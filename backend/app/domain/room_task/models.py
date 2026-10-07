@@ -31,9 +31,11 @@ class TaskStatus(enum.StrEnum):
     word nothing writes and nothing acts on — see the module docstring on
     dependencies for the same reasoning.
 
-    Acceptance closes the task, while a task may also close without delivery.
-    `accepted_at` records approval and `delivered_head` retains the merged
-    revision even if that approval is later revoked.
+    A task may deliver in several steps: accepting the step its card calls the
+    last closes the task, accepting an earlier one leaves it open
+    (`review/task_landing.py`). A task may also close without delivery.
+    `accepted_at` records the latest approval and `delivered_head` the latest
+    merged revision, kept even if that approval is later revoked.
     """
 
     open = "open"
@@ -73,7 +75,7 @@ class TaskTitle(UuidPk, Base):
     source: Mapped[TaskTitleSource] = mapped_column(
         Enum(TaskTitleSource, native_enum=False, length=16)
     )
-    # name | calibrate | follow | proposal | rename
+    # name | calibrate | follow | teammate | rename
     reason: Mapped[str] = mapped_column(String(16))
     by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -136,6 +138,8 @@ class Task(UuidPk, Timestamps, Base):
     __table_args__ = (
         Index("ix_tasks_room_id_created_at", "room_id", "created_at"),
         UniqueConstraint("project_id", "number", name="uq_tasks_project_number"),
+        # The tasks under each message of a channel's main line.
+        Index("ix_tasks_upgraded_from_block_id", "upgraded_from_block_id"),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -262,7 +266,8 @@ class Task(UuidPk, Timestamps, Base):
     # 关闭时留下的一句话：做成了什么，或者为什么不做了。
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # 交付标记, stamped when the work merges. Independent of `status`, above.
+    # 交付标记, stamped each time a delivery merges: the latest one. An open
+    # task with it set has landed earlier steps and goes on.
     accepted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -272,8 +277,8 @@ class Task(UuidPk, Timestamps, Base):
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # If this work was dispatched from a message in the room, the block it came
-    # from — so that position in the timeline stays a live link to the thread.
+    # The main-line message this task was made from, or whose 支线 it was made
+    # in: the task shows under it. A message can have any number of tasks.
     # use_alter: tasks↔blocks is a circular FK; add this one via ALTER.
     upgraded_from_block_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(

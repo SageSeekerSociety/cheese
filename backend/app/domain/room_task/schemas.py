@@ -58,7 +58,8 @@ class TaskOut(BaseModel):
     started_at: datetime | None = None
     started_by: str | None = None
     started_doc_version: int | None = None
-    # Acceptance closes the task; closing a task alone does not imply delivery.
+    # The latest accepted delivery. Accepting the last step closes the task;
+    # closing a task alone does not imply delivery.
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     closed_at: datetime | None = None

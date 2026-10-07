@@ -63,8 +63,10 @@ async def save_to_library(
     room_id: uuid.UUID,
     path: str,
     by: str,
+    said_in: uuid.UUID | None = None,
 ) -> str:
-    """把房间里的一份文件留进资料库，返回它在那里的名字。
+    """把房间里的一份文件留进资料库，返回它在那里的名字。``said_in`` 是按下保存
+    的那段对话（任务或支线）；在那里说一声，不在主线。
 
     撞名不覆盖，跟着资料库自己的规矩走：两次保存就是两份，各自留着 —— 谁也说不准
     第二份是第一份的新版，还是另一样同名的东西。
@@ -84,6 +86,7 @@ async def save_to_library(
     await announce(
         session,
         place_id=room_id,
+        task_id=said_in,
         content=say("librarySaved", name=name),
         meta=notice(
             EVENT_LIBRARY_SAVED,

@@ -32,6 +32,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
 )
 from app.domain.agent.hook_stream import _HookWorkState
+from app.domain.agent.mcp_notice import unconnected_mcp
 from app.domain.agent.platform_notices import (
     EVENT_PROMPT_REPLAYED,
     EVENT_TURN_QUEUED,
@@ -322,10 +323,6 @@ class RoomTurns:
             probe_unread: bool = False,
             fence_delivery: bool = False,
         ) -> InputRegistrar: ...
-
-        async def _unconnected_mcp(
-            self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str | None
-        ) -> tuple[str, ...]: ...
 
         async def post_system_event(
             self,
@@ -1161,8 +1158,12 @@ class RoomTurns:
             teaching=teaching,
             environment=_session_opening_lines(
                 unconnected_mcp=(
-                    await self._unconnected_mcp(
-                        project_id, prepared.room_id, acting_agent
+                    await unconnected_mcp(
+                        self._sessions,
+                        project_id,
+                        prepared.room_id,
+                        acting_agent,
+                        inner_id=prepared.inner_id,
                     )
                     if needs_place
                     else ()

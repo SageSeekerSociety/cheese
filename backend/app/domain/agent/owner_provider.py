@@ -12,11 +12,13 @@ session already ran on comes first, so a conversation stays where its
 transcript is while that machine is there.
 """
 
+import hashlib
 import logging
 from contextlib import asynccontextmanager
 
 from sqlalchemy import select
 
+from app.core.db import async_session_factory
 from app.core.sentences import say
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.harness import SessionRef
@@ -76,7 +78,24 @@ class OwnerChannel(CentralChannel):
             # launch: this session signs in with its owner's login on the
             # machine, and none of the metering proxy's environment is set.
             prepared.env["CHEESE_OWN_LOGIN"] = "1"
+            # What the machine calls a model with is read once, as the session
+            # starts. Folded into what the session was started with, so the
+            # next turn after its owner switches account or model service
+            # starts a new session instead of keeping the old one.
+            calls = await self._model_access(kwargs["precheck"].machine)
+            prepared.env["CHEESE_AGENT_CONFIG"] = hashlib.sha256(
+                f"{prepared.env.get('CHEESE_AGENT_CONFIG', '')}:{calls}".encode()
+            ).hexdigest()
             yield prepared
+
+    async def _model_access(self, machine: str) -> str:
+        """How the owner's Claude Code on ``machine`` reaches a model, as it
+        last said: the kind of login, and a model service's model."""
+        async with (self._session_factory or async_session_factory)() as db:
+            row = await db.get(DeviceClaudeLoginRow, machine)
+        if row is None:
+            return ""
+        return f"{row.auth_method or ''}:{row.model or ''}"
 
 
 async def owners_machines(db, owner_user_id: int) -> list[str]:

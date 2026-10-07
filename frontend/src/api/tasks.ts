@@ -57,6 +57,11 @@ export function closeTask(taskId: string, conclusion?: string): Promise<RoomTask
   })
 }
 
+/** 重新打开一件关了的任务。交付过的从项目最新的代码接着做。 */
+export function reopenTask(taskId: string): Promise<RoomTask> {
+  return request<RoomTask>(`${taskPath(taskId)}/reopen`, { method: 'POST' })
+}
+
 export interface DocumentComparison {
   before: { version: number; content: string }
   after: { version: number; content: string }
@@ -71,38 +76,6 @@ export function compareDocumentVersions(
   const q = new URLSearchParams({ before: String(before) })
   if (after != null) q.set('after', String(after))
   return request<DocumentComparison>(`/documents/${encodeURIComponent(documentId)}/compare?${q.toString()}`)
-}
-
-/** AI 队友提议的一个任务，等房间里的人决定。 */
-export interface TaskProposal {
-  id: string
-  room_id: string
-  title: string
-  summary: string
-  proposed_by: string
-  state: 'open' | 'accepted' | 'dismissed'
-  task_id: string | null
-  created_at: string
-}
-
-function proposalPath(roomId: string, proposalId?: string): string {
-  const base = `/topics/${encodeURIComponent(roomId)}/task-proposals`
-  return proposalId ? `${base}/${encodeURIComponent(proposalId)}` : base
-}
-
-/** 这个房间里还在等人决定的提议。 */
-export function listTaskProposals(roomId: string): Promise<TaskProposal[]> {
-  return request<TaskProposal[]>(proposalPath(roomId))
-}
-
-/** 从 AI 队友的提议创建任务：点的人就是负责人。 */
-export function acceptTaskProposal(roomId: string, proposalId: string): Promise<RoomTask> {
-  return request<RoomTask>(`${proposalPath(roomId, proposalId)}/accept`, { method: 'POST' })
-}
-
-/** 不采用这条提议。 */
-export function dismissTaskProposal(roomId: string, proposalId: string): Promise<TaskProposal> {
-  return request<TaskProposal>(`${proposalPath(roomId, proposalId)}/dismiss`, { method: 'POST' })
 }
 
 /** 任务从哪来：转出它的讨论，和讨论里用到的材料。 */

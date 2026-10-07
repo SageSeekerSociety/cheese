@@ -20,7 +20,7 @@ import pytest
 
 from app.domain.agent.harness.claude_code import owner_login
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
-from app.domain.agent.place import CLAUDE_LOGIN_DIR, footprint_root
+from app.domain.agent.place import CLAUDE_LOGIN_DIR, MODEL_SERVICE_FILE, footprint_root
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.user.models import User
@@ -91,6 +91,44 @@ def test_an_inherited_token_or_the_owners_own_login_is_not_the_platforms(tmp_pat
     login = _ask(_machine(tmp_path, installed=True, logged_in=False))
     assert login.installed
     assert not login.logged_in
+
+
+def _with_model_service(env: dict) -> dict:
+    login = Path(env["EXPECTED_LOGIN"])
+    login.mkdir(parents=True, exist_ok=True)
+    (login / MODEL_SERVICE_FILE).write_text(
+        json.dumps(
+            {
+                "base_url": "https://open.bigmodel.cn/api/anthropic",
+                "token": "the-owners-key",
+                "model": "glm-4.6",
+            }
+        )
+    )
+    return env
+
+
+def test_a_machine_set_to_another_model_service_can_run_its_owners_agent(tmp_path):
+    """No Claude account is logged in, but the owner pointed it at a model
+    service: sessions can start, and the devices page can name the model."""
+    login = _ask(
+        _with_model_service(_machine(tmp_path, installed=True, logged_in=False))
+    )
+    assert login.logged_in
+    assert login.model == "glm-4.6"
+
+
+def test_a_model_services_key_never_leaves_the_machine(tmp_path):
+    result = subprocess.run(
+        [sys.executable, "-"],
+        input=owner_login.program(),
+        env=_with_model_service(_machine(tmp_path, installed=True, logged_in=False)),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    assert "the-owners-key" not in result.stdout + result.stderr
 
 
 def test_a_machine_without_the_build_is_not_logged_in(tmp_path):

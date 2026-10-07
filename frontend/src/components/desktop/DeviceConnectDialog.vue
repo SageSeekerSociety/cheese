@@ -27,6 +27,8 @@ const props = defineProps<{
   teamIds: number[]
   claudeLoggedIn: boolean
   claudePlan: string | null
+  /** 用其他模型服务时它调用的模型名。 */
+  claudeService?: string | null
   claudeState: 'idle' | 'preparing' | 'browser'
   error: string | null
 }>()
@@ -191,6 +193,7 @@ function failedAt(f: ConnectFailure) {
         <ClaudeCodeLogin
           :logged-in="claudeLoggedIn"
           :plan="claudePlan"
+          :service="claudeService"
           :state="claudeState"
           @login="(console) => emit('claudeLogin', console)"
           @cancel="emit('claudeCancel')"

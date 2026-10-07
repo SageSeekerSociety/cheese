@@ -116,12 +116,12 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 | **curl** | `install.sh` 用 curl 下二进制 | 必须 |
 | **tmux** | 把 runner 和它握着的 `claude` 养在持久会话里，链路掉线不丢进程 | 必须。连接器没有 tmux 就直接退出，所以 `link connect` 在批准之前先找一遍 tmux，找不到就停下并说明怎么装；桌面端在 Mac 上自带一份 |
 | **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
-| **python3** | 平台发到机器上跑的那几个小工具：计量隧道（订阅轮次）、运行环境预览的隧道（`cheese serve`）。只用标准库，机器上不需要 venv、不需要 `pip install` | 轮次不需要它，这两样功能需要。缺它则订阅轮次到不了计量端、`cheese serve` 起不来通道——两边都会明说，不会静默 |
+| **python3**（3.11 以上） | 会话的运行程序（runner）、执行器，以及平台发到机器上跑的小工具（计量隧道、`cheese serve` 的预览隧道）。只用标准库，机器上不需要 venv、不需要 `pip install` | 必须。机器上的 `python3` 低于 3.11 或者没有时（每台 Mac 自带的 `/usr/bin/python3` 都是 3.9），连接器从服务器的 toolchain 路由取一份固定版本（python-build-standalone）放到 `~/.cheese/runtime/python`，排到自己 PATH 的最前面；会话窗口也带着这个 PATH 启动。取不到时连接照常，后台服务下次启动再取 |
 | **claude** (Claude Code CLI) | Central model session, or native file tools on an executor | Required; supplied by the platform |
 | **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
 | **能用的用户级 service manager** | 后台常驻靠它，而我们只用当前账户的那一个 | 必须。Linux 上是 `systemd --user`（要 logind：ssh 进来得有 `XDG_RUNTIME_DIR`，还要能 `loginctl enable-linger`），macOS 上是 launchd。装不上不是无声的：`link connect` 直接报错，入册脚本判失败 |
 
-平台：Linux / macOS / Windows。Windows 上不用 WSL：连接器原生运行，不承载终端屏幕（屏幕只在中心会话主机上），首次 `link connect` 从服务器的 toolchain 路由取 python3 和 Git for Windows（bash、git、curl、coreutils）放到 `~/.cheese/runtime`，并排到自己 PATH 的最前面；后台常驻靠当前用户的登录启动项（`HKCU\...\Run`），不需要管理员。上表的依赖在 Windows 上都由它带来。
+平台：Linux / macOS / Windows。Windows 上不用 WSL：连接器原生运行，没有终端屏幕，成员自己的 Claude Code 以后台进程运行（`internal/procscreen`）；首次 `link connect` 从服务器的 toolchain 路由取 python3 和 Git for Windows（bash、git、curl、coreutils）放到 `~/.cheese/runtime`，并排到自己 PATH 的最前面；后台常驻靠当前用户的登录启动项（`HKCU\...\Run`），不需要管理员。上表的依赖在 Windows 上都由它带来。
 
 **claude 由平台安装，不由机器去厂商那里下。** 入册（`bootstrap_script`）和启动器共用同一个 pin，二进制从 `<origin>/connector/claude/<version>/<platform>/claude` 取——平台拉一次、按厂商发布的 SHA-256 校验、缓存、本地供给。三个理由每个都单独成立：机器未必到得了 `claude.ai`（云节点在私有子网、自托管机器在我们看不见的网里，而厂商安装脚本把"你所在地区不可用"列为一种失败）；拿到的版本未必过门槛，而**低于门槛启动器拒绝启动**；只有平台自己发二进制，pin 才从"希望机器下到对的版本"变成"我们递给它的就是那个"。
 
@@ -129,7 +129,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 ### 机主自己的 Claude Code 登录
 
-机主可以把自己的 Claude 账号或 API key 交给这台机器上平台运行的 Claude Code（#2991）：在机器上运行 `cheesehost claude login`。它先向服务器问平台钉的版本（`GET <origin>/connector/claude/pin`），机器上没有就从上面那条路由下载到 `~/.cheese/claude/versions/<version>`，再以 `CLAUDE_CONFIG_DIR=~/.cheese/claude-login` 运行 `claude auth login`。登录只在这个目录里，机主自己的 `~/.claude` 不读也不写，两边各有一对 token、各自续期。`cheesehost claude status` 和 `cheesehost claude logout` 查看和注销这份登录。
+机主可以把自己的 Claude 账号或 API key 交给这台机器上平台运行的 Claude Code（#2991）：在机器上运行 `cheesehost claude login`。它先向服务器问平台钉的版本（`GET <origin>/connector/claude/pin`），机器上没有就从上面那条路由下载到 `~/.cheese/claude/versions/<version>`，再以 `CLAUDE_CONFIG_DIR=~/.cheese/claude-login` 运行 `claude auth login`。登录只在这个目录里，机主自己的 `~/.claude` 不读也不写，两边各有一对 token、各自续期。`cheesehost claude status` 和 `cheesehost claude logout` 查看和注销这份登录。机主也可以不用 Claude 账号，改用兼容 Anthropic 接口的其他模型服务：`cheesehost claude login --base-url <地址> --model <模型>`，密钥从环境变量 `CHEESE_MODEL_TOKEN` 读，没有就在终端里问。三项存在 `~/.cheese/claude-login/model-service.json`（只有机主可读），有这个文件时启动会话导出 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`，并把 `ANTHROPIC_MODEL`、三档默认模型和分身模型都设成这个模型；平台探测登录时只带回模型名，不带密钥。不带 `--base-url` 再登录一次，或者 `logout`，都会删掉这个文件。
 
 机器每次连上，后端经 `hub.exec(["python3", "-"])` 在机器上跑 `claude auth status`（不调用模型），把答案记进 `device_claude_login`（`harness/claude_code/owner_login.py`）。只问人接入的机器，云机器不问。
 

@@ -57,10 +57,10 @@ def test_the_line_names_who_took_part(client):
 
     assert line["reply_count"] == 1
     assert line["participants"] == ["alice", "bob"]
-    assert line["task"] is None
+    assert line["tasks"] == []
 
 
-def test_the_line_names_the_task_the_thread_became(client):
+def test_the_line_names_the_tasks_the_thread_became(client):
     tid = _channel(client)
     root = post_message(client, tid, "alice", {"content": "微信里打不开预览"})
     thread = _thread(client, root["id"], "bob")
@@ -72,7 +72,7 @@ def test_the_line_names_the_task_the_thread_became(client):
 
     line = _line_under(client, tid, root["id"])
 
-    assert line["task"]["id"] == r.json()["data"]["id"]
+    assert [t["id"] for t in line["tasks"]] == [r.json()["data"]["id"]]
 
 
 def test_an_empty_thread_with_nobody_answering_has_no_line(client):

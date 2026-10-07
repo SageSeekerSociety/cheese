@@ -394,6 +394,7 @@
       "createPr": "创建 PR",
       "retryAccept": "重新采纳",
       "acceptAction": "采纳",
+      "acceptAndComplete": "采纳并完成任务",
       "sendBack": "退回",
       "void": "作废",
       "autoMerge": "检查通过后自动合并",
@@ -483,7 +484,6 @@
       "upgrade": "转为任务",
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
-      "upgradedToTask": "已转为任务",
       "upgradedToTopic": "已转为频道",
       "showMore": "展开",
       "showLess": "收起",
@@ -520,12 +520,6 @@
         "md": "存为 .md",
         "keep": "保留为文字"
       }
-    },
-    "dispatched": {
-      "created": "新建任务",
-      "title": "《{title}》",
-      "done": "已完成",
-      "running": "进行中"
     },
     "checklist": {
       "updatedAt": "清单更新于 {time}",
@@ -1210,10 +1204,9 @@
       "replyingStatus": "{name} {status}",
       "lastReply": "{name}：{text}",
       "toTask": "转为任务",
+      "taskLink": "任务「{title}」",
       "backToThread": "返回支线",
       "process": "这一轮的过程",
-      "becameTask": "已转为任务「{title}」",
-      "openTask": "打开任务",
       "close": "关闭",
       "placeholder": "在支线中回复",
       "loadFailed": "加载失败，稍后重试",
@@ -1247,6 +1240,16 @@
       "current": "项目当前版本 · 只读",
       "missing": "项目当前版本里没有这个文件",
       "inTask": "在任务「{title}」里看"
+    },
+    "taskCard": {
+      "owner": "{name} 负责",
+      "created": "新建了任务",
+      "waitingReview": "待 {name} 审阅",
+      "waitingAnswer": "待 {name} 回答",
+      "waitingStart": "待 {name} 开始",
+      "acceptedPr": "已采纳 · PR #{pr}",
+      "acceptedTimesPr": "已采纳 {n} 次 · PR #{pr}",
+      "acceptedTimes": "已采纳 {n} 次"
     }
   },
   "board": {
@@ -2110,14 +2113,9 @@
       "untitled": "未命名文档",
       "by": "{name}"
     },
-    "proposal": {
-      "byline": "{name} 提议了一个任务",
-      "accept": "创建任务",
-      "dismiss": "不用",
-      "failed": "操作失败，稍后重试"
-    },
     "more": "更多操作",
     "close": "关闭任务",
+    "reopen": "重新打开任务",
     "closeTitle": "关闭这个任务？",
     "closeBody": "写下结论表示已经做完；不写表示不再做。",
     "handOver": "转交",

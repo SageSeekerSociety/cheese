@@ -261,6 +261,7 @@ async def save_shown_to_library(
         room_id=place.room_id,
         path=clean_artifact_path(str(body.get("path") or "")),
         by=actor.handle,
+        said_in=place.inner_id,
     )
     await db.commit()
     return ok({"name": name})

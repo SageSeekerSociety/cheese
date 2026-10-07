@@ -52,6 +52,7 @@ function close() {
     :team-ids="here.device.value?.team_ids ?? []"
     :claude-logged-in="!!here.claudeCode.value?.logged_in"
     :claude-plan="here.claudeCode.value?.subscription_type ?? null"
+    :claude-service="here.claudeService.value"
     :claude-state="here.claudeLogin.value"
     :error="here.error.value"
     @connect="connect"

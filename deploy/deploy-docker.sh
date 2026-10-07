@@ -12,6 +12,11 @@
 #   compose-file: default deploy/compose/docker-compose.base.yml
 #
 # Env (with safe defaults baked into the compose file):
+#   APP_RELEASE        the full commit this release ships. The backend reports
+#                      it at /api/version: the image under <image-sha> can be an
+#                      older commit's, retagged because nothing in it changed.
+#                      Ignored when BACKEND_IMAGE names the image, which then
+#                      reports the commit it was built from.
 #   BACKEND_ENV_FILE   path to the box's backend/.env   (default in compose)
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
 #   CLAUDE_CACHE_HOST_PATH  host dir holding the claude binaries served to
@@ -69,6 +74,11 @@ PULL_BACKOFF_SECONDS="${DEPLOY_PULL_BACKOFF_SECONDS:-5 15}"
 CI_POSTGRES_IMAGE="${CI_POSTGRES_IMAGE:-mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4}"
 CI_REDIS_IMAGE="${CI_REDIS_IMAGE:-mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9}"
 export IMAGE_TAG="$SHA"
+# An image named outright is not this release's, so it must not claim to be.
+if [ -n "${BACKEND_IMAGE:-}" ]; then
+  APP_RELEASE=""
+fi
+export APP_RELEASE="${APP_RELEASE:-}"
 
 # Optional overlay compose files layered on top of the base (space-separated).
 # Bare names resolve against the committed compose dir; absolute paths pass
@@ -870,6 +880,12 @@ if [ -z "$PREV_SHA" ]; then
   # Fall back to reading the image tag actually in use.
   PREV_SHA="$(dc images backend 2>/dev/null | awk 'NR==2{print $3}' || true)"
 fi
+# The release the running backend reports, so a rollback reports it again.
+PREV_RELEASE=""
+if [ -n "$PREV_BACKEND_CONTAINER" ]; then
+  PREV_RELEASE="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    "$PREV_BACKEND_CONTAINER" 2>/dev/null | sed -n 's/^APP_RELEASE=//p' | head -n 1 || true)"
+fi
 log "deploying sha=$SHA (previous=${PREV_SHA:-none}) via $COMPOSE"
 
 # From here on the script may leave pulled layers on disk, so every exit path
@@ -1456,17 +1472,17 @@ if [ "$code" != ok ]; then
         if [ -n "$PREV_BACKEND_IMAGE" ] && [ -n "$PREV_FRONTEND_IMAGE" ]; then
           export BACKEND_IMAGE="$PREV_BACKEND_IMAGE" FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE"
         fi
-        export IMAGE_TAG="$PREV_SHA"
+        export IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE"
         write_slots_overlay
         rollout_app
       ) || log "WARNING: the rollback to $PREV_SHA did not complete; see the lines above"
     elif [ -n "$PREV_BACKEND_IMAGE" ] && [ -n "$PREV_FRONTEND_IMAGE" ]; then
       BACKEND_IMAGE="$PREV_BACKEND_IMAGE" \
         FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE" \
-        IMAGE_TAG="$PREV_SHA" \
+        IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE" \
         dc up -d backend frontend collab || true
     else
-      IMAGE_TAG="$PREV_SHA" dc up -d backend frontend collab || true
+      IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE" dc up -d backend frontend collab || true
     fi
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"

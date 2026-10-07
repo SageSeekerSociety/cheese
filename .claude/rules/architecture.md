@@ -19,10 +19,13 @@ One command runs all five: `task boundaries`. Individually:
 | Component imports | `pnpm --dir frontend run lint:boundary` |
 | File sizes | `python3 .claude/scripts/check-file-sizes.py` |
 | Scenes run standalone | `pnpm --dir frontend run lint:scenes` |
+| Grade-A components are in the catalog | `pnpm --dir frontend run lint:catalog` |
 
-All five print their baseline and their refresh command when they fail, and four
-of them carry `--self-test` (also run in CI — a check nobody has watched fail is
-not a check).
+All five print their baseline and their refresh command when they fail, and each
+has tests of its own that CI runs — a check nobody has watched fail is not a
+check: four carry `--self-test` (boundaries in test.yml, file sizes, scenes and
+catalog in repo-guards.yml), and the component-import ratchet is covered by
+`frontend/scripts/import-boundary-ratchet.test.mjs` under `pnpm run test:ratchet`.
 
 What they cannot say is whether the tree is getting *better*: each one is a
 ratchet against a frozen baseline, and a ratchet that holds still reports success
@@ -210,10 +213,17 @@ Two things about it are worth knowing from this file:
   half was implemented at first, which graded ten such scenes A and froze them;
   both halves landed 2026-09-30.
 
-Missing `/demo/catalog` entries are reported as a warning count, never a failure:
-what belongs in the preview site is a product decision, and
-`pnpm exec vitest run src/views/demo/catalog.spec.ts` is the mechanical claim
-that a catalogued component really does render alone.
+Missing `/demo/catalog` entries are no longer a warning here. They are their own
+ratchet, `pnpm run lint:catalog` (`.claude/scripts/catalog-ratchet.py`): every
+grade-A `.vue` under `frontend/src` (the preview site's own `views/demo/`
+excluded) is either catalogued — `views/demo/catalog.ts`, or a `catalog*.ts`
+volume it imports and spreads (transitively; `*Fixtures.ts` not read),
+imports the `.vue` and uses it as an entry's `component:`, comments not
+counted — or listed as `pending` in
+`frontend/catalog-baseline.json`, a list that may only shrink. A new or newly-A
+component that is in neither fails; `--update` only crosses entries off.
+`pnpm exec vitest run src/views/demo/catalog.spec.ts` remains the mechanical
+claim that a catalogued component really does render alone.
 
 ## Files have a size cap, and cap it where it stands
 

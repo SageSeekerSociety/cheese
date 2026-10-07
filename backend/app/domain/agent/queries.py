@@ -374,10 +374,14 @@ async def _say_memory_change(
         )
         if room is not None:
             await keep_record(session, conversation_id=room, content=content, meta=meta)
-    if told:
+    # `writer_room` is the writer's conversation: a room's line, or a task or
+    # 支线 inside one, which `announce` reaches through its room.
+    writer = await PlaceResolver(session).conversation(writer_room)
+    if told and writer is not None:
         await announce(
             session,
-            place_id=writer_room,
+            place_id=writer.room_id,
+            task_id=writer.inner_id,
             content="\n".join(line for line, _ in told),
             meta={
                 **notice(

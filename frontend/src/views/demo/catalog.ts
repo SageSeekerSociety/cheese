@@ -9,7 +9,13 @@
  * 需要哪几样**（`needs`，见 `CatalogNeed`）、**看哪几格**（`states`，每格的 props
  * 是真会出现的形状，见 `catalogFixtures.ts`）。
  *
- * 加一个组件：这个文件末尾追加一条，把上面四件事写清。别的都不用动。
+ * 加一个组件：这个文件末尾追加一条（或放进一个 `catalog*.ts` 分册再展开进来），把上面
+ * 四件事写清。骨架可以用 `node scripts/catalog-scaffold.mjs <组件>` 按 props 生成（它留下的占位记号见 `catalogTodo.ts`）。
+ *
+ * 和 Storybook 的 CSF 一一对应，以后要换工具或做视觉回归能机械迁移：条目是 CSF 的
+ * default export（`component`、`title`、`args`），每一格是一个命名 story（`name`、
+ * `props` 即这一格的 args、`slot` 即默认插槽）；一格的参数是条目的 `args` 叠上这一格
+ * 的 `props`，算法只有 `stateProps` 这一处。
  */
 import type { Component } from 'vue'
 
@@ -42,6 +48,7 @@ import {
   KPI_STATES,
   LONG_ROW,
   NAV_ITEMS,
+  NO_REPO,
   NUMBER_ROWS,
   OPEN_FILES,
   PREVIEW_EMPTY,
@@ -55,6 +62,7 @@ import {
 } from './catalogFixtures'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { MODELS_ENTRIES } from './catalogModels'
+import { PANEL_ENTRIES } from './catalogPanels'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { ROOM_ENTRIES } from './catalogRoom'
@@ -106,8 +114,13 @@ export interface CatalogState {
   slot?: string
   /** 这一格的环境，不写就跟条目走。 */
   needs?: CatalogNeed[]
-  /** 画出来之后该看得见的一句话（测试按它判「真的画出来了」）。骨架屏那类没有。 */
+  /** 画出来之后该看得见的一句话（测试按它判「真的画出来了」）。挑**只有这一格才有**的
+   *  那句：几格都有的字（顶栏、标题）证明不了画的是这一格。 */
   expect?: string
+  /** 字分不出这一格时（几格的字一样、只差状态或形状，比如清单的勾、收着的文件夹、骨架），
+   *  再给一个只在这一格命中的选择器，测试断言它在画出来的东西里找得到。只给测试用，
+   *  页面不读它；和 `expect` 可以同时给。 */
+  expectSelector?: string
 }
 
 export interface CatalogEntry {
@@ -119,6 +132,8 @@ export interface CatalogEntry {
   file: string
   component: Component
   needs: CatalogNeed[]
+  /** 每一格共用的参数（CSF 的 `args`），一格的 `props` 叠在它上面。 */
+  args?: Record<string, unknown>
   /** 要坐在 Vuetify 布局里的（底栏、底部动作面板本来就长在 layout 里）。 */
   layout?: boolean
   /** 画出来的东西不在容器里（浮层传送到 body）。 */
@@ -805,7 +820,7 @@ export const CATALOG: CatalogEntry[] = [
       {
         name: '没绑仓库',
         note: '这个项目没有代码仓库：一句话说清，不画一棵空树。',
-        props: changesPanelProps({ noRepo: true }),
+        props: changesPanelProps(NO_REPO),
         expect: '暂无代码仓库',
       },
       {
@@ -947,7 +962,22 @@ export const CATALOG: CatalogEntry[] = [
   // 文档里的块、基础组件各在自己的文件里：`catalogDoc.ts`、`catalogBase.ts`。
   ...DOC_BLOCK_ENTRIES,
   ...BASE_ENTRIES,
+  ...PANEL_ENTRIES,
 ]
+
+/** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */
+export function stateProps(entry: CatalogEntry, state: CatalogState): Record<string, unknown> {
+  return { ...entry.args, ...state.props }
+}
+
+/** 目录页上的分组：源码所在目录，`src/components/panels/doc/X.vue` → `components/panels/doc`。 */
+export function catalogGroup(entry: CatalogEntry): string {
+  return entry.file
+    .replace(/^src\//, '')
+    .split('/')
+    .slice(0, -1)
+    .join('/')
+}
 
 /** 按 id 找一条（地址里那一段）。 */
 export function catalogEntry(id: string): CatalogEntry | null {

@@ -160,7 +160,15 @@ def api_reach(root: Path) -> set[Path]:
     the rest is closed transitively over `.ts` and `.vue` edges. A type-only
     import is not an edge: it is erased at build time, so a module that only
     declares a type from the API layer is not a module that reaches it.
+
+    `root` is resolved first. Every edge is a `resolve_spec` result, which is
+    absolute, and an absolute path is never `relative_to` a relative root: with
+    `Path('.')` every edge fell into the `ValueError` branch, the graph came
+    out empty and every component graded A (356 became 486). Resolving here
+    rather than refusing a relative root keeps every caller correct without
+    each one having to remember.
     """
+    root = root.resolve()
     src = repo_src(root)
     graph: dict[Path, set[Path]] = {}
     reach: set[Path] = set()
@@ -423,7 +431,11 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
 
     `reach` is `api_reach(root)` — passed in when grading many files, because
     building it reads the whole tree and grading one file should not.
+
+    `root` is resolved for the same reason as in `api_reach`: an API root is
+    recognised by `relative_to(root)`, which a relative root silently fails.
     """
+    root = root.resolve()
     src = repo_src(root)
     if reach is None:
         reach = api_reach(root)

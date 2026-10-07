@@ -394,6 +394,7 @@
       "createPr": "Create PR",
       "retryAccept": "Accept again",
       "acceptAction": "Accept",
+      "acceptAndComplete": "Accept and complete the task",
       "sendBack": "Send back",
       "void": "Void",
       "autoMerge": "Merge automatically once checks pass",
@@ -483,7 +484,6 @@
       "upgrade": "Turn into a task",
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
-      "upgradedToTask": "Moved to a task",
       "upgradedToTopic": "Moved to a channel",
       "showMore": "Show more",
       "showLess": "Show less",
@@ -520,12 +520,6 @@
         "md": "Save as .md",
         "keep": "Keep as text"
       }
-    },
-    "dispatched": {
-      "created": "New task",
-      "title": "“{title}”",
-      "done": "Done",
-      "running": "In progress"
     },
     "checklist": {
       "updatedAt": "Checklist updated {time}",
@@ -1210,10 +1204,9 @@
       "replyingStatus": "{name}: {status}",
       "lastReply": "{name}: {text}",
       "toTask": "Convert to task",
+      "taskLink": "Task “{title}”",
       "backToThread": "Back to thread",
       "process": "Steps of this turn",
-      "becameTask": "Became the task “{title}”",
-      "openTask": "Open task",
       "close": "Close",
       "placeholder": "Reply in thread",
       "loadFailed": "Couldn't load. Try again later",
@@ -1247,6 +1240,16 @@
       "current": "Project's current version · Read-only",
       "missing": "This file isn't in the project's current version",
       "inTask": "View it in the task \"{title}\""
+    },
+    "taskCard": {
+      "owner": "Owner: {name}",
+      "created": "created a task",
+      "waitingReview": "Waiting for {name} to review",
+      "waitingAnswer": "Waiting for {name} to answer",
+      "waitingStart": "Waiting for {name} to start",
+      "acceptedPr": "Accepted · PR #{pr}",
+      "acceptedTimesPr": "Accepted {n} times · PR #{pr}",
+      "acceptedTimes": "Accepted {n} times"
     }
   },
   "board": {
@@ -2110,14 +2113,9 @@
       "untitled": "Untitled doc",
       "by": "{name}"
     },
-    "proposal": {
-      "byline": "{name} proposed a task",
-      "accept": "Create task",
-      "dismiss": "Not now",
-      "failed": "Couldn't do that. Try again later"
-    },
     "more": "More actions",
     "close": "Close task",
+    "reopen": "Reopen task",
     "closeTitle": "Close this task?",
     "closeBody": "Write a conclusion if it is done; leave it empty if it is no longer needed.",
     "handOver": "Hand over",

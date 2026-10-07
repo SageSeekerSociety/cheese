@@ -52,6 +52,7 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt
+from app.domain.agent.runtime import announce_stale
 from app.domain.conversation.services import room_of
 from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.services import TopicService
@@ -181,14 +182,14 @@ async def upgrade_block(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
-    """转为任务：a message in a channel becomes a task of its own, owned by
-    whoever turned it, and its agent drafts the task's document from the
-    message and what was said around it. A private chat's messages do not
-    leave it.
+    """转为任务：a message in a channel, or a reply in its 支线, becomes a task
+    owned by whoever turned it, and its agent drafts the task's document from
+    the message and what was said around it. One message can become several
+    tasks. A private chat's messages do not leave it.
 
     这是一条**在频道里造东西**的写：凭据由 resolve/authorize_topic 认，频道由 block
     自己带 —— block 的对话所在的频道就是那个频道，不是它自己去请求体里说。转的人也
-    由凭据说，而且只能是一个人：AI 队友只能提议任务。
+    由凭据说，而且只能是一个人：AI 队友用自己的工具建任务（`cheese_task`）。
     """
     block = await BlockRepository(db).get(block_id)
     if block is None:
@@ -198,32 +199,28 @@ async def upgrade_block(
     await resolver.authorize_topic(
         actor, project_id=parent.project_id, topic_id=parent.id
     )
-    # Turning a message into a task is a person's act: an AI teammate proposes.
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
-    created_by = actor.handle
-    room, thread, created = await TopicService(db).upgrade_block_to_place(
+    room, task = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
-        created_by=created_by,
+        created_by=actor.handle,
     )
-    out = TaskOut.model_validate(thread).model_dump(mode="json")
-    if created:
-        # The task's agent drafts its document from the message and what was
-        # said around it. Recorded in this transaction, so a rolled-back upgrade
-        # leaves no instruction for a task that does not exist; **幂等**：重复转
-        # （created=False）不再起第二次。
-        await tell_task(
-            db,
-            thread,
-            task_opening_prompt(
-                title=thread.title,
-                owner=thread.owner_handle,
-                source=await source_text(db, block),
-                materials=materials_text(materials((await discussion(db, thread))[1])),
-            ),
-            opening=True,
-        )
-        await db.commit()
-        await dispatch(chat)
-        return ok(out)
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    # The task's agent drafts its document from the message and what was said
+    # around it. Recorded in this transaction, so a rolled-back upgrade leaves
+    # no instruction for a task that does not exist.
+    await tell_task(
+        db,
+        task,
+        task_opening_prompt(
+            title=task.title,
+            owner=task.owner_handle,
+            source=await source_text(db, block),
+            materials=materials_text(materials((await discussion(db, task))[1])),
+        ),
+        opening=True,
+    )
+    await db.commit()
+    await announce_stale(room.id, "topics")
+    await dispatch(chat)
     return ok(out)
