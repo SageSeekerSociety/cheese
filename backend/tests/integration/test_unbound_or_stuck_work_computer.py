@@ -60,21 +60,15 @@ async def test_an_install_that_stopped_does_not_hold_the_room(client, monkeypatc
     lease = await _lease_is(client, room, **_abandoned_install())
     remote = _machines(monkeypatch, online=False)
 
+    # Its agent switches by itself: nothing is refused over work that could
+    # not be pushed, and an install that stopped is no allocation in progress.
     agent = client.put(
         room.path,
         headers=room.agent,
         json={"profile": "device", "device_id": room.new_device},
     )
-    # The agent is told the truth — the machine it leaves cannot push — and not
-    # that an allocation is still running.
-    assert agent.status_code == 409, agent.text
-    assert agent.json()["error"]["name"] == "WorkComputerUnreachable"
 
-    person = client.put(
-        room.path, headers=room.person, json=_to_new(room, abandon_unpushed=True)
-    )
-
-    assert person.status_code == 200, person.text
+    assert agent.status_code == 200, agent.text
     session = await _session(client, room)
     assert session.execution_request["choice"]["device_id"] == room.new_device
     assert session.work_lease is None
@@ -111,9 +105,7 @@ async def test_an_install_in_progress_still_holds_the_switch(client, monkeypatch
     )
     _machines(monkeypatch)
 
-    refused = client.put(
-        room.path, headers=room.person, json=_to_new(room, abandon_unpushed=True)
-    )
+    refused = client.put(room.path, headers=room.person, json=_to_new(room))
 
     assert refused.status_code == 409, refused.text
     assert "分配仍在进行" in refused.json()["error"]["message"]

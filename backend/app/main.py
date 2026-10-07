@@ -157,6 +157,7 @@ async def lifespan(application: FastAPI):
         ComputeMeterSweeper,
         SandboxSweeper,
     )
+    from app.domain.machine.session_work import checkpoint_room
     from app.domain.topic.retire import sweep_retired_storage
 
     # The running work — sessions to listen to, turns to watch, sweeps on a
@@ -266,7 +267,7 @@ async def lifespan(application: FastAPI):
         for job in jobs:
             job.start(runs, last_runs.get(job.name))
         background.spawn(
-            sweep_retired_storage(async_session_factory),
+            sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
             name="cleanup startup recovery",
         )
         if settings.forge_event_relay_url:

@@ -7,7 +7,7 @@ import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
 import { computed, ref } from 'vue'
 
-import { ApiError, setTopicComputeChoice } from '../api'
+import { setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
 import { choiceDetail, choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 import { renderNoticeMessage } from '../lib/noticeText'
@@ -21,9 +21,6 @@ const error = ref('')
 // 选择变成了一条提议：这次点击没有改掉任何东西，等人点头。不是错误，所以不走
 // `error` 那一行红字。
 const proposal = ref('')
-// 原来那台够不着、推不上去：人唯一可以不推就换的情况，这时把「仍然更换」给他，
-// 并记住他刚选的是哪一台。
-const unreachable = ref<ComputeChoice | null>(null)
 // 任务的那一份带 `follows_room`，房间的没有。
 const isTask = computed(() => props.profile.follows_room != null)
 const menuOpen = ref(false)
@@ -54,18 +51,14 @@ function setAccess(visibility: 'host' | 'isolated') {
   const choice: ComputeChoice = props.profile.choice.device_id
     ? props.profile.choice
     : { ...props.profile.choice, profile: 'device', name: device.name, device_id: device.device_id }
-  void pick(choice, false, visibility)
+  void pick(choice, visibility)
 }
-async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?: 'host' | 'isolated') {
+async function pick(choice: ComputeChoice, visibility?: 'host' | 'isolated') {
   saving.value = true
   error.value = ''
   proposal.value = ''
-  unreachable.value = null
   try {
-    const saved = await setTopicComputeChoice(props.topicId, choice, {
-      ...(abandonUnpushed ? { abandonUnpushed } : {}),
-      ...(visibility ? { visibility } : {}),
-    })
+    const saved = await setTopicComputeChoice(props.topicId, choice, visibility ? { visibility } : {})
     // 变提议时房间这一项没有变 —— 不说话就等于这次点击石沉大海。菜单留着不收，
     // 那句话就在他刚按下的那个控件上。
     if (saved.proposal) {
@@ -77,7 +70,6 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?:
     emit('changed')
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('work.roomMachine.saveFailed')
-    if (e instanceof ApiError && e.code === 'WorkComputerUnreachable') unreachable.value = choice
   } finally {
     saving.value = false
   }
@@ -160,16 +152,6 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?:
       />
       <p v-if="proposal" role="status" class="cp-proposal">{{ proposal }}</p>
       <p v-if="error" role="alert" class="cp-error">{{ error }}</p>
-      <button
-        v-if="unreachable"
-        type="button"
-        class="cp-row cp-abandon"
-        data-testid="room-machine-abandon"
-        :disabled="saving"
-        @click="pick(unreachable, true)"
-      >
-        {{ t('work.roomMachine.abandon') }}
-      </button>
     </v-card>
   </v-menu>
 </template>
@@ -258,9 +240,6 @@ async function pick(choice: ComputeChoice, abandonUnpushed = false, visibility?:
   padding: 8px;
   color: var(--danger-ink);
   font-size: 13px;
-}
-.cp-abandon {
-  color: var(--danger-ink);
 }
 .cp-proposal {
   padding: 8px;

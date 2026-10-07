@@ -1,24 +1,22 @@
 <script setup lang="ts">
 // 「现在的分布」里一台自有设备上的 agent：列出来，选一些换到另一台工作电脑。一个话题
 // 一个容器（2026-09-28，推翻结论 60）：换的是它所在的整个房间，走和成员名册同一条
-// 更换（先推送，失败就不换并说明原因），同房间的队友一起搬；房间正在干活的跳过，不打断。
+// 更换（先尽力推送一次，推没推上去都换），同房间的队友一起搬；房间正在干活的跳过，不打断。
 import type { ComputeChoice, TopicComputeDevice } from '../types/compute'
 import type { DeviceSession } from '../types/deviceSessions'
 
 import { computed, ref, watch } from 'vue'
 
-import { ApiError, listDeviceSessions, setTopicComputeChoice } from '../api'
+import { listDeviceSessions, setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
 import { teammateName } from '../lib/agentNames'
 import { choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 import { relTime } from '../lib/relTime'
 import { topicTitle } from '../lib/topicState'
 
-import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
-import { useDialog } from '@/plugins/dialog'
 
 const props = defineProps<{
   projectId: string
@@ -31,7 +29,7 @@ const props = defineProps<{
 // dialog closes: reloading under it could remove the row it hangs on.
 const emit = defineEmits<{ changed: [] }>()
 
-type Outcome = { state: 'done' | 'failed' | 'unreachable'; message: string }
+type Outcome = { state: 'done' | 'failed'; message: string }
 
 const open = ref(false)
 const loading = ref(false)
@@ -43,7 +41,6 @@ const target = ref('')
 const running = ref(false)
 const outcomes = ref<Record<string, Outcome>>({})
 const moved = ref(false)
-const dialog = useDialog()
 
 const choices = computed(() => {
   const cloud: ComputeChoice = {
@@ -113,19 +110,18 @@ function settle(conversation: string, outcome: Outcome) {
   if (outcome.state === 'done') selected.value = selected.value.filter((id) => !room.includes(id))
 }
 
-async function switchOne(session: DeviceSession, choice: ComputeChoice, abandonUnpushed = false) {
+async function switchOne(session: DeviceSession, choice: ComputeChoice) {
   try {
-    await setTopicComputeChoice(conversationOf(session), choice, { ifIdle: true, abandonUnpushed })
+    await setTopicComputeChoice(conversationOf(session), choice, { ifIdle: true })
     settle(conversationOf(session), { state: 'done', message: t('work.bulkSwitch.done') })
     moved.value = true
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : t('global.updateFailed')
-    const unreachable = cause instanceof ApiError && cause.code === 'WorkComputerUnreachable'
-    settle(conversationOf(session), { state: unreachable ? 'unreachable' : 'failed', message })
+    settle(conversationOf(session), { state: 'failed', message })
   }
 }
 
-// One after another: every push runs on the same machine, the one being left.
+// One after another: every checkpoint runs on the same machine, the one being left.
 async function run() {
   const choice = picked.value
   if (!choice || !selected.value.length) return
@@ -137,27 +133,6 @@ async function run() {
     rooms.add(conversationOf(session))
     await switchOne(session, choice)
   }
-  running.value = false
-}
-
-// The one override, per session, after that session's machine could not be
-// reached: the person decides for this agent that its unpushed work stays behind.
-// The unpushed changes are gone for good, so the row's gray entry asks once more
-// before it happens (red only on that confirming button, §3.7).
-async function abandon(session: DeviceSession) {
-  const choice = picked.value
-  if (!choice) return
-  const confirmed = await dialog
-    .confirm(t('work.sessionMachine.abandonWarning'), {
-      title: t('work.sessionMachine.abandonTitle'),
-      confirmLabel: t('work.sessionMachine.abandon'),
-      danger: true,
-    })
-    .wait()
-    .catch(() => false)
-  if (!confirmed) return
-  running.value = true
-  await switchOne(session, choice, true)
   running.value = false
 }
 
@@ -228,12 +203,6 @@ watch(open, (value) => {
               >
                 {{ outcomes[session.id].message }}
               </p>
-              <template v-if="outcomes[session.id]?.state === 'unreachable'">
-                <p class="bs-error">{{ t('work.sessionMachine.abandonWarning') }}</p>
-                <BaseButton kind="ghost" size="sm" :disabled="running" @click="abandon(session)">{{
-                  t('work.sessionMachine.abandon')
-                }}</BaseButton>
-              </template>
             </div>
           </li>
         </ul>

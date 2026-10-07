@@ -77,8 +77,10 @@ the sender the backend ships today, including for rooms last used before a
 deployment.
 
 The device needs Python 3, curl, tmux and lsof. Missing tooling, offline devices,
-active writers, unpublished Git changes or outstanding hook events retain the
-original resource. A stop whose outcome is unknown must be reconciled before that
+active writers or outstanding hook events retain the original resource. Work that
+was not pushed does not: each session gets one best-effort checkpoint first, and
+an old room's non-git `room/` files go to the private bucket for thirty days
+before its home is removed (`scripts/retained_files.py rooms` fetches them). A stop whose outcome is unknown must be reconciled before that
 same environment can be resumed. A backend worktree already moved aside stays
 owned by the unfinished cleanup until it completes. An offline session host keeps
 a retained operation waiting until it is back.

@@ -184,6 +184,38 @@ class RoomCleanup(UuidPk, Timestamps, Base):
     lease_holder: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class KeptRoomFiles(UuidPk, Timestamps, Base):
+    """A home's room directory from before rooms had an executor, looked at
+    once before anything may delete it (``agent/device_storage.py``).
+
+    Such a room worked in its directory directly, with no repository behind it,
+    so its files are on no forge. Where it held any, they went to the private
+    bucket under ``key`` and stay there until ``expires_at``; a row with no
+    ``key`` is a home that held none. ``deleted_at``: the copy is gone.
+    """
+
+    __tablename__ = "kept_room_files"
+    __table_args__ = (
+        UniqueConstraint("device_id", "resource_id", name="uq_kept_room_files_home"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    device_id: Mapped[str] = mapped_column(String(64))
+    resource_id: Mapped[str] = mapped_column(String(64))
+    # The room, and the task inside it, whose conversation was told; None when
+    # nothing names the home any more.
+    room_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class RawTranscript(UuidPk, Timestamps, Base):
     """The index of transcript chunks already uploaded to TRANSCRIPT_S3_BUCKET.
 

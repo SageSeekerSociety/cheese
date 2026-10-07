@@ -1,20 +1,29 @@
 """Durable archived-room cleanup, independent of backend process lifetime."""
 
 import asyncio
+import json
 import logging
 import os
 import socket
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent import resource_cleanup
 from app.domain.agent.device_hub import device_hub
-from app.domain.agent.device_storage import list_device_storage
+from app.domain.agent.device_storage import (
+    KEEP_ROOM_TIMEOUT_S,
+    expire_room_files,
+    list_device_storage,
+    record_room_files,
+    room_files_upload_url,
+)
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
@@ -37,11 +46,11 @@ TRANSCRIPT_RETENTION = timedelta(days=30)
 
 # A cleanup that fails again for the same reason is tried again later and
 # later: a minute, then twice that each time, an hour at most. What holds one
-# (unpushed work, a device that is gone) seldom goes away within the minute,
-# and a sweep that tried every held cleanup every minute ran two commands on
-# their devices for each of them, all day (dev, 2026-10-07: 63 of them). A
-# new reason starts again at a minute, and one that goes away is found
-# within the hour.
+# (a device that is gone, a process that will not leave) seldom goes away
+# within the minute, and a sweep that tried every held cleanup every minute ran
+# two commands on their devices for each of them, all day (dev, 2026-10-07: 63
+# of them). A new reason starts again at a minute, and one that goes away is
+# found within the hour.
 RETRY_FIRST = timedelta(minutes=1)
 RETRY_MOST = timedelta(hours=1)
 
@@ -108,7 +117,11 @@ async def _device_action(
     action: str,
     cleanup_id: uuid.UUID,
     room: uuid.UUID | None = None,
-) -> None:
+    keep_url: str | None = None,
+) -> dict | None:
+    """Run one cleanup action on the device; its last line of output, which
+    every action prints as JSON. ``keep_url``: where ``remove`` sends a room's
+    files that are on no forge (``device_storage.record_room_files``)."""
     result = await device_hub.exec(
         device,
         [
@@ -121,7 +134,8 @@ async def _device_action(
             str(room) if room else "-",
         ],
         stdin=Path(resource_cleanup.__file__).read_text(),
-        timeout=60,
+        timeout=KEEP_ROOM_TIMEOUT_S if keep_url is not None else 60,
+        env={"CHEESE_KEEP_URL": keep_url} if keep_url is not None else None,
     )
     if result.get("exit") == resource_cleanup.STILL_RUNNING_EXIT and not result.get(
         "truncated"
@@ -131,6 +145,8 @@ async def _device_action(
         raise RuntimeError(
             str(result.get("stderr") or "device cleanup check failed")[-1500:]
         )
+    lines = str(result.get("stdout") or "").strip().splitlines()
+    return json.loads(lines[-1]) if lines else None
 
 
 async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:
@@ -297,7 +313,15 @@ _swept: asyncio.Event | None = None
 _last_counts = {"completed": 0, "pending": 0}
 
 
-async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
+#: What gives each session of an archived room its one best-effort checkpoint
+#: before the cleanup stops them (``machine.session_work.checkpoint_room``).
+#: Handed in by whoever starts a sweep: the machine domain is above this one.
+Checkpoint = Callable[[AsyncSession, uuid.UUID], Awaitable[None]]
+
+
+async def sweep_retired_storage(
+    sessions: SessionFactory, *, checkpoint: Checkpoint
+) -> dict[str, int]:
     """Sweep what is due, and answer for the sweep that covered this call.
 
     A caller who arrives while one is running does not start a second: the
@@ -319,7 +343,7 @@ async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
     try:
         while True:
             _sweep_again = False
-            for key, value in (await _sweep_once(sessions)).items():
+            for key, value in (await _sweep_once(sessions, checkpoint)).items():
                 counts[key] += value
             if not _sweep_again:
                 return counts
@@ -329,8 +353,14 @@ async def sweep_retired_storage(sessions: SessionFactory) -> dict[str, int]:
         finished.set()
 
 
-async def _sweep_once(sessions: SessionFactory) -> dict[str, int]:
+async def _sweep_once(
+    sessions: SessionFactory, checkpoint: Checkpoint
+) -> dict[str, int]:
     counts = {"completed": 0, "pending": 0}
+    try:
+        await expire_room_files(sessions)
+    except Exception:  # noqa: BLE001 — the next sweep tries again
+        logger.warning("kept room files not expired", exc_info=True)
     async with sessions() as session:
         ids = list(
             await session.scalars(
@@ -363,7 +393,7 @@ async def _sweep_once(sessions: SessionFactory) -> dict[str, int]:
         try:
             async with sessions() as session:
                 try:
-                    await _advance(session, cleanup_id, inventory)
+                    await _advance(session, cleanup_id, inventory, checkpoint)
                     operation = await session.get(RoomCleanup, cleanup_id)
                     counts[
                         "completed"
@@ -426,7 +456,9 @@ async def _release(sessions: SessionFactory, cleanup_id: uuid.UUID) -> None:
         await session.commit()
 
 
-async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
+async def _advance(
+    session, cleanup_id: uuid.UUID, inventory: dict, checkpoint: Checkpoint
+) -> None:
     operation = await session.get(RoomCleanup, cleanup_id)
     if operation is None or operation.state in {"cancelled", "complete"}:
         return
@@ -436,6 +468,8 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
         await _expire_transcripts(session, operation)
         return
     retry_claim = operation.state == "claimed"
+    # The first time through, the room's sessions get their one checkpoint.
+    first = operation.state == "pending" and not operation.resources
     room = await TopicRepository(session).lock(operation.topic_id)
     if operation.state in {"pending", "kept"}:
         # Only a room taken out of the archive wants its machine back. A room
@@ -491,6 +525,8 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
         operation.topic_id,
         operation.state,
     )
+    if first:
+        await checkpoint(session, operation.topic_id)
     archived = await HostPool(session).archived_resources(operation.topic_id)
     if operation.state == "preparing" and await HostPool(session).unpushed_archives(
         operation.topic_id, str(operation.resource_id)
@@ -531,15 +567,6 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                     )
             stopped = True
             resources = [dict(entry) for entry in operation.resources]
-            for entry in resources:
-                if entry["kind"] == "device" and not _off_host(entry, archived):
-                    await _device_action(
-                        entry["device_id"],
-                        operation.project_id,
-                        entry["resource_id"],
-                        "publication",
-                        operation.id,
-                    )
             active = await session.scalar(
                 select(AgentTurn.id)
                 .where(
@@ -569,9 +596,6 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                         )
                     path = target if target.exists() else Path(entry["path"])
                     await asyncio.to_thread(resource_cleanup.check_no_writers, [path])
-                    await asyncio.to_thread(
-                        resource_cleanup.check_published, path, canonical=True
-                    )
             for entry in resources:
                 if entry["kind"] == "worktree":
                     parking_started = True
@@ -618,14 +642,31 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
                     "prepare",
                     operation.id,
                 )
-            await _device_action(
+            # A room from before rooms had an executor sends its files to the
+            # bucket before they go, and they are kept for a while; nothing
+            # else of the home is waited on.
+            keep_url = await room_files_upload_url(
+                session, entry["device_id"], operation.project_id, entry["resource_id"]
+            )
+            await session.commit()
+            answer = await _device_action(
                 entry["device_id"],
                 operation.project_id,
                 entry["resource_id"],
                 "remove",
                 operation.id,
                 operation.topic_id if _keeps_transcripts(entry) else None,
+                keep_url,
             )
+            kept = answer.get("kept") if isinstance(answer, dict) else None
+            if kept is not None:
+                await record_room_files(
+                    session,
+                    entry["device_id"],
+                    operation.project_id,
+                    entry["resource_id"],
+                    kept,
+                )
             # A session home on a cloud host is gone with its directory, and no
             # longer keeps the host.
             await HostPool(session).forget_device_homes(
@@ -636,9 +677,6 @@ async def _advance(session, cleanup_id: uuid.UUID, inventory: dict) -> None:
             # Never return to the old path: reopening may already own it.
             if target.exists():
                 await asyncio.to_thread(resource_cleanup.check_no_writers, [target])
-                await asyncio.to_thread(
-                    resource_cleanup.check_published, target, canonical=True
-                )
                 if not await asyncio.to_thread(
                     ws.remove_worktree, operation.project_id, target
                 ):
