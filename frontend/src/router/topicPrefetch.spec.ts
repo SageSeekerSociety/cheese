@@ -1,15 +1,23 @@
 // Opening a topic waits on two things: the topic page's code and the topic's
 // newest messages. The rule here is that the second does not wait for the
 // first — the messages are already being fetched while the page code is still
-// on its way. The page modules below never finish loading, which is exactly the
-// moment the rule is about.
+// on its way. The page modules below do not finish loading while the tests run,
+// which is exactly the moment the rule is about.
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { signedIn, never } = vi.hoisted(() => ({
-  signedIn: { id: '7' },
-  never: () => new Promise<never>(() => {}),
-}))
+// The page modules stay pending through every test, and are let go only once the
+// file is done: an import still in flight when the environment is torn down fails
+// the whole run (EnvironmentTeardownError), however the tests themselves went.
+const { signedIn, never, release } = vi.hoisted(() => {
+  let open: (page: { default: object }) => void = () => {}
+  const pending = new Promise<{ default: object }>((resolve) => (open = resolve))
+  return {
+    signedIn: { id: '7' },
+    never: () => pending,
+    release: () => open({ default: { render: () => null } }),
+  }
+})
 vi.mock('@/me', () => ({ myId: () => signedIn.id, myHandle: () => (signedIn.id ? 'alice' : '') }))
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
@@ -26,6 +34,11 @@ import { resetPreviewPointerCache } from '@/lib/previewPointer'
 import router from '@/router'
 
 const PROJECT = '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10'
+
+afterAll(async () => {
+  release()
+  await vi.dynamicImportSettled()
+})
 
 beforeEach(() => {
   setActivePinia(createPinia())
