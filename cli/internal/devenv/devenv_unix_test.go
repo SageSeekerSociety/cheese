@@ -71,6 +71,7 @@ func machine(t *testing.T, systemPythonOK bool) string {
 	os.WriteFile(filepath.Join(bin, "python3"), []byte("#!/bin/sh\nexit "+code+"\n"), 0o755)
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", bin+":/usr/bin:/bin")
+	t.Setenv("CHEESE_RUNTIME_PATH", "")
 	return home
 }
 
@@ -99,8 +100,14 @@ func TestAnOldPythonIsReplacedOnPathByTheServersBuild(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(out)) != "placed" {
 		t.Fatalf("python3 on PATH is not the placed one: %q, %v", out, err)
 	}
-	if !strings.HasPrefix(os.Getenv("PATH"), filepath.Join(home, ".cheese", "runtime", "python", "bin")+":") {
+	placed := filepath.Join(home, ".cheese", "runtime", "python", "bin")
+	if !strings.HasPrefix(os.Getenv("PATH"), placed+":") {
 		t.Fatalf("PATH: %s", os.Getenv("PATH"))
+	}
+	// A session's login shell may reorder PATH; it is handed the placed
+	// directory apart, to put back in front.
+	if !strings.HasPrefix(os.Getenv("CHEESE_RUNTIME_PATH"), placed) {
+		t.Fatalf("CHEESE_RUNTIME_PATH: %s", os.Getenv("CHEESE_RUNTIME_PATH"))
 	}
 }
 
