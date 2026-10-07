@@ -75,7 +75,7 @@ covers:
 
 | 异常 | 状态码 | 响应体 |
 |---|---|---|
-| `BaseError` 及其子类（`BadRequestError`、`NotFoundError`、`ForbiddenError`、`ConflictError`、`UnprocessableEntityError`、`UpstreamUnavailableError` …） | 异常自带 `status_code` | `{"code", "message": 原话, "error": {"name": 类的 code, "message", "data", "retryable": 类的 retryable}}` |
+| `BaseError` 及其子类（`BadRequestError`、`NotFoundError`、`ForbiddenError`、`ConflictError`、`UnprocessableEntityError`、`UpstreamUnavailableError` …） | 异常自带 `status_code` | `{"code", "message": 原话, "error": {"name": 类名或 wire_name, "message", "data", "retryable": 类的 retryable}}` |
 | `StarletteHTTPException`（路由里 `raise HTTPException(...)`） | 原状态码 | 走 `format_error_response`，`name` 恒为 `"Error"`；**异常自带 headers 会带出去** |
 | `RequestValidationError`（请求体不合模型） | 400（不是 FastAPI 默认的 422） | `BadRequestError` 的形状，细节在 `error.data.details` |
 | `DeviceOffline` | 409 | 带 `X-Device-Id` 头 —— 客户端靠它区分「机器不在」和「调用出错」，见[设备与机器接入](/dev/machines#failure)。子类 `LinkInterrupted`（链路断在调用半路，结果未知）另带 `X-Device-Link: interrupted` |
@@ -85,7 +85,7 @@ covers:
 
 三条读这份表时要记住的：
 
-- `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。它取类属性 `code`，类不声明时就是类名；改类名或把类并进别的类时，在类上写回旧的 `code`，客户端就不受影响。
+- `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。它取类自己声明的 `wire_name`（不继承），没声明就是类名；改类名或把类并进别的类时，在类上写回旧名，客户端就不受影响。`code` 这个名字留给以后的 snake_case 错误码（`error.code`）。
 - `retryable` 取类属性，默认 `false`；只有等一会儿真会自己好的类才写 `retryable = True`（`GatewayTimeoutError`、forge 的限流和连不上）。前端对 5xx 的 GET 只在它不为 `false` 时自动重试。
 - `AppError` 和它的 `ValidationError`、`UnauthorizedError`、`GatewayUnavailableError` 已弃用：它们各自已经是替代类（`UnprocessableEntityError`、`AuthenticationRequiredError`、`UpstreamUnavailableError`）的子类，只保留「消息可省」的构造。ruff 的 TID251 禁止新代码导入它们，`backend/pyproject.toml` 里列着还在用的文件，迁完一个删一行。
 - `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <一句话>` 的 SSE 正文而不是 JSON；这条分支在 `BaseError`、`HTTPException`、请求校验三个处理器里各写了一遍，**只有 `BaseError` 和 `HTTPException` 那两支把异常的 headers 转发出去，SSE 与 validation 两支不转**。

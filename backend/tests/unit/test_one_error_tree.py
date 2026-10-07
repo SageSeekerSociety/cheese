@@ -43,17 +43,18 @@ def test_a_deprecated_class_is_its_replacement(legacy, replacement, status) -> N
     assert legacy().message == legacy.message  # the class's default stands in
 
 
-def test_the_code_is_the_class_name_unless_declared() -> None:
+def test_the_wire_name_is_the_class_name_unless_declared() -> None:
     class Declared(NotFoundError):
-        code = "SomethingElse"
+        wire_name = "SomethingElse"
 
     class Inherits(Declared):
         pass
 
-    assert NotFoundError.code == "NotFoundError"
-    assert ValidationError.code == "ValidationError"
+    assert NotFoundError().name == "NotFoundError"
+    assert ValidationError().name == "ValidationError"
     assert Declared().to_response_body()["error"]["name"] == "SomethingElse"
-    assert Inherits.code == "Inherits"
+    # A frozen name is the class's own promise; a subclass is a new condition.
+    assert Inherits().name == "Inherits"
 
 
 def test_retryable_is_what_the_class_says() -> None:

@@ -55,21 +55,21 @@ class BaseError(Exception):
 
     Each class says two things about itself, and the response carries both:
 
-    - ``code``: what a client switches on, sent as ``error.name``. It is the
-      class's name unless the class declares one, so a class can be renamed or
-      folded into another while still answering with the code clients know.
+    - ``wire_name``: sent as ``error.name``, which clients switch on when the
+      status alone does not say which condition it was. Left unset it is the
+      class's name; a class that is renamed or folded into another sets it to
+      the old name, so what clients read does not move with the code.
     - ``retryable``: whether the same request can succeed later unchanged.
       Clients read it to decide between waiting and giving up — the web
       client retries a failed GET only when this is not ``False``.
+
+    ``code`` is deliberately not one of them: it is kept for the stable
+    snake_case error code (``error.code``) that will replace class names as
+    the thing clients switch on.
     """
 
-    code: str = "BaseError"
+    wire_name: str | None = None
     retryable: bool = False
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        if "code" not in cls.__dict__:
-            cls.code = cls.__name__
 
     def __init__(self, status_code: int, message: str, data: Any | None = None) -> None:
         super().__init__(message)
@@ -78,7 +78,10 @@ class BaseError(Exception):
 
     @property
     def name(self) -> str:
-        return self.code
+        # Read off the class itself, not inherited: a subclass is a condition
+        # of its own, and answers with its own name unless it freezes one.
+        cls = type(self)
+        return cls.__dict__.get("wire_name") or cls.__name__
 
     @property
     def message(self) -> str:
