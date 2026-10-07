@@ -5,7 +5,8 @@ platform job, not the AI teammate's: one structured call to a small model
 through the gateway, off the agent's turn, at three moments —
 
 * **name**: a still-unnamed task gets its first real message from a person (in
-  parallel with the turn it starts), or its first turn ends;
+  parallel with the turn it starts), or its first turn ends — and for a task
+  turned from a message, that message is its first (``_origin``);
 * **calibrate**, once: the first turn ended, or three people's messages are in
   — the opening line is rarely the whole story;
 * **follow**: something suggests the task changed direction (its document was
@@ -61,6 +62,7 @@ from app.domain.room_task.models import (
     TaskTitleSource,
 )
 from app.domain.service_keys import KeySpec, gateway_base, service_key
+from app.domain.thread.models import Thread
 from app.domain.usage.ledger import Ledger
 
 logger = logging.getLogger(__name__)
@@ -224,35 +226,72 @@ def _said(text: str) -> str:
     return _MENTION.sub("", text).strip()
 
 
-async def _conversation(session: AsyncSession, task_id: uuid.UUID) -> list[Line]:
-    """The task's own conversation, newest ``_MESSAGES`` messages, oldest first.
+def _messages(blocks: list[Block]) -> list[Line]:
+    """What people and agents said among ``blocks``, in the order given.
 
-    Only what people and agents said: platform notices, tool activity and
-    messages hidden from the conversation are not what the task is about."""
-    rows = (
-        await session.scalars(
-            select(Block)
-            .where(
-                Block.conversation_id == task_id,
-                Block.kind == BlockKind.message,
-                Block.author_type == AuthorType.participant,
-            )
-            .order_by(Block.created_at.desc())
-            .limit(_MESSAGES * 2)
-        )
-    ).all()
+    Platform notices, tool activity and messages hidden from the conversation
+    are not what the task is about."""
     lines: list[Line] = []
-    for block in rows:
+    for block in blocks:
+        if block.kind != BlockKind.message:
+            continue
+        if block.author_type != AuthorType.participant:
+            continue
         if (block.meta or {}).get("in_room") is False:
             continue
         text = (block.content or "").strip()
-        if not text:
-            continue
-        lines.append(Line(person=names_a_person(block.author), text=text))
-        if len(lines) == _MESSAGES:
-            break
-    lines.reverse()
+        if text:
+            lines.append(Line(person=names_a_person(block.author), text=text))
     return lines
+
+
+async def _newest(
+    session: AsyncSession, conversation_id: uuid.UUID, before: datetime | None = None
+) -> list[Block]:
+    stmt = select(Block).where(
+        Block.conversation_id == conversation_id,
+        Block.kind == BlockKind.message,
+        Block.author_type == AuthorType.participant,
+    )
+    if before is not None:
+        stmt = stmt.where(Block.created_at < before)
+    return list(
+        (
+            await session.scalars(
+                stmt.order_by(Block.created_at.desc()).limit(_MESSAGES * 2)
+            )
+        ).all()
+    )
+
+
+async def _origin(session: AsyncSession, task: Task) -> list[Block]:
+    """The discussion a task was turned from (转为任务), oldest first: the
+    message, and what was said under it in its 支线 before the task existed.
+
+    That message is where a person said what the task is. The task's own
+    conversation starts after it, often with nothing but its AI teammate's
+    words, so reading only that, a task made from a message was never named:
+    every trigger found no person in it (2026-10-07)."""
+    if task.upgraded_from_block_id is None:
+        return []
+    root = await session.get(Block, task.upgraded_from_block_id)
+    if root is None:
+        return []
+    thread = await Thread.of_root(session, root.id)
+    replies = (
+        await _newest(session, thread.id, before=task.created_at)
+        if thread is not None
+        else []
+    )
+    return [root, *reversed(replies)]
+
+
+async def _conversation(session: AsyncSession, task: Task) -> list[Line]:
+    """What was said about the task, newest ``_MESSAGES`` messages, oldest
+    first: the discussion it was turned from, then its own conversation."""
+    own = _messages(list(reversed(await _newest(session, task.id))))
+    lines = _messages(await _origin(session, task)) + own
+    return lines[-_MESSAGES:]
 
 
 def _render(
@@ -285,7 +324,7 @@ def _render(
 
 
 async def _material(session: AsyncSession, task: Task, stage: str) -> str | None:
-    lines = await _conversation(session, task.id)
+    lines = await _conversation(session, task)
     if not lines:
         return None
     doc = (
@@ -464,7 +503,7 @@ class Asked:
 async def _stage(session: AsyncSession, task: Task, reason: Reason) -> Asked:
     """Which judgement, if any, this trigger calls for."""
     if task.title_source == TaskTitleSource.placeholder:
-        lines = await _conversation(session, task.id)
+        lines = await _conversation(session, task)
         people = [line for line in lines if line.person]
         if not people:
             return Asked(why="no_person_in_the_task_yet")
@@ -479,7 +518,7 @@ async def _stage(session: AsyncSession, task: Task, reason: Reason) -> Asked:
     if not task.title_calibrated:
         if reason == "turn":
             return Asked(stage="calibrate")
-        lines = await _conversation(session, task.id)
+        lines = await _conversation(session, task)
         if sum(line.person for line in lines) >= _CALIBRATE_AFTER_PEOPLE:
             return Asked(stage="calibrate")
         return Asked(why="few_people_since_it_opened")
