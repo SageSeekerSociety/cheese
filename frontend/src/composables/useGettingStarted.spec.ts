@@ -39,6 +39,8 @@ interface Setup {
   agentHasSpoken?: boolean
   roomHasAttachment?: boolean
   members?: { user_handle: string; agent?: boolean }[]
+  /** 项目本体上那层手把手引导还在不在场（它就是那个「除了这张卡还有人要读」的人）。 */
+  alsoProbe?: boolean
 }
 
 function setup(opts: Setup = {}) {
@@ -52,6 +54,7 @@ function setup(opts: Setup = {}) {
       agentHasSpoken: () => spoken.value,
       roomHasAttachment: () => attached.value,
       members: () => opts.members ?? [],
+      alsoProbe: () => opts.alsoProbe ?? false,
     })
   )
   return { ...value, projectId, spoken, attached, stop }
@@ -132,6 +135,14 @@ describe('useGettingStarted', () => {
     await flush()
     expect(mocks.library).not.toHaveBeenCalled()
     expect(mocks.forge).not.toHaveBeenCalled()
+    gs.stop()
+  })
+
+  it('引导还在场时，卡片退场了也继续问仓库——不然气泡会把「不知道」当成「还没接」', async () => {
+    const gs = setup({ agentHasSpoken: true, roomHasAttachment: true, alsoProbe: true })
+    await flush()
+    expect(gs.visible.value).toBe(false)
+    expect(mocks.forge).toHaveBeenCalled()
     gs.stop()
   })
 

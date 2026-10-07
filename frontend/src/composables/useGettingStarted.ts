@@ -31,6 +31,15 @@ export interface GettingStartedOptions {
   roomHasAttachment: () => boolean
   /** 项目名册（workspace store 里那一份，不再单独请求）。 */
   members: () => ProjectMemberRow[]
+  /**
+   * 除了这张卡，还有谁在读这几个事实（项目本体上那层手把手引导）。
+   *
+   * 卡做完两件必做的就退场，引导还要往下走到「接仓库」「请同事」——那两步的事实
+   * 正是资料库和仓库这两条网络判据给的，卡一退场就问不到了，「不知道」会被当成
+   * 「还没做」，气泡于是指着已经接好的仓库让人再连一次。所以卡之外还有人要读时，
+   * 这两条继续问。
+   */
+  alsoProbe?: () => boolean
 }
 
 function dismissKey(projectId: string): string {
@@ -87,9 +96,10 @@ export function useGettingStarted(opts: GettingStartedOptions) {
   )
 
   // 两张网络判据各问一次，问完就停：清单画在项目本体上，而项目本体是每次进来都
-  // 会开的那一页，不该每次开都多发两个请求。仓库那条只在卡片真的看得见时才问。
-  const needsLibrary = computed(() => visible.value && !opts.roomHasAttachment() && libraryCount.value === null)
-  const needsForge = computed(() => visible.value && forgeConnected.value === null)
+  // 会开的那一页，不该每次开都多发两个请求。仓库那条只在「还有人读它」时才问。
+  const probesOn = computed(() => visible.value || (opts.alsoProbe?.() ?? false))
+  const needsLibrary = computed(() => probesOn.value && !opts.roomHasAttachment() && libraryCount.value === null)
+  const needsForge = computed(() => probesOn.value && forgeConnected.value === null)
 
   async function loadLibrary() {
     const pid = projectId.value
