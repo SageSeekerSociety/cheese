@@ -1284,9 +1284,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_doc_list":
         return {"method": "GET", "path": f"/projects/{project}/documents"}
     if tool == "cheese_library_ls":
-        # 带上话题：沙箱 token 是为一轮、一个地方铸的，后端要凭它确认这个凭据属于谁。
-        where = urllib.parse.quote(topic)
-        return {"method": "GET", "path": f"/projects/{project}/library?topic={where}"}
+        return {"method": "GET", "path": f"/projects/{project}/library"}
     if tool == "cheese_title":
         body = {"title": args["text"]}
         return {"method": "POST", "path": here + "/title", "body": body}
@@ -4417,8 +4415,6 @@ def main() -> None:
             print(f"没有推送：{r.get('reason') or '没有可推的东西'}")
     elif a.cmd == "library":
         project = _need("CHEESE_PROJECT", PROJECT)
-        # 带上话题:沙箱 token 是为一轮、一个地方铸的,后端要凭它确认这个凭据属于谁。
-        where = f"?topic={urllib.parse.quote(_need('CHEESE_TOPIC', TOPIC))}"
         if a.libcmd == "get":
             # 默认落在自己 home 下,和随消息发来的那份同一个位置;不落在工作目录
             # ——那是被托管的检出,资料库那一份写进去就是别人仓库里一个未跟踪文件
@@ -4430,8 +4426,8 @@ def main() -> None:
                 os.makedirs(parent, exist_ok=True)
             _raw_request(
                 "GET",
-                f"/projects/{project}/library/raw{where}"
-                f"&path={urllib.parse.quote(a.name)}",
+                f"/projects/{project}/library/raw"
+                f"?path={urllib.parse.quote(a.name)}",
                 None,
                 out=out,
             )

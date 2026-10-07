@@ -515,12 +515,9 @@ def build_session_opening(
             "不在这里列出来；**没列出来 ≠ 不存在**。需要找它们时自己查（返回全部"
             "频道，含 archived 的名字和 id）：\n"
             '`platform_request(method="GET", '
-            'path="/topics?project_id=<本项目 id>&topic=<CHEESE_TOPIC>")`\n'
-            "拿到 id 后用 `<#id>` 就能精确引用任何一个频道（包括没列在下面的）。"
-            "读项目级的清单（`/topics`、`/projects/<id>/tasks`、"
-            "`weeklies`、`library`、`artifacts`）都要带 "
-            "`topic=<CHEESE_TOPIC>`（环境变量里你所在对话的 id）点名你所在的位置，"
-            "不带会 403——那不是没权限。\n" + lines
+            'path="/topics?project_id=<本项目 id>")`\n'
+            "拿到 id 后用 `<#id>` 就能精确引用任何一个频道（包括没列在下面的）。\n"
+            + lines
         )
     if artifacts is not None:
         # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，
