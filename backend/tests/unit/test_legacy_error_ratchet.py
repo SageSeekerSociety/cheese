@@ -14,11 +14,13 @@ lower or delete its line here. When ``_BASELINE`` is empty the four classes go.
 A use is any reference to one of the names as imported from
 ``app.core.errors`` (``as`` renames and ``errors.X`` included), so pydantic's
 own ValidationError never counts. A name re-exported through another module
-and ``import *`` are not followed; neither occurs today.
+and ``import *`` are not followed; neither occurs today. Only the four names
+count: subclassing OverTier or raising ForgeUnreachableError (both AppErrors
+underneath) does not, so those subclasses go the same way as their base.
 """
 
 import ast
-import functools
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -29,39 +31,53 @@ LEGACY = frozenset(
 )
 _MODULE = "app.core.errors"
 
+#: The only spellings that can bind the names; a file without one is skipped
+#: before it is parsed, which is what keeps this inside a pure test's ceiling.
+_MENTIONS_MODULE = re.compile(
+    r"app\.core\.errors|from app\.core import [^\n]*\berrors\b"
+)
+
 #: Where the classes live, and this file: neither is a use.
 _SKIPPED = frozenset({"app/core/errors.py", "tests/unit/test_legacy_error_ratchet.py"})
 
 
 def _uses(tree: ast.AST) -> Counter[str]:
+    # One walk that tallies every name and every `module.attr`, resolved
+    # against the imports afterwards: imports inside functions are common
+    # here, so a use can be walked before the import that binds it.
     names: dict[str, str] = {}  # local binding -> legacy name
     modules: set[str] = set()  # local bindings of app.core.errors itself
+    bare: Counter[str] = Counter()
+    dotted: Counter[tuple[str, str]] = Counter()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == _MODULE:
-            for alias in node.names:
-                if alias.name in LEGACY:
-                    names[alias.asname or alias.name] = alias.name
-        elif isinstance(node, ast.ImportFrom) and node.module == "app.core":
-            modules.update(a.asname or a.name for a in node.names if a.name == "errors")
+        if isinstance(node, ast.Name):
+            bare[node.id] += 1
+        elif isinstance(node, ast.Attribute):
+            if node.attr in LEGACY and isinstance(node.value, ast.Name):
+                dotted[(node.value.id, node.attr)] += 1
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == _MODULE:
+                for alias in node.names:
+                    if alias.name in LEGACY:
+                        names[alias.asname or alias.name] = alias.name
+            elif node.module == "app.core":
+                modules.update(
+                    a.asname or a.name for a in node.names if a.name == "errors"
+                )
         elif isinstance(node, ast.Import):
             modules.update(
                 a.asname for a in node.names if a.name == _MODULE and a.asname
             )
     found: Counter[str] = Counter()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in names:
-            found[names[node.id]] += 1
-        elif (
-            isinstance(node, ast.Attribute)
-            and node.attr in LEGACY
-            and isinstance(node.value, ast.Name)
-            and node.value.id in modules
-        ):
-            found[node.attr] += 1
+    for local, legacy in names.items():
+        if bare[local]:
+            found[legacy] += bare[local]
+    for (module, attr), count in dotted.items():
+        if module in modules:
+            found[attr] += count
     return found
 
 
-@functools.cache
 def _scan() -> dict[tuple[str, str], int]:
     found: dict[tuple[str, str], int] = {}
     for tree_root in ("app", "tests"):
@@ -72,7 +88,7 @@ def _scan() -> dict[tuple[str, str], int]:
             text = path.read_text()
             # Parsing both trees whole takes longer than a pure test may; a
             # file that never spells one of the names cannot use it.
-            if "app.core" not in text or not any(n in text for n in LEGACY):
+            if not _MENTIONS_MODULE.search(text) or not any(n in text for n in LEGACY):
                 continue
             for name, count in _uses(ast.parse(text)).items():
                 found[(rel, name)] = count
@@ -236,17 +252,14 @@ _BASELINE: dict[tuple[str, str], int] = {
 }
 
 
-def test_no_new_uses_of_the_deprecated_errors() -> None:
+def test_uses_of_the_deprecated_errors_only_go_down() -> None:
+    # One test, one scan: split in two, xdist would run the scan twice.
     found = _scan()
     grew = {k: v for k, v in found.items() if v > _BASELINE.get(k, 0)}
     assert not grew, (
         "New uses of a deprecated error class; raise the class its docstring "
         f"names instead (app/core/errors.py): {grew}"
     )
-
-
-def test_paid_debt_is_taken_off_the_baseline() -> None:
-    found = _scan()
     shrank = {
         k: (v, found.get(k, 0)) for k, v in _BASELINE.items() if found.get(k, 0) < v
     }

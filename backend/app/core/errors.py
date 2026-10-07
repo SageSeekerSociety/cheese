@@ -231,9 +231,10 @@ class UpstreamUnavailableError(BaseError):
 
 class GatewayTimeoutError(BaseError):
     """Something we called did not answer in time. Not a fault of this server,
-    and a 500 says it was — see the execution route and `device_connection_app`."""
+    and a 500 says it was — see the execution route and `device_connection_app`.
 
-    retryable = True
+    Not retryable: the one call that raises it (an execution, a POST) may
+    or may not have run, so sending it again is not the same request."""
 
     def __init__(self, message: str = "Upstream did not answer in time") -> None:
         super().__init__(HTTP_504_GATEWAY_TIMEOUT, message, None)
@@ -247,7 +248,9 @@ def format_error_response(
     data: Any | None = None,
     retryable: bool = False,
 ) -> dict:
-    """The envelope every client of ours parses, and the one place it is built.
+    """The envelope every client of ours parses, built for every exception
+    handler here (a few routes that answer without raising still write their
+    own; they are listed in docs/manual/dev/backend-app.md).
 
     ``name`` is what a caller switches on when the status alone does not say
     which condition it was. The top-level ``message`` is the sentence alone:

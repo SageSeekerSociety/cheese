@@ -62,7 +62,9 @@ def test_retryable_is_what_the_class_says() -> None:
         retryable = True
 
     assert Passing().to_response_body()["error"]["retryable"] is True
-    assert GatewayTimeoutError().to_response_body()["error"]["retryable"] is True
+    # An execution that timed out may have run; resending it is not the same
+    # request.
+    assert GatewayTimeoutError().to_response_body()["error"]["retryable"] is False
     # Raised for a missing configuration as often as for load: waiting does not
     # fix those, so neither says it does.
     assert SystemBusyError().to_response_body()["error"]["retryable"] is False

@@ -71,7 +71,7 @@ covers:
 
 ## 错误怎么变成响应 {#errors}
 
-`app/core/errors.py` 里只有一棵异常树，根是 `BaseError`，和一张处理器表一起经 `register_exception_handlers(app)` 注册（`device_connection_app.py` 装的是同一份）。所有错误体都由 `format_error_response` 构造。
+`app/core/errors.py` 里只有一棵异常树，根是 `BaseError`，和一张处理器表一起经 `register_exception_handlers(app)` 注册（`device_connection_app.py` 装的是同一份）。异常处理器产出的错误体都由 `format_error_response` 构造；还有几处路由不抛异常、自己写错误体（`main.py` 的沙箱令牌闸门、`routes/sandbox.py`、`routes/assistant.py` 与 `routes/docs_site.py` 的 `_refuse`），收进来是后续一步。
 
 | 异常 | 状态码 | 响应体 |
 |---|---|---|
@@ -83,12 +83,12 @@ covers:
 | `ClientDisconnect`（浏览器读到一半挂了） | 499 | 只记一条 info，不当故障 |
 | 其它任何异常 | 500 | 同一个信封，`name` 为 `InternalServerError`、`message` 为「服务器内部错误」，真正的原因只进日志 |
 
-三条读这份表时要记住的：
+读这份表时要记住的：
 
 - `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。它取类自己声明的 `wire_name`（不继承），没声明就是类名；改类名或把类并进别的类时，在类上写回旧名，客户端就不受影响。`code` 这个名字留给以后的 snake_case 错误码（`error.code`）。
-- `retryable` 取类属性，默认 `false`；只有等一会儿真会自己好的类才写 `retryable = True`（`GatewayTimeoutError`、forge 的限流和连不上）。前端对 5xx 的 GET 只在它不为 `false` 时自动重试。
+- `retryable` 取类属性，默认 `false`；只有同一个请求原样再发、过一会儿真会成功的类才写 `retryable = True`（今天是 forge 的限流和连不上；限流中间件的 429 也带 `true`）。前端对 502–504、520–530 的 GET 只在它不为 `false` 时自动重试。
 - `AppError` 和它的 `ValidationError`、`UnauthorizedError`、`GatewayUnavailableError` 已弃用：它们各自已经是替代类（`UnprocessableEntityError`、`AuthenticationRequiredError`、`UpstreamUnavailableError`）的子类，只保留「消息可省」的构造。`tests/unit/test_legacy_error_ratchet.py` 按文件记着它们的用法次数，多了少了都会红：新代码用替代类，迁完一处就把基线减下来。
-- `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <一句话>` 的 SSE 正文而不是 JSON；这条分支在 `BaseError`、`HTTPException`、请求校验三个处理器里各写了一遍，**只有 `BaseError` 和 `HTTPException` 那两支把异常的 headers 转发出去，SSE 与 validation 两支不转**。
+- `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <一句话>` 的 SSE 正文而不是 JSON；这条分支在 `BaseError`、`HTTPException`、请求校验三个处理器里各写了一遍，**转发异常 headers 的只有 `HTTPException` 的 JSON 那支和 `DeviceOffline`**；`BaseError` 没有 headers。
 
 处理器一律用 `closing_the_socket` 包一层：异常发生在 WebSocket 连接上时不能返回 HTTP 响应（uvicorn 会拒绝并报「Expected ASGI message ...」），改成记一条 WARNING 后按 1011 关掉。
 
