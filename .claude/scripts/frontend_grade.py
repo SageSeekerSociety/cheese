@@ -222,13 +222,28 @@ def strip_js_comments(code: str) -> str:
     A comment is replaced by whitespace of the same shape (newlines kept), so
     nothing that follows it moves. Quoted strings, template literals and regex
     literals are copied through untouched: the `//` in `'https://x'` or in
-    `/https?:\/\//` is not a comment. A regex literal is told from a division
-    by the character before it — the usual heuristic, and the place this can
-    still be wrong is a `/` right after a keyword other than `return`.
+    `/https?:\/\//` is not a comment. A template literal's `${ ... }` is code
+    again — it may hold strings, comments and further template literals — so it
+    is scanned like the rest, up to the `}` that closes it. A regex literal is
+    told from a division by the character before it — the usual heuristic, and
+    the place this can still be wrong is a `/` right after a keyword other than
+    `return`.
     """
     out: list[str] = []
-    i, n = 0, len(code)
+    _strip_code(code, 0, out, in_substitution=False)
+    return "".join(out)
+
+
+def _strip_code(code: str, i: int, out: list[str], *, in_substitution: bool) -> int:
+    """Copy code from `i` into `out` with comments blanked; return where it stopped.
+
+    Inside a template literal's `${ ... }` (`in_substitution`) it stops at the
+    `}` that balances the opening brace, leaving that `}` uncopied; otherwise
+    it runs to the end of `code`.
+    """
+    n = len(code)
     prev = ""  # last significant (non-space) character copied through
+    depth = 0  # open `{` inside a `${ ... }`
     while i < n:
         char = code[i]
         nxt = code[i + 1] if i + 1 < n else ""
@@ -244,12 +259,16 @@ def strip_js_comments(code: str) -> str:
             out.append("".join(c if c == "\n" else " " for c in code[i:end]))
             i = end
             continue
-        if char in "'\"`":
+        if char == "`":
+            i = _strip_template(code, i, out)
+            prev = char
+            continue
+        if char in "'\"":
             j = i + 1
             while j < n and code[j] != char:
                 if code[j] == "\\":
                     j += 1
-                elif char != "`" and code[j] == "\n":
+                elif code[j] == "\n":
                     break  # an unterminated quote ends at the line, like JS
                 j += 1
             out.append(code[i:j + 1])
@@ -275,11 +294,39 @@ def strip_js_comments(code: str) -> str:
             i = j + 1
             prev = "/"
             continue
+        if in_substitution:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                if depth == 0:
+                    return i
+                depth -= 1
         out.append(char)
         if not char.isspace():
             prev = char
         i += 1
-    return "".join(out)
+    return n
+
+
+def _strip_template(code: str, i: int, out: list[str]) -> int:
+    """Copy the template literal opening at `code[i]`; return the index after it."""
+    n = len(code)
+    start = i
+    j = i + 1
+    while j < n and code[j] != "`":
+        if code[j] == "\\":
+            j += 2
+            continue
+        if code[j] == "$" and j + 1 < n and code[j + 1] == "{":
+            out.append(code[start:j + 2])
+            j = _strip_code(code, j + 2, out, in_substitution=True)
+            start = j  # the closing `}` (if any) is copied with the next run
+            if j < n:
+                j += 1
+            continue
+        j += 1
+    out.append(code[start:j + 1])
+    return j + 1
 
 
 def normalise_store(name: str) -> str:
@@ -506,6 +553,11 @@ _FIXTURE: dict[str, str] = {
         "const re = /\\/\\//g; const r2 = useRoute()\n"
         "</script>\n<template><a :href=\"home\">{{ route }}</a></template>\n"
     ),
+    "frontend/src/components/NestedTemplate.vue": (
+        "<script setup lang=\"ts\">\n"
+        "const a = `x ${y ? `//q` : ''} z`; const route = useRoute()\n"
+        "</script>\n<template><a>{{ a }}{{ route }}</a></template>\n"
+    ),
 }
 
 
@@ -526,6 +578,16 @@ def self_test() -> int:
         "a block comment keeps its newlines",
         strip_js_comments("a /* x\ny */ b"),
         "a     \n     b",
+    )
+    check(
+        "a template literal nested in ${ } does not end the outer one",
+        strip_js_comments("a = `x ${y ? `//q` : '}'} z`; f() // gone"),
+        "a = `x ${y ? `//q` : '}'} z`; f()        ",
+    )
+    check(
+        "a comment inside ${ } is still a comment",
+        strip_js_comments("a = `x ${ /* `} */ y // }\n } z` // gone"),
+        "a = `x ${          y     \n } z`        ",
     )
     check(
         "a regex literal keeps its //",
@@ -549,6 +611,11 @@ def self_test() -> int:
         check("vue-router, $router, $parent in a /* */ comment are not read", letter("BlockComment.vue"), "A")
         check("a real useRoute() is still D", letter("Real.vue"), "D")
         check("a // inside a string does not hide the code after it", letter("Url.vue"), "D")
+        check(
+            "a // in a template literal nested in ${ } does not hide the code after it",
+            letter("NestedTemplate.vue"),
+            "D",
+        )
 
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
@@ -557,7 +624,8 @@ def self_test() -> int:
     print(
         "PASS: frontend_grade self-test (comments are not code: vue-router, $router "
         "and $parent named in // and /* */ comments grade A, a real useRoute() "
-        "stays D, and a // inside a string or a regex is not a comment)"
+        "stays D, and a // inside a string, a regex or a template literal nested in "
+        "${ } is not a comment)"
     )
     return 0
 
