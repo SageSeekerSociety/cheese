@@ -522,6 +522,7 @@ async def _finish_pr_accept(
     self._notify_merge_result(
         topic,
         accepted_line,
+        task_id=card.task_id,
         meta=notice(
             EVENT_ACCEPT_DONE,
             severity=SEVERITY_INFO,
@@ -578,6 +579,7 @@ async def _stop_accept_pr_unavailable(
     self._notify_merge_result(
         topic,
         say("acceptStoppedPrUnavailable"),
+        task_id=card.task_id,
         meta=notice(
             EVENT_ACCEPT_STOPPED,
             severity=SEVERITY_ERROR,
@@ -619,6 +621,7 @@ async def _stop_accept_no_branch(
     self._notify_merge_result(
         topic,
         say("acceptStoppedNoCommits"),
+        task_id=card.task_id,
         meta=notice(
             EVENT_ACCEPT_STOPPED,
             severity=SEVERITY_ERROR,
@@ -690,6 +693,7 @@ async def _publish_pr_for_accept(
         self._notify_merge_result(
             topic,
             say("acceptStoppedPrOpenFailed"),
+            task_id=card.task_id,
             meta=notice(
                 EVENT_ACCEPT_STOPPED,
                 severity=SEVERITY_ERROR,

@@ -8,8 +8,10 @@ before its archive is verified.
 
 The hosts here are directories on this machine: what the platform runs on a
 host (``machine/sandbox_home.py``) runs here for real, with ``HOME`` pointed
-at the host's directory. The bucket is a small HTTP server that stores what is
-PUT to it and answers ETags the way S3 does.
+at the host's directory. The bucket is a small HTTP server that speaks the
+part of the S3 protocol an archive uses — multipart uploads through signed part
+URLs, HEAD, GET, DELETE — and answers ETags the way S3 and R2 do; the platform
+reaches it through its real S3 client.
 """
 
 import asyncio
@@ -17,10 +19,12 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
+import urllib.parse
 import uuid
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +36,7 @@ from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
+from app.core.storage import S3StorageBackend, multipart_etag
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import ComputeChoice, standard_choice
 from app.domain.agent.device_hub import device_hub
@@ -56,58 +61,159 @@ from tests.microcloud import FakeMicroCloud
 
 
 class Bucket:
-    """The private bucket: PUT, GET and HEAD of one object by a URL handed out
-    for it. An object written in one PUT has its MD5 as ETag."""
+    """The private bucket, spoken to over S3's protocol: ``storage`` is the
+    platform's own client for it. ``objects`` holds what is stored by key;
+    ``part_puts`` each part number a host sent, in order."""
+
+    NAME = "private"
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
+        self.etags: dict[str, str] = {}
+        self.uploads: dict[str, dict] = {}
+        self.part_puts: list[int] = []
         # Store something other than what was sent, as a bucket that lost
         # bytes would.
         self.mangle = False
+        # Part numbers whose next PUT the bucket fails, as a dropped
+        # connection or a 5xx does.
+        self.fail_once: set[int] = set()
+        self.lock = threading.Lock()
         bucket = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
 
-            def do_PUT(self):
-                body = self.rfile.read(int(self.headers["Content-Length"]))
-                bucket.objects[self.path.lstrip("/")] = (
-                    body[:-1] if bucket.mangle else body
-                )
-                self.send_response(200)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+            def _target(self):
+                parsed = urllib.parse.urlsplit(self.path)
+                path = parsed.path.lstrip("/")
+                assert path.split("/", 1)[0] == Bucket.NAME, path
+                key = path.split("/", 1)[1] if "/" in path else ""
+                return key, urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
 
-            def do_GET(self):
-                body = bucket.objects.get(self.path.lstrip("/"))
-                if body is None:
-                    self.send_response(404)
-                    self.send_header("Content-Length", "0")
-                    self.end_headers()
-                    return
-                self.send_response(200)
+            def _answer(self, status, body=b"", headers=()):
+                self.send_response(status)
+                for name, value in headers:
+                    self.send_header(name, value)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+
+            def _body(self):
+                return self.rfile.read(int(self.headers.get("Content-Length") or 0))
+
+            def do_PUT(self):
+                key, query = self._target()
+                body = self._body()
+                number = int(query["partNumber"][0])
+                with bucket.lock:
+                    bucket.part_puts.append(number)
+                    if number in bucket.fail_once:
+                        bucket.fail_once.discard(number)
+                        return self._answer(500)
+                    upload = bucket.uploads.get(query["uploadId"][0])
+                    if upload is None or upload["key"] != key:
+                        return self._answer(404)
+                    stored = body[:-1] if bucket.mangle else body
+                    upload["parts"][number] = stored
+                etag = hashlib.md5(stored).hexdigest()  # noqa: S324
+                self._answer(200, headers=[("ETag", f'"{etag}"')])
+
+            def do_POST(self):
+                key, query = self._target()
+                body = self._body()
+                with bucket.lock:
+                    if "uploads" in query:
+                        upload_id = uuid.uuid4().hex
+                        bucket.uploads[upload_id] = {"key": key, "parts": {}}
+                        return self._answer(
+                            200,
+                            (
+                                "<InitiateMultipartUploadResult>"
+                                f"<Bucket>{Bucket.NAME}</Bucket><Key>{key}</Key>"
+                                f"<UploadId>{upload_id}</UploadId>"
+                                "</InitiateMultipartUploadResult>"
+                            ).encode(),
+                        )
+                    upload = bucket.uploads.pop(query["uploadId"][0])
+                    asked = [
+                        int(n)
+                        for n in re.findall(rb"<PartNumber>(\d+)</PartNumber>", body)
+                    ]
+                    parts = [upload["parts"][n] for n in asked]
+                    # All parts but the last are the same size, as R2 requires.
+                    assert len({len(p) for p in parts[:-1]}) <= 1
+                    bucket.objects[key] = b"".join(parts)
+                    etag = multipart_etag(
+                        [hashlib.md5(p).hexdigest() for p in parts]  # noqa: S324
+                    )
+                    bucket.etags[key] = etag
+                self._answer(
+                    200,
+                    (
+                        "<CompleteMultipartUploadResult>"
+                        f"<Key>{key}</Key><ETag>&quot;{etag}&quot;</ETag>"
+                        "</CompleteMultipartUploadResult>"
+                    ).encode(),
+                )
+
+            def do_GET(self):
+                key, query = self._target()
+                if "uploads" in query:
+                    prefix = query.get("prefix", [""])[0]
+                    with bucket.lock:
+                        listed = "".join(
+                            f"<Upload><Key>{u['key']}</Key>"
+                            f"<UploadId>{upload_id}</UploadId></Upload>"
+                            for upload_id, u in bucket.uploads.items()
+                            if u["key"].startswith(prefix)
+                        )
+                    return self._answer(
+                        200,
+                        (
+                            "<ListMultipartUploadsResult>"
+                            f"<Bucket>{Bucket.NAME}</Bucket>{listed}"
+                            "</ListMultipartUploadsResult>"
+                        ).encode(),
+                    )
+                body = bucket.objects.get(key)
+                if body is None:
+                    return self._answer(404)
+                self._answer(200, body)
+
+            def do_HEAD(self):
+                key, _ = self._target()
+                body = bucket.objects.get(key)
+                if body is None:
+                    return self._answer(404)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("ETag", f'"{bucket.etags[key]}"')
+                self.end_headers()
+
+            def do_DELETE(self):
+                key, query = self._target()
+                with bucket.lock:
+                    if "uploadId" in query:
+                        bucket.uploads.pop(query["uploadId"][0], None)
+                    else:
+                        bucket.objects.pop(key, None)
+                        bucket.etags.pop(key, None)
+                self._answer(204)
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        self.storage = S3StorageBackend(
+            bucket=Bucket.NAME,
+            endpoint_url=f"http://127.0.0.1:{self._server.server_address[1]}",
+            access_key="test",
+            secret_key="test",
+        )
 
     def close(self) -> None:
         self._server.shutdown()
-
-    async def presign(self, key, operation, expires_s):
-        return f"http://127.0.0.1:{self._server.server_address[1]}/{key}"
-
-    async def stat(self, key):
-        body = self.objects.get(key)
-        if body is None:
-            return None
-        return len(body), hashlib.md5(body).hexdigest()  # noqa: S324
-
-    async def delete(self, key):
-        return self.objects.pop(key, None) is not None
 
 
 class Hosts:
@@ -120,8 +226,9 @@ class Hosts:
         self.installs: list[str] = []
         # What each host program was asked to do, in order: (host, action).
         self.actions: list[tuple[str, str]] = []
-        # Called with (host, action) before a host program runs.
+        # Called with (host, action) before a host program runs, and after.
         self.before = None
+        self.after = None
         # Commands each host's executors report running in the background.
         self.background: dict[str, int] = {}
 
@@ -153,6 +260,8 @@ class Hosts:
                 env={**os.environ, "HOME": str(self.home_dir(device_id))},
                 timeout=timeout,
             )
+            if self.after is not None:
+                await self.after(device_id, action)
             return {
                 "exit": done.returncode,
                 "stdout": done.stdout,
@@ -200,7 +309,9 @@ def cloud(client, monkeypatch, tmp_path):
     )
     hosts = Hosts(tmp_path / "hosts")
     bucket = Bucket()
-    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket)
+    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket.storage)
+    # Parts small enough that a test's home takes several.
+    monkeypatch.setattr(lifecycle, "PART_SIZE", 64 * 1024)
     monkeypatch.setattr(work_lease, "device_hub", hosts)
     monkeypatch.setattr(lifecycle, "device_hub", hosts)
     monkeypatch.setattr(device_hub, "is_online", hosts.is_online)
@@ -542,6 +653,104 @@ def test_a_home_whose_archive_does_not_verify_stays_on_its_host(cloud):
     assert machine not in cloud.provider.deleted
 
 
+def a_large_home(case, seat) -> Path:
+    """A home whose archive is several parts: what the session left in it
+    does not compress."""
+    home = working_on(case, seat, "host-a")
+    (home / "room" / "build.bin").write_bytes(os.urandom(300 * 1024))
+    return home
+
+
+def sent_once_each(case) -> bool:
+    return sorted(case.bucket.part_puts) == sorted(set(case.bucket.part_puts))
+
+
+def test_a_restart_mid_archive_does_not_send_the_home_again(cloud):
+    """On dev a 1.3 GB home took longer to write and send than the platform
+    ran between deploys: each deploy stopped the archive, which counted as a
+    failed one and was not tried for six hours, while the host finished the
+    upload to an object nobody recorded (2026-10-07). The host goes on without
+    the platform, and the next sweep takes up where it got to."""
+    seat = cloud.seats[0]
+    home = a_large_home(cloud, seat)
+    build = (home / "room" / "build.bin").read_bytes()
+    asleep(cloud, seat)
+    time_passes(cloud, seat, timedelta(days=8))
+
+    async def platform_stops(_device_id, action):
+        if action == "archive":
+            cloud.hosts.after = None
+            raise asyncio.CancelledError
+
+    cloud.hosts.after = platform_stops
+
+    async def deploy_interrupts():
+        try:
+            await SandboxSweeper(cloud.client.test_request_factory).sweep()
+        except asyncio.CancelledError:
+            return
+        raise AssertionError("the sweep was not interrupted")
+
+    run(cloud, deploy_interrupts)
+    interrupted = home_of(cloud, seat)
+    assert interrupted.archive_failed_at is None
+    assert interrupted.busy_until is None
+    sent = len(cloud.bucket.part_puts)
+    assert sent > 1
+
+    assert sweep(cloud)["archived"] == 1
+    assert len(cloud.bucket.part_puts) == sent
+    archived = home_of(cloud, seat)
+    assert archived.host_id is None
+    assert list(cloud.bucket.objects) == [archived.archive_key]
+    assert not home.exists()
+    # With no home left on it, host A is released.
+    machine = host_of_machine(cloud, "host-a")
+    maintain(cloud)
+    assert machine in cloud.provider.deleted
+
+    assert tool_call(cloud, seat).get("preparing")
+    host_comes_up(cloud, seat, "host-b")
+    assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"
+    restored = sandbox_dir(cloud, seat, "host-b")
+    assert (restored / "room" / "notes.md").read_text() == "not committed anywhere\n"
+    assert (restored / "room" / "build.bin").read_bytes() == build
+
+
+def test_an_archive_longer_than_a_sweep_waits_is_finished_by_a_later_one(
+    cloud, monkeypatch
+):
+    seat = cloud.seats[0]
+    a_large_home(cloud, seat)
+    asleep(cloud, seat)
+    time_passes(cloud, seat, timedelta(days=8))
+    monkeypatch.setattr(lifecycle, "ARCHIVE_WAIT_S", 0)
+
+    assert sweep(cloud)["archived"] == 0
+    waiting = home_of(cloud, seat)
+    assert waiting.host_id is not None
+    assert waiting.archive_failed_at is None and waiting.busy_until is None
+
+    monkeypatch.setattr(lifecycle, "ARCHIVE_WAIT_S", 30)
+    assert sweep(cloud)["archived"] == 1
+    assert home_of(cloud, seat).host_id is None
+    assert sent_once_each(cloud)
+
+
+def test_a_part_the_bucket_drops_is_sent_again_alone(cloud):
+    seat = cloud.seats[0]
+    a_large_home(cloud, seat)
+    asleep(cloud, seat)
+    time_passes(cloud, seat, timedelta(days=8))
+    cloud.bucket.fail_once = {2}
+
+    assert sweep(cloud)["archived"] == 1
+    puts = cloud.bucket.part_puts
+    assert puts.count(2) == 2
+    assert all(puts.count(n) == 1 for n in set(puts) - {2})
+    assert home_of(cloud, seat).host_id is None
+
+
 def test_a_sleeping_sandbox_on_a_full_host_moves_to_one_with_room(cloud):
     one, two, _ = cloud.seats
     working_on(cloud, one, "host-a")
@@ -660,10 +869,11 @@ def test_a_home_that_cannot_be_archived_is_not_tried_on_every_sweep(cloud):
     assert cloud.bucket.objects == {}
 
 
-def test_an_unreadable_core_dump_does_not_stop_a_home_being_archived(cloud):
+def test_an_unreadable_core_dump_does_not_stop_a_home_being_archived(cloud, caplog):
     """A process that crashed in the sandbox left a core dump the host cannot
-    read. On dev one such file failed a home's archive every six hours
-    (2026-10-05). The dump is left out; the work around it is archived."""
+    read. On dev one such file failed a home's archive every six hours, and
+    kept its host (2026-10-05). The dump is left out, and the log names it; the
+    work around it is archived and the host is let go."""
     seat = cloud.seats[0]
     home = working_on(cloud, seat, "host-a")
     dump = home / "room" / "frontend" / "core.1"
@@ -673,12 +883,18 @@ def test_an_unreadable_core_dump_does_not_stop_a_home_being_archived(cloud):
     try:
         asleep(cloud, seat)
         time_passes(cloud, seat, timedelta(days=8))
-        assert sweep(cloud)["archived"] == 1
+        with caplog.at_level("WARNING", logger="cheese.machine.lifecycle"):
+            assert sweep(cloud)["archived"] == 1
     finally:
         if dump.exists():
             dump.chmod(0o600)
+    assert any(
+        "room/frontend/core.1" in record.getMessage() for record in caplog.records
+    )
 
+    machine = host_of_machine(cloud, "host-a")
     maintain(cloud)
+    assert machine in cloud.provider.deleted
     assert tool_call(cloud, seat).get("preparing")
     host_comes_up(cloud, seat, "host-b")
     assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"

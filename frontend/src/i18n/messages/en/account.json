@@ -510,6 +510,9 @@
     "rename": "Rename",
     "unbind": "Unlink",
     "more": "More actions",
+    "claudeCodeLoggedIn": "Claude Code · logged in ({plan})",
+    "claudeCodeLoggedOut": "Claude Code · not logged in. Run {command} on this computer to log in",
+    "claudeCodeApiKey": "API key",
     "deviceId": "Device ID",
     "teams": "Available to",
     "noTeams": "Not available to any project yet",
@@ -517,7 +520,7 @@
     "screens": "Running sessions",
     "watch": "Watch · {'@'}{name}",
     "commandsTitle": "Connect with a command",
-    "commandsDesc": "On a Mac or Windows computer, download the desktop app under Add device. On other machines, run the command for the system, then run cheesehost link connect and approve when asked",
+    "commandsDesc": "On a Mac or Windows computer, download the desktop app under Add device. On other machines, run the command for the system, then run the command its last line gives and approve when asked",
     "os": {
       "unix": "Mac / Linux",
       "windows": "Windows (PowerShell)"
@@ -536,7 +539,7 @@
     "otherMachines": "Other machines",
     "serverTitle": "Servers, or computers without the desktop app",
     "step1": "On the machine you want to connect, run the command for its system",
-    "step2": "Then run cheesehost link connect and approve in the link it gives",
+    "step2": "Then run the command the installer prints last, and approve in the link it gives",
     "step3": "The device shows up on this page, where you can watch, rename or unlink it",
     "done": "Done",
     "liveTitle": "Session · {'@'}{name}",

@@ -1,6 +1,6 @@
 {
   "name": "default",
-  "home": "workspace-running",
+  "home": "workspace-overview",
   "nav": {
     "rail": ["home", "projects", "add"],
     "tabs": ["home", "workspace", "inbox"],

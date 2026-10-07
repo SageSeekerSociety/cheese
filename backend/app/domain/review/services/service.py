@@ -51,6 +51,9 @@ class AcceptService:
     def __init__(self, session: AsyncSession):
 
         self._session = session
+        # Set only while a claimed poll runs (): forge clients
+        # then give the connection back before each call.
+        self._commits_before_remote = False
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)
@@ -214,10 +217,15 @@ class AcceptService:
         )
 
     def _notify_merge_result(
-        self, topic: Topic, content: str, *, meta: dict | None = None
+        self,
+        topic: Topic,
+        content: str,
+        *,
+        task_id: uuid.UUID | None,
+        meta: dict | None = None,
     ) -> None:
         return notices._notify_merge_result(
-            self, topic=topic, content=content, meta=meta
+            self, topic=topic, content=content, task_id=task_id, meta=meta
         )
 
     @staticmethod

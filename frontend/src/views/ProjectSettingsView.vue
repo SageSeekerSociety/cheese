@@ -27,6 +27,7 @@ import CreditsPanel from '@/components/settings/CreditsPanel.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubAccountSettings from '@/components/settings/GithubAccountSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
+import OwnAgentsSettings from '@/components/settings/OwnAgentsSettings.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
@@ -256,6 +257,15 @@ function close() {
             </div>
             <div class="page-section-body">
               <ProjectDefaultModelSettings :project-id="projectId" />
+            </div>
+          </section>
+          <section class="page-section">
+            <div class="page-section-head">
+              <v-icon size="14" class="c-faint">mdi-laptop</v-icon>
+              <span class="page-section-title">{{ t('work.projectSettings.ownAgentsTitle') }}</span>
+            </div>
+            <div class="page-section-body">
+              <OwnAgentsSettings :project-id="projectId" />
             </div>
           </section>
         </template>

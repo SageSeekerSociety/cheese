@@ -338,9 +338,9 @@ async function onAnnotate(payload: AnnotateDraft) {
          格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
          条上（见下面）。 -->
     <div v-if="!path" class="preview-head">
-      <!-- 发布是项目级的事，落点是项目首页上那块「网站」——在房间里看着一份页面
-           想把它发出去，这是唯一要跳出去的一下。 -->
-      <BaseButton v-if="projectId" kind="ghost" size="sm" :to="{ name: 'workspace-running', params: { projectId } }">
+      <!-- 发布是项目级的事，落点是项目总览「做出了什么」最上面那块「网站」——在房间里
+           看着一份页面想把它发出去，这是唯一要跳出去的一下。 -->
+      <BaseButton v-if="projectId" kind="ghost" size="sm" :to="{ name: 'workspace-overview', params: { projectId } }">
         {{ t('work.room.preview.publishSite') }}
       </BaseButton>
       <v-spacer />

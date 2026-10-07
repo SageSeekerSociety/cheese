@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent import death_evidence, own_limit
+from app.domain.agent import death_evidence, own_calls, own_limit
 from app.domain.agent.announce import announce, answer_questions
 from app.domain.agent.ask import publish_answered
 from app.domain.agent.cli_notices import cli_notice
@@ -164,7 +164,7 @@ from app.domain.agent.queries import (
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.turn import RoomTurns, _is_dm
+from app.domain.agent.room.turn import RoomTurns, _is_dm, room_roster
 
 # 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
 # `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
@@ -229,7 +229,6 @@ from app.domain.identity.handles import (
     names_a_person,
     recipient_seat,
 )
-from app.domain.membership.roster import roster_rows
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -1951,6 +1950,7 @@ class ChatService(SessionRecovery, RoomTurns):
             project = await ProjectRepository(session).get(topic.project_id)
             if project is None:
                 raise NotFoundError("Project not found")
+            await own_calls.seat_if_named(session, project, topic, content, author)
             agent = await self._agent_at(session, place)
             mentions = await person_mentions(
                 session, topic, content, agent, dm=_is_dm(topic)
@@ -2018,6 +2018,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     # A seat still under the room-derived handle names no
                     # instance, and that seat IS the agent the room points at,
                     # so the recipient resolved above is already the right one.
+                refused = await own_calls.refused(session, project, recipient, author)
                 user_block = await blocks.add(
                     project_id=topic.project_id,
                     conversation_id=place.conversation_id,
@@ -2045,6 +2046,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 if attribution_id is None:
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
+                await own_calls.say_refused(session, place, user_block, refused)
                 await announce_mentions(session, topic, user_block, author, roster)
                 # A reply to an agent's question goes to that agent (`recipient`).
                 answered = await answer_questions(session, user_block, recipient)
@@ -2321,7 +2323,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 # instead of passing []: [] means 私聊 (no member list at all),
                 # and conflating the two flagged every @ in a recovered message
                 # as a non-member while silently dropping its notification.
-                roster = await _room_roster(session, project_id, topic)
+                roster = await room_roster(session, project_id, topic)
             text = _expand_mention_names(text, roster, topic_refs)
             if (
                 closing
@@ -2734,16 +2736,6 @@ class ChatService(SessionRecovery, RoomTurns):
         )
 
 
-async def _room_roster(
-    session: AsyncSession, project_id: uuid.UUID, topic: Topic | None
-) -> list[dict]:
-    """The names an agent's message is read against: the project roster, or
-    none at all in a private room."""
-    return (
-        [] if topic is None or _is_dm(topic) else await roster_rows(session, project_id)
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class SentText:
     """A message's text as sending it would have stored it, and how it was sent."""
@@ -2778,7 +2770,7 @@ async def text_as_sent(
         return SentText(topic, text, None, by_agent)
     if by_agent:
         text = await project_refs_text(session, topic.project_id, topic.id, content)
-        roster = await _room_roster(session, topic.project_id, topic)
+        roster = await room_roster(session, topic.project_id, topic)
         return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
     project = await ProjectRepository(session).get(topic.project_id)
     if project is None:

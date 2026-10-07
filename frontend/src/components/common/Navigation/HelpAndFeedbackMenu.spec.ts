@@ -60,7 +60,7 @@ async function mount(
       { path: '/feedback', name: 'FeedbackCenter', component: { template: '<div />' } },
       { path: '/feedback/mine', name: 'FeedbackMine', component: { template: '<div />' } },
       { path: '/admin/feedback', name: 'AdminFeedback', component: { template: '<div />' } },
-      { path: '/admin/dashboard', name: 'AdminDashboard', component: { template: '<div />' } },
+      { path: '/admin/overview', name: 'AdminOverview', component: { template: '<div />' } },
     ],
   })
   await router.push('/')
@@ -127,12 +127,12 @@ describe('帮助与反馈入口', () => {
     await waitFor(() => expect(document.body.textContent).toContain('管理后台'))
   })
 
-  it('只是平台管理员：管理后台那一项落在看板上，不落在他进不去的队列上', async () => {
+  it('只是平台管理员：管理后台那一项落在平台总览上，不落在他进不去的队列上', async () => {
     const { container } = await mount({}, { admin: false, platformAdmin: true })
     await fireEvent.click(container.querySelector('.help-entry') as HTMLElement)
     await waitFor(() => expect(document.body.textContent).toContain('管理后台'))
     const link = Array.from(document.querySelectorAll('a')).find((a) => a.textContent?.includes('管理后台'))
-    expect(link?.getAttribute('href')).toContain('/admin/dashboard')
+    expect(link?.getAttribute('href')).toContain('/admin/overview')
   })
 
   it('使用文档那一项整页跳到 /docs/，不交给应用的路由', async () => {

@@ -1,33 +1,23 @@
 <script setup lang="ts">
-// 做出了什么 —— 这个项目交出去的东西，一项一行 (#1085 结论二、三)。
-//
-// 它是看板上**最右边那一列**。四列从左到右读是一条流水线（未开始 → 进行中 →
-// 检查中 → 待处理），产物正是这条流水线吐出来的东西，所以它接在后面而不是摞在板上面：摞
-// 上面要占竖直高度，有几项就占多高，板会被挤到只剩一张卡，而这一页不滚。作为一
-// 列，它和别的列一样自己内部滚动，再多产物也挤不着板。
+// 做出了什么 —— 这个项目交出去的东西，一项一行 (#1085 结论二、三)。它在项目总览的
+// 右栏，「谁在做什么」下面。
 //
 // 界面上不出现产物的类别：形态不统一（一份 PDF、一个网址、一套 typst 工程），
 // 任何试图说出「它是什么」的类别名都不成立，只出现这几行东西本身。
 //
-// 空的时候这一列留着。它曾经是整块隐藏（#1085 结论三），那是它还摞在板上面的时
-// 候——一列凭空消失会让整个网格错位，而板的规矩是位置本身就是信息。
-//
 // 已发布的网站钉在最上面一行：它也是这个项目交出去的东西，只是只有一个。
-//
-// 列的框和列头由 RunningWorkView 出（`.board-col`），这里只是那一列的内容：四列的
-// 边、圆角、列头语法因此只有一份，改一处四列一起变。件数走 `count` 事件上去——列头
-// 属于那块网格，件数属于这里。
 //
 // 能做的三件事都是人的判断，芝士 做不了：改名（它起错了名字）、合并（两项其实是
 // 同一个东西）、删除（它本来就不该是一项）。
+import type { ListPayload } from '@/cx_types'
 import type { ProjectArtifact } from '../api'
 import type { MenuAction } from './common/menuAction'
+import type { SiteApi } from './PublishedSite.vue'
 
 import { computed, ref, watch } from 'vue'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
-import { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, renameProjectArtifact } from '../api'
 import { t } from '../i18n'
 import { relTime } from '../lib/relTime'
 
@@ -40,7 +30,21 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 
-const props = defineProps<{ projectId: string }>()
+/** 清单的读写由页面给：组件自己不碰接口层（`docs/manual/dev/scenes.md`）。 */
+export interface ArtifactApi {
+  list(projectId: string): Promise<ListPayload<ProjectArtifact>>
+  rename(projectId: string, artifactId: string, name: string): Promise<unknown>
+  merge(projectId: string, artifactId: string, into: string): Promise<unknown>
+  remove(projectId: string, artifactId: string): Promise<unknown>
+  site: SiteApi
+}
+
+const props = defineProps<{
+  projectId: string
+  api: ArtifactApi
+  /** handle → 名册上的名字，给网站那一行的「谁发布的」。 */
+  names?: Record<string, string>
+}>()
 const emit = defineEmits<{ count: [number] }>()
 
 const rows = ref<ProjectArtifact[]>([])
@@ -48,8 +52,8 @@ const actionError = ref('')
 const busy = ref('')
 const rowMenu = useRowMenu<string>()
 
-// 窄的时候这一块摞在板上面，只列前几项，其余的收着，点开才全列出来。宽的时候它是
-// 一整列，自己滚，全列着——收起只在窄的那一档起作用（见样式里的 @container）。
+// 总览上只列前几项，其余的收着，点开才全列出来：这一块和「谁在做什么」摞在一栏里，
+// 全列出来会把那一栏拉得很长。
 const FOLDED = 3
 const expanded = ref(false)
 
@@ -96,12 +100,12 @@ const mergeTargets = computed(() =>
 async function load() {
   const projectId = props.projectId
   try {
-    const listed = await listProjectArtifacts(projectId)
+    const listed = await props.api.list(projectId)
     if (props.projectId !== projectId) return
     rows.value = listed.data
   } catch {
-    // 读不到清单不该把首页变成一条错误：板是这一页的主体。下一次进这一页会再试
-    // 一遍，这一列这次显示成空的。
+    // 读不到清单不该把总览变成一条错误：下一次进这一页会再试一遍，这一块这次显示
+    // 成空的。
     if (props.projectId === projectId) rows.value = []
   }
   if (props.projectId === projectId) emit('count', rows.value.length)
@@ -142,11 +146,7 @@ async function rename() {
   const row = renaming.value
   if (!row) return
   renaming.value = null
-  await act(
-    row.id,
-    () => renameProjectArtifact(props.projectId, row.id, newName.value),
-    t('project.artifacts.renameFailed')
-  )
+  await act(row.id, () => props.api.rename(props.projectId, row.id, newName.value), t('project.artifacts.renameFailed'))
 }
 
 async function merge() {
@@ -154,14 +154,14 @@ async function merge() {
   const into = mergeInto.value
   if (!row || !into) return
   merging.value = null
-  await act(row.id, () => mergeProjectArtifacts(props.projectId, row.id, into), t('project.artifacts.mergeFailed'))
+  await act(row.id, () => props.api.merge(props.projectId, row.id, into), t('project.artifacts.mergeFailed'))
 }
 
 async function remove() {
   const row = removing.value
   if (!row) return
   removing.value = null
-  await act(row.id, () => deleteProjectArtifact(props.projectId, row.id), t('project.artifacts.deleteFailed'))
+  await act(row.id, () => props.api.remove(props.projectId, row.id), t('project.artifacts.deleteFailed'))
 }
 
 watch(
@@ -179,7 +179,7 @@ watch(
 <template>
   <div class="made" :class="{ 'made--expanded': expanded }">
     <!-- 网站钉在最上面：它也是交出去的东西，但只有一个，所以不排进下面那张清单。 -->
-    <PublishedSite :project-id="projectId" />
+    <PublishedSite :project-id="projectId" :api="api.site" :names="names" />
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
     <ul class="made__list">
       <li v-if="!rows.length" class="made__empty">
@@ -360,11 +360,6 @@ watch(
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-/* 收起、展开只在窄的那一档：这一块摞在板上面，全列出来就把板往下推。宽的时候它是
-   一整列，自己滚，全列着，按钮也不出现。 */
-.made__fold {
-  display: none;
-}
 .made__fold-btn {
   position: relative;
   padding: 4px;
@@ -377,15 +372,10 @@ watch(
 .made__fold-btn:hover {
   color: var(--ink);
 }
-@container (width < 1000px) {
-  .made:not(.made--expanded) .made-row--folded {
-    display: none;
-  }
-  .made__fold {
-    display: block;
-  }
+.made:not(.made--expanded) .made-row--folded {
+  display: none;
 }
-/* 空列自己说它空。和任务列的空行同一个观感（同样的内边距、同样的 --muted）。 */
+/* 空的时候自己说它空。 */
 .made__empty {
   padding: 8px 4px;
 }

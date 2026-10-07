@@ -86,12 +86,12 @@ TASK_CASES = [
     ("开始了，在跑", task(running=True), Column.building, Building.running),
     # 开始了，此刻没有在跑的一轮，也还没递出改动。
     ("开始了，停着", task(), Column.building, Building.started),
-    # 递出去的那一版被退回：它不算数，下一步是再动手。
+    # 递出去的那一版被退回，而没有一轮在改：停在人手上。
     (
         "改动被退回",
         task(card=card(AcceptStatus.rejected)),
-        Column.building,
-        Building.started,
+        Column.needs_you,
+        NeedsYou.bounced,
     ),
     (
         "闸门在跑",
@@ -397,20 +397,27 @@ def test_an_archived_room_does_not_ask_anything_of_anyone():
 
 # —— 结算掉的卡不再替这条活说话 ————————————————————————————————————
 
-SETTLED = [
-    AcceptStatus.accepted,
-    AcceptStatus.rejected,
-    AcceptStatus.revoked,
-    AcceptStatus.gate_failed,
-    AcceptStatus.gate_blocked,
-]
+SETTLED = [AcceptStatus.accepted, AcceptStatus.revoked]
+
+#: 结算了、但把球交回给芝士去改的那几种：退回、闸门判红、闸门没跑成。
+BOUNCED = [AcceptStatus.rejected, AcceptStatus.gate_failed, AcceptStatus.gate_blocked]
 
 
 @pytest.mark.parametrize("status", SETTLED, ids=[str(s) for s in SETTLED])
 def test_a_settled_card_stops_answering(status):
-    """一张已经结算的卡不是这个任务此刻的状态 —— 它被退回之后，任务回到进行中。"""
+    """一张已经结算的卡不是这个任务此刻的状态。"""
     shown = task_presentation(task(card=card(status)), now=NOW)
     assert (shown.column, shown.phrase) == (Column.building, Building.started)
+
+
+@pytest.mark.parametrize("status", BOUNCED, ids=[str(s) for s in BOUNCED])
+def test_a_returned_task_nobody_is_reworking_waits_on_a_person(status):
+    """退回之后芝士在改，任务就在运行中；没有一轮在改、也没递新的，就停在人手上
+    —— 不能还说「已开始」，好像有人在推。"""
+    idle = task_presentation(task(card=card(status)), now=NOW)
+    assert (idle.column, idle.phrase) == (Column.needs_you, NeedsYou.bounced)
+    reworking = task_presentation(task(card=card(status), running=True), now=NOW)
+    assert reworking.phrase == Building.running
 
 
 # —— 列 × 短语 的约束 ————————————————————————————————————————————

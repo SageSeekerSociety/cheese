@@ -42,8 +42,8 @@ from pathlib import Path
 
 # The only names the proxy serves. api.anthropic.com carries the metered
 # messages; console.anthropic.com and platform.claude.com carry interactive
-# Claude Code's login/refresh. Everything else is refused (reverse listener) or
-# tunneled raw without interception (CONNECT listener) — the real credential is
+# Claude Code's login/refresh. Everything else is tunneled raw without
+# interception (CONNECT listener) — the real credential is
 # injected per-request, so forwarding to an attacker-chosen SNI would hand the
 # subscription token to whatever host the caller named.
 ANTHROPIC_HOSTS = frozenset(

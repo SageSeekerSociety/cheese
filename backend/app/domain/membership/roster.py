@@ -74,6 +74,9 @@ class Member:
     # A teammate's ``name_source``: ``default`` while it still carries the name
     # it was born with, which a screen shows in its reader's language.
     name_source: str | None = None
+    # A member's own agent (#2991): who it belongs to. Only that person may call
+    # it, and it is not one of the project's teammates the others pick from.
+    owner_handle: str | None = None
 
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
@@ -103,6 +106,8 @@ class Member:
             row["instance_handle"] = self.instance_handle
         if self.name_source is not None:
             row["name_source"] = self.name_source
+        if self.owner_handle is not None:
+            row["owner_handle"] = self.owner_handle
         return row
 
 
@@ -161,6 +166,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
         for row in rows
     ]
     at = {row.handle: index for index, row in enumerate(rows)}
+    owners = await _owners_of_own_agents(session, project_id)
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         seat = agent_instance_handle(instance.id)
         name = instance.display_name or instance.handle
@@ -177,6 +183,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
                     source="agent",
                     instance_handle=instance.handle,
                     name_source=name_source,
+                    owner_handle=owners.get(instance.id),
                 )
             )
             at[seat] = len(rows) - 1
@@ -198,8 +205,28 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             created_at=held.created_at,
             instance_handle=instance.handle,
             name_source=name_source,
+            owner_handle=owners.get(instance.id),
         )
     return tuple(rows)
+
+
+async def _owners_of_own_agents(
+    session: AsyncSession, project_id: uuid.UUID
+) -> dict[uuid.UUID, str]:
+    """Which of the project's agents are members' own, and whose."""
+    from sqlalchemy import select
+
+    from app.domain.agent_instance.own import owned_in_project
+    from app.domain.user.models import User
+
+    owned = await owned_in_project(session, project_id)
+    if not owned:
+        return {}
+    rows = await session.execute(
+        select(User.id, User.username).where(User.id.in_({o for _, o in owned}))
+    )
+    users: dict[int, str] = {user_id: name for user_id, name in rows.all()}
+    return {instance.id: users[owner] for instance, owner in owned if owner in users}
 
 
 async def roster_rows(session: AsyncSession, project_id: uuid.UUID) -> list[dict]:
@@ -209,4 +236,11 @@ async def roster_rows(session: AsyncSession, project_id: uuid.UUID) -> list[dict
     它们是**渲染**这张表，不是再读一次「项目里有谁」——所以这里只是同一次读的一个形
     状，不是第二个出处。
     """
-    return [member.as_dict() for member in await roster(session, project_id)]
+    # A member's own agent is not a teammate anyone else names or notifies: an
+    # agent reading this roster in its prompt would only learn a name it cannot
+    # call (#2991).
+    return [
+        member.as_dict()
+        for member in await roster(session, project_id)
+        if member.owner_handle is None
+    ]

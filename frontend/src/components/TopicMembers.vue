@@ -170,7 +170,8 @@ const addable = computed(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
   return (
     props.projectMembers
-      .filter((m) => !inRoom.has(m.user_handle) && m.active !== false)
+      // 成员自己的 Claude Code 不由别人请进来：主人第一次 @ 它时它自己入座（#2991）。
+      .filter((m) => !inRoom.has(m.user_handle) && m.active !== false && !m.owner_handle)
       // 「综合」里本来就有项目里的每个人，只剩 AI 队友可请。
       .filter((m) => !props.general || m.agent)
       .map((m) => ({

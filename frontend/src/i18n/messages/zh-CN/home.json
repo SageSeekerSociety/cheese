@@ -7,8 +7,16 @@
     "reason": {
       "reviewer": "待你审阅",
       "reporter": "你提的需求已有交付",
-      "asked": "待你回答"
-    }
+      "asked": "待你回答",
+      "start": "待你开始",
+      "checksFailed": "检查未通过",
+      "bounced": "已退回",
+      "decide": "待你决定",
+      "read": "变更提醒"
+    },
+    "markRead": "标为已读",
+    "actionFailed": "操作失败",
+    "markAllRead": "全部标为已读"
   },
   "nav": {
     "teamProjects": "项目",

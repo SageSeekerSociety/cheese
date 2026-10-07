@@ -18,11 +18,10 @@
 
 // ---------- llm: one model request, session process to vendor ----------
 const LLM_STATIONS = [
-  { key: 'session', label: '会话进程', sub: '沙盒容器 / 裸进程 / 会话主机 / Codex·Pi', col: 0, row: 2, tone: '--chart-1' },
+  { key: 'session', label: '会话进程', sub: '会话主机上的 Claude Code / Codex·Pi', col: 0, row: 2, tone: '--chart-1' },
   { key: 'helper', label: '隧道助手', sub: '会话主机上的回环口', col: 1, row: 4, tone: '--chart-4' },
   { key: 'llmv1', label: '/llm/v1', sub: '主 API 的另一条入口', col: 2, row: 0, tone: '--chart-5' },
-  { key: 'proxy443', label: ':443 反向代理', sub: '容器路径', col: 2, row: 1, tone: '--chart-4' },
-  { key: 'proxy8444', label: ':8444 CONNECT', sub: '裸进程路径', col: 2, row: 3, tone: '--chart-4' },
+  { key: 'proxy8444', label: ':8444 CONNECT', sub: '隧道送到这里', col: 2, row: 3, tone: '--chart-4' },
   { key: 'meter', label: '计量代理', sub: '唯一的拦截点', col: 3, row: 2, tone: '--chart-3' },
   { key: 'admission', label: '准入', sub: 'POST /llm/admission', col: 3, row: 4, tone: '--chart-2' },
   { key: 'gateway', label: '网关路', sub: 'LiteLLM + 虚拟 key', col: 4, row: 1, tone: '--chart-5' },
@@ -31,9 +30,9 @@ const LLM_STATIONS = [
 ]
 
 const LLM_WIRES = [
-  ['session', 'proxy443'], ['session', 'proxy8444'], ['session', 'helper'], ['session', 'llmv1'],
+  ['session', 'helper'], ['session', 'llmv1'],
   ['helper', 'proxy8444'],
-  ['proxy443', 'meter'], ['proxy8444', 'meter'],
+  ['proxy8444', 'meter'],
   // The meter asks admission and then acts on the answer, so a walk stands on
   // the admission stop and next on the route the answer chose. Those two hops
   // are the ANSWER steering the request, not a service it is handed to — but
@@ -45,8 +44,6 @@ const LLM_WIRES = [
 ]
 
 const LLM_ENTRIES = [
-  { key: 'sandbox', label: '沙盒容器', sub: '本机容器，:443 反向代理' },
-  { key: 'bare', label: '裸进程', sub: '设备屏幕 / 云机器，:8444 CONNECT' },
   { key: 'cloud', label: '会话主机', sub: '经模型隧道到计量代理' },
   { key: 'codex', label: 'Codex、Pi', sub: '{平台地址}/llm/v1' },
 ]
@@ -60,14 +57,12 @@ const LLM_SCENES = [
 ]
 
 const LLM_MATRIX = {
-  sandbox: ['ok', 'budget', 'binding', 'failopen', 'subagent'],
-  bare: ['ok', 'budget', 'binding', 'failopen', 'subagent'],
-  cloud: ['ok', 'budget', 'binding', 'failopen'],
+  cloud: ['ok', 'budget', 'binding', 'failopen', 'subagent'],
   codex: ['ok', 'budget'],
 }
 
-// 会话进程里那一站的两种长相：容器/裸进程把占位凭证放在 authorization 上，
-// Codex、Pi 带着自己的短期令牌去 /llm/v1。
+// 会话进程里那一站的两种长相：会话主机上的 Claude Code 把占位凭证放在
+// authorization 上，Codex、Pi 带着自己的短期令牌去 /llm/v1。
 const sessionStop = (f, entry) => ({
   at: 'session',
   head: '会话进程：发出一次 /v1/messages',
@@ -82,25 +77,9 @@ const sessionStop = (f, entry) => ({
     : `会话里的凭证是一个占位 token（${f.placeholder_token}）：它不认证任何东西，能用的是平台上那一份。`,
 })
 
-const containerEntryStop = (f) => ({
-  at: 'proxy443',
-  head: '计量代理的 :443 反向代理：容器从这里进来',
-  see: [['来源', `本机 docker 网桥 172.17.0.1:${f.ports.reverse}`], ['上游', 'api.anthropic.com']],
-  say: [['它做的事', '认出发往模型厂商的请求，交给计量代理']],
-  note: `容器没有 root，改不了 HTTPS_PROXY，但能改域名解析：--add-host 让 api.anthropic.com 指向计量代理，容器以为自己直连厂商。这个监听只在机器本机的网桥上开着。`,
-})
-
-const bareEntryStop = (f) => ({
-  at: 'proxy8444',
-  head: `计量代理的 :${f.ports.connect} CONNECT：裸进程从这里进来`,
-  see: [['入口', `HTTPS_PROXY=http://172.17.0.1:${f.ports.connect}`], ['Proxy-Authorization', 'Basic <会话的短期芝士令牌>']],
-  say: [['它做的事', '口令验过才放行，然后交给计量代理']],
-  note: `裸进程没有 root，改不了域名解析，只能走 HTTPS_PROXY。CONNECT 时要拿短期令牌当代理密码：不然一个敞开的监听口就是给谁都能用的代理，验不过回 ${f.connect_refusal}。`,
-})
-
 const cloudHelperStop = (f) => ({
   at: 'helper',
-  head: '机器上的隧道助手：HTTPS_PROXY 指向回环口',
+  head: '会话主机上的隧道助手：HTTPS_PROXY 指向回环口',
   see: [['HTTPS_PROXY', 'http://127.0.0.1:<隧道端口>'], ['机器上有什么', '只有自己的短期芝士令牌']],
   say: [['它做的事', `把这次 CONNECT 装进一条 WebSocket，发到平台的 ${f.paths.tunnel}`]],
   note: '会话主机上的 claude 只认 HTTPS_PROXY。隧道助手装在会话主机上，替它说 CONNECT：把请求装进一条出去的 WebSocket。',
@@ -111,7 +90,7 @@ const cloudArriveStop = (f) => ({
   head: `到达的是同一个 :${f.ports.connect} 监听口`,
   see: [['从哪来', `模型隧道 ${f.paths.tunnel}（WebSocket）`], ['平台侧', '隧道由单独一个进程持有，发版不断']],
   say: [['收到的', '一个普通的 CONNECT']],
-  note: '计量代理不关心这个 CONNECT 是从本机来的还是从隧道里出来的：入口只有一个，改写和记账都只有一份。',
+  note: '每个会话的 CONNECT 都从模型隧道里出来：入口只有一个，改写和记账都只有一份。',
 })
 
 const gatewayStop = () => ({
@@ -178,101 +157,6 @@ const ASK = { pool: 'gateway', model: 'claude-sonnet-5' }
 const Q = (from, to) => ({ label: '本项目额度', from, to })
 
 const llmWalks = {
-  sandbox: {
-    ok: (f) => [
-      sessionStop(f, 'sandbox'),
-      containerEntryStop(f),
-      meterStop(f, {
-        say: [['先做的事', `POST ${f.paths.admission}`], ['准入回答', 'allow: true，pool: gateway']],
-        quota: Q('62%', '62%'),
-        note: '它是唯一的拦截点：每个 /v1/messages 都先问一次主 API 的准入，再决定怎么改写。',
-      }),
-      admissionStop(f, { allow: true, reason: f.budget.allow_reason, reason_kind: 'budget', pool: ASK.pool, model: ASK.model, key: true, quota: Q('62%', '62%'), note: '三个回答一起回来：能不能跑、走哪条路、模型名写什么。每个请求现查，所以改绑模型不用重启会话。' }),
-      gatewayStop(),
-      vendorStop(f),
-    ],
-    budget: (f) => [
-      sessionStop(f, 'sandbox'),
-      containerEntryStop(f),
-      meterStop(f, {
-        say: [['准入回答', 'allow: false，reason_kind: budget']],
-        out: [['status', String(f.budget.status)], ['body', `{"type":"${f.budget.type}","message":"${f.budget.prefix}${f.budget.refusal_reason}"}`]],
-        note: `准入说不行，计量代理就照这个拒绝的形状回给会话：${f.budget.status} ${f.budget.type}。`,
-      }),
-      admissionStop(f, { allow: false, reason: f.budget.refusal_reason, reason_kind: 'budget', pool: 'gateway（没给 key）', model: ASK.model, block: true, quota: Q('0%', '0%'), note: '额度用完。这一轮不执行，话题里会出现一条平台提示，厂商那边一个请求都没到。拒绝的形状由 reason_kind 决定，不是由额度这一件事决定。' }),
-    ],
-    binding: (f) => [
-      sessionStop(f, 'sandbox'),
-      containerEntryStop(f),
-      meterStop(f, {
-        say: [['准入回答', 'allow: false，reason_kind: binding']],
-        out: [['status', String(f.binding.status)], ['body', `{"type":"${f.binding.type}","message":"…能指定的模型：…"}`]],
-        note: `绑定解析不出来时说成「额度用完」会把人送去充值，而卡本身是坏的。所以这一类回 ${f.binding.status} ${f.binding.type}，客户端不会白白重试。`,
-      }),
-      admissionStop(f, { allow: false, reason: '这个项目不能跑 <模型名>；能指定的有：…', reason_kind: 'binding', pool: '（空）', model: '（没有）', block: true, note: '绑定的模型解析不出来时不会悄悄换到另一条路：回答或拒绝，不换池子，厂商那边一个请求都没到。' }),
-    ],
-    failopen: (f) => [
-      sessionStop(f, 'sandbox'),
-      containerEntryStop(f),
-      meterStop(f, {
-        say: [['准入', '连不上主 API'], ['它自己的决定', '放行（fail-open）']],
-        note: '准入这一道是软的：问不到就放行。主 API 发版重启的那几秒不该变成平台不能干活。',
-      }),
-      { ...admissionStop(f, { allow: true, reason: f.admission.fail_open_reason, reason_kind: 'budget', pool: 'subscription', model: '（没说，用客户端自己的）', soft: true, note: '这一份判定是计量代理自己造的：每个字段都是默认值，pool 也读成订阅路。所以谁都不能拿它当「这个项目走网关」的依据。' }), block: false },
-      subscriptionStop(f),
-      { ...vendorStop(f), note: '兜底的不是准入：订阅路自己有一条滚动 token 上限，窗口内用超了回 429。' },
-    ],
-    subagent: (f) => [
-      { ...sessionStop(f, 'sandbox'), head: '分身进程：请求头带着它要的模型', see: [['authorization', `Bearer ${f.placeholder_token}`], ['body.model', f.sub_model.id], ['x-cheese-child-model', f.sub_model.id]] },
-      containerEntryStop(f),
-      meterStop(f, {
-        see: [['body.model', f.sub_model.id], ['x-cheese-child-model', f.sub_model.id], ['父会话跑的模型', '不是这一个']],
-        say: [['它做的事', '把请求体里的模型名拿出来，放在请求头上交给准入']],
-        note: '头里的模型名和父会话一样时是「继承」，不是指定——那种情况计量代理会把头删掉，按项目默认的分身模型走。',
-      }),
-      admissionStop(f, { allow: true, reason: f.budget.allow_reason, reason_kind: 'budget', pool: ASK.pool, model: f.sub_model.wire, key: true, note: `指定的模型在项目目录里、也在允许范围内，就用它：目录里的名字是 ${f.sub_model.id}，写进请求体的是 ${f.sub_model.wire}。翻译只发生在准入这一处。` }),
-      gatewayStop(),
-      vendorStop(f),
-    ],
-  },
-  bare: {
-    ok: (f) => [
-      { ...sessionStop(f, 'bare'), head: '设备屏幕上的裸进程：发出一次 /v1/messages', act: '发起请求' },
-      bareEntryStop(f),
-      meterStop(f, { say: [['先做的事', `POST ${f.paths.admission}`], ['准入回答', 'allow: true，pool: gateway']], quota: Q('62%', '62%'), note: '从 CONNECT 进来的请求和从反向代理进来的一样：一个拦截点，一份改写。' }),
-      admissionStop(f, { allow: true, reason: f.budget.allow_reason, reason_kind: 'budget', pool: ASK.pool, model: ASK.model, key: true, quota: Q('62%', '62%'), note: '项目从短期令牌里的声明认出来，不看请求头——请求头是会话自己的，伪造成本为零。' }),
-      gatewayStop(),
-      vendorStop(f),
-    ],
-    budget: (f) => [
-      { ...sessionStop(f, 'bare'), head: '设备屏幕上的裸进程：发出一次 /v1/messages', act: '发起请求' },
-      bareEntryStop(f),
-      meterStop(f, { say: [['准入回答', 'allow: false，reason_kind: budget']], out: [['status', String(f.budget.status)], ['body', `{"type":"${f.budget.type}","message":"${f.budget.prefix}${f.budget.refusal_reason}"}`]], note: '这一份拒绝沿 CONNECT 隧道回到会话，形状和容器那条路完全一样。' }),
-      admissionStop(f, { allow: false, reason: f.budget.refusal_reason, reason_kind: 'budget', pool: 'gateway（没给 key）', model: ASK.model, block: true, quota: Q('0%', '0%'), note: '额度用完：这一轮不执行，话题里出现一条平台提示，厂商那边一个请求都没到。' }),
-    ],
-    binding: (f) => [
-      { ...sessionStop(f, 'bare'), head: '设备屏幕上的裸进程：发出一次 /v1/messages', act: '发起请求' },
-      bareEntryStop(f),
-      meterStop(f, { say: [['准入回答', 'allow: false，reason_kind: binding']], out: [['status', String(f.binding.status)], ['body', `{"type":"${f.binding.type}","message":"…能指定的模型：…"}`]], note: '拒绝的形状说的是真原因：卡上绑的模型目录里没有，重试多少次都一样。' }),
-      admissionStop(f, { allow: false, reason: '这个项目不能跑 <模型名>；能指定的有：…', reason_kind: 'binding', pool: '（空）', model: '（没有）', block: true, note: '不会悄悄换到另一条路，厂商那边一个请求都没到。' }),
-    ],
-    failopen: (f) => [
-      { ...sessionStop(f, 'bare'), head: '设备屏幕上的裸进程：发出一次 /v1/messages', act: '发起请求' },
-      bareEntryStop(f),
-      meterStop(f, { say: [['准入', '连不上主 API'], ['它自己的决定', '放行（fail-open）']], note: '放行不等于放任：订阅路自己的滚动 token 上限还在后面接着。' }),
-      { ...admissionStop(f, { allow: true, reason: f.admission.fail_open_reason, reason_kind: 'budget', pool: 'subscription', model: '（没说，用客户端自己的）', soft: true, note: '判定是计量代理自己造的，它标了自己是 fail_open：这份回答里 pool 读出来是订阅路，但那只是一个默认值。' }), block: false },
-      subscriptionStop(f),
-      { ...vendorStop(f), note: '兜底的是订阅路的滚动 token 上限，不是准入。' },
-    ],
-    subagent: (f) => [
-      { ...sessionStop(f, 'bare'), head: '设备屏幕上的分身进程：请求头带着它要的模型', act: '发起请求', see: [['authorization', `Bearer ${f.placeholder_token}`], ['body.model', f.sub_model.id], ['x-cheese-child-model', f.sub_model.id]] },
-      bareEntryStop(f),
-      meterStop(f, { see: [['body.model', f.sub_model.id], ['x-cheese-child-model', f.sub_model.id]], say: [['它做的事', '把模型名放在请求头上交给准入']], note: '和父会话一样的模型名是继承，不是指定。' }),
-      admissionStop(f, { allow: true, reason: f.budget.allow_reason, reason_kind: 'budget', pool: ASK.pool, model: f.sub_model.wire, key: true, note: `允许范围内就用它：${f.sub_model.id} → ${f.sub_model.wire}，翻译只发生在准入这一处。` }),
-      gatewayStop(),
-      vendorStop(f),
-    ],
-  },
   cloud: {
     ok: (f) => [
       { ...sessionStop(f, 'cloud'), head: '会话主机上的会话进程：调模型', act: '发起请求' },
@@ -305,6 +189,19 @@ const llmWalks = {
       { ...admissionStop(f, { allow: true, reason: f.admission.fail_open_reason, reason_kind: 'budget', pool: 'subscription', model: '（没说，用客户端自己的）', soft: true, note: '判定是计量代理自己造的，pool 读出来是订阅路——那只是一个默认值。' }), block: false },
       subscriptionStop(f),
       { ...vendorStop(f), note: '兜底的是订阅路的滚动 token 上限。' },
+    ],
+    subagent: (f) => [
+      { ...sessionStop(f, 'cloud'), head: '会话主机上的分身进程：请求头带着它要的模型', act: '发起请求', see: [['authorization', `Bearer ${f.placeholder_token}`], ['body.model', f.sub_model.id], ['x-cheese-child-model', f.sub_model.id]] },
+      cloudHelperStop(f),
+      cloudArriveStop(f),
+      meterStop(f, {
+        see: [['body.model', f.sub_model.id], ['x-cheese-child-model', f.sub_model.id], ['父会话跑的模型', '不是这一个']],
+        say: [['它做的事', '把请求体里的模型名拿出来，放在请求头上交给准入']],
+        note: '头里的模型名和父会话一样时是「继承」，不是指定——那种情况计量代理会把头删掉，按项目默认的分身模型走。',
+      }),
+      admissionStop(f, { allow: true, reason: f.budget.allow_reason, reason_kind: 'budget', pool: ASK.pool, model: f.sub_model.wire, key: true, note: `指定的模型在项目目录里、也在允许范围内，就用它：目录里的名字是 ${f.sub_model.id}，写进请求体的是 ${f.sub_model.wire}。翻译只发生在准入这一处。` }),
+      gatewayStop(),
+      vendorStop(f),
     ],
   },
   codex: {

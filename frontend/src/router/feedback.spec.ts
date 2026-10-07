@@ -49,14 +49,24 @@ beforeEach(() => {
 })
 
 describe('adminSectionGuard', () => {
-  it('只是平台管理员：去队列那块会被领到第一块能进的（看板）', async () => {
+  it('只是平台管理员：去队列那块会被领到平台总览', async () => {
     const result = await runGuard({ is_admin: false, is_platform_admin: true }, 'AdminQueue', '/admin/queue')
-    expect(result).toBe('/admin/dashboard')
+    expect(result).toBe('/admin/overview')
   })
 
   it('只是平台管理员：队列的旧地址也一样会被领走', async () => {
     const result = await runGuard({ is_admin: false, is_platform_admin: true }, 'AdminFeedback', '/admin/feedback')
-    expect(result).toBe('/admin/dashboard')
+    expect(result).toBe('/admin/overview')
+  })
+
+  it('只是反馈管理员：落到平台总览（`/admin` 的默认去处）会被领回队列', async () => {
+    const result = await runGuard({ is_admin: true, is_platform_admin: false }, 'AdminOverview', '/admin/overview')
+    expect(result).toBe('/admin/queue')
+  })
+
+  it('只是反馈管理员：空间申请也归平台管理员，会被领回队列', async () => {
+    const result = await runGuard({ is_admin: true, is_platform_admin: false }, 'AdminSpaces', '/admin/spaces')
+    expect(result).toBe('/admin/queue')
   })
 
   it('只是反馈管理员：平台那几块（成员）会被领回队列', async () => {

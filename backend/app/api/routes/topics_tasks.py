@@ -45,6 +45,7 @@ from app.domain.agent.harness.prompt import task_opening_prompt, task_started_pr
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
 from app.domain.agent.runtime import announce_stale
+from app.domain.agent_instance.own import may_work_for
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -303,10 +304,12 @@ async def conclude_task(
             ),
         )
     task = await tasks.close_thread(task, conclusion=conclusion)
-    # The room hears how it ended: done with a conclusion, or put down.
+    # The task's own conversation hears how it ended; the channel's one line for
+    # this task updates in place (`DispatchedMarker`).
     await announce(
         db,
         place_id=place.room_id,
+        task_id=task.id,
         content=(
             say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
             if task.conclusion
@@ -394,6 +397,7 @@ async def start_task(
     await announce(
         db,
         place_id=place.room_id,
+        task_id=task.id,
         content=say("taskStarted", actor=f"<@{actor.handle}>", title=said_title(task)),
         meta={"platform": True, "action": "task_started", "task_id": str(task.id)},
     )
@@ -445,10 +449,21 @@ async def update_task(
             db, actor, place, task, body.owner_handle
         )
         await tasks.hand_over(task, owner_handle=body.owner_handle)
+    project_now = await ProjectRepository(db).get(place.project_id)
+    settings_now = project_now.settings if project_now is not None else None
     if "agent_handle" in body.model_fields_set:
-        await TopicService(db).give_task_teammate(
-            task, (body.agent_handle or "").strip() or None
-        )
+        given = (body.agent_handle or "").strip() or None
+        if not await may_work_for(
+            db, place.project_id, given, task.owner_handle, settings_now
+        ):
+            raise ForbiddenError(say("ownAgentOtherOwnersTask"))
+        await TopicService(db).give_task_teammate(task, given)
+    elif not await may_work_for(
+        db, place.project_id, task.agent_handle, task.owner_handle, settings_now
+    ):
+        # Handed to someone whose own agent it is not (#2991): the task goes
+        # back to the project's teammate, and its new owner may give it theirs.
+        await TopicService(db).give_task_teammate(task, None)
     if body.contributor_handles is not None:
         people = await members.project_people(place.project_id)
         wanted = list(dict.fromkeys(body.contributor_handles))

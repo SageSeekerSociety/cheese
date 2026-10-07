@@ -15,7 +15,9 @@ from app.domain.machine import services
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
     host_comes_up,
+    host_of,
     maintain,
+    room_lines,
     run,
     working_on,
 )
@@ -99,3 +101,36 @@ def test_the_agent_is_told_once_that_its_sandbox_was_replaced(cloud, monkeypatch
     other = _tool_call(cloud, other_seat, tells_agent=True)
     assert other["target"]["device_id"] == "host-b"
     assert "notice" not in other
+
+
+def test_a_session_whose_host_was_suspended_waits_for_it_and_keeps_its_work(
+    cloud, monkeypatch
+):
+    """A host MicroCloud suspended is woken, not replaced: its session is told
+    the sandbox is waking, and gets it back with what it had not pushed."""
+    seat, other_seat = cloud.seats[0], cloud.seats[1]
+    home = working_on(cloud, seat, "host-a")
+    working_on(cloud, other_seat, "host-b")
+    machine = host_of(cloud, seat).machine_id
+    cloud.provider.machines[machine]["status"] = "suspended"
+    cloud.hosts.online.discard("host-a")
+    maintain(cloud)
+    _later(monkeypatch, timedelta(minutes=11))
+    maintain(cloud)
+
+    waiting = _tool_call(cloud, seat, tells_agent=True)
+
+    assert waiting.get("preparing")
+    assert waiting["unavailable"] == "沙箱正在唤醒；对话和平台工具仍可用。"
+    assert "正在唤醒环境" in room_lines(cloud, seat)
+    assert cloud.provider.wakes == [("resume", machine)]
+
+    cloud.hosts.online.add("host-a")
+    maintain(cloud)
+    back = _tool_call(cloud, seat, tells_agent=True)
+
+    assert back["target"]["device_id"] == "host-a"
+    assert "notice" not in back
+    assert (home / "room" / "notes.md").read_text() == "not committed anywhere\n"
+    assert cloud.provider.deleted == []
+    assert _said(cloud, seat) == []

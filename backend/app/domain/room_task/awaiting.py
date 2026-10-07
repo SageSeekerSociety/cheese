@@ -38,7 +38,8 @@ class WaitingItem:
 
     project_id: uuid.UUID
     project_name: str
-    topic_id: uuid.UUID
+    #: 在哪个频道。来自通知的那几件可以不指向频道，那时是 None，标题空着。
+    topic_id: uuid.UUID | None
     topic_title: str
     #: 这是房间自己的事（None），还是房间里某一条活的事。
     task_id: uuid.UUID | None
@@ -54,12 +55,20 @@ class WaitingItem:
     block_id: uuid.UUID | None = None
     #: The 支线 the question was asked in, when it was: the item opens there.
     thread_id: uuid.UUID | None = None
+    #: 第二行：等的是什么 —— 提问的原话、递上来的改动主题、卡停住的原因、决策请求
+    #: 的说明。从已有的事实里取，没有就空着，不替它编一句。
+    detail: str = ""
+    #: 来自一条通知的才有：哪一条通知、它的标题（决策请求要他拍板的问题、变更提醒
+    #: 说的那件事），以及决策请求可选的答案。
+    alert_id: int | None = None
+    headline: str = ""
+    options: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return {
             "projectId": str(self.project_id),
             "projectName": self.project_name,
-            "topicId": str(self.topic_id),
+            "topicId": None if self.topic_id is None else str(self.topic_id),
             "topicTitle": self.topic_title,
             "taskId": None if self.task_id is None else str(self.task_id),
             "taskTitle": self.task_title,
@@ -68,5 +77,9 @@ class WaitingItem:
             "reason": self.reason,
             "blockId": str(self.block_id) if self.block_id else None,
             "threadId": str(self.thread_id) if self.thread_id else None,
+            "detail": self.detail,
+            "alertId": self.alert_id,
+            "options": list(self.options),
+            "headline": self.headline,
             "at": self.at.isoformat(),
         }

@@ -815,8 +815,9 @@ details[open]::details-content {
 .room-happening__go:hover {
   text-decoration: underline;
 }
-/* 任务到了哪一档：等人看的那一档（待审阅）用琥珀色点出来，其余照这一行的颜色。 */
-.task-level[data-level='review'] {
+/* 任务到了哪一档：在等人的那两档（待审阅、待处理）用琥珀色点出来，其余照这一行的颜色。 */
+.task-level[data-level='review'],
+.task-level[data-level='waiting'] {
   color: var(--accent-ink);
 }
 /* 连着的同一种操作合成的那一行：点一下在原处列出每一条。 */

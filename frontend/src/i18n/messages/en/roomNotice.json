@@ -62,6 +62,7 @@
   "ownLimitWaiting": "Usage limit reached. It resets in about {minutes} min, and the work continues then",
   "ownLimitResume": "The usage window has reset. Go on with what the usage limit stopped.",
   "ownerMachineAway": "The computer Claude Code runs on is offline. The work continues when it is back",
+  "ownAgentOwnerOnly": "This is {owner}'s Claude Code. Only {owner} can call it",
   "cliProviderOverloaded": "The AI service is overloaded right now; this step did not finish",
   "cliProviderOverloadedHint": "This is a problem on the service's side and usually clears up quickly. You can retry later.",
   "cliSubscriptionEgressOffline": "The subscription's egress machine is offline; this step did not finish",
@@ -372,5 +373,6 @@
   "sandboxFailing": "The cloud environment keeps failing",
   "sandboxFailingNext": "The channel stays where it is and won't move elsewhere on its own. Someone needs to check the connector and the session in this environment; retry once it is fixed.",
   "computeCloud": "Cloud environment",
-  "computeCloudVm": "Whole cloud VM"
+  "computeCloudVm": "Whole cloud VM",
+  "taskQuiet": "No progress on the task \"{title}\" for {days} days"
 }

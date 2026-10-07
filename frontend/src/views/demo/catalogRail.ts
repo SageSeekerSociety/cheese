@@ -127,7 +127,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-pinned',
     title: 'TopicRailPinnedRows',
-    about: '项目名下面那两行：看板和资料库，和频道行同一种行。别的页进项目名菜单，这里不再加。',
+    about: '项目名下面那两行：总览和资料库，和频道行同一种行。别的页进项目名菜单，这里不再加。',
     file: 'src/components/topic-sidebar/TopicRailPinnedRows.vue',
     component: TopicRailPinnedRows,
     // 只读词表和 props：哪几页露出来了、当前在哪一页，都是父级算好递进来的。
@@ -149,7 +149,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         note: '整页形态里这两页在点项目名弹出的面板里，这里不画。',
         props: {
           pages: RAIL_PAGES,
-          routeName: 'workspace-running',
+          routeName: 'workspace-overview',
           terms: RAIL_TERMS,
           page: true,
         },
@@ -180,7 +180,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-header',
     title: 'TopicRailHeader',
-    about: '项目名那一行：点名字弹出项目菜单（看板、资料库之外的几页、项目文档、设置），右边是搜索。',
+    about: '项目名那一行：点名字弹出项目菜单（总览、资料库之外的几页、项目文档、设置），右边是搜索。',
     file: 'src/components/topic-sidebar/TopicRailHeader.vue',
     component: TopicRailHeader,
     // 名字连着 ⌄ 是一个按钮，点下去是菜单。
@@ -189,7 +189,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '所有者',
-        note: '菜单里是项目文档、看板和资料库之外的几页、项目设置和「转让项目」；成员上挂着私聊未读。',
+        note: '菜单里是项目文档、总览和资料库之外的几页、项目设置和「转让项目」；成员上挂着私聊未读。',
         props: {
           page: false,
           column: false,
@@ -202,7 +202,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
             { key: 'project-members', label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
             { key: 'project-routines', label: 'navigation.project.routines', icon: 'mdi-timer-cog-outline' },
           ],
-          routeName: 'workspace-running',
+          routeName: 'workspace-overview',
           terms: RAIL_TERMS,
           projectSelected: true,
           canTransfer: true,

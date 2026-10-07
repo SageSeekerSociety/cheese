@@ -1,15 +1,8 @@
-/** 平台发的那一条变更提醒，人在项目首页读得到，点得进它说的那个话题。
+/** 平台发的那一条变更提醒，人在「待办」里读得到，点得进它说的那个频道。
  *
- * 它以前写进库没有任何界面读得到（收件箱查询只放行决策请求和验收卡），点它亮着
- * 项目角标、列表里却一条也没有。这一条从写入那一步开始走完整条路：走 `cheese
- * notify` 用的那个接口写一条，在项目首页看到它，点「去话题」落到那个话题上。
- *
- * 2026-09-25 在本机这套栈上跑过（Playwright 的 webServer 从本工作树起自己的后端和
- * 前端 + 一份迁移+种子好的库 + 独立的 forge，真 chromium）：这两条加上
- * `room-work.spec.ts` 里那条「板里不另起标题」共 3 passed。把下面每条用例后的清理
- * 临时去掉再跑，`room-work` 那条立刻红 —— 报的是 `.board h1, h2` 计数为 1，和 CI
- * 上那条一字不差。它数的是整个板容器里的标题，而这一叠正嵌在板容器里，所以那页上
- * 有任何一条未读提醒都会让它红：这是下面那个清理必须有的理由。
+ * 它曾两次写进库却没有任何界面读得到：先是收件箱查询只放行决策请求和验收卡，后来
+ * 是看板拆掉、读它的那一叠跟着走了。这一条从写入那一步开始走完整条路：走 `cheese
+ * notify` 用的那个接口写一条，在「待办」里看到它，点进它说的频道，读过标掉。
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
@@ -22,12 +15,8 @@ function projectIdOf(page: Page): string {
 }
 
 test.describe('变更提醒', () => {
-  // 这几条落在「第一个项目」上 —— 所有 e2e 用例共用的那一个（alice 的种子项目），
-  // 收件箱按项目 + 人读。写下的未读提醒会变成别人的前提：2026-09-24 上 CI，这里
-  // 那条游到 room-work.spec.ts 去，「板里不另起标题」的断言就多出一个 h2 —— 它数
-  // 的是 `.board` 里的标题，而这一叠正嵌在板容器里。所以每条读完清干净：点了「去
-  // 话题」的那条没走完「收起来」，靠 afterEach 收尾（CI 上用例串行，前一条留下的
-  // 东西后一条真的看得见）。
+  // 这几条落在「第一个项目」上，所有 e2e 用例共用的那一个（alice 的种子项目）。写下
+  // 的未读提醒会出现在别的用例打开的「待办」里，所以每条读完清干净。
   let projectId = '';
 
   test.beforeEach(async ({ page }) => {
@@ -42,10 +31,10 @@ test.describe('变更提醒', () => {
     await api(page, 'post', `/projects/${projectId}/alerts/read-all`);
   });
 
-  test('写一条出来，项目首页读得到，点「去话题」落到它说的那个话题', async ({ page }) => {
+  test('写一条出来，「待办」里读得到，点进它说的那个频道', async ({ page }) => {
     const stamp = Date.now();
 
-    // 通知指向一个话题：通知只是提醒，东西在话题里，所以先开一间当落点。
+    // 通知指向一个频道：通知只是提醒，东西在频道里，所以先开一间当落点。
     const topic = (await api(page, 'post', '/topics', {
       project_id: projectId,
       title: `提醒落点 ${stamp}`,
@@ -53,7 +42,7 @@ test.describe('变更提醒', () => {
 
     const title = `变更提醒 ${stamp}`;
     const body = `修了预览的转圈 ${stamp}`;
-    // 平台自己那条写入路径 —— 芝士干活时用的就是它。
+    // 平台自己那条写入路径：芝士干活时用的就是它。
     await api(page, 'post', `/projects/${projectId}/alerts`, {
       level: 'light',
       kind: 'change_alert',
@@ -63,23 +52,20 @@ test.describe('变更提醒', () => {
       topic_id: topic.id,
     });
 
-    await page.goto(`/projects/${projectId}/running`);
-    const asked = page.locator('.asked');
-    await expect(asked).toBeVisible();
-    // 标题说的是摆着的那条：一条变更提醒不是「等你决定」的事。
-    await expect(asked).toContainText('变更提醒');
-    await expect(asked).toContainText(title);
-    await expect(asked).toContainText(body);
+    await page.goto('/inbox');
+    const row = page.locator('.inbox-item', { hasText: title });
+    await expect(row).toContainText('变更提醒');
+    await expect(row).toContainText(body);
 
-    await asked.getByRole('button', { name: '去频道' }).click();
+    await row.getByText(title).click();
     await expect(page).toHaveURL(
       new RegExp(`/projects/${projectId}/topics/${topic.id}`),
     );
   });
 
-  test('读过就收起来，角标跟着灭', async ({ page }) => {
+  test('读过就标掉，不再留在「待办」里', async ({ page }) => {
     const stamp = Date.now();
-    const title = `收起来的提醒 ${stamp}`;
+    const title = `标掉的提醒 ${stamp}`;
     await api(page, 'post', `/projects/${projectId}/alerts`, {
       level: 'light',
       kind: 'change_alert',
@@ -88,20 +74,18 @@ test.describe('变更提醒', () => {
       target_handle: 'alice',
     });
 
-    // 没有话题的那一条给不出去处，所以不摆「去话题」。
-    await page.goto(`/projects/${projectId}/running`);
-    const asked = page.locator('.asked');
-    await expect(asked).toContainText(title);
-    await expect(asked.getByRole('button', { name: '去频道' })).toHaveCount(0);
+    await page.goto('/inbox');
+    const row = page.locator('.inbox-item', { hasText: title });
+    await row.getByRole('button', { name: '标为已读' }).click();
+    await expect(page.getByText(title)).toHaveCount(0);
 
-    await asked.getByRole('button', { name: '收起' }).click();
-    // 断言「这个标题不在了」，而不是「这一叠不在了」：答掉的最后一条会让整叠退场，
-    // `.asked` 动画放完就从 DOM 里摘掉 —— 那时候 `not.toContainText` 两种情形都不
-    // 满足（还在读得到 / 元素已经没了），会红在一个跟被测行为无关的时机上。
+    // 不是只从这一页上摘掉：重新读一遍，它也不在了。
+    await page.reload();
+    await expect(page.getByRole('heading', { name: '等你处理' })).toBeVisible();
     await expect(page.getByText(title)).toHaveCount(0);
   });
 
-  test('一队不止一条时，一下「全部标记已读」收走整队', async ({ page }) => {
+  test('一个项目里不止一条时，一下「全部标为已读」收走整队', async ({ page }) => {
     const stamp = Date.now();
     const first = `整队提醒甲 ${stamp}`;
     const second = `整队提醒乙 ${stamp}`;
@@ -115,15 +99,10 @@ test.describe('变更提醒', () => {
       });
     }
 
-    await page.goto(`/projects/${projectId}/running`);
-    const asked = page.locator('.asked');
-    await expect(asked).toBeVisible();
-    // 新的在前：第二条压在叠顶读得到，第一条在叠里读不到 —— 但整队入口在。
-    await expect(asked).toContainText(second);
-    const readAll = asked.getByRole('button', { name: '标记全部已读' });
-    await expect(readAll).toBeVisible();
-
-    await readAll.click();
+    await page.goto('/inbox');
+    await expect(page.getByText(second)).toBeVisible();
+    const group = page.locator('.inbox__project', { hasText: second });
+    await group.getByRole('button', { name: '全部标为已读' }).click();
 
     // 一百条不该要一百下：这一下把两条一起收掉。
     await expect(page.getByText(first)).toHaveCount(0);

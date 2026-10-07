@@ -148,6 +148,16 @@ def _is_dm(topic: Topic) -> bool:
     return topic.is_private
 
 
+async def room_roster(
+    session: "AsyncSession", project_id: uuid.UUID, topic: Topic | None
+) -> list[dict]:
+    """The names an agent's message is read against: the project roster, or
+    none at all in a private room."""
+    if topic is None or _is_dm(topic):
+        return []
+    return await roster_rows(session, project_id)
+
+
 @dataclass(frozen=True, slots=True)
 class _Launch:
     """What a seat's session is started with, read without opening a turn
@@ -701,9 +711,7 @@ class RoomTurns:
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
             # 回事」在下游是两种情况（见 `_HookWorkState.roster`）。问的是这间房
             # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `announce_mentions`。
-            roster = (
-                [] if _is_dm(topic) else await roster_rows(session, topic.project_id)
-            )
+            roster = await room_roster(session, topic.project_id, topic)
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
             # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
             # ——用户自己打 @某个归档话题也必须还能变成链接）；
