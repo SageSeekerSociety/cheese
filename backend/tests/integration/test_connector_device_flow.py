@@ -7,6 +7,7 @@ human.
 
 import asyncio
 import socket
+import time
 
 import httpx
 import pytest
@@ -398,3 +399,40 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatc
         "the device_team read — the #356 leak that blocks device-table migrations"
     )
     assert recovered == [device_id]
+
+
+def test_a_machine_that_went_away_says_when_it_was_last_seen(client, monkeypatch):
+    """The devices page tells a machine that is away from one that never came
+    up by when the server last heard from it."""
+    owner = _login(client, "rowan")
+    code = client.post(
+        "/connector/auth/device/start", json={"device_name": "rowans-box"}
+    ).json()["device_code"]
+    client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(owner)
+    )
+    approved = client.post(
+        "/connector/auth/device/poll", json={"device_code": code}
+    ).json()
+
+    class Chat:
+        async def recover_sessions(self, connected_device_id: str) -> int:
+            return 0
+
+    monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
+
+    def last_seen():
+        devices = client.get("/connector/my/devices", headers=_bearer(owner)).json()
+        mine = next(
+            d for d in devices["devices"] if d["device_id"] == approved["device_id"]
+        )
+        return mine["last_seen_at"]
+
+    assert last_seen() is None
+    with client.websocket_connect(f"/connector/agent?token={approved['token']}") as ws:
+        ws.close()
+        # The server keeps it as the link winds down, after the close.
+        deadline = time.monotonic() + 5
+        while last_seen() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+    assert last_seen() is not None

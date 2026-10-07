@@ -208,7 +208,7 @@ def live_stack(monkeypatch):
         # database. Left running, its shutdown proceeds concurrently with the
         # next test: an httpx client closing after that test's loop is gone is
         # #665's ExceptionGroup landing on a random victim, and a connection it
-        # still holds is a lock the next test's TRUNCATE waits 300s on (#693).
+        # still holds is a lock the next test's clear waits on (#693).
         try:
             meter.close()
         finally:

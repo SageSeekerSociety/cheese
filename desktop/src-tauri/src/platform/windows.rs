@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
 
+use crate::connect::{self, Events, Failure, Running};
+
 // No console window flashes up for any of the commands below.
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -37,10 +39,15 @@ pub fn kill(pid: u32) {
         .status();
 }
 
-/// Downloads the connector the server publishes for this machine. Once it is
-/// there it keeps itself current (the server tells it when it is stale), and a
-/// running copy could not be overwritten anyway.
-pub async fn install_connector(origin: &str) -> Result<(), String> {
+/// Downloads the connector the server publishes for this machine, reporting
+/// curl's percentages. Once it is there it keeps itself current (the server
+/// tells it when it is stale), and a running copy could not be overwritten
+/// anyway.
+pub async fn install_connector(
+    origin: &str,
+    running: &Running,
+    on_percent: &(dyn Fn(u8) + Send + Sync),
+) -> Result<(), String> {
     let path = cheesehost_path();
     if path.exists() {
         return Ok(());
@@ -54,20 +61,18 @@ pub async fn install_connector(origin: &str) -> Result<(), String> {
     // install, as the server's install.sh and install.ps1 do.
     let mut attempt = 1;
     loop {
-        let out = Command::new("curl.exe")
-            .args(["-fsSL", "-C", "-", "-o"])
+        let mut cmd = Command::new("curl.exe");
+        cmd.args(["-fSL", "-#", "-C", "-", "-o"])
             .arg(&partial)
             .arg(&url)
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .await
-            .map_err(|e| format!("curl.exe: {e}"))?;
-        if out.status.success() {
-            break;
-        }
-        if attempt >= 5 {
-            let _ = std::fs::remove_file(&partial);
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+            .creation_flags(CREATE_NO_WINDOW);
+        match connect::run(cmd, running, on_percent, &mut |_: &str| {}).await {
+            Ok(()) => break,
+            Err(e) if running.cancelled() || attempt >= 5 => {
+                let _ = std::fs::remove_file(&partial);
+                return Err(e);
+            }
+            Err(_) => {}
         }
         attempt += 1;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -75,6 +80,6 @@ pub async fn install_connector(origin: &str) -> Result<(), String> {
     std::fs::rename(&partial, &path).map_err(|e| e.to_string())
 }
 
-pub async fn prepare(_resources: &Path, _step: &impl Fn(&str)) -> Result<(), String> {
+pub async fn prepare(_resources: &Path, _events: &Events<'_>, _running: &Running) -> Result<(), Failure> {
     Ok(())
 }

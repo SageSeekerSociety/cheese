@@ -63,7 +63,7 @@ err "Port ${RELAY_MAIN} is already in use; refusing to report a stale relay as t
 
 ## 3. e2e / Playwright
 
-**配置层面基本平手。** 逐项对齐后，`timeout` / `retries: CI?2:0` / `workers: CI?1` / `trace: on-first-retry` / `screenshot: only-on-failure` / `reuseExistingServer: !CI` 我们和它**一模一样**，属于社区共识而非它的洞见。我们的 <&e2e/playwright.config.ts> 在注释质量上更好——每条配置都写清了是哪次真实失败逼出来的（冷编译 >30s、并行冷编译风暴、CI runner 就是 dev box 所以端口要可覆盖、`pnpm run dev -- --port` 把 `--` 当成位置参数导致 vite 静默服务不存在的目录）。
+**配置层面基本平手。** 逐项对齐后，`timeout` / `retries: CI?2:0` / `workers: CI?1` / `trace: on-first-retry` / `screenshot: only-on-failure` / `reuseExistingServer: !CI` 我们和它**一模一样**，属于社区共识而非它的洞见。我们的 <&e2e/playwright.config.ts> 在注释质量上更好——每条配置都写清了是哪次真实失败逼出来的（CI runner 就是 dev box 所以端口要可覆盖、`pnpm run dev -- --port` 把 `--` 当成位置参数导致 vite 静默服务不存在的目录）。
 
 **它有而我们没有、值得抄的，按性价比排序：**
 

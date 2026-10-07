@@ -84,7 +84,8 @@ interface CommentCta {
   editor: CoreEditor
   doc: PMNode
   selection: Selection
-  topicId: string
+  /** 资料库里打开的文档不属于哪个对话，这里是 null；评论按文档编号发，不靠它。 */
+  topicId: string | null
   /** The caret sits in a status tag: the bar offers its kinds, over the tag. */
   status?: { from: number; to: number }
 }
@@ -166,7 +167,7 @@ function schedulePosition() {
 }
 function updateCommentCta(ed: CoreEditor) {
   const sel = ed.state.selection
-  if (sel.empty && props.topicId && !sameSelection(ed) && props.editable && ed.isEditable && !touch.value) {
+  if (sel.empty && !sameSelection(ed) && props.editable && ed.isEditable && !touch.value) {
     const status = statusAt(ed.state, sel.from)
     if (status) {
       commentCta.value = {
@@ -184,7 +185,7 @@ function updateCommentCta(ed: CoreEditor) {
       return
     }
   }
-  if (sel.empty || !props.topicId || sameSelection(ed)) {
+  if (sel.empty || sameSelection(ed)) {
     commentCta.value = null
     return
   }

@@ -1,7 +1,7 @@
 """Notifications no longer carry a thumbs-up or thumbs-down
 
 Revision ID: b7e3c9d14a52
-Revises: a6e2f91c4d07
+Revises: b7e3c9d1f4a2
 Create Date: 2026-10-07
 
 #3022 removed the rating buttons, the endpoint behind them and the admin card
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b7e3c9d14a52"
-down_revision: str | Sequence[str] | None = "a6e2f91c4d07"
+down_revision: str | Sequence[str] | None = "b7e3c9d1f4a2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
