@@ -1047,7 +1047,7 @@
       "addPlaceholder": "添加成员…",
       "allIn": "项目成员和队友都已在频道中",
       "add": "加入",
-      "readOnly": "只有频道创建者和项目管理员能修改成员",
+      "readOnly": "只有频道里的人能添加成员",
       "listSeparator": "、",
       "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
       "creator": "管理者"

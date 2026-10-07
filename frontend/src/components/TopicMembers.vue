@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 频道里有谁：页头一小串头像，点开是名单。频道管理者（创建者、项目管理员）能从
-// 项目成员里加人、移人、请 AI 队友；「综合」是项目里的所有人，管理者在那里只管
+// 频道里有谁：页头一小串头像，点开是名单。频道里的人都能从项目成员里加人、请 AI
+// 队友，移人只归频道管理者和项目管理员；「综合」是项目里的所有人，那里只管
 // AI 队友。AI 队友带「AI 队友」标，和 @ 菜单里一样。
 //
 // 名册底下一行写这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻
@@ -37,7 +37,7 @@ const props = defineProps<{
   me: string
   /** 我管不管这个频道（创建者或项目管理员）。 */
   canManage: boolean
-  /** 不管频道也能拉人进来：私密频道里的人都能邀请别人，移出仍只归管理者。 */
+  /** 不管频道也能加人：频道里的人都能加人，移出仍只归管理者。 */
   canInvite?: boolean
   /** 这是「综合」：项目里的人都在，名单上只有 AI 队友能加减。 */
   general?: boolean
@@ -273,7 +273,7 @@ async function onRemove(handle: string) {
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />
 
-          <!-- 建这个频道的人标一个「创建者」：他和项目管理员一起管这个频道。 -->
+          <!-- 管这个频道的人标一个「管理者」：这个人和项目管理员一起管这个频道。 -->
           <span v-if="m.role === 'owner' && !m.agent" class="roster__role">{{ t('work.room.roster.creator') }}</span>
           <button
             v-if="removable(m)"
@@ -307,7 +307,7 @@ async function onRemove(handle: string) {
         <button type="button" class="roster__retry" @click="loadMachines">{{ t('work.roomMachine.retry') }}</button>
       </div>
 
-      <!-- 管理者从项目成员里加人；「综合」里只剩 AI 队友可加。私密频道里的人都能拉人。 -->
+      <!-- 频道里的人从项目成员里加人；「综合」里只剩 AI 队友可加。 -->
       <div v-if="canManage || canInvite" class="roster__add">
         <v-select
           v-model="addHandle"

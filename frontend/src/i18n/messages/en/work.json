@@ -1047,7 +1047,7 @@
       "addPlaceholder": "Add a member…",
       "allIn": "Every project member and teammate is already in this channel",
       "add": "Add",
-      "readOnly": "Only the channel's creator and the project's managers can change members",
+      "readOnly": "Only people in the channel can add members",
       "listSeparator": ", ",
       "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
       "creator": "Manager"
