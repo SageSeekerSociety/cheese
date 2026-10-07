@@ -8,8 +8,11 @@ import { test, expect } from '@playwright/test';
 // 入口那一支请求按住，不依赖后端。
 
 test('慢网首帧画的是骨架外壳，不是白屏', async ({ page }) => {
-  // 按住入口模块：模块图跑不起来，屏幕上剩下的就只能是 HTML 自己画的那一屏。
-  await page.route('**/src/main.ts', (route) => route.abort());
+  // 按住所有脚本请求：入口跑不起来，屏幕上剩下的就只能是 HTML 自己画的那一屏。
+  // 按资源类型而不是按路径拦，开发服务器的 /src/main.ts 和生产构建带哈希的入口都拦得住。
+  await page.route('**/*', (route) =>
+    route.request().resourceType() === 'script' ? route.abort() : route.continue(),
+  );
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 
   const shell = page.locator('#sx-boot-skeleton');

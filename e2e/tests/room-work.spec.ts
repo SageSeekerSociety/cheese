@@ -5,17 +5,12 @@ import { once } from "node:events";
 import { closeSync, openSync } from "node:fs";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { api, apiToken, apiLogin, openFirstProject } from "./helpers";
+import { api, apiToken, apiLogin, openFirstProject, projectIdOf } from "./helpers";
 
-function projectIdOf(page: Page): string {
-  const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
-  if (!id) throw new Error(`当前页不是项目工作台：${page.url()}`);
-  return id;
-}
 
 /** 一间空房间。每条用例一间，互不干扰。 */
 async function freshRoom(page: Page, title: string) {
-  const project_id = projectIdOf(page);
+  const project_id = await projectIdOf(page);
   const room = (await api(page, "post", "/topics", { project_id, title })) as {
     id: string;
   };
@@ -29,7 +24,7 @@ async function dispatch(page: Page, roomId: string, title: string) {
   })) as { id: string };
   return (await api(page, "post", `/topics/${task.id}/start`, {
     reviewer_handle: "alice",
-  })) as { id: string; branch_name?: string };
+  })) as { id: string; number: number; branch_name?: string };
 }
 
 test.describe("房间里的任务", () => {
@@ -39,7 +34,7 @@ test.describe("房间里的任务", () => {
   });
 
   test("任务出现在房间总览里，点一下就进它自己的页面", async ({ page }) => {
-    const projectId = projectIdOf(page);
+    const projectId = await projectIdOf(page);
     const stamp = Date.now();
     const roomId = await freshRoom(page, `派活 ${stamp}`);
     const first = await dispatch(page, roomId, `第一件事 ${stamp}`);
@@ -57,9 +52,7 @@ test.describe("房间里的任务", () => {
 
     // 点条目就去这个任务的页面 —— 总览里的一行必须是个入口，不然它只是一张表。
     await progress.getByText(`第一件事 ${stamp}`).click();
-    await expect(page).toHaveURL(
-      new RegExp(`/topics/${roomId}/tasks/${first.id}`),
-    );
+    await expect(page).toHaveURL(new RegExp(`/tasks/${first.number}(\\?|$)`));
     // 进来的是这个任务：页头写着它的标题。
     await expect(page.locator(".task-header__title")).toHaveText(
       `第一件事 ${stamp}`,
@@ -69,7 +62,7 @@ test.describe("房间里的任务", () => {
   test("侧栏项目名下的「总览」打开项目总览，别的频道里的任务也在上面", async ({
     page,
   }) => {
-    const projectId = projectIdOf(page);
+    const projectId = await projectIdOf(page);
     const stamp = Date.now();
     const roomId = await freshRoom(page, `跨房间 ${stamp}`);
     await dispatch(page, roomId, `跨房间的活 ${stamp}`);
@@ -81,9 +74,7 @@ test.describe("房间里的任务", () => {
       .locator('[aria-label="项目页面"]')
       .getByText("总览", { exact: true })
       .click();
-    await expect(page).toHaveURL(
-      new RegExp(`/projects/${projectId}/overview`),
-    );
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/overview/);
 
     // 总览答的是「这个项目怎么样了」：四块都在。
     for (const section of [
@@ -101,7 +92,7 @@ test.describe("房间里的任务", () => {
   });
 
   test("全部任务上的计数在任务到货之前不写 0", async ({ page }) => {
-    const projectId = projectIdOf(page);
+    const projectId = await projectIdOf(page);
     const stamp = Date.now();
     const roomId = await freshRoom(page, `计数 ${stamp}`);
     await dispatch(page, roomId, `计数的活 ${stamp}`);
@@ -139,7 +130,7 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
   test.setTimeout(120_000);
   await apiLogin(page);
   await openFirstProject(page);
-  const project = projectIdOf(page);
+  const project = await projectIdOf(page);
   const room = await freshRoom(page, `文件来源 ${Date.now()}`);
   const first = await dispatch(page, room, "调整登录样式");
   const second = await dispatch(page, room, "修复登录校验");

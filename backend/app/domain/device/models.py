@@ -56,6 +56,11 @@ class DeviceRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    # When the server last heard from this machine: written as it connects and
+    # at most once a minute while connected; null until it first connects.
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Supply is the stored lifecycle fact. Access is not a property of the machine:
     # it is chosen per topic binding (``TopicDeviceRow.visibility``).

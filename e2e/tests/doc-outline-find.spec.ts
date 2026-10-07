@@ -7,14 +7,9 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 
 // 布景走 API：文档本来就是芝士写的，断言全在屏幕上量（同 doc-panel.spec.ts）。
-function projectIdOf(page: Page): string {
-  const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
-  if (!id) throw new Error(`当前页不是项目工作台：${page.url()}`);
-  return id;
-}
 
 const HEADED_DOC = [
   '# 章程',
@@ -36,7 +31,7 @@ const PLAIN_DOC = ['只有一段普通的话，没有任何标题。', '', '这�
 async function openDoc(page: Page, content: string) {
   await apiLogin(page);
   await openFirstProject(page);
-  const projectId = projectIdOf(page);
+  const projectId = await projectIdOf(page);
 
   const room = (await api(page, 'post', '/topics', {
     project_id: projectId,

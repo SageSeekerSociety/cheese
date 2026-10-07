@@ -6,12 +6,14 @@
 //      parent record, which is what keeps the sidebar mounted). Pull one back
 //      out to the top level and nothing fails to compile; the sidebar just
 //      disappears on that one page again.
-//   2. no link that ever worked stops working — `?topic=`, and the three
-//      项目文档 routes that used to be distinguished by name.
+//   2. no link that ever worked stops working — `?topic=`, `topics/<id>`, and
+//      the three 项目文档 routes that used to be distinguished by name.
 //
 // The records under test are IMPORTED, not restated. `resolve()` is used rather
 // than `push()` throughout: it exercises the real matcher without pulling every
 // view in the workspace into the test.
+import type { RouteLocationNormalized } from 'vue-router'
+
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
@@ -33,7 +35,11 @@ const TOPIC = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b01'
 describe('the project frame', () => {
   it.each([
     ['/', 'workspace-project'],
-    [`/topics/${TOPIC}`, 'workspace-topic'],
+    ['/channels/7', 'workspace-topic'],
+    [`/channels/${TOPIC}`, 'workspace-topic'],
+    ['/channels/7/threads/x1', 'workspace-thread'],
+    ['/tasks/318', 'workspace-task'],
+    ['/docs/42', 'project-document'],
     ['/dm/agent:cheese', 'workspace-dm'],
     ['/docs/weeklies', 'project-docs'],
     ['/library', 'project-library'],
@@ -102,14 +108,19 @@ describe('the project frame', () => {
 
   it('puts what you are looking at in the URL', () => {
     const r = router()
-    expect(r.resolve(`/projects/${PROJECT}/topics/${TOPIC}`).params.topicId).toBe(TOPIC)
+    expect(r.resolve(`/projects/cheese/channels/7`).params).toMatchObject({ projectId: 'cheese', topicId: '7' })
+    expect(r.resolve(`/projects/cheese/tasks/318`).params.taskId).toBe('318')
+    expect(r.resolve(`/projects/cheese/docs/42`).params.docId).toBe('42')
     expect(r.resolve(`/projects/${PROJECT}/dm/lisi`).params.peer).toBe('lisi')
     expect(r.resolve(`/projects/${PROJECT}/docs/weeklies`).params.kind).toBe('weeklies')
   })
 
   it('hands each child its params as props, so a reload rebuilds the same view', () => {
-    const topic = router().resolve(`/projects/${PROJECT}/topics/${TOPIC}`)
-    expect(topic.matched[topic.matched.length - 1].props.default).toBe(true)
+    const topic = router().resolve(`/projects/${PROJECT}/channels/${TOPIC}`)
+    const props = topic.matched[topic.matched.length - 1].props.default
+    // `resolve()` hands back a resolved location; the props function reads only its params.
+    const given = typeof props === 'function' ? props(topic as unknown as RouteLocationNormalized) : props
+    expect(given).toMatchObject({ projectId: PROJECT, topicId: TOPIC })
   })
 })
 
@@ -122,6 +133,21 @@ describe('links that used to work', () => {
     expect(resolved.name).toBe('workspace-project')
     expect(resolved.query.topic).toBe(TOPIC)
   })
+
+  // 频道和任务以前挂在 topics/<频道> 下面，发出去的这些链接都要还能打开。
+  it.each([
+    [`/topics/${TOPIC}`, 'workspace-topic', `/channels/${TOPIC}`],
+    [`/topics/${TOPIC}/tasks/${TOPIC}`, 'workspace-task', `/tasks/${TOPIC}`],
+  ])(
+    'sends the old %s link to its new place',
+    async (suffix, name, path) => {
+      const r = router()
+      await r.push(`/projects/${PROJECT}${suffix}`)
+      expect(r.currentRoute.value.name).toBe(name)
+      expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}${path}`)
+    },
+    20_000
+  )
 
   it.each(['charter', 'weeklies'])('sends the old /%s page to docs/:kind', async (kind) => {
     const r = router()
@@ -146,7 +172,8 @@ describe('页面栈的末端', () => {
   // 只会在手机上表现为"进去就出不来"，而且是新加一条路由时最容易漏的一件事。
   it('列表之外的每一层都收起底栏，并说明回哪一层', () => {
     const paths = [
-      `/projects/${PROJECT}/topics/t1`,
+      `/projects/${PROJECT}/channels/1`,
+      `/projects/${PROJECT}/tasks/1`,
       `/projects/${PROJECT}/docs/charter`,
       `/projects/${PROJECT}/overview`,
       `/projects/${PROJECT}/tasks`,
@@ -191,7 +218,7 @@ describe('页面栈的末端', () => {
   // 另画一条横条。声明错了不会编译失败，只会在手机上多出一条写着路由标题的横条。
   it('自带头的层填的是顶栏那一格', () => {
     expect(leafOf(`/projects/${PROJECT}`).meta.barSlot).toBe(true)
-    expect(leafOf(`/projects/${PROJECT}/topics/t1`).meta.barSlot).toBe(true)
+    expect(leafOf(`/projects/${PROJECT}/channels/1`).meta.barSlot).toBe(true)
     expect(leafOf(`/projects/${PROJECT}/dm/agent:cheese`).meta.barSlot).toBeUndefined()
   })
 })
@@ -201,7 +228,7 @@ describe('页面栈的末端', () => {
 // 失——而那正是这套机制存在的原因。
 describe('项目框自己举的手', () => {
   it('框那条记录带着 projectFrame，框里每一层都继承得到', () => {
-    for (const path of ['', '/running', `/topics/${TOPIC}`, '/settings']) {
+    for (const path of ['', '/running', '/channels/1', '/tasks/1', '/docs/1', '/settings']) {
       const matched = router().resolve(`/projects/${PROJECT}${path}`).matched
       expect(
         matched.some((r) => r.meta.projectFrame === true),

@@ -66,16 +66,13 @@ DOC_SUGGESTIONS_KEY = "doc_suggestions"
 
 
 def _actor_label(handles: list[str]) -> NoticeList:
-    """Everyone in an edit run, as the event names them. A human is the
-    structured <@handle> token the client renders as a mention chip; 芝士 is
-    one familiar name whichever 分身 wrote (each authors under its own
-    ``cheese-<topic hex>`` handle, which is not what a reader should see)."""
-    names: list[str] = []
-    for handle in handles:
-        name = say("actorCheese") if looks_like_agent_handle(handle) else f"<@{handle}>"
-        if name not in names:
-            names.append(name)
-    return listing(names)
+    """Everyone in an edit run, as the event names them: each one's <@handle>
+    token, which the client draws as a chip with the name the roster gives
+    that handle. An AI teammate is named the same way as a person, so the line
+    calls it what the document's own header and its messages do, and a
+    teammate renamed after the edit reads under its new name. Spelling out a
+    name here instead wrote 「芝士」 for every teammate, whatever it was called."""
+    return listing([f"<@{handle}>" for handle in dict.fromkeys(handles)])
 
 
 def _notice_kind(meta: dict) -> str:

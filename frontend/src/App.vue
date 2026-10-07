@@ -255,6 +255,7 @@
       <DesktopPhoneDialog />
     </template>
     <CommandPalette />
+    <DeviceConnect />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
   </my-app>
@@ -316,7 +317,8 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
-import { autoConnectThisComputer } from '@/lib/desktop'
+import { routeIds } from '@/lib/addresses'
+import { offerToConnect } from '@/lib/desktop'
 import {
   desktopBadge,
   desktopListenForNotices,
@@ -343,6 +345,7 @@ import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
+import DeviceConnect from '@/views/desktop/DeviceConnect.vue'
 import TaskInheritance from '@/views/tasks/components/TaskInheritance.vue'
 import { useTaskInheritance } from '@/views/tasks/composables/useTaskInheritance'
 
@@ -555,12 +558,12 @@ watch(
   }
 )
 
-// In the desktop app, being signed in is what makes this computer one of your
-// devices: at launch with a session, and at every sign-in (lib/desktop.ts).
+// In the desktop app, signing in asks once whether to connect this computer as a
+// device; one connected before comes back on its own (lib/desktop.ts).
 watch(
   () => AccountService.loggedIn && AccountService.user?.id,
   (userId) => {
-    if (typeof userId === 'number') void autoConnectThisComputer(userId)
+    if (typeof userId === 'number') void offerToConnect(userId)
   },
   { immediate: true }
 )
@@ -624,9 +627,7 @@ const navSources = computed<NavSources>(() => ({
 // 设置、某个 赛题 页）时是 default——那里没有项目行可读，而 default 就是今天的
 // 样子，所以项目外的一点都没变。按地址取而不是按「上次开过的项目」取：壳是**你
 // 现在待的地方**的长相，走出项目还挂着上一个项目的样子会让人以为走岔了。
-const openProjectId = computed<string | null>(() =>
-  typeof currentRoute.params.projectId === 'string' ? currentRoute.params.projectId : null
-)
+const openProjectId = computed<string | null>(() => routeIds(currentRoute.params).projectId ?? null)
 const navShell = computed(() => shellFor(railProjects.value, openProjectId.value) ?? DEFAULT_SHELL)
 
 const rail = computed(() => railItems(navSources.value, navShell.value))

@@ -5,6 +5,7 @@ import { toast } from 'vuetify-sonner'
 
 import { provideTopicMemory } from '@/composables/useTopicMemory'
 
+import { routeIds } from '@/lib/addresses'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -29,7 +30,7 @@ provideTopicMemory()
 // The route is the single source of truth for "what am I looking at" — the
 // store only mirrors it so background refreshes know which badge not to light.
 watch(
-  () => [route.params.topicId, route.params.peer, props.projectId] as const,
+  () => [routeIds(route.params).topicId, route.params.peer, props.projectId] as const,
   ([topicId, peer, projectId]) => {
     store.activeTopicId = typeof topicId === 'string' ? topicId : null
     store.activeDmPeer = typeof peer === 'string' ? peer : null

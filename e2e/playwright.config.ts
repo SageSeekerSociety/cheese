@@ -9,6 +9,12 @@ import { defineConfig } from '@playwright/test';
 // must be kept in step with the resolution below by hand.
 const BACKEND_PORT = process.env.E2E_BACKEND_PORT ?? '8081';
 const FRONTEND_PORT = process.env.E2E_FRONTEND_PORT ?? '3000';
+// Specs that mount source components straight from the dev server
+// (`/src/...`, `/node_modules/.vite/deps/...`) rather than visiting the app.
+// A production build has no such paths, so on CI they get a dev server of
+// their own; locally the one frontend server is already a dev server.
+const COMPONENT_SPECS = ['chat-file-reference-hit-area.spec.ts', 'design-region-note.spec.ts'];
+const COMPONENT_PORT = process.env.CI ? (process.env.E2E_COMPONENT_PORT ?? '3300') : FRONTEND_PORT;
 const STUB_GATEWAY_PORT = process.env.E2E_STUB_GATEWAY_PORT ?? '4010';
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const STUB_GATEWAY_URL = `http://127.0.0.1:${STUB_GATEWAY_PORT}`;
@@ -21,14 +27,15 @@ const COLLAB_SECRET = 'e2e-collab-secret';
 export default defineConfig({
   testDir: './tests',
   globalSetup: './global-setup.ts',
-  // 60s (not 30s): the vite dev server compiles routes on-demand, and the first
-  // navigation into a heavy route (the project workspace pulls in tiptap /
-  // prosemirror / DocEditor) can take >30s to transform on a cold start.
-  timeout: 60_000,
-  // Serial on CI: parallel workers each trigger a fresh cold compile at once,
-  // and the resulting storm blows the per-test timeout. The suite is small, so
-  // serializing costs little and makes cold runs deterministic. Local stays
-  // parallel (dev servers are usually already warm via reuseExistingServer).
+  // About twice the slowest test measured against the production build on CI
+  // (22.9 s, a layout check looping over several viewports). A file whose
+  // tests sweep many screens sets its own, longer limit.
+  timeout: 45_000,
+  // Serial on CI: every spec shares one backend and signs in as alice, and
+  // what one test leaves behind (an unread badge, a notification) shows up in
+  // another's page. Running them concurrently against that one backend has
+  // not been tried; the five CI shards are where the parallelism comes from.
+  // Local runs stay parallel.
   workers: process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [
@@ -40,6 +47,11 @@ export default defineConfig({
       wsEndpoint: process.env.E2E_BROWSER_WS_ENDPOINT,
       exposeNetwork: '<loopback>',
     } : undefined,
+    // The production build registers a service worker that precaches the
+    // whole bundle. Every test opens a fresh context, so each one would
+    // install it again and download every chunk; no spec is about offline
+    // behaviour.
+    serviceWorkers: process.env.CI ? 'block' : 'allow',
     // Existing workspace scenarios assert Chinese UI labels explicitly.
     locale: 'zh-CN',
     baseURL: process.env.BASE_URL || `http://localhost:${FRONTEND_PORT}`,
@@ -54,7 +66,15 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
+    { name: 'chromium', use: { browserName: 'chromium' }, testIgnore: COMPONENT_SPECS },
+    {
+      name: 'components',
+      use: { browserName: 'chromium', baseURL: `http://localhost:${COMPONENT_PORT}` },
+      testMatch: COMPONENT_SPECS,
+      // The dev server compiles a component and everything it imports on the
+      // first request for it, which can take tens of seconds on a cold start.
+      timeout: 60_000,
+    },
   ],
   webServer: [
     {
@@ -104,7 +124,13 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      command: `cd ../frontend && pnpm exec vite --port ${FRONTEND_PORT} --strictPort`,
+      // CI serves the production build e2e.yml made (`vite preview`, which
+      // applies the same `server.proxy` table); a local run keeps the dev
+      // server and its hot reload. Preview fails loudly when frontend/dist is
+      // missing, so CI cannot fall back to the dev server unnoticed.
+      command: process.env.CI
+        ? `cd ../frontend && pnpm exec vite preview --port ${FRONTEND_PORT} --strictPort`
+        : `cd ../frontend && pnpm exec vite --port ${FRONTEND_PORT} --strictPort`,
       url: `http://localhost:${FRONTEND_PORT}`,
       // VITE_API_BASE_URL=/api makes the 知是 1.0 layer prefix its calls with
       // /api (so /users/auth/login → /api/users/auth/login), which the proxy's
@@ -113,9 +139,21 @@ export default defineConfig({
       // are relative (/users/...), miss the /api proxy entirely, and hit the SPA.
       env: { BACKEND_URL, COLLAB_URL: COLLAB_URL.replace(/^http/, 'ws'), VITE_API_BASE_URL: '/api' },
       reuseExistingServer: !process.env.CI,
-      // Same 180s the backend gets: a cold vite start pre-bundles deps and runs
-      // the legacy plugin, on a runner that is also building and deploying.
+      // Same 180s the backend gets: a cold dev server pre-bundles deps before
+      // it answers. Preview answers in seconds.
       timeout: 180_000,
     },
+    ...(process.env.CI
+      ? [
+          {
+            // The component specs' dev server. Their fixtures replace fetch and
+            // WebSocket, so it needs no proxy target.
+            command: `cd ../frontend && pnpm exec vite --port ${COMPONENT_PORT} --strictPort`,
+            url: `http://localhost:${COMPONENT_PORT}`,
+            reuseExistingServer: false,
+            timeout: 180_000,
+          },
+        ]
+      : []),
   ],
 });

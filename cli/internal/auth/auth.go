@@ -13,16 +13,27 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
 
-// machineName is a friendly default label for THIS machine — its hostname with a
-// trailing ".local" (macOS/Bonjour) trimmed. The CLI runs on the box being enrolled,
-// so it is the only party that knows the hostname (the approving browser may be on a
-// different machine). Empty if the OS won't say; the server then falls back to a
+// machineName is a friendly default label for THIS machine. On a Mac that is the
+// name its owner sees in System Settings ("Xiaoming's MacBook Air"), not the
+// hostname derived from it; elsewhere the hostname with a trailing ".local"
+// (Bonjour) trimmed. The CLI runs on the box being enrolled, so it is the only
+// party that knows either (the approving browser may be on a different
+// machine). Empty if the OS won't say; the server then falls back to a
 // generated name, and the human can rename on the approval page.
 func machineName() string {
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("/usr/sbin/scutil", "--get", "ComputerName").Output(); err == nil {
+			if name := strings.TrimSpace(string(out)); name != "" {
+				return name
+			}
+		}
+	}
 	h, err := os.Hostname()
 	if err != nil {
 		return ""

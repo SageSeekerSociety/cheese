@@ -129,7 +129,9 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
         headers=_agent(pid, str(task)),
     )
     assert filed.status_code == 200, filed.text
-    assert _stale(frames, rid) == ["accept"]
+    # The card, and the task's progress it decides — in the room and on the task.
+    assert _stale(frames, rid) == ["accept", "tasks"]
+    assert _stale(frames, str(task)) == ["accept", "tasks"]
     frames.clear()
     corrected = client.post(
         f"/topics/{task}/accept-card/describe",
@@ -137,7 +139,8 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
         headers=_agent(pid, str(task)),
     )
     assert corrected.status_code == 200, corrected.text
-    assert _stale(frames, rid) == ["accept"]
+    assert _stale(frames, rid) == ["accept", "tasks"]
+    assert _stale(frames, str(task)) == ["accept", "tasks"]
 
 
 def _propose_feedback(client, pid: str, rid: str) -> str:

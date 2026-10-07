@@ -7,6 +7,7 @@ fully self-governing.
 """
 
 import enum
+import secrets
 import uuid
 from datetime import datetime
 
@@ -18,6 +19,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Select,
     String,
     Text,
@@ -29,6 +31,19 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+
+_SLUG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+#: The database's own default for a slug: eight random hex characters.
+SLUG_SQL_DEFAULT = text("substr(md5(random()::text), 1, 8)")
+
+
+def random_slug() -> str:
+    """Eight random lowercase letters and digits: a new project's first slug.
+    Project names are mostly Chinese, and a romanised one is as likely to read
+    oddly as to collide."""
+    return "".join(secrets.choice(_SLUG_ALPHABET) for _ in range(8))
 
 
 class AiMode(enum.StrEnum):
@@ -42,6 +57,14 @@ class Project(UuidPk, Timestamps, Base):
     __tablename__ = "projects"
 
     name: Mapped[str] = mapped_column(String(200))
+    # The project's name in addresses: `/projects/<slug>/tasks/318`. Unique
+    # across every project; the names it had before are in `project_slugs`, so
+    # a link made before a rename still finds it (`app/domain/project/address.py`).
+    # A row written past the ORM (raw SQL in a script or a test) gets eight hex
+    # characters from the database instead.
+    slug: Mapped[str] = mapped_column(
+        String(32), unique=True, default=random_slug, server_default=SLUG_SQL_DEFAULT
+    )
     owner_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # The team this project belongs to. Its members are the project's people and
     # its machines and quota are the project's; personal work belongs to the
@@ -370,3 +393,40 @@ class RoomFileRevision(UuidPk, Timestamps, Base):
     #: (each 「保存」, then on close), and its own previous save is not somebody
     #: else's change — this is how the second save tells the two apart.
     editor_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class ProjectSlug(Base):
+    """A name a project went by in addresses before its current one.
+
+    A rename adds a row and removes none: the old name keeps leading to the
+    project, and no other project can take it (a reused name would send every
+    old link into someone else's project). The project itself may take one of
+    its old names back, which moves it from here to `projects.slug`.
+    """
+
+    __tablename__ = "project_slugs"
+
+    slug: Mapped[str] = mapped_column(String(32), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+
+
+class ProjectCounter(Base):
+    """The last number handed out to one kind of thing in one project: tasks,
+    documents and channels are each numbered from 1 within their project.
+
+    A number is taken in the same transaction that creates the row it names, so
+    a rollback leaves a gap and never a duplicate; only this one row is locked.
+    """
+
+    __tablename__ = "project_counters"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    last_number: Mapped[int] = mapped_column(Integer)

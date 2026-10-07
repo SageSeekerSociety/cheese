@@ -2757,6 +2757,55 @@ def test_a_quiet_branch_is_asked_about_without_locking_its_task(
     assert locked_elsewhere == [False]
 
 
+def test_github_is_asked_about_its_quota_without_the_task_locked(
+    client, sweeping, monkeypatch
+):
+    """Before a sweep opens a draft PR it asks GitHub how much of the
+    installation's hour is left. That request must not run while the task's
+    row is held: the sweep's locked step relies on the answer the unlocked
+    look already got, and anyone touching the task meanwhile would otherwise
+    wait on GitHub."""
+    from sqlalchemy import select, text
+
+    from app.domain.room_task.models import Task
+
+    _, room = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, room)))
+    locked_while_asked: list[bool] = []
+
+    async def core_quota(_self):
+        async with client.test_request_factory() as other:
+            await other.execute(text("SET LOCAL lock_timeout = '200ms'"))
+            try:
+                await other.scalar(
+                    select(Task.id).where(Task.id == task_id).with_for_update()
+                )
+                locked_while_asked.append(False)
+            except Exception:  # noqa: BLE001 — the lock wait is the observation
+                locked_while_asked.append(True)
+            await other.rollback()
+        return 5000, 5000
+
+    monkeypatch.setattr(_FakeTokens, "core_quota", core_quota)
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    assert locked_while_asked and not any(locked_while_asked), locked_while_asked
+
+
+def test_a_quota_github_already_reported_spent_keeps_the_sweep_away(client, sweeping):
+    """Once GitHub has put the installation under the share kept for people,
+    background work leaves the rest to them: no draft PR is opened."""
+    _room_with_work(client)
+    _FakeTokens.quota_left = 100  # of 5000: under the share kept for people
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 0, counts
+    assert sweeping["opened"] == []
+
+
 def test_a_batch_left_open_in_an_archived_room_gets_no_pr(client, sweeping):
     """Rooms archived before archiving closed their work still hold open tasks.
 

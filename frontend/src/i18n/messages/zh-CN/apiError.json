@@ -969,5 +969,8 @@
   "contributorNotInProject": "只能把项目成员加为协作者",
   "routineOwnerNotInProject": "{handle} 不是项目成员，结果无法通知到",
   "topicMuteUntilPast": "静音的截止时间必须晚于现在",
-  "channelArchiveOpenTasks": "频道里还有进行中的任务，先关闭这些任务再归档"
+  "channelArchiveOpenTasks": "频道里还有进行中的任务，先关闭这些任务再归档",
+  "projectSlugFormat": "短名只能用小写字母、数字和连字符，3 到 32 位，不能以连字符开头或结尾",
+  "projectSlugReserved": "这个短名留作平台页面使用，换一个",
+  "projectSlugTaken": "这个短名已被别的项目使用过，换一个"
 }

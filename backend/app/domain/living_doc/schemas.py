@@ -109,6 +109,7 @@ def document_snapshot(doc: Document) -> dict:
     return {
         "id": str(doc.id),
         "project_id": str(doc.project_id),
+        "number": doc.number,
         "kind": doc.kind,
         "title": doc.title,
         "content": doc.content,
@@ -125,6 +126,7 @@ def document_row(doc: Document) -> dict:
     return {
         "id": str(doc.id),
         "project_id": str(doc.project_id),
+        "number": doc.number,
         "kind": doc.kind,
         "title": doc.title,
         "doc_version": doc.version,

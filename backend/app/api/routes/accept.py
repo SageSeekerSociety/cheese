@@ -23,7 +23,7 @@ from app.domain.agent.platform_notices import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.agent.runtime import AgentWorkRunner, announce_stale
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
@@ -152,7 +152,6 @@ async def create_accept_card(
     # machine-gate dispatch is retired (cards are never born `pending_gate`
     # any more — see AcceptService.create_card).
     await db.commit()
-    await announce_stale(topic_id, "accept")
     # Work handed in for acceptance: a moment the task's direction may show.
     naming.nudge(task_id, "signal")
     if pr_publish.enabled():
@@ -206,7 +205,7 @@ async def describe_card(
     署名（`Cheese-Task:`）没有这样的入口，而且不该有：见
     `AcceptService.redescribe` 的 docstring。
     """
-    actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
+    actor, _room, task_id = await _task_actor(topic_id, db, resolver)
     card = await AcceptService(db).redescribe(
         task_id,
         actor=actor.handle,
@@ -214,7 +213,6 @@ async def describe_card(
         change_body=body.change_body,
     )
     await db.commit()
-    await announce_stale(room_id, "accept")
     return ok(await AcceptService(db).describe(card))
 
 

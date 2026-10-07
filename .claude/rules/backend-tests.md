@@ -68,6 +68,16 @@ POST `/users/auth/login` 必然失败。
 
 **做法**：按路由路径 grep，而不是按测试名，把命中的每个文件都跑一遍。
 
+## 症状：`[gwN] node down: Not properly terminated`，worker crashed while running 某个测试
+
+**容易误判成**：#3005 那种 worker 无声丢失，或者内存被 kill。
+
+**真因**：先往上看日志。紧挨着有 `+++ Timeout +++` 和一段调用栈，就是这条测试超过了它那一层的时间上限
+（`tests/conftest.py` 的 `_LAYER_TIMEOUT_S`），pytest-timeout 结束了整个 worker。
+
+**做法**：看调用栈停在哪里等，把那个超时、退避或轮询间隔做成测试能传小值的参数。
+不要把它加进 `tests/slow_tests.txt`，也不要给它标一个更宽的 `timeout`：这两条只许变紧。
+
 ## 选择鉴权方式
 
 | 目录 | 用什么 | 定义在 |

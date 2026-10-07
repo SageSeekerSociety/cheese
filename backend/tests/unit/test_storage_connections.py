@@ -61,12 +61,13 @@ def configure(monkeypatch, endpoint):
     monkeypatch.setattr(settings, "s3_region", "us-east-1")
 
 
-def backend(endpoint, bucket="private", access_key="test-access"):
+def backend(endpoint, bucket="private", access_key="test-access", **options):
     return S3StorageBackend(
         bucket=bucket,
         endpoint_url=endpoint,
         access_key=access_key,
         secret_key="test-secret",
+        **options,
     )
 
 
@@ -172,11 +173,14 @@ async def test_small_upload_retries_incomplete_body_without_changing_bytes(
 async def test_stalled_upload_retries_before_transcript_deadline():
     content = b"transcript chunk"
     bodies = []
+    # The first attempt stalls until the test is done with it: past the
+    # client's read timeout, however long that is, without a timer here.
+    released = asyncio.Event()
 
     async def handle(request):
         bodies.append(await request.read())
         if len(bodies) == 1:
-            await asyncio.sleep(17)
+            await released.wait()
         return web.Response(headers={"ETag": '"stored"'})
 
     app = web.Application()
@@ -189,10 +193,13 @@ async def test_stalled_upload_retries_before_transcript_deadline():
     started = time.monotonic()
     try:
         async with asyncio.timeout(60):
-            await backend(endpoint).upload(io.BytesIO(content), "chunk", "text/plain")
+            await backend(endpoint, read_timeout_s=1).upload(
+                io.BytesIO(content), "chunk", "text/plain"
+            )
         assert bodies == [content, content]
         assert time.monotonic() - started < 60
     finally:
+        released.set()
         await runner.cleanup()
 
 

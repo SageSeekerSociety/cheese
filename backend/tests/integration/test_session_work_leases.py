@@ -1425,11 +1425,15 @@ async def test_an_installation_whose_backend_is_gone_does_not_hold_the_next_star
         assert response.status_code == 200, response.text
         return response.json()["data"]
 
-    assert ask(timeout=0.001).get("preparing") is True
-    # The answer comes back before the installation it set off has reached the
-    # machine; wait for it to, or there is nothing yet to be cut off.
-    reached = time.monotonic() + 5
+    # Ask the way the session's client does: again while the answer is
+    # "preparing", until the installation has reached the machine. An answer
+    # can come back before the installation it set off gets there; and on a
+    # loaded runner an ask can run out of its time before its attempt takes
+    # the claim, which starts nothing (the route rolls the attempt back) and
+    # leaves the next ask to start it.
+    reached = time.monotonic() + 10
     while hub.exec.await_count == 0 and time.monotonic() < reached:
+        assert ask(timeout=0.001).get("preparing") is True
         await asyncio.sleep(0.05)
     assert hub.exec.await_count == 1
     # The process goes: every installation it ran stops where it was, and

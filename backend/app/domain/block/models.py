@@ -25,6 +25,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.block.indexed_rows import (
+    COALESCED_ROWS,
+    EID,
     FAILED_TURN_ROWS,
     MACHINE_EVENT_ROWS,
     QUESTION_ROWS,
@@ -218,6 +220,14 @@ class Block(UuidPk, Timestamps, Base):
             "created_at",
             "id",
             postgresql_where=QUEUED_MESSAGE_ROWS,
+        ),
+        # Whether a conversation already holds a hook event id: asked for every
+        # room event that lands (`has_any_eid`), and almost always answered no.
+        Index("ix_blocks_conversation_eid", "conversation_id", EID),
+        Index(
+            "ix_blocks_coalesced",
+            "conversation_id",
+            postgresql_where=COALESCED_ROWS,
         ),
     )
 

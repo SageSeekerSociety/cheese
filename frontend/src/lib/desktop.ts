@@ -3,10 +3,10 @@
 // of that bridge; outside the app desktopBridge() is null and the page offers
 // the download instead.
 import { reactive } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { connectDevice, deviceProposedName, listMyDevices } from '../api'
-import { t } from '../i18n'
+
+import { desktopCan } from './desktopApp'
 
 // The site serves the desktop build itself: build.yml copies the `desktop-latest`
 // release (.github/workflows/desktop.yml) into the frontend image, because GitHub
@@ -39,7 +39,21 @@ export async function downloadForThisComputer(): Promise<Download> {
   return hints?.architecture === 'x86' ? DOWNLOADS[1] : DOWNLOADS[0]
 }
 
-type Progress = { kind: 'step'; text: string } | { kind: 'code'; text: string }
+/** A step of connecting this computer, as the app reports it. */
+export type ConnectStep = 'removeOld' | 'tools' | 'download' | 'approve' | 'runtime' | 'start'
+
+/** Why connecting stopped: the step it stopped at, or "cancelled", and what the tool said. */
+export interface ConnectFailure {
+  step: ConnectStep | 'cancelled' | 'busy' | 'prepare' | 'login'
+  detail: string
+}
+
+type ClaudeLoginStep = 'preparing' | 'browser'
+
+type Progress =
+  | { kind: 'step'; id: ConnectStep | ClaudeLoginStep }
+  | { kind: 'percent'; value: number }
+  | { kind: 'code'; text: string }
 
 interface TauriChannel<T> {
   onmessage: (message: T) => void
@@ -53,55 +67,80 @@ interface TauriGlobal {
 }
 
 export interface ConnectOptions {
-  // The devices the signed-in user owns; a stored credential for any other is dropped.
   knownDeviceIds: string[]
-  // Approves the login with this page's session (POST /connector/connect).
   approve: (code: string) => Promise<void>
-  onStep: (text: string) => void
+  onStep: (step: ConnectStep) => void
+  onPercent: (value: number) => void
 }
 
 export interface DesktopBridge {
-  // Resolves once the connector is installed and running; rejects with a message to show.
   connectThisMachine: (options: ConnectOptions) => Promise<void>
-  // The device this computer is logged in as, if any.
+  cancelConnect: () => Promise<void>
   thisDevice: () => Promise<string | null>
+  claudeLogin: (console: boolean, onStep: (step: ClaudeLoginStep) => void) => Promise<void>
+  cancelClaudeLogin: () => Promise<void>
+  claudeLogout: () => Promise<void>
+  disconnectThisMachine: () => Promise<void>
 }
 
+function failure(err: unknown): ConnectFailure {
+  if (err && typeof err === 'object' && 'step' in err) return err as ConnectFailure
+  return { step: 'prepare', detail: err instanceof Error ? err.message : String(err) }
+}
+
+/** The app's commands for this computer; null in a browser, or in an app that
+ *  predates connecting step by step (it updates itself within hours). */
 export function desktopBridge(): DesktopBridge | null {
   const tauri = (window as unknown as { __TAURI__?: TauriGlobal }).__TAURI__
-  if (!tauri?.core) return null
+  if (!tauri?.core || !desktopCan('device')) return null
   const { invoke, Channel } = tauri.core
   return {
-    async connectThisMachine({ knownDeviceIds, approve, onStep }) {
-      let approveError: Error | null = null
+    async connectThisMachine({ knownDeviceIds, approve, onStep, onPercent }) {
+      let approveError: ConnectFailure | null = null
       const progress = new Channel<Progress>()
       progress.onmessage = (message) => {
-        if (message.kind === 'step') return onStep(message.text)
+        if (message.kind === 'step')
+          return message.id === 'preparing' || message.id === 'browser' ? undefined : onStep(message.id)
+        if (message.kind === 'percent') return onPercent(message.value)
         approve(message.text).catch((err: unknown) => {
-          approveError = new Error(
-            t('compute.desktop.approveFailed', { reason: err instanceof Error ? err.message : String(err) })
-          )
+          approveError = { step: 'approve', detail: err instanceof Error ? err.message : String(err) }
           void invoke('cancel_connect')
         })
       }
       try {
         await invoke('connect_this_machine', { knownDeviceIds, progress })
       } catch (err) {
-        // A failed approval cancels the login, which reports only "已取消".
-        throw approveError ?? new Error(String(err))
+        throw approveError ?? failure(err)
       }
     },
-    thisDevice: async () => ((await invoke('this_device')) as string | null) ?? null,
+    async cancelConnect() {
+      await invoke('cancel_connect')
+    },
+    async thisDevice() {
+      return (await invoke('this_device')) as string | null
+    },
+    async claudeLogin(console, onStep) {
+      const progress = new Channel<Progress>()
+      progress.onmessage = (message) => {
+        if (message.kind === 'step' && (message.id === 'preparing' || message.id === 'browser')) onStep(message.id)
+      }
+      try {
+        await invoke('claude_login', { console, progress })
+      } catch (err) {
+        throw failure(err)
+      }
+    },
+    async cancelClaudeLogin() {
+      await invoke('cancel_claude_login')
+    },
+    async claudeLogout() {
+      await invoke('claude_logout')
+    },
+    async disconnectThisMachine() {
+      await invoke('disconnect_this_machine')
+    },
   }
 }
-
-// One connection at a time, whoever started it: the sign-in that connects this
-// computer on its own, or the button on 设置 → 设备. Both show this state.
-export const thisComputer = reactive({
-  connecting: false,
-  step: '',
-  error: null as string | null,
-})
 
 async function myDevices() {
   try {
@@ -113,66 +152,141 @@ async function myDevices() {
   }
 }
 
-export async function connectThisComputer(): Promise<boolean> {
+/** Connecting this computer, as the dialog shows it: asked, under way, done
+ *  or stopped. One at a time, from the sign-in offer or the settings page. */
+export const deviceFlow = reactive({
+  open: false,
+  stage: 'ask' as 'ask' | 'progress' | 'done' | 'failed',
+  steps: [] as ConnectStep[],
+  current: null as ConnectStep | null,
+  percent: null as number | null,
+  failure: null as ConnectFailure | null,
+  deviceId: null as string | null,
+})
+
+const CORE_STEPS: ConnectStep[] = ['download', 'approve', 'start']
+const ORDER: ConnectStep[] = ['removeOld', 'tools', 'download', 'approve', 'runtime', 'start']
+
+// A reconnect at launch runs out of sight, until a step needs the person: the
+// password for removing an old connector, or Apple's tools to install.
+let quiet = false
+
+function enter(step: ConnectStep) {
+  if (quiet && (step === 'removeOld' || step === 'tools')) deviceFlow.open = true
+  if (!deviceFlow.steps.includes(step)) {
+    deviceFlow.steps = ORDER.filter((s) => s === step || deviceFlow.steps.includes(s))
+  }
+  deviceFlow.current = step
+  deviceFlow.percent = null
+}
+
+async function untilOnline(deviceId: string | null): Promise<boolean> {
+  // The service dials in a moment after it starts; Windows fetches its runtime first.
+  for (let i = 0; i < 40; i++) {
+    const devices = await myDevices().catch(() => [])
+    if (devices.some((d) => d.device_id === deviceId && d.online)) return true
+    await new Promise((r) => setTimeout(r, 1500))
+  }
+  return false
+}
+
+/** Connects this computer, showing each step in the dialog; `quiet`, for a
+ *  computer connected before, shows the dialog only when a step needs the
+ *  person, and closes it again once connected. Asked while one is under way,
+ *  it shows that one. */
+export async function startConnecting(options: { quiet?: boolean } = {}) {
   const bridge = desktopBridge()
-  if (!bridge || thisComputer.connecting) return false
-  thisComputer.connecting = true
-  thisComputer.error = null
-  thisComputer.step = t('compute.desktop.preparing')
+  if (!bridge) return
+  if (deviceFlow.stage === 'progress') {
+    // Asked for while a reconnect runs out of sight: show it, through to the end.
+    if (!options.quiet) {
+      deviceFlow.open = true
+      quiet = false
+    }
+    return
+  }
+  quiet = !!options.quiet
+  Object.assign(deviceFlow, { open: !quiet, stage: 'progress', failure: null, deviceId: null, percent: null })
+  deviceFlow.steps = [...CORE_STEPS]
+  deviceFlow.current = null
   try {
     await bridge.connectThisMachine({
       knownDeviceIds: (await myDevices()).map((d) => d.device_id),
-      onStep: (text) => (thisComputer.step = text),
+      onStep: enter,
+      onPercent: (value) => (deviceFlow.percent = value),
       approve: async (code) => {
         const { device_name } = await deviceProposedName(code)
         await connectDevice(code, device_name ?? undefined)
       },
     })
-    return true
-  } catch (e) {
-    thisComputer.error = e instanceof Error ? e.message : String(e)
-    return false
+    enter('start')
+    deviceFlow.deviceId = await bridge.thisDevice()
+    if (!(await untilOnline(deviceFlow.deviceId))) {
+      stop({ step: 'start', detail: '' })
+      return
+    }
+    deviceFlow.current = null
+    if (quiet) {
+      deviceFlow.open = false
+      deviceFlow.stage = 'ask'
+    } else deviceFlow.stage = 'done'
+  } catch (err) {
+    stop(failure(err))
   } finally {
-    thisComputer.connecting = false
+    quiet = false
   }
 }
 
-// Unbinding this computer from inside the app is a no to connecting it, kept
-// per account so the next sign-in does not undo it; the button says yes again.
-const declinedKey = (userId: number) => `cheese.desktop.noAutoConnect.${userId}`
+// Stopped: a cancel closes the dialog; a failure shows in it, unless nobody
+// was ever shown a dialog (a reconnect at launch that failed stays quiet).
+function stop(why: ConnectFailure) {
+  if (why.step === 'cancelled' || (quiet && !deviceFlow.open)) {
+    deviceFlow.open = false
+    deviceFlow.stage = 'ask'
+    return
+  }
+  deviceFlow.failure = why
+  deviceFlow.stage = 'failed'
+}
 
-export function setAutoConnect(userId: number, on: boolean) {
+export async function cancelConnecting() {
+  await desktopBridge()?.cancelConnect()
+}
+
+// Whether this person was already asked to connect this computer: asked once,
+// and from then on it is the settings page's to change.
+const askedKey = (userId: number) => `cheese.desktop.askedToConnect.${userId}`
+
+export function markAsked(userId: number) {
   try {
-    if (on) localStorage.removeItem(declinedKey(userId))
-    else localStorage.setItem(declinedKey(userId), '1')
+    localStorage.setItem(askedKey(userId), '1')
   } catch {
-    // Storage unavailable: the choice lasts until the app restarts.
+    // Storage unavailable: the question may come again at the next launch.
   }
 }
 
-function autoConnectDeclined(userId: number) {
+function asked(userId: number) {
   try {
-    return localStorage.getItem(declinedKey(userId)) === '1'
+    return localStorage.getItem(askedKey(userId)) === '1'
   } catch {
     return false
   }
 }
 
-// Signed in to the desktop app means this computer is one of your devices, as
-// in Claude's desktop app: nothing to find or press. Runs on every sign-in and
-// launch; costs one look at the device list when the computer is already online.
-export async function autoConnectThisComputer(userId: number) {
+/** At sign-in: a computer connected before and now away comes back on its
+ *  own; one never connected is asked about, once. */
+export async function offerToConnect(userId: number) {
   const bridge = desktopBridge()
-  if (!bridge || autoConnectDeclined(userId)) return
+  if (!bridge) return
   const [stored, devices] = await Promise.all([bridge.thisDevice(), myDevices().catch(() => null)])
   if (devices === null) return
-  if (stored && devices.some((d) => d.device_id === stored && d.online)) return
-  toast(t('compute.desktop.connecting'))
-  if (await connectThisComputer()) toast.success(t('compute.desktop.connected'))
-  else toast.error(t('compute.desktop.connectFailed', { reason: thisComputer.error ?? '' }))
-}
-
-// Whether a device in the list is the computer this app runs on.
-export async function isThisComputer(deviceId: string) {
-  return (await desktopBridge()?.thisDevice()) === deviceId
+  const mine = stored ? devices.find((d) => d.device_id === stored) : undefined
+  if (mine?.online) return
+  if (mine) {
+    // Connected before: bring it back without asking.
+    await startConnecting({ quiet: true })
+    return
+  }
+  if (asked(userId)) return
+  Object.assign(deviceFlow, { open: true, stage: 'ask', failure: null, steps: [], current: null, percent: null })
 }

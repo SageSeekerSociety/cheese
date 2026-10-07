@@ -11,6 +11,7 @@ does: opening a seat's runner (``open``), and answering a call to it
 import ast
 import hashlib
 import json
+import re
 import tempfile
 import uuid
 from collections.abc import AsyncIterator
@@ -27,6 +28,10 @@ from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.agent.session_host.host import SessionHost
+
+# The driver's read of a launch's ending from its runner log
+# (`ClaudeCodeDriver._ended`): the record's marker is what it searches for.
+_ENDING_READ = re.compile(r'sed -n "/([^/]+)/,')
 
 
 class _Hub:
@@ -52,6 +57,14 @@ class _Hub:
     async def exec(
         self, device_id: str, argv: list, *, stdin: str | None = None, **_: object
     ) -> dict:
+        ending = _ENDING_READ.search(argv[2]) if argv[:2] == ["sh", "-c"] else None
+        if ending is not None:
+            # A runner whose process is gone has written its ending in its log,
+            # as a real one does, so a launch reads that and stops instead of
+            # waiting out the whole startup window for a ping that cannot come.
+            if getattr(self.channel, "alive", True):
+                return {"exit": 0, "stdout": ""}
+            return {"exit": 0, "stdout": f"{ending[1]}\nthe session's process is gone"}
         if argv != ["python3", "-"] or not stdin or "payload=json.loads(" not in stdin:
             return {"exit": 0, "stdout": ""}
         # A launch program (pi's, Codex's): the seat it starts is named by its

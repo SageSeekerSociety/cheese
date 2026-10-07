@@ -38,6 +38,7 @@ from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
 )
+from app.domain.project.address import Numbered, take_number
 from app.domain.project.environment import project_environment
 from app.domain.project.models import Project
 from app.domain.topic.models import (
@@ -211,6 +212,7 @@ class TopicRepository:
         project = await self._session.get(Project, project_id)
         topic = Topic(
             project_id=project_id,
+            number=await take_number(self._session, project_id, Numbered.channel),
             environment=project_environment(project.settings if project else None),
             title=title,
             parent_id=parent_id,

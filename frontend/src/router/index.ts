@@ -15,6 +15,7 @@ import TeamsRoutes from './teams'
 import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
+import { canonicalAddress, routeIds } from '@/lib/addresses'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { refreshPreviewPointer } from '@/lib/previewPointer'
@@ -135,6 +136,8 @@ const router = createRouter({
 router.beforeEach(carryLoginRedirect)
 router.beforeEach(handSignInToApp(() => !!myId()))
 requireEmail(router, async () => (await import('@/services/account')).default)
+// 项目框里的地址落地成短的那一种（`/projects/<短名>/tasks/318`），见 lib/addresses。
+router.beforeEach((to) => (myId() ? canonicalAddress(to) : true))
 
 router.beforeEach(async (to, from, next) => {
   const store = usePageTitleStore()
@@ -167,7 +170,8 @@ router.afterEach((to, from, failure) => {
 // 在这里再取一次；没登录就什么都不发。
 router.beforeEach((to) => {
   if (to.name !== 'workspace-topic' || !myId()) return
-  const topicId = String(to.params.topicId)
+  const topicId = routeIds(to.params).topicId
+  if (!topicId) return
   if (!cachedWindow(topicId)) void refreshBlockCache(topicId)
   // 「这个房间当前预览是哪一份」也同时去问。它和消息一样不依赖话题页的代码：等那
   // 一串 chunk 下完、话题数据回来，面板才挂得上，而它一挂上就要这份答案。这里先让

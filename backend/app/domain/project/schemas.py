@@ -37,6 +37,8 @@ class ProjectOut(BaseModel):
 
     id: uuid.UUID
     name: str
+    #: Its name in addresses: `/projects/<slug>/...`.
+    slug: str
     owner_handle: str | None
     team_id: int | None = None
     #: The owning team's handle, which links to the team go by. Filled by the

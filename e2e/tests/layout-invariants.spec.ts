@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 
 // Parallel so CI shards split this file by test rather than handing one shard
 // all of it: no test depends on another, and one CI worker still runs them one
@@ -191,7 +191,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await apiLogin(page);
     await page.locator('.app-rail-item--tile').first().click();
     await page.waitForURL(/\/projects\/[^/]+/);
-    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const projectId = await projectIdOf(page);
     const artifactId = '00000000-0000-0000-0000-000000000123';
     const versions = [1, 2].map(number => ({
       number, card_id: `version-${number}`, subject: `Report ${number}`,
@@ -248,7 +248,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     await apiLogin(page);
     await page.locator('.app-rail-item--tile').first().click();
     await page.waitForURL(/\/projects\/[^/]+/);
-    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const projectId = await projectIdOf(page);
 
     await page.goto(`/projects/${projectId}/agents`);
     const edit = page.getByRole('button', { name: '编辑' }).first();
@@ -380,7 +380,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   test('技能页：新建表单、导入的两步、打开一份的详情，桌面与手机', async ({ page }) => {
     await apiLogin(page);
     await openFirstProject(page);
-    const projectId = page.url().match(/\/projects\/([^/?#]+)/)![1];
+    const projectId = await projectIdOf(page);
     const skillMd = Buffer.from(
       '---\nname: layout-check\ndescription: 量一量布局时\n---\n\n# 布局检查\n\n## 步骤与规则\n\n逐个打开\n'
     );
@@ -749,7 +749,7 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
   await rows.first().click();
-  await page.waitForURL(/\/topics\//);
+  await page.waitForURL(/\/channels\//);
   const topicHref = new URL(page.url()).pathname;
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -858,7 +858,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
-    await page.waitForURL(/\/topics\//);
+    await page.waitForURL(/\/channels\//);
     const topicHref = new URL(page.url()).pathname;
 
     for (const size of [
@@ -1031,7 +1031,7 @@ test('房间面板的「定时与触发」那一格铺满整条面板', async ({
   await apiLogin(page);
   const rows = await openFirstProject(page);
   await rows.first().click();
-  await page.waitForURL(/\/topics\//);
+  await page.waitForURL(/\/channels\//);
   // 地址直接点名这一格（`?tab=routines`），不点页签：任务那一档的页签比这里多，面板窄了
   // 它们会收进溢出菜单——点不到不代表这一格不存在。
   await page.goto(`${new URL(page.url()).pathname}?tab=routines`);

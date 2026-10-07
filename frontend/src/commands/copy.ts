@@ -4,6 +4,7 @@ import type { RouteLocationRaw, Router } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
+import { shortRoute } from '@/lib/addresses'
 
 export async function copyText(text: string, done: string): Promise<boolean> {
   try {
@@ -18,7 +19,7 @@ export async function copyText(text: string, done: string): Promise<boolean> {
 
 /** 一个站内地址的完整链接：贴到别处、别人点开能到同一个地方。 */
 export function linkOf(router: Router, to: RouteLocationRaw): string {
-  return new URL(router.resolve(to).href, window.location.origin).href
+  return new URL(router.resolve(shortRoute(to)).href, window.location.origin).href
 }
 
 export function copyLink(link: string): Promise<boolean> {

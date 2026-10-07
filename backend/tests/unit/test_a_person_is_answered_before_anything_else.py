@@ -162,6 +162,21 @@ class Backend:
         self.thread.join()
 
 
+def _exited(pid: int) -> bool:
+    """Whether the process is gone. `configure` starts the Codex runner from
+    this process, so the runner is our child and stays a zombie, which
+    `kill(pid, 0)` still finds, until it is reaped here."""
+    try:
+        return os.waitpid(pid, os.WNOHANG)[0] == pid
+    except ChildProcessError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
 def _ask(path: str, method: str, params: dict, timeout: float = 30.0) -> dict:
     """One call on a runner's socket, waiting for the socket to appear."""
     deadline = time.monotonic() + timeout
@@ -485,9 +500,7 @@ async def codex(tmp_path: Path, steps: list):
         if started is not None:
             os.kill(started["pid"], 15)
             for _ in range(100):
-                try:
-                    os.kill(started["pid"], 0)
-                except ProcessLookupError:
+                if _exited(started["pid"]):
                     break
                 time.sleep(0.1)
         subprocess.run(
@@ -648,8 +661,11 @@ async def test_a_person_who_writes_mid_turn_is_answered_before_the_next_tool(
 ):
     """…and without waiting for the command it was running: that goes on in
     the background, and finishes there."""
+    # The slow command holds until the test lets it go, so "it was still
+    # running when the person was answered" does not rest on a race with a
+    # timer, and the test does not wait out a timer to see it finish.
     steps = [
-        shell("touch STARTED; sleep 20; touch SLOW"),
+        shell("touch STARTED; while [ ! -e RELEASE ]; do sleep 0.05; done; touch SLOW"),
         shell("touch NEXT"),
         publish("stopping"),
         shell("touch AFTER"),
@@ -668,6 +684,7 @@ async def test_a_person_who_writes_mid_turn_is_answered_before_the_next_tool(
         assert not (session.machine / "NEXT").exists()
         assert REFUSED not in session.told(1)
         assert REFUSED in session.told(2)
+        (session.machine / "RELEASE").touch()
         await session.ran("SLOW", timeout=30)
 
 

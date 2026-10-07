@@ -27,6 +27,7 @@ import NavLink from './common/NavLink.vue'
 import PublishedSite from './PublishedSite.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 
 /** 清单的读写由页面给：组件自己不碰接口层（`docs/manual/dev/scenes.md`）。 */
@@ -181,7 +182,9 @@ watch(
     <PublishedSite :project-id="projectId" :api="api.site" :names="names" />
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
     <ul class="made__list">
-      <li v-if="!rows.length" class="made__empty t-body">{{ t('project.artifacts.empty') }}</li>
+      <li v-if="!rows.length" class="made__empty">
+        <BaseEmptyState size="inline" :title="t('project.artifacts.empty')" />
+      </li>
       <li
         v-for="(row, index) in rows"
         :key="row.id"
@@ -375,6 +378,5 @@ watch(
 /* 空的时候自己说它空。 */
 .made__empty {
   padding: 8px 4px;
-  color: var(--muted);
 }
 </style>

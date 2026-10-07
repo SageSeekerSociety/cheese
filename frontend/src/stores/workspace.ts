@@ -29,6 +29,7 @@ import {
 import { ApiError, isProjectArchivedError } from '@/api'
 import { setChannelMembersOnly } from '@/api/topicMembers'
 import { t } from '@/i18n'
+import { rememberNumbered, rememberProjects } from '@/lib/addresses'
 import { memberName } from '@/lib/agentNames'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { externalHandles } from '@/lib/externalMembers'
@@ -332,6 +333,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   async function refreshProjects() {
     try {
       projects.value = (await listProjects()).data
+      rememberProjects(projects.value)
     } catch (e) {
       reportError(e, t('shell.workspaceErrors.loadProject'))
     } finally {
@@ -367,6 +369,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const payload = await readLatest(`topics:${pid}:${revision}`, () => listTopics(pid, TOPIC_SORT))
       if (epoch === projectEpoch && projectId.value === pid && revision === topicRevision) {
         if (topics.value !== payload.data) topics.value = payload.data
+        rememberNumbered('channels', payload.data)
         forgetMissingTopic(pid, payload.data)
         noteArchived(payload.data)
       }
@@ -392,6 +395,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const payload = await readLatest(`topics:${id}:${revision}`, () => listTopics(id, TOPIC_SORT))
       if (epoch !== projectEpoch || projectId.value !== id) return false
       if (revision === topicRevision) topics.value = payload.data
+      rememberNumbered('channels', payload.data)
       forgetMissingTopic(id, payload.data)
       noteArchived(payload.data)
       return true
@@ -460,6 +464,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     if (!id) return
     try {
       const project = await getProject(id)
+      rememberProjects([project])
       if (epoch === projectEpoch && projectId.value === id) openedProject.value = project
     } catch {
       // 取不到就只少了名字和「取消归档」那颗按钮；「项目已归档」照样说得出。

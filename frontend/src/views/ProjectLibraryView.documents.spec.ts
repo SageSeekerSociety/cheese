@@ -126,6 +126,12 @@ async function mount(url = '/projects/p1/library') {
     history: createMemoryHistory(),
     routes: [
       { path: '/projects/:projectId/library', name: 'project-library', component: ProjectLibraryView, props: true },
+      {
+        path: '/projects/:projectId/docs/:docId',
+        name: 'project-document',
+        component: ProjectLibraryView,
+        props: true,
+      },
       { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: Blank },
       { path: '/projects/:projectId/topics/:topicId/tasks/:taskId', name: 'workspace-task', component: Blank },
     ],
@@ -155,7 +161,7 @@ describe('资料库里的文档', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '新建文档' }))
 
-    await waitFor(() => expect(router.currentRoute.value.query.doc).toBe('d2'))
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/docs/d2'))
     expect(vi.mocked(createProjectDocument)).toHaveBeenCalledWith('p1', {})
     await waitFor(() => expect(container.querySelector('[data-open-document="d2"]')).not.toBeNull())
   })
@@ -182,7 +188,7 @@ describe('资料库里的文档', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '另存为文档' }))
 
     expect(vi.mocked(createProjectDocument)).toHaveBeenCalledWith('p1', { copy_of: 'room-doc' })
-    await waitFor(() => expect(router.currentRoute.value.query.doc).toBe('copy'))
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/docs/copy'))
   })
 
   it('搜到的任务文档点开就进那个任务', async () => {
@@ -209,7 +215,7 @@ describe('资料库里的文档', () => {
 
   it('从打开的文档里删除先问一句，答应了才删，删完回到列表', async () => {
     vi.mocked(getDocumentAbout).mockResolvedValue(doc('d1', '竞品定价对比', '2026-09-21T10:00:00Z'))
-    const { router } = await mount('/projects/p1/library?doc=d1')
+    const { router } = await mount('/projects/p1/docs/d1')
 
     await fireEvent.click(await screen.findByRole('button', { name: 'delete-from-doc' }))
     await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
@@ -218,6 +224,6 @@ describe('资料库里的文档', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'delete-from-doc' }))
     await fireEvent.click(await screen.findByRole('button', { name: '删除' }))
     await waitFor(() => expect(vi.mocked(deleteDocument)).toHaveBeenCalledWith('d1'))
-    await waitFor(() => expect(router.currentRoute.value.query.doc).toBeUndefined())
+    await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/library'))
   })
 })

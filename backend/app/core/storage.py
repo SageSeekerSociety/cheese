@@ -158,6 +158,7 @@ class S3StorageBackend(StorageBackend):
         secret_key: str | None = None,
         region: str = "us-east-1",
         public_url: str | None = None,
+        read_timeout_s: float = 15,
     ) -> None:
         self._bucket = bucket
         self._endpoint_url = endpoint_url
@@ -165,6 +166,7 @@ class S3StorageBackend(StorageBackend):
         self._secret_key = secret_key
         self._region = region
         self._public_url = public_url
+        self._read_timeout_s = read_timeout_s
 
     @asynccontextmanager
     async def _get_client(self):  # type: ignore[override]
@@ -180,7 +182,7 @@ class S3StorageBackend(StorageBackend):
             # a caller's transfer deadline.
             config=AioConfig(
                 connect_timeout=5,
-                read_timeout=15,
+                read_timeout=self._read_timeout_s,
                 retries={"mode": "standard", "total_max_attempts": 3},
             ),
         )

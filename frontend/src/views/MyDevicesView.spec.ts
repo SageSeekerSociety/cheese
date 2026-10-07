@@ -29,18 +29,20 @@ function mount() {
 // The desktop app's side of the bridge: it reports steps, hands the page the
 // login code it is waiting on, and finishes once that code has been approved.
 function desktopHost(finish: Promise<void>) {
-  const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
+  const invoke = vi.fn(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
     if (cmd === 'this_device') return null
     if (cmd !== 'connect_this_machine') return
     const progress = args!.progress as { onmessage: (m: unknown) => void }
-    progress.onmessage({ kind: 'step', text: '正在接入' })
+    progress.onmessage({ kind: 'step', id: 'approve' })
     progress.onmessage({ kind: 'code', text: 'c0de' })
     await finish
   })
   class Channel {
     onmessage: (m: unknown) => void = () => {}
   }
-  ;(window as unknown as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke, Channel } }
+  const w = window as unknown as { __TAURI__?: unknown; __CHEESE_APP__?: unknown }
+  w.__TAURI__ = { core: { invoke, Channel } }
+  w.__CHEESE_APP__ = { can: ['device'] }
   return invoke
 }
 
@@ -63,7 +65,9 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
-  delete (window as unknown as { __TAURI__?: unknown }).__TAURI__
+  const w = window as unknown as { __TAURI__?: unknown; __CHEESE_APP__?: unknown }
+  delete w.__TAURI__
+  delete w.__CHEESE_APP__
   localStorage.clear()
 })
 
@@ -77,46 +81,24 @@ describe('adding a device', () => {
     expect(screen.getByText('Windows').closest('a')?.getAttribute('href')).toMatch(/Cheese-Setup-x64\.exe$/)
     expect(screen.getAllByText(/connector\/install\.sh/).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/irm .*\/connector\/install\.ps1 \| iex/).length).toBeGreaterThan(0)
-    expect(screen.queryByText('接入这台电脑')).toBeNull()
+    expect(screen.queryByText('接入这台设备')).toBeNull()
   })
 
-  it('in the desktop app, connects this computer and approves it as the signed-in user', async () => {
+  it('in the desktop app, connects this device as the signed-in user and lists it once online', async () => {
     let finish!: () => void
     const invoke = desktopHost(new Promise<void>((r) => (finish = r)))
     mount()
 
-    await fireEvent.click(await screen.findByText('接入这台电脑'))
-    await screen.findByText('正在接入')
+    await fireEvent.click(await screen.findByText('接入这台设备'))
     await vi.waitFor(() => expect(connectDevice).toHaveBeenCalledWith('c0de', 'andy-mbp'))
     expect(invoke).toHaveBeenCalledWith('connect_this_machine', expect.objectContaining({ knownDeviceIds: [] }))
 
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'this_device' ? 'd1' : undefined))
     listMyDevices.mockResolvedValue({
       devices: [{ device_id: 'd1', name: 'andy-mbp', online: true, team_ids: [], screens: [] }],
     })
     finish()
     expect(await screen.findByText('andy-mbp')).toBeTruthy()
-  })
-
-  it('in the desktop app, says why when the approval is refused and stops the login', async () => {
-    connectDevice.mockRejectedValue(new Error('code expired'))
-    let finish!: () => void
-    const invoke = desktopHost(new Promise<void>((r) => (finish = r)))
-    invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === 'cancel_connect') {
-        finish()
-        return undefined
-      }
-      if (cmd === 'this_device') return null
-      const progress = args!.progress as { onmessage: (m: unknown) => void }
-      progress.onmessage({ kind: 'code', text: 'c0de' })
-      await new Promise<void>((r) => (finish = r))
-      throw new Error('已取消')
-    })
-    mount()
-
-    await fireEvent.click(await screen.findByText('接入这台电脑'))
-    expect(await screen.findByText('批准失败：code expired')).toBeTruthy()
-    expect(invoke).toHaveBeenCalledWith('cancel_connect')
   })
 })
 

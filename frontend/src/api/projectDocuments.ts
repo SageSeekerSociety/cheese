@@ -3,6 +3,8 @@
 import type { ListPayload } from '../cx_types'
 import type { DocumentSearch, ProjectDocument } from '../lib/projectDocument'
 
+import { rememberNumbered } from '../lib/addresses'
+
 import { request } from './http'
 
 export type { DocumentHit, DocumentSearch, ProjectDocument } from '../lib/projectDocument'
@@ -11,7 +13,10 @@ const base = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/
 const one = (documentId: string) => `/documents/${encodeURIComponent(documentId)}`
 
 export function listProjectDocuments(projectId: string): Promise<ListPayload<ProjectDocument>> {
-  return request<ListPayload<ProjectDocument>>(base(projectId))
+  return request<ListPayload<ProjectDocument>>(base(projectId)).then((page) => {
+    rememberNumbered('docs', page.data)
+    return page
+  })
 }
 
 /** 新建一份：空的，或者另存 `copyOf` 那一份现在的样子。 */

@@ -12,6 +12,9 @@ from app.core.config import settings
 from app.core.db import async_session_factory, engine, get_db
 from app.core.ownership import Ownership
 from app.core.redis import get_redis_client
+
+# Registers the listener that publishes committed platform notices live.
+from app.domain.agent import live_notices as live_notices
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool, build_compute_pool
