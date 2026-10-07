@@ -64,7 +64,7 @@ covers:
 有执行器之前的房间直接在自己的目录（home 下的 `room/`）里干活，后面没有仓库，那里的文件不在任何分支、也不在任何快照里。这样的 home（没有执行器标记、`room/` 不是 git 检出又不是空的，`resource_cleanup.kept_room_files`）在删之前，`room/` 打成一个 tar.gz 送进私有存储（`kept-room-files/<项目>/<资源>.tar.gz`），保留三十天（`device_storage.RETENTION`），到期由清理的定时器删掉。
 
 - 两个时机。自有设备每次连上来，以及房间清理的定时器每小时最多一次扫一遍已连着的自有设备（`keep_room_files_due`，一台跨过部署一直连着的设备不会再连一次），它上面还没看过的每个 home 都看一次（`keep_device_room_files`），有文件的当场送走，并在那段对话里说一次文件保留到哪天、找平台管理员取回；没文件的也记一行，下次不再看。房间清理删 home 时把上传地址交给 `remove`（`room_files_upload_url`），还没送过的在同一条命令里先送再删；已经送过的传 `-`，不再送一遍。所以这样的 home 不会在没有副本时被删。
-- 记在 `kept_room_files` 表里：哪台设备、哪个 home、存储里的键、大小、到期时间、告诉了哪段对话。
+- 记在 `kept_room_files` 表里：哪台设备、哪个 home、存储里的键、大小、到期时间、告诉了哪段对话。同一个 home 同时只由一个进程打包上传：先插入或接过它那一行并记下 `looking_since`，插不进、接不过的进程就不碰它（部署时新旧两个后端会同时扫同一台设备）；送到一半进程没了的，过了 `CLAIM_STALE` 由下一次扫的接着送。
 - 没配私有存储时，有这种文件的 home 不删，清理停在那里并写明原因。
 - 取回：在服务器上 `python -m scripts.retained_files rooms list` 列出还在保留的，`rooms download <键> [--out 路径]` 下载。
 
