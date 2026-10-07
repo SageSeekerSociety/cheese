@@ -12,7 +12,7 @@ import type { Component, Plugin } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render, waitFor } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -32,8 +32,9 @@ vi.mock('@/api', async () => {
   }
 })
 
-import { CATALOG, stateProps } from './catalog'
+import { CATALOG, catalogGroup, stateProps } from './catalog'
 import { installCatalogAnswers } from './catalogFixtures'
+import { isTodo, TODO_MARK, todoSites } from './catalogTodo'
 import { installDemoBackend } from './demoBackend'
 import DemoCatalog from './DemoCatalog.vue'
 import { demoRouter } from './demoRouter'
@@ -53,6 +54,19 @@ function plugins(needs: string[]): Plugin[] {
 }
 
 const Page = DemoCatalog as unknown as Component
+
+/** 一格的参数序列化成字：取数那几包里有 ref，ref 互相指着，见过的对象不再展开。 */
+function serialized(value: unknown): string {
+  const seen = new WeakSet<object>()
+  return (
+    JSON.stringify(value, (_key, v: unknown) => {
+      if (typeof v !== 'object' || v === null) return v
+      if (seen.has(v)) return undefined
+      seen.add(v)
+      return v instanceof Map || v instanceof Set ? [...v] : v
+    }) ?? ''
+  )
+}
 
 describe('组件预览站', () => {
   let original: typeof fetch
@@ -98,13 +112,18 @@ describe('组件预览站', () => {
     vi.restoreAllMocks()
   })
 
-  it('没有一条还留着生成脚本的占位（TODO(catalog)）', () => {
-    // 骨架（`scripts/catalog-scaffold.mjs`）把要人写的每一句都写成这个记号：目录里的
-    // 一张卡要说清它是什么、这一格在讲什么，没写完的骨架不算一张卡。
-    const unfinished = CATALOG.filter((entry) =>
-      [entry.about, ...entry.states.flatMap((s) => [s.name, s.note])].some((text) => text.includes('TODO(catalog)'))
-    ).map((entry) => entry.id)
+  it('没有一条还留着生成脚本的占位（TODO(catalog) 或 todo(...)）', () => {
+    // 骨架（`scripts/catalog-scaffold.mjs`）把要人写的每一句、要人换成真形状的每一个
+    // 参数都带上记号（见 `catalogTodo.ts`）：目录里的一张卡要说清它是什么、这一格在讲
+    // 什么，喂的是产品里的形状。没写完的骨架不算一张卡，只补了句子也不算。
+    const unfinished = CATALOG.filter((entry) => {
+      const values = [entry.args ?? {}, ...entry.states.map((s) => stateProps(entry, s))]
+      const texts = [entry.about, ...entry.states.flatMap((s) => [s.name, s.note]), ...values.map(serialized)]
+      return texts.some((text) => text.includes(TODO_MARK)) || values.some((v) => Object.values(v).some(isTodo))
+    }).map((entry) => entry.id)
     expect(unfinished).toEqual([])
+    // 数、布尔、null 认不出是哪一条的，但 `todo(...)` 调过就记了一处。
+    expect(todoSites()).toEqual([])
   })
 
   it('每个 id 只出现一次', () => {
@@ -129,9 +148,10 @@ describe('组件预览站', () => {
           // 有几件自己去取数（验收卡），所以「画出来了」要等一等，不是同步的事。
           await waitFor(() => {
             if (state.expect) expect(scope.textContent).toContain(state.expect)
-            // 没有该看见的那句话的（骨架屏就是这种：它本来一个字都没有），退一步：
-            // 至少得画出点东西来，不能是一片空白。
-            else expect(scope.innerHTML.trim()).not.toBe('')
+            // 字分不出这一格的，再看一个只有这一格才有的形状。
+            if (state.expectSelector) expect(scope.querySelector(state.expectSelector)).not.toBeNull()
+            // 两样都没给的，退一步：至少得画出点东西来，不能是一片空白。
+            if (!state.expect && !state.expectSelector) expect(scope.innerHTML.trim()).not.toBe('')
           })
         })
       }
@@ -155,6 +175,44 @@ describe('组件预览站', () => {
         expect(hrefs).toContain(`/demo/catalog/${entry.id}`)
         expect(view.container.textContent).toContain(entry.title)
       }
+    })
+
+    /** 目录页上的卡：每一张指到哪一条。 */
+    function cardIds(scope: ParentNode): string[] {
+      return Array.from(scope.querySelectorAll('a.catalog-card')).map((a) =>
+        a.getAttribute('href')!.replace('/demo/catalog/', '')
+      )
+    }
+
+    it('卡按源码目录分组：每一组的卡都在那个目录下，组按目录名排', () => {
+      const view = mount('/demo/catalog')
+      const sections = Array.from(view.container.querySelectorAll('section.catalog-group'))
+      const names = sections.map((section) => section.querySelector('.catalog-group-name code')!.textContent)
+      expect(names).toEqual([...new Set(CATALOG.map(catalogGroup))].sort((a, b) => a.localeCompare(b)))
+      for (const [i, section] of sections.entries()) {
+        const groups = cardIds(section).map((id) => catalogGroup(CATALOG.find((e) => e.id === id)!))
+        expect(new Set(groups)).toEqual(new Set([names[i]]))
+      }
+      expect(cardIds(view.container).sort()).toEqual(CATALOG.map((e) => e.id).sort())
+    })
+
+    it('搜索只留下名字、说明或路径里对得上的卡，并说一声找到几个', async () => {
+      const view = mount('/demo/catalog')
+      await fireEvent.update(view.getByRole('searchbox', { name: '按名字、说明或路径找组件' }), 'panels/Changes')
+      const want = CATALOG.filter((e) =>
+        [e.title, e.about, e.file].some((text) => text.toLowerCase().includes('panels/changes'))
+      ).map((e) => e.id)
+      expect(want.length).toBeGreaterThan(1)
+      expect(want.length).toBeLessThan(CATALOG.length)
+      expect(cardIds(view.container).sort()).toEqual(want.sort())
+      expect(view.getByRole('status').textContent).toBe(`找到 ${want.length} 个组件`)
+    })
+
+    it('什么都没对上时说一句话，不是一块空白', async () => {
+      const view = mount('/demo/catalog')
+      await fireEvent.update(view.getByRole('searchbox'), '不会有组件叫这个名字')
+      expect(cardIds(view.container)).toEqual([])
+      expect(view.getByRole('status').textContent).toBe('没有对得上的组件。')
     })
 
     it('一个组件那一页画出它每一格的状态', () => {

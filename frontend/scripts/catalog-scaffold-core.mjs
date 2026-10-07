@@ -10,6 +10,13 @@
 // `TODO(catalog)` — and `catalog.spec.ts` fails on any entry still carrying
 // the marker, so an unfinished skeleton cannot be committed as a card.
 //
+// The placeholder ARGS are marked too: a value of the right kind is still an
+// invented one, and a skeleton whose sentences were filled in but whose args
+// were not is exactly as unfinished. A string placeholder is the marker itself;
+// a value that cannot hold a string (number, boolean, null, array, object,
+// function) is wrapped in `todo(...)` from `src/views/demo/catalogTodo.ts`,
+// which returns it unchanged and records the call — the spec fails on that too.
+//
 // WHERE THE PROPS COME FROM. Vue's own compiler (`compileScript`), the same
 // one the build runs: a type-only `defineProps<Props>()` is resolved to the
 // runtime declaration the component will actually get, imported types
@@ -23,6 +30,9 @@ registerTS(() => ts)
 
 /** The marker every hand-written sentence starts as; the catalog spec rejects it. */
 export const TODO = 'TODO(catalog)'
+
+/** Where `todo(...)` lives, as the catalog shards import it (they sit next to it). */
+export const TODO_IMPORT = "import { todo } from './catalogTodo'"
 
 /**
  * `{ name, types, required }` for each declared prop, in declaration order.
@@ -85,27 +95,29 @@ function parseProps(block) {
 }
 
 /**
- * A value of the right kind, written as TypeScript source. A prop that may be
- * null gets null: it is the one value of its type that needs no invention.
+ * A value of the right kind, written as TypeScript source, and marked as a
+ * placeholder: a string is the marker itself, anything else is `todo(value)`.
+ * A prop that may be null gets null — the one value of its type that needs no
+ * invention, but still a choice the person has to make, so it is marked too.
  */
 export function placeholder(prop) {
-  if (prop.types.includes('null')) return 'null'
+  if (prop.types.includes('null')) return 'todo(null)'
   const kinds = prop.types.filter((t) => t !== 'null')
   switch (kinds[0]) {
     case 'String':
-      return `'${prop.name}'`
+      return `'${TODO}'`
     case 'Number':
-      return '0'
+      return 'todo(0)'
     case 'Boolean':
-      return 'false'
+      return 'todo(false)'
     case 'Array':
-      return '[]'
+      return 'todo([])'
     case 'Function':
-      return '() => {}'
+      return 'todo(() => {})'
     case 'Object':
-      return '{}'
+      return 'todo({})'
     default:
-      return 'undefined'
+      return 'todo(undefined)'
   }
 }
 
@@ -163,7 +175,11 @@ export function bindingNames(files) {
   }
 }
 
-/** One entry's import line and object literal, as TypeScript source. */
+/**
+ * One entry's import line and object literal, as TypeScript source.
+ * `usesTodo` says whether the entry calls `todo(...)`, i.e. whether the file it
+ * is pasted into needs `TODO_IMPORT`.
+ */
 export function scaffold({ file, source, fs, name = bindingNames([file])[0] }) {
   const props = propsOf(source, file, fs)
   const required = props.filter((p) => p.required)
@@ -191,5 +207,6 @@ export function scaffold({ file, source, fs, name = bindingNames([file])[0] }) {
   return {
     importLine: `import ${name} from '@/${file.replace(/^src\//, '')}'`,
     entry: lines.join('\n'),
+    usesTodo: args.some((line) => line.includes('todo(')),
   }
 }

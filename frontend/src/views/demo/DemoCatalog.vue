@@ -55,6 +55,14 @@ const groups = computed(() => {
     .map(([name, items]) => ({ name, items: items.sort((a, b) => a.title.localeCompare(b.title)) }))
 })
 
+const shown = computed(() => groups.value.reduce((n, group) => n + group.items.length, 0))
+
+/** 搜索的结果说一句：读屏软件听得到「找到几个」，什么都没对上时说的也是这一句。 */
+const resultNote = computed(() => {
+  if (!query.value.trim()) return ''
+  return shown.value ? `找到 ${shown.value} 个组件` : '没有对得上的组件。'
+})
+
 function needsOf(needs: string[]): string {
   return needs.length ? needs.map((n) => NEED_LABELS[n] ?? n).join(' · ') : '一件都不用装'
 }
@@ -70,6 +78,7 @@ function needsOf(needs: string[]): string {
 
     <!-- 目录：扫一眼有哪些组件、各自要什么。这一页不挂组件，挂满一屏的组件没人看。 -->
     <template v-if="!entry">
+      <h1 class="catalog-name">组件目录</h1>
       <p class="catalog-lede">
         每个组件一页，用真产品的形状渲染几种状态。这一页不连后端、不登录 —— <code>pnpm dev</code> 打开
         <code>/demo/catalog</code> 就能看。加一个组件：<code>node scripts/catalog-scaffold.mjs</code> 按 props
@@ -80,8 +89,11 @@ function needsOf(needs: string[]): string {
         class="catalog-search"
         type="search"
         autocomplete="off"
+        aria-label="按名字、说明或路径找组件"
         placeholder="按名字、说明或路径找"
       />
+      <!-- 一直在页面上的那一格：内容变了读屏软件才会念（中途插进来的 live region 常常不念）。 -->
+      <p class="catalog-result" role="status">{{ resultNote }}</p>
       <section v-for="group in groups" :key="group.name" class="catalog-group">
         <h2 class="catalog-group-name">
           <code>{{ group.name }}</code> <span>{{ group.items.length }}</span>
@@ -100,7 +112,6 @@ function needsOf(needs: string[]): string {
           </li>
         </ul>
       </section>
-      <p v-if="!groups.length" class="catalog-missing">没有对得上的组件。</p>
     </template>
 
     <!-- 这个组件的那一页：一格里一个状态。 -->
@@ -188,16 +199,33 @@ function needsOf(needs: string[]): string {
 .catalog-search {
   max-width: 360px;
   padding: 6px 10px;
-  font-size: 13px;
+  /* 16px 以下 iOS Safari 聚焦时会把整页放大。 */
+  font-size: 16px;
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);
 }
 
-.catalog-search:focus {
+.catalog-search:focus-visible {
   border-color: var(--accent);
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.catalog-result {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 没在搜的时候它是空的：不占那一行，但留在无障碍树里（display: none 会让它下次不被念）。 */
+.catalog-result:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 
 .catalog-group {
@@ -220,7 +248,8 @@ function needsOf(needs: string[]): string {
 .catalog-index {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  /* 窄屏（360 宽的手机减去左右留白）放不下 320px 一列：最窄退到整行宽。 */
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   padding: 0;
   margin: 0;
   list-style: none;

@@ -8,15 +8,18 @@
  *     树上的 +N −M 和点开看到的那一段因此不会对不上；
  *   - 现场、步骤清单读的是 `quickstart` 剧本放到某一步的那一帧（`frameAt`），和
  *     `DemoRoom` 上演的是同一串行；
- *   - 三只壳子（`PanelChanges` / `PanelPreview` / `PanelDoc`）收的是取数那一层的整包，
- *     这里把 View 夹具那一串 props 原样装回 composable 返回的形状：状态是 ref，动作
- *     是什么都不做的函数。壳子只是把包摊开递给 View，所以画出来的就是 View 那几格。
+ *   - 四只壳子（`PanelChanges` / `PanelPreview` / `PanelDoc` / `PanelSite`）收的是取数
+ *     那一层的整包，这里把 View 夹具那一串 props 逐键装回 composable 返回的形状：状态
+ *     是 ref 或 computed（和产品里那一样一致），动作是什么都不做的函数。一包里有哪几样
+ *     由返回类型守着，少一样 typecheck 就报错；壳子只是把包摊开递给 View，所以画出来
+ *     的就是 View 那几格。
  *   - 剧本没演到的（定时规则、支线、很长的一份 diff），照各自的类型造，人和房间仍然
  *     是剧本里那几位。
  *
  * 单独一份文件：`catalogFixtures.ts` 已经九百多行，再加会顶到一千行的上限。条目在
  * `catalogPanels.ts`。
  */
+import type { Ref } from 'vue'
 import type { DocThreadsBundle } from '@/composables/useDocThreads'
 import type { PanelChangesBundle } from '@/composables/usePanelChanges'
 import type { PanelDocBundle } from '@/composables/usePanelDoc'
@@ -25,11 +28,12 @@ import type { PanelSiteBundle } from '@/composables/usePanelSite'
 import type { SessionInspectorBundle, SessionRead } from '@/composables/useSessionInspector'
 import type { Block, RoomTask, TodoItem, WorkspaceFile } from '@/cx_types'
 import type { DiffLine, FileDiff } from '@/lib/diff'
+import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { Routine, RoutineRun } from '@/lib/routine'
 import type { AgentControlState } from '@/types/agentControl'
 import type { ThreadReply, ThreadRow } from '@/types/threads'
 
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, shallowRef } from 'vue'
 
 import { useDocPeople } from '@/composables/useDocPeople'
 
@@ -47,6 +51,7 @@ import { SCENES } from './scenes'
 
 import { buildFileRows } from '@/lib/changesTree'
 import { DIFF_WINDOW, parseDiffLines, splitDiffByFile } from '@/lib/diff'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, pageViewOf, suffixOf } from '@/lib/fileKind'
 
 const SCENE = SCENES.quickstart
 
@@ -60,6 +65,8 @@ export const PANEL_NAMES: Record<string, string> = ROOM_REFS.mentionNames
 
 const noop = () => {}
 const noopAsync = async () => {}
+/** 要写点什么回去的动作（发评论、传标注、落修改）：预览站只画，不写，点到了就说一声。 */
+const refuseWrite = () => Promise.reject(new Error('组件预览站不写任何东西'))
 
 // ---- 改动那一支活 ----------------------------------------------------------
 
@@ -98,9 +105,22 @@ export const LONG_DIFF_LINES: DiffLine[] = parseDiffLines(
   )[0].body
 )
 
-/** 文件树那几行：和 `PanelChangesView` 一样交给 `buildFileRows` 折。 */
+/** 工作区里这时有的文件：这一支活碰过的那几份（删掉的那份已经不在了），加上它没碰的
+ *  —— 「全部文件」比「只看改动」多出来的就是这几样。 */
+const WORKSPACE_FILES: WorkspaceFile[] = [
+  ...TREE_FILES.filter((f) => DIFF_BY_PATH.get(f.path)?.status !== 'removed'),
+  { path: 'syllabus.md', bytes: 1840 },
+  { path: 'docs/week-2.md', bytes: 612 },
+  { path: 'slides/week-1.pdf', bytes: 2_310_144 },
+]
+
+/** 文件树那几行：和 `PanelChangesView` 一样交给 `buildFileRows` 折。树上的文件照
+ *  `usePanelChanges` 的 `treeFiles` 取：只看改动是改过的那几份；全部文件是工作区那一份
+ *  清单，再补上这一支删掉、工作区里已经没有的（那也是要验收的一条）。 */
 export function fileTreeRows(showAll: boolean, expanded: string[] = []) {
-  return buildFileRows({ files: TREE_FILES, diffByPath: DIFF_BY_PATH, showAll, expandedDirs: new Set(expanded) })
+  const known = new Set(WORKSPACE_FILES.map((f) => f.path))
+  const files = showAll ? [...WORKSPACE_FILES, ...TREE_FILES.filter((f) => !known.has(f.path))] : TREE_FILES
+  return buildFileRows({ files, diffByPath: DIFF_BY_PATH, showAll, expandedDirs: new Set(expanded) })
 }
 
 /** `ProjectFileView` 的那十八样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
@@ -128,27 +148,69 @@ export function projectFileProps(over: Record<string, unknown> = {}): Record<str
   }
 }
 
-// ---- 三只壳子收的那几包 ------------------------------------------------------
+// ---- 四只壳子收的那几包 ------------------------------------------------------
+//
+// 每一包都逐键写出来，返回类型就是 composable 的 `ReturnType`：少一样、多一样、名字拼
+// 错、该是 computed 的给成了 ref，typecheck 当场点名。不用 `...` 摊一串 Record、也不
+// `as` 收口 —— 那样漏掉的键在运行时是 undefined，壳子照样摊开递下去，View 多半还画得
+// 出这几格，测试看不出来。
 
-/** 去掉几样：壳子自己的 props 不在取数那一包里。 */
-function without(values: Record<string, unknown>, keys: string[]): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(values).filter(([key]) => !keys.includes(key)))
-}
+/** 一包摊开以后 View 拿到的那一串值：每个 ref 解开成它装的东西，其余（动作、整包）原样。
+ *  View 夹具（`changesPanelProps` 那几个）写的就是这个形状。 */
+type Unwrapped<B> = { [K in keyof B]: B[K] extends Ref<infer T> ? T : B[K] }
 
-/** 一串 View 的 props 装回 composable 的形状：状态各是一个 ref，`keep` 里那几样本来就
- *  是一整包（修订、编辑器、历史），原样放进去。 */
-function refsOf(values: Record<string, unknown>, keep: string[]): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, keep.includes(key) ? value : ref(value)])
-  )
-}
-
-/** 「改动」那一包（`usePanelChanges` 的返回）。 */
-export function changesBundle(over: Record<string, unknown> = {}): PanelChangesBundle {
-  const state = without(changesPanelProps(over), ['topicId', 'readOnly'])
+/** 「改动」那一包（`usePanelChanges` 的返回）。View 夹具是一串按 View props 写的
+ *  Record，这里把它读成解开的那一包：值对不对由 catalog.spec 挂 View 那几格时的 props
+ *  校验看着，这里管的是一包里有哪几样、各自是 ref 还是 computed。 */
+export function changesBundle(over: Partial<Unwrapped<PanelChangesBundle>> = {}): PanelChangesBundle {
+  const v = changesPanelProps(over) as Unwrapped<PanelChangesBundle>
   return {
-    ...refsOf(state, ['revs']),
-    fileSaved: ref(false),
+    taskLoadError: ref(v.taskLoadError),
+    selectedTask: computed(() => v.selectedTask),
+    currentTask: computed(() => v.currentTask),
+    sourceStatus: computed(() => v.sourceStatus),
+    sourceUnavailable: computed(() => v.sourceUnavailable),
+    showAll: ref(v.showAll),
+    fileSource: computed(() => v.fileSource),
+    fileToolReady: computed(() => v.fileToolReady),
+    loading: ref(v.loading),
+    refreshing: ref(v.refreshing),
+    errorMsg: ref(v.errorMsg),
+    noRepo: ref(v.noRepo),
+    missing: ref(v.missing),
+    gitCommits: ref(v.gitCommits),
+    fileDiffs: computed(() => v.fileDiffs),
+    diffByPath: computed(() => v.diffByPath),
+    treeFiles: computed(() => v.treeFiles),
+    openPath: ref(v.openPath),
+    fileDraft: ref(v.fileDraft),
+    // 上一次读到或存下的正文；没改过就是手上这一份（`fileDirty` 在产品里就是两者不等）。
+    fileSaved: ref(v.fileDirty ? '' : v.fileDraft),
+    fileSaving: ref(v.fileSaving),
+    fileDirty: computed(() => v.fileDirty),
+    fileVersion: ref(v.fileVersion),
+    fileBinary: ref(v.fileBinary),
+    fileTooLarge: ref(v.fileTooLarge),
+    fileBytes: ref(v.fileBytes),
+    fileReadOnly: computed(() => v.fileReadOnly),
+    fileConflict: ref(v.fileConflict),
+    openDiff: computed(() => v.openDiff),
+    openDiffLines: computed(() => v.openDiffLines),
+    effectiveView: computed(() => v.effectiveView),
+    fileView: ref(v.fileView),
+    openIsImage: computed(() => v.openIsImage),
+    openIsDocument: computed(() => v.openIsDocument),
+    openDocumentType: computed(() => v.openDocumentType),
+    revisionPath: computed(() => v.revisionPath),
+    openRawUrl: computed(() => v.openRawUrl),
+    expandedDirs: ref(v.expandedDirs),
+    revealTick: ref(v.revealTick),
+    draftCount: computed(() => v.draftCount),
+    docBytes: computed(() => v.docBytes),
+    docLoading: computed(() => v.docLoading),
+    docError: computed(() => v.docError),
+    docRendererMissing: computed(() => v.docRendererMissing),
+    revs: v.revs,
     loadAll: noopAsync,
     selectFile: noopAsync,
     selectVersion: noopAsync,
@@ -158,66 +220,111 @@ export function changesBundle(over: Record<string, unknown> = {}): PanelChangesB
     saveFile: noopAsync,
     overwriteFile: noopAsync,
     reloadOpenFile: noopAsync,
-    onRevisionDecided: noop,
-  } as unknown as PanelChangesBundle
+    onRevisionDecided: noopAsync,
+  }
 }
 
-/** 「预览」那一包（`usePanelPreview` 的返回）。View 夹具里没有的那几样（帧、导航、
- *  文档身份、网页那一档）给的是取数那一层的初值：这一份是 markdown，用不上它们。 */
-export function previewBundle(over: Record<string, unknown> = {}): PanelPreviewBundle {
-  const state = without(previewPanelProps(over), ['topicId', 'projectId', 'frameName'])
+/** 预览那一包里由「这一份文件」算出来的几样：照 `usePanelPreview` 的算法算，不由夹具给。 */
+type PreviewDerived = 'documentSuffix' | 'documentType' | 'documentName' | 'isImageArtifact' | 'docIdentity' | 'canPage'
+
+/** 「预览」那一包（`usePanelPreview` 的返回）。View 夹具里没有的那几样（帧、导航、网页
+ *  那一档）给的是取数那一层的初值：这一份是 markdown，用不上它们。后缀、类型、名字、
+ *  文档身份从 `previewFile` 算 —— 没有文件时它们就是产品里那时的值，夹具不必另写一遍。 */
+export function previewBundle(
+  over: Partial<Omit<Unwrapped<PanelPreviewBundle>, PreviewDerived>> = {}
+): PanelPreviewBundle {
+  const v = previewPanelProps(over) as Unwrapped<PanelPreviewBundle>
+  const file = v.previewFile
+  const suffix = suffixOf(file?.path ?? '')
+  const identity: DocumentIdentity | null = file
+    ? { topicId: DEMO_TOPIC, path: file.path, taskId: null, source: file.source ?? 'live', version: file.version }
+    : null
   return {
-    ...refsOf(state, ['revs', 'editor', 'fileHistory']),
     frames: computed(() => []),
     displayedFrame: ref(null),
     navigation: ref('idle'),
     navigationError: ref(''),
-    autoReloaded: ref(false),
-    docIdentity: ref(null),
-    docSnapshot: ref(null),
-    slideContext: ref(undefined),
-    docPage: ref(false),
-    canPage: ref(false),
-    docPageHtml: ref(null),
     frameLoaded: noop,
     frameFailed: noop,
+    loading: ref(v.loading),
+    refreshing: ref(v.refreshing),
+    previewFile: ref(v.previewFile),
+    previewMime: ref(v.previewMime),
+    previewNamed: ref(v.previewNamed),
+    previewUrl: ref(v.previewUrl),
+    previewAppNote: ref(v.previewAppNote),
+    previewTunnelUp: ref(v.previewTunnelUp),
+    previewNamedPath: ref(v.previewNamedPath),
+    autoReloaded: ref(false),
+    previewError: ref(v.previewError),
+    previewReadError: ref(v.previewReadError),
+    documentSuffix: computed(() => suffix),
+    documentType: computed(() => DOCUMENT_TYPES[suffix] ?? null),
+    documentName: computed(() => file?.path.split('/').pop() ?? ''),
+    isImageArtifact: computed(() => IMAGE_SUFFIXES.has(suffix)),
+    downloadError: ref(v.downloadError),
+    docBytes: computed(() => v.docBytes),
+    docIdentity: computed(() => identity),
+    docSnapshot: ref(null),
+    slideContext: computed(() => undefined),
+    docLoading: computed(() => v.docLoading),
+    docError: computed(() => v.docError),
+    docRendererMissing: computed(() => v.docRendererMissing),
+    docPage: computed(() => false),
+    canPage: computed(() => pageViewOf(identity?.path)),
+    docPageHtml: ref(null),
+    revs: v.revs,
+    editing: ref(v.editing),
+    showHistory: ref(v.showHistory),
+    editor: v.editor,
+    fileHistory: v.fileHistory,
     load: noopAsync,
     downloadArtifact: noopAsync,
-    refreshDocument: noopAsync,
-    uploadAnnotation: async () => '',
+    refreshDocument: noop,
+    uploadAnnotation: refuseWrite,
     openEditor: noop,
     closeEditor: noop,
     toggleHistory: noop,
     toggleDocPage: noop,
     setPickMode: noop,
-  } as unknown as PanelPreviewBundle
+  }
 }
 
 /** 「文档」那一包（`usePanelDoc` 的返回）：正文是一篇只活在这一页里的协同文档。 */
-export function docBundle(over: Record<string, unknown> = {}): PanelDocBundle {
-  const view = docPanelProps(over)
+export function docBundle(over: Partial<Unwrapped<PanelDocBundle>> = {}): PanelDocBundle {
+  const view = docPanelProps()
+  const v = {
+    session: view.session,
+    connection: view.connection,
+    peers: view.peers,
+    readOnly: view.readOnly,
+    editable: view.editable,
+    loading: view.loading,
+    errorMsg: view.errorMsg as string | null,
+    ...over,
+  }
   return {
-    session: ref(view.session),
-    connection: ref(view.connection),
+    session: shallowRef(v.session),
+    connection: ref(v.connection),
     outdated: ref(false),
     deleted: ref(false),
     renames: ref(0),
-    peers: ref(view.peers),
-    readOnly: ref(view.readOnly),
-    editable: ref(view.editable),
-    loading: ref(view.loading),
-    errorMsg: ref(view.errorMsg),
+    peers: shallowRef(v.peers),
+    readOnly: ref(v.readOnly),
+    editable: computed(() => v.editable),
+    loading: computed(() => v.loading),
+    errorMsg: computed(() => v.errorMsg),
     documentId: ref(null),
     suggestionReasons: ref({}),
-    fetchSuggestionReasons: noop,
+    fetchSuggestionReasons: noopAsync,
     commentAuthor: 'wang',
-    sendComment: async () => ({}),
+    sendComment: refuseWrite,
     askAgent: noopAsync,
     stopAgent: noopAsync,
     answerToComment: async () => '',
-    lastEdit: ref(null),
+    lastEdit: computed(() => null),
     nameOf: (handle: string) => PANEL_NAMES[handle] ?? handle,
-    loadVersions: async () => ({ versions: [] }),
+    loadVersions: async () => ({ versions: [], cursor: null }),
     restoreVersion: noopAsync,
     withMentions: (content: string) => content,
     rename: async (title: string) => title,
@@ -226,14 +333,14 @@ export function docBundle(over: Record<string, unknown> = {}): PanelDocBundle {
     setError: view.setError,
     fetchDocNodes: view.fetchDocNodes,
     imageSrc: view.imageSrc,
-    applyEdits: noopAsync,
-  } as unknown as PanelDocBundle
+    applyEdits: refuseWrite,
+  }
 }
 
 /** 评论串那一包（`useDocThreads` 的返回）：还没有评论。 */
 export function docThreadsBundle(): DocThreadsBundle {
   const view = docPanelProps()
-  return { state: reactive(view.threadState), actions: view.threadActions, refresh: noopAsync } as DocThreadsBundle
+  return { state: reactive(view.threadState), actions: view.threadActions, refresh: noopAsync }
 }
 
 /** 名册那一包：真的 `useDocPeople`（它只是几个 computed），名册是验收卡那份。 */
@@ -302,12 +409,38 @@ export function siteBundle(
     selectAgent: noop,
     inspector: inspectorBundle(over.connected ? { id: 'demo-session', connected: true, tasks: {} } : null),
     loadStepOutput: async () => '',
-  } as unknown as PanelSiteBundle
+  }
 }
 
-/** 摊开一步之后那一段输出：`ls` 打印的就是工作区里那几样。 */
+/** 整段输出有多少字节（`SiteStepOutput` 的 `bytes` 说的就是这个）。 */
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length
+}
+
+/** 一小段输出：`ls` 打印的就是工作区里那几样。 */
+const LS_OUTPUT = 'README.md\ndocs\n'
+export const LS_OUTPUT_BYTES = byteLength(LS_OUTPUT)
 export async function loadLsOutput(): Promise<string> {
-  return 'README.md\ndocs\n'
+  return LS_OUTPUT
+}
+
+/** 一大段输出：一次构建把每个产物都报了一行，整段 48 KB 上下。 */
+const BUILD_LOG = (() => {
+  const lines = ['vite v7.1.4 building for production...', 'transforming...']
+  for (let i = 1; byteLength(lines.join('\n')) < 48 * 1024 - 64; i++) {
+    const kb = (((i * 37) % 900) + 12) / 10
+    lines.push(
+      `dist/assets/chunk-${String(i).padStart(4, '0')}.js   ${kb.toFixed(2)} kB │ gzip: ${(kb / 3).toFixed(2)} kB`
+    )
+  }
+  return `${lines.join('\n')}\n✓ built in 41.27s\n`
+})()
+export const BUILD_LOG_BYTES = byteLength(BUILD_LOG)
+/** 后端只留末尾 8 KiB，按 UTF-8 字节数，切断的半个字丢掉（`backend/app/domain/agent/step_output.py`
+ *  的 `output_tail`）：取回来的就是那一截。 */
+export async function loadBuildTail(): Promise<string> {
+  const tail = new TextEncoder().encode(BUILD_LOG).slice(-8 * 1024)
+  return new TextDecoder().decode(tail).replace(/^\uFFFD+/, '')
 }
 
 // ---- 步骤清单 -----------------------------------------------------------------
@@ -326,7 +459,16 @@ function replyOf(step: number, who: string, index = 0): ThreadReply {
   return { author: block.author, content: block.content, created_at: block.created_at }
 }
 
-/** 两条支线：王长鑫点名芝士的那句下面芝士回了话；另一条后来转成了任务。 */
+/** 第二条支线下面那一句：剧本里没人在「先记一下」下面回话，照支线的类型造一句，
+ *  说话的仍是芝士，时间在那条消息之后。 */
+const NOTE_ROOT = replyOf(0, 'wang')
+const NOTE_REPLY: ThreadReply = {
+  author: 'cheese',
+  content: '这件我开个任务整理：第一周的课件放进 docs/week-1.md。',
+  created_at: new Date(Date.parse(NOTE_ROOT.created_at) + 5 * 60_000).toISOString(),
+}
+
+/** 两条支线：王长鑫点名芝士的那句下面芝士回了话；另一条芝士回了一句，后来转成了任务。 */
 export const THREAD_ROWS: ThreadRow[] = [
   {
     id: 'thread-1',
@@ -345,11 +487,11 @@ export const THREAD_ROWS: ThreadRow[] = [
     room_id: DEMO_TOPIC,
     root_block_id: 'root-2',
     reply_count: 1,
-    last_reply_at: replyOf(0, 'wang').created_at,
-    last_reply: replyOf(0, 'wang'),
-    participants: ['wang'],
+    last_reply_at: NOTE_REPLY.created_at,
+    last_reply: NOTE_REPLY,
+    participants: ['wang', 'cheese'],
     task: { id: CHANGES_TASK.id, title: CHANGES_TASK.title, status: 'open' },
-    root: replyOf(0, 'wang'),
+    root: NOTE_ROOT,
     unread: false,
   },
 ]

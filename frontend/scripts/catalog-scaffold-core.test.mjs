@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { bindingNames, guessNeeds, idOf, placeholder, propsOf, scaffold, TODO } from './catalog-scaffold-core.mjs'
+import {
+  bindingNames,
+  guessNeeds,
+  idOf,
+  placeholder,
+  propsOf,
+  scaffold,
+  TODO,
+  TODO_IMPORT,
+} from './catalog-scaffold-core.mjs'
 
 const noFs = { fileExists: () => false, readFile: () => undefined }
 
@@ -56,11 +65,22 @@ test('the runtime-object form and a component with no props both work', () => {
   assert.deepEqual(propsOf('<template><hr /></template>', 'Plain.vue', noFs), [])
 })
 
-test('placeholders are of the declared kind, and nullable is null', () => {
-  assert.equal(placeholder({ name: 'title', types: ['String'] }), "'title'")
-  assert.equal(placeholder({ name: 'error', types: ['String', 'null'] }), 'null')
-  assert.equal(placeholder({ name: 'rows', types: ['Array'] }), '[]')
-  assert.equal(placeholder({ name: 'onPick', types: ['Function'] }), '() => {}')
+test('placeholders are of the declared kind, nullable is null, and every one carries the marker', () => {
+  assert.equal(placeholder({ name: 'title', types: ['String'] }), `'${TODO}'`)
+  assert.equal(placeholder({ name: 'error', types: ['String', 'null'] }), 'todo(null)')
+  assert.equal(placeholder({ name: 'count', types: ['Number'] }), 'todo(0)')
+  assert.equal(placeholder({ name: 'open', types: ['Boolean'] }), 'todo(false)')
+  assert.equal(placeholder({ name: 'rows', types: ['Array'] }), 'todo([])')
+  assert.equal(placeholder({ name: 'onPick', types: ['Function'] }), 'todo(() => {})')
+  assert.equal(placeholder({ name: 'meta', types: ['Object'] }), 'todo({})')
+  assert.equal(placeholder({ name: 'anything', types: [] }), 'todo(undefined)')
+})
+
+test('the todo import points at the module that defines it', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const from = /from '\.\/(\w+)'/.exec(TODO_IMPORT)[1]
+  const source = await readFile(new URL(`../src/views/demo/${from}.ts`, import.meta.url), 'utf8')
+  assert.match(source, /export function todo</)
 })
 
 test('needs are guessed from what the source visibly uses', () => {
@@ -76,11 +96,29 @@ test('ids are kebab case, acronyms included', () => {
 test('the skeleton fills required args only and marks every sentence a person owes', () => {
   const { importLine, entry } = scaffold({ file: 'src/components/x/Typed.vue', source: TYPED, fs: noFs })
   assert.equal(importLine, "import Typed from '@/components/x/Typed.vue'")
-  assert.match(entry, /rows: \[\],/)
-  assert.match(entry, /error: null,/)
+  assert.match(entry, /rows: todo\(\[\]\),/)
+  assert.match(entry, /error: todo\(null\),/)
   assert.doesNotMatch(entry, /count: /)
   assert.match(entry, /\/\/ optional: count/)
-  assert.equal(entry.split(TODO).length - 1, 3)
+  // about、格名、格的说明三句，加上 title 那个字符串参数。
+  assert.equal(entry.split(TODO).length - 1, 4)
+})
+
+test('every required arg the skeleton writes is marked, so filling in the sentences alone is not enough', () => {
+  const { entry, usesTodo } = scaffold({ file: 'src/components/x/Typed.vue', source: TYPED, fs: noFs })
+  const args = /args: \{\n([\s\S]*?)\n {4}\},/
+    .exec(entry)[1]
+    .split('\n')
+    .filter((line) => !line.includes('//'))
+  assert.equal(args.length, 4)
+  for (const line of args) assert.match(line, new RegExp(`todo\\(|'${TODO.replace(/[()]/g, '\\$&')}'`))
+  assert.equal(usesTodo, true)
+  const plain = scaffold({
+    file: 'src/P.vue',
+    source: '<script setup lang="ts">defineProps<{ label: string }>()</script>',
+    fs: noFs,
+  })
+  assert.equal(plain.usesTodo, false)
 })
 
 test('binding names are legal identifiers and unique across a batch', () => {

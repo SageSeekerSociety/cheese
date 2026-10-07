@@ -8,13 +8,16 @@
  *
  * 三只壳子（`PanelChanges` / `PanelPreview` / `PanelDoc`）和 `catalog.ts` 里那三只
  * View（`panel-changes` / `panel-preview` / `panel-doc`）不是重复：View 那几条看的是
- * 「这一串 props 画成什么」，这里看的是「取数那一层的整包递进来，壳子摊开以后接得上」
- * —— 包里少一样、名字对不上，这几格当场就画不出来。数据见 `catalogPanelsFixtures.ts`。
+ * 「这一串 props 画成什么」，这里看的是「取数那一层的整包递进来，壳子摊开以后接得上」。
+ * 包里有哪几样、各是 ref 还是 computed，由 `catalogPanelsFixtures.ts` 里那几包的返回
+ * 类型（composable 的 `ReturnType`）守着 —— 少一样是 typecheck 报错；这几格挂起来
+ * 看的是壳子摊开递下去以后，View 画出了这一格该有的那句话。
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { DOC_TOPIC, docSession } from './catalogFixtures'
+import { DOC_TOPIC, docSession, NO_REPO, NOTHING_CHANGED } from './catalogFixtures'
 import {
+  BUILD_LOG_BYTES,
   CHANGES_TASK,
   changesBundle,
   checklistAt,
@@ -23,8 +26,10 @@ import {
   docPeopleBundle,
   docThreadsBundle,
   fileTreeRows,
+  loadBuildTail,
   loadLsOutput,
   LONG_DIFF_LINES,
+  LS_OUTPUT_BYTES,
   PANEL_NAMES,
   previewBundle,
   projectFileProps,
@@ -112,20 +117,21 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '全部文件，文件夹收着',
-        note: '看整个工作区时文件夹默认收着，只露出第一层；要哪个开哪个。',
+        note: '看整个工作区：这一支没碰过的文件也在（syllabus.md、slides），文件夹默认收着，只露出第一层；要哪个开哪个。',
         props: { rows: fileTreeRows(true), showAll: true, emptyLabel: '暂无文件' },
-        expect: 'docs',
+        expect: 'syllabus.md',
+        expectSelector: '.file-item--dir[title="docs"] .mdi-folder-outline',
       },
       {
         name: '全部文件，展开一个文件夹',
-        note: '展开的文件夹贡献它的子树，下一层缩进一格。',
+        note: '展开的文件夹贡献它的子树，下一层缩进一格：改过的、删掉的、没碰过的（week-2.md）排在一起，只有前两样带标记。',
         props: {
           rows: fileTreeRows(true, ['docs']),
           showAll: true,
           expandedDirs: new Set(['docs']),
           emptyLabel: '暂无文件',
         },
-        expect: 'week-1.md',
+        expect: 'week-2.md',
       },
       {
         name: '什么都没改',
@@ -153,24 +159,13 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       {
         name: '这一轮什么都没改',
         note: '包里的树和提交记录都是空的：树上写「暂无改动」，右边写「暂无提交」。',
-        props: {
-          changes: changesBundle({
-            fileDiffs: [],
-            diffByPath: new Map(),
-            treeFiles: [],
-            gitCommits: [],
-            openPath: null,
-            openDiff: null,
-            openDiffLines: [],
-            fileToolReady: false,
-          }),
-        },
+        props: { changes: changesBundle(NOTHING_CHANGED) },
         expect: '暂无提交',
       },
       {
         name: '没绑仓库',
-        note: '取数那一层说这个项目没有代码仓库：一句话说清，不画一棵空树。',
-        props: { changes: changesBundle({ noRepo: true }) },
+        note: '取数那一层说这个项目没有代码仓库：一句话说清，不画一棵空树；树、提交、打开的文件都是空的，横条上文件那半也不摆。',
+        props: { changes: changesBundle(NO_REPO) },
         expect: '暂无代码仓库',
       },
     ],
@@ -240,14 +235,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         name: '还没有东西可看',
         note: '房间里还没摆出过任何东西：一句话，不是一块空白。',
         props: {
-          preview: previewBundle({
-            previewFile: null,
-            documentType: null,
-            documentName: '',
-            previewMime: '',
-            previewNamed: false,
-            previewNamedPath: '',
-          }),
+          preview: previewBundle({ previewFile: null, previewMime: '', previewNamed: false, previewNamedPath: '' }),
         },
         expect: '暂无预览',
       },
@@ -255,13 +243,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         name: '取预览失败',
         note: '读这一格本身失败：一句「预览加载失败」，底下一行是这个错。',
         props: {
-          preview: previewBundle({
-            previewFile: null,
-            documentType: null,
-            documentName: '',
-            previewMime: '',
-            previewError: '接口返回 502',
-          }),
+          preview: previewBundle({ previewFile: null, previewMime: '', previewError: '接口返回 502' }),
         },
         expect: '预览加载失败',
       },
@@ -329,8 +311,10 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '读记录的时候',
-        note: '还在路上时画的是那条流的形状（一条条「点 + 两行」），不是一个居中的转圈。',
+        note: '还在路上时画的是那条流的形状（一条条「圆点 + 动作 + 参数」的单行），不是一个居中的转圈。',
         props: { site: siteBundle({ transcript: [], loading: true }) },
+        expect: '加载中',
+        expectSelector: '.skel--site',
       },
       {
         name: '还没有记录',
@@ -346,7 +330,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     about: '频道概览里「支线」那一格：有人回过话的支线，最近有回复的在前，转成任务的写那件任务。',
     file: 'src/components/panels/PanelThreads.vue',
     component: PanelThreads,
-    needs: UI,
+    needs: [],
     args: {
       rows: THREAD_ROWS,
       loading: false,
@@ -358,7 +342,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '两条支线',
-        note: '每一行写挂着的那条消息、最后一句回复和谁说过话；有新回复的亮一个点；转成任务的那一条写任务和它的状态。',
+        note: '每一行写挂着的那条消息、最后一句回复和谁说过话；有新回复的亮一个点；转成任务的那一条在回复的位置改写任务和它的状态。',
         props: {},
         expect: '已转为任务「整理第一周的课件」',
       },
@@ -366,6 +350,8 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         name: '读支线的时候',
         note: '手上还一行都没有：骨架，不是转圈。',
         props: { rows: [], loading: true },
+        expect: '加载中',
+        expectSelector: '.skel--list',
       },
       {
         name: '读失败',
@@ -393,13 +379,14 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         name: '一份读得到的文件',
         note: '代码和文本在只读编辑器里打开（带行号的 chip 会滚到那几行并选中）；顶上写着这是项目当前版本。',
         props: projectFileProps({ lines: { start: 2, end: 2 } }),
-        expect: 'week-1.md',
+        // 正文在 Monaco 里，它是按需加载的，测试环境里不画字：看的是只读编辑器那一块在不在。
+        expectSelector: '.code-editor',
       },
       {
         name: '读文件的时候',
         note: '转圈：等的可能是代码、图片或一份文档，到了才知道是哪一种。',
         props: projectFileProps({ loading: true }),
-        expect: '项目当前版本 · 只读',
+        expectSelector: '[role="progressbar"]',
       },
       {
         name: '不在当前版本里',
@@ -428,18 +415,17 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     file: 'src/components/panels/SiteStepOutput.vue',
     component: SiteStepOutput,
     needs: [],
-    args: { blockId: 'demo-ls', load: loadLsOutput },
     states: [
       {
         name: '一小段输出',
-        note: '收着时只说有多长：参数是这一行的主体，输出是想追问的人才看的。',
-        props: { bytes: 14 },
-        expect: '输出（14 B）',
+        note: '收着时只说有多长：参数是这一行的主体，输出是想追问的人才看的。点开是 ls 打印的那两行。',
+        props: { blockId: 'demo-ls', bytes: LS_OUTPUT_BYTES, load: loadLsOutput },
+        expect: `输出（${LS_OUTPUT_BYTES} B）`,
       },
       {
         name: '一大段输出',
         note: '几十 KB 的构建日志也只占一行；点开时后端只留了末尾 8 KB，会再说一句只看到了末尾。',
-        props: { bytes: 48 * 1024 },
+        props: { blockId: 'demo-build', bytes: BUILD_LOG_BYTES, load: loadBuildTail },
         expect: '输出（48 KB）',
       },
     ],
@@ -457,18 +443,21 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '剧本第二步：芝士复述完理解就列了三步，第一步正在做（半填充、字加粗），其余空心圈。',
         props: { items: checklistAt(1) },
         expect: '读一下项目现有文件',
+        expectSelector: '.progress-item--in_progress:first-child',
       },
       {
         name: '做到一半',
         note: '第一步打了勾、字变淡，做到第二步。',
         props: { items: checklistAt(2) },
         expect: '写 README.md',
+        expectSelector: '.progress-item--completed + .progress-item--in_progress',
       },
       {
         name: '全做完了',
         note: '三步都带勾：清单本身不写「完成」，那句结果写在消息里。',
         props: { items: checklistAt(3) },
         expect: '递验收卡',
+        expectSelector: '.progress-item--completed:last-child',
       },
     ],
   },

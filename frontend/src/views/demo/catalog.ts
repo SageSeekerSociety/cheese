@@ -10,7 +10,7 @@
  * 是真会出现的形状，见 `catalogFixtures.ts`）。
  *
  * 加一个组件：这个文件末尾追加一条（或放进一个 `catalog*.ts` 分册再展开进来），把上面
- * 四件事写清。骨架可以用 `node scripts/catalog-scaffold.mjs <组件>` 按 props 生成。
+ * 四件事写清。骨架可以用 `node scripts/catalog-scaffold.mjs <组件>` 按 props 生成（它留下的占位记号见 `catalogTodo.ts`）。
  *
  * 和 Storybook 的 CSF 一一对应，以后要换工具或做视觉回归能机械迁移：条目是 CSF 的
  * default export（`component`、`title`、`args`），每一格是一个命名 story（`name`、
@@ -48,6 +48,7 @@ import {
   KPI_STATES,
   LONG_ROW,
   NAV_ITEMS,
+  NO_REPO,
   NUMBER_ROWS,
   OPEN_FILES,
   PREVIEW_EMPTY,
@@ -113,8 +114,13 @@ export interface CatalogState {
   slot?: string
   /** 这一格的环境，不写就跟条目走。 */
   needs?: CatalogNeed[]
-  /** 画出来之后该看得见的一句话（测试按它判「真的画出来了」）。骨架屏那类没有。 */
+  /** 画出来之后该看得见的一句话（测试按它判「真的画出来了」）。挑**只有这一格才有**的
+   *  那句：几格都有的字（顶栏、标题）证明不了画的是这一格。 */
   expect?: string
+  /** 字分不出这一格时（几格的字一样、只差状态或形状，比如清单的勾、收着的文件夹、骨架），
+   *  再给一个只在这一格命中的选择器，测试断言它在画出来的东西里找得到。只给测试用，
+   *  页面不读它；和 `expect` 可以同时给。 */
+  expectSelector?: string
 }
 
 export interface CatalogEntry {
@@ -814,7 +820,7 @@ export const CATALOG: CatalogEntry[] = [
       {
         name: '没绑仓库',
         note: '这个项目没有代码仓库：一句话说清，不画一棵空树。',
-        props: changesPanelProps({ noRepo: true }),
+        props: changesPanelProps(NO_REPO),
         expect: '暂无代码仓库',
       },
       {
