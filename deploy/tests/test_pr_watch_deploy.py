@@ -27,7 +27,13 @@ for ((i = 0; i < ${#args[@]}; i++)); do
 done
 case "$1 $2" in
   "api graphql") cat "$FAKE/pr.json" ;;
-  "run list") jq -r "$query" "$FAKE/runs.json" ;;
+  "run list")
+    # The first listing may come from runs-first.json; later ones from runs.json.
+    if [ -f "$FAKE/runs-first.json" ] && [ ! -f "$FAKE/listed" ]; then
+      touch "$FAKE/listed"; jq -r "$query" "$FAKE/runs-first.json"
+    else
+      jq -r "$query" "$FAKE/runs.json"
+    fi ;;
   "run view") jq -r "$query" "$FAKE/jobs-$3.json" ;;
   api\ repos/*/compare/*)
     pair="${2##*/compare/}"
@@ -45,7 +51,7 @@ def run(run_id, status, conclusion, title, deploy="success"):
 
 
 class DeployRunForAMergedPR(unittest.TestCase):
-    def watch(self, runs, live):
+    def watch(self, runs, live, first=None):
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory)
             (fake / "gh").write_text(FAKE_GH)
@@ -56,6 +62,8 @@ class DeployRunForAMergedPR(unittest.TestCase):
                 "state": "MERGED", "mergeCommit": {"oid": MERGE}, "mergeQueueEntry": None,
                 "timelineItems": {"nodes": []}}}}}))
             (fake / "runs.json").write_text(json.dumps(runs))
+            if first is not None:
+                (fake / "runs-first.json").write_text(json.dumps(first))
             for entry in runs:
                 (fake / f"jobs-{entry['databaseId']}.json").write_text(json.dumps(
                     {"jobs": [{"name": "eligibility", "conclusion": "success"},
@@ -99,6 +107,15 @@ class DeployRunForAMergedPR(unittest.TestCase):
         result = self.watch(runs, live=MIDDLE)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("dev deploy run 7: completed failure", result.stdout)
+
+    def test_a_deploy_still_running_is_reported_before_it_finishes(self):
+        # GitHub lists a run that has not finished with an empty conclusion.
+        running = [run(8, "in_progress", "", f"Deploy {MERGE}", deploy="")]
+        finished = [run(8, "completed", "success", f"Deploy {MERGE}")]
+        result = self.watch(finished, live=MERGE, first=running)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("dev deploy run 8: in_progress none", result.stdout)
+        self.assertIn("dev deploy run 8: completed success", result.stdout)
 
     def test_deploy_runs_are_named_after_the_commit_they_release(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
