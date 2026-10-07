@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.harness.channel import mint_session_token
 from tests.integration.conftest import (
     open_task,
     post_project,
@@ -47,8 +48,12 @@ class BackendHost:
             "CHEESE_PROJECT": project,
             "CHEESE_AUTHOR": "cheese",
         }
+        # The credential a session launches with (`mint_session_token`): its
+        # room's agent, in this conversation.
         self.headers = {
-            "X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=topic)
+            "X-Cheese-Token": mint_session_token(
+                project, topic, room_agent_seat(client, topic)
+            )
         }
         self.doc_versions: dict = {}
         self.synced: list[str] = []
