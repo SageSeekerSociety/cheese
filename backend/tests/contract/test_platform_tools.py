@@ -76,9 +76,9 @@ CALLS = {
     ),
     "cheese_doc_list": ({}, "GET", "/projects/fixture-project/documents"),
     "cheese_task": (
-        {"title": "数据清洗", "summary": "按新口径重算"},
+        {"title": "数据清洗", "summary": "按新口径重算", "start": False},
         "POST",
-        f"/topics/{TOPIC}/task-proposals",
+        f"/topics/{TOPIC}/teammate-tasks",
     ),
     "cheese_close_task": ({}, "POST", f"/topics/{TOPIC}/close"),
     "cheese_describe": (
@@ -203,7 +203,7 @@ CALLS = {
 #: 要机器的那一样：推一条任务分支。
 NEEDS_THE_MACHINE = {
     "cheese_accept_request": (
-        {"subject": "fix(x): y"},
+        {"subject": "fix(x): y", "completes_task": True},
         "POST",
         f"/topics/{TOPIC}/accept-card",
     ),
@@ -516,7 +516,7 @@ def test_acceptance_pushes_the_work_before_it_files_the_card(machine_is_here):
     outcome = _call(
         process,
         "cheese_accept_request",
-        {"subject": "fix(x): y", "reviewer": "lisi"},
+        {"subject": "fix(x): y", "reviewer": "lisi", "completes_task": True},
     )
 
     assert "deny" not in outcome, outcome

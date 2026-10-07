@@ -5,9 +5,25 @@ import type { MyDevice } from '@/cx_types'
 export interface ClaudeCodeLogin {
   installed: boolean
   logged_in: boolean
+  /** `model_service` when the owner pointed it at another model service. */
   auth_method: string | null
   subscription_type: string | null
+  /** The model a model service is called with. */
+  model: string | null
   checked_at: string
+}
+
+/** What a model service is set up with, as the owner fills it in on this device. */
+export interface ModelServiceInput {
+  baseUrl: string
+  token: string
+  model: string
+}
+
+/** The model a model service is called with, when the machine's Claude Code uses one;
+ *  null when it uses a Claude account or is not logged in. */
+export function modelServiceOf(login: ClaudeCodeLogin | null): string | null {
+  return login?.logged_in && login.auth_method === 'model_service' ? login.model ?? '' : null
 }
 
 /** 项目里成员自己的 Claude Code：项目允不允许接入，以及谁接了、在哪几台电脑上。 */

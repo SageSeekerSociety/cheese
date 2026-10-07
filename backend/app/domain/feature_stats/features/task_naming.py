@@ -64,7 +64,7 @@ KEY_ALIAS = "topic-naming"
 
 # The three stages a title can be written at (``naming.Stage``), in the order a
 # task meets them. The reason column of an automatic row holds one of these, or
-# ``proposal`` for the title an AI teammate proposed the task under.
+# ``teammate`` for the title the AI teammate that created the task gave it.
 STAGES = ("name", "calibrate", "follow")
 
 # The naming key never changes, and the window only moves at midnight, so a

@@ -32,7 +32,7 @@ describe('the step an agent is on, read from its live frame', () => {
 
   it('strips the MCP server prefix so the verb is not left raw', () => {
     expect(liveStep([tool('mcp__native__cheese_task', { title: '修回退' })])).toEqual({
-      verb: '提议任务',
+      verb: '创建任务',
       arg: '修回退',
     })
   })

@@ -79,9 +79,12 @@
           class="this-device__col"
           :logged-in="claudeLoggedIn"
           :plan="claudePlan"
+          :service="claudeService"
           :state="claudeState"
           can-log-out
+          :can-use-model-service="canUseModelService"
           @login="(console) => emit('claudeLogin', console)"
+          @service="(service) => emit('claudeService', service)"
           @cancel="emit('claudeCancel')"
           @logout="emit('claudeLogout')"
         />
@@ -110,6 +113,7 @@
 
 <script setup lang="ts">
 import type { MyTeam } from '@/cx_types'
+import type { ModelServiceInput } from '@/types/ownAgents'
 
 import { computed, ref, watch } from 'vue'
 
@@ -131,7 +135,11 @@ const props = defineProps<{
   teamIds: number[]
   claudeLoggedIn: boolean
   claudePlan: string | null
+  /** 用其他模型服务时它调用的模型名。 */
+  claudeService: string | null
   claudeState: 'idle' | 'preparing' | 'browser'
+  /** 这个桌面端能不能接其他模型服务。 */
+  canUseModelService: boolean
   error: string | null
 }>()
 
@@ -140,6 +148,7 @@ const emit = defineEmits<{
   rename: [name: string]
   teams: [ids: number[]]
   claudeLogin: [console: boolean]
+  claudeService: [service: ModelServiceInput]
   claudeCancel: []
   claudeLogout: []
   disconnect: []

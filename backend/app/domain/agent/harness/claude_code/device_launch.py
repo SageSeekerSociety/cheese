@@ -31,6 +31,7 @@ from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.place import (
     CLAUDE_LOGIN_DIR,
+    MODEL_SERVICE_FILE,
     SEATS_DIR,
     footprint_root,
     seat_name,
@@ -634,11 +635,32 @@ cheese_launch_phase credentials_selected
 # would win over it, so none is let through. A service started by launchd has no
 # USER, and Claude Code has been reported unable to find a Keychain login on
 # macOS without it (anthropics/claude-code#77213).
+#
+# When the owner set another model service there (`cheesehost claude login
+# --base-url`), the session calls that instead: its address and key, and its
+# model for the main loop, the three tiers Claude Code addresses by alias, and
+# subagents, since a service like that serves none of Anthropic's names. The
+# file is read through the shell's redirect, so on Windows Python is handed no
+# Git Bash path; a file that cannot be read leaves the session on the login.
+_MODEL_SERVICE_EXPORTS = """\
+import json, shlex, sys
+s = json.load(sys.stdin)
+env = {"ANTHROPIC_BASE_URL": s["base_url"], "ANTHROPIC_AUTH_TOKEN": s["token"]}
+for name in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+             "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+             "CLAUDE_CODE_SUBAGENT_MODEL"):
+    env[name] = s["model"]
+for name, value in env.items():
+    print("export %s=%s" % (name, shlex.quote(str(value))))
+"""
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
 OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}"
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
+if [ -f "$OWN_LOGIN/{MODEL_SERVICE_FILE}" ]; then
+  eval "$(python3 -c '{_MODEL_SERVICE_EXPORTS}' < "$OWN_LOGIN/{MODEL_SERVICE_FILE}")"
+fi
 export CHEESE_OWN_LOGIN=1
 cheese_launch_phase credentials_selected
 """

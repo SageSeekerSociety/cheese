@@ -252,7 +252,9 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
                 ? t('work.room.accept.createPr')
                 : card.status === 'conflict'
                   ? t('work.room.accept.retryAccept')
-                  : t('work.room.accept.acceptAction')
+                  : card.completes_task === false
+                    ? t('work.room.accept.acceptAction')
+                    : t('work.room.accept.acceptAndComplete')
             }}
           </BaseButton>
         </span>

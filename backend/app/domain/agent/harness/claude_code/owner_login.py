@@ -21,7 +21,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
-from app.domain.agent.place import CLAUDE_LOGIN_DIR, footprint_root
+from app.domain.agent.place import (
+    CLAUDE_LOGIN_DIR,
+    MODEL_SERVICE_FILE,
+    footprint_root,
+)
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.device.supply import Supply
 
@@ -40,6 +44,15 @@ suffix = ".exe" if sys.platform == "win32" else ""
 binary = root / "claude" / "versions" / (VERSION + suffix)
 if not binary.is_file():
     print(json.dumps({"installed": False}))
+    raise SystemExit
+# Another model service the owner set (`cheesehost claude login --base-url`):
+# the sessions call it and not the login. Only its model leaves the machine.
+try:
+    service = json.loads((root / LOGIN / SERVICE).read_text())
+except (OSError, ValueError):
+    service = None
+if isinstance(service, dict) and service.get("base_url") and service.get("token"):
+    print(json.dumps({"installed": True, "service": {"model": service.get("model")}}))
     raise SystemExit
 env = {
     k: v
@@ -68,8 +81,13 @@ def program() -> str:
     return (
         f"ROOT = {footprint_root()!r}\n"
         f"LOGIN = {CLAUDE_LOGIN_DIR!r}\n"
+        f"SERVICE = {MODEL_SERVICE_FILE!r}\n"
         f"VERSION = {CLAUDE_PINNED_VERSION!r}\n" + _PROGRAM
     )
+
+
+#: What a machine whose owner set another model service reports as its login.
+MODEL_SERVICE = "model_service"
 
 
 @dataclass(frozen=True)
@@ -78,6 +96,8 @@ class ClaudeLogin:
     logged_in: bool
     auth_method: str | None = None
     subscription_type: str | None = None
+    #: The model a model service is called with; None for a Claude account.
+    model: str | None = None
 
 
 def read_answer(stdout: str) -> ClaudeLogin:
@@ -90,6 +110,15 @@ def read_answer(stdout: str) -> ClaudeLogin:
         return ClaudeLogin(installed=False, logged_in=False)
     if not isinstance(answer, dict) or not answer.get("installed"):
         return ClaudeLogin(installed=False, logged_in=False)
+    service = answer.get("service")
+    if isinstance(service, dict):
+        model = service.get("model")
+        return ClaudeLogin(
+            installed=True,
+            logged_in=True,
+            auth_method=MODEL_SERVICE,
+            model=model[:128] if isinstance(model, str) and model else None,
+        )
     status = answer.get("status")
     if not isinstance(status, dict):
         status = {}
@@ -126,6 +155,7 @@ async def remember(session: AsyncSession, device_id: str, login: ClaudeLogin) ->
         "logged_in": login.logged_in,
         "auth_method": login.auth_method,
         "subscription_type": login.subscription_type,
+        "model": login.model,
         "checked_at": datetime.now(UTC),
     }
     await session.execute(
@@ -146,6 +176,7 @@ async def status(session: AsyncSession, device_id: str) -> dict | None:
         "logged_in": row.logged_in,
         "auth_method": row.auth_method,
         "subscription_type": row.subscription_type,
+        "model": row.model,
         "checked_at": row.checked_at.isoformat(),
     }
 
