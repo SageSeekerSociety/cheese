@@ -6,8 +6,9 @@
 // 推路由」是同一段代码抄 48 遍，而且每处都得自己记得处理「没有 handle / 没装
 // 路由」的兜底。所以留这一只薄容器，使用方只改 import 一行。
 //
-// 它自己不 import vue-router：路由和 store 都在 composables/useUserRef 里，
-// components/ 这层依旧不碰路由（见 .claude/rules/frontend.md 的组件边界）。
+// 名册和路由都不在这里：useUserRef 从外壳注入的 UserRefDirectory 问
+// （lib/userRefDirectory.ts）。没人注入时它照样画出 @handle，只是不能点，所以这只
+// chip 和渲染它的组件都能离开后端单独挂起来。
 import { useUserRef } from '@/composables/useUserRef'
 
 import UserRef from './UserRef.vue'
