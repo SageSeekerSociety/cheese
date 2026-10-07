@@ -337,9 +337,10 @@ function resetPasswordForm() {
   passwordForm.value?.reset()
 }
 
-// 弹窗关上就把表单清空：`AdaptiveDialog` 不转发 `v-dialog` 的 `after-leave`，改盯状态。
+// 每一次打开都是一张空表单：`AdaptiveDialog` 不转发 `v-dialog` 的 `after-leave`，所以
+// 清空放在开的那一刻，而不是关的那一刻——放在关的时候，关闭动画还没放完字段就先白了。
 watch(showChangePassword, (open) => {
-  if (!open) resetPasswordForm()
+  if (open) resetPasswordForm()
 })
 
 const submitPassword = async () => {

@@ -182,15 +182,14 @@
 
   <!-- Hand the invite code over the moment the board is created: the backend issues it at
        creation, so the creator has nowhere else to see it. -->
-  <!-- 关掉它的每一条路（取消、Esc、点遮罩）都进刚建好的板：这张卡一走，邀请码就没别
-       处能看了。 -->
+  <!-- 只有「打开空间」这一颗进新板；取消、Esc、点遮罩只是关上这张卡（迁移前也只有那
+       一颗按钮会进）。 -->
   <AdaptiveDialog
     v-model="codeDialog"
     :title="t('spaces.inviteCodes.createdTitle')"
     size="sm"
     :primary-label="t('spaces.inviteCodes.openSpace')"
     @primary="enterCreatedSpace"
-    @update:model-value="(value: boolean) => !value && enterCreatedSpace()"
   >
     <p class="text-body-2 mb-3">{{ t('spaces.inviteCodes.createdBody') }}</p>
     <div class="d-flex align-center ga-2">
