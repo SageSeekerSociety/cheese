@@ -7,10 +7,10 @@ reference rows / data never race across workers. Two DBs per worker because the
 two harnesses can't share one:
   * ``cheesex_test[_<worker>]``    — the integration harness (per-test transactional
     rollback on a session-long connection); the app engines bind here.
-  * ``cheesex_test[_<worker>]_c``  — client / python_client (TRUNCATE + a real
-    session factory: ChatService spins up its own sessions and background turns
-    COMMIT, which rollback can't isolate; truncate would also deadlock against the
-    integration harness's open transaction, hence a separate DB).
+  * ``cheesex_test[_<worker>]_c``  — client / python_client (cleared before each
+    test, plus a real session factory: ChatService spins up its own sessions and
+    background turns COMMIT, which rollback can't isolate; clearing would also
+    block on the integration harness's open transaction, hence a separate DB).
 A stub agent keeps tests off the live model.
 """
 
@@ -195,7 +195,7 @@ def _topics_with_pending_records() -> set[str]:
 def wait_work_idle() -> None:
     """Block until background turns (e.g. a new task's kickoff)
     finish: they run on the TestClient portal loop and write to this worker's DB —
-    if a turn is still writing when the next test truncates, the test flakes.
+    if a turn is still writing when the next test clears it, the test flakes.
     Returns as soon as they're idle; the generous ceiling only matters under heavy
     parallel/external load, when a turn can take much longer than usual.
 
@@ -1312,11 +1312,11 @@ def client(
     setup_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     setup_factory = async_sessionmaker(setup_engine, expire_on_commit=False)
 
-    asyncio.run(_truncate_all(setup_engine))
+    asyncio.run(_clear_client_db())
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
 
     # agent-as-user baseline (P1): 芝士 is a real user with a platform agent-
-    # binding — seeded by the migration in prod, re-seeded here after the truncate.
+    # binding — seeded by the migration in prod, re-seeded here after the clear.
     async def _seed_agent_user() -> None:
         from app.domain.identity.services import IdentityService
 
@@ -1420,25 +1420,115 @@ def _plans_migration():
     return module
 
 
-async def _truncate_all(engine) -> None:
-    """Wipe every table for a clean per-test slate (fast; keeps the schema).
+@functools.cache
+def _clean_slate_queries() -> tuple[str, str]:
+    """The two reads ``_clear_tables`` decides its work from.
 
-    TRUNCATE takes an exclusive lock on every table, so a session some earlier
-    test left ``idle in transaction`` — holding no more than a share lock on one
-    of them — makes it wait, and the server's ``lock_timeout`` is 0, so it waits
+    The first names every table that holds a row. The second names every
+    sequence a table owns that has handed out a value since it was last reset,
+    with the value it starts from: a test that inserted a row and deleted it,
+    or whose transaction rolled back, leaves an empty table and a moved
+    sequence, and ids have to start from 1 again all the same (Redis keys are
+    scoped by user id).
+    """
+    names = [t.name for t in Base.metadata.sorted_tables]
+    occupied = " UNION ALL ".join(
+        f"SELECT '{name}' WHERE EXISTS (SELECT 1 FROM \"{name}\")" for name in names
+    )
+    listed = ", ".join(f"'{name}'" for name in names)
+    moved_sequences = (
+        "SELECT format('%I.%I', ps.schemaname, ps.sequencename), ps.start_value"
+        " FROM pg_sequences ps"
+        " JOIN pg_class seq ON seq.relname = ps.sequencename"
+        "  AND seq.relnamespace = ps.schemaname::regnamespace"
+        " JOIN pg_depend dep ON dep.classid = 'pg_class'::regclass"
+        "  AND dep.objid = seq.oid AND dep.refclassid = 'pg_class'::regclass"
+        "  AND dep.deptype IN ('a', 'i')"
+        " JOIN pg_class tbl ON tbl.oid = dep.refobjid"
+        f" WHERE ps.last_value IS NOT NULL AND tbl.relname IN ({listed})"
+    )
+    return occupied, moved_sequences
+
+
+#: The loop and engine every clear of the client database runs on, made on
+#: first use. See ``_clear_client_db``.
+_clear_loop: asyncio.AbstractEventLoop | None = None
+_clear_engine = None
+
+
+async def _clear_client_db() -> None:
+    """Clear this worker's client database; see ``_clear_tables``.
+
+    It runs on one connection that lives as long as the worker, on a loop of
+    its own. The clear reads every table, and a backend's first read of
+    a table loads its catalog entries: 25-45 ms on a fresh connection against
+    under 1 ms on one that has read them before, and every engine the fixtures
+    build is new per test. The loop is the connection's own because the
+    callers run on short-lived loops (``asyncio.run`` per step) that an
+    asyncpg connection cannot outlive. ``pool_pre_ping`` reconnects it if the
+    database was recreated underneath.
+    """
+    global _clear_loop, _clear_engine
+    if _clear_loop is None:
+        _clear_loop = asyncio.new_event_loop()
+        threading.Thread(
+            target=_clear_loop.run_forever, name="client-db-clear", daemon=True
+        ).start()
+        _clear_engine = create_async_engine(
+            TEST_DATABASE_URL, pool_size=1, max_overflow=0, pool_pre_ping=True
+        )
+    await asyncio.wrap_future(
+        asyncio.run_coroutine_threadsafe(_clear_tables(_clear_engine), _clear_loop)
+    )
+
+
+async def _clear_tables(engine) -> None:
+    """Put the client database back to what ``TRUNCATE <every table> RESTART
+    IDENTITY`` leaves, plus the seeded plans.
+
+    It does not run that TRUNCATE. TRUNCATE gives every table a new file
+    whether or not it holds a row, and it has to name every table that
+    references the ones it clears, so the seeded ``users`` alone drags in most
+    of the schema: about 250 ms per test, a quarter to a half of a typical
+    client test. A test writes to a handful of tables, so this deletes the
+    rows of exactly those and rewinds exactly the sequences that moved. Every
+    table ends up empty and every owned sequence starts over, which is what
+    the TRUNCATE produced; ``_assert_clean_slate`` checks that on every call
+    rather than trusting it.
+
+    The deletes run with ``session_replication_role = replica``, which skips
+    row triggers, foreign-key checks included, for this transaction only.
+    TRUNCATE fires no row triggers either, and two kinds here would otherwise
+    stop or change the delete: ``document_versions`` refuses every DELETE
+    (its history is immutable), and deleting a task, thread or topic deletes
+    its row in the conversation registry, which is cleared here anyway. The
+    setting needs a superuser, which every database this suite runs on has,
+    since the harness creates and drops databases.
+
+    A session some earlier test left ``idle in transaction`` can hold a lock
+    this needs, and the server's ``lock_timeout`` is 0, so it would wait
     forever. That used to surface as a 300 s pytest-timeout on the NEXT test's
     setup, then on the one after that, and the report named the victims and
     never the session holding the lock (see #693's sibling: the hang on
     ``test_runtime``/``test_work_continuation`` in CI, 2026-09-05). So the wait
     is bounded here, and when it runs out the error says who is in the way.
     """
-    tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
-    if not tables:
+    if not Base.metadata.sorted_tables:
         return
+    occupied_sql, sequences_sql = _clean_slate_queries()
     try:
         async with engine.begin() as conn:
             await conn.exec_driver_sql("SET LOCAL lock_timeout = '20s'")
-            await conn.exec_driver_sql(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
+            occupied = {r[0] for r in await conn.exec_driver_sql(occupied_sql)}
+            moved = list(await conn.exec_driver_sql(sequences_sql))
+            await conn.exec_driver_sql("SET LOCAL session_replication_role = replica")
+            for name in occupied:
+                await conn.exec_driver_sql(f'DELETE FROM "{name}"')
+            await conn.exec_driver_sql("SET LOCAL session_replication_role = DEFAULT")
+            for sequence, start in moved:
+                await conn.exec_driver_sql(
+                    f"SELECT setval('{sequence}', {int(start)}, false)"
+                )
             await _reseed_plans(conn)
     except DBAPIError as exc:
         if "lock timeout" not in str(exc).lower():
@@ -1461,11 +1551,34 @@ async def _truncate_all(engine) -> None:
             for r in others
         )
         raise RuntimeError(
-            "TRUNCATE waited 20 s for a table lock. Another session on this"
+            "Clearing the tables waited 20 s for a lock. Another session on this"
             " worker's client database still holds one — most likely a test that"
             " left a transaction open. Sessions on the database right now:\n"
             + (lines or "  (none — the blocker went away as this was raised)")
         ) from exc
+    await _assert_clean_slate(engine)
+
+
+async def _assert_clean_slate(engine) -> None:
+    """Fail the test about to start if a table still holds a row, or an owned
+    sequence did not start over, once ``_clear_tables`` is done.
+
+    The cleanup reads what to clear and then clears it; a writer that commits
+    in between, such as a background turn the previous test left running,
+    leaves rows the next test would take for its own. This makes that test
+    fail by name instead.
+    """
+    occupied_sql, sequences_sql = _clean_slate_queries()
+    async with engine.connect() as conn:
+        left = {r[0] for r in await conn.exec_driver_sql(occupied_sql)} - {"plans"}
+        moved = sorted(r[0] for r in await conn.exec_driver_sql(sequences_sql))
+    if left or moved:
+        raise RuntimeError(
+            "The client database is not clean after clearing it: something"
+            " wrote to it in the meantime, most likely work the previous test"
+            f" left running. Tables with rows: {sorted(left)};"
+            f" sequences that did not start over: {moved}"
+        )
 
 
 async def _admin_recreate_db(db_name: str) -> None:
@@ -1935,14 +2048,14 @@ def pytest_runtest_teardown(item: pytest.Item):
     """After a client-DB test has torn down, no session of ours may still be
     inside a transaction on that database.
 
-    One left open holds locks the next test's TRUNCATE needs (see
-    ``_truncate_all``), and it is invisible from there: the report names the
+    One left open can hold row locks the next test's clear needs (see
+    ``_clear_tables``), and it is invisible from there: the report names the
     test that waited, never the one that leaked. Checking at the leaker's own
     teardown is what pins it, so a leak fails HERE, on the test that made it,
     with the statement it was running. The session is terminated too, so the
     rest of the run is not held hostage to a bug already reported.
 
-    Only the client database (``_c``): it is truncate-isolated, so any open
+    Only the client database (``_c``): it is cleared between tests, so any open
     transaction there once the test is over is a leak by definition. The
     integration database uses a session-long connection with per-test rollback,
     where a transaction between tests can be the harness itself. ``client``,
@@ -2059,7 +2172,7 @@ async def _fail_on_background_work(label: str) -> None:
     returns without waiting for it races the per-test event loop's own
     teardown: whatever task is still going gets frozen mid-await the moment
     the loop closes under it — mid a DB transaction, most dangerously, holding
-    a lock the next test's ``TRUNCATE`` then waits on (see
+    a lock the next test's clear then waits on (see
     ``pytest_runtest_teardown`` above, which is the backstop for whatever gets
     past this).
 
@@ -2110,7 +2223,7 @@ async def db_factory(_pg_schema):
     test needs a database at all.
     """
     engine = _production_test_engine(TEST_DATABASE_URL)
-    await _truncate_all(engine)
+    await _clear_client_db()
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
@@ -2187,7 +2300,7 @@ async def python_client(
 
     engine = _production_test_engine(TEST_DATABASE_URL)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)
-    await _truncate_all(engine)
+    await _clear_client_db()
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
     async with test_factory() as session:
         await IdentityService(session).ensure_agent_user()

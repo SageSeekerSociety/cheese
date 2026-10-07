@@ -39,6 +39,7 @@ import SessionInspector from '../SessionInspector.vue'
 
 import SiteStepOutput from './SiteStepOutput.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 import { vRovingTabs } from '@/lib/rovingTabs'
 
@@ -313,13 +314,8 @@ function isLive(index: number): boolean {
         </button>
       </div>
       <MemberActivity :lines="workingLines" class="site-activity" />
-      <div
-        v-if="transcript.length === 0"
-        :id="logId"
-        class="text-center text-medium-emphasis py-6"
-        :role="agents.length > 1 ? 'tabpanel' : undefined"
-      >
-        {{ t('work.room.site.empty') }}
+      <div v-if="transcript.length === 0" :id="logId" :role="agents.length > 1 ? 'tabpanel' : undefined">
+        <BaseEmptyState :title="t('work.room.site.empty')" />
       </div>
       <div v-else :id="logId" class="site-log pa-3" :role="agents.length > 1 ? 'tabpanel' : undefined">
         <div v-if="hasOlder" class="site-older">

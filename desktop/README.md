@@ -62,10 +62,17 @@ kept and the browser never saw (`POST /users/auth/app-sign-in` and
 `.../finish`); the browser stays signed in too.
 
 Beyond that the app adds one thing a browser cannot do: connect the computer it runs
-on as a device. Under 设置 → 设备 it offers 「接入这台电脑」, which does what the
-page otherwise asks a terminal user to do — run the server's `install.sh`, then
-`cheesehost link connect` — and approves the login with the session the page is
-already signed in with. The page's side of that is `frontend/src/lib/desktop.ts`.
+on as a device. At the first sign-in it asks once whether to; after that the
+choice lives under 设置 → 桌面端 → 这台设备, which also names the device, offers
+it to teams, logs in the person's own Claude Code and disconnects it. Connecting
+does what the page otherwise asks a terminal user to do — run the server's
+`install.sh`, then `cheesehost link connect` — and approves the login with the
+session the page is already signed in with. The app reports each step, how far
+the connector's download has got and why it stopped as ids (`src-tauri/src/connect.rs`),
+and every step can be cancelled; the page words them (`frontend/src/lib/desktop.ts`,
+`frontend/src/views/desktop/DeviceConnect.vue`). A computer connected before
+comes back on its own at launch. Logging in Claude Code runs `cheesehost claude
+login` with no terminal: it opens the browser and finishes there.
 
 What each platform needs before cheesehost can run (`src-tauri/src/platform/`):
 

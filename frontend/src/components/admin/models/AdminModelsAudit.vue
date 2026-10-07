@@ -4,6 +4,7 @@ import type { AuditItem } from '@/lib/adminModels'
 import { useI18n } from 'vue-i18n'
 
 import AdminAuditDiff from '@/components/admin/AdminAuditDiff.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -67,7 +68,12 @@ function auditActionLabel(action: string): string {
     <div v-else-if="props.loading && !props.items.length" class="amd__auditSkeleton">
       <v-skeleton-loader v-for="i in 4" :key="i" type="text" />
     </div>
-    <p v-else-if="!props.items.length" class="amd__auditEmpty t-meta-read">{{ t('models.audit.empty') }}</p>
+    <BaseEmptyState
+      v-else-if="!props.items.length"
+      size="inline"
+      class="amd__auditEmpty"
+      :title="t('models.audit.empty')"
+    />
     <ol v-else class="amd__auditRows">
       <li v-for="(item, i) in props.items" :key="i" class="amd__auditRow">
         <div class="amd__auditLine">
@@ -117,10 +123,10 @@ function auditActionLabel(action: string): string {
   padding: 16px;
 }
 
+/* 空态走 BaseEmptyState 的 inline 档，这里只留这一块自己的内距。 */
 .amd__auditEmpty {
   margin: 0;
   padding: 20px 16px;
-  color: var(--muted);
 }
 
 .amd__auditRows {

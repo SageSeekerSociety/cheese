@@ -201,7 +201,7 @@ claude -p 的 stdout（stream-json）               读循环按游标向 runner
 
 ### 5.3 设备离线时的表现
 
-- **设备掉线**：`device_hub.is_online` 转 false，「设置 → 设备」里该设备变灰「离线」。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，已经发出、正在等回话的调用立刻失败（`LinkInterrupted`，结果未知，不会重发），不会等到各自超时。掉线后 15 秒内（`RECONNECT_GRACE_S`）新来的调用等机器重连并发来 hello 再发出；过了这段时间仍没回来，或者这个进程从没见过这台机器，调用立刻失败（`DeviceOffline`）。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
+- **设备掉线**：`device_hub.is_online` 转 false，「设置 → 设备」里该设备变灰「离线」，并写着上次在线的时间（`device.last_seen_at`：连上时记一次，连接期间最多每分钟记一次）。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，已经发出、正在等回话的调用立刻失败（`LinkInterrupted`，结果未知，不会重发），不会等到各自超时。掉线后 15 秒内（`RECONNECT_GRACE_S`）新来的调用等机器重连并发来 hello 再发出；过了这段时间仍没回来，或者这个进程从没见过这台机器，调用立刻失败（`DeviceOffline`）。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
 - **已 pin 该设备的话题发 turn**：`resolve_pinned_device` 发现 pinned 设备离线 → 抛 `ScreenSetupError`「话题绑定的算力设备已离线，请重新连接该设备再继续本轮（不会漂到别的设备，以免工作树/会话错乱）」→ 该轮排队/失败重试，**绝不漂到别的在线设备**。
 - **话题还没 pin、且没有任何绑定设备在线**：报「没有在线的绑定设备可运行本轮（self-hosted 设备未连接）」。
 - **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、`DeviceChannel.available` 转 false、市场 listing 里 `device` 变为不可选。

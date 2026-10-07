@@ -6,6 +6,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseField from '@/components/base/BaseField.vue'
 
 const props = defineProps<{
@@ -85,7 +86,7 @@ const summary = computed(() => {
                 <v-list-item v-bind="itemProps" :subtitle="item.raw?.subtitle" />
               </template>
             </v-select>
-            <p v-else class="tfm__empty t-meta-read">{{ t('tasks.form.more.noDomainGroups') }}</p>
+            <BaseEmptyState v-else size="inline" class="tfm__empty" :title="t('tasks.form.more.noDomainGroups')" />
           </template>
         </BaseField>
       </div>

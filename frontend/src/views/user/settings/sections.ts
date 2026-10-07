@@ -4,7 +4,7 @@ import { t } from '@/i18n'
 import { desktopCan } from '@/lib/desktopApp'
 
 /** 个人设置的目录：桌面上是浮层左边那一列，手机上是打开设置先看到的那一页。
- *  「通用」只在桌面 app 里有：那里是这台电脑上的 app 自己的设置。 */
+ *  「这台设备」和「通用」只在桌面 app 里有：说的是 app 所在的这台电脑。 */
 export function settingsGroups(): SettingsGroup[] {
   const item = (name: string, label: string, icon: string) => ({ key: name, label, icon, to: { name } })
   return [
@@ -27,12 +27,19 @@ export function settingsGroups(): SettingsGroup[] {
         item('UserSettingsConnections', t('account.settings.connections'), 'mdi-link-variant'),
       ],
     },
-    ...(desktopCan('autostart')
+    ...(desktopCan('autostart') || desktopCan('device')
       ? [
           {
             key: 'app',
             title: t('account.settings.groups.app'),
-            items: [item('UserSettingsGeneral', t('account.settings.general'), 'mdi-tune-variant')],
+            items: [
+              ...(desktopCan('device')
+                ? [item('UserSettingsThisDevice', t('account.thisDevice.title'), 'mdi-laptop-account')]
+                : []),
+              ...(desktopCan('autostart')
+                ? [item('UserSettingsGeneral', t('account.settings.general'), 'mdi-tune-variant')]
+                : []),
+            ],
           },
         ]
       : []),

@@ -12,12 +12,5 @@
     "unknown": "Unknown",
     "partlyUnpriced": "Another {tokens} tokens have no rate and are not in the amount",
     "allUnpriced": "{tokens} tokens have no rate, so no amount is shown here"
-  },
-  "desktop": {
-    "approveFailed": "Approval failed: {reason}",
-    "preparing": "Preparing",
-    "connecting": "Connecting this computer to Cheese",
-    "connected": "This computer is connected. You can find it under Settings → Devices",
-    "connectFailed": "Couldn't connect this computer: {reason}"
   }
 }

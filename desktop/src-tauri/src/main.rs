@@ -46,6 +46,10 @@ const SERVER_PERMISSIONS: &[&str] = &[
     "allow-connect-this-machine",
     "allow-cancel-connect",
     "allow-this-device",
+    "allow-claude-login",
+    "allow-cancel-claude-login",
+    "allow-claude-logout",
+    "allow-disconnect-this-machine",
     "allow-set-theme",
     "allow-set-badge",
     "allow-listen-for-notices",
@@ -77,11 +81,14 @@ fn is_docs(url: &Url) -> bool {
     url.path() == "/docs" || url.path().starts_with("/docs/")
 }
 
+/// What the page hears while this computer is connected: a step started, how
+/// far a download has got, or the code to approve.
 #[derive(Clone, Serialize)]
-#[serde(tag = "kind", content = "text", rename_all = "lowercase")]
+#[serde(tag = "kind", rename_all = "lowercase")]
 enum Progress {
-    Step(String),
-    Code(String),
+    Step { id: &'static str },
+    Percent { value: u8 },
+    Code { text: String },
 }
 
 #[tauri::command]
@@ -90,17 +97,16 @@ async fn connect_this_machine(
     running: State<'_, connect::Running>,
     known_device_ids: Vec<String>,
     progress: Channel<Progress>,
-) -> Result<(), String> {
-    let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
-    connect::connect(
-        ORIGIN,
-        &resources,
-        &known_device_ids,
-        &running,
-        |s| drop(progress.send(Progress::Step(s.into()))),
-        |c| drop(progress.send(Progress::Code(c.into()))),
-    )
-    .await
+) -> Result<(), connect::Failure> {
+    let resources = app
+        .path()
+        .resource_dir()
+        .map_err(|e| connect::Failure::at("prepare", e.to_string()))?;
+    let step = |id: &'static str| drop(progress.send(Progress::Step { id }));
+    let percent = |value: u8| drop(progress.send(Progress::Percent { value }));
+    let code = |text: &str| drop(progress.send(Progress::Code { text: text.into() }));
+    let events = connect::Events { step: &step, percent: &percent, code: &code };
+    connect::connect(ORIGIN, &resources, &known_device_ids, &running, &events).await
 }
 
 /// Which device this computer is, so the page can tell whether it is already connected.
@@ -112,6 +118,38 @@ async fn this_device() -> Option<String> {
 #[tauri::command]
 fn cancel_connect(running: State<'_, connect::Running>) {
     connect::cancel(&running);
+}
+
+/// The Claude Code login under way, apart from a connection under way.
+#[derive(Default)]
+struct ClaudeLogin(connect::Running);
+
+/// Logs in the platform's Claude Code here: in the browser, no terminal. The
+/// channel hears "preparing" and "browser".
+#[tauri::command]
+async fn claude_login(
+    running: State<'_, ClaudeLogin>,
+    console: bool,
+    progress: Channel<Progress>,
+) -> Result<(), connect::Failure> {
+    let step = |id: &'static str| drop(progress.send(Progress::Step { id }));
+    connect::claude_login(&running.0, console, &step).await
+}
+
+#[tauri::command]
+fn cancel_claude_login(running: State<'_, ClaudeLogin>) {
+    connect::cancel(&running.0);
+}
+
+#[tauri::command]
+async fn claude_logout() -> Result<(), String> {
+    connect::claude_logout().await
+}
+
+/// Stops this computer's connector after the page has unbound the device.
+#[tauri::command]
+async fn disconnect_this_machine() -> Result<(), String> {
+    connect::disconnect().await
 }
 
 /// The theme the person picked in the web app: "system", "light" or "dark".
@@ -205,6 +243,7 @@ fn main() {
                 .build(),
         )
         .manage(connect::Running::default())
+        .manage(ClaudeLogin::default())
         .manage(resident::StartHidden::default())
         .manage(notices::Notices::default())
         .manage(updates::Updates::default())
@@ -212,6 +251,10 @@ fn main() {
             connect_this_machine,
             cancel_connect,
             this_device,
+            claude_login,
+            cancel_claude_login,
+            claude_logout,
+            disconnect_this_machine,
             set_theme,
             resident::set_badge,
             resident::opens_at_login,
@@ -278,7 +321,7 @@ fn main() {
             // the title bar lies over the page, the app's own version, and what else
             // the app can do for it.
             let about = format!(
-                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\"] }};",
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\", \"device\"] }};",
                 version = app.package_info().version.to_string(),
                 start = serde_json::to_string(&start).unwrap_or_else(|_| "null".into()),
             );

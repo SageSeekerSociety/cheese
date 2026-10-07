@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.domain.device.models import DeviceRow, DeviceTeamRow
+from app.domain.device.models import DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.team.models import Team
 from tests.conftest import _PG_BASE, _admin_recreate_db
@@ -160,17 +160,22 @@ async def _seed(db_name: str) -> dict:
             ("dev-room", Supply.cloud),
             ("dev-laptop", Supply.self_hosted),
         ):
-            db.add(
-                DeviceRow(
-                    device_id=device_id,
-                    name=device_id,
-                    token=f"token-{device_id}",
-                    owner_user_id=user_id,
-                    supply=supply,
-                    created_at=now,
-                )
+            # A row, not today's model: `device` is at the revision before the
+            # pool, and the model has columns that revision does not.
+            await db.execute(
+                text(
+                    "INSERT INTO device (device_id, name, cloud_control_private, "
+                    "token, owner_user_id, created_at, supply) VALUES (:id, :id, "
+                    "false, :token, :owner, :now, :supply)"
+                ),
+                {
+                    "id": device_id,
+                    "token": f"token-{device_id}",
+                    "owner": user_id,
+                    "now": now,
+                    "supply": supply.name,
+                },
             )
-            await db.flush()
             db.add(DeviceTeamRow(device_id=device_id, team_id=team.id))
         resource = str(room_id)
         # Written as rows, not through today's model: the table is at the
