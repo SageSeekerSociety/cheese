@@ -168,11 +168,17 @@ def sleep(cleanup, project, resource):
     return {"asleep": True}
 
 
-def archive(cleanup, project, resource, job, upload, urls, part_size, wait):
+def archive(cleanup, project, resource, job, upload, fresh, urls, part_size, wait):
     """Start, or come back to, the job that archives the home under ``job``
     (its object's name) through multipart upload ``upload``, and wait up to
-    ``wait`` seconds for it. ``upload`` None asks only for the answer of a job
-    already done: the platform found its object in the bucket."""
+    ``wait`` seconds for it. ``fresh`` says the platform started that upload
+    for this call, so no part sent before belongs to it. ``upload`` None asks
+    only for the answer of a job already done: the platform found its object
+    in the bucket.
+
+    An upload is told apart by ``fresh``, never by comparing ``upload`` with
+    the one given before: R2 answers the same upload's id in a different
+    spelling each time it lists it, and every spelling is good for it."""
     home, work = _paths(cleanup, project, resource)
     folder = _scratch(cleanup) / f"{resource}.job"
     state = _read(folder / "job.json")
@@ -182,8 +188,9 @@ def archive(cleanup, project, resource, job, upload, urls, part_size, wait):
         _end_job(cleanup, folder)
         state = None
     done = _read(folder / "done.json")
-    if done is not None and upload is not None and done["upload"] != upload:
-        # Its upload is gone from the bucket, and its parts with it.
+    if done is not None and fresh:
+        # The upload it was sent to was finished or dropped: no part of it is
+        # in the one started now.
         _end_job(cleanup, folder)
         state = done = None
     if done is not None:
@@ -197,11 +204,10 @@ def archive(cleanup, project, resource, job, upload, urls, part_size, wait):
             return {"absent": True}
         folder.mkdir(mode=0o700)
         state = {"job": job, "part_size": part_size}
-    if state.get("upload") != upload:
+    if fresh:
         # The parts sent belong to the upload they were sent to.
         _stop_worker(folder)
         (folder / "parts.json").unlink(missing_ok=True)
-        state["upload"] = upload
     _write(folder / "job.json", state)
     _write(folder / "urls.json", urls)
     deadline = time.monotonic() + wait
@@ -259,16 +265,13 @@ def _working(folder):
 def _stop_worker(folder):
     if not _working(folder):
         return
-    try:
-        pid = int((folder / "pid").read_text())
-    except (FileNotFoundError, ValueError):
-        pid = None
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        if pid is not None:
-            try:
-                os.kill(pid, sig)
-            except ProcessLookupError:
-                pass
+    for sig in (signal.SIGTERM, signal.SIGTERM, signal.SIGKILL):
+        # Read each round: a worker that took the job a moment ago, started by
+        # another call, has written its own pid since.
+        try:
+            os.kill(int((folder / "pid").read_text()), sig)
+        except (FileNotFoundError, ValueError, ProcessLookupError):
+            pass
         for _ in range(50):
             if not _working(folder):
                 return
@@ -317,7 +320,7 @@ def _work(cleanup, project, resource, folder):
             written = _write_archive(cleanup, project, resource, folder, state)
         etags = {}
         parts = _read(folder / "parts.json")
-        if parts is not None and parts["upload"] == state["upload"]:
+        if parts is not None:
             etags = parts["etags"]
         size, part_size = written["size"], state["part_size"]
         for number in range(1, len(written["parts"]) + 1):
@@ -327,11 +330,10 @@ def _work(cleanup, project, resource, folder):
             etags[str(number)] = _put_part(
                 folder, number, offset, min(part_size, size - offset)
             )
-            _write(folder / "parts.json", {"upload": state["upload"], "etags": etags})
+            _write(folder / "parts.json", {"etags": etags})
         _write(
             folder / "done.json",
             {
-                "upload": state["upload"],
                 "size": size,
                 "md5": written["md5"],
                 "parts": written["parts"],
