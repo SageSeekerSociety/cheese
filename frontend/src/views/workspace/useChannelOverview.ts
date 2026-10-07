@@ -8,7 +8,7 @@ import { ref, watch } from 'vue'
 
 import { listRoomTasks } from '@/api'
 import { listPins, unpinBlock } from '@/api/pins'
-import { getProjectOverview } from '@/api/projectDocuments'
+import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
 
 export function useChannelOverview(opts: {
   /** 正看着的频道；任务页上是 null，什么都不读。 */
@@ -16,11 +16,15 @@ export function useChannelOverview(opts: {
   projectId: () => string
   /** 这个频道是不是综合。 */
   general: () => boolean
+  /** 频道里有了动静（一轮做完、文档变了）：项目总览的正文跟着重读。 */
+  tick: () => number
   reportError: (e: unknown) => void
 }) {
   const tasks = ref<RoomTask[]>([])
   const pins = ref<ChannelPin[]>([])
   const overview = ref<PanelDocument | null>(null)
+  /** 项目总览现在写着什么：概览里只读地显示开头，要改就整份打开。 */
+  const overviewText = ref('')
 
   async function loadTasks() {
     const id = opts.channelId()
@@ -45,13 +49,16 @@ export function useChannelOverview(opts: {
   async function loadOverview() {
     if (!opts.general()) {
       overview.value = null
+      overviewText.value = ''
       return
     }
     try {
       const { id } = await getProjectOverview(opts.projectId())
       overview.value = { id, projectId: opts.projectId(), title: '' }
+      overviewText.value = await getDocumentText(id)
     } catch {
       overview.value = null
+      overviewText.value = ''
     }
   }
 
@@ -67,6 +74,9 @@ export function useChannelOverview(opts: {
     },
     { immediate: true }
   )
+  watch(opts.tick, () => {
+    if (opts.general()) void loadOverview()
+  })
 
   async function unpin(blockId: string) {
     const id = opts.channelId()
@@ -79,5 +89,5 @@ export function useChannelOverview(opts: {
     }
   }
 
-  return { tasks, pins, overview, loadTasks, loadPins, unpin }
+  return { tasks, pins, overview, overviewText, loadTasks, loadPins, unpin }
 }

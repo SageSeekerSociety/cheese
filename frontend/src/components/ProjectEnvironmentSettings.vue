@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import type { EnvironmentDiagnosis } from '@/types/environment'
 import type { EnvironmentStatus, ProjectEnvironmentInfo } from '../cx_types'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { holdRevealGate } from '@/composables/useRevealGate'
 import { useSaveState } from '@/composables/useSaveState'
@@ -10,10 +11,19 @@ import { applyRoomEnvironment, getProjectEnvironment, getRoomEnvironment, savePr
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SaveStatus from '@/components/base/SaveStatus.vue'
+import EnvironmentFailureCard from '@/components/environment/EnvironmentFailureCard.vue'
 import i18n, { t } from '@/i18n'
 import { responseText } from '@/lib/noticeText'
 
-const props = defineProps<{ projectId: string }>()
+const props = defineProps<{
+  projectId: string
+  /** 从一条「环境准备失败」点过来的：先看那个频道。 */
+  room?: string
+  /** 项目给 AI 队友起的名字。 */
+  agentName: string
+  /** 「让芝士看看」：问一次这个频道最近那次失败，由页面去问。 */
+  diagnoseRoom: (roomId: string) => Promise<EnvironmentDiagnosis>
+}>()
 const info = ref<ProjectEnvironmentInfo | null>(null)
 const setup = ref('')
 const startup = ref('')
@@ -59,7 +69,8 @@ async function load() {
     setup.value = result.config.setup_script
     startup.value = result.config.startup_script
     variables.value = Object.entries(result.config.variables).map(([key, value]) => ({ key, value }))
-    selectedRoom.value = result.rooms[0]?.id ?? null
+    const asked = result.rooms.find((r) => r.id === props.room)
+    selectedRoom.value = (asked ?? result.rooms.find((r) => r.failure) ?? result.rooms[0])?.id ?? null
   } catch (e) {
     if (current === generation)
       error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.loadFailed')
@@ -108,6 +119,45 @@ async function apply(latest: boolean) {
   })
 }
 
+// ---- 这个频道最近一次失败：让芝士看看、重试、采用它的改法 ----
+const failing = computed(() => info.value?.rooms.find((r) => r.id === selectedRoom.value && r.failure) ?? null)
+const diagnosis = ref<EnvironmentDiagnosis | null>(null)
+const diagnosing = ref(false)
+watch(selectedRoom, () => (diagnosis.value = null))
+
+async function diagnose() {
+  const room = selectedRoom.value
+  if (!room) return
+  diagnosing.value = true
+  error.value = ''
+  try {
+    const answer = await props.diagnoseRoom(room)
+    if (room === selectedRoom.value) diagnosis.value = answer
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.failure.diagnoseFailed')
+  } finally {
+    diagnosing.value = false
+  }
+}
+
+/** 重试：按保存的那一版重新准备，在等的那几段对话接着处理。 */
+async function retry() {
+  await apply(true)
+  await load()
+}
+
+/** 采用芝士的改法：写进脚本，保存，再重试。 */
+async function adopt() {
+  const answer = diagnosis.value
+  if (!answer) return
+  if (answer.setup_script !== null) setup.value = answer.setup_script
+  if (answer.startup_script !== null) startup.value = answer.startup_script
+  await save()
+  if (saveError.value) return
+  diagnosis.value = null
+  await retry()
+}
+
 // 首次取数期间占住设置页的显示闸，见 useRevealGate。
 const releaseGate = holdRevealGate()
 watch(
@@ -138,6 +188,20 @@ onBeforeUnmount(() => {
         t('work.projectSettings.environment.reload')
       }}</BaseButton>
       <template v-if="info">
+        <EnvironmentFailureCard
+          v-if="failing?.failure"
+          :failure="failing.failure"
+          :room-title="failing.title"
+          :can-edit="info.can_edit"
+          :agent-name="agentName"
+          :diagnosis="diagnosis"
+          :diagnosing="diagnosing"
+          :retrying="applying || saving"
+          @diagnose="diagnose"
+          @retry="retry"
+          @adopt="adopt"
+          @dismiss="diagnosis = null"
+        />
         <p class="t-body c-muted mb-3">
           {{ t('work.projectSettings.environment.intro') }}
         </p>
@@ -274,15 +338,6 @@ onBeforeUnmount(() => {
             </p>
             <p>{{ t('work.projectSettings.environment.logNote') }}</p>
           </details>
-          <p v-if="status?.recovery_state === 'requested'" class="t-body mb-2">
-            {{ t('work.projectSettings.environment.recoveryRequested') }}
-          </p>
-          <p v-else-if="status?.recovery_state === 'retrying'" class="t-body mb-2">
-            {{ t('work.projectSettings.environment.recoveryRetrying') }}
-          </p>
-          <p v-else-if="status?.recovery_state === 'needs_help'" class="t-body mb-2">
-            {{ t('work.projectSettings.environment.recoveryNeedsHelp') }}
-          </p>
           <div class="d-flex flex-wrap ga-2 mb-3">
             <BaseButton kind="secondary" @click="refreshStatus">{{
               t('work.projectSettings.environment.refreshStatus')

@@ -112,8 +112,6 @@ export const AGENT_STATUS_EVENTS = new Set([
   'sandbox_rebuilt',
   'host_failure',
   'platform_error',
-  'environment_recovery',
-  'environment_recovery_request',
   'subagent_start',
   'ci_failed',
   'gate_failed',
@@ -481,6 +479,24 @@ export function confirmTarget(block: Block, projectId: string | null | undefined
   if (kind === 'skill_proposed' && str(m?.skill_id))
     return { name: 'project-skills', params: { projectId }, query: { skill: str(m?.skill_id) } }
   return null
+}
+
+/** 「环境准备失败」那一行指向的地方：项目设置的「环境」，先看出事的那个频道。 */
+export interface EnvironmentTarget {
+  name: 'project-settings'
+  params: { projectId: string; section: 'environment' }
+  query: Record<string, string>
+}
+
+export function environmentTarget(block: Block, projectId: string | null | undefined): EnvironmentTarget | null {
+  const m = meta(block)
+  if (!projectId || str(m?.event_type) !== 'environment_failed') return null
+  const room = str(m?.room_id)
+  return {
+    name: 'project-settings',
+    params: { projectId, section: 'environment' },
+    query: room ? { room } : {},
+  }
 }
 
 /** 连续折叠时，这条事件归哪一类；null = 不参与按类别折叠。 */

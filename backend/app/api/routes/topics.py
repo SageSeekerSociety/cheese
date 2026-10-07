@@ -57,6 +57,7 @@ from app.domain.room_task.services import (
     RoomLockService,
     TaskService,
 )
+from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, threads_of_rooms
 from app.domain.topic.models import Topic
@@ -570,6 +571,12 @@ async def list_topic_blocks(
         if place.inner_id is None
         else {}
     )
+    # A routine's runs are messages of its teammate's: how each went.
+    runs = (
+        await routine_reads.runs_under(db, [b.id for b in blocks])
+        if place.inner_id is None
+        else {}
+    )
     items = []
     for b in blocks:
         item = BlockOut.model_validate(b).model_dump(mode="json")
@@ -577,6 +584,8 @@ async def list_topic_blocks(
             item["reactions"] = reactions[b.id]
         if b.id in threads:
             item["thread"] = threads[b.id]
+        if b.id in runs:
+            item["routine_run"] = runs[b.id]
         items.append(item)
     return ok(
         {

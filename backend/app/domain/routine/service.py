@@ -1,9 +1,13 @@
 """Routines: create and govern the rules, fire them, and settle each run.
 
-Firing writes the run row, the room's event block and the agent's delivery in
-one transaction; the delivery ledger then owns getting the prompt to the
-teammate. A run is settled by the teammate's own report, or, when the turn ends
-without one or never starts, by what the ledger and the turn record show.
+A run is one message of the teammate's in the channel's main line, and the run
+itself happens in that message's 支线, where a follow-up question reaches the
+same session. Firing writes the run row, the message, the 支线's opening line
+and the agent's delivery in one transaction; the delivery ledger then owns
+getting the prompt to the teammate. A run is settled by the teammate's own
+report, or, when the turn ends without one or never starts, by what the ledger
+and the turn record show. When it is settled the message says how it went and
+moves to the bottom of the main line, at the moment it finished.
 """
 
 from __future__ import annotations
@@ -22,12 +26,10 @@ from app.core.sentences import listing, say, with_keys
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
-    EVENT_ROUTINE_RESULT,
     EVENT_ROUTINE_RUN,
     EVENT_ROUTINE_STOPPED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
-    SEVERITY_ERROR,
     SEVERITY_INFO,
     WHO_CHEESE,
     WHO_PLATFORM,
@@ -53,6 +55,7 @@ from app.domain.routine.models import (
     RoutineTrigger,
     RunStatus,
 )
+from app.domain.thread.services import answered_in
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -506,7 +509,7 @@ class RoutineService:
         return run
 
 
-def run_prompt(routine: Routine, run: RoutineRun) -> str:
+def run_prompt(routine: Routine, run: RoutineRun, previous: str = "") -> str:
     folder = routine.output_dir or "房间根目录"
     lines = [
         f"【{TRIGGER_LABELS[RoutineTrigger(routine.trigger)]}工作】{routine.title}",
@@ -520,9 +523,13 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
         "",
         "做完后必须交回结果，成功失败都要交：",
         f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
-        'summary="一两句结果或失败原因", outputs=["房间里的结果文件路径"])',
+        'summary="结果，或失败原因", outputs=["房间里的结果文件路径"])',
+        "成功时的 summary 会作为你的一条消息发在频道主线上，频道里的人直接读它："
+        "写清结论，可以分几点，不用在这里再发一遍。",
         "没有交回结果的一次执行会被记为失败。",
     ]
+    if previous:
+        lines += ["", "上一次执行交回的结果：", previous]
     return "\n".join(lines)
 
 
@@ -561,19 +568,40 @@ async def _fire(
     assert run is not None
     if skip_reason:
         return run
+    # The run's message, in the main line where the rule lives. It says
+    # 「运行中」 until the run is settled, and the run happens in its 支线 (in
+    # a private chat, where there are no 支线, in the chat itself).
+    message = Block(
+        id=uuid.uuid4(),
+        project_id=routine.project_id,
+        conversation_id=routine.topic_id,
+        author=routine.agent_handle,
+        author_type=AuthorType.participant,
+        kind=BlockKind.message,
+        content="",
+        meta={},
+        created_at=stamp,
+    )
+    session.add(message)
+    await session.flush()
+    run.message_id = message.id
+    place = await answered_in(session, message)
     agent = await instance_for_seat(session, routine.project_id, routine.agent_handle)
     if agent is None or not agent.is_active:
         run.status = RunStatus.failed.value
         run.error = f"执行者 {routine.agent_handle} 已不在这个项目里"
         run.finished_at = stamp
         return run
-    content = run_prompt(routine, run)
+    content = run_prompt(routine, run, await _previous_result(session, routine))
     batch_size = routine.spec.get("feedback_batch")
     if batch_size:
         batch = await feedback_triage.untriaged(session, batch_size)
         if not batch:
-            # Nothing waiting is not news: no turn, and no daily notice to the
-            # owner saying so (`notified` is what `_announce_finished` reads).
+            # Nothing waiting is not news: no turn, no message, and no daily
+            # notice to the owner saying so (`notified` is what
+            # `_announce_finished` reads).
+            run.message_id = None
+            await session.delete(message)
             run.status = RunStatus.skipped.value
             run.error = NO_FEEDBACK_WAITING
             run.finished_at = stamp
@@ -586,7 +614,7 @@ async def _fire(
         Block(
             id=event_id,
             project_id=routine.project_id,
-            conversation_id=routine.topic_id,
+            conversation_id=place,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,
@@ -625,12 +653,27 @@ async def _fire(
             },
             occurred_at=stamp,
         ),
-        conversation_id=routine.topic_id,
+        conversation_id=place,
         instance_id=agent.id,
         content=content,
     )
     run.delivery_event_id = event_id
     return run
+
+
+async def _previous_result(session: AsyncSession, routine: Routine) -> str:
+    """What the rule's last successful run handed back: where this one picks
+    up (last week's report, the feedback already sorted)."""
+    summary = await session.scalar(
+        select(RoutineRun.summary)
+        .where(
+            RoutineRun.routine_id == routine.id,
+            RoutineRun.status == RunStatus.succeeded.value,
+        )
+        .order_by(RoutineRun.finished_at.desc())
+        .limit(1)
+    )
+    return summary or ""
 
 
 async def _fire_schedules(session: AsyncSession) -> int:
@@ -866,7 +909,10 @@ async def _settle_open_runs(session: AsyncSession) -> None:
             run.finished_at = stamp
 
 
-async def _announce_finished(session: AsyncSession) -> None:
+async def _announce_finished(session: AsyncSession) -> list[Block]:
+    """Tell how each settled run went: its message in the main line, and its
+    owner. The messages returned changed; the caller publishes them once
+    this commits."""
     from app.domain.notification.services import ProjectNotificationService
 
     rows = list(
@@ -882,6 +928,7 @@ async def _announce_finished(session: AsyncSession) -> None:
             .with_for_update(of=RoutineRun, skip_locked=True)
         )
     )
+    changed: list[Block] = []
     for run, routine in rows:
         run.notified = True
         topic = await session.get(Topic, routine.topic_id)
@@ -899,39 +946,18 @@ async def _announce_finished(session: AsyncSession) -> None:
             if run.outputs
             else said
         )
-        line = say("routineResult", title=routine.title, verdict=verdict)
-        session.add(
-            Block(
-                id=uuid.uuid4(),
-                project_id=routine.project_id,
-                conversation_id=routine.topic_id,
-                author="system",
-                author_type=AuthorType.platform,
-                kind=BlockKind.event,
-                content=line,
-                # A row, not `BlockRepository.add`: the key is recorded here.
-                meta=with_keys(
-                    {
-                        **notice(
-                            EVENT_ROUTINE_RESULT,
-                            severity=SEVERITY_INFO if ok_ else SEVERITY_ERROR,
-                            who=WHO_PLATFORM,
-                            detail=body,
-                            detail_label=(
-                                say("labelResult") if ok_ else say("labelReason")
-                            ),
-                        ),
-                        "routine_id": str(routine.id),
-                        "routine_run_id": str(run.id),
-                        "outputs": run.outputs,
-                    },
-                    content=line,
-                ),
-            )
-        )
+        message = await session.get(Block, run.message_id) if run.message_id else None
+        if message is not None:
+            # What the teammate handed back is its message; a run that did not
+            # get that far says nothing in the teammate's name, and its reason
+            # is the platform's, drawn beside the message. Either way it is
+            # news when it is settled, so it moves to that moment.
+            message.content = run.summary if ok_ else ""
+            message.created_at = now()
+            changed.append(message)
         await ProjectNotificationService(session).create(
             project_id=routine.project_id,
-            level=NotificationLevel.light if ok_ else NotificationLevel.light,
+            level=NotificationLevel.light,
             kind=NotificationType.CHANGE_ALERT,
             title=f"周期任务「{routine.title}」{verdict}",
             body=body,
@@ -939,20 +965,79 @@ async def _announce_finished(session: AsyncSession) -> None:
             topic_id=routine.topic_id,
             payload={"routine_id": str(routine.id), "routine_run_id": str(run.id)},
         )
+    return changed
+
+
+async def publish_run_messages(
+    sessions: SessionFactory, message_ids: list[uuid.UUID], *, new: bool
+) -> None:
+    """Runs' messages, whole, to whoever has their channel open: a new one as
+    a message of the teammate's, a settled one as the line it replaces. Each
+    carries what it is drawn with: how the run went, its reactions and the
+    line under it of its 支线."""
+    if not message_ids:
+        return
+    from app.domain.agent.runtime import get_broker
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.block.schemas import BlockOut
+    from app.domain.routine.reads import runs_under
+    from app.domain.thread import reads as thread_reads
+
+    broker = get_broker()
+    async with sessions() as session:
+        messages = list(
+            await session.scalars(select(Block).where(Block.id.in_(message_ids)))
+        )
+        runs = await runs_under(session, message_ids)
+        threads = await thread_reads.under_messages(
+            session,
+            message_ids,
+            replying=lambda thread: sorted(
+                set(broker.activity.turn_agents(str(thread)).values())
+            ),
+        )
+        reactions = await BlockRepository(session).reactions_for_blocks(message_ids)
+    for message in messages:
+        payload = BlockOut.model_validate(message).model_dump(mode="json")
+        payload["routine_run"] = runs.get(message.id)
+        if message.id in reactions:
+            payload["reactions"] = reactions[message.id]
+        if message.id in threads:
+            payload["thread"] = threads[message.id]
+        await broker.publish(
+            str(message.conversation_id),
+            {
+                "type": "assistant_block" if new else "block_updated",
+                "block": payload,
+            },
+        )
 
 
 async def sweep(sessions: SessionFactory, *, chat, runner) -> dict[str, int]:
+    began = now()
     async with sessions() as session:
         scheduled = await _fire_schedules(session)
         triggered = await _fire_events(session)
         await session.commit()
+        started = [
+            message
+            for message in await session.scalars(
+                select(RoutineRun.message_id).where(
+                    RoutineRun.created_at >= began,
+                    RoutineRun.message_id.is_not(None),
+                )
+            )
+            if message is not None
+        ]
+    await publish_run_messages(sessions, started, new=True)
     async with sessions() as session:
         # 归档是别处做的动作，所以这里每次都问一遍「哪个房间的话还没说」，而不是
         # 让归档那几条路各自记得来敲这扇门（`announce_archived_rooms`）。
         stopped = await RoutineService(session).announce_archived_rooms()
         await _settle_open_runs(session)
-        await _announce_finished(session)
+        changed = await _announce_finished(session)
         await session.commit()
+    await publish_run_messages(sessions, [m.id for m in changed], new=False)
     dispatched = 0
     if scheduled or triggered:
         dispatched = await dispatch_pending(sessions, chat=chat, runner=runner)

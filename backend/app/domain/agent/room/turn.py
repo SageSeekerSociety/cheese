@@ -62,7 +62,7 @@ from app.domain.agent.room.thread_context import thread_context as _thread_conte
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skills
-from app.domain.agent.turn_speakers import turn_speakers
+from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.agent_instance.services import (
     AgentInstanceService,
@@ -758,8 +758,9 @@ class RoomTurns:
             earlier_messages = await blocks.count_messages(
                 place.conversation_id, excluding=prompt_pending_ids
             )
+            routine_run = await is_routine_run(session, delivery_id)
             thread_context = (
-                await _thread_context(session, topic, root)
+                await _thread_context(session, topic, root, routine_run=routine_run)
                 if root is not None
                 else None
             )
@@ -987,7 +988,9 @@ class RoomTurns:
         return _TurnContext(
             room_id=place.room_id,
             inner_id=place.inner_id,
-            reads_only=place.thread is not None
+            # A 支线 reads only, except the turn that is a routine's run: a rule
+            # its owner confirmed, which keeps what it produces.
+            reads_only=(place.thread is not None and not routine_run)
             or (task is not None and task.started_at is None),
             task_machine=None
             if task is None or place.thread is not None
@@ -1400,11 +1403,6 @@ class RoomTurns:
                 False,
                 False,
             )
-            status = getattr(exc, "environment_status", None)
-            if status is not None:
-                from app.domain.project.environment_recovery import report_failure
-
-                await report_failure(self, project_id, prepared.room_id, status)
             # The write never reached the transport, so the Stop consumer's
             # close_one rightly refuses this interval (undelivered). Its own
             # coroutine retires it HERE, by exact id — the same end the
@@ -1425,8 +1423,6 @@ class RoomTurns:
         # and so calls a prompt that landed two seconds earlier undelivered
         # and re-sends it. Nothing but the runtime acts on this, so it never
         # reaches the broker.
-        from app.domain.project.environment_recovery import close_recovery
-
         # Delivery is recorded AT the source (FB-56): the transport accepted
         # the write, so the interval and its input are stamped delivered in
         # the same commit — a converse driven without the work runner leaves
@@ -1436,7 +1432,6 @@ class RoomTurns:
             await turn_inputs.stamp_delivered(
                 session, turn_id=turn_id, at=datetime.now(UTC)
             )
-            await close_recovery(session, prepared.room_id)
             await session.commit()
         _delivery_step("stamp_delivered")
         logger.info(

@@ -466,10 +466,10 @@ function markChangesSeen() {
 // ---- 这个房间派出去了几件活 ----
 // A signal, so 总览 can carry its count while closed and can stay out of the way
 // of a room that never dispatched anything.
-const threads = ref<{ total: number; open: number }>({ total: 0, open: 0 })
+const threads = ref<{ open: number }>({ open: 0 })
 
 function countThreads(rows: { status: string }[]) {
-  threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+  threads.value = { open: rows.filter((r) => r.status === 'open').length }
 }
 
 async function pollThreads(opts: { fresh?: boolean } = {}) {
@@ -525,10 +525,8 @@ useCommands(() =>
 function tabTitle(tab: TabDef): string {
   const detailed = (detail: string) => t('work.room.panel.tabDetail', { label: tab.label, detail })
   const pair = (first: string, second: string) => t('work.room.panel.detailPair', { first, second })
-  if (tab.key === 'overview' && threads.value.total) {
-    const { total, open } = threads.value
-    const tasks = t('work.room.panel.taskCount', { count: total })
-    return detailed(open ? pair(tasks, t('work.room.panel.inProgress', { count: open })) : tasks)
+  if (tab.key === 'overview' && threads.value.open) {
+    return detailed(t('work.room.panel.inProgress', { count: threads.value.open }))
   }
   if (tab.key === 'preview' && previewHasNew.value) return detailed(t('work.room.panel.newContent'))
   if (tab.key === 'changes' && summary.value.changedFiles.length) {
@@ -543,7 +541,8 @@ function signalFor(key: TabKey): PanelTab['signal'] {
   if (key === 'site' && props.working) return { kind: 'pulse' }
   if (key === 'preview' && previewHasNew.value) return { kind: 'dot' }
   if (key === 'threads' && props.threadsNew) return { kind: 'dot' }
-  if (key === 'overview' && threads.value.total) return { kind: 'count', count: threads.value.total }
+  // 进行中的才数：关掉的再多也不是这个频道现在在忙的事。
+  if (key === 'overview' && threads.value.open) return { kind: 'count', count: threads.value.open }
   if (key === 'changes' && summary.value.changedFiles.length) {
     return { kind: 'count', count: summary.value.changedFiles.length, fresh: changesHasNew.value }
   }

@@ -141,6 +141,7 @@ describe('芝士起草、等人确认的那一行', () => {
         { path: '/', component: stub },
         { name: 'project-routines', path: '/projects/:projectId/routines', component: stub },
         { name: 'project-skills', path: '/projects/:projectId/skills', component: stub },
+        { name: 'project-settings', path: '/projects/:projectId/settings/:section?', component: stub },
       ],
     })
     const [row] = collapseNotices([block])
@@ -169,6 +170,14 @@ describe('芝士起草、等人确认的那一行', () => {
   it('整理的技能：通到技能页的那一条', async () => {
     const { getByTestId } = await mountWithRouter(proposed({ event_type: 'skill_proposed', skill_id: 's-3' }))
     expect(getByTestId('notice-confirm').getAttribute('href')).toBe('/projects/proj-1/skills?skill=s-3')
+  })
+
+  it('环境准备失败：一颗「去环境设置」直接打开那个频道的环境', async () => {
+    const { getByTestId } = await mountWithRouter(
+      proposed({ event_type: 'environment_failed', room_id: 'room-7', who: 'human' })
+    )
+    const link = getByTestId('notice-environment')
+    expect(link.getAttribute('href')).toBe('/projects/proj-1/settings/environment?room=room-7')
   })
 
   it('别的平台提示不带这颗按钮', async () => {

@@ -24,6 +24,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     String,
     UniqueConstraint,
     Uuid,
@@ -166,6 +167,9 @@ class RoomCleanup(UuidPk, Timestamps, Base):
     state: Mapped[str] = mapped_column(String(16), default="pending")
     resources: Mapped[list] = mapped_column(JSON, default=list)
     last_error: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    # Attempts in a row that failed for ``last_error``: what the next one waits
+    # (see retire.py).
+    failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Which sweep is working on this cleanup, until when (see retire.py).
     lease_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

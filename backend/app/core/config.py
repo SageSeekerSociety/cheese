@@ -411,6 +411,10 @@ class Settings(BaseSettings):
     topic_naming_model: str = "deepseek-flash"
     topic_naming_budget_usd: float = 10.0
     topic_naming_timeout_seconds: float = 15.0
+    # 「让芝士看看」：环境准备失败时，读日志和两段脚本给出原因和改法的那一问。
+    environment_diagnosis_model: str = "deepseek-flash"
+    environment_diagnosis_budget_usd: float = 10.0
+    environment_diagnosis_timeout_seconds: float = 60.0
     # A named task is re-judged no sooner than this, and at most this often a
     # day: a title is how people find a task again, so it moves rarely.
     topic_naming_follow_interval_seconds: int = 1800

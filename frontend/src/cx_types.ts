@@ -3,6 +3,7 @@
 import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
 import type { DeviceScreen } from './types/deviceSessions'
+import type { EnvironmentFailure } from './types/environment'
 export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { DeviceScreen } from './types/deviceSessions'
@@ -890,12 +891,11 @@ export interface EnvironmentConfig {
 export interface ProjectEnvironmentInfo {
   config: EnvironmentConfig
   can_edit: boolean
-  rooms: { id: string; title: string; revision: string | null }[]
+  rooms: { id: string; title: string; revision: string | null; failure?: EnvironmentFailure }[]
 }
 export interface EnvironmentStatus {
   busy?: boolean
   state: 'unbound' | 'pending' | 'preparing' | 'ready' | 'stopped' | 'failed' | 'offline'
-  recovery_state?: 'requested' | 'retrying' | 'needs_help' | 'closed' | null
   stage?: string
   log?: string
   error?: string

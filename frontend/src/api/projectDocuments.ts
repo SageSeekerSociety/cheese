@@ -39,6 +39,12 @@ export function deleteDocument(documentId: string): Promise<unknown> {
   return request(one(documentId), { method: 'DELETE' })
 }
 
+/** 这份文档最后存下的正文；还没写过字时是空的。 */
+export async function getDocumentText(documentId: string): Promise<string> {
+  const stored = await request<{ content: string } | null>(one(documentId))
+  return stored?.content ?? ''
+}
+
 /** 项目总览是哪一份文档（第一次问时建出空的一份）。综合的概览和项目文档页都显示它。 */
 export function getProjectOverview(projectId: string): Promise<{ id: string }> {
   return request<{ id: string }>(`/projects/${encodeURIComponent(projectId)}/overview`)

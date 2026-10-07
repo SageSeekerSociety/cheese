@@ -91,15 +91,6 @@ DeviceResolver = Callable[
 ]
 
 
-class EnvironmentPreparationError(ScreenSetupError):
-    def __init__(self, status: dict):
-        self.environment_status = status
-        super().__init__(
-            say("environmentPreparationFailed"),
-            failure_code="environment_preparation_failed",
-        )
-
-
 # #358 · what a turn gets when its only/pinned machine is enrolled as the boxed
 # `isolated` 档: a clean, actionable refusal, NOT a silent bare-on-host launch. It
 # is deliberately NOT one of platform_failures' host-scoped classifications — an

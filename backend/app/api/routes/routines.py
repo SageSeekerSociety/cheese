@@ -420,6 +420,10 @@ async def run_routine_now(
     run = await RoutineService(db).run_now(row, by=actor.handle)
     await db.commit()
     chat = get_chat_service()
+    if run.message_id is not None:
+        await routines.publish_run_messages(
+            chat.session_factory, [run.message_id], new=True
+        )
     await routines.dispatch_pending(
         chat.session_factory, chat=chat, runner=get_work_runner()
     )

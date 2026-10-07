@@ -135,14 +135,15 @@ def test_a_routine_runs_with_the_owners_private_memory(client, tmp_path):
     _make_due(client, rule["id"])
     _, runner = _sweep(client)
     assert len(runner.submitted) == 1, "没有派出一轮"
-    _topic, submitted = runner.submitted[0]
+    conversation, submitted = runner.submitted[0]
     delivery_id, payload = _delivery_of(client)
     assert submitted["delivery_id"] == delivery_id
     assert payload["eventType"] == "routine_run"
     assert payload["routineOwner"] == OWNER
     assert submitted["content"] == payload["content"]
 
-    prompt = _prompt_of_the_routine_turn(client, tmp_path, room, submitted)
+    # The run is answered where the runner was told to: the run's own 支线.
+    prompt = _prompt_of_the_routine_turn(client, tmp_path, conversation, submitted)
     assert TEAM_HOOK in prompt
     assert OWNER_HOOK in prompt, "规则主人那一份没有被读进来"
     assert BOB_HOOK not in prompt, "读到了没交代这件事的人的私有偏好"

@@ -87,6 +87,18 @@ def _weekly(client, room, headers=None, **over):
     return client.post(f"/topics/{room}/routines", json=body, headers=headers or {})
 
 
+def _run_message(client, room: str, run_id: str) -> dict:
+    """The main-line message that stands for this run."""
+    blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
+    found = [
+        b
+        for b in blocks["data"]
+        if (b.get("routine_run") or {}).get("run_id") == run_id
+    ]
+    assert len(found) == 1, "这次执行在主线上没有一条消息"
+    return found[0]
+
+
 def _runs(client, routine_id):
     r = client.get(f"/routines/{routine_id}/runs", headers=PERSON)
     assert r.status_code == 200, r.text
@@ -126,10 +138,14 @@ def test_a_due_moment_wakes_the_teammate_once(client):
     assert second["scheduled"] == 0
     assert len(runner.submitted) == 1 and runner2.submitted == []
     topic_id, kwargs = runner.submitted[0]
-    assert topic_id == room
     assert "整理本周各房间的进展" in kwargs["content"]
     runs = _runs(client, routine["id"])
     assert len(runs) == 1
+    # The run is a message of the teammate's in the main line, and the run
+    # itself is answered in that message's 支线.
+    message = _run_message(client, room, runs[0]["id"])
+    assert message["author"] == routine["agent_handle"]
+    assert topic_id == message["routine_run"]["thread_id"] != room
     assert runs[0]["scheduled_for"] == due.isoformat()
     after = client.get(f"/routines/{routine['id']}", headers=PERSON).json()["data"]
     assert datetime.fromisoformat(after["next_run_at"]) > datetime.now(UTC)

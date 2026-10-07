@@ -114,11 +114,16 @@ function backToRoom() {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: props.topicId } })
 }
 
+// Bumped on every AI turn / tool use. Watched by the documents in the panel
+// and the project overview on 综合's overview (reload what 芝士 maintained).
+const activityTick = ref(0)
+
 // 频道概览：置顶、任务、综合的项目总览。
 const channelOverview = useChannelOverview({
   channelId: () => (props.taskId ? null : props.topicId),
   projectId: () => props.projectId,
   general: () => store.placeById(props.topicId)?.kind === 'root',
+  tick: () => activityTick.value,
   reportError: (e) => store.reportError(e, t('work.channel.pins.unpinFailed')),
 })
 const canPin = computed(() => {
@@ -367,10 +372,6 @@ function startPaneDrag(e: MouseEvent) {
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
 }
-
-// Bumped on every AI turn / tool use. Watched by the 文档 tab (reload the living
-// doc 芝士 maintained).
-const activityTick = ref(0)
 
 // The chat column's own composer is the one this topic uses; TopicView only
 // needs a handle on the panel it lives in for the connection dot in the header.
@@ -813,21 +814,20 @@ void openPlace()
                 :topic="selectedTopic"
                 :general="selectedTopic.kind === 'root'"
                 :overview="channelOverview.overview.value"
+                :overview-text="channelOverview.overviewText.value"
                 :pins="channelOverview.pins.value"
                 :tasks="channelOverview.tasks.value"
                 :can-pin="canPin"
                 :member-names="memberNames"
                 :agent-name="store.agentName"
-                :agent-handle="store.agentHandle"
-                :members="store.members"
-                :topic-list="store.topics"
-                :activity-tick="activityTick"
                 :save-description="(text: string) => store.describe(topicId, text)"
                 @unpin="channelOverview.unpin"
+                @edit-overview="
+                  (id: string) => panelRef?.openDocument?.({ id, title: t('work.channel.overview.project') })
+                "
                 @jump="jumpTo"
                 @open-task="onOpenCard"
                 @open-all="router.push({ name: 'workspace-channel-tasks', params: { projectId, topicId } })"
-                @open-topic="openTopic"
                 @mention-click="handleMentionClick"
               />
             </template>
