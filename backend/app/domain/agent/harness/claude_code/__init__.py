@@ -13,6 +13,7 @@ a ratchet — adding to it goes red, and so does forgetting to delete a line you
 paid off.
 """
 
+from app.domain.agent.harness.claude_code import owner_login
 from app.domain.agent.harness.claude_code.backlog import control_state
 from app.domain.agent.harness.claude_code.behaviour import declaration
 from app.domain.agent.harness.claude_code.device_launch import (
@@ -45,6 +46,7 @@ __all__ = [
     "declaration",
     "ended",
     "executor_launch",
+    "owner_login",
     "private_execution_target",
     "resident_release",
 ]

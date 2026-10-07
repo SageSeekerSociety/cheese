@@ -626,6 +626,7 @@ routes:
   # app.api.routes.installer
   - {protocol: "http", method: "GET", path: "/connector/install.sh", auth: "public.catalogue", owner: "installer"}
   - {protocol: "http", method: "GET", path: "/connector/install.ps1", auth: "public.catalogue", owner: "installer"}
+  - {protocol: "http", method: "GET", path: "/connector/claude/pin", auth: "public.catalogue", owner: "installer"}
   - {protocol: "http", method: "GET", path: "/connector/claude/{version}/{platform}/{name}", auth: "public.catalogue", owner: "installer"}
   - {protocol: "http", method: "GET", path: "/connector/pi/{version}/{platform}/pi.tar.gz", auth: "public.catalogue", owner: "installer"}
   - {protocol: "http", method: "GET", path: "/connector/toolchain/{tool}/{platform}/artifact", auth: "public.catalogue", owner: "installer"}
