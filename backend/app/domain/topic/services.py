@@ -754,7 +754,7 @@ class TopicService:
         if operation is not None:
             if operation.state == "preparing":
                 raise ConflictError(say("unarchiveWhileSessionStopping"))
-            if operation.state == "pending":
+            if operation.state in {"pending", "kept"}:
                 operation.state = "cancelled"
             elif operation.state in {"claimed", "retained", "complete"}:
                 topic.resource_id = uuid.uuid4()

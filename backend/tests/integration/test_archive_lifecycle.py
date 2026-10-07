@@ -835,12 +835,13 @@ async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_only_once_pushed
         return
 
     assert _sweep(client) == {"completed": 0, "pending": 1}
-    assert _sweep(client) == {"completed": 0, "pending": 1}
+    # Kept for a person, it is not due again within the day.
+    assert _sweep(client) == {"completed": 0, "pending": 0}
     assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
     status = client.get(
         f"/topics/{room_id}/cleanup", headers=session_auth_headers("owner")
     ).json()["data"]
-    assert status["state"] == "pending"
+    assert status["state"] == "kept"
     assert "not pushed" in status["reason"]
     async with client.test_factory() as session:
         await TopicService(session).unarchive(room_id, by="owner")
@@ -938,8 +939,75 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(
     assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
-        assert operation.state == "pending"
+        assert operation.state == "kept"
         assert "not pushed" in operation.last_error
+
+
+async def test_work_kept_only_in_an_archive_is_not_retried_on_the_machines(
+    client, monkeypatch
+):
+    """A cleanup held only because an archive is the sole copy of unpushed work
+    waits for a person: it asks no machine anything while it waits, counts no
+    failures, and looks again a day later. Once that copy is gone it goes on
+    like any other cleanup."""
+    from app.domain.agent_session.services import AgentSessionService
+
+    room_id, cleanup_id = await archived_room(client, monkeypatch)
+    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    asked = AsyncMock()
+    monkeypatch.setattr(retire, "_device_action", asked)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        conversation = await AgentSessionService(session).ensure(
+            room_id, "worker", harness="claude-code"
+        )
+        session.add(
+            CloudHostHome(
+                host_id=None,
+                project_id=operation.project_id,
+                topic_id=room_id,
+                room_resource_id=str(operation.resource_id),
+                resource_id=str(uuid.uuid4()),
+                session_id=conversation.id,
+                stopped_at=datetime.now(UTC),
+                archive_key="sandbox-archives/home.tar.gz",
+                archive_size=13,
+                archive_md5="0" * 32,
+                archive_published=False,
+            )
+        )
+        await session.commit()
+
+    _sweep(client)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        assert operation.state == "kept"
+        assert operation.failures == 0
+        assert operation.due_at - datetime.now(UTC) > timedelta(hours=23)
+        # Due again, it still asks no machine.
+        operation.due_at = datetime.now(UTC)
+        await session.commit()
+    _sweep(client)
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, cleanup_id)
+        assert operation.state == "kept"
+        assert operation.failures == 0
+    assert asked.await_count == 0
+
+    # The archive stops being the only copy: the cleanup goes on as usual.
+    async with client.test_factory() as session:
+        home = await session.scalar(
+            select(CloudHostHome).where(CloudHostHome.topic_id == room_id)
+        )
+        home.archive_published = True
+        operation = await session.get(RoomCleanup, cleanup_id)
+        operation.due_at = datetime.now(UTC)
+        await session.commit()
+    _sweep(client)
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, cleanup_id)).state != "kept"
+    assert asked.await_count > 0
 
 
 async def test_a_cleanup_held_for_the_same_reason_backs_off(client, monkeypatch):
