@@ -113,7 +113,11 @@ def session_settings() -> dict:
         "permissions": {"deny": list(DISALLOWED_TOOLS)},
         # Set before the first turn: changing this later cannot remove a URL
         # already present in the conversation's model-visible history.
-        "attribution": {"sessionUrl": False},
+        # Empty commit/pr: no "Co-Authored-By: Claude" trailer on the commits a
+        # teammate makes, and no "Generated with Claude Code" line under its PRs.
+        # The work is the teammate's, credited through the platform's own
+        # identities (`domain/repository/identity.py`), not to the CLI.
+        "attribution": {"commit": "", "pr": "", "sessionUrl": False},
         "hooks": {
             "SessionStart": sync_agents,
             "UserPromptSubmit": sync_agents,
