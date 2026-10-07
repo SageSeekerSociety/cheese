@@ -21,6 +21,7 @@ import * as api from '@/api'
 
 vi.mock('@/api', async (original) => ({
   ...(await original<typeof import('@/api')>()),
+  getAppVersion: vi.fn(async () => ({ sha: '', short: '', badge: false })),
   listProjects: vi.fn(async () => ({ data: [] })),
   listProjectAgents: vi.fn(async () => ({ data: [] })),
   createProject: vi.fn(async (name: string) => ({
