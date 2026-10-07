@@ -29,6 +29,7 @@ from app.domain.living_doc.models import (
     DocumentVersion,
 )
 from app.domain.living_doc.repositories import DocumentRepository
+from app.domain.project.address import Numbered, take_number
 
 
 def content_hash(content: str) -> str:
@@ -54,13 +55,24 @@ class Documents:
         return await self._repo.of_project(project_id)
 
     async def create(
-        self, *, project_id: uuid.UUID, title: str | None = None, author: str = "system"
+        self,
+        *,
+        project_id: uuid.UUID,
+        title: str | None = None,
+        author: str = "system",
+        own: bool = False,
     ) -> Document:
-        """A new document in no room, empty (version 0): the project's own, or
-        one a task points at. What it says is written the way every other
-        write is, through the service."""
+        """A new document in no room, empty (version 0): the project's own
+        (``own``, which gets the project's next document number), or one a
+        task points at. What it says is written the way every other write is,
+        through the service."""
+        number = (
+            await take_number(self._session, project_id, Numbered.document)
+            if own
+            else None
+        )
         return await self._repo.create(
-            project_id=project_id, title=title, author=author
+            project_id=project_id, title=title, author=author, number=number
         )
 
     async def nodes(self, doc: Document) -> list[DocumentNode]:

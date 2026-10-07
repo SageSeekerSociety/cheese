@@ -130,7 +130,7 @@ async def create_document(
             task = await TaskService(db).of_document(source.id)
             title = source.title or (task.title if task is not None else "")
     doc = await Documents(db).create(
-        project_id=project_id, title=title, author=actor.handle
+        project_id=project_id, title=title, author=actor.handle, own=True
     )
     await db.commit()
     if content and content.strip():
