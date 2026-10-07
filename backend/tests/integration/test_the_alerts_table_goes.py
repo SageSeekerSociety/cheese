@@ -133,7 +133,7 @@ def test_what_the_window_left_on_an_already_moved_row_comes_over(client):
     # 拍过板的不再挂在「等你处理的事」里 —— 挂着就会被再拍一次
     assert "要不要上" not in [row["title"] for row in _pending(client, pid, "alice")]
 
-    # 赞本身已经不在通知上了（迁移 b7e3c9d14a52），这一行照样搬过来。
+    # 通知上的赞已经不再读出来，这一行照样搬过来。
     assert "看一眼" in [row["title"] for row in _inbox(client, pid, "bob")]
     assert not _alerts_exists(client)
 
