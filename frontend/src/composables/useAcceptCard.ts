@@ -238,20 +238,26 @@ export function useAcceptCard(props: AcceptCardHost) {
     rejectNote.value = ''
     showGateOutput.value = false
     expanded.value = false
+    showVoidInput.value = false
+    voidNote.value = ''
+    showForceMergeInput.value = false
+    forceMergeReason.value = ''
   }
 
   // 后发的请求先回来、先发的后回来时，晚到的那份是旧的，不许盖掉新的。
   let requested = 0
   let applied = 0
 
-  async function loadAcceptCard() {
+  // `alongside`：和卡一起变的另一份数据（话题状态）。等它也回来再换卡：采纳之后卡先
+  // 变成 accepted、话题还没归档的那一拍，框会先收走再长回来。
+  async function loadAcceptCard(alongside?: Promise<unknown>) {
     const tid = props.topicId
     const task = props.taskId
     if (!tid) return
     const seq = ++requested
     try {
       // A task's cards are read through the task's own conversation.
-      const payload = await getAcceptCards(task ?? tid)
+      const [payload] = await Promise.all([getAcceptCards(task ?? tid), alongside?.catch(() => undefined)])
       if (props.topicId !== tid || props.taskId !== task || seq < applied) return
       applied = seq
       const first = !loaded.value
@@ -382,7 +388,10 @@ export function useAcceptCard(props: AcceptCardHost) {
       if (updated.status === 'conflict') {
         store.error = t('topic.accept.conflict', { agent: store.agentName })
       }
-      await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
+      // 卡已经定了：开着的退回框和里面那半句理由不再适用。
+      showRejectInput.value = false
+      rejectNote.value = ''
+      await loadAcceptCard(store.refreshTopicRow(props.topicId))
     } catch (e) {
       store.reportError(e, needsPr.value ? t('topic.accept.createPrFailed') : t('topic.accept.acceptFailed'))
       // 被拒的原因可能正是「你看到的版本已过时」——那就把屏幕换成新的那一版，
@@ -399,7 +408,10 @@ export function useAcceptCard(props: AcceptCardHost) {
     acceptBusy.value = true
     try {
       await revokeCard(card.id, AUTHOR)
-      await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
+      // 卡已经定了：开着的退回框和里面那半句理由不再适用。
+      showRejectInput.value = false
+      rejectNote.value = ''
+      await loadAcceptCard(store.refreshTopicRow(props.topicId))
     } catch (e) {
       store.reportError(e, t('topic.accept.undoFailed'))
     } finally {
@@ -415,7 +427,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       await mergeCardAnyway(card.id, forceMergeReason.value, card.merge_state.head_sha)
       showForceMergeInput.value = false
       forceMergeReason.value = ''
-      await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
+      await loadAcceptCard(store.refreshTopicRow(props.topicId))
     } catch (e) {
       store.reportError(e, t('topic.accept.acceptFailed'))
       await loadAcceptCard() // 见 onAcceptCard：过时的那一版要换掉
@@ -448,7 +460,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       await rejectCard(card.id, AUTHOR, rejectNote.value)
       showRejectInput.value = false
       rejectNote.value = ''
-      await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
+      await loadAcceptCard(store.refreshTopicRow(props.topicId))
     } catch (e) {
       store.reportError(e, t('topic.accept.returnFailed'))
     } finally {
@@ -464,7 +476,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       await voidCard(card.id, voidNote.value)
       showVoidInput.value = false
       voidNote.value = ''
-      await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
+      await loadAcceptCard(store.refreshTopicRow(props.topicId))
     } catch (e) {
       store.reportError(e, t('topic.accept.voidFailed'))
     } finally {
@@ -530,7 +542,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     deliverableBusy,
     deliverableError,
     // 动作
-    reload: loadAcceptCard,
+    reload: () => loadAcceptCard(),
     onDownloadDeliverable,
     onApproveCard,
     onReassignCard,

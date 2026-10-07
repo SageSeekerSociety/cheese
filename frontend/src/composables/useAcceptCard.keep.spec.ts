@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAcceptCards = vi.fn()
 const reassignCard = vi.fn()
+const acceptCard = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -16,6 +17,7 @@ vi.mock('@/api', async () => {
     ...actual,
     getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
     reassignCard: (...a: unknown[]) => reassignCard(...a),
+    acceptCard: (...a: unknown[]) => acceptCard(...a),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
   }
 })
@@ -64,6 +66,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   getAcceptCards.mockReset()
   reassignCard.mockReset().mockResolvedValue({})
+  acceptCard.mockReset().mockResolvedValue({ status: 'accepted' })
   useWorkspaceStore().refreshTopicRow = vi.fn().mockResolvedValue(undefined)
 })
 
@@ -119,5 +122,32 @@ describe('useAcceptCard keeps the card while it re-reads', () => {
     slow.resolve({ data: [card({ reviewer_handle: 'stale' })] })
     await flush()
     expect(api.pendingCard.value?.reviewer_handle).toBe('new')
+  })
+  it('a decided card does not keep a half-written return note open', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card()] })
+    const api = host(reactive({ topicId: 't1', topicStatus: 'active' }))
+    await flush()
+    api.showRejectInput.value = true
+    api.rejectNote.value = 'half typed'
+
+    getAcceptCards.mockResolvedValue({ data: [card({ status: 'accepted' })] })
+    await api.onAcceptCard()
+    expect(api.showRejectInput.value).toBe(false)
+    expect(api.rejectNote.value).toBe('')
+  })
+
+  it('switching topics closes the void and force-merge forms', async () => {
+    getAcceptCards.mockResolvedValue({ data: [card()] })
+    const props = reactive({ topicId: 't1', topicStatus: 'active' })
+    const api = host(props)
+    await flush()
+    api.showVoidInput.value = true
+    api.voidNote.value = 'x'
+    api.showForceMergeInput.value = true
+    api.forceMergeReason.value = 'y'
+    props.topicId = 't2'
+    await flush()
+    expect([api.showVoidInput.value, api.voidNote.value]).toEqual([false, ''])
+    expect([api.showForceMergeInput.value, api.forceMergeReason.value]).toEqual([false, ''])
   })
 })

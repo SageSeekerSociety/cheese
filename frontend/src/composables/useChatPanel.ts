@@ -8,13 +8,13 @@
 // what it looks like.
 //
 // What lives here: the roster and the turns, the timeline window and its paging
-// (listBlocks is called in exactly four places, all of them in useChatPaging),
+// (listBlocks is called from useChatPaging, loadTopic and roomResync),
 // the socket frames and what each one means for the window, the scroll position
 // policy, the unread/received animation sets, and the error banner. What
 // does not: the composer (useChatComposer), the pointer affordances on a row
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
-import type { Block, ChatAttachment, ReactionAgg, Topic, WsServerFrame } from '../cx_types'
+import type { Block, ChatAttachment, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
@@ -28,8 +28,10 @@ import { ApiError, attachmentRawUrl, downloadFile, ensureFreshToken, isRetryable
 import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
+import { applyRoomState, useRoomResync } from '../components/room/composables/roomResync'
 import { useActivityLines } from '../components/room/composables/useActivityLines'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
+import { useHistoryReads } from '../components/room/composables/useHistoryReads'
 import { useLiveSteps } from '../components/room/composables/useLiveSteps'
 import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
 import { useRoomActivity } from '../components/room/composables/useRoomActivity'
@@ -49,7 +51,6 @@ import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
-import { resyncTail } from '../lib/tailResync'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
@@ -140,6 +141,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
   const timeline = useTimeline({ renders: rendersInRoom })
+  const history = useHistoryReads({ roomId: () => place()?.id, disposed: () => disposed })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
 
@@ -161,7 +163,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   function replaceShown(block: Block) {
     if (!timeline.find(block.id)) return
     timeline.replace(block)
-    historyChanges?.set(block.id, block)
+    history.note(block.id, block)
   }
 
   // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
@@ -175,7 +177,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const { reactionPickerFor, applyReactions, onReact, togglePicker } = useMessageReactions({
     find: (id) => timeline.find(id),
     errorMsg,
-    pendingHistory: () => historyReactions,
+    pendingHistory: history.pendingReactions,
     me: AUTHOR,
   })
 
@@ -223,14 +225,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // State frames are transient, so a re-connect rather than the first open:
       // a doc saved while we were away has no remaining turn left to replay it.
       if (reconnect) emit('state-changed', 'doc')
-      // 要一份此刻的现场（在跑的轮次、在忙的人）：重连时屏幕上留着断线前那一份，拿
-      // 它核对，见 handleFrame 的 room_state。
+      // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
       sendOnSocket({ type: 'sync' })
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
       const current = place()
-      if (current?.id === topicId) void resyncTopic(current)
+      if (current?.id === topicId) void resync(topicId)
     },
     errorMsg,
   })
@@ -263,13 +264,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     openSocket(topicId)
   }
 
-  // Append a block unless it's already in the timeline: after a switch-away /
-  // return, history (DB) and the broker's in-progress-turn replay overlap, and
-  // a block must never show up twice (现场不能错).
-  let historyChanges: Map<string, Block | null> | null = null
-  let historyReactions: Map<string, ReactionAgg[]> | null = null
-  let historyGeneration = 0
-
   // 出错提示停多久。一次没成的事（表情没加上、下载失败）说一句，够读完就淡出：一直
   // 挂着的话它盖住输入框上方那块，而说的多半已经过去了。连不上服务器的时候不走——
   // 那时候这一行说的是房间此刻的状态（连接被拒、正在重连、历史没读出来），它一走，
@@ -286,10 +280,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 后换成落库的那一条）必须是瞬间的，否则同一句话会在屏幕上出现两遍。
   const editing = new Set<string>()
 
+  // Append a block unless it's already in the timeline: after a switch-away /
+  // return, history (DB) and the broker's in-progress-turn replay overlap, and
+  // a block must never show up twice (现场不能错).
   function pushBlock(b: Block) {
-    historyChanges?.set(b.id, b)
+    history.note(b.id, b)
     const landing = timeline.append(b)
-    if (landing === 'known' || landing === 'above' || historyChanges !== null || b.author === AUTHOR) return
+    if (landing === 'known' || landing === 'above' || history.reading() || b.author === AUTHOR) return
     if (b.kind === 'artifact') emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
     if (landing === 'shown') arrived.add(b.id)
     if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
@@ -336,7 +333,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'block_updated': {
         // 已经在时间线上的一行变了：原地换掉，不追加第二行。
         timeline.replace(frame.block)
-        historyChanges?.set(frame.block.id, frame.block)
+        history.note(frame.block.id, frame.block)
         toSite(frame.block)
         break
       }
@@ -368,7 +365,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         autoScroll()
         break
       case 'retract_block':
-        historyChanges?.set(frame.block_id, null)
+        history.note(frame.block_id, null)
         timeline.remove(frame.block_id)
         break
       case 'agent_control':
@@ -383,16 +380,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'activity_snapshot':
         activity.snapshot(frame.members)
         break
-      case 'room_state': {
-        // 此刻的全部现场。重连后屏幕上留着断线前那一份：断线期间结束了的轮次、停下
-        // 的人、过去了的那一步、写到一半又结束了的消息在这里撤掉，其余原样留着。
-        turns.reconcile(frame.turn_ids, frame.since, frame.agents)
-        for (const id of frame.turn_ids) runRecords.turnBegan(id)
-        activity.snapshot(frame.members)
-        liveSteps.keepOnly(new Set(Object.values(frame.agents ?? {})))
-        typing.keepTurns(new Set(frame.turn_ids))
+      case 'room_state':
+        applyRoomState(frame, { turns, runRecords, activity, liveSteps, typing })
         break
-      }
       case 'thread_activity':
         emit('thread-activity', frame.thread_id, frame.member, frame.active)
         break
@@ -415,13 +405,26 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
   let disposed = false
 
+  function historyReadFailed(roomId: string, e: unknown) {
+    if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
+    // A failed history fetch must not terminate socket recovery during an outage.
+    if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) retryLater(roomId)
+  }
+
+  const resync = useRoomResync({
+    history,
+    timeline,
+    runRecords,
+    settle: (b: Block) => settleOutbox(b),
+    follow: () => atBottom.value && autoScroll(),
+    connect: (id: string) => connectRefused.value || connectSocket(id),
+    close: closeSocket,
+    failed: historyReadFailed,
+  })
+
   async function loadTopic(room: Topic, entering = false) {
-    const generation = ++historyGeneration
-    const changes = new Map<string, Block | null>()
-    historyChanges = changes
-    const reactions = new Map<string, ReactionAgg[]>()
-    historyReactions = reactions
-    const stillHere = () => !disposed && generation === historyGeneration && place()?.id === room.id
+    const { changes, reactions, stillHere, end } = history.begin(room.id)
     // 地址点名了一条消息：落到它上面，而不是上次停的地方。
     const focus = focusBlock() ?? null
     errorMsg.value = null
@@ -541,76 +544,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // 之前露出来就是「一条消息飘在半空」，补完再露才是首屏一屏历史。见 useChatPaging。
       await paging.fillViewportIfNeeded()
     } catch (e) {
-      if (!stillHere()) return
-      if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
-      // A failed history fetch must not terminate socket recovery during an outage.
-      if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
-        retryLater(room.id)
-      }
+      if (stillHere()) historyReadFailed(room.id, e)
     } finally {
-      if (generation === historyGeneration) {
-        historyChanges = null
-        historyReactions = null
-        loadingHistory.value = false
-      }
-    }
-  }
-
-  /**
-   * 断线重连：屏幕上正是这间房，什么都不清。读回最新一页，就地合进时间线（变了的
-   * 换掉、新来的接上、断线期间撤回的拿走），再开 socket；现场（轮次、在忙的人、当前
-   * 一步）留着，等连上后的 room_state 帧核对。输入框、待发的图片、正在编辑的那条、
-   * 未读分隔线、滚动位置都是读的人自己的，和断线无关，一样不动。
-   *
-   * 进房间（loadTopic）才清空：那时屏幕上是别的房间。
-   */
-  async function resyncTopic(room: Topic) {
-    const generation = ++historyGeneration
-    const changes = new Map<string, Block | null>()
-    historyChanges = changes
-    const reactions = new Map<string, ReactionAgg[]>()
-    historyReactions = reactions
-    const stillHere = () => !disposed && generation === historyGeneration && place()?.id === room.id
-    closeSocket()
-    try {
-      await ensureFreshToken()
-      if (!stillHere()) return
-      const payload = await listBlocks(room.id, { limit: PAGE_SIZE })
-      if (!stillHere()) return
-      const fresh = { blocks: payload.data, hasMore: !!payload.has_more }
-      fresh.blocks = applyLiveChanges(fresh, changes, reactions)
-      // 断线期间开始又结束的轮次，排队那一行要知道它已经开始过了：它在历史里留下的
-      // 块带着轮次 id。
-      for (const block of fresh.blocks) if (block.turn_id) runRecords.turnBegan(block.turn_id)
-      const before = timeline.newest().blocks.at(-1)?.id
-      const plan = resyncTail(timeline.newest().blocks, fresh)
-      if (plan.gap) {
-        // 断线期间来了不止一页：中间那截没读过，接上会留一个看不见的洞。
-        timeline.show(fresh)
-      } else {
-        for (const id of plan.removed) timeline.remove(id)
-        for (const block of plan.upserts) {
-          if (timeline.newest().blocks.some((b) => b.id === block.id)) timeline.replace(block)
-          else timeline.append(block)
-        }
-      }
-      for (const block of fresh.blocks) settleOutbox(block)
-      setCachedWindow(room.id, timeline.newest())
-      if (timeline.newest().blocks.at(-1)?.id !== before && atBottom.value) autoScroll()
-      if (!connectRefused.value) connectSocket(room.id)
-    } catch (e) {
-      if (!stillHere()) return
-      if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
-      if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
-        retryLater(room.id)
-      }
-    } finally {
-      if (generation === historyGeneration) {
-        historyChanges = null
-        historyReactions = null
-      }
+      if (end()) loadingHistory.value = false
     }
   }
 
