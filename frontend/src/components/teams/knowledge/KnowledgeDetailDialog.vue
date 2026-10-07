@@ -44,7 +44,6 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vue/no-restricted-syntax -- viewer: image/audio/video preview fills most of the screen (design-system §3.7) -->
   <v-dialog
     :model-value="modelValue"
     :max-width="DIALOG_WIDTH.lg"

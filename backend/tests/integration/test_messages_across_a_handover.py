@@ -154,7 +154,7 @@ def test_a_message_that_was_answered_is_not_answered_again(client):
 def test_a_message_refused_for_spent_credits_is_not_tried_again(client, monkeypatch):
     room, channel, service = _room(client)
 
-    async def spent(topic_id):
+    async def spent(topic_id, agent_instance_id=None):
         return {"project_id": None, "credits_exhausted": True}
 
     monkeypatch.setattr(service, "work_policy", spent)

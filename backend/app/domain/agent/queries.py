@@ -20,6 +20,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
@@ -412,3 +413,23 @@ def _model_policy_call(project, agent=None) -> gate.Call:
         tier=choices[bound.model]["tier"],
         approver=project.owner_handle or "",
     )
+
+
+async def instance_of_handle(
+    session_factory, place_id: uuid.UUID, agent_handle: str
+) -> uuid.UUID | None:
+    """The agent instance *agent_handle* names in the project *place_id* is in,
+    or None when no instance carries it."""
+    from app.domain.agent_instance.models import AgentInstance
+    from app.domain.room_task.place import PlaceResolver
+
+    async with session_factory() as session:
+        place = await PlaceResolver(session).conversation(place_id)
+        if place is None:
+            return None
+        return await session.scalar(
+            select(AgentInstance.id).where(
+                AgentInstance.project_id == place.project_id,
+                AgentInstance.handle == agent_handle,
+            )
+        )

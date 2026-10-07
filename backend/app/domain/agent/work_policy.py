@@ -9,6 +9,7 @@ import uuid
 
 from app.core.config import settings
 from app.domain.agent.compute_configs import place_choice, project_configs
+from app.domain.agent_instance.own import owned_instance
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import PlaceResolver
 from app.domain.usage.ledger import Ledger, payer_for_project
@@ -23,7 +24,9 @@ def resolve_compute_id(
     return project_configs(project_settings).default.profile
 
 
-async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
+async def work_policy(
+    sessions, compute, topic_id: uuid.UUID, agent_instance_id: uuid.UUID | None = None
+) -> dict | None:
     """Admission facts a turn is gated on before it runs (spec §9.1 算力额度):
     the owning project, its concurrency ceiling, whether its compute credits are
     exhausted, and whether its session starts on the session host. None when
@@ -34,8 +37,20 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
             return None
         topic, task = place.room, place.task
         project = await ProjectRepository(session).get(topic.project_id)
-        refused = await Ledger(session).admit(
-            await payer_for_project(session, topic.project_id)
+        # A member's own coding agent is paid by its owner's own login and
+        # runs on their machine: the project's credits and the session host's
+        # memory are not what admits it.
+        owned = (
+            await owned_instance(session, agent_instance_id)
+            if agent_instance_id is not None
+            else None
+        )
+        refused = (
+            None
+            if owned is not None
+            else await Ledger(session).admit(
+                await payer_for_project(session, topic.project_id)
+            )
         )
     project_settings = project.settings if project else None
     max_concurrent = settings.max_concurrent_turns
@@ -54,5 +69,5 @@ async def work_policy(sessions, compute, topic_id: uuid.UUID) -> dict | None:
         # Why the project's credits refuse a turn now (a sentence the room
         # shows), or None when they admit it.
         "credits_exhausted": refused.message if refused is not None else None,
-        "on_session_host": provider is not None,
+        "on_session_host": provider is not None and owned is None,
     }

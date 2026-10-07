@@ -1,5 +1,4 @@
 <template>
-  <!-- eslint-disable-next-line vue/no-restricted-syntax -- sudo: one block-width primary per method sits in the body, not in a footer (design-system §3.7) -->
   <v-dialog
     :model-value="request !== null"
     max-width="420"

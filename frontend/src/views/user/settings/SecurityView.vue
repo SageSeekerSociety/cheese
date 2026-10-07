@@ -156,102 +156,123 @@
     </section>
 
     <!-- Changing the password -->
-    <AdaptiveDialog
-      v-model="showChangePassword"
-      :title="t('account.security.changePasswordTitle')"
-      size="sm"
-      :primary-label="t('account.security.changePasswordSubmit')"
-      :primary-loading="changingPassword"
-      @primary="submitPassword"
-    >
-      <v-form ref="passwordForm" @submit.prevent="submitPassword">
-        <PasswordField
-          id="security-new-password"
-          v-model="newPassword"
-          autocomplete="new-password"
-          :label="t('account.field.newPassword')"
-          :hint="t('account.rule.passwordHint')"
-          persistent-hint
-          :rules="[(v: string) => REGEX_PASSWORD.test(v ?? '') || t('account.rule.passwordInvalid')]"
-          class="mb-2"
-        />
-        <PasswordField
-          id="security-confirm-password"
-          v-model="confirmPassword"
-          autocomplete="new-password"
-          :label="t('account.field.confirmPassword')"
-          :rules="[(v: string) => v === newPassword || t('account.rule.passwordsDoNotMatch')]"
-        />
-      </v-form>
-    </AdaptiveDialog>
+    <v-dialog v-model="showChangePassword" :max-width="DIALOG_WIDTH.sm" @after-leave="resetPasswordForm">
+      <v-card :title="t('account.security.changePasswordTitle')">
+        <v-form ref="passwordForm" @submit.prevent="submitPassword">
+          <v-card-text class="pt-2">
+            <PasswordField
+              id="security-new-password"
+              v-model="newPassword"
+              autocomplete="new-password"
+              :label="t('account.field.newPassword')"
+              :hint="t('account.rule.passwordHint')"
+              persistent-hint
+              :rules="[(v: string) => REGEX_PASSWORD.test(v ?? '') || t('account.rule.passwordInvalid')]"
+              class="mb-2"
+            />
+            <PasswordField
+              id="security-confirm-password"
+              v-model="confirmPassword"
+              autocomplete="new-password"
+              :label="t('account.field.confirmPassword')"
+              :rules="[(v: string) => v === newPassword || t('account.rule.passwordsDoNotMatch')]"
+            />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <BaseButton kind="ghost" @click="showChangePassword = false">{{ t('account.cancel') }}</BaseButton>
+            <BaseButton kind="primary" type="submit" :loading="changingPassword">
+              {{ t('account.security.changePasswordSubmit') }}
+            </BaseButton>
+          </v-card-actions>
+        </v-form>
+      </v-card>
+    </v-dialog>
 
     <!-- Turning on two-step verification, and showing new backup codes -->
-    <AdaptiveDialog
-      v-model="showTotp"
-      :title="codesOnly ? t('account.security.newCodesTitle') : t('account.security.setupTitle')"
-      size="md"
-      persistent
-      :cancel-label="t('account.cancel')"
-      :primary-label="totpPrimaryLabel"
-      :primary-loading="setupStep === 'verify' && totpBusy"
-      :primary-disabled="setupStep === 'verify' && verificationCode.length !== 6"
-      @primary="totpPrimary"
-      @update:model-value="(value: boolean) => !value && emit('close-totp')"
-    >
-      <p v-if="!codesOnly" class="t-meta mb-2">
-        {{ t('account.security.step', { step: stepIndex + 1, total: 3 }) }}
-      </p>
-      <transition name="setup-step" mode="out-in">
-        <div v-if="setupStep === 'qr'" key="qr" class="setup">
-          <p class="setup__lede">{{ t('account.security.scanLede') }}</p>
-          <img :src="qrCodeData" :alt="t('account.security.qrAlt')" class="setup__qr" width="200" height="200" />
-          <p class="setup__manual">{{ t('account.security.manualKey') }}</p>
-          <div class="setup__secret">
-            <code>{{ totpSecret }}</code>
-            <BaseButton
-              icon="mdi-content-copy"
-              size="sm"
-              :aria-label="t('account.security.copy')"
-              @click="emit('copy', totpSecret)"
-            />
-          </div>
-        </div>
+    <v-dialog v-model="showTotp" max-width="480" persistent>
+      <v-card>
+        <v-card-item>
+          <v-card-title>
+            {{ codesOnly ? t('account.security.newCodesTitle') : t('account.security.setupTitle') }}
+          </v-card-title>
+          <v-card-subtitle v-if="!codesOnly">
+            {{ t('account.security.step', { step: stepIndex + 1, total: 3 }) }}
+          </v-card-subtitle>
+        </v-card-item>
 
-        <div v-else-if="setupStep === 'verify'" key="verify" class="setup">
-          <p class="setup__lede">{{ t('account.security.verifyLede') }}</p>
-          <v-otp-input
-            v-model="verificationCode"
-            autofocus
-            length="6"
-            type="number"
-            variant="outlined"
-            :error="!!verifyError"
-            @finish="emit('enable-totp')"
-          />
-          <p v-if="verifyError" class="setup__error">{{ verifyError }}</p>
-        </div>
+        <v-card-text>
+          <transition name="setup-step" mode="out-in">
+            <div v-if="setupStep === 'qr'" key="qr" class="setup">
+              <p class="setup__lede">{{ t('account.security.scanLede') }}</p>
+              <img :src="qrCodeData" :alt="t('account.security.qrAlt')" class="setup__qr" width="200" height="200" />
+              <p class="setup__manual">{{ t('account.security.manualKey') }}</p>
+              <div class="setup__secret">
+                <code>{{ totpSecret }}</code>
+                <BaseButton
+                  icon="mdi-content-copy"
+                  size="sm"
+                  :aria-label="t('account.security.copy')"
+                  @click="emit('copy', totpSecret)"
+                />
+              </div>
+            </div>
 
-        <div v-else key="backup" class="setup">
-          <p class="setup__lede">{{ t('account.security.codesLede') }}</p>
-          <ul class="setup__codes">
-            <li v-for="code in backupCodes" :key="code">{{ code }}</li>
-          </ul>
-          <BaseButton
-            kind="secondary"
-            size="sm"
-            prepend-icon="mdi-content-copy"
-            @click="emit('copy', backupCodes.join('\n'))"
-          >
-            {{ t('account.security.copyAll') }}
+            <div v-else-if="setupStep === 'verify'" key="verify" class="setup">
+              <p class="setup__lede">{{ t('account.security.verifyLede') }}</p>
+              <v-otp-input
+                v-model="verificationCode"
+                autofocus
+                length="6"
+                type="number"
+                variant="outlined"
+                :error="!!verifyError"
+                @finish="emit('enable-totp')"
+              />
+              <p v-if="verifyError" class="setup__error">{{ verifyError }}</p>
+            </div>
+
+            <div v-else key="backup" class="setup">
+              <p class="setup__lede">{{ t('account.security.codesLede') }}</p>
+              <ul class="setup__codes">
+                <li v-for="code in backupCodes" :key="code">{{ code }}</li>
+              </ul>
+              <BaseButton
+                kind="secondary"
+                size="sm"
+                prepend-icon="mdi-content-copy"
+                @click="emit('copy', backupCodes.join('\n'))"
+              >
+                {{ t('account.security.copyAll') }}
+              </BaseButton>
+            </div>
+          </transition>
+        </v-card-text>
+
+        <v-card-actions>
+          <BaseButton v-if="setupStep === 'verify'" kind="ghost" @click="setupStep = 'qr'">
+            {{ t('account.security.back') }}
           </BaseButton>
-        </div>
-      </transition>
-      <template #actions>
-        <BaseButton v-if="setupStep === 'verify'" kind="ghost" @click="setupStep = 'qr'">
-          {{ t('account.security.back') }}
-        </BaseButton>
-      </template>
-    </AdaptiveDialog>
+          <v-spacer />
+          <BaseButton v-if="setupStep !== 'backup'" kind="ghost" @click="emit('close-totp')">{{
+            t('account.cancel')
+          }}</BaseButton>
+          <BaseButton v-if="setupStep === 'qr'" kind="primary" @click="setupStep = 'verify'">
+            {{ t('account.security.next') }}
+          </BaseButton>
+          <BaseButton
+            v-else-if="setupStep === 'verify'"
+            kind="primary"
+            :loading="totpBusy"
+            :disabled="verificationCode.length !== 6"
+            @click="emit('enable-totp')"
+          >
+            {{ t('account.security.verify') }}
+          </BaseButton>
+          <BaseButton v-else kind="primary" @click="emit('close-totp')">{{ t('account.security.done') }}</BaseButton>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
@@ -259,13 +280,13 @@
 import type { OAuthConnectionInfo } from '@/cx_types'
 import type { PasskeyInfo, SessionInfo } from '@/network/api/users/types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
 import { REGEX_PASSWORD } from '@/utils/form'
 
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
-import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import i18n, { t } from '@/i18n'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
 import { deviceOf } from '@/views/user/settings/deviceName'
@@ -337,12 +358,6 @@ function resetPasswordForm() {
   passwordForm.value?.reset()
 }
 
-// 每一次打开都是一张空表单：`AdaptiveDialog` 不转发 `v-dialog` 的 `after-leave`，所以
-// 清空放在开的那一刻，而不是关的那一刻——放在关的时候，关闭动画还没放完字段就先白了。
-watch(showChangePassword, (open) => {
-  if (open) resetPasswordForm()
-})
-
 const submitPassword = async () => {
   const { valid } = (await passwordForm.value?.validate()) ?? { valid: false }
   if (!valid) return
@@ -351,25 +366,6 @@ const submitPassword = async () => {
 
 const STEPS: SetupStep[] = ['qr', 'verify', 'backup']
 const stepIndex = computed(() => STEPS.indexOf(setupStep.value))
-
-// 三步各有一颗主操作：字和动作都跟着这一步走（§3.7 说的分步表单）。
-const totpPrimaryLabel = computed(() => {
-  if (setupStep.value === 'qr') return t('account.security.next')
-  if (setupStep.value === 'verify') return t('account.security.verify')
-  return t('account.security.done')
-})
-
-function totpPrimary() {
-  if (setupStep.value === 'qr') {
-    setupStep.value = 'verify'
-    return
-  }
-  if (setupStep.value === 'verify') {
-    emit('enable-totp')
-    return
-  }
-  emit('close-totp')
-}
 
 const formatDate = (value: string | Date) =>
   new Intl.DateTimeFormat(i18n.global.locale.value, { dateStyle: 'long' }).format(new Date(value))

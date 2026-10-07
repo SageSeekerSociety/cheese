@@ -241,8 +241,17 @@ def prepare(
     unavailable = target.get("kind") in {"unavailable", "deferred"}
     forwarded = target.get("kind") not in {"private", "unavailable"}
     device_forwarded = target.get("kind") in {"device", "deferred"}
+    # The executor is on this machine (a member's own Claude Code on their own
+    # computer, `owner_provider`): the session sees the project where the
+    # executor holds it, with no forwarded view and no namespace of its own.
+    # Before its lease it starts in an empty directory of its own, which is
+    # its placeholder here.
+    local = bool(target.get("local"))
+    placeholder = str(directory / "workspace") if local else DEFERRED_WORKSPACE
     workspace = (
-        directory / "forwarded-project"
+        directory / "workspace"
+        if local
+        else directory / "forwarded-project"
         if forwarded
         else Path(workspace_override)
         if workspace_override
@@ -280,12 +289,26 @@ def prepare(
     # every path the build prints is the one it prints running there (`enter`).
     # `central_workspace` is where this host holds the view of it.
     seen = session_path(info["workspace"])
-    if seen != DEFERRED_WORKSPACE:
-        _carry_transcripts(config, DEFERRED_WORKSPACE, seen)
+    if local:
+        seen = placeholder if unavailable else info["workspace"]
+        if not unavailable:
+            workspace = Path(info["workspace"])
+    if seen != placeholder:
+        if __package__:
+            from .release import carry_transcripts
+        else:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from release import carry_transcripts
+
+        carry_transcripts(config, placeholder, seen)
     target = dict(
         target,
         workspace=info["workspace"],
         session_workspace=seen,
+        # Where its paths are rewritten from once it takes its machine
+        # (`RemoteClient.call`): the directory it started in, not the
+        # placeholder a session in its own namespace sees.
+        **({"virtual_workspace": placeholder} if local and unavailable else {}),
         # The session reads every skill from its config dir. The project's
         # are links into the view, and are the project's on the executor; the
         # rest the platform wrote there itself, and the executor holds its own
@@ -339,7 +362,7 @@ def prepare(
         from release import MOUNT_LIVE, mount_state, release_mount
 
     mount_log = directory / "forwarded-project.log"
-    if forwarded and mount_state(workspace) != MOUNT_LIVE:
+    if forwarded and not local and mount_state(workspace) != MOUNT_LIVE:
         # A previous mount whose server died still occupies this directory and
         # cannot be mounted over, so without this the spawn below fails and the
         # room is stuck reporting a mount failure on every turn from then on.
@@ -567,66 +590,14 @@ def prepare(
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.
-        "command": [*helper, "enter", str(target_path), *command],
+        "command": command if local else [*helper, "enter", str(target_path), *command],
         "env": env,
-        "cwd": str(workspace),
+        "cwd": seen if local else str(workspace),
         "workspace": seen,
         "execution": str(target_path),
     }
     (directory / "launch.json").write_text(json.dumps(launch))
     return launch
-
-
-def project_dir(config, path):
-    """Where the pinned build keeps the transcripts of sessions started at
-    `path`: under its config dir, named for the path with every UTF-16 unit
-    other than an ASCII letter or digit spelled `-`, and a name longer than
-    200 cut there and followed by a hash of the path. `headless_contract.py`
-    holds this to the build."""
-    units = memoryview(path.encode("utf-16-le")).cast("H")
-    name = "".join(
-        chr(unit) if chr(unit).isascii() and chr(unit).isalnum() else "-"
-        for unit in units
-    )
-    if len(name) > 200:
-        digest = 0
-        for unit in units:
-            digest = (digest * 31 + unit) & 0xFFFFFFFF
-        digest = abs(digest - (1 << 32) if digest >= 1 << 31 else digest)
-        spelled = ""
-        while True:
-            digest, digit = divmod(digest, 36)
-            spelled = "0123456789abcdefghijklmnopqrstuvwxyz"[digit] + spelled
-            if not digest:
-                break
-        name = f"{name[:200]}-{spelled}"
-    return Path(config) / "projects" / name
-
-
-def _carry_transcripts(config, before, after):
-    """A session resumed at another path keeps writing the transcript where it
-    found it, and a session started there writes it where the build keeps that
-    path's. So the conversations begun at `before` move to `after`'s, before a
-    session relaunched there resumes one."""
-    source = project_dir(config, before)
-    if source.is_dir():
-        _move_into(source, project_dir(config, after))
-
-
-def _move_into(source, destination):
-    """`source`'s entries into `destination`, merging the directories both
-    have. A conversation that already lived at `after` and was resumed at
-    `before` keeps its transcript where it found it, but writes its subagents'
-    transcripts and saved tool results under `before`'s directory for that
-    conversation, which `after` has too."""
-    destination.mkdir(parents=True, exist_ok=True)
-    for entry in source.iterdir():
-        target = destination / entry.name
-        if entry.is_dir() and not entry.is_symlink() and target.is_dir():
-            _move_into(entry, target)
-        else:
-            entry.replace(target)
-    source.rmdir()
 
 
 def _take_leased_machine(target):

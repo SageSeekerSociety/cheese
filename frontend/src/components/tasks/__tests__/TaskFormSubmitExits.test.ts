@@ -11,8 +11,7 @@
  * 3. **点了发布才标红**：打开时不报，交过一次还拦着才报几项。
  *
  * `useI18n` 键透传（按**标签原文**找字段）、`createVuetify`、stub `ResizeObserver` /
- * `visualViewport`、tiptap 换成壳。共用弹窗 `AdaptiveDialog` 自己那颗「取消」走的是应用级
- * 的 `t`（`@/i18n`），不经过上面 mock 掉的 `useI18n`，所以那一颗按它真正渲染出来的字找。
+ * `visualViewport`、tiptap 换成壳。
  */
 import type { Component } from 'vue'
 
@@ -43,7 +42,7 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
 
 import TaskForm from '../TaskForm.vue'
 
-import i18n, { t as appT } from '@/i18n'
+import i18n from '@/i18n'
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -143,7 +142,7 @@ describe('发题表单：实名要求的隐私确认闸', () => {
     await trySubmit(view)
     await waitFor(() => expect(dialogOpen('tasks.form.privacy.title')).toBe(true))
 
-    await fireEvent.click(view.getByText(appT('global.cancel')))
+    await fireEvent.click(view.getByText('global.cancel'))
 
     await waitFor(() => expect(dialogOpen('tasks.form.privacy.title')).toBe(false))
     expect((await realNameSwitch(view)).checked).toBe(false)
