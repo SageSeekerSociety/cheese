@@ -92,7 +92,8 @@ def test_archiving_a_room_says_so_in_the_room_and_tells_each_owner(client):
     notices = [n for n in _notices_for(client, OWNER) if "周期任务" in n.title]
     assert len(notices) == 1, notices
     assert rule["title"] in notices[0].title
-    assert str(notices[0].topic_id) == room
+    # 归属那一列是一个会话 id，房间自己就是一条会话，所以存的就是房间。
+    assert str(notices[0].conversation_id) == room
 
     # 规则自己的状态没动，变的只是房间 —— 由 topic.status 推。
     async def state_of(session):
