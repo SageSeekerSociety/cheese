@@ -1,20 +1,21 @@
-// 资料库里正看着的那一份文档：地址上是它的编号（`?doc=`），刷新、发给别人都回到这一份。
+// 资料库里正看着的那一份文档：它有自己的地址（`/projects/<短名>/docs/<编号>`），整页打开，
+// 刷新、发给别人都回到这一份。
 import type { ProjectDocument } from '../api/projectDocuments'
 import type { PanelDocument } from './usePanelDoc'
 
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 
 import { closeOverlay } from '@/lib/backOut'
 
 export function useOpenLibraryDocument(
   projectId: () => string,
+  docId: () => string | undefined,
   docs: { about(id: string): Promise<ProjectDocument>; renamed(id: string, title: string): void },
   failed: (message: string) => void
 ) {
-  const route = useRoute()
   const router = useRouter()
-  const selectedDocId = computed(() => (typeof route.query.doc === 'string' ? route.query.doc : ''))
+  const selectedDocId = computed(() => docId() ?? '')
   const openDocument = ref<PanelDocument | null>(null)
 
   /** 回频道，给了任务就进那个任务。 */
@@ -43,8 +44,9 @@ export function useOpenLibraryDocument(
     selectedDocId,
     openDocument,
     openRoom,
-    openDoc: (id: string) => void router.push({ query: { doc: id } }),
-    closeDoc: () => closeOverlay(router, { query: {} }),
+    openDoc: (id: string) =>
+      void router.push({ name: 'project-document', params: { projectId: projectId(), docId: id } }),
+    closeDoc: () => closeOverlay(router, { name: 'project-library', params: { projectId: projectId() } }),
     /** 标题在文档页上改了：开着的这一份和列表里那一行都跟着。 */
     titled(title: string) {
       if (openDocument.value) openDocument.value = { ...openDocument.value, title }

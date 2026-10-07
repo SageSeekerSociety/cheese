@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
+from app.domain.project.address import Numbered, take_number
 from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
 
 
@@ -39,6 +40,7 @@ class TaskRepository:
         task = Task(
             project_id=project_id,
             room_id=room_id,
+            number=await take_number(self._session, project_id, Numbered.task),
             title=title,
             title_source=title_source,
             owner_handle=owner_handle,

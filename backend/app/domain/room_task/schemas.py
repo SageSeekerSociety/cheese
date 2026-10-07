@@ -29,6 +29,8 @@ class TaskOut(BaseModel):
     project_id: uuid.UUID
     # The room this thread hangs in — never another task: work does not nest.
     room_id: uuid.UUID
+    # Its number in the project's addresses (`/projects/<slug>/tasks/<number>`).
+    number: int | None = None
     title: str
     # `placeholder`: still unnamed, and each screen says so in its reader's
     # language instead of showing the stored placeholder text.

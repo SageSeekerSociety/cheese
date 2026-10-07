@@ -45,6 +45,7 @@ from app.domain.living_doc.schemas import (
 )
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.mentions import canonicalize_refs
+from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService, refuse_writes_if_archived
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
@@ -130,7 +131,10 @@ async def create_document(
             task = await TaskService(db).of_document(source.id)
             title = source.title or (task.title if task is not None else "")
     doc = await Documents(db).create(
-        project_id=project_id, title=title, author=actor.handle
+        project_id=project_id,
+        title=title,
+        author=actor.handle,
+        number=await take_number(db, project_id, Numbered.document),
     )
     await db.commit()
     if content and content.strip():

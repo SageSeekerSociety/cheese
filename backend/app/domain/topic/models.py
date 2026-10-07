@@ -88,6 +88,9 @@ class TopicRole(enum.StrEnum):
 
 class Topic(UuidPk, Timestamps, Base):
     __tablename__ = "topics"
+    __table_args__ = (
+        UniqueConstraint("project_id", "number", name="uq_topics_project_number"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
@@ -97,6 +100,10 @@ class Topic(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
     )
     title: Mapped[str] = mapped_column(String(300))
+    # Its number among the project's channels, for addresses (`project_counters`).
+    # NULL until one is taken; the address falls back to the id meanwhile.
+    # A private chat has none: it is not a channel anyone links to.
+    number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # What a channel is for, in its managers' words. Shown under its name.
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     kind: Mapped[TopicKind] = mapped_column(

@@ -7,13 +7,8 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 
-function projectIdOf(page: Page): string {
-  const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
-  if (!id) throw new Error(`当前页不是项目工作台：${page.url()}`);
-  return id;
-}
 
 // 一张宽表格。宽在**单元格拆不开**：路径、URL、英文标识符没有可换行的地方，所以
 // 表格的最小宽度就是它们的宽度。纯中文表格逐字换行，挤得下，永远复现不出来。
@@ -31,7 +26,7 @@ const WIDE_TABLE_DOC = [
 test('文档里的宽表格在自己那格里横向滚动，不把整栏顶出面板', async ({ page }) => {
   await apiLogin(page);
   await openFirstProject(page);
-  const projectId = projectIdOf(page);
+  const projectId = await projectIdOf(page);
 
   const room = (await api(page, 'post', '/topics', {
     project_id: projectId,
@@ -79,7 +74,7 @@ test('文档里的宽表格在自己那格里横向滚动，不把整栏顶出�
 test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({ page }) => {
   await apiLogin(page);
   await openFirstProject(page);
-  const projectId = projectIdOf(page);
+  const projectId = await projectIdOf(page);
 
   const room = (await api(page, 'post', '/topics', {
     project_id: projectId,
@@ -126,7 +121,7 @@ test('键盘焦点落在正文上时，编辑器盒子画出焦点环', async ({
 test('手机上任务概览里的长文档能一路滚到最后一段', async ({ page }) => {
   await apiLogin(page);
   await openFirstProject(page);
-  const projectId = projectIdOf(page);
+  const projectId = await projectIdOf(page);
 
   const room = (await api(page, 'post', '/topics', {
     project_id: projectId,

@@ -6,13 +6,8 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 
-function projectIdOf(page: Page): string {
-  const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
-  if (!id) throw new Error(`当前页不是项目工作台：${page.url()}`);
-  return id;
-}
 
 test.describe('变更提醒', () => {
   // 这几条落在「第一个项目」上，所有 e2e 用例共用的那一个（alice 的种子项目）。写下
@@ -22,7 +17,7 @@ test.describe('变更提醒', () => {
   test.beforeEach(async ({ page }) => {
     await apiLogin(page);
     await openFirstProject(page);
-    projectId = projectIdOf(page);
+    projectId = await projectIdOf(page);
   });
 
   test.afterEach(async ({ page }) => {
@@ -38,7 +33,7 @@ test.describe('变更提醒', () => {
     const topic = (await api(page, 'post', '/topics', {
       project_id: projectId,
       title: `提醒落点 ${stamp}`,
-    })) as { id: string };
+    })) as { id: string; number: number };
 
     const title = `变更提醒 ${stamp}`;
     const body = `修了预览的转圈 ${stamp}`;
@@ -58,9 +53,7 @@ test.describe('变更提醒', () => {
     await expect(row).toContainText(body);
 
     await row.getByText(title).click();
-    await expect(page).toHaveURL(
-      new RegExp(`/projects/${projectId}/topics/${topic.id}`),
-    );
+    await expect(page).toHaveURL(new RegExp(`/channels/${topic.number}(\\?|$)`));
   });
 
   test('读过就标掉，不再留在「待办」里', async ({ page }) => {

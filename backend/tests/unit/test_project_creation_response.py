@@ -38,6 +38,7 @@ async def test_project_response_waits_for_commit(monkeypatch, commit_fails):
     project = SimpleNamespace(
         id=uuid.uuid4(),
         name="project",
+        slug="k3f9x2pq",
         owner_handle="owner",
         team_id=1,
         external_task_id=None,

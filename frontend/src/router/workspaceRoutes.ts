@@ -16,11 +16,40 @@
 // rather than a restatement of them (same reason as ./legacyProjectPaths).
 import type { RouteRecordRaw } from 'vue-router'
 
+import { addressProps } from '@/lib/addresses'
+
 // 项目文档 used to be three routes distinguished by NAME rather than by a
 // parameter, which is how the same words ended up leading to two different
 // places: the sidebar swapped the panel in place, the action card pushed the
 // full page. One address per document now; the old links still resolve.
 const DOC_KINDS = ['charter', 'weeklies'] as const
+
+// 地址是给人看的：项目用短名，频道、任务、资料库文档用项目里的编号
+// （`/projects/cheese/tasks/318`）。参数在地址上是短名和编号，页面拿到的 props 是
+// UUID（`addressProps`）；代码照旧拿 UUID 拼路由，落地时由 `canonicalAddress` 换成
+// 短的那一种。数字或 UUID 都认，所以编号参数的正则两样都收。
+const NUMBER_OR_ID = '(\\d+|[0-9a-fA-F-]{36})'
+
+// 频道和任务以前在 `topics/<频道>` 下面。发出去的旧链接原样换到新地址。
+const LEGACY_TOPIC_PATHS: RouteRecordRaw[] = [
+  {
+    path: 'topics/:topicId',
+    redirect: (to) => ({ name: 'workspace-topic', params: to.params, query: to.query, hash: to.hash }),
+  },
+  {
+    path: 'topics/:topicId/threads/:threadId',
+    redirect: (to) => ({ name: 'workspace-thread', params: to.params, query: to.query, hash: to.hash }),
+  },
+  {
+    path: 'topics/:topicId/tasks/:taskId',
+    redirect: (to) => ({
+      name: 'workspace-task',
+      params: { projectId: to.params.projectId, taskId: to.params.taskId },
+      query: to.query,
+      hash: to.hash,
+    }),
+  },
+]
 
 // The topic list is the mobile workspace destination. Child pages declare their
 // parent through backTo, which is used by both desktop and mobile navigation.
@@ -30,7 +59,7 @@ export const workspaceRoutes: RouteRecordRaw = {
     default: () => import('@/views/workspace/ProjectShell.vue'),
     sidebar: () => import('@/views/workspace/ProjectSidebar.vue'),
   },
-  props: { default: true, sidebar: true },
+  props: { default: addressProps, sidebar: addressProps },
   // `projectFrame` 标出「项目这个框」。没有浏览历史可退时，顶栏那颗 ← 靠它认出
   // 自己站在项目的根上，退到项目所属的小队。
   // 顶栏标题是这个项目的名字（ProjectShell 按 `project-frame` 这个键填进来），不是
@@ -47,16 +76,16 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'workspace-project',
       path: '',
       component: () => import('@/views/workspace/WorkspaceEntry.vue'),
-      props: true,
+      props: addressProps,
       // 手机上这一层就是话题列表，项目名 + 切换器由它自己填进顶栏（barSlot）。
       // 它同时是底栏「工作区」那一格的落点，所以底栏留着，也没有"回上一层"。
       meta: { barSlot: true },
     },
     {
       name: 'workspace-topic',
-      path: 'topics/:topicId',
+      path: `channels/:topicId${NUMBER_OR_ID}`,
       component: () => import('@/views/workspace/TopicView.vue'),
-      props: true,
+      props: addressProps,
       // 手机上这是页面栈的末端：底栏收起（它不是一级目的地），← 回到话题列表。
       // `barSlot`: TopicHeader（标题 + #id + 阶段）填的就是顶栏那一格，不再自己
       // 画一条横条；← 由顶栏按 backTo 出。
@@ -66,9 +95,9 @@ export const workspaceRoutes: RouteRecordRaw = {
       // 一条支线：频道主线上一条消息下面的回复。和频道页是同一个组件——桌面上频道
       // 主线还在左边，支线占右边那一半；手机上支线是一整页，← 回到频道。
       name: 'workspace-thread',
-      path: 'topics/:topicId/threads/:threadId',
+      path: `channels/:topicId${NUMBER_OR_ID}/threads/:threadId`,
       component: () => import('@/views/workspace/TopicView.vue'),
-      props: true,
+      props: addressProps,
       meta: { hideTabs: true, backTo: 'workspace-topic' },
     },
     {
@@ -82,11 +111,12 @@ export const workspaceRoutes: RouteRecordRaw = {
     },
     {
       // 任务页：一个任务自己的对话和实况文档。和房间页是同一个组件——任务挂在房间下，
-      // 房间要先打开，任务页借它的名册和外框；地址里多出来的 taskId 决定画哪一边。
+      // 房间要先打开，任务页借它的名册和外框；props 里多出来的 taskId 决定画哪一边。
+      // 地址里只有任务的编号，它所在的频道由 `addressProps` 补上。
       name: 'workspace-task',
-      path: 'topics/:topicId/tasks/:taskId',
+      path: `tasks/:taskId${NUMBER_OR_ID}`,
       component: () => import('@/views/workspace/TopicView.vue'),
-      props: true,
+      props: addressProps,
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
@@ -96,7 +126,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'workspace-overview',
       path: 'overview',
       component: () => import('@/views/workspace/ProjectOverview.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.overview',
         hideTabs: true,
@@ -110,7 +140,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-tasks',
       path: 'tasks',
       component: () => import('@/views/workspace/ProjectTasks.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.tasks',
         hideTabs: true,
@@ -128,16 +158,24 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'workspace-dm',
       path: 'dm/:peer',
       component: () => import('@/views/workspace/DmView.vue'),
-      props: true,
+      props: addressProps,
       // ← 回成员页，不回话题列表：私聊只有一个入口，就是名册。手机顶栏那颗 ←
       // 读的是这里，桌面上私聊头里那颗读的是 DmView，两颗指同一个地方。
       meta: { titleKey: 'navigation.pages.dm', hideTabs: true, backTo: 'project-members' },
     },
     {
+      // 资料库里的一份文档，整页打开。和资料库是同一个组件：它决定画列表还是这一份。
+      name: 'project-document',
+      path: `docs/:docId${NUMBER_OR_ID}`,
+      component: () => import('@/views/ProjectLibraryView.vue'),
+      props: addressProps,
+      meta: { titleKey: 'navigation.project.library', hideTabs: true, backTo: 'project-library' },
+    },
+    {
       name: 'project-docs',
       path: 'docs/:kind',
       component: () => import('@/views/ProjectDocsView.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.docs',
         hideTabs: true,
@@ -151,7 +189,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-library',
       path: 'library',
       component: () => import('@/views/ProjectLibraryView.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.library',
         hideTabs: true,
@@ -164,7 +202,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-channels',
       path: 'channels',
       component: () => import('@/views/workspace/ChannelBrowse.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.channels',
         hideTabs: true,
@@ -177,7 +215,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-search',
       path: 'search',
       component: () => import('@/views/ProjectSearchView.vue'),
-      props: true,
+      props: addressProps,
       meta: { titleKey: 'navigation.search.title', hideTabs: true, backTo: 'workspace-project' },
     },
     {
@@ -186,7 +224,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-routines',
       path: 'routines',
       component: () => import('@/views/ProjectRoutinesView.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.routines',
         hideTabs: true,
@@ -199,7 +237,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-skills',
       path: 'skills',
       component: () => import('@/views/ProjectSkillsView.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.skills',
         hideTabs: true,
@@ -213,7 +251,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-artifact',
       path: 'artifacts/:artifactId',
       component: () => import('@/views/ProjectArtifactView.vue'),
-      props: true,
+      props: addressProps,
       meta: { titleKey: 'navigation.pages.artifact', hideTabs: true, backTo: 'workspace-project' },
     },
     {
@@ -228,7 +266,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-settings',
       path: 'settings/:section?',
       component: () => import('@/views/ProjectSettingsView.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.settings',
         hideTabs: true,
@@ -249,7 +287,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'project-members',
       path: 'members',
       component: () => import('@/views/workspace/ProjectMembersView.vue'),
-      props: true,
+      props: addressProps,
       meta: {
         titleKey: 'navigation.project.members',
         hideTabs: true,
@@ -262,9 +300,10 @@ export const workspaceRoutes: RouteRecordRaw = {
       name: 'member',
       path: 'members/:handle',
       component: () => import('@/views/ProfileView.vue'),
-      props: true,
+      props: addressProps,
       meta: { titleKey: 'navigation.pages.member', hideTabs: true, backTo: 'project-members' },
     },
+    ...LEGACY_TOPIC_PATHS,
     ...DOC_KINDS.map(
       (kind): RouteRecordRaw => ({
         path: kind,

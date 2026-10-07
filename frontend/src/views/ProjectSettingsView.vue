@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
+import { useProjectAddress } from '@/composables/useProjectAddress'
 import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
@@ -28,6 +29,7 @@ import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubAccountSettings from '@/components/settings/GithubAccountSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import OwnAgentsSettings from '@/components/settings/OwnAgentsSettings.vue'
+import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
@@ -144,10 +146,16 @@ watch(
 )
 const { mdAndUp } = useDisplay()
 const router = useRouter()
+const address = useProjectAddress(() => props.projectId)
 
 /** 九栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
-  ...(managesProject.value ? [{ group: 'collab', key: 'channels', icon: 'mdi-pound' }] : []),
+  ...(managesProject.value
+    ? [
+        { group: 'collab', key: 'channels', icon: 'mdi-pound' },
+        { group: 'collab', key: 'address', icon: 'mdi-link-variant' },
+      ]
+    : []),
   { group: 'ai', key: 'agents', icon: 'mdi-robot-outline' },
   { group: 'ai', key: 'task-naming', icon: 'mdi-format-title' },
   { group: 'run', key: 'environment', icon: 'mdi-console' },
@@ -373,6 +381,15 @@ function close() {
             @clear-notice="githubAccountNotice = null"
           />
         </template>
+
+        <ProjectAddressSection
+          v-else-if="section === 'address'"
+          :slug="address.slug.value"
+          :prefix="address.prefix"
+          :saving="address.saving.value"
+          :error="address.error.value"
+          @save="address.save"
+        />
 
         <ProjectMcpSettings v-else-if="section === 'mcp'" :project-id="projectId" />
 

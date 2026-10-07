@@ -1,7 +1,7 @@
 """A forge token can be one that only reads
 
 Revision ID: c5e2a7d91f3b
-Revises: b7e3c9d14a52
+Revises: 5a00f11b4537
 Create Date: 2026-10-07
 
 ``forge_tokens.read_only``: a token handed to a session whose work is not kept
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c5e2a7d91f3b"
-down_revision: str | Sequence[str] | None = "b7e3c9d14a52"
+down_revision: str | Sequence[str] | None = "5a00f11b4537"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

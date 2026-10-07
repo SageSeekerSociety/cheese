@@ -6,25 +6,22 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 
-function projectIdOf(page: Page): string {
-  const id = page.url().match(/\/projects\/([0-9a-f-]{36})/)?.[1];
-  if (!id) throw new Error(`当前页不是项目工作台：${page.url()}`);
-  return id;
-}
 
 const SHOTS = process.env.E2E_SHOTS_DIR;
 
 test('新建文档直接打开，起了名、写了字，回到资料库就在列表里', async ({ page }) => {
   await apiLogin(page);
   await openFirstProject(page);
-  const projectId = projectIdOf(page);
+  const projectId = await projectIdOf(page);
 
   await page.goto(`/projects/${projectId}/library`);
   await page.getByRole('button', { name: '新建文档' }).click();
-  await expect(page).toHaveURL(/[?&]doc=[0-9a-f-]{36}/);
-  const docId = new URL(page.url()).searchParams.get('doc')!;
+  // 新建的文档整页打开，地址是它在项目里的编号。
+  await expect(page).toHaveURL(/\/docs\/\d+$/);
+  const number = /\/docs\/(\d+)$/.exec(page.url())![1];
+  const docId = (await api(page, 'get', `/addresses/projects/${projectId}/docs/${number}`)).id as string;
 
   const title = `定价对比 ${Date.now()}`;
   const titleBox = page.getByRole('textbox', { name: '文档标题' });

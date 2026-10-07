@@ -1530,6 +1530,7 @@
     },
     "sections": {
       "channels": "频道",
+      "address": "项目地址",
       "agents": "AI 队友",
       "task-naming": "任务命名",
       "environment": "环境",
@@ -1888,6 +1889,14 @@
         "active": "最近活跃",
         "actions": "操作"
       }
+    },
+    "address": {
+      "title": "项目地址",
+      "label": "短名",
+      "save": "保存",
+      "saved": "已保存",
+      "failed": "保存失败",
+      "hint": "项目的链接里用这个短名，只能用小写字母、数字和连字符。改名后旧链接仍能打开这个项目，旧短名也不会给别的项目使用"
     }
   },
   "computeChoice": {
