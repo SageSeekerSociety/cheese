@@ -6,16 +6,17 @@ test.describe('Topics and chat', () => {
     await apiLogin(page);
   });
 
-  // 新建频道在项目设置的「频道」一栏：先起名，建好就打开它，侧栏上多出这一行。
-  test('creating a channel in project settings opens it in the sidebar', async ({ page }) => {
+  // 新建频道在「浏览频道」那一页：先起名，建好就打开它，侧栏上多出这一行。
+  test('creating a channel from 浏览频道 opens it in the sidebar', async ({ page }) => {
     const rows = await openFirstProject(page);
     const before = await rows.count();
     const projectId = /\/projects\/([^/]+)/.exec(page.url())?.[1];
 
-    await page.goto(`/projects/${projectId}/settings/channels`);
+    await page.goto(`/projects/${projectId}/channels`);
+    await page.getByRole('button', { name: '新建频道' }).first().click();
     const name = `e2e 频道 ${Date.now()}`;
     await page.getByLabel('频道名称').fill(name);
-    await page.getByRole('button', { name: '新建频道' }).click();
+    await page.locator('.v-overlay').getByRole('button', { name: '新建频道' }).click();
 
     await expect(page).toHaveURL(/\/topics\/[^/]+$/);
     await expect(rows).toHaveCount(before + 1);
