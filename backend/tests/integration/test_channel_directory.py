@@ -162,3 +162,17 @@ def test_an_external_member_does_not_open_channels(client):
     )
     assert r.status_code == 403, r.text
     assert _channel(client, p["id"], "队内的频道", by="bob")
+
+
+def test_someone_outside_a_private_chat_cannot_archive_it(client):
+    p = _project(client)
+    r = client.get(
+        f"/projects/{p['id']}/private-chat",
+        params={"user_handle": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    dm = r.json()["data"]["id"]
+
+    outside = client.post(f"/topics/{dm}/archive", headers=session_auth_headers("dave"))
+    assert outside.status_code == 404, outside.text

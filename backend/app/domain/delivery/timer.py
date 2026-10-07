@@ -220,8 +220,8 @@ async def deliver_due(
 async def give_up_stale(sessions: SessionFactory, *, chat) -> int:
     """Fail every instruction to an AI teammate that has not started half an
     hour after it was given (`agent.GIVE_UP_AFTER`), and say so once in each
-    conversation it was for: whoever waits there sees it, and 「重试」 starts a
-    turn again. Returns how many gave up."""
+    conversation where a person's message went unanswered: whoever waits there
+    sees it, and 「重试」 starts a turn again. Returns how many gave up."""
     stamp = _utcnow()
     told: dict[uuid.UUID, str] = {}
     async with sessions() as session:
@@ -242,7 +242,14 @@ async def give_up_stale(sessions: SessionFactory, *, chat) -> int:
         for row in rows:
             row.state = "failed"
             row.last_error = GAVE_UP
-            if row.conversation_id is not None:
+            # Only a person's message is told: 「重试」 starts a turn from the
+            # messages still waiting, and a platform instruction is not one. A
+            # task's opening says it failed on the task page; a routine's run
+            # on its own line.
+            if (
+                row.conversation_id is not None
+                and row.type == NotificationType.MENTION.value
+            ):
                 told.setdefault(row.conversation_id, row.recipient_handle)
         await session.commit()
     for conversation_id, seat in told.items():

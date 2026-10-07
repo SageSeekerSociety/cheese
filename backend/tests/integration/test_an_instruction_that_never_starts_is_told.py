@@ -5,7 +5,9 @@ The rules, as stated before the code was written:
 
 - whoever waits in that conversation sees one line saying the teammate could
   not start, with a retry;
-- the line is said once, however many times the ledger is swept afterwards.
+- the line is said once, however many times the ledger is swept afterwards;
+- a platform instruction nobody is waiting on, such as a task's opening, gives
+  up without a line: its retry would have nothing to start from.
 """
 
 import asyncio
@@ -25,8 +27,11 @@ from app.domain.delivery.timer import give_up_stale
 from tests.integration.conftest import in_thread, post_project, room_agent_seat
 
 
-def _stale_delivery(client, project: str, conversation: str, seat: str) -> uuid.UUID:
-    """A message for the teammate, given 31 minutes ago and tried once."""
+def _stale_delivery(
+    client, project: str, conversation: str, seat: str, *, kind: str = "MENTION"
+) -> uuid.UUID:
+    """An instruction for the teammate, given 31 minutes ago and tried once:
+    a person's message to it, unless ``kind`` says otherwise."""
 
     async def record() -> uuid.UUID:
         async with client.test_factory() as session:
@@ -43,7 +48,7 @@ def _stale_delivery(client, project: str, conversation: str, seat: str) -> uuid.
                 agent_instance_id=instance,
                 conversation_id=uuid.UUID(conversation),
                 dedup_key=str(uuid.uuid4()),
-                type="mention",
+                type=kind,
                 payload={"content": f"<@{seat}> 看一下"},
                 event_at=long_ago,
                 recorded_at=long_ago,
@@ -92,3 +97,15 @@ def test_an_instruction_that_never_starts_is_told_once_where_people_wait(client)
     lines = _failure_lines(client, thread)
     assert len(lines) == 1, "没开始的指令说了不止一遍，或者没说"
     assert (lines[0].meta or {}).get("retryable") is True
+
+
+def test_a_platform_instruction_gives_up_without_a_line(client):
+    data = post_project(client, {"name": "Never started"}, owner="alice").json()["data"]
+    thread = in_thread(client, data["root_topic_id"], "alice")
+    seat = room_agent_seat(client, thread)
+    chat = client.app.dependency_overrides[get_chat_service]()
+    _stale_delivery(client, data["id"], thread, seat, kind="ROOM_NOTICE")
+
+    client.portal.call(lambda: give_up_stale(chat.session_factory, chat=chat))
+
+    assert _failure_lines(client, thread) == []

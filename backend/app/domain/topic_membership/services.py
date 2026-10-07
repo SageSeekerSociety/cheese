@@ -602,7 +602,10 @@ class TopicMemberService:
         if topic is None:
             raise NotFoundError("Topic not found")
         if not _public(topic):
-            # A private room of two is its own people's business.
+            # A private room of two is its own people's business: someone not
+            # in it is not told it exists.
+            if await self._repo.get(topic_id=topic_id, member_handle=actor) is None:
+                raise NotFoundError("Topic not found")
             return await self.require_manager(topic_id, actor)
         if await self.administers(topic, actor):
             return topic
