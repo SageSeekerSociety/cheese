@@ -142,8 +142,8 @@ class Notification(Base):
         # 「这个频道的对话里 @ 过我没有、还有没有没拍板的决策」——话题列表的相关性
         # 一次查完。频道自己那条线、它的任务和支线都在这一列里。
         Index(
-            "idx_notification_conversation_recipient",
-            "conversation_id",
+            "idx_notification_topic_recipient",
+            "topic_id",
             "recipient_handle",
         ),
     )
@@ -166,8 +166,10 @@ class Notification(Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
     )
+    #: 列名暂时还是旧的 `topic_id`：改名要分两次发布，这一版先把外键换指
+    #: `conversations`，物理改名留到下一次（`.claude/rules/migrations.md` 第 4 条）。
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True
+        "topic_id", ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True
     )
 
     #: 打扰到什么程度。人对人的那几种不分级，为空 —— 它们不进项目角标，项目角标

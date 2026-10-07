@@ -47,23 +47,11 @@ def _load(migration: Path = _MIGRATION):
 
 
 def _upgrade(client, migration: Path = _MIGRATION) -> None:
-    """把迁移的 `upgrade()` 跑一遍，跟 `alembic upgrade head` 同一条路。
-
-    库现在是 head 的形状，而这次搬家写的是它当时的列名 `topic_id`：那一列后来换成
-    `conversation_id`（9f2b7c14a8e3，一条通知关于的那条对话），读侧返回的是后者。
-    搬完照那次改名再走一步 —— 库里历史上就是这个顺序 —— 否则下面读到的每一行都
-    像是没记着它在哪个频道。
-    """
+    """把迁移的 `upgrade()` 跑一遍，跟 `alembic upgrade head` 同一条路。"""
 
     def _apply(conn) -> None:
         with Operations.context(MigrationContext.configure(conn)):
             _load(migration).upgrade()
-            conn.execute(
-                text(
-                    "UPDATE notification SET conversation_id = topic_id"
-                    " WHERE conversation_id IS NULL"
-                )
-            )
 
     async def _run() -> None:
         async with client.test_factory() as s:

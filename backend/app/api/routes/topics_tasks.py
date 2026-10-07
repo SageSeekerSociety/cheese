@@ -33,6 +33,7 @@ from app.api.routes.topics import (
 )
 from app.api.task_instructions import dispatch, teammate_source_text, tell_task
 from app.api.task_origin import discussion, materials, materials_text
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
@@ -344,7 +345,7 @@ async def conclude_task(
     return ok(out)
 
 
-@router.post("/{topic_id}/reopen")
+@router.post("/{topic_id}/reopen", dependencies=[ROUTE_DECIDES])
 async def reopen_task(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -554,7 +555,7 @@ class TeammateTaskIn(BaseModel):
     start: bool = False
 
 
-@router.post("/{topic_id}/teammate-tasks")
+@router.post("/{topic_id}/teammate-tasks", dependencies=[ROUTE_DECIDES])
 async def create_teammate_task(
     topic_id: uuid.UUID,
     body: TeammateTaskIn,

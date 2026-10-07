@@ -1353,9 +1353,9 @@ def client(
 
     try:
         with TestClient(app) as c:
-            # The cheese write-API is token-gated (app.main.cheese_token_gate); send
-            # the secret on every test request so contract tests exercising those
-            # endpoints (doc/weekly/...) aren't rejected with 401.
+            # The cheese-only write routes are token-gated (app/api/write_access.py);
+            # send the secret on every test request so tests exercising those
+            # endpoints (note/lock/...) aren't rejected with 401.
             c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]
@@ -1604,9 +1604,15 @@ def _migration_fingerprint() -> str:
     import hashlib
     from pathlib import Path
 
-    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    alembic = Path(__file__).resolve().parent.parent / "alembic"
     digest = hashlib.sha256()
-    for path in sorted(versions.glob("*.py")):
+    # env.py and migration_helpers.py decide what the migrations do as much as
+    # the version files: a change to either must not reuse an old template.
+    for path in [
+        alembic / "env.py",
+        alembic / "migration_helpers.py",
+        *sorted((alembic / "versions").glob("*.py")),
+    ]:
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()[:12]

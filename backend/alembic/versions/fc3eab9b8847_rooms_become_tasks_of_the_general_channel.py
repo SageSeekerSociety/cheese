@@ -65,6 +65,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -77,33 +78,6 @@ GENERAL = "综合"
 RECENT = "60 days"
 UNFINISHED_CLEANUP = ("pending", "preparing", "retained")
 IMPORTED_MARKER = ".imported-task-delivery"
-
-
-def _lock(tables: str) -> None:
-    """As in b6fcc6362b79: queue for every table, a few seconds at a time."""
-    op.execute(f"""
-        DO $$
-        DECLARE
-            attempts integer := 0;
-            outer_timeout text := current_setting('lock_timeout');
-        BEGIN
-            PERFORM set_config('lock_timeout', '3s', true);
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 100 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.2);
-                END;
-            END LOOP;
-            PERFORM set_config('lock_timeout', outer_timeout, true);
-        END
-        $$
-    """)
 
 
 def _cursors_follow_conversations() -> None:
@@ -413,7 +387,7 @@ def _copy_files(workspace: Path) -> None:
 
 
 def upgrade() -> None:
-    _lock("topics, tasks, conversations, topic_read_states")
+    with_lock_retries("topics, tasks, conversations, topic_read_states")
     _cursors_follow_conversations()
     _choose()
     _delete_the_empty()

@@ -18,6 +18,7 @@ from app.api.deps import (
     get_work_runner,
 )
 from app.api.response import ok, page
+from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -1086,7 +1087,7 @@ async def summon_agent(
     return ok({"started": True})
 
 
-@router.post("/{topic_id}/webhook-token")
+@router.post("/{topic_id}/webhook-token", dependencies=[CHEESE_ONLY_IN_ROOM])
 async def mint_webhook_token(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -1337,7 +1338,7 @@ async def record_check_result(
     return ok({"recorded": True, "task_id": str(task.id)})
 
 
-@router.post("/{topic_id}/lock")
+@router.post("/{topic_id}/lock", dependencies=[CHEESE_ONLY_IN_ROOM])
 async def take_room_lock(
     topic_id: uuid.UUID,
     body: LockIn,
@@ -1376,7 +1377,7 @@ async def _lock_holder(db, place, body: LockIn) -> uuid.UUID:
     return body.task_id
 
 
-@router.post("/{topic_id}/unlock")
+@router.post("/{topic_id}/unlock", dependencies=[CHEESE_ONLY_IN_ROOM])
 async def release_room_lock(
     topic_id: uuid.UUID,
     body: LockIn,

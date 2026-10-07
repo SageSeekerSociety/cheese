@@ -1,91 +1,63 @@
-"""A notification belongs to a conversation
+"""A notification is about the conversation it names
 
 Revision ID: 9f2b7c14a8e3
-Revises: 4b7e2d9c1f30
+Revises: ff58bbb04b89
 Create Date: 2026-10-07
 
-The inbox row said which place it was about with ``topic_id``: a room. A
-decision request asked in a task or a 支线 is not about the room it hangs in,
-and the receipt written back when someone decides it (`resolve`) went to the
-room's own line — the conversation that asked never read the answer.
+The inbox row said which place it was about with ``topic_id``, under a foreign
+key to ``topics`` — a room. A decision request asked in a task or a 支线 is not
+about the room it hangs in, and the receipt written back when someone decides it
+(`resolve`) went to the room's own line; the conversation that asked never read
+the answer.
 
-``notification`` takes the shape every other row that belongs to a conversation
-already has (b6fcc6362b79): one ``conversation_id`` pointing at
-``conversations``, holding a room's own id, a task's or a 支线's. Every existing
-row names a room, which is a conversation of its own, so the same ids carry
-forward unchanged.
+``conversations`` registers a room and a task under its own id (f7985445d2bf),
+and every other row that belongs to a conversation already points at it
+(b6fcc6362b79). This moves the foreign key there, so the column can hold a
+room's own id, a task's or a 支线's. Existing rows name a room, which is a
+conversation of its own, so the same ids carry forward unchanged.
+
+Its name lags: the code reads and writes it as ``conversation_id``, mapped onto
+the column it has always had (``mapped_column("topic_id")``). A rename is the new
+name mapped onto the old column, and the physical rename — like the drop — is a
+later release (`.claude/rules/migrations.md`, rule 4).
 """
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
 revision: str = "9f2b7c14a8e3"
-# 接在 main 当下的链尾后面：本文件写下时那个头是 c3a8e5f1d702，此后
-# main 每加一条迁移都要再往后挪一次（1ed9ee06ed4a、7d3e1c4b9a20、
-# c11a23e6ea8d、a9c88363ec79、e241eeb9ffdb、4b7e2d9c1f30 ……）。
-# 几条互不相干，只是不能分叉。
-down_revision: str | Sequence[str] | None = "4b7e2d9c1f30"
+# 接在 main 当下的链尾后面：本文件写下时那个头是 c3a8e5f1d702，此后 main 每加
+# 一条迁移都要再往后挪一次（1ed9ee06ed4a、7d3e1c4b9a20、c11a23e6ea8d、
+# a9c88363ec79、e241eeb9ffdb、4b7e2d9c1f30、ff58bbb04b89 ……）。几条互不相干，
+# 只是不能分叉。
+down_revision: str | Sequence[str] | None = "ff58bbb04b89"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-
-def _lock(tables: str) -> None:
-    """As in b6fcc6362b79: queue for the tables a few seconds at a time.
-
-    Dropping the old column drops its foreign key, which locks ``topics`` too:
-    taken mid-way, behind a request that holds one of them and wants a table
-    locked here, it deadlocks.
-    """
-    op.execute(f"""
-        DO $$
-        DECLARE
-            attempts integer := 0;
-            outer_timeout text := current_setting('lock_timeout');
-        BEGIN
-            PERFORM set_config('lock_timeout', '3s', true);
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 100 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.2);
-                END;
-            END LOOP;
-            PERFORM set_config('lock_timeout', outer_timeout, true);
-        END
-        $$
-    """)
+_CONSTRAINT = "fk_notification_topic_id_conversations"
 
 
 def upgrade() -> None:
-    _lock("notification, topics, conversations")
+    # 旧外键指着 `topics`，这一列于是只装得下房间。换指 `conversations` —— 房间和
+    # 任务都在里面注册。删旧外键也锁 `topics`（b6fcc6362b79 记着这个死锁），加新外
+    # 键锁 `conversations`，两张都报给重试。
+    with_lock_retries("notification, topics, conversations")
 
-    op.add_column(
-        "notification", sa.Column("conversation_id", sa.Uuid(), nullable=True)
-    )
-    op.execute("UPDATE notification SET conversation_id = topic_id")
-    # 旧列一走，架在它上面的那个索引跟着走（和 b6fcc6362b79 的 `_fold` 一样）。
-    op.drop_column("notification", "topic_id")
+    op.drop_constraint("notification_topic_id_fkey", "notification", type_="foreignkey")
+    # 表里已经有行：外键先 NOT VALID 加上（不扫表），再单独校验一次。
     op.create_foreign_key(
-        "fk_notification_conversation_id",
+        _CONSTRAINT,
         "notification",
         "conversations",
-        ["conversation_id"],
+        ["topic_id"],
         ["id"],
         ondelete="CASCADE",
+        postgresql_not_valid=True,
     )
-    op.create_index(
-        "idx_notification_conversation_recipient",
-        "notification",
-        ["conversation_id", "recipient_handle"],
-    )
+    op.execute(f"ALTER TABLE notification VALIDATE CONSTRAINT {_CONSTRAINT}")
 
 
 def downgrade() -> None:

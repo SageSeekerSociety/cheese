@@ -12,8 +12,6 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-import sqlalchemy as sa
-
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.project.models import InvitationStatus, ProjectInvitation
 from tests.conftest import seed_user
@@ -77,25 +75,11 @@ def _seed_old_invitation(client, pid: str, status: InvitationStatus) -> str:
 
 
 def _migrate(client) -> None:
-    """把那次迁移的 `convert()` 重放一遍，跟 `alembic upgrade head` 同一条路。
-
-    库现在是 head 的形状，而 `convert()` 清的是它当时的列名 `topic_id` —— 那一列
-    后来换成 `conversation_id`（9f2b7c14a8e3，一条通知关于的那条对话）。重放前把
-    那一列按库当时的样子补上，跑完再撤掉：`convert()` 只把它置空，没有数据要搬，
-    之后这一行照样是「不属于哪条对话」，和它想写的结果一样。
-    """
     convert = _migration().convert
-
-    def _apply(conn) -> None:
-        conn.execute(
-            sa.text("ALTER TABLE notification ADD COLUMN IF NOT EXISTS topic_id uuid")
-        )
-        convert(conn)
-        conn.execute(sa.text("ALTER TABLE notification DROP COLUMN topic_id"))
 
     async def run() -> None:
         async with client.test_factory() as session:
-            await session.run_sync(_apply)
+            await session.run_sync(lambda s: convert(s.connection()))
             await session.commit()
 
     asyncio.run(run())

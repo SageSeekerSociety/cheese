@@ -373,10 +373,10 @@ async def merge_despite_checks(
 
     谁能点 (#718)：项目分支保护的人工放行名单（`override_handles`，没配置
     = 项目所有者 + 团队的所有者和管理员）。芝士被 `_forbid_ai` 挡在外面
-    （跟 accept/approve/void 同一条线），路由也**故意不进** `app/main.py`
-    的 `_CHEESE_WRITE_PATHS`——
-    照 `void` 的先例：不进白名单本身拦不住任何东西（没列进去的写路由压根不
-    过那个中间件），真正拦住芝士的是这里的 `_forbid_ai` 加路由上的登录校验。
+    （跟 accept/approve/void 同一条线），路由也**故意不**声明成芝士专用
+    （`app/api/write_access.py`）——
+    照 `void` 的先例：写权限声明管的是「只许芝士进」，挡不住芝士，真正拦住
+    芝士的是这里的 `_forbid_ai` 加路由上的登录校验。
 
     放行**放的是规则，不是眼睛**：它跟采纳一样要声明「我看的是哪一版」
     （`_seen_head_or_refresh`）。签字的人要为一段具体的代码背书，屏幕上那版
@@ -556,7 +556,7 @@ async def void(
 
     授权：卡上的验收人、项目所有者、团队的所有者和管理员。它是授权类动作，所以芝士在
     collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
-    —— 路由也**故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`。
+    —— 路由也**故意不**声明成芝士专用（`app/api/write_access.py`）。
     """
     card = await self._card_or_404(card_id)
     if card.status not in archive.OPEN_CARD_STATUSES:
