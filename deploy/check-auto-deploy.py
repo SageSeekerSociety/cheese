@@ -63,7 +63,7 @@ def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
         page += 1
 
 
-def ci_ready(candidate: str) -> bool:
+def ci_ready(candidate: str, say=print) -> bool:
     """Check the latest build and required-CI attempts for this exact main SHA."""
     if not re.fullmatch(r"[0-9a-f]{40}", candidate):
         raise ValueError("the automatic release must name a full commit SHA")
@@ -87,7 +87,7 @@ def ci_ready(candidate: str) -> bool:
         if (latest is None or any(run["status"] != "completed" for run in runs)
                 or latest["conclusion"] != "success"):
             seen = ", ".join(f"{run['id']} {run['status']}/{run['conclusion']}" for run in runs) or "none"
-            print(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
+            say(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
             ready = False
     return ready
 
@@ -109,6 +109,29 @@ def ci_ready_settled(candidate: str) -> bool:
         print(f"Reading {candidate}'s runs again in {SETTLE_INTERVAL} s.")
         time.sleep(SETTLE_INTERVAL)
     return True
+
+
+def newer_on_main(candidate: str) -> list[str]:
+    """The commits on main after the candidate, newest first."""
+    repository = os.environ["GITHUB_REPOSITORY"]
+    comparison = github_json(f"https://api.github.com/repos/{repository}/compare/{candidate}...main?per_page=100")
+    if comparison["status"] not in ("ahead", "identical"):
+        raise ValueError(f"candidate {candidate} is not on main: {comparison['status']}")
+    return [commit["sha"] for commit in reversed(comparison["commits"])]
+
+
+# Only one deploy may wait for the deploy-dev group, and a newly waiting one
+# cancels the one already waiting, whichever commit each releases. Builds do
+# not finish in merge order, so an older commit's late build used to cancel a
+# newer commit's waiting deploy and leave main's newest commit off dev until
+# the next merge (runs 37646273755 and 37646390290). An older candidate whose
+# newer commit can already be released is superseded: its run stops here,
+# before it asks for the group, and the newer commit's run releases both.
+def superseded_by(candidate: str) -> str:
+    for newer in newer_on_main(candidate):
+        if ci_ready(newer, say=lambda _line: None):
+            return newer
+    return ""
 
 
 def should_skip(candidate: str, rebuilt: bool = False) -> bool:
@@ -177,18 +200,24 @@ def main() -> None:
             raise SystemExit("The release commit no longer has successful validation.")
         return
     if sys.argv[1] == "--ci-only":
-        key, value = "ready", ci_ready_settled(sys.argv[2])
-    else:
-        rebuilt = sys.argv[1] == "--rebuilt"
-        candidate = sys.argv[2] if rebuilt else sys.argv[1]
-        # CI may have been rerun while this job waited for the deploy runner.
-        # That release did not happen, so the job fails: a skip would leave it
-        # green, and a green deploy job reads as "this commit is on dev".
-        if not ci_ready_settled(candidate):
-            raise SystemExit(f"Not deploying {candidate}: its validation is no longer successful.")
-        key, value = "skip", should_skip(candidate, rebuilt=rebuilt)
+        ready = ci_ready_settled(sys.argv[2])
+        newer = superseded_by(sys.argv[2]) if ready else ""
+        if newer:
+            print(f"Not deploying {sys.argv[2]}: {newer}, newer on main, has its images and Required CI, "
+                  "and its own run releases both.")
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+            output.write(f"ready={str(ready).lower()}\nsuperseded={newer}\n")
+        return
+    rebuilt = sys.argv[1] == "--rebuilt"
+    candidate = sys.argv[2] if rebuilt else sys.argv[1]
+    # CI may have been rerun while this job waited for the deploy runner.
+    # That release did not happen, so the job fails: a skip would leave it
+    # green, and a green deploy job reads as "this commit is on dev".
+    if not ci_ready_settled(candidate):
+        raise SystemExit(f"Not deploying {candidate}: its validation is no longer successful.")
+    skip = should_skip(candidate, rebuilt=rebuilt)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-        output.write(f"{key}={str(value).lower()}\n")
+        output.write(f"skip={str(skip).lower()}\n")
 
 
 if __name__ == "__main__":
