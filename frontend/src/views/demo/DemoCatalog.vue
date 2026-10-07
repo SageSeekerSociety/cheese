@@ -11,7 +11,7 @@
 // 地址照 DemoView 的做法由入口当 props 传进来（测试里换得了 props，换不了 location）。
 import type { CatalogEntry } from './catalog'
 
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { CATALOG, catalogEntry, catalogGroup, stateProps } from './catalog'
 import { installCatalogAnswers } from './catalogFixtures'
@@ -58,10 +58,23 @@ const groups = computed(() => {
 const shown = computed(() => groups.value.reduce((n, group) => n + group.items.length, 0))
 
 /** 搜索的结果说一句：读屏软件听得到「找到几个」，什么都没对上时说的也是这一句。 */
-const resultNote = computed(() => {
+const resultText = computed(() => {
   if (!query.value.trim()) return ''
   return shown.value ? `找到 ${shown.value} 个组件` : '没有对得上的组件。'
 })
+
+/**
+ * 卡片随打随筛，那一句等手停下来才换：每敲一个字就换一次，读屏软件会把一串过时的
+ * 「找到几个」排着队念出来，盖在它自己的按键回显上。
+ */
+const RESULT_SETTLE_MS = 600
+const resultNote = ref('')
+let settle: ReturnType<typeof setTimeout> | undefined
+watch(resultText, (text) => {
+  clearTimeout(settle)
+  settle = setTimeout(() => (resultNote.value = text), RESULT_SETTLE_MS)
+})
+onBeforeUnmount(() => clearTimeout(settle))
 
 function needsOf(needs: string[]): string {
   return needs.length ? needs.map((n) => NEED_LABELS[n] ?? n).join(' · ') : '一件都不用装'

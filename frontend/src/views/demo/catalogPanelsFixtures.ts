@@ -151,18 +151,24 @@ export function projectFileProps(over: Record<string, unknown> = {}): Record<str
 // ---- 四只壳子收的那几包 ------------------------------------------------------
 //
 // 每一包都逐键写出来，返回类型就是 composable 的 `ReturnType`：少一样、多一样、名字拼
-// 错、该是 computed 的给成了 ref，typecheck 当场点名。不用 `...` 摊一串 Record、也不
-// `as` 收口 —— 那样漏掉的键在运行时是 undefined，壳子照样摊开递下去，View 多半还画得
-// 出这几格，测试看不出来。
+// 错、该是 computed 的给成了 ref，typecheck 当场点名。整包不用 `...` 摊一串 Record、
+// 也不 `as` 收口 —— 那样漏掉的键在运行时是 undefined，壳子照样摊开递下去，View 多半
+// 还画得出这几格，测试看不出来。唯一的 `as` 是读 View 夹具那一处（它是按 View props
+// 写的 Record）：值缺了由 catalog.spec 挂 View 时的 props 校验报出来。
 
 /** 一包摊开以后 View 拿到的那一串值：每个 ref 解开成它装的东西，其余（动作、整包）原样。
  *  View 夹具（`changesPanelProps` 那几个）写的就是这个形状。 */
 type Unwrapped<B> = { [K in keyof B]: B[K] extends Ref<infer T> ? T : B[K] }
 
+/** 一格能改的那几样：一包里的数据，不含动作（动作在包里统一是空操作，传进来也不会用）。 */
+type Overrides<B> = Partial<{
+  [K in keyof Unwrapped<B> as Unwrapped<B>[K] extends (...args: never[]) => unknown ? never : K]: Unwrapped<B>[K]
+}>
+
 /** 「改动」那一包（`usePanelChanges` 的返回）。View 夹具是一串按 View props 写的
  *  Record，这里把它读成解开的那一包：值对不对由 catalog.spec 挂 View 那几格时的 props
  *  校验看着，这里管的是一包里有哪几样、各自是 ref 还是 computed。 */
-export function changesBundle(over: Partial<Unwrapped<PanelChangesBundle>> = {}): PanelChangesBundle {
+export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelChangesBundle {
   const v = changesPanelProps(over) as Unwrapped<PanelChangesBundle>
   return {
     taskLoadError: ref(v.taskLoadError),
@@ -227,11 +233,14 @@ export function changesBundle(over: Partial<Unwrapped<PanelChangesBundle>> = {})
 /** 预览那一包里由「这一份文件」算出来的几样：照 `usePanelPreview` 的算法算，不由夹具给。 */
 type PreviewDerived = 'documentSuffix' | 'documentType' | 'documentName' | 'isImageArtifact' | 'docIdentity' | 'canPage'
 
+/** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。 */
+type PreviewFixed = 'frames' | 'navigation' | 'autoReloaded' | 'docPage' | 'docPageHtml'
+
 /** 「预览」那一包（`usePanelPreview` 的返回）。View 夹具里没有的那几样（帧、导航、网页
  *  那一档）给的是取数那一层的初值：这一份是 markdown，用不上它们。后缀、类型、名字、
  *  文档身份从 `previewFile` 算 —— 没有文件时它们就是产品里那时的值，夹具不必另写一遍。 */
 export function previewBundle(
-  over: Partial<Omit<Unwrapped<PanelPreviewBundle>, PreviewDerived>> = {}
+  over: Omit<Overrides<PanelPreviewBundle>, PreviewDerived | PreviewFixed> = {}
 ): PanelPreviewBundle {
   const v = previewPanelProps(over) as Unwrapped<PanelPreviewBundle>
   const file = v.previewFile
@@ -291,7 +300,9 @@ export function previewBundle(
 }
 
 /** 「文档」那一包（`usePanelDoc` 的返回）：正文是一篇只活在这一页里的协同文档。 */
-export function docBundle(over: Partial<Unwrapped<PanelDocBundle>> = {}): PanelDocBundle {
+export function docBundle(
+  over: Omit<Overrides<PanelDocBundle>, 'outdated' | 'deleted' | 'documentId'> = {}
+): PanelDocBundle {
   const view = docPanelProps()
   const v = {
     session: view.session,

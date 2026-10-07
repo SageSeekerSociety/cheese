@@ -205,14 +205,15 @@ describe('组件预览站', () => {
       expect(want.length).toBeGreaterThan(1)
       expect(want.length).toBeLessThan(CATALOG.length)
       expect(cardIds(view.container).sort()).toEqual(want.sort())
-      expect(view.getByRole('status').textContent).toBe(`找到 ${want.length} 个组件`)
+      // 那一句等手停下来才换（防抖），卡片是即时的。
+      await waitFor(() => expect(view.getByRole('status').textContent).toBe(`找到 ${want.length} 个组件`))
     })
 
     it('什么都没对上时说一句话，不是一块空白', async () => {
       const view = mount('/demo/catalog')
       await fireEvent.update(view.getByRole('searchbox'), '不会有组件叫这个名字')
       expect(cardIds(view.container)).toEqual([])
-      expect(view.getByRole('status').textContent).toBe('没有对得上的组件。')
+      await waitFor(() => expect(view.getByRole('status').textContent).toBe('没有对得上的组件。'))
     })
 
     it('一个组件那一页画出它每一格的状态', () => {
