@@ -255,8 +255,10 @@ function onRemove(commentId: string) {
   font-weight: 400;
   line-height: var(--lh-14-loose);
 }
-/* 无评论那一块：长相交给 BaseEmptyState 的 compact 档（§3.12），这里只留外边距。
-   下边距和 `.fb-thread` 一样是 24 —— 列表在不在，底下那个评论框的位置不该跟着挪。 */
+/* 无评论那一块：整块交给 BaseEmptyState 的 compact 档（§3.12）——主副两句、字号和
+   上下 32px 的留白都由这一档定，比原来手写的那一版多出左右 16px 的内缩。这里只留
+   外边距：下边距和 `.fb-thread` 一样是 24 —— 列表在不在，底下那个评论框的位置不该
+   跟着挪。 */
 .fb-thread__empty {
   margin: 0 0 24px;
 }
