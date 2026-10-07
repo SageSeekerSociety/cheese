@@ -183,8 +183,8 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           <li v-for="task in group.tasks" :key="task.id">
             <button type="button" class="tasks__row" @click="emit('open-task', task)">
               <span class="tasks__title t-body">{{ taskTitle(task) }}</span>
-              <span class="tasks__channel t-meta c-faint"># {{ channelTitle.get(task.room_id) ?? '' }}</span>
-              <span class="tasks__who t-meta">
+              <span class="tasks__channel c-faint"># {{ channelTitle.get(task.room_id) ?? '' }}</span>
+              <span class="tasks__who">
                 <template v-if="task.owner_handle">
                   <UserAvatar
                     :size="20"
@@ -198,9 +198,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                   >+{{ task.contributor_handles.length }}</span
                 >
               </span>
-              <span class="tasks__state t-meta" :class="`tasks__state--${stateOf(task).tone}`">{{
-                stateOf(task).text
-              }}</span>
+              <span class="tasks__state" :class="`tasks__state--${stateOf(task).tone}`">{{ stateOf(task).text }}</span>
               <span class="tasks__when t-meta c-faint">{{ relTime(task.last_activity_at) }}</span>
             </button>
           </li>
@@ -222,11 +220,11 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           <li v-for="task in stalled" :key="task.id">
             <button type="button" class="tasks__row tasks__row--stalled" @click="emit('open-task', task)">
               <span class="tasks__title t-body">{{ taskTitle(task) }}</span>
-              <span class="tasks__channel t-meta c-faint"># {{ channelTitle.get(task.room_id) ?? '' }}</span>
-              <span class="tasks__who t-meta">
+              <span class="tasks__channel c-faint"># {{ channelTitle.get(task.room_id) ?? '' }}</span>
+              <span class="tasks__who">
                 <span v-if="task.owner_handle" class="tasks__name">{{ nameOf(task.owner_handle) }}</span>
               </span>
-              <span class="tasks__state t-meta">{{ stateOf(task).text }}</span>
+              <span class="tasks__state">{{ stateOf(task).text }}</span>
               <span class="tasks__when t-meta c-faint">{{ relTime(task.last_activity_at) }}</span>
             </button>
           </li>
@@ -336,6 +334,12 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   color: var(--ink);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.tasks__channel,
+.tasks__who,
+.tasks__state {
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .tasks__channel,
 .tasks__name {

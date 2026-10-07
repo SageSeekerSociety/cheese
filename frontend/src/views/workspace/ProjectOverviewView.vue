@@ -122,7 +122,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
             <button
               v-if="overviewText?.trim()"
               type="button"
-              class="ov-link t-meta"
+              class="ov-link"
               data-testid="overview-edit"
               @click="emit('edit-overview')"
             >
@@ -136,7 +136,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
             <button
               v-if="overviewLong"
               type="button"
-              class="ov-link t-meta"
+              class="ov-link"
               :aria-expanded="overviewOpen"
               @click="overviewOpen = !overviewOpen"
             >
@@ -145,7 +145,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           </template>
           <div v-else-if="overviewText !== null" class="ov-empty">
             <span class="t-body c-muted">{{ t('work.overview.noDocument') }}</span>
-            <button type="button" class="ov-link t-meta" data-testid="overview-write" @click="emit('edit-overview')">
+            <button type="button" class="ov-link" data-testid="overview-write" @click="emit('edit-overview')">
               {{ t('work.overview.write') }}
             </button>
           </div>
@@ -168,7 +168,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
               <ul class="ov-events">
                 <li v-for="item in group.items" :key="`${item.kind}:${item.taskId ?? item.artifactId}:${item.at}`">
                   <button type="button" class="ov-event" @click="openProgress(item)">
-                    <span class="ov-event__kind t-meta" :class="`ov-event__kind--${item.kind}`">
+                    <span class="ov-event__kind" :class="`ov-event__kind--${item.kind}`">
                       {{ t(`work.overview.kind.${item.kind}`) }}
                     </span>
                     <span class="ov-event__what t-body">
@@ -183,7 +183,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
             <button
               v-if="progress.length > PROGRESS_FIRST && !progressAll"
               type="button"
-              class="ov-link t-meta ov-more"
+              class="ov-link ov-more"
               @click="progressAll = true"
             >
               {{ t('work.overview.earlier') }}
@@ -197,7 +197,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
         <section class="ov-section" data-testid="overview-people">
           <div class="ov-head">
             <h2 class="ov-title">{{ t('work.overview.people') }}</h2>
-            <button type="button" class="ov-link t-meta" data-testid="overview-all-tasks" @click="emit('all-tasks')">
+            <button type="button" class="ov-link" data-testid="overview-all-tasks" @click="emit('all-tasks')">
               {{ t('work.overview.allTasks', { count: going.length }) }}
             </button>
           </div>
@@ -221,13 +221,13 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                   @click="emit('open-task', { taskId: task.id, roomId: task.room_id })"
                 >
                   <span class="ov-task__title t-body">{{ taskTitle(task) }}</span>
-                  <span class="ov-task__state t-meta" :class="`ov-task__state--${stateOf(task).tone}`">
+                  <span class="ov-task__state" :class="`ov-task__state--${stateOf(task).tone}`">
                     {{ stateOf(task).text }}
                   </span>
                 </button>
               </li>
               <li v-if="person.tasks.length > PER_PERSON">
-                <button type="button" class="ov-link t-meta ov-person__more" @click="emit('all-tasks')">
+                <button type="button" class="ov-link ov-person__more" @click="emit('all-tasks')">
                   {{ t('work.overview.moreOf', { count: person.tasks.length - PER_PERSON }) }}
                 </button>
               </li>
@@ -295,7 +295,9 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   border: 0;
   background: none;
   color: var(--accent-ink);
-  font: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: var(--lh-13);
   cursor: pointer;
 }
 .ov-link:hover {
@@ -361,6 +363,8 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   background: var(--fill);
 }
 .ov-event__kind {
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--muted);
 }
 .ov-event__kind--accepted,
@@ -433,6 +437,8 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
 }
 .ov-task__state {
   flex-shrink: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--muted);
 }
 .ov-task__state--mine {

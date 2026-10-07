@@ -205,13 +205,13 @@ async function decide(item: WaitingItem, chosen: string) {
           >
             <NavLink :to="linkTo(item)" class="inbox-item__link">
               <span class="inbox-item__head">
-                <span class="inbox-item__ask t-meta" :class="`inbox-item__ask--${askOf(item).tone}`">{{
+                <span class="inbox-item__ask" :class="`inbox-item__ask--${askOf(item).tone}`">{{
                   askOf(item).text
                 }}</span>
                 <span class="inbox-item__title t-body">{{ itemTitle(item) }}</span>
               </span>
               <span v-if="item.detail" class="inbox-item__detail t-body">{{ item.detail }}</span>
-              <span class="inbox-item__where t-meta">
+              <span class="inbox-item__where">
                 # {{ topicTitle({ title: item.topicTitle }) }} · {{ relTime(item.at) }}
               </span>
             </NavLink>
@@ -361,6 +361,8 @@ async function decide(item: WaitingItem, chosen: string) {
 }
 .inbox-item__ask {
   flex-shrink: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
   font-weight: 600;
 }
 .inbox-item__ask--warn {
@@ -385,6 +387,8 @@ async function decide(item: WaitingItem, chosen: string) {
   -webkit-line-clamp: 2;
 }
 .inbox-item__where {
+  font-size: 12px;
+  line-height: var(--lh-12);
   color: var(--faint);
 }
 .inbox-item__options {
