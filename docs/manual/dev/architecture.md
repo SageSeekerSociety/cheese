@@ -270,7 +270,7 @@ CREATE INDEX ON session_work_leases (claim_until) WHERE claim IS NOT NULL;
 |---|---|---|
 | A. 已经能并发跑 | routines、timed deliveries、通知邮件和推送、通知摘要、PR 轮询两项、云计算计量、云预热池 | 第一批迁出。routines 和 timed deliveries 会起轮次，先确认不持锁的进程能起轮次 |
 | B. 只做保留期清理或幂等同步 | 托管凭据缓存清理、运行记录过期、文档问答保留、棘轮快照采集、托管事件订阅对账 | 第二批迁出，每个先用两个进程跑一遍集成测试 |
-| C. 读请求路径写进本进程内存的东西 | backend error flush：`backend_log.py:280` 的 `intake` 在每个进程的请求路径上写入（`:418`），却只在持锁进程上刷出（`:459`）。不持锁的进程攒下的报错要等它拿到锁才出去，拿到之前退出就丢了 | 每个进程都跑，不要租约；进程退出时再刷一次。迁出锁的第一步就做 |
+| C. 读请求路径写进本进程内存的东西 | backend error flush：`backend_log.py` 的 `intake` 在每个进程的请求路径上写入，由持锁进程的周期任务刷出，只刷满 300 秒（`DEDUP_WINDOW_S`）的窗口。部署是单实例蓝绿双槽，后起的进程拿到锁后会刷自己攒的窗口，不会丢。会丢的是出局的进程：`main.py` 的 `hand_over()` 先停掉所有周期任务、再放锁，它最后不足 300 秒的窗口随退出丢掉 | 在 `hand_over()` 停周期任务之前强制刷一次，不论 300 秒到没到。和是否持锁无关，迁出锁的第一步就做 |
 | D. 靠本进程内存判断「谁在跑」 | 孤儿轮次清扫、排队消息清扫、进度提醒、闸门清扫（`gate.in_flight_card_ids()`）、启动恢复、托管事件监听 | 留在锁里，等[全局锁退役](#ownership-retire)那一步 |
 | 待逐个读代码 | 记忆整理、任务截止、安静任务提醒、超时投递告警、托管孤儿账号清理、云主机池、云沙箱生命周期、订阅用量导入 | 能用领取列改造的归 A，否则归 D |
 
@@ -351,7 +351,7 @@ frontend/src/
 | 2b | 「不许新增 `announce_stale`」「不许新增读进程内存运行态」「新路由必须声明响应模型」三道守卫 | 1 |
 | 2c | 前端装 vue-query，`useCachedResource` 换成薄壳；就地改数据的调用方改成 `setQueryData`；KeepAlive 页面的 `enabled` | 1 |
 | 2d | 租约写入收口：10 处写入收进一个 `lease_store`，带状态转移表；`claim_until` 改用数据库 `now()`；守卫：写 `work_lease` 只许经过它 | 1 |
-| 2e | backend error flush 改成每个进程都跑、退出时再刷；`periodic_job_runs` 加 `run_by`、`run_until`，`PeriodicRunner` 加「只在持锁进程跑」的开关 | 1 |
+| 2e | 交接（`hand_over()`）停周期任务前强制刷一次 backend error flush；`periodic_job_runs` 加 `run_by`、`run_until`，`PeriodicRunner` 加「只在持锁进程跑」的开关 | 1 |
 | 3a | 分层契约：每个包都分好层，越界的边冻结 | 2a |
 | 3b | `change_log`、两个写钩子和 Core 写守卫、分配器、`after` / `hello` / `resync` 协议，GET 和写响应带 `X-Change-Seq`；先给房间连接 | 2b |
 | 3c | `topicPanelCache` 换成 queryOptions；旧 `state` 帧改成按键失效 | 2c |
