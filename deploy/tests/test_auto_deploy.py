@@ -363,7 +363,8 @@ class CandidateCI(unittest.TestCase):
             output = Path(directory) / "output"
             with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GITHUB_OUTPUT": str(output)}), \
                     patch.object(GUARD.sys, "argv", ["check-auto-deploy.py", "--ci-only", self.candidate]), \
-                    patch.object(GUARD, "workflow_runs", side_effect=workflow_runs):
+                    patch.object(GUARD, "workflow_runs", side_effect=workflow_runs), \
+                    patch.object(GUARD, "newer_on_main", return_value=[]):
                 GUARD.main()
             return output.read_text(), reads
 
@@ -375,20 +376,21 @@ class CandidateCI(unittest.TestCase):
             with self.subTest(stale=stale[0]):
                 self.clock.now = 0.0
                 output, reads = self.eligibility([stale, stale, settled])
-                self.assertEqual(output, "ready=true\n")
+                self.assertEqual(output, "ready=true\nsuperseded=\n")
                 self.assertLessEqual(reads[-1], 60)
 
     def test_a_build_that_really_failed_is_refused_within_a_bounded_wait(self):
         failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
         output, reads = self.eligibility([failed])
-        self.assertEqual(output, "ready=false\n")
+        self.assertEqual(output, "ready=false\nsuperseded=\n")
         self.assertGreater(len(reads), 1)
         self.assertLessEqual(reads[-1], 180)
 
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
         self.assertEqual(workflow["jobs"]["deploy"]["needs"], "eligibility")
-        self.assertEqual(workflow["jobs"]["deploy"]["if"].strip(), "needs.eligibility.outputs.ready == 'true'")
+        self.assertEqual(workflow["jobs"]["deploy"]["if"].strip(),
+                         "needs.eligibility.outputs.ready == 'true' && needs.eligibility.outputs.superseded == ''")
         self.assertNotIn("cheese-dev", workflow["jobs"]["eligibility"]["runs-on"])
         self.assertNotIn("concurrency", workflow)
         self.assertEqual(workflow["jobs"]["deploy"]["concurrency"]["group"], "deploy-dev")
@@ -532,6 +534,97 @@ class CandidateCI(unittest.TestCase):
             self.assertIn("--require-ci", gate["run"])
 
 
+
+
+class SupersededRelease(unittest.TestCase):
+    """Only one deploy waits for the deploy-dev group, and a newly waiting one
+    cancels the one already waiting. A late build of an older commit must not
+    take that place from a newer commit's deploy: run 37646390290 (83be7802c,
+    built last) cancelled the waiting 37646273755 (64a9aa54e, newer), and main's
+    newest commit stayed off dev."""
+
+    older, candidate, newer, newest = ("1" * 40, "2" * 40, "3" * 40, "4" * 40)
+
+    def setUp(self):
+        patcher = patch.object(GUARD, "time", Clock())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def runs(sha, build="success", ci="success"):
+        def record(workflow, conclusion, event, branch):
+            status = "completed" if conclusion else "in_progress"
+            return {"id": 1, "head_sha": sha, "head_branch": branch, "event": event,
+                    "updated_at": "2026-10-07T15:43:00Z", "status": status, "conclusion": conclusion,
+                    "head_repository": {"full_name": "example/app"}, "workflow": workflow}
+        return [record("build.yml", build, "push", "main"),
+                record("required-ci.yml", ci, "merge_group", f"gh-readonly-queue/main/pr-1-{sha}")]
+
+    def eligibility(self, on_main, records):
+        """`on_main`: main's commits after the candidate, oldest first.
+        `records`: each commit's runs. Answers the GitHub API like GitHub."""
+        def urlopen(request, timeout):
+            url = request.full_url
+            if "/compare/" in url:
+                body = {"status": "ahead" if on_main else "identical",
+                        "commits": [{"sha": sha} for sha in on_main]}
+            else:
+                workflow = url.split("/actions/workflows/", 1)[1].split("/", 1)[0]
+                sha = url.split("head_sha=", 1)[1].split("&", 1)[0]
+                body = {"workflow_runs": [run for run in records.get(sha, []) if run["workflow"] == workflow]}
+            return io.BytesIO(json.dumps(body).encode())
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "t",
+                                         "GITHUB_OUTPUT": str(output)}), \
+                    patch.object(GUARD.sys, "argv", ["check-auto-deploy.py", "--ci-only", self.candidate]), \
+                    patch.object(GUARD, "urlopen", side_effect=urlopen), \
+                    patch("sys.stdout", new_callable=io.StringIO) as printed:
+                GUARD.main()
+            return output.read_text(), printed.getvalue()
+
+    def test_an_older_commit_built_after_a_newer_ready_one_steps_aside(self):
+        output, printed = self.eligibility([self.newer], {self.candidate: self.runs(self.candidate),
+                                                          self.newer: self.runs(self.newer)})
+        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\n")
+        self.assertIn(f"Not deploying {self.candidate}: {self.newer}, newer on main", printed)
+
+    def test_the_newest_commit_that_is_ready_is_the_one_named(self):
+        output, _ = self.eligibility([self.newer, self.newest], {
+            self.candidate: self.runs(self.candidate), self.newer: self.runs(self.newer),
+            self.newest: self.runs(self.newest, build=None)})
+        self.assertEqual(output, f"ready=true\nsuperseded={self.newer}\n")
+
+    def test_a_newer_commit_that_cannot_be_released_yet_does_not_supersede(self):
+        for build, ci in ((None, "success"), ("failure", "success"), ("success", "failure")):
+            with self.subTest(build=build, ci=ci):
+                output, printed = self.eligibility([self.newer], {
+                    self.candidate: self.runs(self.candidate), self.newer: self.runs(self.newer, build=build, ci=ci)})
+                self.assertEqual(output, "ready=true\nsuperseded=\n")
+                # A newer commit's state is not this release's refusal.
+                self.assertNotIn(f"Not deploying {self.newer}", printed)
+
+    def test_main_newest_commit_deploys(self):
+        output, _ = self.eligibility([], {self.candidate: self.runs(self.candidate)})
+        self.assertEqual(output, "ready=true\nsuperseded=\n")
+
+    def test_a_superseded_run_does_not_ask_for_the_deploy_group(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        self.assertEqual(workflow["jobs"]["eligibility"]["outputs"]["superseded"],
+                         "${{ steps.check.outputs.superseded }}")
+        condition = workflow["jobs"]["deploy"]["if"]
+        self.assertIn("needs.eligibility.outputs.superseded == ''", condition)
+        self.assertIn("needs.eligibility.outputs.ready == 'true'", condition)
+        step = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                    if step.get("if") == "steps.check.outputs.superseded != ''")
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            result = subprocess.run(["bash", "-e", "-c", step["run"]], capture_output=True, text=True,
+                                    env={**os.environ, "CANDIDATE_SHA": self.candidate, "NEWER": self.newer,
+                                         "GITHUB_STEP_SUMMARY": str(summary)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"`{self.candidate}`", summary.read_text())
+            self.assertIn(f"`{self.newer}`", summary.read_text())
 
 class DesktopRebuild(unittest.TestCase):
     """desktop.yml rebuilds the images for new installers and asks deploy-dev to
