@@ -23,6 +23,8 @@
     "lint:i18n": "node scripts/i18n-cjk-gate.mjs",
     "lint:scenes": "python3 ../.claude/scripts/scene-ratchet.py",
     "lint:scenes:update": "python3 ../.claude/scripts/scene-ratchet.py --update",
+    "gen:api-types": "node scripts/gen-api-types.mjs",
+    "check:api-types": "node scripts/gen-api-types.mjs --check",
     "prettier": "prettier --write \"**/*.{vue,js,jsx,ts,tsx}\"",
     "test": "vitest"
   },
@@ -149,6 +151,7 @@
     "globals": "^15.15.0",
     "happy-dom": "^13.10.1",
     "jsdom": "^29.1.1",
+    "openapi-typescript": "7.13.0",
     "prettier": "3.2.4",
     "sass": "^1.89.2",
     "stylelint-config-standard": "^36.0.1",

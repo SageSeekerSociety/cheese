@@ -12,6 +12,7 @@
   ],
   "frontend": [
     "frontend/**",
+    "backend/openapi.json",
     ".github/workflows/frontend.yml",
     "docs/site/src/style.css",
     "backend/app/domain/agent/skill_library/doc_writing.md",
