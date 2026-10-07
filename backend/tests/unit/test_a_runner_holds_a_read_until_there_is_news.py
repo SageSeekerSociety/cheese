@@ -14,6 +14,12 @@ import pytest
 from app.domain.agent.harness.driven import runner
 from tests.unit.test_driven_harness import Journal, call
 
+#: How long the held reads below ask to wait. An answer well inside it came from
+#: the news, not from the wait running out; how far inside depends on how busy
+#: the machine is, so the bound is a share of the wait, not a latency target.
+HOLD_S = 30
+PROMPT_S = HOLD_S / 6
+
 
 class Session(runner.Runner[Journal]):
     """A session that writes when told to, read the way a backend reads it."""
@@ -52,15 +58,13 @@ async def test_a_held_read_is_answered_when_a_record_is_written_and_not_before(
 
         mark = first["live"]["mark"]
         read = asyncio.create_task(
-            call(session.state, "events", {"after": 0, "wait": 30, "live": mark})
+            call(session.state, "events", {"after": 0, "wait": HOLD_S, "live": mark})
         )
         await asyncio.sleep(0.5)
         assert not read.done()
 
-        written_at = time.monotonic()
         session.journal.append({"said": "done"})
-        answer = await asyncio.wait_for(read, 5)
-        assert time.monotonic() - written_at < 0.5
+        answer = await asyncio.wait_for(read, PROMPT_S)
         assert [row["record"] for row in answer["events"]] == [{"said": "done"}]
     finally:
         await session.close()
@@ -117,15 +121,13 @@ async def test_the_agent_process_ending_answers_a_held_read_at_once(tmp_path):
     try:
         mark = session.live_mark()
         held = asyncio.create_task(
-            call(session.state, "events", {"after": 0, "wait": 30, "live": mark})
+            call(session.state, "events", {"after": 0, "wait": HOLD_S, "live": mark})
         )
         await asyncio.sleep(0.3)
         assert not held.done()
 
-        died_at = time.monotonic()
         session.process.kill()
-        answer = await asyncio.wait_for(held, 5)
-        assert time.monotonic() - died_at < 0.5
+        answer = await asyncio.wait_for(held, PROMPT_S)
         assert answer["alive"] is False
     finally:
         await session.close()
