@@ -1575,6 +1575,208 @@ class ChatGPTCredential:
         os.replace(tmp, self.path)
 
 
+#: The error type ChatGPT's Codex backend answers a spent plan with: a 429 whose
+#: error carries this type and when the plan opens again. Any other 429 is a
+#: passing rate limit and says nothing about the plan.
+USAGE_LIMIT_REACHED = "usage_limit_reached"
+
+
+def usage_limit_reset(body: bytes, now: float, unknown_s: float) -> float | None:
+    """When a ChatGPT refusal says its account opens again; None when it is not a
+    spent usage limit.
+
+    The error names the reset as ``resets_at`` (epoch seconds) or
+    ``resets_in_seconds``. A usage-limit refusal that names neither still marks
+    the account spent, for ``unknown_s``.
+    """
+    try:
+        payload = json.loads(body or b"")
+    except (ValueError, TypeError):
+        return None
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict) or USAGE_LIMIT_REACHED not in (
+        error.get("type"),
+        error.get("code"),
+    ):
+        return None
+    for field, base in (("resets_at", 0.0), ("resets_in_seconds", now)):
+        value = error.get(field)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return base + float(value)
+    return now + unknown_s
+
+
+#: Where ChatGPT says how much of an account's plan is left: what Codex's
+#: /status reads. It answers on the account's own login, so asking it spends
+#: nothing.
+CHATGPT_USAGE_PATH = "/backend-api/wham/usage"
+
+
+def usage_capacity(payload: dict) -> tuple[bool, float | None] | None:
+    """Whether a ChatGPT usage answer says the account is spent, and until when.
+
+    ``rate_limit`` carries ``allowed``, ``limit_reached`` and one or two windows
+    (``primary_window``, ``secondary_window``), each with ``used_percent`` and
+    ``reset_at`` in epoch seconds. The account is spent when it is not allowed
+    or its limit is reached; it opens again when its last full window resets.
+    None when the answer has no ``rate_limit`` to read.
+    """
+    limit = payload.get("rate_limit") if isinstance(payload, dict) else None
+    if not isinstance(limit, dict):
+        return None
+    spent = limit.get("allowed") is False or limit.get("limit_reached") is True
+    if not spent:
+        return False, None
+    windows = [
+        window
+        for window in (limit.get("primary_window"), limit.get("secondary_window"))
+        if isinstance(window, dict) and isinstance(window.get("reset_at"), (int, float))
+    ]
+    full = [w for w in windows if (w.get("used_percent") or 0) >= 100] or windows
+    return True, (max(float(w["reset_at"]) for w in full) if full else None)
+
+
+def fetch_chatgpt_usage(
+    token: str,
+    account_id: str,
+    version: str,
+    timeout_s: float,
+    *,
+    egress: Egress | None = None,
+    connect=http.client.HTTPSConnection,
+) -> tuple[int, dict]:
+    """GET an account's usage from ChatGPT through its egress, as Codex does.
+    Returns (status, parsed body); raises OSError on transport problems."""
+    host, port = CHATGPT_UPSTREAM
+    if egress is None:
+        conn = connect(host, port, timeout=timeout_s)
+    else:
+        conn = connect(egress.host, egress.port, timeout=timeout_s)
+        tunnel_headers = (
+            {"Proxy-Authorization": egress.authorization}
+            if egress.authorization
+            else {}
+        )
+        conn.set_tunnel(host, port, headers=tunnel_headers)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "originator": "cheese",
+        "version": version,
+    }
+    if account_id:
+        headers["chatgpt-account-id"] = account_id
+    try:
+        conn.request("GET", CHATGPT_USAGE_PATH, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        status = resp.status
+    except http.client.HTTPException as err:
+        raise OSError(str(err)) from err
+    finally:
+        conn.close()
+    try:
+        parsed = json.loads(data or b"{}")
+    except ValueError:
+        parsed = {}
+    return status, parsed if isinstance(parsed, dict) else {}
+
+
+class ChatGPTUsageLimits:
+    """Which of the platform's ChatGPT accounts have spent their usage limit,
+    and until when.
+
+    While an account is spent the meter answers its requests itself, at once,
+    so the gateway moves to another account instead of reaching ChatGPT for a
+    refusal every few seconds. A plan can open again before the time it named
+    (a reset, an upgrade) and nothing announces that, so every ``probe_s`` the
+    account's usage is asked (CHECK) — that costs no user request. When asking
+    fails, the next look sends one real request instead (PROBE). Any request the
+    account serves clears the record. Kept in memory; a restarted meter learns
+    it again from the next refusal.
+    """
+
+    SEND = "send"
+    CHECK = "check"
+    PROBE = "probe"
+    REOPENED = "reopened"
+    ANSWER = "answer"
+
+    def __init__(self, *, probe_s: float = 600.0, now=time.time) -> None:
+        self.probe_s = probe_s
+        self._now = now
+        self._lock = threading.Lock()
+        self._until: dict[str, float] = {}
+        self._probed: dict[str, float] = {}
+        # Accounts whose usage could not be asked last time: their next look
+        # is a real request.
+        self._unreadable: set[str] = set()
+
+    def decide(self, name: str) -> tuple[str, float]:
+        """What to do with a request for ``name``, and the seconds until it
+        opens again: SEND, REOPENED (its time passed), CHECK (answer it here and
+        ask the account's usage), PROBE (send it; usage could not be asked), or
+        ANSWER here."""
+        with self._lock:
+            until = self._until.get(name)
+            if until is None:
+                return self.SEND, 0.0
+            now = self._now()
+            if now >= until:
+                del self._until[name]
+                self._probed.pop(name, None)
+                return self.REOPENED, 0.0
+            if now - self._probed.get(name, now) >= self.probe_s:
+                self._probed[name] = now
+                action = self.PROBE if name in self._unreadable else self.CHECK
+                return action, until - now
+            return self.ANSWER, until - now
+
+    def checked(self, name: str, capacity: tuple[bool, float | None] | None) -> str:
+        """Apply what the account's usage said: ``capacity`` from
+        ``usage_capacity``, None when it could not be read. Returns "cleared",
+        "spent" or "unreadable"."""
+        if capacity is None:
+            with self._lock:
+                self._unreadable.add(name)
+            return "unreadable"
+        with self._lock:
+            self._unreadable.discard(name)
+        spent, until = capacity
+        if not spent:
+            self.served(name)
+            return "cleared"
+        if until is not None and until > self._now():
+            with self._lock:
+                if name in self._until:
+                    self._until[name] = until
+        return "spent"
+
+    def refused(self, name: str, body: bytes) -> tuple[float, bool] | None:
+        """Learn from a 429 ChatGPT gave ``name``: when it is a spent usage limit,
+        record it and answer when the account opens again and whether it was
+        not spent before; otherwise None."""
+        until = usage_limit_reset(body, self._now(), self.probe_s)
+        if until is None:
+            return None
+        return until, self.spent(name, until)
+
+    def spent(self, name: str, until: float) -> bool:
+        """Record a usage-limit refusal; True when the account was not spent."""
+        with self._lock:
+            new = name not in self._until
+            self._until[name] = until
+            self._probed[name] = self._now()
+            return new
+
+    def served(self, name: str) -> bool:
+        """The account answered a request; True when that clears a record."""
+        with self._lock:
+            self._probed.pop(name, None)
+            self._unreadable.discard(name)
+            return self._until.pop(name, None) is not None
+
+
 class ChatGPTAccounts:
     """The ChatGPT accounts under one directory, one subdirectory per name.
 
