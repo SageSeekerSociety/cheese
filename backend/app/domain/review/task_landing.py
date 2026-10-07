@@ -11,6 +11,7 @@ the merge queue, the poller, a PR merged by hand — so none of them can keep
 closing a task the card said goes on.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -20,6 +21,8 @@ from app.core.sentences import say
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
+
+logger = logging.getLogger(__name__)
 
 
 async def delivery_landed(
@@ -64,23 +67,39 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
     """Say ``content`` in the 支线 under the message ``task`` was made from,
     opening it if nobody has replied there yet. It is said by the task's AI
     teammate, as a reply: whoever took part in the discussion hears it, and the
-    line under the message shows it. A task made on its own has nowhere to say
-    it."""
+    line under the message shows it. A task made on its own, or from something
+    that is not a message in a live channel, has nowhere to say it.
+
+    Best effort: what landed has landed, and a line that cannot be said must
+    not take the task's own state back with it."""
+    try:
+        async with session.begin_nested():
+            await _tell_origin(session, task, content)
+    except Exception:  # noqa: BLE001 — a courtesy line never undoes a landing
+        logger.warning("could not tell task %s's discussion", task.id, exc_info=True)
+
+
+async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
     from app.domain.agent_instance.services import AgentInstanceService
     from app.domain.block.models import AuthorType, Block, BlockKind
     from app.domain.identity.handles import agent_instance_handle
     from app.domain.project.models import Project
     from app.domain.thread.services import open_thread
-    from app.domain.topic.models import Topic
+    from app.domain.topic.models import Topic, TopicStatus
 
     if task.upgraded_from_block_id is None:
         return
     origin = await session.get(Block, task.upgraded_from_block_id)
     room = await session.get(Topic, task.room_id)
     project = await session.get(Project, task.project_id)
-    if origin is None or origin.conversation_id != task.room_id or room is None:
-        return
-    if project is None:
+    if (
+        origin is None
+        or origin.kind != BlockKind.message
+        or origin.conversation_id != task.room_id
+        or room is None
+        or room.status == TopicStatus.archived
+        or project is None
+    ):
         return
     agent = await AgentInstanceService(session).for_task(
         project, room, task.agent_handle

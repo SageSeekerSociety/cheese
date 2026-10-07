@@ -144,3 +144,45 @@ def test_how_a_task_ended_is_said_where_it_came_from(client):
     [thread] = [t for t in threads if t["root_block_id"] == said["id"]]
     replies = client.get(f"/topics/{thread['id']}/blocks").json()["data"]["data"]
     assert any("必填项压到 4 项" in b["content"] for b in replies)
+
+
+def test_a_task_from_something_that_is_not_a_message_still_closes(client):
+    """The discussion hears how a task ended only where there is one; a task
+    made from a file in the channel closes all the same."""
+    import asyncio
+    import uuid
+
+    from app.domain.block.models import AuthorType, Block, BlockKind
+    from tests.integration.test_tasks import _room
+
+    project, room = _room(client)
+    file_id = uuid.uuid4()
+
+    async def put_file():
+        async with client.test_factory() as session:
+            session.add(
+                Block(
+                    id=file_id,
+                    project_id=uuid.UUID(project),
+                    conversation_id=uuid.UUID(room),
+                    kind=BlockKind.attachment,
+                    author_type=AuthorType.participant,
+                    author="alice",
+                    content="海报.png",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(put_file())
+    task = client.post(
+        f"/blocks/{file_id}/upgrade", headers=session_auth_headers("alice")
+    ).json()["data"]
+
+    closed = client.post(
+        f"/topics/{task['id']}/close",
+        json={"conclusion": "海报定稿"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert closed.status_code == 200, closed.text
+    assert client.get(f"/topics/{task['id']}/task").json()["data"]["status"] == "closed"
