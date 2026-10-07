@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -28,6 +29,9 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			"attached it finishes there, so the desktop app can run it too.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if runtime.GOOS == "windows" {
+				return fmt.Errorf("claude: your own Claude Code does not run on Windows yet")
+			}
 			base, err := serverBase(*cfgPath)
 			if err != nil {
 				return err
