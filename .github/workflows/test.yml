@@ -371,6 +371,9 @@ jobs:
           tracepoint:signal:signal_generate /(args->sig == 9 || args->sig == 15 || args->sig == 6 || args->sig == 1 || args->sig == 2 || args->sig == 11 || args->sig == 7 || args->sig == 4 || args->sig == 8 || args->sig == 31) && (args->comm == "python3" || args->comm == "python")/ { printf("%lld sig=%d from=%d(%s) to=%d(%s)\n", nsecs / 1000000, args->sig, pid, comm, args->pid, args->comm); }
           kprobe:do_exit /pid == tid && arg0 != 0 && (comm == "python3" || comm == "python")/ { printf("%lld exit pid=%d(%s) code=%d\n", nsecs / 1000000, pid, comm, arg0); }
           ' > "$RUNNER_TEMP/backend-results/signals.log" 2>&1 &
+          # A signal's sender is named only by pid and comm (`python3`): every
+          # process's command line every five seconds tells which program it was.
+          nohup bash -c 'while true; do echo "== $(cut -d" " -f1 /proc/uptime)"; ps -eo pid,ppid,etimes,args | cut -c1-300; sleep 5; done' > "$RUNNER_TEMP/backend-results/processes.log" 2>&1 &
 
       - name: Run the selected layer partition
         timeout-minutes: ${{ matrix.timeout }}
@@ -417,6 +420,7 @@ jobs:
         if: ${{ !cancelled() && matrix.layer == 'pure' }}
         run: |
           sudo pkill bpftrace || true
+          pkill -f "ps -eo pid,ppid,etimes,args" || true
           if grep -q "node down" "$RUNNER_TEMP/backend-results/pytest.log"; then
             grep -E "node down|crashed while running" "$RUNNER_TEMP/backend-results/pytest.log"
             # Times are milliseconds since boot; the worker's death is among the
