@@ -82,6 +82,25 @@ from tests import isolation  # noqa: E402
 from tests.support.hang import HANG_S  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
+
+import contextlib as _probe_ctx
+_PROBE: dict[str, list[float]] = {}
+
+
+@_probe_ctx.contextmanager
+def _phase(name: str):
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        _PROBE.setdefault(name, []).append(time.perf_counter() - t0)
+
+
+def pytest_sessionfinish(session):
+    out = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "backend-results"
+    if not _PROBE or not out.is_dir():
+        return
+    (out / f"fixture-timing-{_XDIST_WORKER or "main"}.json").write_text(json.dumps(_PROBE))
 # The runner slot this run is on, empty everywhere but a pool machine with more
 # than one. Two runs sharing a machine otherwise share every name below, and the
 # harness drops its databases WITH (FORCE) — see tests/isolation.py.
@@ -1342,7 +1361,8 @@ def client(
 
     # agent-as-user baseline (P1): 芝士 is a real user with a platform agent-
     # binding — seeded by the migration in prod, re-seeded here after the clear.
-    asyncio.run(_clear_client_db(seed_agent_user=True))
+    with _phase("client.clear_and_seed"):
+        asyncio.run(_clear_client_db(seed_agent_user=True))
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
 
     async def override_get_db():
@@ -2136,9 +2156,11 @@ def pytest_runtest_teardown(item: pytest.Item):
     """
     yield
     try:
-        _fail_on_open_transactions(item)
+        with _phase("teardown.open_transactions"):
+            _fail_on_open_transactions(item)
     finally:
-        _end_leftover_executors(item)
+        with _phase("teardown.leftover_executors"):
+            _end_leftover_executors(item)
 
 
 def _fail_on_open_transactions(item: pytest.Item) -> None:
