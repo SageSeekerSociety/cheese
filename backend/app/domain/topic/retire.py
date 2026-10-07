@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent import resource_cleanup
 from app.domain.agent.device_hub import device_hub
-from app.domain.agent.device_provider import list_device_storage
+from app.domain.agent.device_storage import list_device_storage
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room

@@ -121,3 +121,29 @@ describe('UserAvatar 的加载与失败记忆', () => {
     labelled.unmount()
   })
 })
+
+/**
+ * 形状（§3.14）：人是圆，团队、空间、项目是圆角方块，半径是边长的四分之一。
+ *
+ * 这一条盯的是一个**只有 CSS 才看得见**的坑：Vuetify 的 `false` 意思是「方角」，它会挂
+ * `rounded-0`，而 `.rounded-0 { border-radius: 0 !important }` 压得过组件写给 `v-avatar`
+ * 的内联圆角 —— 于是圆角方块全成直角（团队、空间、项目一起），而 DOM 里看不出来：内联
+ * 样式照样写着 12px，只有那一个类名露馅。所以钉的是类名 + 内联样式这两头。
+ */
+describe('UserAvatar 的形状', () => {
+  it('人用 Vuetify 的圆；org 绝不能沾上它的方角', () => {
+    const person = mount({ avatar: '', kind: 'person', size: 32 })
+    const round = person.container.querySelector('.v-avatar')!
+    expect(round.classList.contains('rounded-circle')).toBe(true)
+    expect(round.classList.contains('rounded-0')).toBe(false)
+    person.unmount()
+
+    const org = mount({ avatar: '', kind: 'org', size: 48 })
+    const square = org.container.querySelector('.v-avatar')!
+    // 方角在 Vuetify 里就是 `rounded-0`（border-radius: 0 !important）——它一出现，圆角就没了。
+    expect(square.classList.contains('rounded-0'), '方角会吃掉圆角').toBe(false)
+    // 圆角由内联样式说：48px → 12px（squareRadius 是边长四分之一）。
+    expect(square.getAttribute('style')).toContain('border-radius: 12px')
+    org.unmount()
+  })
+})

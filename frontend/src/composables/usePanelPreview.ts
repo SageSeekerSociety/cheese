@@ -24,9 +24,9 @@ import {
   requestPreviewSession,
   uploadAttachment,
 } from '../api'
-import { useDocumentBytes } from '../lib/documentBytes'
+import { useDocumentBytes, useDocumentPage } from '../lib/documentBytes'
 import { sameDocumentIdentity } from '../lib/documentIdentity'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, suffixOf, webMimeOf } from '../lib/fileKind'
+import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, pageViewOf, suffixOf, webMimeOf } from '../lib/fileKind'
 import { warmPreviewPointer } from '../lib/previewPointer'
 import { roomFileDestination } from '../lib/previewSession'
 
@@ -516,7 +516,16 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   // ---- 文档字节 ----
   // 那一页的字节由 `useDocumentBytes` 取：浏览器画不出来的先转 PDF，其余读原始字节。
   // 「改动」那一格取的是同一份东西，所以这件事只写在一处。
+  //
+  // 读者能挑另一种读法：网页（`docPage`）。两种读法各自取各自的那一份，同一时刻只有
+  // 一种在取——PDF 那一边的 `enabled` 因此要看这个开关。挑法不跟着文件走：一份文档
+  // 读成什么样是阅读习惯，不是这份文件的属性，换一份不该把它翻回去。
+  //
+  // 网页那一档里「整页引用」够不着：它要的是刚画出来的那一页和文件版本对得上
+  // （下面的 `slideContext`），而那一页在一个沙箱帧里，选中的字回不到这边。读者要指着
+  // 整页说话就切回分页视图——那里的话仍然作数。
   const docNonce = ref(0)
+  const docPage = ref(false)
   const docIdentity = computed<DocumentIdentity | null>(() => {
     const file = previewFile.value
     if (!props.topicId || !file) return null
@@ -528,22 +537,43 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       version: file.version,
     }
   })
-  const {
-    bytes: docBytes,
-    snapshot: docSnapshot,
-    loading: docLoading,
-    error: docError,
-    rendererMissing: docRendererMissing,
-  } = useDocumentBytes({
+  const canPage = computed(() => pageViewOf(docIdentity.value?.path))
+  const wantPage = computed(() => docPage.value && canPage.value)
+  const docSource = {
     topicId: () => docIdentity.value?.topicId ?? null,
     path: () => docIdentity.value?.path ?? null,
     version: () => docIdentity.value?.version ?? null,
     task: () => docIdentity.value?.taskId ?? null,
     source: () => docIdentity.value?.source ?? 'live',
     nonce: () => docNonce.value,
+  }
+  const {
+    bytes: docBytes,
+    snapshot: docSnapshot,
+    loading: bytesLoading,
+    error: bytesError,
+    rendererMissing: bytesRendererMissing,
+  } = useDocumentBytes({
+    ...docSource,
     enabled: () =>
-      (!!documentType.value && documentType.value.view !== 'markdown') || (!!props.path && isImageArtifact.value),
+      !wantPage.value &&
+      ((!!documentType.value && documentType.value.view !== 'markdown') || (!!props.path && isImageArtifact.value)),
   })
+  const {
+    html: docPageHtml,
+    loading: pageLoading,
+    error: pageError,
+    rendererMissing: pageRendererMissing,
+  } = useDocumentPage({ ...docSource, enabled: () => wantPage.value })
+  // 面板只认一套状态：屏幕上同时只可能是一种读法，所以递上去的是正在显示的那一种的
+  // 状态，模板里那几个「转圈」「缺服务」「转不了」的分支不用按读法分两遍写。
+  const docLoading = computed(() => (wantPage.value ? pageLoading.value : bytesLoading.value))
+  const docError = computed(() => (wantPage.value ? pageError.value : bytesError.value))
+  const docRendererMissing = computed(() => (wantPage.value ? pageRendererMissing.value : bytesRendererMissing.value))
+
+  function toggleDocPage() {
+    docPage.value = !docPage.value
+  }
   const slideContext = computed(() => {
     const current = docIdentity.value
     const displayed = docSnapshot.value
@@ -684,6 +714,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docLoading,
     docError,
     docRendererMissing,
+    // 递下去的是「这一份现在读成网页」，不是读者手上那个开关：开关是粘的（换文件不
+    // 翻回去），而屏幕上画得出来的只有这一份能画的那一种。两者只在能换的格式上相等
+    // ——那正是开关露面的地方——所以按钮的文案和图标不受影响。
+    docPage: wantPage,
+    canPage,
+    docPageHtml,
     // 在线编辑 + 历史（各自的取数那一包，原样递下去）
     revs,
     editing,
@@ -698,6 +734,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     openEditor,
     closeEditor,
     toggleHistory,
+    toggleDocPage,
     // 圈选：画的那一半按帧的类型选「递进帧」还是「宿主自己盖一层」，取数这一层只管把
     // 开关送到当前那一帧的桥。
     setPickMode: host.setPickMode,

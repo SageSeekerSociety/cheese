@@ -47,6 +47,19 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
  *  它之所以是表的东西。 */
 export const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'ppt', 'odp'])
 
+/** 还有「网页」这一种读法的那几个。和 `NEEDS_CONVERSION` 不是同一张表，虽然重叠：
+ *  转成网页的是 OfficeCLI，它只认这三种，而 `.doc`/`.odt`/`.rtf` 它读不了。表格在
+ *  那边是「不转」，在这边恰恰是要转的那一种——一张表失去单元格地址就不成其为表，
+ *  而网页恰恰把地址留在元素上。 */
+export const PAGE_FORMATS = new Set(['docx', 'xlsx', 'pptx'])
+
+/** 这一份能不能换成网页读。
+ *
+ *  收路径，因为它总是和「读者按了没有」一起用，而那一格认得的是文件。 */
+export function pageViewOf(path: string | null | undefined): boolean {
+  return !!path && PAGE_FORMATS.has(suffixOf(path))
+}
+
 /** 浏览器自己画得出来的图片。它们不是文档，所以不在上面那张表里，但预览域按
  *  对应的 image/* 把字节发出来，浏览器画得出来。 */
 export const IMAGE_SUFFIXES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp'])

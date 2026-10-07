@@ -120,6 +120,68 @@ async def test_a_refused_document_is_the_file_s_problem(client):
     assert "转换没有产出文件" in str(excinfo.value)
 
 
+# ---- The web view ---------------------------------------------------------
+
+
+async def test_a_workbook_goes_to_the_page_endpoint(client):
+    """The one format the two outputs disagree about: a sheet has no PDF route
+    and does have a page, which is the whole reason it is in this set."""
+    client.responses.append(_Response(200, b"<!DOCTYPE html><html>x</html>"))
+
+    page = await office.render_to_html(b"PK\x03\x04book", "预算.xlsx", "http://r:8901")
+
+    assert page.startswith(b"<!DOCTYPE html>")
+    assert client.calls[0]["url"].endswith("/html")
+    assert client.calls[0]["params"] == {"suffix": ".xlsx"}
+
+
+async def test_a_document_the_pdf_path_takes_is_refused_by_the_page_path(client):
+    """`.doc` converts to a PDF and has no page; refusing it here keeps the
+    sentence about the format rather than about the renderer's HTTP code."""
+    with pytest.raises(office.OfficeRenderFailed):
+        await office.render_to_html(b"doc", "老报告.doc", "http://r:8901")
+
+    assert client.calls == [], "nothing should have been sent"
+
+
+async def test_the_same_bytes_cached_as_a_pdf_and_as_a_page_are_two_entries(client):
+    """Keyed by the digest alone the page would answer for the PDF: the same
+    bytes asked for twice, two different documents back."""
+    client.responses.append(_Response(200, b"%PDF-1.7 printout"))
+    client.responses.append(_Response(200, b"<!DOCTYPE html><html>page</html>"))
+    raw = b"PK\x03\x04same"
+
+    pdf = await office.render_to_pdf(raw, "a.docx", "http://r:8901")
+    page = await office.render_to_html(raw, "a.docx", "http://r:8901")
+
+    assert pdf == b"%PDF-1.7 printout"
+    assert page.startswith(b"<!DOCTYPE html>")
+    assert len(client.calls) == 2, "one answer served for both"
+    assert len(office._cache) == 2
+
+    # And each is still a hit the second time around.
+    again_pdf = await office.render_to_pdf(raw, "a.docx", "http://r:8901")
+    again_page = await office.render_to_html(raw, "a.docx", "http://r:8901")
+    assert again_pdf == pdf and again_page == page
+    assert len(client.calls) == 2
+
+
+async def test_a_body_that_is_not_a_page_is_not_passed_off_as_one(client):
+    """Something between here and the service answering 200 with a body that is
+    not a page would otherwise reach the frame as the reader's document."""
+    client.responses.append(_Response(200, b'{"ok": false, "error": "boom"}'))
+    client.responses.append(_Response(200, b""))
+
+    for _ in range(2):
+        with pytest.raises(office.OfficeRenderFailed):
+            await office.render_to_html(b"doc", "a.docx", "http://r:8901")
+
+
+async def test_a_deployment_with_no_renderer_says_so_for_the_page_too():
+    with pytest.raises(office.OfficeRenderUnavailable):
+        await office.render_to_html(b"doc", "a.docx", None)
+
+
 async def test_a_spreadsheet_is_refused_before_it_reaches_the_service(client):
     with pytest.raises(office.OfficeRenderFailed):
         await office.render_to_pdf(b"PK", "预算.xlsx", "http://r:8901")

@@ -2,6 +2,15 @@
 
 from contextlib import asynccontextmanager
 
+from app.core.sentences import say
+from app.domain.agent.device_hub import device_hub
+from app.domain.agent.owner_provider import owner_is_away
+from app.domain.agent.platform_notices import (
+    EVENT_TURN_FAILED,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.agent.seat_admission import seat_admission
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.models import Delivery
@@ -62,9 +71,42 @@ async def admitted_initial(
             pending = seated is not None and await seat_has_unfinished_input(
                 session, topic_id, seated[1]
             )
-            if pending and user_block_id is not None:
+            # A member's own Claude Code runs only on its owner's machine: with
+            # none of them online, the message waits for one to come back, and
+            # the periodic scan of waiting messages starts it then.
+            away = (
+                not pending
+                and instance_id is not None
+                and await owner_is_away(session, instance_id, device_hub)
+            )
+            told_away = False
+            if (pending or away) and user_block_id is not None:
                 from app.domain.agent.pending_messages import defer_message
 
                 await defer_message(session, user_block_id)
+                if away:
+                    told_away = await _tell_once(session, user_block_id)
             await session.commit()
-        yield pending
+        if told_away:
+            await chat.post_system_event(
+                topic_id,
+                say("ownerMachineAway"),
+                meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
+            )
+        yield pending or away
+
+
+async def _tell_once(session, block_id) -> bool:
+    """Whether the room is still to be told this message waits for its
+    agent's computer: once per message, not once per scan that finds it
+    waiting."""
+    from app.domain.block.models import Block
+
+    block = await session.get(Block, block_id, with_for_update=True)
+    if block is None or (block.meta or {}).get(_TOLD_AWAY):
+        return False
+    block.meta = {**(block.meta or {}), _TOLD_AWAY: True}
+    return True
+
+
+_TOLD_AWAY = "owner_away_told"

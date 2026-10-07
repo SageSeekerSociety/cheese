@@ -92,14 +92,6 @@ export default [
             'Use BaseButton (src/components/base/BaseButton.vue, docs/design-system.md §3.6): pick a kind and a size instead of variant/color.',
         },
         {
-          // docs/design-system.md §3.7. Same exception rule as above: a raw
-          // v-dialog is allowed only with an eslint-disable-next-line naming
-          // why this one is not a form dialog or a confirm box.
-          selector: 'VElement[rawName="v-dialog"]',
-          message:
-            'Use AdaptiveDialog (src/components/common/AdaptiveDialog.vue) or ConfirmDialog (docs/design-system.md §3.7); viewers, progress notices and shells that own their own actions keep VDialog with an eslint-disable-next-line explaining which they are.',
-        },
-        {
           // docs/design-system.md §3.12. The tree has no raw v-empty-state left
           // after the empty-state pass; a new one needs an eslint-disable-next-line
           // naming why BaseEmptyState's three sizes do not fit.

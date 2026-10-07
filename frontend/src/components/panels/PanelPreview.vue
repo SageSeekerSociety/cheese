@@ -86,6 +86,9 @@ const {
   docLoading,
   docError,
   docRendererMissing,
+  docPage,
+  canPage,
+  docPageHtml,
   revs,
   editing,
   showHistory,
@@ -99,6 +102,7 @@ const {
   openEditor,
   closeEditor,
   toggleHistory,
+  toggleDocPage,
   setPickMode,
 } = props.preview
 
@@ -159,6 +163,9 @@ function refresh() {
     :doc-loading="docLoading"
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"
+    :doc-page="docPage"
+    :can-page="canPage"
+    :doc-page-html="docPageHtml"
     :revs="revs"
     :editing="editing"
     :show-history="showHistory"
@@ -175,6 +182,7 @@ function refresh() {
     @open-editor="openEditor"
     @close-editor="closeEditor"
     @toggle-history="toggleHistory"
+    @toggle-doc-page="toggleDocPage"
     @mention-click="emit('mention-click', $event)"
   />
 </template>

@@ -456,7 +456,6 @@ useCommands(() =>
       </ol>
     </AdaptiveDialog>
 
-    <!-- eslint-disable-next-line vue/no-restricted-syntax -- viewer: the device screen mirror (design-system §3.7) -->
     <v-dialog :model-value="liveScreen !== null" max-width="900" @update:model-value="liveScreen = null">
       <v-card v-if="liveScreen" class="pa-3">
         <div class="d-flex align-center mb-2">

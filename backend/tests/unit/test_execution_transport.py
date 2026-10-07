@@ -22,7 +22,11 @@ import pytest
 from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness.claude_code.remote_execution import client as central
-from app.domain.agent.harness.claude_code.remote_execution import mcp_process, runtime
+from app.domain.agent.harness.claude_code.remote_execution import (
+    mcp_process,
+    release,
+    runtime,
+)
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
 from tests.support import executor_release, wire
@@ -1346,7 +1350,7 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     platform, work, launch = leased_session
     # The conversation it had at the placeholder, before the relaunch.
     config = work.parent / "session" / "config"
-    before = central.project_dir(config, "/unavailable-project") / "s.jsonl"
+    before = release.project_dir(config, "/unavailable-project") / "s.jsonl"
     before.parent.mkdir(parents=True)
     before.write_text("{}\n")
     started = launch()
@@ -1355,7 +1359,7 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     assert (target["kind"], target["generation"]) == ("device", platform.generation)
     # Where the build keeps a session started at the machine's path, which is
     # where the resumed one goes on writing.
-    assert (central.project_dir(config, str(work)) / "s.jsonl").read_text() == "{}\n"
+    assert (release.project_dir(config, str(work)) / "s.jsonl").read_text() == "{}\n"
     assert not before.parent.exists()
     assert "execution_token" not in target
     assert Path(target["token_file"]).read_text() == "execution-only"
@@ -1391,8 +1395,8 @@ def test_a_session_back_on_its_machine_keeps_what_it_wrote_at_the_placeholder(
     and the relaunch starts."""
     _, work, launch = leased_session
     config = work.parent / "session" / "config"
-    machine = central.project_dir(config, str(work))
-    placeholder = central.project_dir(config, "/unavailable-project")
+    machine = release.project_dir(config, str(work))
+    placeholder = release.project_dir(config, "/unavailable-project")
     (machine / "s/subagents").mkdir(parents=True)
     (machine / "s.jsonl").write_text("conversation\n")
     (machine / "s/subagents/agent-first.jsonl").write_text("first\n")

@@ -35,6 +35,8 @@ from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
+from app.domain.agent.owner_provider import OWNER_CHANNEL
+from app.domain.agent_instance.own import owned_by_seat
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
@@ -934,6 +936,15 @@ async def ensure(
             waited = True
 
 
+def _own_host(row) -> str | None:
+    """The owner's machine a member's own agent's session runs on, or None
+    for any other session."""
+    location = row.runtime_location or {}
+    if location.get("channel") != OWNER_CHANNEL:
+        return None
+    return location.get("device_id")
+
+
 async def _attempt(
     db, *, topic_id, session_id, claims, token, env, hub, tells_agent=False
 ):
@@ -968,6 +979,12 @@ async def _attempt(
         else None
     )
     choice = place_choice(topic, task, project.settings)
+    # A member's own coding agent works on the machine its session runs on,
+    # the owner's (`owner_provider`), whatever the room chose: both ends of it
+    # are that one machine.
+    own_host = _own_host(row)
+    if own_host is not None:
+        choice = ComputeChoice(profile=COMPUTE_DEVICE, device_id=own_host)
     request = {**request, "choice": choice.model_dump()}
     row.execution_request = request
     generation = request["generation"]
@@ -981,8 +998,11 @@ async def _attempt(
         if lease["generation"] != generation:
             raise ConflictError("The previous work lease has not been released")
     ready = bool(lease and lease.get("status", "ready") == "ready")
-    if ready and (lease or {}).get("device_id") == (row.runtime_location or {}).get(
-        "device_id"
+    if (
+        own_host is None
+        and ready
+        and (lease or {}).get("device_id")
+        == (row.runtime_location or {}).get("device_id")
     ):
         raise ForbiddenError("Project tools cannot execute on the session host")
     now = datetime.now(UTC)
@@ -1005,7 +1025,8 @@ async def _attempt(
         # 再没有就问房间里的队友——同一个房间里的会话落在同一台机器上，所以「系统挑
         # 一台」不该由谁先来谁挑一台在线的来决定（``_roommates_device``）。
         device_id = (
-            (lease or {}).get("device_id")
+            own_host
+            or (lease or {}).get("device_id")
             or choice.device_id
             or await _roommates_device(db, topic, resource)
         )
@@ -1018,7 +1039,8 @@ async def _attempt(
                 topic.project_id, hub.is_online
             )
         if (
-            task is not None
+            own_host is None
+            and task is not None
             and not lease
             and selected is not None
             and not await works_tasks_of(
@@ -1041,7 +1063,13 @@ async def _attempt(
             raise ForbiddenError(
                 "Choose self-hosted equipment or request a Cloud lease"
             )
-        if not await devices.serves_project(selected.device_id, topic.project_id):
+        if own_host is not None:
+            # The owner's machine need not be bound to the project: it works
+            # for its owner's own agent, in any project the owner is in.
+            owned = await owned_by_seat(db, topic.project_id, row.agent_handle)
+            if owned is None or owned.owner_user_id != selected.owner_user_id:
+                raise ForbiddenError("Device does not belong to this agent's owner")
+        elif not await devices.serves_project(selected.device_id, topic.project_id):
             raise ForbiddenError("Device no longer serves this project")
         if await devices.get_hosted_device(selected.device_id) is None:
             raise ForbiddenError("Device is not hosted")
@@ -1142,7 +1170,7 @@ async def _attempt(
     # Placement records the session host before the screen that asks opens.
     assert row.runtime_location is not None
     host = row.runtime_location["device_id"]
-    if device_id == host:
+    if device_id == host and own_host is None:
         raise ForbiddenError("Project tools cannot execute on the session host")
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)

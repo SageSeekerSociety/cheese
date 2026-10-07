@@ -449,7 +449,6 @@ onMounted(() => {
     </div>
   </v-bottom-sheet>
 
-  <!-- eslint-disable-next-line vue/no-restricted-syntax -- viewer: one participant's submission history (design-system §3.7) -->
   <v-dialog :model-value="reviewing !== null" max-width="860" scrollable @update:model-value="closeReview">
     <TaskSubmissionHistory
       v-if="reviewing && taskData"

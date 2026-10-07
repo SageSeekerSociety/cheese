@@ -21,8 +21,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from functools import lru_cache
 
-from sqlalchemy import select
-
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
@@ -107,26 +105,6 @@ def _fire_on_done(callback: Callable[[], None]) -> None:
         callback()
     except Exception:  # noqa: BLE001 — a hook must never break the runner
         logger.exception("submit on_done hook failed")
-
-
-async def _instance_of(
-    session_factory, place_id: uuid.UUID, agent_handle: str
-) -> uuid.UUID | None:
-    """The agent instance *agent_handle* names in the project *place_id* is in,
-    or None when no instance carries it."""
-    from app.domain.agent_instance.models import AgentInstance
-    from app.domain.room_task.place import PlaceResolver
-
-    async with session_factory() as session:
-        place = await PlaceResolver(session).conversation(place_id)
-        if place is None:
-            return None
-        return await session.scalar(
-            select(AgentInstance.id).where(
-                AgentInstance.project_id == place.project_id,
-                AgentInstance.handle == agent_handle,
-            )
-        )
 
 
 async def _open_turn(session_factory, **fields) -> None:
@@ -1741,11 +1719,13 @@ class AgentWorkRunner:
         any turn nobody named an agent for."""
 
         async def _later() -> None:
+            from app.domain.agent.queries import instance_of_handle
+
             await asyncio.sleep(after_s)
             recipient = (
                 None
                 if agent_handle is None
-                else await _instance_of(
+                else await instance_of_handle(
                     chat_service.session_factory, topic_id, agent_handle
                 )
             )
@@ -1841,7 +1821,7 @@ class AgentWorkRunner:
         return block is not None
 
     async def _admit(
-        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID
+        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID, agent=None
     ) -> tuple[str, Slot | None]:
         """Admission control (spec §9.1 算力额度真实化), before any execution:
 
@@ -1854,7 +1834,7 @@ class AgentWorkRunner:
           the turn itself surfaces the real error.
         """
         try:
-            policy = await chat_service.work_policy(topic_id)
+            policy = await chat_service.work_policy(topic_id, agent)
         except Exception:  # noqa: BLE001 — admission must never kill a turn
             logger.exception("work_policy failed for %s; admitting", topic_id)
             policy = None
@@ -2044,7 +2024,9 @@ class AgentWorkRunner:
         await self._wait_to_start()
         await self._wait_for_replay(chat_service, topic_id, turn_id)
         admit_started = time.monotonic()
-        verdict, gate = await self._admit(chat_service, topic_id, turn_id)
+        verdict, gate = await self._admit(
+            chat_service, topic_id, turn_id, recipient_instance_id
+        )
         logger.info(
             "chat_admission_timing topic=%s turn=%s phase=admitted verdict=%s "
             "elapsed_ms=%.3f unix_ms=%.3f",

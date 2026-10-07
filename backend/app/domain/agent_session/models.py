@@ -117,6 +117,8 @@ class AgentSession(UuidPk, Timestamps, Base):
     # **房间**租手（一个话题一个容器，2026-09-28 决定，推翻结论 60）：这一份是房间
     # 那一项选择落到这条会话上的那一份，房间里每一条会话的租约落在同一台机器上，
     # 换机器是房间一起换（`machine/session_work.request_choice`），不是谁自己搬。
+    # 一位成员自己的 Claude Code 例外：它的手是它会话所在的那台主人电脑，不跟房间
+    # （`session_work._own_host`）。
     #
     # ``none_as_null=True``：没租到手要落成 SQL NULL。默认那一档会把 Python 的
     # ``None`` 序列化成 JSON ``'null'`` 存进去，于是 ``work_lease IS NOT NULL``
