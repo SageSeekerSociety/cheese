@@ -17,13 +17,15 @@ import (
 // the owner's Claude Code on this machine. The owner's own `~/.claude` is not
 // read or touched.
 func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
+	var console bool
 	login := withConfig(&cobra.Command{
 		Use:   "login",
 		Short: "Log in the Claude Code the platform runs on this machine",
 		Long: "Installs the Claude Code build the platform runs, if this machine does not\n" +
 			"have it yet, and logs it in with your own Claude account or API key. The\n" +
 			"login is kept apart from your own Claude Code (~/.claude), which keeps its\n" +
-			"own login and settings.",
+			"own login and settings. The login opens in the browser; with no terminal\n" +
+			"attached it finishes there, so the desktop app can run it too.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			base, err := serverBase(*cfgPath)
@@ -42,7 +44,11 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			if err := os.MkdirAll(loginDir, 0o700); err != nil {
 				return err
 			}
-			cmd := claudecode.Command(ctx, binary, loginDir, "auth", "login")
+			kind := "--claudeai"
+			if console {
+				kind = "--console"
+			}
+			cmd := claudecode.Command(ctx, binary, loginDir, "auth", "login", kind)
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := cmd.Run(); err != nil {
 				return fmt.Errorf("claude: login did not finish: %w", err)
@@ -50,6 +56,9 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			return printClaudeStatus(ctx, binary, loginDir)
 		},
 	})
+
+	login.Flags().BoolVar(&console, "console", false,
+		"log in with an Anthropic Console account (API usage billing) instead of a Claude subscription")
 
 	status := withConfig(&cobra.Command{
 		Use:   "status",
