@@ -439,9 +439,11 @@ const sessionIcon = (userAgent: string) =>
 
    On the wide layout the row is one line: a device's details that wrap to a
    second line push the row taller than the sign-out button beside it and the
-   button looks misaligned. So at sm (600px) and up the parts are laid out inline in a
-   single clipped line — anything past the edge is hidden and the full text is
-   on `title`. Below md the row has its own full-width line and wraps freely. */
+   button looks misaligned. So from the phone tier up the parts are laid out
+   inline in a single clipped line — anything past the edge is hidden and the
+   full text is on `title`. Below it the row has its own full-width line and
+   wraps freely. The line used to be drawn at 600, which is not one of the four
+   tiers; every settings row now folds at the same one. */
 .srow__v--parts {
   --sep: 20px;
 
@@ -450,7 +452,10 @@ const sessionIcon = (userAgent: string) =>
   overflow: hidden;
 }
 
-/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）；下面这条是 min-width。这一处原来是 600，归 767.98 会让 600–767 从单行截断改成换行。 */
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）；下面这条是 min-width。
+   这一处原来是 600，归 767.98 会把 600–767 从单行截断改成换行 —— 真浏览器里量过这一带
+   （视口 390/560/600/767/768/900/1440，种子里的 15 行设备记录）：两边的行高都是 19px、
+   值区都没被裁、和右边那颗退出按钮都没有重叠，折叠点挪过来没改变任何一行的样子。 */
 @media (min-width: 767.98px) {
   .srow__v--parts {
     display: block;

@@ -338,8 +338,11 @@ const chosen = computed(() => groups.value.find((g) => idOf(g) === props.selecte
 /* 点开一行之后右边多出 360 的详情栏，判的是**这一列**还剩多少地方，不是窗口有多宽：
    这一页在后台容器里（`.app-page__column--admin`，名字 `admin`），侧栏收起省出的宽度
    视口查询看不见（§3.5、§10.9）。1200 那条视口线挪到容器上取 900——后台容器已有的值
-   （`AdminModelsAudit`）。再窄下去两张并排也不会挤坏表格：`.rr-table` 本来就是
-   `overflow-x: auto`，表格自己横向滚。 */
+   （`AdminModelsAudit`）。换轴会挪动开并排的位置，真浏览器里逐档量过：侧栏展开时这一列
+   只有 845（视口 1200）、收起时 925（视口 1000），旧的 1200 恰好在列最窄处开、在列更宽
+   的 1000–1179 反而没开；现在列 ≥ 900 就开。列 900–996 那一段并排时表格横向滚
+   （`.rr-table` 是 `overflow-x: auto`，`min-width: 620` 的行放进 549 的表列），
+   旧规则在 1280（列 925）下本来就是这个样子。 */
 @container admin (min-width: 900px) {
   .rr-body--open {
     grid-template-columns: minmax(0, 1fr) 360px;
