@@ -60,7 +60,7 @@ import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
 import { useRoomTasks } from './useRoomTasks'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 // The panel and its host have to agree on the event list, so it lives on its own
 // (see chatPanelContract) and is re-exported here: the view keeps importing
@@ -813,10 +813,14 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   function fmtTime(iso: string): string {
-    // Local HH:mm next to the name on the first of a run (not raw UTC).
-    return new Date(iso).toLocaleTimeString([], {
+    // Local HH:mm next to the name on the first of a run (not raw UTC). In the
+    // app's language, not the browser's: a Chinese screen on an en-US system
+    // otherwise reads 「07:20 PM」, which also no longer fits the gutter that a
+    // continued message shows its time in.
+    return new Date(iso).toLocaleTimeString(i18n.global.locale.value, {
       hour: '2-digit',
       minute: '2-digit',
+      hour12: false,
     })
   }
   // 分栏 (2026-09-09, <@符露夀> 定): 我说的话靠右，别人和芝士靠左。

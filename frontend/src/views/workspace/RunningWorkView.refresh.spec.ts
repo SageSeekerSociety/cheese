@@ -34,7 +34,7 @@ vi.mock('vue-router', () => ({
 }))
 
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ topics: [{ id: 'room-1', title: '运维' }], members: [] }),
+  useWorkspaceStore: () => ({ topics: [{ id: 'room-1', title: '运维' }], members: [], noteAccess: () => false }),
 }))
 
 import RunningWorkView from './RunningWorkView.vue'

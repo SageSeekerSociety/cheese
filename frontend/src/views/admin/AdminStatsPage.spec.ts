@@ -1,5 +1,6 @@
 /**
- * 看板页（`/admin/dashboard`，§4.2）。
+ * 后台的统计页（`AdminStatsPage`：平台总览、交付流水线、用量、性能、反馈趋势……，原来是
+ * 同一页看板上的几屏，§4.2）。
  *
  * **这一组存在的理由是一次真事故**：看板前端曾经指着一条已经没有的路由
  * （`/admin/feedback/stats` —— 服务端把它拆成了 `/admin/stats/{feedback,usage,platform}`）。
@@ -25,6 +26,7 @@
  * 「我调了我自己」，而这正是这次要守的那一段。
  */
 import type { Component } from 'vue'
+import type { Router } from 'vue-router'
 import type { StatsKind } from '@/api'
 
 import { nextTick } from 'vue'
@@ -36,7 +38,7 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import AdminDashboardPage from './AdminDashboardPage.vue'
+import AdminStatsPage from './AdminStatsPage.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import { installPreviewFetch } from '@/proto-preview-transport'
@@ -95,14 +97,34 @@ afterAll(() => {
   window.fetch = preview
 })
 
-/** 套一层 `v-app`：图里的 `v-skeleton-loader` 之类的组件要 layout 才挂得上。 */
-const Wrapper = { components: { AdminDashboardPage }, template: '<v-app><AdminDashboardPage /></v-app>' }
+/** 套一层 `v-app`：图里的 `v-skeleton-loader` 之类的组件要 layout 才挂得上。子页按路由名
+ *  给 key，和后台外壳（`AdminLayout`）里同一个写法：几页是同一个组件。 */
+const Wrapper = {
+  template:
+    '<v-app><RouterView v-slot="{ Component, route }"><component :is="Component" :key="route.name" /></RouterView></v-app>',
+}
 
-async function mountDashboard() {
-  const router = createRouter({
+/** 侧栏上的页名 → 地址与它画的那一类。 */
+const PAGES: Record<string, { path: string; kind: StatsKind }> = {
+  交付: { path: '/admin/pipeline', kind: 'pipeline' },
+  用量: { path: '/admin/usage', kind: 'usage' },
+  平台: { path: '/admin/overview', kind: 'platform' },
+  性能: { path: '/admin/performance', kind: 'performance' },
+  反馈: { path: '/admin/feedback-trends', kind: 'feedback' },
+}
+
+let router: Router
+
+async function mountStats(start = '/admin/pipeline') {
+  router = createRouter({
     history: createWebHashHistory(),
     routes: [
-      { path: '/admin/dashboard', component: Wrapper },
+      ...Object.values(PAGES).map((page) => ({
+        path: page.path,
+        name: page.kind,
+        component: AdminStatsPage,
+        props: { kind: page.kind },
+      })),
       // 这一页上的出口：KPI 卡片去队列、迷你列表的每一行去详情、top_projects 的
       // 横条去项目页。两边都只用 `name` 定过位，**路由表里没有它们时 `router-link`
       // 会当场抛**（不是「点了没反应」），于是整页在挂载时就红了 —— 所以这里要把
@@ -116,7 +138,7 @@ async function mountDashboard() {
       { path: '/admin', name: 'AdminHome', component: { template: '<div />' } },
     ],
   })
-  await router.push('/admin/dashboard')
+  await router.push(start)
   await router.isReady()
   const vuetify = createVuetify({ components, directives })
   const pinia = createPinia()
@@ -124,7 +146,12 @@ async function mountDashboard() {
   return render(Wrapper as unknown as Component, { global: { plugins: [vuetify, pinia, router, i18n] } })
 }
 
-describe('看板页', () => {
+/** 换到侧栏上的另一页（单页应用里的一次路由跳转，store 里已拉过的类还在）。 */
+async function go(label: string) {
+  await router.push(PAGES[label]!.path)
+}
+
+describe('统计页', () => {
   /** 等**数据到货**，不是等请求发出去 —— 两者差一个来回，而这一组里的断言都是关于
    *  「手上有没有那一份」的。等错了一头，测试会在请求刚发出时就往下走，然后把
    *  「上一份还没到」读成「不会再拉了」。 */
@@ -134,54 +161,44 @@ describe('看板页', () => {
     return store
   }
 
-  /** 只在**分类开关**里找按钮。页面上别处的按钮（错误块的重试、表里的 chevron）
-   *  也带 button 角色 —— 不收窄范围就可能点错控件。 */
-  const tab = (label: string, getAllByRole: (role: string) => HTMLElement[]) => {
-    const kinds = document.querySelector('.ad__kinds')
-    const buttons = kinds ? Array.from(kinds.querySelectorAll('button')) : getAllByRole('button')
-    return buttons.find((b) => b.textContent?.includes(label))!
-  }
-
-  it('挂载时打的是 /admin/stats/pipeline（默认落点是交付），不是老路由', async () => {
-    await mountDashboard()
+  it('交付流水线页挂载时打的是 /admin/stats/pipeline，不是老路由', async () => {
+    await mountStats()
     await loaded('pipeline')
 
     // 一次事故的化石：老路径没有路由之后会落进 `/admin/feedback/{id}` 被当成 uuid，
-    // 真环境回 400、页面上是「看板加载失败」。这条断言把「前端指着哪条路」变成测试里
+    // 真环境回 400、页面上是「加载失败」。这条断言把「前端指着哪条路」变成测试里
     // 看得见的东西。
     expect(hits).not.toContain('/api/admin/feedback/stats')
-    // 其余六类这一帧没有人要看，不该被顺带拉一次；**默认那一类也只该拉一次**。
-    // 挂载时控件同步（`selectKind` 顺手拉一次）和结尾那句「切片还是 null 就补一次」
-    // 曾经各拉一遍，于是同一分类两个并发请求，而 `loadStats` 完成前不写 `stats`，
-    // 那句必然成立 —— 序号守卫丢掉一个响应，白拉一趟。
+    // 其余六类这一帧没有人要看，不该被顺带拉一次；**这一类也只该拉一次**：同一类两个
+    // 并发请求时，`loadStats` 完成前不写 `stats`，序号守卫会丢掉一个响应，白拉一趟。
     expect(hits).toEqual(['/api/admin/stats/pipeline'])
     // 默认窗口 7 天。
     expect(full).toEqual(['/api/admin/stats/pipeline?days=7'])
   })
 
-  it('切分类只拉切过去的那一类，切回来不重拉', async () => {
-    const { findByText, getAllByRole } = await mountDashboard()
+  it('换页只拉那一页的那一类，切回来不重拉', async () => {
+    const { findByText } = await mountStats()
     await loaded('pipeline')
 
-    await fireEvent.click(tab('用量', getAllByRole))
+    await go('用量')
     await loaded('usage')
     expect(hits).not.toContain('/api/admin/stats/platform')
 
-    await fireEvent.click(tab('平台', getAllByRole))
+    await go('平台')
     await loaded('platform')
 
-    // 切回第一类：那一份已经在手上了，再拉一次只是重复读那两张最长的表。
+    // 切回第一页：那一份已经在手上了，再拉一次只是重复读那两张最长的表。
     const before = hits.length
-    await fireEvent.click(tab('交付', getAllByRole))
+    await go('交付')
     expect(await findByText('交付主链')).toBeTruthy()
     expect(hits.length).toBe(before)
   })
 
   it('第四类「性能」：只拉它那一条，按 p95 列路由，没样本的分位数画「—」', async () => {
-    const { findByText, getAllByRole, queryByText } = await mountDashboard()
+    const { findByText, queryByText } = await mountStats()
     await loaded('pipeline')
 
-    await fireEvent.click(tab('性能', getAllByRole))
+    await go('性能')
     const store = await loaded('performance')
 
     // 它和另外几类共用那一条路径规则：切过去才拉，而且只拉它。
@@ -203,10 +220,10 @@ describe('看板页', () => {
   })
 
   it('性能屏：表按 p95 降序、「此刻最慢」横幅与最慢那行一致、量级条按全表归一', async () => {
-    const { findByText, getAllByRole, container } = await mountDashboard()
+    const { findByText, container } = await mountStats()
     await loaded('pipeline')
 
-    await fireEvent.click(tab('性能', getAllByRole))
+    await go('性能')
     await loaded('performance')
 
     // fixture 是未排序的（/feedback 在前，/topics/{topic_id}/messages 的 p95 更高）——
@@ -226,11 +243,11 @@ describe('看板页', () => {
   })
 
   it('性能屏：路由多于 Top N 时折叠并给出被折部分的 p95 上限，筛选不受折叠限制', async () => {
-    const { getAllByRole, getByPlaceholderText, getByRole, container } = await mountDashboard()
+    const { getByPlaceholderText, getByRole, container } = await mountStats()
     await loaded('pipeline')
     const store = useFeedbackStore()
 
-    await fireEvent.click(tab('性能', getAllByRole))
+    await go('性能')
     await loaded('performance')
 
     // 在 fixture 的 7 条上追加 6 条快路由（总数 13 > Top 8）。排序降序，所以折掉的
@@ -272,10 +289,10 @@ describe('看板页', () => {
   })
 
   it('平台那一类把机器报成存量，并写明它不是在线数', async () => {
-    const { findByText, getAllByRole, getByText } = await mountDashboard()
+    const { findByText, getByText } = await mountStats()
     await loaded('pipeline')
 
-    await fireEvent.click(tab('平台', getAllByRole))
+    await go('平台')
     await loaded('platform')
 
     expect(await findByText('机器（存量）')).toBeTruthy()
@@ -286,7 +303,7 @@ describe('看板页', () => {
   })
 
   it('切窗口（7→30→7）重拉已加载的窗口类，未加载的类一趟都不多发', async () => {
-    const { findByText, getAllByRole, getByRole } = await mountDashboard()
+    const { findByText, getByRole } = await mountStats()
     const store = await loaded('pipeline')
 
     // 切 30 天：只有 pipeline（此刻唯一已加载的窗口类）重拉，带着 days=30。
@@ -297,7 +314,7 @@ describe('看板页', () => {
     expect(full.filter((u) => !u.startsWith('/api/admin/stats/pipeline'))).toEqual([])
 
     // 切到反馈：按新窗口拉（days=30），KPI 标签跟着窗口变。
-    await fireEvent.click(tab('反馈', getAllByRole))
+    await go('反馈')
     await loaded('feedback')
     expect(full).toContain('/api/admin/stats/feedback?days=30')
     expect(await findByText('30 日新增')).toBeTruthy()
@@ -326,11 +343,11 @@ describe('看板页', () => {
       return preview(input as RequestInfo, init)
     }
 
-    const { findByText, getByRole } = await mountDashboard()
+    const { findByText, getByRole } = await mountStats()
 
     // 错误块：标题 + **服务端原话**（不改写 —— 「检查网络后重试」那种静态文案会把
     // 「连接池满了」说成另一种病）。
-    expect(await findByText('看板加载失败')).toBeTruthy()
+    expect(await findByText('数据加载失败')).toBeTruthy()
     expect(await findByText('数据库连接池满了')).toBeTruthy()
 
     // 重试**真重拉**：第二次放行之后，交付那一屏正常渲染。
@@ -343,13 +360,13 @@ describe('看板页', () => {
     // 排上，先挂载再换假钟，那个间隔还排在真钟上，`advanceTimersByTime` 够不着它。
     vi.useFakeTimers()
     try {
-      const { getAllByRole } = await mountDashboard()
+      await mountStats()
       await vi.advanceTimersByTimeAsync(1)
       const store = useFeedbackStore()
       expect(store.stats.pipeline).not.toBeNull()
 
       // 平台：60s 后同一类来第二趟。
-      await fireEvent.click(tab('平台', getAllByRole))
+      await go('平台')
       await vi.advanceTimersByTimeAsync(1)
       expect(store.stats.platform).not.toBeNull()
       expect(hits.filter((h) => h === '/api/admin/stats/platform')).toHaveLength(1)
@@ -358,7 +375,7 @@ describe('看板页', () => {
 
       // 窗口类（反馈）：切过去的初次加载有一趟，再过 60s 轮询不找它（窗口类有
       // 手动 R 和切窗口已经够新；轮询只覆盖「这一刻」的两类）。
-      await fireEvent.click(tab('反馈', getAllByRole))
+      await go('反馈')
       await vi.advanceTimersByTimeAsync(1)
       expect(store.stats.feedback).not.toBeNull()
       expect(hits.filter((h) => h === '/api/admin/stats/feedback')).toHaveLength(1)
@@ -371,7 +388,7 @@ describe('看板页', () => {
   })
 
   it('下钻：top_projects 是项目链接、主机健康不是链接、性能表展开 spark', async () => {
-    const { findByText, getAllByRole, container } = await mountDashboard()
+    const { findByText, container } = await mountStats()
     await loaded('pipeline')
 
     // 主机健康行：**没有目的地**（平台没有设备列表页），不装成链接 —— 它曾经
@@ -382,7 +399,7 @@ describe('看板页', () => {
 
     // 用量：top_projects 的横条整行是指向 `/projects/{project_id}` 的链接
     // （`project_id` 一直在响应里，注释明说留着给钻取用）。
-    await fireEvent.click(tab('用量', getAllByRole))
+    await go('用量')
     await loaded('usage')
     const projectLink = container.querySelector('.abr a[href*="/projects/"]')
     expect(projectLink).toBeTruthy()
@@ -391,7 +408,7 @@ describe('看板页', () => {
     // 性能：第一行的 chevron 展开这条路由的分钟级 spark（响应里一直回、此前
     // 没人读的那 24 个点）；spark 全 null 的行 chevron 禁用。
     // （happy-dom 不支持 `:disabled` 伪类，选择器走 `[disabled]` 属性。）
-    await fireEvent.click(tab('性能', getAllByRole))
+    await go('性能')
     await loaded('performance')
     const toggle = container.querySelector('.ad__perf-toggle:not([disabled])')!
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
@@ -403,14 +420,14 @@ describe('看板页', () => {
   })
 
   it('数据到货后页头出现「更新于」时间戳；注册图是真人/Agent 双系列', async () => {
-    const { findByText, getAllByRole } = await mountDashboard()
+    const { findByText } = await mountStats()
     await loaded('pipeline')
 
     // 时间戳跟着「这一类成功到货」走 —— 它是「这份数据有多旧」的读数。
     expect(await findByText(/更新于/)).toBeTruthy()
 
     // 平台注册图：真人 / Agent 两条线（拆分列一直在响应里，此前没人读）。
-    await fireEvent.click(tab('平台', getAllByRole))
+    await go('平台')
     await loaded('platform')
     const legend = document.querySelector('.alc__legend')!
     expect(legend.textContent).toContain('真人')

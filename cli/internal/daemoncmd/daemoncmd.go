@@ -29,6 +29,7 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/auth"
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/devenv"
+	"github.com/SageSeekerSociety/cheese/cli/internal/host"
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
@@ -180,9 +181,26 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if len(args) == 1 {
 				serverArg = args[0]
 			}
+			// The service does not start without somewhere to keep its screens,
+			// and a service that exits at once would still be reported connected;
+			// asked before the approval, which it would otherwise waste.
+			if err := host.CanHostScreens(); err != nil {
+				return fmt.Errorf("this machine cannot run the connector yet: %w\n"+
+					"Install tmux (on a Mac: brew install tmux), or connect a Mac with the desktop app, which brings its own", err)
+			}
 			cfg, _ := config.Load(*cfgPath)
-			if cfg == nil || cfg.Token == "" || serverArg != "" && cfg != nil && cfg.Base != serverArg {
-				fmt.Println("Not logged in yet — starting login first.")
+			// A machine unbound since it was approved still holds its token,
+			// and a connector installed with it would be turned away on every
+			// dial while this command reported it connected.
+			forgotten := cfg != nil && cfg.Token != "" && (serverArg == "" || cfg.Base == serverArg) &&
+				auth.Forgotten(context.Background(), cfg.Base, cfg.Token)
+			if forgotten {
+				fmt.Println("This machine's earlier approval is no longer valid — approving it again.")
+			}
+			if forgotten || cfg == nil || cfg.Token == "" || serverArg != "" && cfg != nil && cfg.Base != serverArg {
+				if !forgotten {
+					fmt.Println("Not logged in yet — starting login first.")
+				}
 				var err error
 				if cfg, err = doLogin(*cfgPath, serverArg); err != nil {
 					return err

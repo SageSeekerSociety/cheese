@@ -19,18 +19,24 @@ import i18n from '@/i18n'
 import { createDialogPlugin } from '@/plugins/dialog'
 import vuetify from '@/plugins/vuetify'
 import pinia from '@/stores'
-import AdminDashboardPage from '@/views/admin/AdminDashboardPage.vue'
+import AdminStatsPage from '@/views/admin/AdminStatsPage.vue'
 
 installPreviewFetch()
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', component: AdminDashboardPage },
+    // 后台的七页统计页，同一个容器按 `kind` 画一类；hash 地址和后台里的地址一致。
+    { path: '/', redirect: '/admin/overview' },
+    { path: '/admin/overview', component: AdminStatsPage, props: { kind: 'platform' } },
+    { path: '/admin/performance', component: AdminStatsPage, props: { kind: 'performance' } },
+    { path: '/admin/pipeline', component: AdminStatsPage, props: { kind: 'pipeline' } },
+    { path: '/admin/usage', component: AdminStatsPage, props: { kind: 'usage' } },
+    { path: '/admin/product', component: AdminStatsPage, props: { kind: 'product' } },
+    { path: '/admin/feedback-trends', component: AdminStatsPage, props: { kind: 'feedback' } },
+    { path: '/admin/integration-health', component: AdminStatsPage, props: { kind: 'integrations' } },
     // 页面上的下钻出口。没有它们 `router-link` 会当场抛。
-    { path: '/admin/dashboard', component: AdminDashboardPage },
     { path: '/admin/queue', component: { template: '<div class="pa-6">队列（预览里是空壳）</div>' } },
-    { path: '/admin', component: AdminDashboardPage },
     { path: '/topics/:id', component: { template: '<div class="pa-6">话题（预览里是空壳）</div>' } },
     { path: '/feedback/:id', component: { template: '<div class="pa-6">反馈详情（预览里是空壳）</div>' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },

@@ -96,3 +96,29 @@ describe('打不开一个项目的时候', () => {
     expect(store.accessDenied).toBeNull()
   })
 })
+
+describe('开着的项目页，登录在中途没了', () => {
+  async function openFine() {
+    listTopics.mockResolvedValue({ data: [{ id: 't1', kind: 'root' }] })
+    const store = useWorkspaceStore()
+    await store.openProject('p1')
+    return store
+  }
+
+  // 侧栏每 30 秒在后台重读一次话题清单。登录没了之后那一次答 401，侧栏要是
+  // 照旧摆着上一份，内容区里的看板就只剩一句「加载失败」加一个永远重试不好的按钮。
+  it('后台那次重读答 401：整页换成「要登录」', async () => {
+    const store = await openFine()
+    listTopics.mockRejectedValue(new ApiError(401, 'Sign in to open this project'))
+    await store.refreshTopics()
+    expect(store.accessDenied).toBe('unauthenticated')
+  })
+
+  it('后台那次重读断网：什么都不换，下一次再读', async () => {
+    const store = await openFine()
+    listTopics.mockRejectedValue(new TypeError('Failed to fetch'))
+    await store.refreshTopics()
+    expect(store.accessDenied).toBeNull()
+    expect(store.topics.map((t) => t.id)).toEqual(['t1'])
+  })
+})

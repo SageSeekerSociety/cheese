@@ -18,6 +18,8 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listProjectTasks = vi.fn()
+// 整页那一屏（「要登录」「不是成员」）收不收这个错：默认不收，和 500/断网一样。
+const noteAccess = vi.hoisted(() => vi.fn((_e: unknown) => false))
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -41,6 +43,7 @@ vi.mock('@/stores/workspace', () => ({
       { id: 'room-2', title: '前端' },
     ],
     members: [{ user_handle: 'ligan', role: 'member', name: '李干' }],
+    noteAccess,
   }),
 }))
 
@@ -388,5 +391,17 @@ describe('读不到板的时候', () => {
     await fireEvent.click(container.querySelector('.base-load-error button')!)
     await waitFor(() => expect(container.querySelector('.base-load-error')).toBeNull())
     expect(titlesInColumn(container, 'building')).toEqual(['查一下分页接口'])
+  })
+
+  // 登录没了：重试换不来别的答案。这一个错交给整页那一屏（它给去登录的路），
+  // 板上不再画一个永远重试不好的「加载失败」。
+  it('答 401 时交给整页那一屏，板上不画「加载失败」', async () => {
+    const refused = new Error('Sign in to open this project')
+    listProjectTasks.mockRejectedValue(refused)
+    noteAccess.mockImplementation((e: unknown) => e === refused)
+    const { container } = mount()
+    await waitFor(() => expect(noteAccess).toHaveBeenCalledWith(refused))
+    expect(container.querySelector('.base-load-error')).toBeNull()
+    noteAccess.mockImplementation(() => false)
   })
 })

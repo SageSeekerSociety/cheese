@@ -8,7 +8,7 @@ has been waking, how many resume or start requests it sent, and when it stopped
 trying and kept the host for a person to look at.
 
 Revision ID: c71e5a90d4b2
-Revises: a4d8e2f61c07
+Revises: 7e3c1b9d4a52
 Create Date: 2026-10-07 12:00:00
 """
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c71e5a90d4b2"
-down_revision: str | Sequence[str] | None = "a4d8e2f61c07"
+down_revision: str | Sequence[str] | None = "7e3c1b9d4a52"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

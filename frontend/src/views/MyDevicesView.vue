@@ -384,7 +384,7 @@ function claudePlan(plan: string | null | undefined): string {
               {{ t('account.devices.claudeCodeLoggedIn', { plan: claudePlan(claudeLoginOf(d)?.subscription_type) }) }}
             </template>
             <i18n-t v-else keypath="account.devices.claudeCodeLoggedOut" tag="span">
-              <template #command><code>cheesehost claude login</code></template>
+              <template #command><code>~/.local/bin/cheesehost claude login</code></template>
             </i18n-t>
           </div>
 

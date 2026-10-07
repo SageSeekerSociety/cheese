@@ -20,7 +20,7 @@
     "notInInputs": "输入框里不触发",
     "refresh": "刷新当前列表 / 看板",
     "goQueue": "去队列",
-    "goDashboard": "去看板",
+    "goOverview": "去平台总览",
     "goFeedbackCenter": "去反馈中心（用户侧）",
     "within1s": "1s 内有效",
     "openSheet": "打开这张表",

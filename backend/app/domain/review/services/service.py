@@ -51,6 +51,9 @@ class AcceptService:
     def __init__(self, session: AsyncSession):
 
         self._session = session
+        # Set only while a claimed poll runs (): forge clients
+        # then give the connection back before each call.
+        self._commits_before_remote = False
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)

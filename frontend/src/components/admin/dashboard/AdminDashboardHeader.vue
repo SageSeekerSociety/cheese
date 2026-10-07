@@ -3,8 +3,7 @@ import type { StatsDays } from '@/lib/adminStats'
 
 import { useI18n } from 'vue-i18n'
 
-// 看板页头右边那两样：统计窗口 7/30/90 和更新时间戳。标题、说明和分类导轨
-// （`AdminDashboardKinds`）由页面交给 `AdminPage`。
+// 统计页页头右边那两样：统计窗口 7/30/90 和更新时间戳。标题由页面交给 `AdminPage`。
 defineProps<{
   /** 这一类的数有「过去 N 天」这个说法吗（性能读进程内存、集成是存量）。 */
   windowed: boolean

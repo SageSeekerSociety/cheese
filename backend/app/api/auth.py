@@ -645,7 +645,7 @@ class ActorResolver:
         if not actor.authenticated:
             if is_global_sandbox_token(self._cheese_token):
                 return  # Trusted development credential; anonymous access stays denied.
-            raise AuthenticationRequiredError("Login required to access a room")
+            raise AuthenticationRequiredError(say("signInForRoom"))
         if not await self.can_access_topic(
             actor, project_id=project_id, topic_id=topic_id
         ):
@@ -764,7 +764,7 @@ class ActorResolver:
         if not actor.authenticated:
             if is_global_sandbox_token(self._cheese_token):
                 return  # Trusted development credential; anonymous access stays denied.
-            raise AuthenticationRequiredError("Login required to access a project")
+            raise AuthenticationRequiredError(say("signInForProject"))
         if await self._is_project_member(project_id, actor.handle):
             return
         if await ProjectRepository(self._session).get(project_id) is None:
@@ -793,7 +793,7 @@ class ActorResolver:
         if not actor.authenticated:
             if is_global_sandbox_token(self._cheese_token):
                 return  # Trusted development credential; anonymous access stays denied.
-            raise AuthenticationRequiredError("Login required to access a task")
+            raise AuthenticationRequiredError(say("signInForTask"))
         task = await TaskRepository(self._session).get_by_id(task_id)
         if task is None:
             return
@@ -826,7 +826,7 @@ class ActorResolver:
         if not actor.authenticated:
             if is_global_sandbox_token(self._cheese_token):
                 return  # Trusted development credential; anonymous access stays denied.
-            raise AuthenticationRequiredError("Login required to access a team")
+            raise AuthenticationRequiredError(say("signInForTeam"))
         if await self._is_team_member(team_id, actor.handle):
             return
         _log.info("team_access_denied", handle=actor.handle, team=team_id)

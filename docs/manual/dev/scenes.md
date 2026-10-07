@@ -162,7 +162,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/account/recover/password/Verify.vue` | 容器 | 画面在 `VerifyView.vue`（A 级）；取数、路由留在本页 |
 | `views/account/signup/Start.vue` | 容器 | 画面在 `StartView.vue`（A 级）；取数、路由、signup store 留在本页 |
 | `views/account/signup/VerifyEmail.vue` | 容器 | 画面在 `VerifyEmailView.vue`（A 级）；取数、路由、signup store 留在本页 |
-| `views/admin/AdminDashboardPage.vue` | D | 读路由；读 store（feedback） |
 | `views/admin/AdminFeaturePage.vue` | D | 读路由；经 `views/admin/features/registry.ts` 取数 |
 | `views/admin/AdminFeatureStatsPage.vue` | D | 读路由；经 `views/admin/features/featureApi.ts` 取数；经 `views/admin/features/registry.ts` 取数 |
 | `views/admin/AdminIntegrationsPage.vue` | C | 经 `api/feishu.ts` 取数 |
@@ -170,6 +169,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/admin/AdminMembersPage.vue` | C | 直接取数（`api.ts`） |
 | `views/admin/AdminModelsPage.vue` | C | 直接取数（`api.ts`） |
 | `views/admin/AdminQueuePage.vue` | D | 读路由；读 store（feedback） |
+| `views/admin/AdminStatsPage.vue` | 容器 | 画面在 `AdminStatsPageView.vue`（A 级）；取数（`useAdminStats`）、路由留在本页 |
 | `views/admin/AdminSpacesPage.vue` | C | 直接取数（`network/api/spaces`） |
 | `views/feedback/AdminFeedbackPage.vue` | A | 只吃 props 和事件 |
 | `views/feedback/FeedbackCenterPage.vue` | C | 读 store（feedback） |

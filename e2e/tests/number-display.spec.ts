@@ -118,13 +118,11 @@ async function inflateFixture(page: import('@playwright/test').Page): Promise<vo
 
 test.describe('数字不会被裁掉', () => {
   for (const kind of ['pipeline', 'usage', 'platform', 'performance'] as const) {
-    test(`看板 · ${kind}：没有数字叶子被裁，简写都带完整值`, async ({ page }) => {
+    test(`统计页 · ${kind}：没有数字叶子被裁，简写都带完整值`, async ({ page }) => {
       await apiLogin(page);
-      await page.goto('/admin/dashboard');
-      await page.waitForLoadState('networkidle');
-      // 切到这一类（导轨上的按钮：accessible name 是裸标签）。
-      const label = { pipeline: '交付', usage: '用量', platform: '平台', performance: '性能' }[kind];
-      await page.getByRole('button', { name: label, exact: true }).first().click();
+      // 每一类是后台里单独的一页。
+      const path = { pipeline: 'pipeline', usage: 'usage', platform: 'overview', performance: 'performance' }[kind];
+      await page.goto(`/admin/${path}`);
       await page.waitForLoadState('networkidle');
 
       const board = page.locator('.ad, main').first();
