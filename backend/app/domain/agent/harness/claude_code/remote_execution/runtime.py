@@ -750,25 +750,16 @@ class Executor:
     def _wait_command(self, command_id, process):
         code = process.wait()
         # Negative for a POSIX child killed by signal n, kept so its reader can
-        # end the same way. Renamed in and off `running` as one step, and that
-        # step is a `finally`: a full disk (2026-10-03) must not strand a reader.
+        # end the same way. Renamed in and off `running` as one step, even when
+        # a full disk (2026-10-03) refused the code: no `exit` tells the reader.
         temporary = self._record(command_id) / ("exit." + uuid.uuid4().hex)
-        try:
+        with contextlib.suppress(OSError):
             temporary.write_text(str(code))
-        except OSError as exc:
-            # The reader learns it was lost from the missing `exit`; raising
-            # here would only end this daemon thread with an unhandled
-            # exception nobody reads, and the disk that refused the code may
-            # refuse the event line too.
+        with self.command_lock:
             with contextlib.suppress(OSError):
-                self.log(command_id, "exit-unrecorded", exit_code=code, error=str(exc))
-            return
-        finally:
-            with self.command_lock:
-                with contextlib.suppress(OSError):
-                    temporary.replace(temporary.with_name("exit"))
-                self.running.pop(command_id, None)
-                self.collected[command_id] = time.time()
+                temporary.replace(temporary.with_name("exit"))
+            self.running.pop(command_id, None)
+            self.collected[command_id] = time.time()
         self.log(command_id, "exited", exit_code=code)
 
     def _tree(self, pid):

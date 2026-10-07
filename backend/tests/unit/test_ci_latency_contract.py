@@ -59,13 +59,14 @@ def test_remote_execution_keeps_every_main_push():
 
 
 def test_backend_lint_is_a_separate_hosted_job():
-    """Lint is its own job, kept out of `test` (which must not re-run
-    ruff/pyright), and it runs on a GitHub-hosted runner: the repository is
-    public, hosted minutes are free, and nothing in lint needs the pool. What
-    this test guards is the split itself — a separate lint job, never
+    """Lint runs in the `static` job, kept out of `test` (which must not re-run
+    ruff/pyright), on a GitHub-hosted runner: the repository is public, hosted
+    minutes are free, and nothing in lint needs the pool. `static` also holds
+    the other service-free checks, so they share one runner's queue wait. What
+    this test guards is the split itself — lint in its own job, never
     duplicated inside `test`."""
     workflow = load_workflow("test.yml")
-    lint = workflow["jobs"]["lint"]
+    lint = workflow["jobs"]["static"]
     assert lint["runs-on"] == "ubuntu-latest"
 
     # The commands themselves moved into .pre-commit-config.yaml, so what is
