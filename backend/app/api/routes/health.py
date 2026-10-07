@@ -2,6 +2,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import text
 
@@ -18,25 +19,22 @@ router = APIRouter(tags=["health"])
 # unready because one feature is degraded. Keeping the two apart is what lets a
 # check be loud without also being a switch that pulls the whole platform out
 # of rotation — see `event_loop`.
-_REQUIRED_CHECKS = ("database", "redis")
+_REQUIRED_CHECKS = ("database", "redis", "routes")
 
 # A check that had nothing to do is not a failing check.
 _HEALTHY_STATUSES = frozenset({"up", "skipped"})
 
 
-@router.get("/healthz", summary="Health check")
+@router.get("/healthz", summary="Liveness check")
 async def health_check() -> dict[str, Any]:
-    """Healthy means every route module mounted, not merely that the process is up.
+    """Live means the process is up and answering — nothing more.
 
-    A module that fails to import is skipped in production so one bad file cannot
-    take the app down — but the app is then serving 404s for a whole group of
-    endpoints, and the only party that finds out is the caller. Reporting it here
-    is what turns that into something monitoring can see.
+    Whether it should take traffic is `/readyz`'s question, and every gate that
+    decides that (the rollout, the container healthcheck) reads `/readyz`. This
+    one stays 200 through a dependency outage or an unmounted route module: a
+    restart fixes neither, so a liveness probe that failed on them would only
+    add a restart loop to the outage.
     """
-    from app.main import FAILED_ROUTE_MODULES
-
-    if FAILED_ROUTE_MODULES:
-        return {"status": "degraded", "unmounted": list(FAILED_ROUTE_MODULES)}
     return {"status": "ok"}
 
 
@@ -63,6 +61,7 @@ async def health_report() -> dict[str, Any]:
 
     checks["database"] = await _check_database()
     checks["redis"] = await _check_redis()
+    checks["routes"] = _check_routes()
     checks["event_loop"] = _check_event_loop()
 
     overall = (
@@ -71,6 +70,26 @@ async def health_report() -> dict[str, Any]:
         else "degraded"
     )
     return {"status": overall, "checks": checks}
+
+
+def _check_routes() -> dict[str, Any]:
+    """Whether every route module mounted this boot.
+
+    Production skips a module that fails to import so one bad file cannot take
+    the app down — but the app then answers 404 for that module's whole group
+    of endpoints, and only the caller finds out. Required, so `/readyz` turns
+    it into a 503 and the rollout keeps such a build away from traffic.
+    """
+    from app.main import FAILED_ROUTE_MODULES
+
+    if FAILED_ROUTE_MODULES:
+        unmounted = list(FAILED_ROUTE_MODULES)
+        return {
+            "status": "down",
+            "unmounted": unmounted,
+            "error": "unmounted: " + ", ".join(unmounted),
+        }
+    return {"status": "up"}
 
 
 def _check_event_loop() -> dict[str, Any]:
@@ -130,13 +149,17 @@ async def get_metrics(_admin: PlatformAdminDep) -> dict[str, Any]:
 
 
 @router.get("/readyz", summary="Readiness check")
-async def readiness_check() -> dict[str, Any]:
+async def readiness_check() -> Any:
     """Ready means "can serve requests", which is narrower than "all green".
 
     Only `_REQUIRED_CHECKS` can make this 503. A degraded advisory check still
     shows up in `/health/detailed` — that is where a human or an alert looks —
     but taking the process out of rotation over it would trade one degraded
     feature for a total outage.
+
+    The 503 is a plain JSON response, not an `HTTPException`: the app's error
+    envelope would replace the report with a generic "HTTP error", and the
+    report is what makes an outage diagnosable with no session.
     """
     result = await health_report()
     unready = [
@@ -145,7 +168,8 @@ async def readiness_check() -> dict[str, Any]:
         if result["checks"].get(name, {}).get("status") != "up"
     ]
     if unready:
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=503, detail=result)
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unready", "unready": unready, "checks": result["checks"]},
+        )
     return {"status": "ready"}

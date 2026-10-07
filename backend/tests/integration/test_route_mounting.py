@@ -19,14 +19,37 @@ def _clean_registry():
     main.FAILED_ROUTE_MODULES.clear()
 
 
-def test_healthz_reports_a_module_that_did_not_mount(client):
-    assert client.get("/healthz").json()["status"] == "ok"
+def test_readiness_fails_while_a_module_is_unmounted(client, monkeypatch):
+    """The rollout waits on /readyz, so this 503 is what keeps the build off traffic."""
+    from app.api.routes import health
+
+    async def _up():
+        return {"status": "up"}
+
+    # Only the routes check is under test; the dependencies answer for themselves.
+    monkeypatch.setattr(health, "_check_database", _up)
+    monkeypatch.setattr(health, "_check_redis", _up)
+    assert client.get("/readyz").status_code == 200
 
     main.FAILED_ROUTE_MODULES.append("app.api.routes.agent_control")
-    body = client.get("/healthz").json()
+    response = client.get("/readyz")
 
-    assert body["status"] == "degraded"
-    assert "app.api.routes.agent_control" in body["unmounted"]
+    assert response.status_code == 503
+    body = response.json()
+    assert body["unready"] == ["routes"]
+    routes = body["checks"]["routes"]
+    assert routes["status"] == "down"
+    assert routes["unmounted"] == ["app.api.routes.agent_control"]
+
+
+def test_liveness_stays_up_while_a_module_is_unmounted(client):
+    """A restart cannot bring the module back, so liveness must not ask for one."""
+    main.FAILED_ROUTE_MODULES.append("app.api.routes.agent_control")
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 def test_a_broken_module_stops_the_boot_outside_production(monkeypatch):
@@ -54,3 +77,31 @@ def test_production_keeps_serving_and_records_the_damage(monkeypatch):
     main._discover_routers(FastAPI())
 
     assert main.FAILED_ROUTE_MODULES, "a skipped module left no trace"
+
+
+def test_an_import_failure_at_boot_makes_the_build_unready(client, monkeypatch):
+    """End to end: a module that fails to import in production → /readyz 503."""
+    from app.api.routes import health
+
+    async def _up():
+        return {"status": "up"}
+
+    monkeypatch.setattr(health, "_check_database", _up)
+    monkeypatch.setattr(health, "_check_redis", _up)
+    monkeypatch.setattr(main.settings, "environment", "production")
+    real_import = main.importlib.import_module
+
+    def _one_broken(name, *args, **kwargs):
+        if name == "app.api.routes.agent_control":
+            raise ImportError("boom")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(main.importlib, "import_module", _one_broken)
+    main._discover_routers(FastAPI())
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["routes"]["unmounted"] == [
+        "app.api.routes.agent_control"
+    ]

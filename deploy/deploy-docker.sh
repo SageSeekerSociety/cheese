@@ -1149,12 +1149,17 @@ take_frontend_ports() {
 # $1 = host port, $2 = what is expected there. Polls the published port from
 # the host, which is what api-front will use, rather than docker's own health
 # state — a one-off container may not carry the service healthcheck.
-wait_for_healthz() {
+#
+# /readyz, not /healthz: both ports answer with a backend, and /healthz only
+# says its process is up. /readyz is 503 while the database or Redis is out of
+# reach or a route module failed to import (production skips such a module and
+# serves 404 for its whole group), so a build like that never takes traffic.
+wait_for_ready() {
   local port="$1" what="$2" waited=0 step="$HEALTH_INTERVAL_SECONDS"
   [ "$step" -gt 0 ] 2>/dev/null || step=1
   while [ "$waited" -lt "$BACKEND_START_TIMEOUT" ]; do
-    if curl -fsS -m 3 "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then
-      log "$what answers /healthz on :$port after ${waited}s"
+    if curl -fsS -m 3 "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then
+      log "$what answers /readyz on :$port after ${waited}s"
       return 0
     fi
     sleep "$HEALTH_INTERVAL_SECONDS"
@@ -1252,10 +1257,10 @@ rollout_app() {
     dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
     fail "could not start $backend_to; the running backend was not touched"
   fi
-  if ! wait_for_healthz "$backend_port" "$backend_to"; then
+  if ! wait_for_ready "$backend_port" "$backend_to"; then
     docker logs --tail 40 "$(service_container "$backend_to")" 2>&1 | sed 's/^/  next| /' || true
     dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
-    fail "$backend_to never answered /healthz within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
+    fail "$backend_to was not ready within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
   fi
   if [ -n "$frontend_to" ]; then
     if ! dc up -d --no-deps --force-recreate "$frontend_to" \
@@ -1339,7 +1344,7 @@ if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   rollout_app
   # Forge migration stops the old backend. Probe the routed backend only after
   # its replacement is serving, including retries from a persisted cutover.
-  wait_for_healthz 18085 "application router" || fail "application router is not healthy"
+  wait_for_ready 18085 "application router" || fail "the backend behind the application router is not ready"
   if [ -z "$ACTIVE_FRONTEND_DIR" ]; then
     log "bringing up frontend…"
     dc up -d --no-deps frontend || fail "compose up frontend failed"

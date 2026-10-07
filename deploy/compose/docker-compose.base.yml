@@ -234,8 +234,12 @@ services:
     # only `docker exec -u 0` can use it.
     cap_add:
       - SYS_PTRACE
+    # /readyz, not /healthz: "healthy" here is read as "can take traffic" — by
+    # the frontend's depends_on and by deploy/check-auto-deploy.py. /readyz is
+    # 503 while the database or Redis is out of reach or a route module failed
+    # to import. Docker restarts nothing on unhealthy, so this cannot loop.
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/readyz"]
       interval: 15s
       timeout: 8s
       start_period: 40s

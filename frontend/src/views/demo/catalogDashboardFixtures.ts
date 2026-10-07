@@ -346,7 +346,7 @@ export const DASH_PLATFORM: StatsPlatform = {
   machines: { devices: 7, hosted_devices: 5, warm_machines: 3, cloud_hosts: 2 },
   health: {
     overall: 'healthy',
-    checks: { database: { status: 'up' }, redis: { status: 'up' }, event_loop: { status: 'up', detail: 3.4 } },
+    checks: { database: { status: 'up' }, redis: { status: 'up' }, event_loop: { status: 'up', detail: 3.4 }, routes: { status: 'up' } },
   },
   extras: {
     disk: {
