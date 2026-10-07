@@ -45,6 +45,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.delivery.addressing import (
     NAMES_NOBODY,
@@ -130,6 +131,7 @@ async def announce(
         turn_id=turn_id,
         meta=meta,
     )
+    _show_once_committed(session, block)
     await _notify(
         session,
         place=place,
@@ -140,6 +142,28 @@ async def announce(
         event_id=event_id,
     )
     return block
+
+
+#: `session.info` 里的一格：这个会话落下、提交之后要当场推给页面的那几行，各带
+#: 它所在那段对话的频道。推送本身在 broker 那一侧（`runtime`），这里只记下来。
+SHOW_ONCE_COMMITTED = "notices_shown_once_committed"
+
+
+def _show_once_committed(session: AsyncSession, block: Block) -> None:
+    """让开着这段对话的页面当场看见这一行，而不是等下一次刷新。
+
+    发在这一行所在的那段对话上 —— 一个任务的提示落在任务自己的对话里，任务页的
+    socket 听的也正是那一段；房间页听房间。提交之后才发：一次回滚不能留下一行页面上
+    看得见、库里却没有的字。载荷在这里就定下来，提交之后这一行的属性已经过期，
+    读不回来。
+    """
+    frame = {
+        "type": "event_block",
+        "block": BlockOut.model_validate(block).model_dump(mode="json"),
+    }
+    session.info.setdefault(SHOW_ONCE_COMMITTED, []).append(
+        (str(block.conversation_id), frame)
+    )
 
 
 async def notify_question(

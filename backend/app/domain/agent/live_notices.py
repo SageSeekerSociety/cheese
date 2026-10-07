@@ -1,0 +1,29 @@
+"""平台说的一句话提交了，开着那段对话的页面当场看见它。
+
+`announce` 落下一行时把它记在会话的 `session.info` 里（`SHOW_ONCE_COMMITTED`），
+这里在会话提交之后把它们作为 `event_block` 发到各自那段对话的频道上；回滚了就扔掉。
+
+发送放在这里而不在 `announce` 里：broker 在 `runtime`，而 `runtime` 本身会间接载入
+`announce`，两边互相 import 就成了一个环。这个模块由 `app.api.deps`（接 broker 的
+那一层）载入，监听器随之装上。
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+
+from app.core.background import spawn
+from app.domain.agent.announce import SHOW_ONCE_COMMITTED
+from app.domain.agent.runtime import get_broker
+
+
+@event.listens_for(Session, "after_commit")
+def _show_committed_notices(session: Session) -> None:
+    for channel, frame in session.info.pop(SHOW_ONCE_COMMITTED, ()):
+        spawn(get_broker().publish(channel, frame), name="notice live")
+
+
+@event.listens_for(Session, "after_rollback")
+def _drop_rolled_back_notices(session: Session) -> None:
+    session.info.pop(SHOW_ONCE_COMMITTED, None)
