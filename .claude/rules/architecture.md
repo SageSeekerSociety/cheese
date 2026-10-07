@@ -147,7 +147,7 @@ Four principles, in the order they matter:
    decide which side of that line a file is on.
 
 The rule is ratcheted because the tree started dirty — 127 violations in 82
-components when it landed, 59 in 47 today (`frontend/import-boundary-baseline.json`);
+components when it landed, 21 in 21 on 2026-10-07 (`frontend/import-boundary-baseline.json`);
 a gate that reddened the whole tree on day one would be switched off within a week. It is a separate ESLint config
 (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs` for the
 same reason. Only *new* violations fail; `pnpm run lint:boundary:update` writes
