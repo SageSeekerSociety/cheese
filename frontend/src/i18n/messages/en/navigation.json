@@ -31,7 +31,6 @@
   },
   "admin": {
     "queue": "Feedback",
-    "dashboard": "Dashboard",
     "models": "Models",
     "spaces": "Space applications",
     "members": "Members",
@@ -39,7 +38,22 @@
     "featureStats": "Feature data",
     "ratchet": "Ratchet",
     "credits": "Plans & credits",
-    "runRecords": "Run records"
+    "runRecords": "Run records",
+    "overview": "Platform overview",
+    "performance": "Performance",
+    "pipeline": "Delivery pipeline",
+    "usage": "Usage",
+    "product": "Product metrics",
+    "feedbackTrends": "Feedback trends",
+    "integrationHealth": "Integration health",
+    "group": {
+      "pending": "To handle",
+      "run": "Operations",
+      "delivery": "Delivery",
+      "cost": "Usage & cost",
+      "product": "Product data",
+      "settings": "Settings"
+    }
   },
   "userMenu": {
     "profile": "Profile",

@@ -49,16 +49,6 @@ export interface KpiRow {
   note?: string
 }
 
-/** 分类导轨上一颗迷你摘要卡的内容。 */
-export type PulseTone = 'ink' | 'ok' | 'warn' | 'danger'
-
-export interface PulseRow {
-  key: StatsKind
-  value: string
-  hint: string
-  tone: PulseTone
-}
-
 /** 「需处理」迷你列表的一行。取数那一半从 store 的队列里切出来，画法在
  *  `AdminNumberList`。 */
 export interface PendingRow {
