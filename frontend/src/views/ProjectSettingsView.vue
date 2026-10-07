@@ -9,6 +9,7 @@ import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
 import { getProject } from '@/api'
+import { handOverChannel, listChannels, stepIntoChannel } from '@/api/channels'
 import { diagnoseRoomEnvironment } from '@/api/environment'
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
@@ -56,7 +57,7 @@ const workspace = useWorkspaceStore()
 const project = computed(() => workspace.projects.find((p) => p.id === props.projectId) ?? null)
 const projectName = computed(() => project.value?.name ?? '')
 const ownsProject = computed(() => !!project.value?.owner_handle && project.value.owner_handle === myHandle())
-// 我管不管这个项目：「频道」一栏据此给不给「设为公开」（后端动手时按同一条规则再判一次）。
+// 我管不管这个项目：「频道」一栏只给管项目的人（后端动手时按同一条规则再判一次）。
 const managesProject = ref(false)
 watch(
   () => props.projectId,
@@ -145,7 +146,7 @@ const router = useRouter()
 
 /** 九栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
-  { group: 'collab', key: 'channels', icon: 'mdi-pound' },
+  ...(managesProject.value ? [{ group: 'collab', key: 'channels', icon: 'mdi-pound' }] : []),
   { group: 'ai', key: 'agents', icon: 'mdi-robot-outline' },
   { group: 'ai', key: 'task-naming', icon: 'mdi-format-title' },
   { group: 'run', key: 'environment', icon: 'mdi-console' },
@@ -262,8 +263,11 @@ function close() {
         <ProjectChannelSettings
           v-else-if="section === 'channels'"
           :project-id="projectId"
-          :can-make-public="managesProject"
-          @open-channel="(topic) => router.push({ name: 'workspace-topic', params: { projectId, topicId: topic.id } })"
+          :members="workspace.members"
+          :load="listChannels"
+          :step-in="stepIntoChannel"
+          :hand-over="handOverChannel"
+          @open-channel="(id) => router.push({ name: 'workspace-topic', params: { projectId, topicId: id } })"
         />
         <section v-else-if="section === 'task-naming'" class="page-section">
           <ProjectTaskNamingSettings :project-id="projectId" />

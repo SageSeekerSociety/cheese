@@ -242,8 +242,8 @@ describe('project settings', () => {
     try {
       const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
       const entries = Array.from(nav.querySelectorAll('.so__item'), (a) => a.textContent?.trim())
+      // 「频道」只给管项目的人：这里的我不管。
       expect(entries).toEqual([
-        '频道',
         'AI 队友',
         '任务命名',
         '环境',
@@ -253,6 +253,20 @@ describe('project settings', () => {
         '导出项目',
         '归档项目',
       ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('lists 频道 first for whoever manages the project', async () => {
+    vi.mocked(api.getProject).mockResolvedValue({ id: 'project', name: 'P', can_manage_members: true } as Project)
+    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }]
+    const wrapper = await openSettings()
+    try {
+      await vi.waitFor(() => {
+        const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
+        expect(nav.querySelector('.so__item')?.textContent?.trim()).toBe('频道')
+      })
     } finally {
       wrapper.unmount()
     }

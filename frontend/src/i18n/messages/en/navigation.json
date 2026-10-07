@@ -5,6 +5,7 @@
   "project": {
     "board": "Board",
     "library": "Library",
+    "channels": "Browse channels",
     "members": "Members",
     "docs": "Project docs",
     "settings": "Project settings",

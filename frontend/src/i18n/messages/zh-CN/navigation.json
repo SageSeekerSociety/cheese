@@ -5,6 +5,7 @@
   "project": {
     "board": "看板",
     "library": "资料库",
+    "channels": "浏览频道",
     "members": "成员",
     "docs": "项目文档",
     "settings": "项目设置",

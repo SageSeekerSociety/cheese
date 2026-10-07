@@ -80,6 +80,7 @@
     "src/views/account/signup/VerifyEmailView.vue",
     "src/views/admin/AdminCreditsPageView.vue",
     "src/views/admin/AdminRatchetPageView.vue",
+    "src/views/admin/AdminRunRecordsPageView.vue",
     "src/views/legal/LegalDocumentView.vue",
     "src/views/spaces/detail/ManageDeniedView.vue",
     "src/views/spaces/detail/PublishTaskView.vue",
@@ -98,6 +99,7 @@
     "src/views/user/settings/RealNameView.vue",
     "src/views/user/settings/SecurityView.vue",
     "src/views/user/settings/UsageView.vue",
+    "src/views/workspace/ChannelBrowseView.vue",
     "src/views/workspace/ChannelTasksView.vue"
   ],
   "debt": [

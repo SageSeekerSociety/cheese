@@ -150,6 +150,19 @@ export const workspaceRoutes: RouteRecordRaw = {
       },
     },
     {
+      // 浏览频道：项目里我能看到的频道，找、加入、新建。侧栏只列我加入的频道。
+      name: 'project-channels',
+      path: 'channels',
+      component: () => import('@/views/workspace/ChannelBrowse.vue'),
+      props: true,
+      meta: {
+        titleKey: 'navigation.project.channels',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.channels', icon: 'mdi-pound' },
+      },
+    },
+    {
       // 搜索结果页：命令面板里内容只列前几条，「查看全部结果」进这里看全。词在地址上。
       name: 'project-search',
       path: 'search',
