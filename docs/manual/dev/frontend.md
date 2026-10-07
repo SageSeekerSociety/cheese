@@ -72,7 +72,7 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 加一个组件：
 
 1. `node scripts/catalog-scaffold.mjs <src/...vue>` 按 props 打出骨架；`--pending <目录前缀>` 一次打出白名单里这个目录下的全部。
-2. 把骨架贴进一个已被 `catalog.ts` 导入并展开的 `catalog*.ts` 分册（新开分册就要在 `catalog.ts` 里 `import` 它的数组并 `...` 展开进 `CATALOG`，否则页面、测试和收录闸都看不见它），补上 `about`、每格的名字和说明，换上真实形状的示例数据。骨架里的 `TODO(catalog)` 不改完，目录测试会报红。
+2. 把骨架贴进一个已被 `catalog.ts` 导入并展开的 `catalog*.ts` 分册（新开分册就要在 `catalog.ts` 里 `import` 它的数组并 `...` 展开进 `CATALOG`，否则页面、测试和收录闸都看不见它），补上 `about`、每格的名字和说明，换上真实形状的示例数据。每格的 `expect`（一句字）或 `expectSelector`（一个选择器）要能证明画出来的是这一格，而不是兄弟格也有的东西。骨架里要人补的句子和占位值都标着 `TODO(catalog)`，不改完目录测试会报红。
 3. 跑 `pnpm exec vitest run src/views/demo/catalog.spec.ts`。它按每格声明的插件逐格挂载，有任何 warning 或 error 就红。
 4. 跑 `pnpm run lint:catalog:update`，把这个组件从白名单里划掉。
 

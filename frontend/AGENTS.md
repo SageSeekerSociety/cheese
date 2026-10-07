@@ -62,17 +62,26 @@ pnpm dev            # then open /demo/catalog on the port it prints
 
 To add a component:
 
-1. Add an entry to `views/demo/catalog.ts`: `id`, `title`, `about`, `file`,
-   the `component`, the plugins it needs (`needs`), and one `states` item per
-   state worth seeing. Name the state, say what it shows, pass the props, and
-   give the text that proves it rendered.
-2. Build those props in `views/demo/catalogFixtures.ts` out of the product's
-   own demo scenes where you can — a card in the catalog should be a card from
-   a real room, not a hand-typed object that drifts.
+1. `node scripts/catalog-scaffold.mjs <src/...vue>` prints the entry's skeleton
+   from the component's props (`--pending <prefix>` does every pending
+   component under a directory). Every sentence and placeholder value a person
+   owes is marked `TODO(catalog)`, and the spec fails while one is left.
+2. Paste it into a `catalog*.ts` volume that `catalog.ts` imports and spreads
+   (below) — not `catalog.ts` itself, which sits at the file-size cap. Write
+   `about`, name each state and say what it shows, and give the text (or the
+   `expectSelector`) that proves *this* state rendered and not its sibling.
+   Props shared by every state go in the entry's `args`; a state's `props`
+   override them. Build the values in the volume's `*Fixtures.ts` out of the
+   product's own demo scenes where you can — a card in the catalog should be a
+   card from a real room, not a hand-typed object that drifts.
 3. `pnpm exec vitest run src/views/demo/catalog.spec.ts`. The spec walks the
    registry and mounts every state with only the plugins that state declares,
    failing on any console warning or error — so a `needs` that is too small is
    a red test, not a surprise in the browser.
+4. `pnpm run lint:catalog:update` crosses the component off the pending list.
+
+The same steps in Chinese, with the CSF mapping, are in
+`docs/manual/dev/frontend.md#catalog`.
 
 Rendering the site writes nothing to the source tree.
 
@@ -88,13 +97,13 @@ ratchet below. A grade-A one must be catalogued — `catalog.ts` or a volume it
 imports and spreads (above) imports the `.vue` and uses it as an entry's
 `component:` — or be listed in `pending` in
 `catalog-baseline.json`, which is the backlog from the day the check was added
-and may only shrink:
+and may only shrink.
 
 The check reads only those files, from `catalog.ts` outward, because `CATALOG`
 is what the site renders and `catalog.spec.ts` mounts. A `component:` anywhere
 else — a route in `demoRouter.ts`, a `catalog*.ts` nobody imports, a
 `*Fixtures.ts`, a spec — does not count, nor does one inside a `//` or `/* */`
-comment, nor a `file:` label alone.
+comment, nor a `file:` label alone. The commands:
 
 ```bash
 pnpm run lint:catalog           # what CI runs
@@ -103,7 +112,7 @@ python3 ../.claude/scripts/catalog-ratchet.py --list   # every component, grade,
 ```
 
 - A **new** grade-A component, or an old one that just became grade A, that is
-  not catalogued **fails** — the three steps above are the fix. Adding it to
+  not catalogued **fails** — the four steps above are the fix. Adding it to
   `pending` is not: `--update` only removes, and refuses to write while such a
   component exists.
 - A pending entry that is now catalogued, gone, or no longer grade A does not

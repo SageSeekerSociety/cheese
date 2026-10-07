@@ -17,7 +17,7 @@ covers:
 
 组件预览站（`/demo/catalog`）能做什么，取决于**谁被注册进去了**；而这个集合是攒出来的，没人知道还剩多少、剩下的差在哪。这一页把它翻过来数一遍：前端一共有多少个能叫「场景」的东西，几个今天就能脱离后端单独跑一遍，剩下的各卡在哪一步。
 
-> 讲：每个路由页和工作面板今天站在哪一档、卡住的原因是什么、一共多少个、下一步先动哪一批，以及**从今天起这条线怎么被机器看住**。不讲：怎么往目录里加一个组件（三步写在仓库内的 `frontend/AGENTS.md`），A/B/C/D 的判据和怎么跑（见[架构指标](/dev/arch-metrics#metrics)），组件边界那三道闸本身（见[前端结构](/dev/frontend#gates)）。
+> 讲：每个路由页和工作面板今天站在哪一档、卡住的原因是什么、一共多少个、下一步先动哪一批，以及**从今天起这条线怎么被机器看住**。不讲：怎么往目录里加一个组件（见[前端结构](/dev/frontend#catalog)），A/B/C/D 的判据和怎么跑（见[架构指标](/dev/arch-metrics#metrics)），组件边界那三道闸本身（见[前端结构](/dev/frontend#gates)）。
 
 ## 「单独渲染」是什么意思 {#standalone}
 
@@ -128,7 +128,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 - 名单里的组件已经进了目录、文件没了、或者不再是 A 级，检查**不失败**，只提示跑 `pnpm run lint:catalog:update` 把它划掉（和上面场景基线「变好了就提示收紧」是同一个做法）。
 - 进了目录但不是 A 级的组件不归它管：`pnpm exec vitest run src/views/demo/catalog.spec.ts` 会把每条条目真挂一遍，那才是「它真的能单独挂起来」的结论；`--list` 里会标出来。
 
-加一个组件到目录的三步写在 `frontend/AGENTS.md`「The component preview site」一节。
+加一个组件到目录的四步见[前端结构](/dev/frontend#catalog)。
 
 ## 页面 {#pages}
 
