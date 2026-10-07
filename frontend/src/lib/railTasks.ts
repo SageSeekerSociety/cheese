@@ -1,7 +1,7 @@
 // 侧栏上一个频道下面挂哪几条任务。频道里的任务会很多（房间变成任务之后，「综合」
 // 下面挂着整个项目的事），全列出来侧栏就没法看了，所以只列和我有关的那几条：先是我
 // 负责的，再是我协作的，各自按最近有动静的排，合起来最多 RAIL_TASKS 条；其余的
-// 点「全部任务」看。
+// 点「全部任务」看。十四天没动静的（`stalled`）收起来，也只在「全部任务」里。
 import type { RoomTask } from '@/cx_types'
 
 export const RAIL_TASKS = 5
@@ -23,6 +23,7 @@ export function railTasksByChannel(tasks: RoomTask[], me: string): Record<string
     if (task.status !== 'open' || task.presentation.column === 'done') continue
     const channel = (byChannel[task.room_id] ??= { mine: [], helping: [], total: 0 })
     channel.total += 1
+    if (task.stalled) continue
     if (task.owner_handle === me) channel.mine.push(task)
     else if ((task.contributor_handles ?? []).includes(me)) channel.helping.push(task)
   }

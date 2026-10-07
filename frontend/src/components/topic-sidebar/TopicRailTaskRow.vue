@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 侧栏里挂在频道下面的一个任务。比频道的字往里缩一点，左边一条竖线从频道的 # 下面
-// 一直连到「全部任务」，说「这几条是那个频道里的」；字和频道一样大。需要你处理的亮
-// 一颗暖色点，正在运行的一颗绿点，别的不画。
+// 一直连到「全部任务」，说「这几条是那个频道里的」；字和频道一样大。在等**你**的亮
+// 一颗暖色点（服务端按看的人算的 `awaits_me`，不是「在待处理那一列」），正在运行的
+// 一颗绿点，别的不画。
 import type { RoomTask } from '@/cx_types'
 
 import { computed } from 'vue'
@@ -13,7 +14,7 @@ import { taskTitle } from '@/lib/topicState'
 
 const props = withDefaults(
   defineProps<{
-    task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>
+    task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation' | 'awaits_me'>
     selected: boolean
     /** 任务里别人说了几句我还没读（只对负责人和协作者算，只算人说的）。 */
     unread?: number
@@ -28,7 +29,7 @@ const emit = defineEmits<{
 }>()
 
 const mark = computed<'needs-you' | 'running' | null>(() => {
-  if (props.task.presentation.column === 'needs_you') return 'needs-you'
+  if (props.task.awaits_me) return 'needs-you'
   if (props.task.presentation.phrase === 'running') return 'running'
   return null
 })

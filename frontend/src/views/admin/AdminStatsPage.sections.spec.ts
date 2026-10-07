@@ -128,15 +128,15 @@ describe('统计页 · 交付管线那一屏', () => {
 })
 
 describe('统计页 · 产品健康那一屏', () => {
-  it('四张 KPI、两条分布、两条「今天算不出来」', async () => {
+  it('两张 KPI、一条分布、两条「今天算不出来」', async () => {
     const { container } = await openTab('产品')
 
-    expect(kpiLabels(container)).toEqual(['7 日验收通过的成果', '递卡走到了哪', '主动消息有用吗', '没用'])
-    // 38 / 30% / 80% / 2 —— 北极星合计、退回率、有用率、提案被否。
-    expect(kpiValues(container)).toEqual(['38', '30%', '80%', '2'])
+    expect(kpiLabels(container)).toEqual(['7 日验收通过的成果', '递卡走到了哪'])
+    // 38 / 30% —— 北极星合计、退回率。
+    expect(kpiValues(container)).toEqual(['38', '30%'])
 
-    // 两条分布：退回的六个桶（值 >0 的那些）与有用/没用的四档。
-    expect(container.querySelectorAll('.ash')).toHaveLength(2)
+    // 一条分布：退回的六个桶（值 >0 的那些）。
+    expect(container.querySelectorAll('.ash')).toHaveLength(1)
 
     // 「算不出来」的两条带理由，不画一个假 0。
     expect(unavailableTexts(container)).toHaveLength(2)

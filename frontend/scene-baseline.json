@@ -101,7 +101,8 @@
     "src/views/user/settings/SecurityView.vue",
     "src/views/user/settings/UsageView.vue",
     "src/views/workspace/ChannelBrowseView.vue",
-    "src/views/workspace/ChannelTasksView.vue"
+    "src/views/workspace/ProjectOverviewView.vue",
+    "src/views/workspace/ProjectTasksView.vue"
   ],
   "debt": [
     "src/views/ConnectView.vue",
@@ -179,7 +180,6 @@
     "src/views/workspace/ProjectMembersView.vue",
     "src/views/workspace/ProjectShell.vue",
     "src/views/workspace/ProjectSidebar.vue",
-    "src/views/workspace/RunningWorkView.vue",
     "src/views/workspace/TopicView.vue",
     "src/views/workspace/WorkspaceEntry.vue"
   ]

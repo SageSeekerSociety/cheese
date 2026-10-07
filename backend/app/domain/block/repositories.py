@@ -16,6 +16,7 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    text,
     true,
     tuple_,
 )
@@ -25,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
-from app.domain.block.indexed_rows import QUESTION_ROWS
+from app.domain.block.indexed_rows import COALESCED_ROWS, EID, QUESTION_ROWS
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
@@ -142,6 +143,15 @@ class BlockRepository:
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
 
+    async def contents(self, block_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """{block id: 正文} —— 一次查完。"""
+        if not block_ids:
+            return {}
+        rows = await self._session.execute(
+            select(Block.id, Block.content).where(Block.id.in_(block_ids))
+        )
+        return {block_id: content or "" for block_id, content in rows.all()}
+
     async def client_delivery(
         self, conversation_id: uuid.UUID, *, author: str, client_id: str
     ) -> list[Block]:
@@ -184,20 +194,33 @@ class BlockRepository:
         whichever of its constituent ids it arrives under."""
         if not eids:
             return False
-        stmt = (
+        # Two lookups, each written with the exact expression its index is
+        # built on (`indexed_rows`), so the planner can use the index even on
+        # the generic plan a cached statement switches to.
+        by_eid = (
             select(Block.id)
             .where(
                 Block.conversation_id == conversation_id,
-                or_(
-                    Block.meta["eid"].as_string().in_(eids),
-                    # meta is JSON (not JSONB); cast the array for `?|`
-                    # (jsonb "contains any of these strings").
-                    cast(Block.meta["eids"], JSONB).op("?|")(array(eids, type_=Text)),
+                text(f"{EID.text} = ANY(:eids)").bindparams(
+                    bindparam("eids", eids, type_=ARRAY(Text))
                 ),
             )
             .limit(1)
         )
-        return await self._session.scalar(stmt) is not None
+        if await self._session.scalar(by_eid) is not None:
+            return True
+        coalesced = (
+            select(Block.id)
+            .where(
+                Block.conversation_id == conversation_id,
+                COALESCED_ROWS,
+                # meta is JSON (not JSONB); cast the array for `?|`
+                # (jsonb "contains any of these strings").
+                cast(Block.meta["eids"], JSONB).op("?|")(array(eids, type_=Text)),
+            )
+            .limit(1)
+        )
+        return await self._session.scalar(coalesced) is not None
 
     async def last_said_in_turn(
         self, conversation_id: uuid.UUID, turn_id: uuid.UUID

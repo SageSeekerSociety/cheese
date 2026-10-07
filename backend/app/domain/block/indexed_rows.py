@@ -67,3 +67,14 @@ QUEUED_MESSAGE_ROWS = text(
     " AND (meta -> 'delivery_event_id') IS NULL"
     " AND (meta -> 'answer_to') IS NULL"
 )
+
+#: The hook event id a materialized block carries, as `has_any_eid` reads it
+#: and `ix_blocks_conversation_eid` is built on. Nine blocks in ten carry one;
+#: the lookup asks whether a conversation already holds an id, and without this
+#: index an id it does not hold reads the whole table (873 ms on dev,
+#: 2026-10-07, 442,504 blocks).
+EID = text("(meta ->> 'eid')")
+
+#: A coalesced message: one block that landed several hook events, listed in
+#: `meta.eids`. About 2,300 of the 442,000 blocks on dev.
+COALESCED_ROWS = text("(meta -> 'eids') IS NOT NULL")

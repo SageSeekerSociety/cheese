@@ -22,7 +22,7 @@ import AdminShortcutSheet from '@/components/admin/AdminShortcutSheet.vue'
 import BlankPage from '@/components/common/BlankPage.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import { setLocale, t } from '@/i18n'
-import { BOARD_COLUMNS } from '@/lib/board'
+import { columnLabel } from '@/lib/board'
 import { SLASH_ITEMS } from '@/lib/docSlashMenu'
 import { PRIORITY_META, statusMeta } from '@/lib/feedbackMeta'
 import { DOCUMENT_TYPES } from '@/lib/fileKind'
@@ -106,7 +106,7 @@ describe('in English', () => {
 
   it('label tables built at import time follow the locale', () => {
     const labels = [
-      ...BOARD_COLUMNS.map((column) => column.label),
+      ...(['not_started', 'building', 'delivering', 'needs_you'] as const).map(columnLabel),
       ...SLASH_ITEMS.flatMap((item) => [item.label, item.hint]),
       ...Object.values(PRIORITY_META).map((meta) => meta.label),
       ...(['received', 'in_progress', 'resolved', 'deployed', 'declined'] as const).map((s) => statusMeta(s).label),

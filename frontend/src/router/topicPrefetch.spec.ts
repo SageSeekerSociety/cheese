@@ -1,21 +1,20 @@
 // Opening a topic waits on two things: the topic page's code and the topic's
 // newest messages. The rule here is that the second does not wait for the
 // first — the messages are already being fetched while the page code is still
-// on its way. The page modules below do not finish loading while the tests run,
-// which is exactly the moment the rule is about.
+// on its way. The page modules below never finish loading, which is exactly the
+// moment the rule is about.
 import { createPinia, setActivePinia } from 'pinia'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// The page modules stay pending through every test, and are let go only once the
-// file is done: an import still in flight when the environment is torn down fails
-// the whole run (EnvironmentTeardownError), however the tests themselves went.
-const { signedIn, never, release } = vi.hoisted(() => {
-  let open: (page: { default: object }) => void = () => {}
-  const pending = new Promise<{ default: object }>((resolve) => (open = resolve))
+const { signedIn, pageCode, release } = vi.hoisted(() => {
+  // 页面代码在整个文件里都还在路上；文件跑完才放行（换成空组件），不留一个永远
+  // 挂着的加载让测试环境拆掉之后还在后台读模块。
+  let open!: () => void
+  const gate = new Promise<void>((resolve) => (open = resolve))
   return {
     signedIn: { id: '7' },
-    never: () => pending,
-    release: () => open({ default: { render: () => null } }),
+    pageCode: () => gate.then(() => ({ default: { render: () => null } })),
+    release: () => open(),
   }
 })
 vi.mock('@/me', () => ({ myId: () => signedIn.id, myHandle: () => (signedIn.id ? 'alice' : '') }))
@@ -24,9 +23,9 @@ vi.mock('@/api', async (importOriginal) => ({
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
   getPreview: vi.fn().mockResolvedValue(null),
 }))
-vi.mock('@/views/workspace/ProjectShell.vue', never)
-vi.mock('@/views/workspace/ProjectSidebar.vue', never)
-vi.mock('@/views/workspace/TopicView.vue', never)
+vi.mock('@/views/workspace/ProjectShell.vue', pageCode)
+vi.mock('@/views/workspace/ProjectSidebar.vue', pageCode)
+vi.mock('@/views/workspace/TopicView.vue', pageCode)
 
 import { getPreview, listBlocks } from '@/api'
 import { blockCache, setCachedWindow } from '@/lib/blockCache'
@@ -37,7 +36,7 @@ const PROJECT = '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10'
 
 afterAll(async () => {
   release()
-  await vi.dynamicImportSettled()
+  await router.isReady().catch(() => {})
 })
 
 beforeEach(() => {
