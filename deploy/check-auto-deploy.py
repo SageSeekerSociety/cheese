@@ -88,7 +88,11 @@ def ci_ready_settled(candidate: str) -> bool:
     return True
 
 
-def should_skip(candidate: str) -> bool:
+def should_skip(candidate: str, rebuilt: bool = False) -> bool:
+    """Whether this automatic release must not run. `rebuilt`: the candidate's
+    images were just rebuilt under the tag they already had (desktop.yml does
+    this to ship new installers), so the box running that tag runs the images
+    being replaced, and a healthy box on it is not a duplicate."""
     if not re.fullmatch(r"[0-9a-f]{40}", candidate):
         raise ValueError("the automatic release must name a full commit SHA")
     project = os.environ.get("PROJECT", "cheese")
@@ -135,6 +139,9 @@ def should_skip(candidate: str) -> bool:
             raise ValueError(f"candidate {candidate} is not a descendant of running release {version}: {status}")
         print(f"Candidate {candidate} is {status} relative to running release {version}.")
         all_identical = all_identical and status == "identical"
+    if all_identical and rebuilt:
+        print(f"Releasing {candidate} again: its images were rebuilt under the tag it runs.")
+        return False
     if all_identical and all_healthy and healthy_services == {"backend", "frontend"}:
         print(f"Skipping duplicate release {candidate}: both application services are healthy.")
         return True
@@ -149,12 +156,14 @@ def main() -> None:
     if sys.argv[1] == "--ci-only":
         key, value = "ready", ci_ready_settled(sys.argv[2])
     else:
+        rebuilt = sys.argv[1] == "--rebuilt"
+        candidate = sys.argv[2] if rebuilt else sys.argv[1]
         # CI may have been rerun while this job waited for the deploy runner.
         # That release did not happen, so the job fails: a skip would leave it
         # green, and a green deploy job reads as "this commit is on dev".
-        if not ci_ready_settled(sys.argv[1]):
-            raise SystemExit(f"Not deploying {sys.argv[1]}: its validation is no longer successful.")
-        key, value = "skip", should_skip(sys.argv[1])
+        if not ci_ready_settled(candidate):
+            raise SystemExit(f"Not deploying {candidate}: its validation is no longer successful.")
+        key, value = "skip", should_skip(candidate, rebuilt=rebuilt)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"{key}={str(value).lower()}\n")
 

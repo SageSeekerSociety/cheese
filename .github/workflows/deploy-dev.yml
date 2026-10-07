@@ -2,7 +2,7 @@ name: Deploy (dev/test box)
 # The commit a run releases. For a build-completed event the run's own head SHA
 # is main's tip when the event fired, which can be a later commit than the one
 # whose images it deploys; .claude/scripts/pr-watch.sh reads this name instead.
-run-name: Deploy ${{ github.event.workflow_run.head_sha || github.sha }}
+run-name: Deploy ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
 
 # Continuous deployment to the cheese dev/test box (cheese-dev-env1-app,
 # 192.168.16.5). The box is on ghg's private network with no public inbound, so
@@ -36,13 +36,15 @@ run-name: Deploy ${{ github.event.workflow_run.head_sha || github.sha }}
 on:
   workflow_dispatch:
     inputs:
-      automatic:
-        # desktop.yml sets this after rebuilding the images for new installers:
-        # a build it starts raises no workflow_run event, so it asks here
-        # instead, and gets the same guards as an event-driven release.
-        description: Release like an automatic deploy (check images, Required CI and the running version)
-        type: boolean
-        default: false
+      rebuilt:
+        # desktop.yml names the commit whose images it just rebuilt to carry
+        # new installers: a build it starts raises no workflow_run event, so it
+        # asks here instead, and gets the same guards as an event-driven
+        # release. The commit is named, not taken from the ref, because main
+        # can move past it while the rebuild runs.
+        description: Release this commit, whose images were just rebuilt, like an automatic deploy (check images, Required CI and the running version)
+        type: string
+        default: ""
   workflow_run:
     workflows: ["Build and Push Docker Image"]
     types: [completed]
@@ -70,10 +72,10 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-          AUTOMATIC: ${{ inputs.automatic }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+          REBUILT: ${{ inputs.rebuilt }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "${AUTOMATIC:-}" != true ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -z "${REBUILT:-}" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             python3 deploy/check-auto-deploy.py --ci-only "$CANDIDATE_SHA"
@@ -83,7 +85,7 @@ jobs:
       - name: Fail when this commit will not be deployed
         if: steps.check.outputs.ready != 'true'
         env:
-          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
         run: |
           live="$(curl -fsS --max-time 10 https://okcheese.com/api/version | jq -r '.data.sha // empty')" || true
           reason="its image build or Required CI has no successful latest attempt"
@@ -136,7 +138,7 @@ jobs:
       # The candidate may predate this guard. Read policy from the workflow's
       # default-branch commit before checking out that candidate's deploy code.
       - name: Check out automatic deployment policy
-        if: github.event_name == 'workflow_run' || inputs.automatic
+        if: github.event_name == 'workflow_run' || inputs.rebuilt != ''
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
@@ -145,13 +147,14 @@ jobs:
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-          AUTOMATIC: ${{ inputs.automatic }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+          REBUILT: ${{ inputs.rebuilt }}
         run: |
           # A manual dispatch is an explicit release or rollback, including a
-          # commit that predates the automatic guard itself. One marked
-          # automatic (desktop.yml's) takes the guard like any automatic release.
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "${AUTOMATIC:-}" != true ]; then
+          # commit that predates the automatic guard itself. desktop.yml's,
+          # which names a rebuilt commit, takes the guard like any automatic
+          # release.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -z "${REBUILT:-}" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -159,7 +162,11 @@ jobs:
             . "$HOME/ops/deploy.env"
           fi
           export PROJECT="${PROJECT:-cheese}"
-          python3 deploy/check-auto-deploy.py "$CANDIDATE_SHA"
+          if [ -n "${REBUILT:-}" ]; then
+            python3 deploy/check-auto-deploy.py --rebuilt "$CANDIDATE_SHA"
+          else
+            python3 deploy/check-auto-deploy.py "$CANDIDATE_SHA"
+          fi
 
       - name: Check out the built commit (for the deploy scripts + compose)
         if: steps.release.outputs.skip != 'true'
@@ -167,7 +174,7 @@ jobs:
         with:
           # workflow_run checks out the DEFAULT branch unless told otherwise, so
           # pin the exact commit whose images were just built.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
 
       # A docs commit can include queued code changes relative to the running
@@ -419,7 +426,7 @@ jobs:
       - name: Say which commit dev runs
         if: always()
         env:
-          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
           SKIP: ${{ steps.release.outputs.skip }}
           OUTCOME: ${{ job.status }}
         run: |
