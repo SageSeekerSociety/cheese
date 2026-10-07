@@ -12,6 +12,10 @@
     </slot>
     <template v-else>
       <slot></slot>
+      <!-- 这一格是通用列表 `#empty` 插槽的兜底：横向的图标 + 一行小字，和同一处的
+           骨架、「加载中」、「没有更多了」是同一副长相——它们都在这一个容器里竖排
+           挨着。§3.12 的 BaseEmptyState 三档没有等价的这一种（inline 是竖排的一行
+           灰字、不画图标），硬套会让它和上下两条长得不像，所以这里保持原样。 -->
       <slot v-if="isEmpty" name="empty">
         <div class="empty d-flex justify-center align-center flex-row">
           <v-icon>mdi-alert-circle</v-icon>

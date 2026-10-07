@@ -123,6 +123,7 @@ function auditActionLabel(action: string): string {
   padding: 16px;
 }
 
+/* 空态走 BaseEmptyState 的 inline 档，这里只留这一块自己的内距。 */
 .amd__auditEmpty {
   margin: 0;
   padding: 20px 16px;
