@@ -9,9 +9,11 @@
 // 文件** —— 想把一个新的组件放进来，改的是 `catalog.ts`。
 //
 // 地址照 DemoView 的做法由入口当 props 传进来（测试里换得了 props，换不了 location）。
-import { computed } from 'vue'
+import type { CatalogEntry } from './catalog'
 
-import { CATALOG, catalogEntry } from './catalog'
+import { computed, ref } from 'vue'
+
+import { CATALOG, catalogEntry, catalogGroup, stateProps } from './catalog'
 import { installCatalogAnswers } from './catalogFixtures'
 import { installDemoBackend } from './demoBackend'
 
@@ -32,6 +34,27 @@ const NEED_LABELS: Record<string, string> = {
   pinia: 'store',
 }
 
+/** 目录页上的搜索：标题、说明、源码路径里出现就算。 */
+const query = ref('')
+
+/**
+ * 按源码目录分组，组内按标题排。几百条平铺成一页没人找得到；目录就是这个仓库自己
+ * 给组件分的类，不用另起一套。
+ */
+const groups = computed(() => {
+  const words = query.value.trim().toLowerCase()
+  const hit = (item: CatalogEntry) =>
+    !words || [item.title, item.about, item.file].some((text) => text.toLowerCase().includes(words))
+  const byGroup = new Map<string, CatalogEntry[]>()
+  for (const item of CATALOG.filter(hit)) {
+    const key = catalogGroup(item)
+    byGroup.set(key, [...(byGroup.get(key) ?? []), item])
+  }
+  return [...byGroup.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, items]) => ({ name, items: items.sort((a, b) => a.title.localeCompare(b.title)) }))
+})
+
 function needsOf(needs: string[]): string {
   return needs.length ? needs.map((n) => NEED_LABELS[n] ?? n).join(' · ') : '一件都不用装'
 }
@@ -51,19 +74,26 @@ function needsOf(needs: string[]): string {
         每个组件一页，用真产品的形状渲染几种状态。这一页不连后端、不登录 —— <code>pnpm dev</code> 打开
         <code>/demo/catalog</code> 就能看。加一个组件：在 <code>src/views/demo/catalog.ts</code> 里追加一条。
       </p>
-      <ul class="catalog-index">
-        <li v-for="item in CATALOG" :key="item.id">
-          <a class="catalog-card" :href="`/demo/catalog/${item.id}`">
-            <span class="catalog-card-title">{{ item.title }}</span>
-            <span class="catalog-card-about">{{ item.about }}</span>
-            <span class="catalog-card-meta">
-              <code>{{ item.file }}</code>
-              <span>{{ needsOf(item.needs) }}</span>
-              <span>{{ item.states.length }} 格</span>
-            </span>
-          </a>
-        </li>
-      </ul>
+      <input v-model="query" class="catalog-search" type="search" placeholder="按名字、说明或路径找" />
+      <section v-for="group in groups" :key="group.name" class="catalog-group">
+        <h2 class="catalog-group-name">
+          <code>{{ group.name }}</code> <span>{{ group.items.length }}</span>
+        </h2>
+        <ul class="catalog-index">
+          <li v-for="item in group.items" :key="item.id">
+            <a class="catalog-card" :href="`/demo/catalog/${item.id}`">
+              <span class="catalog-card-title">{{ item.title }}</span>
+              <span class="catalog-card-about">{{ item.about }}</span>
+              <span class="catalog-card-meta">
+                <code>{{ item.file }}</code>
+                <span>{{ needsOf(item.needs) }}</span>
+                <span>{{ item.states.length }} 格</span>
+              </span>
+            </a>
+          </li>
+        </ul>
+      </section>
+      <p v-if="!groups.length" class="catalog-missing">没有对得上的组件。</p>
     </template>
 
     <!-- 这个组件的那一页：一格里一个状态。 -->
@@ -86,9 +116,9 @@ function needsOf(needs: string[]): string {
              别处没有它们的位置：这里给的就是它们在产品里的那一层。 -->
         <div class="catalog-stage">
           <v-layout v-if="entry.layout">
-            <component :is="entry.component" v-bind="state.props">{{ state.slot }}</component>
+            <component :is="entry.component" v-bind="stateProps(entry, state)">{{ state.slot }}</component>
           </v-layout>
-          <component :is="entry.component" v-else v-bind="state.props">{{ state.slot }}</component>
+          <component :is="entry.component" v-else v-bind="stateProps(entry, state)">{{ state.slot }}</component>
         </div>
       </section>
     </template>
@@ -146,6 +176,38 @@ function needsOf(needs: string[]): string {
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--faint);
+}
+
+.catalog-search {
+  max-width: 360px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+}
+
+.catalog-search:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.catalog-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.catalog-group-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.catalog-group-name code {
+  font-family: var(--font-mono);
 }
 
 .catalog-index {

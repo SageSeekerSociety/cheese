@@ -9,7 +9,13 @@
  * 需要哪几样**（`needs`，见 `CatalogNeed`）、**看哪几格**（`states`，每格的 props
  * 是真会出现的形状，见 `catalogFixtures.ts`）。
  *
- * 加一个组件：这个文件末尾追加一条，把上面四件事写清。别的都不用动。
+ * 加一个组件：这个文件末尾追加一条（或放进一个 `catalog*.ts` 分册再展开进来），把上面
+ * 四件事写清。骨架可以用 `node scripts/catalog-scaffold.mjs <组件>` 按 props 生成。
+ *
+ * 和 Storybook 的 CSF 一一对应，以后要换工具或做视觉回归能机械迁移：条目是 CSF 的
+ * default export（`component`、`title`、`args`），每一格是一个命名 story（`name`、
+ * `props` 即这一格的 args、`slot` 即默认插槽）；一格的参数是条目的 `args` 叠上这一格
+ * 的 `props`，算法只有 `stateProps` 这一处。
  */
 import type { Component } from 'vue'
 
@@ -119,6 +125,8 @@ export interface CatalogEntry {
   file: string
   component: Component
   needs: CatalogNeed[]
+  /** 每一格共用的参数（CSF 的 `args`），一格的 `props` 叠在它上面。 */
+  args?: Record<string, unknown>
   /** 要坐在 Vuetify 布局里的（底栏、底部动作面板本来就长在 layout 里）。 */
   layout?: boolean
   /** 画出来的东西不在容器里（浮层传送到 body）。 */
@@ -948,6 +956,16 @@ export const CATALOG: CatalogEntry[] = [
   ...DOC_BLOCK_ENTRIES,
   ...BASE_ENTRIES,
 ]
+
+/** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */
+export function stateProps(entry: CatalogEntry, state: CatalogState): Record<string, unknown> {
+  return { ...entry.args, ...state.props }
+}
+
+/** 目录页上的分组：源码所在目录，`src/components/panels/doc/X.vue` → `components/panels/doc`。 */
+export function catalogGroup(entry: CatalogEntry): string {
+  return entry.file.replace(/^src\//, '').split('/').slice(0, -1).join('/')
+}
 
 /** 按 id 找一条（地址里那一段）。 */
 export function catalogEntry(id: string): CatalogEntry | null {

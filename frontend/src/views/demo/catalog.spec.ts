@@ -32,7 +32,7 @@ vi.mock('@/api', async () => {
   }
 })
 
-import { CATALOG } from './catalog'
+import { CATALOG, stateProps } from './catalog'
 import { installCatalogAnswers } from './catalogFixtures'
 import { installDemoBackend } from './demoBackend'
 import DemoCatalog from './DemoCatalog.vue'
@@ -98,6 +98,20 @@ describe('组件预览站', () => {
     vi.restoreAllMocks()
   })
 
+  it('没有一条还留着生成脚本的占位（TODO(catalog)）', () => {
+    // 骨架（`scripts/catalog-scaffold.mjs`）把要人写的每一句都写成这个记号：目录里的
+    // 一张卡要说清它是什么、这一格在讲什么，没写完的骨架不算一张卡。
+    const unfinished = CATALOG.filter((entry) =>
+      [entry.about, ...entry.states.flatMap((s) => [s.name, s.note])].some((text) => text.includes('TODO(catalog)'))
+    ).map((entry) => entry.id)
+    expect(unfinished).toEqual([])
+  })
+
+  it('每个 id 只出现一次', () => {
+    const ids = CATALOG.map((entry) => entry.id)
+    expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([])
+  })
+
   for (const entry of CATALOG) {
     describe(entry.title, () => {
       for (const [index, state] of entry.states.entries()) {
@@ -106,7 +120,7 @@ describe('组件预览站', () => {
             ? ({ ...LAYOUT, components: { Case: entry.component } } as unknown as Component)
             : entry.component
           const { container } = render(host, {
-            props: state.props,
+            props: stateProps(entry, state),
             slots: state.slot ? { default: state.slot } : {},
             global: { plugins: plugins(state.needs ?? entry.needs) },
           })
