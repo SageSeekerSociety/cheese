@@ -21,8 +21,9 @@ import type { EntityInfo } from '@/network/api/notifications/types'
 
 import { computed } from 'vue'
 
+import { getNotificationMark } from './registry'
+
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import { getNotificationMark } from '@/services/notification/registry'
 
 const props = defineProps<{
   notification: Notification

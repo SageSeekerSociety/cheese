@@ -5,8 +5,8 @@ import { beforeAll, expect, it } from 'vitest'
 
 import RenderDeviceInUseNotification from './RenderDeviceInUseNotification.vue'
 
+import { getNotificationRenderer } from '@/components/common/Notification/registry'
 import i18n, { setLocale } from '@/i18n'
-import { getNotificationRenderer } from '@/services/notification/registry'
 
 beforeAll(() => setLocale('zh-CN'))
 

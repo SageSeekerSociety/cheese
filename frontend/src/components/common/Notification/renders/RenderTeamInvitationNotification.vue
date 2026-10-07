@@ -16,32 +16,26 @@
   </div>
 </template>
 
-<script lang="ts">
-import { reactive } from 'vue'
-
-// 在这儿答过的邀请。记在组件之外：答完这一行会换成带链接的那一种，渲染器跟着重建，
-// 而列表要到下次重拉才拿到新状态；记在实例里的话，重建之后按钮又回来了，再点只会
-// 报「找不到」。
-const answeredHere = reactive(new Set<string>())
-</script>
-
 <script setup lang="ts">
 import type { NotificationRenderProps, RenderedNotificationContent } from './NotificationRenderUtils'
 
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
+
+import { useTeamInvitationAnswer } from '@/composables/useTeamInvitationAnswer'
 
 import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
 import UserRef from '@/components/common/UserRefLink.vue'
-import { TeamsApi } from '@/network/api/teams'
 
 const props = defineProps<NotificationRenderProps>()
 const emit = defineEmits<{
   (e: 'update-notification', notificationId: number): void
 }>()
 const { t } = useI18n()
+
+// 答过的邀请记在这份 composable 的模块作用域里，不记在这个实例里——见那里的注释。
+const { answeredHere, answer: answerInvitation } = useTeamInvitationAnswer()
 
 // 获取实体和元数据
 const inviter = computed(() => getEntity(props.notification, 'inviter'))
@@ -51,8 +45,6 @@ const message = computed(() => getStringMetadata(props.notification, 'message', 
 // 这条邀请本身：后端把它解析成 entities.application，状态是此刻的，不是发通知那一刻的。
 const application = computed(() => getEntity(props.notification, 'application'))
 const waiting = computed(() => application.value?.status === 'PENDING' && !answeredHere.has(application.value.id))
-// 请求还没回来时再点不算数：连点或者点完接受又点拒绝，只发第一下。
-const sending = ref(false)
 
 // 通知标题
 const title = computed(() => {
@@ -83,28 +75,9 @@ const routerLink = computed(() => {
 })
 
 async function answer(accept: boolean) {
-  if (sending.value) return
-  sending.value = true
-  const id = application.value!.id
-  try {
-    await (accept ? TeamsApi.acceptInvitation(Number(id)) : TeamsApi.declineInvitation(Number(id)))
-    answeredHere.add(id)
-    toast.success(
-      t(accept ? 'notifications.TEAM_INVITATION.toast.accepted' : 'notifications.TEAM_INVITATION.toast.declined')
-    )
-    emit('update-notification', props.notification.id)
-  } catch (error) {
-    console.error('Failed to answer team invitation', error)
-    toast.error(
-      t(
-        accept
-          ? 'notifications.TEAM_INVITATION.toast.acceptFailed'
-          : 'notifications.TEAM_INVITATION.toast.declineFailed'
-      )
-    )
-  } finally {
-    sending.value = false
-  }
+  const answered = await answerInvitation(application.value!.id, accept)
+  // 答成了才告诉宿主：列表要重拉，这一行也该跟着换成答过的那一种。
+  if (answered) emit('update-notification', props.notification.id)
 }
 
 const actions = computed(() =>

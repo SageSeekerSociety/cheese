@@ -15,32 +15,26 @@
   </div>
 </template>
 
-<script lang="ts">
-import { reactive } from 'vue'
-
-// 在这儿答过的申请。记在组件之外：答完这一行会换成带链接的那一种，渲染器跟着重建，
-// 而列表要到下次重拉才拿到新状态；记在实例里的话，重建之后按钮又回来了，再点只会
-// 报「找不到」。
-const answeredHere = reactive(new Set<string>())
-</script>
-
 <script setup lang="ts">
 import type { NotificationRenderProps, RenderedNotificationContent } from './NotificationRenderUtils'
 
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
+
+import { useTeamJoinRequestAnswer } from '@/composables/useTeamJoinRequestAnswer'
 
 import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
 import UserRef from '@/components/common/UserRefLink.vue'
-import { TeamsApi } from '@/network/api/teams'
 
 const props = defineProps<NotificationRenderProps>()
 const emit = defineEmits<{
   (e: 'update-notification', notificationId: number): void
 }>()
 const { t } = useI18n()
+
+// 答过的申请记在这份 composable 的模块作用域里，不记在这个实例里——见那里的注释。
+const { answeredHere, answer: answerJoinRequest } = useTeamJoinRequestAnswer()
 
 const requester = computed(() => getEntity(props.notification, 'requester'))
 const team = computed(() => getEntity(props.notification, 'team'))
@@ -50,8 +44,6 @@ const application = computed(() => getEntity(props.notification, 'application'))
 const waiting = computed(
   () => !!team.value && application.value?.status === 'PENDING' && !answeredHere.has(application.value.id)
 )
-// 请求还没回来时再点不算数：连点或者点完批准又点拒绝，只发第一下。
-const sending = ref(false)
 
 const title = computed(() => {
   if (!requester.value) return t('notifications.TEAM_JOIN_REQUEST.title_anonymous')
@@ -79,29 +71,9 @@ const routerLink = computed(() => {
 })
 
 async function answer(approve: boolean) {
-  if (sending.value) return
-  sending.value = true
-  const id = application.value!.id
-  const teamId = Number(team.value!.id)
-  try {
-    await (approve ? TeamsApi.approveJoinRequest(teamId, Number(id)) : TeamsApi.rejectJoinRequest(teamId, Number(id)))
-    answeredHere.add(id)
-    toast.success(
-      t(approve ? 'notifications.TEAM_JOIN_REQUEST.toast.approved' : 'notifications.TEAM_JOIN_REQUEST.toast.rejected')
-    )
-    emit('update-notification', props.notification.id)
-  } catch (error) {
-    console.error('Failed to answer team join request', error)
-    toast.error(
-      t(
-        approve
-          ? 'notifications.TEAM_JOIN_REQUEST.toast.approveFailed'
-          : 'notifications.TEAM_JOIN_REQUEST.toast.rejectFailed'
-      )
-    )
-  } finally {
-    sending.value = false
-  }
+  const answered = await answerJoinRequest(application.value!.id, Number(team.value!.id), approve)
+  // 答成了才告诉宿主：列表要重拉，这一行也该跟着换成答过的那一种。
+  if (answered) emit('update-notification', props.notification.id)
 }
 
 const actions = computed(() =>
