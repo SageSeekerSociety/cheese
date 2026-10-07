@@ -36,7 +36,7 @@ from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent.owner_provider import OWNER_CHANNEL
-from app.domain.agent_instance.own import owned_by_seat
+from app.domain.agent_instance.own import owned_by_session
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
@@ -1065,7 +1065,7 @@ async def _attempt(
         if own_host is not None:
             # The owner's machine need not be bound to the project: it works
             # for its owner's own agent, in any project the owner is in.
-            owned = await owned_by_seat(db, topic.project_id, row.agent_handle)
+            owned = await owned_by_session(db, topic.project_id, row.agent_handle)
             if owned is None or owned.owner_user_id != selected.owner_user_id:
                 raise ForbiddenError("Device does not belong to this agent's owner")
         elif not await devices.serves_project(selected.device_id, topic.project_id):

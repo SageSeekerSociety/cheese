@@ -21,7 +21,7 @@ from app.core.sentences import say
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent_instance.own import owned_by_seat, owned_instance
+from app.domain.agent_instance.own import owned_by_session, owned_instance
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDeviceRow
 from app.domain.device.supply import Supply
@@ -45,7 +45,7 @@ class OwnerChannel(CentralChannel):
 
     async def _resolve_session_host(self, db, session: SessionRef) -> str:
         topic = await TopicService(db).get_or_404(session.topic_id)
-        owned = await owned_by_seat(db, topic.project_id, session.agent_handle)
+        owned = await owned_by_session(db, topic.project_id, session.agent_handle)
         if owned is None:
             raise ScreenSetupError(say("screenAgentIdentityMissing"))
         place = await AgentSessionService(db).place(

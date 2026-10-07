@@ -17,12 +17,14 @@ from sqlalchemy import select
 
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
-from app.domain.agent.owner_provider import OWNER_CHANNEL
+from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.harness import SessionRef
+from app.domain.agent.owner_provider import OWNER_CHANNEL, OwnerChannel
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
-from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.topic.models import Topic
@@ -134,7 +136,15 @@ async def _own_session(client, *, session_host_of):
                 instance_id=instance.id, owner_user_id=bob.id, harness="claude-code"
             )
         )
-        seat = agent_instance_handle(instance.id)
+        # Bob gave the platform his login on his laptop.
+        db.add(
+            DeviceClaudeLoginRow(
+                device_id=bobs_laptop,
+                installed=True,
+                logged_in=True,
+                checked_at=datetime.now(UTC),
+            )
+        )
         actor = (await IdentityService(db).ensure_room_agent_user(topic_id)).username
         topic = await db.get(Topic, topic_id)
         topic.compute_config = {
@@ -143,8 +153,9 @@ async def _own_session(client, *, session_host_of):
             "device_id": rooms_machine,
         }
         resource = str(topic.resource_id or topic_id)
+        # A session names its agent by the instance's handle, as a turn does.
         session = await AgentSessionService(db).ensure(
-            topic_id, seat, harness="claude-code"
+            topic_id, instance.handle, harness="claude-code"
         )
         host = {"bob": bobs_laptop, "alice": rooms_machine}[session_host_of]
         session.runtime_location = {
@@ -162,37 +173,58 @@ async def _own_session(client, *, session_host_of):
             session_id=str(session.id),
         )
         await db.commit()
-    return topic_id, session.id, token, bobs_laptop
+    return SimpleNamespace(
+        project_id=project_id,
+        topic_id=topic_id,
+        session_id=session.id,
+        token=token,
+        bobs_laptop=bobs_laptop,
+        handle=instance.handle,
+    )
 
 
 async def test_an_own_agent_works_on_its_owners_machine_not_the_rooms(
     client, monkeypatch
 ):
-    topic_id, session_id, token, bobs_laptop = await _own_session(
-        client, session_host_of="bob"
-    )
+    own = await _own_session(client, session_host_of="bob")
     monkeypatch.setattr(work_lease, "device_hub", _hub())
     monkeypatch.setattr(execution, "call", AsyncMock(side_effect=_executor))
 
     response = client.post(
-        f"/topics/{topic_id}/sessions/{session_id}/work-lease",
-        headers={"X-Cheese-Token": token},
+        f"/topics/{own.topic_id}/sessions/{own.session_id}/work-lease",
+        headers={"X-Cheese-Token": own.token},
         json={"env": {}},
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["target"]["device_id"] == bobs_laptop
+    assert response.json()["data"]["target"]["device_id"] == own.bobs_laptop
 
 
 async def test_an_own_agent_is_never_given_another_members_machine(client, monkeypatch):
-    topic_id, session_id, token, _ = await _own_session(client, session_host_of="alice")
+    own = await _own_session(client, session_host_of="alice")
     monkeypatch.setattr(work_lease, "device_hub", _hub())
     monkeypatch.setattr(execution, "call", AsyncMock(side_effect=_executor))
 
     response = client.post(
-        f"/topics/{topic_id}/sessions/{session_id}/work-lease",
-        headers={"X-Cheese-Token": token},
+        f"/topics/{own.topic_id}/sessions/{own.session_id}/work-lease",
+        headers={"X-Cheese-Token": own.token},
         json={"env": {}},
     )
 
     assert response.status_code == 403, response.text
+
+
+async def test_an_own_agents_conversation_starts_on_its_owners_machine(client):
+    own = await _own_session(client, session_host_of="bob")
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+
+    placement = client.portal.call(
+        lambda: channel.precheck(
+            SessionRef(own.project_id, own.topic_id, own.handle, harness="claude-code"),
+            needs_place=False,
+        )
+    )
+
+    assert placement.machine == own.bobs_laptop
