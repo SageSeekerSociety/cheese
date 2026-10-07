@@ -1,153 +1,135 @@
 <template>
-  <v-dialog :model-value="open" :max-width="DIALOG_WIDTH.md" scrollable @update:model-value="$emit('close')">
-    <v-card rounded="lg" elevation="3">
-      <v-card-title class="pa-4 pb-3">
-        <div class="d-flex align-center">
-          <v-icon color="primary" class="mr-3" size="28">mdi-account-group</v-icon>
-          <span class="text-h5 font-weight-medium">{{ t('tasks.teamSelect.title') }}</span>
-        </div>
-      </v-card-title>
-      <v-divider></v-divider>
-      <v-card-text class="pa-0">
-        <div class="px-4 pt-4 pb-2">
-          <div class="text-body-1">{{ t('tasks.teamSelect.choose') }}</div>
-        </div>
+  <AdaptiveDialog :model-value="open" :title="t('tasks.teamSelect.title')" @update:model-value="$emit('close')">
+    <div class="px-4 pt-4 pb-2">
+      <div class="text-body-1">{{ t('tasks.teamSelect.choose') }}</div>
+    </div>
 
-        <div v-if="loading" class="d-flex justify-center my-8">
-          <v-progress-circular indeterminate color="primary" size="56"></v-progress-circular>
-        </div>
+    <div v-if="loading" class="d-flex justify-center my-8">
+      <v-progress-circular indeterminate color="primary" size="56"></v-progress-circular>
+    </div>
 
-        <div v-else-if="eligibleTeams.length === 0" class="text-center py-8 px-4">
-          <v-avatar color="warning" class="mb-4" size="64">
-            <!-- 状态色底上的反白图标：warning 深色下是 #F0A94A（更亮），白色压不住 -->
-            <v-icon icon="mdi-alert-circle-outline" color="surface" size="36"></v-icon>
-          </v-avatar>
-          <div class="text-h6 font-weight-medium mb-2">{{ t('tasks.teamSelect.emptyTitle') }}</div>
-          <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">
-            {{ taskData?.requireRealName ? t('tasks.teamSelect.emptyRealName') : t('tasks.teamSelect.emptyNoTeam') }}
+    <div v-else-if="eligibleTeams.length === 0" class="text-center py-8 px-4">
+      <v-avatar color="warning" class="mb-4" size="64">
+        <!-- 状态色底上的反白图标：warning 深色下是 #F0A94A（更亮），白色压不住 -->
+        <v-icon icon="mdi-alert-circle-outline" color="surface" size="36"></v-icon>
+      </v-avatar>
+      <div class="text-h6 font-weight-medium mb-2">{{ t('tasks.teamSelect.emptyTitle') }}</div>
+      <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">
+        {{ taskData?.requireRealName ? t('tasks.teamSelect.emptyRealName') : t('tasks.teamSelect.emptyNoTeam') }}
+      </div>
+    </div>
+
+    <div v-else class="px-4 pt-2 pb-4">
+      <!-- Real-name verification notice -->
+      <v-card
+        v-if="taskData?.requireRealName"
+        class="mb-4 info-alert-card"
+        variant="flat"
+        rounded="lg"
+        color="surface-light"
+      >
+        <v-card-text class="pa-3">
+          <div class="d-flex align-start">
+            <v-avatar size="36" color="primary" class="mr-3 info-avatar">
+              <v-icon icon="mdi-shield-account" color="surface" size="20"></v-icon>
+            </v-avatar>
+            <div>
+              <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.teamSelect.realNameTitle') }}</div>
+              <p class="text-body-2 mb-0">{{ t('tasks.teamSelect.realNameText') }}</p>
+            </div>
           </div>
-        </div>
+        </v-card-text>
+      </v-card>
 
-        <div v-else class="px-4 pt-2 pb-4">
-          <!-- Real-name verification notice -->
-          <v-card
-            v-if="taskData?.requireRealName"
-            class="mb-4 info-alert-card"
-            variant="flat"
-            rounded="lg"
-            color="surface-light"
-          >
-            <v-card-text class="pa-3">
-              <div class="d-flex align-start">
-                <v-avatar size="36" color="primary" class="mr-3 info-avatar">
-                  <v-icon icon="mdi-shield-account" color="surface" size="20"></v-icon>
-                </v-avatar>
-                <div>
-                  <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.teamSelect.realNameTitle') }}</div>
-                  <p class="text-body-2 mb-0">{{ t('tasks.teamSelect.realNameText') }}</p>
-                </div>
+      <div class="team-cards-container mt-2">
+        <v-card
+          v-for="teamEligibility in availableTeams"
+          :key="teamEligibility.team.id"
+          :disabled="!teamEligibility.eligibility.eligible"
+          class="team-card mb-3"
+          :class="{ 'team-card-disabled': !teamEligibility.eligibility.eligible }"
+          flat
+          rounded="lg"
+          variant="outlined"
+          @click="teamEligibility.eligibility.eligible ? $emit('select', teamEligibility.team.id) : null"
+        >
+          <div v-if="!teamEligibility.eligibility.eligible" class="team-card-overlay">
+            <div class="certification-required">
+              <v-icon
+                :icon="getTeamDisabledIcon(teamEligibility)"
+                :color="getTeamDisabledColor(teamEligibility)"
+                size="22"
+                class="mr-2"
+              ></v-icon>
+              <span>{{ getTeamDisabledText(teamEligibility) }}</span>
+            </div>
+          </div>
+          <div class="d-flex pa-3">
+            <UserAvatar
+              kind="org"
+              :avatar="getAvatarUrl(teamEligibility.team.avatarId)"
+              :name="teamEligibility.team.name"
+              size="52"
+              class="mr-3 flex-shrink-0"
+            />
+
+            <div class="flex-grow-1 min-width-0">
+              <div class="d-flex align-center flex-wrap gap-2 mb-1">
+                <span class="text-subtitle-1 font-weight-medium text-truncate">{{ teamEligibility.team.name }}</span>
+                <v-chip
+                  size="small"
+                  :color="getTeamVerificationStatus(teamEligibility.team).color"
+                  :text-color="
+                    getTeamVerificationStatus(teamEligibility.team).color === 'success' ? 'white' : undefined
+                  "
+                  label
+                  class="px-2"
+                >
+                  {{ getTeamVerificationStatus(teamEligibility.team).status }}
+                </v-chip>
               </div>
-            </v-card-text>
-          </v-card>
 
-          <div class="team-cards-container mt-2">
-            <v-card
-              v-for="teamEligibility in availableTeams"
-              :key="teamEligibility.team.id"
-              :disabled="!teamEligibility.eligibility.eligible"
-              class="team-card mb-3"
-              :class="{ 'team-card-disabled': !teamEligibility.eligibility.eligible }"
-              flat
-              rounded="lg"
-              variant="outlined"
-              @click="teamEligibility.eligibility.eligible ? $emit('select', teamEligibility.team.id) : null"
-            >
-              <div v-if="!teamEligibility.eligibility.eligible" class="team-card-overlay">
-                <div class="certification-required">
-                  <v-icon
-                    :icon="getTeamDisabledIcon(teamEligibility)"
-                    :color="getTeamDisabledColor(teamEligibility)"
-                    size="22"
-                    class="mr-2"
-                  ></v-icon>
-                  <span>{{ getTeamDisabledText(teamEligibility) }}</span>
-                </div>
+              <div class="text-body-2 text-medium-emphasis text-truncate mb-2">
+                {{ teamEligibility.team.intro }}
               </div>
-              <div class="d-flex pa-3">
-                <UserAvatar
-                  kind="org"
-                  :avatar="getAvatarUrl(teamEligibility.team.avatarId)"
-                  :name="teamEligibility.team.name"
-                  size="52"
-                  class="mr-3 flex-shrink-0"
-                />
 
-                <div class="flex-grow-1 min-width-0">
-                  <div class="d-flex align-center flex-wrap gap-2 mb-1">
-                    <span class="text-subtitle-1 font-weight-medium text-truncate">{{
-                      teamEligibility.team.name
-                    }}</span>
-                    <v-chip
-                      size="small"
-                      :color="getTeamVerificationStatus(teamEligibility.team).color"
-                      :text-color="
-                        getTeamVerificationStatus(teamEligibility.team).color === 'success' ? 'white' : undefined
-                      "
-                      label
-                      class="px-2"
-                    >
-                      {{ getTeamVerificationStatus(teamEligibility.team).status }}
-                    </v-chip>
-                  </div>
-
-                  <div class="text-body-2 text-medium-emphasis text-truncate mb-2">
-                    {{ teamEligibility.team.intro }}
-                  </div>
-
-                  <div
-                    v-if="
-                      taskData?.requireRealName &&
-                      teamEligibility.team.memberRealNameStatus &&
-                      teamEligibility.team.memberRealNameStatus.length > 0
-                    "
-                    class="team-members-container"
+              <div
+                v-if="
+                  taskData?.requireRealName &&
+                  teamEligibility.team.memberRealNameStatus &&
+                  teamEligibility.team.memberRealNameStatus.length > 0
+                "
+                class="team-members-container"
+              >
+                <div class="text-caption text-medium-emphasis mb-1">{{ t('tasks.teamSelect.memberStatus') }}</div>
+                <div class="d-flex flex-wrap gap-1">
+                  <v-chip
+                    v-for="member in teamEligibility.team.memberRealNameStatus"
+                    :key="member.memberId"
+                    size="x-small"
+                    :color="member.hasRealNameInfo ? 'success' : 'error'"
+                    :variant="member.hasRealNameInfo ? 'flat' : 'outlined'"
+                    class="member-chip"
                   >
-                    <div class="text-caption text-medium-emphasis mb-1">{{ t('tasks.teamSelect.memberStatus') }}</div>
-                    <div class="d-flex flex-wrap gap-1">
-                      <v-chip
-                        v-for="member in teamEligibility.team.memberRealNameStatus"
-                        :key="member.memberId"
-                        size="x-small"
-                        :color="member.hasRealNameInfo ? 'success' : 'error'"
-                        :variant="member.hasRealNameInfo ? 'flat' : 'outlined'"
-                        class="member-chip"
-                      >
-                        <template #prepend>
-                          <v-icon size="12" class="mr-1">
-                            {{ member.hasRealNameInfo ? 'mdi-check-circle' : 'mdi-close-circle' }}
-                          </v-icon>
-                        </template>
-                        {{ member.userName }}
-                      </v-chip>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-if="teamEligibility.eligibility.eligible" class="select-btn-container ml-3 d-flex align-center">
-                  <v-icon icon="mdi-chevron-right" size="20" class="c-muted" aria-hidden="true" />
+                    <template #prepend>
+                      <v-icon size="12" class="mr-1">
+                        {{ member.hasRealNameInfo ? 'mdi-check-circle' : 'mdi-close-circle' }}
+                      </v-icon>
+                    </template>
+                    {{ member.userName }}
+                  </v-chip>
                 </div>
               </div>
-            </v-card>
+            </div>
+
+            <div v-if="teamEligibility.eligibility.eligible" class="select-btn-container ml-3 d-flex align-center">
+              <v-icon icon="mdi-chevron-right" size="20" class="c-muted" aria-hidden="true" />
+            </div>
           </div>
-        </div>
-      </v-card-text>
-      <v-divider></v-divider>
-      <v-card-actions class="pa-4">
-        <v-spacer></v-spacer>
-        <BaseButton kind="ghost" @click="$emit('close')">{{ t('global.cancel') }}</BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+        </v-card>
+      </div>
+    </div>
+  </AdaptiveDialog>
 </template>
 
 <script setup lang="ts">
@@ -158,8 +140,7 @@ import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import { DIALOG_WIDTH } from '@/components/base/dialogSize'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { eligibilityReasonKey } from '@/views/tasks/eligibilityReason'
 

@@ -3,80 +3,71 @@
     <!-- 操作区 -->
     <div class="d-flex align-center mb-4">
       <v-spacer></v-spacer>
-      <v-dialog v-model="isInviteDialogActive" max-width="500">
-        <template #activator="{ props: activatorProps }">
-          <BaseButton
-            v-if="canBringPeopleIn"
-            v-bind="activatorProps"
-            kind="primary"
-            prepend-icon="mdi-account-plus"
-            size="sm"
-          >
-            {{ t('teams.members.invite') }}
-          </BaseButton>
-        </template>
+      <BaseButton
+        v-if="canBringPeopleIn"
+        kind="primary"
+        prepend-icon="mdi-account-plus"
+        size="sm"
+        @click="isInviteDialogActive = true"
+      >
+        {{ t('teams.members.invite') }}
+      </BaseButton>
 
-        <template #default="{ isActive }">
-          <v-form @submit.prevent="confirmInvite">
-            <v-card :title="t('teams.members.invite')">
-              <v-card-text>
-                <v-text-field
-                  v-model="inviteQuery"
-                  autocomplete="off"
-                  :label="t('teams.members.inviteLabel')"
-                  :placeholder="t('teams.members.invitePlaceholder')"
-                  variant="outlined"
-                  :loading="lookingUp"
-                  :error-messages="lookupError ? [lookupError] : []"
-                  :hide-details="!lookupError"
-                  class="mb-4"
-                />
-                <!-- 先把查到的人摆出来：邀请的是这一位，按下按钮之前就看得见。 -->
-                <div v-if="found" class="d-flex align-center mb-4" data-testid="found-user">
-                  <UserAvatar
-                    :name="found.name || found.handle"
-                    :avatar="getAvatarUrl(found.avatar_id)"
-                    :seed="found.handle"
-                    :size="32"
-                    class="mr-3"
-                  />
-                  <div class="min-w-0">
-                    <div class="t-body">{{ found.name || found.handle }}</div>
-                    <div class="t-meta c-muted">{{ found.handle }}</div>
-                  </div>
-                </div>
-                <v-select
-                  v-model="inviteRoleInput"
-                  autocomplete="off"
-                  :items="roleOptions"
-                  :label="t('teams.members.roleLabel')"
-                  variant="outlined"
-                  hide-details
-                  class="mb-4"
-                ></v-select>
-                <v-textarea
-                  v-model="inviteMessageInput"
-                  autocomplete="off"
-                  :label="t('teams.members.inviteMessageLabel')"
-                  variant="outlined"
-                  :placeholder="t('teams.members.inviteMessagePlaceholder')"
-                  rows="3"
-                  auto-grow
-                  hide-details
-                ></v-textarea>
-              </v-card-text>
-
-              <v-card-actions>
-                <v-spacer></v-spacer>
-                <BaseButton type="button" @click="isActive.value = false">{{ t('teams.members.cancel') }}</BaseButton>
-                <BaseButton type="submit" kind="primary" :disabled="!found">{{
-                  t('teams.members.inviteSubmit')
-                }}</BaseButton>
-              </v-card-actions>
-            </v-card>
-          </v-form>
-        </template>
-      </v-dialog>
+      <AdaptiveDialog
+        v-model="isInviteDialogActive"
+        :title="t('teams.members.invite')"
+        size="md"
+        :primary-label="t('teams.members.inviteSubmit')"
+        :primary-disabled="!found"
+        @primary="confirmInvite"
+      >
+        <v-form @submit.prevent="confirmInvite">
+          <v-text-field
+            v-model="inviteQuery"
+            autocomplete="off"
+            :label="t('teams.members.inviteLabel')"
+            :placeholder="t('teams.members.invitePlaceholder')"
+            variant="outlined"
+            :loading="lookingUp"
+            :error-messages="lookupError ? [lookupError] : []"
+            :hide-details="!lookupError"
+            class="mb-4"
+          />
+          <!-- 先把查到的人摆出来：邀请的是这一位，按下按钮之前就看得见。 -->
+          <div v-if="found" class="d-flex align-center mb-4" data-testid="found-user">
+            <UserAvatar
+              :name="found.name || found.handle"
+              :avatar="getAvatarUrl(found.avatar_id)"
+              :seed="found.handle"
+              :size="32"
+              class="mr-3"
+            />
+            <div class="min-w-0">
+              <div class="t-body">{{ found.name || found.handle }}</div>
+              <div class="t-meta c-muted">{{ found.handle }}</div>
+            </div>
+          </div>
+          <v-select
+            v-model="inviteRoleInput"
+            autocomplete="off"
+            :items="roleOptions"
+            :label="t('teams.members.roleLabel')"
+            variant="outlined"
+            hide-details
+            class="mb-4"
+          ></v-select>
+          <v-textarea
+            v-model="inviteMessageInput"
+            autocomplete="off"
+            :label="t('teams.members.inviteMessageLabel')"
+            variant="outlined"
+            :placeholder="t('teams.members.inviteMessagePlaceholder')"
+            rows="3"
+            auto-grow
+            hide-details
+          ></v-textarea>
+        </v-form>
+      </AdaptiveDialog>
     </div>
 
     <TeamJoinLinkCard
@@ -391,6 +382,7 @@ import { ApiError } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'

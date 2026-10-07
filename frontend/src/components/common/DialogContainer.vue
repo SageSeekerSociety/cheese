@@ -1,5 +1,6 @@
 <template>
   <div>
+    <!-- eslint-disable-next-line vue/no-restricted-syntax -- shell whose body and action bar both come from the useDialog() descriptor, not from a template (design-system §3.7) -->
     <v-dialog
       v-for="dialog in dialogs"
       :key="dialog.id"

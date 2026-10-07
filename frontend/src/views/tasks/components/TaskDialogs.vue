@@ -154,38 +154,20 @@
   </AdaptiveDialog>
 
   <!-- 隐私声明对话框 -->
-  <v-dialog
+  <AdaptiveDialog
     v-if="taskData?.requireRealName"
     :model-value="privacyDialogOpen"
-    max-width="560"
-    scrollable
+    :title="t('tasks.verifyDialog.privacyTitle')"
+    :cancel-label="fromSubmit ? t('tasks.verifyDialog.notNow') : t('tasks.verifyDialog.understood')"
+    :primary-label="fromSubmit ? t('tasks.verifyDialog.agreeAndJoin') : undefined"
+    @primary="confirmPrivacy"
     @update:model-value="handleCancelPrivacy"
   >
-    <v-card rounded="lg">
-      <v-card-title class="d-flex align-center px-4 pt-4 pb-2">
-        <v-icon color="primary" class="mr-3" size="28">mdi-shield-check</v-icon>
-        <span class="text-h5 font-weight-medium">{{ t('tasks.verifyDialog.privacyTitle') }}</span>
-      </v-card-title>
+    <p class="text-subtitle-2 font-weight-medium mb-4">{{ t('tasks.verifyDialog.privacyIntro') }}</p>
 
-      <v-card-text class="px-4 pb-2">
-        <p class="text-subtitle-2 font-weight-medium mb-4">{{ t('tasks.verifyDialog.privacyIntro') }}</p>
-
-        <!-- 隐私信息保护区域 -->
-        <PrivacyProtectionInfo />
-      </v-card-text>
-
-      <v-card-actions class="pa-4 pt-2">
-        <v-spacer></v-spacer>
-        <BaseButton v-if="!fromSubmit" kind="ghost" @click="handleCancelPrivacy">{{
-          t('tasks.verifyDialog.understood')
-        }}</BaseButton>
-        <template v-else>
-          <BaseButton kind="ghost" @click="handleCancelPrivacy">{{ t('tasks.verifyDialog.notNow') }}</BaseButton>
-          <BaseButton kind="primary" @click="confirmPrivacy">{{ t('tasks.verifyDialog.agreeAndJoin') }}</BaseButton>
-        </template>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+    <!-- 隐私信息保护区域 -->
+    <PrivacyProtectionInfo />
+  </AdaptiveDialog>
 
   <!-- 新增队伍选择对话框 -->
   <TeamSelectionDialog
@@ -221,7 +203,6 @@ import { useEvents } from '../events'
 
 import TaskInheritance from './TaskInheritance.vue'
 
-import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 
 const { t } = useI18n()
