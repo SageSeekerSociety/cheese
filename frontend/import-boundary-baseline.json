@@ -10,7 +10,6 @@
     "src/components/common/TopicSelector.vue": 1,
     "src/components/DeviceLiveViewer.vue": 1,
     "src/components/DeviceSessionsSwitch.vue": 1,
-    "src/components/NodeBoard.vue": 1,
     "src/components/ProjectComputeSettings.vue": 1,
     "src/components/ProjectDefaultModelSettings.vue": 1,
     "src/components/ProjectEnvironmentSettings.vue": 1,

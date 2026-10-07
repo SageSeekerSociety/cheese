@@ -23,6 +23,7 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
 })
 
 vi.mock('@/api', () => ({
+  getMarketNodes: async () => ({ nodes: [], active_turns_total: 0, current_provider: 'local' }),
   getMarketPools: async () => ({
     ai: [
       {
