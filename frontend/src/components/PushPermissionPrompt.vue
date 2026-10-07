@@ -59,12 +59,19 @@ watch(
   () => props.working,
   (working) => {
     stopTimer()
-    if (!working || shown.value) return
+    // 它说的是「这次运行」：这一轮收工了，这句话就不再是真的，没答的也一起收起。
+    // 没答不算问过 —— 下一次跑过一分钟的轮次还会再问。
+    if (!working) {
+      shown.value = false
+      return
+    }
+    if (shown.value) return
     if (!pushSupported() || permissionSettled() || asked()) return
     timer = setTimeout(async () => {
       // 一分钟到了再问一次这个部署开不开推送：这一步要打后端，放在计时之前等于每
       // 开一轮就白问一次。
-      if (props.working && (await pushAvailable())) shown.value = true
+      // 问后端的那一下里这一轮可能已经收工了，所以拿到答复之后再看一次。
+      if (props.working && (await pushAvailable()) && props.working) shown.value = true
     }, ASK_AFTER_MS)
   },
   // `immediate` 是必须的：打开一个**已经在跑**的房间时，`working` 一进来就是 true
