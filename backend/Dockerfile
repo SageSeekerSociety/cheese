@@ -194,9 +194,10 @@ USER cheese
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-# The commit this image was built from, so the running app can report its own
-# version (settings.app_version → /api/version). Passed by build.yml; "dev" for
-# a plain local build.
+# The commit this image was built from, so the running app can say what it was
+# built from (settings.app_version → `build` in /api/version; a deploy passes the
+# commit it releases as APP_RELEASE). Passed by build.yml; "dev" for a plain
+# local build.
 ARG GIT_SHA=dev
 ENV APP_VERSION=$GIT_SHA
 
