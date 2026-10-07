@@ -8,7 +8,7 @@ rename carries it along; a route without one stops the app from starting.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, WebSocket
 from fastapi.testclient import TestClient
 
 from app.api.write_access import (
@@ -161,3 +161,25 @@ def test_a_write_route_mounted_after_seal_is_refused_at_request_time() -> None:
     refused = client.post("/late")
     assert refused.status_code == 403
     assert "write-access declaration" in refused.json()["message"]
+
+
+def test_a_router_wide_declaration_leaves_its_sockets_and_reads_alone() -> None:
+    for declaration in (ROUTE_DECIDES, CHEESE_ONLY_IN_ROOM):
+        router = APIRouter(prefix="/topics", dependencies=[declaration])
+
+        @router.websocket("/{topic_id}/socket")
+        async def socket(websocket: WebSocket, topic_id: str) -> None:
+            await websocket.accept()
+            await websocket.send_text("hello")
+            await websocket.close()
+
+        @router.get("/{topic_id}/read")
+        async def read(topic_id: str) -> dict:
+            return {"reached": True}
+
+        built = _app(router, guarded=True)
+        seal(built)
+        client = TestClient(built)
+        with client.websocket_connect("/topics/t1/socket") as ws:
+            assert ws.receive_text() == "hello"
+        assert client.get("/topics/t1/read").json() == {"reached": True}

@@ -19,8 +19,9 @@ routes are mounted and refuses to start the app, unless the route is in the
 frozen list of undeclared routes that predate this module
 (``write_access_baseline``, which only shrinks). ``refuse_unsealed_writes`` is
 an app-wide dependency that answers 403 to a write whose route ``seal`` did not
-admit, so a route mounted after ``seal``, or an app nobody sealed, is closed
-rather than open.
+admit, so a route object created after ``seal``, or an app nobody sealed, is
+closed rather than open. (A router already sealed and included again under
+another prefix shares its route objects, and so stays admitted.)
 
 A route that is renamed or moved carries its declaration along, and a frozen
 route that is renamed leaves the list and has to be declared. The gate this
@@ -36,7 +37,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI
 from fastapi.dependencies.models import Dependant
 from fastapi.requests import HTTPConnection
 from fastapi.routing import APIRoute
@@ -70,15 +71,31 @@ class WriteAccess:
         where = {"topic": "_in_room", "project": "_in_project", None: ""}
         return self.kind + where[self.scope]
 
-    async def __call__(
-        self, request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+    async def __call__(self, connection: HTTPConnection) -> None:
+        """``route_decides``: nothing to check here; the handler does.
+
+        Typed as the connection, not the request, so a router that declares
+        for all its routes keeps its WebSocket routes working.
+        """
+
+
+@dataclass(frozen=True, eq=False)
+class _CheeseOnly(WriteAccess):
+    kind: Literal["cheese_only"] = "cheese_only"
+
+    async def __call__(  # type: ignore[override]
+        self,
+        connection: HTTPConnection,
+        db: Annotated[AsyncSession, Depends(get_db)],
     ) -> None:
-        if self.kind == "route_decides":
+        # Write access is about HTTP writes: a WebSocket or a read under a
+        # router that declares 芝士-only is not this check's to refuse.
+        if connection.scope.get("method") not in WRITE_METHODS:
             return
-        raw = request.path_params.get(f"{self.scope}_id")
+        raw = connection.path_params.get(f"{self.scope}_id")
         project_id = str(raw) if self.scope == "project" and raw else None
         topic_id = str(raw) if self.scope == "topic" and raw else None
-        token = request.headers.get("x-cheese-token") or ""
+        token = connection.headers.get("x-cheese-token") or ""
         opened = is_valid_cheese_token(token, project_id=project_id, topic_id=topic_id)
         # A project agent credential can address topics in its project, so it
         # can't be matched against the URL by string compare the way a per-turn
@@ -91,7 +108,7 @@ class WriteAccess:
                 token,
                 project_id=project_id,
                 topic_id=topic_id,
-                screen_token=request.headers.get("x-cheese-screen") or "",
+                screen_token=connection.headers.get("x-cheese-screen") or "",
             )
         if not opened:
             raise UnauthorizedError("invalid sandbox token")
@@ -132,8 +149,8 @@ async def _credential_opens(
         return False
 
 
-CHEESE_ONLY_IN_ROOM = Depends(WriteAccess("cheese_only", "topic"))
-CHEESE_ONLY_IN_PROJECT = Depends(WriteAccess("cheese_only", "project"))
+CHEESE_ONLY_IN_ROOM = Depends(_CheeseOnly(scope="topic"))
+CHEESE_ONLY_IN_PROJECT = Depends(_CheeseOnly(scope="project"))
 ROUTE_DECIDES = Depends(WriteAccess("route_decides"))
 
 
@@ -203,7 +220,8 @@ def violations(app: FastAPI, frozen: frozenset[tuple[str, str]]) -> list[str]:
 
 
 #: Routes ``seal`` admitted, by identity of the object in ``scope["route"]``.
-_SEALED: set[int] = set()
+#: The value holds the route so its id cannot be reused by a later object.
+_SEALED: dict[int, APIRoute] = {}
 
 
 def seal(app: FastAPI) -> None:
@@ -216,7 +234,7 @@ def seal(app: FastAPI) -> None:
         raise RuntimeError(
             "write routes without a write-access declaration:\n  " + "\n  ".join(found)
         )
-    _SEALED.update(id(route.original) for route in write_routes(app))
+    _SEALED.update((id(r.original), r.original) for r in write_routes(app))
 
 
 async def refuse_unsealed_writes(connection: HTTPConnection) -> None:

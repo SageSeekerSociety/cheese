@@ -1353,7 +1353,7 @@ def client(
 
     try:
         with TestClient(app) as c:
-            # The cheese write-API is token-gated (app.main.cheese_token_gate); send
+            # The cheese write-API is token-gated (app/api/write_access.py); send
             # the secret on every test request so contract tests exercising those
             # endpoints (doc/weekly/...) aren't rejected with 401.
             c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
