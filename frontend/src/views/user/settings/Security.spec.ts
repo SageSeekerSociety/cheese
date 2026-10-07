@@ -84,7 +84,7 @@ describe('signed-in devices', () => {
 
     await view.findByText('Chrome on Windows')
     expect(view.getByText('Safari on iOS')).toBeTruthy()
-    expect(view.getByText('This device')).toBeTruthy()
+    expect(view.getByText('Current')).toBeTruthy()
     expect(view.getByText('Password sign-in')).toBeTruthy()
     expect(view.getByText('GitHub sign-in')).toBeTruthy()
     expect(view.queryByText('Trusted')).toBeNull()
@@ -123,7 +123,7 @@ describe('signed-in devices', () => {
     const view = await renderPage()
     await view.findByText('Safari on iOS')
 
-    await fireEvent.click(view.getByRole('button', { name: 'Sign out other devices' }))
+    await fireEvent.click(view.getByRole('button', { name: 'Sign out everywhere else' }))
 
     await waitFor(() => expect(UserApi.revokeOtherSessions).toHaveBeenCalledTimes(1))
   })

@@ -8,19 +8,19 @@ import type { DeviceScreen, MyDevice, MyTeam } from '../cx_types'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import { listMyDevices, listMyTeams, renameMyDevice, unbindMyDevice } from '../api'
+import {
+  listMyDevices,
+  listMyTeams,
+  registerDeviceForTeam,
+  renameMyDevice,
+  unbindMyDevice,
+  unregisterDeviceFromTeam,
+} from '../api'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '../components/common/AdaptiveMenu.vue'
 import DeviceLiveViewer from '../components/DeviceLiveViewer.vue'
 import { useRowMenu } from '../composables/useRowMenu'
-import {
-  connectThisComputer,
-  desktopBridge,
-  downloadsForThisComputer,
-  isThisComputer,
-  setAutoConnect,
-  thisComputer,
-} from '../lib/desktop'
+import { desktopBridge, deviceFlow, downloadsForThisComputer, markAsked, startConnecting } from '../lib/desktop'
 
 import { checkClaudeCode } from '@/api/ownAgents'
 import { useCommands } from '@/commands'
@@ -28,9 +28,12 @@ import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import DeviceTeamsPicker from '@/components/settings/DeviceTeamsPicker.vue'
 import { t } from '@/i18n'
 import { screenAgentName } from '@/lib/agentNames'
+import { relTime } from '@/lib/relTime'
 import accountService from '@/services/account'
+import { lastSeenOf } from '@/types/devices'
 import { claudeLoginOf } from '@/types/ownAgents'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
@@ -89,30 +92,23 @@ async function copyInstall(command: string) {
   await copyText(command, t('account.devices.copied'))
 }
 
-// Inside the desktop app (desktop/) this computer connects on its own at sign-in
-// (lib/desktop.ts); the button here is for connecting it again by hand. Either
-// way the progress is the shared `thisComputer` state.
+// Inside the desktop app (desktop/) this computer is offered at sign-in and in
+// 设置 → 这台设备 (lib/desktop.ts); the button here opens the same dialog.
 const desktop = desktopBridge()
 const downloads = downloadsForThisComputer()
 
-async function connectThisMachine() {
-  const userId = accountService.user?.id
-  if (userId !== undefined) setAutoConnect(userId, true)
-  await connectThisComputer()
+// 在桌面 app 里，这台电脑本身就是可以接入的设备：接入走同一个对话框（views/desktop/DeviceConnect.vue）。
+const thisDeviceId = ref<string | null>(null)
+function connectHere() {
+  addDeviceOpen.value = false
+  void startConnecting()
 }
 
-// However the connection started, once it ends the list is reloaded until the
-// computer shows up online — the service dials in a moment after it starts.
+// 从这一页或别处接好之后，列表跟着刷新。
 watch(
-  () => thisComputer.connecting,
-  async (connecting) => {
-    if (connecting || thisComputer.error) return
-    addDeviceOpen.value = false
-    for (let i = 0; i < 10; i++) {
-      await load()
-      if (devices.value.some((d) => d.online)) break
-      await new Promise((r) => setTimeout(r, 1500))
-    }
+  () => deviceFlow.stage,
+  (stage) => {
+    if (stage === 'done') void load()
   }
 )
 
@@ -206,6 +202,12 @@ function deviceActions(d: MyDevice): MenuAction[] {
   return [
     { key: 'rename', label: t('account.devices.rename'), icon: 'mdi-pencil-outline', onSelect: () => startRename(d) },
     {
+      key: 'copyId',
+      label: t('account.devices.copyId'),
+      icon: 'mdi-content-copy',
+      onSelect: () => void copyText(d.device_id, t('account.devices.copiedId')),
+    },
+    {
       key: 'unbind',
       label: t('account.devices.unbind'),
       icon: 'mdi-link-variant-off',
@@ -225,8 +227,12 @@ async function confirmUnbind() {
   unbinding.value = true
   try {
     await unbindMyDevice(d.device_id)
-    const userId = accountService.user?.id
-    if (desktop && userId !== undefined && (await isThisComputer(d.device_id))) setAutoConnect(userId, false)
+    // Unbinding this computer stops its connector too, and it is not asked about again.
+    if (desktop && d.device_id === thisDeviceId.value) {
+      await desktop.disconnectThisMachine().catch(() => {})
+      const userId = accountService.user?.id
+      if (userId !== undefined) markAsked(userId)
+    }
     devices.value = devices.value.filter((x) => x.device_id !== d.device_id)
     unbindTarget.value = null
   } catch (e) {
@@ -236,7 +242,51 @@ async function confirmUnbind() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  thisDeviceId.value = (await desktop?.thisDevice()) ?? null
+  await load()
+})
+
+// 「提供给」哪些团队：在这里改，和团队的设备页是同一件事。
+const teamsTarget = ref<MyDevice | null>(null)
+const draftTeams = ref<number[]>([])
+const savingTeams = ref(false)
+const teamsOpen = computed({
+  get: () => teamsTarget.value !== null,
+  set: (open) => {
+    if (!open) teamsTarget.value = null
+  },
+})
+
+function editTeams(d: MyDevice) {
+  teamsTarget.value = d
+  draftTeams.value = [...d.team_ids]
+}
+
+async function saveTeams() {
+  const d = teamsTarget.value
+  if (!d) return
+  savingTeams.value = true
+  try {
+    let next = d
+    for (const id of draftTeams.value.filter((x) => !d.team_ids.includes(x)))
+      next = await registerDeviceForTeam(d.device_id, id)
+    for (const id of d.team_ids.filter((x) => !draftTeams.value.includes(x)))
+      next = await unregisterDeviceFromTeam(d.device_id, id)
+    Object.assign(d, { team_ids: next.team_ids })
+    teamsTarget.value = null
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : t('account.thisDevice.teamsFailed')
+  } finally {
+    savingTeams.value = false
+  }
+}
+
+function stateText(d: MyDevice) {
+  if (d.online) return t('account.devices.online')
+  const seen = lastSeenOf(d)
+  return seen ? t('account.devices.lastSeen', { when: relTime(seen) }) : t('account.devices.offline')
+}
 
 // 「添加设备」也能从命令面板去；页面上那颗按钮在标题旁边。
 useCommands(() =>
@@ -309,14 +359,10 @@ function claudePlan(plan: string | null | undefined): string {
           class="settings-empty devices__empty"
           :title="t('account.devices.empty')"
         >
-          <!-- 在桌面 app 里，最直接的是把这台电脑接进来。 -->
-          <template v-if="desktop">
-            <BaseButton kind="secondary" :loading="thisComputer.connecting" @click="connectThisMachine">
-              {{ t('account.devices.connectThis') }}
-            </BaseButton>
-            <span v-if="thisComputer.connecting">{{ thisComputer.step }}</span>
-            <span v-if="thisComputer.error" class="c-danger">{{ thisComputer.error }}</span>
-          </template>
+          <!-- 在桌面 app 里，最直接的是把这台设备接进来。 -->
+          <BaseButton v-if="desktop" kind="secondary" @click="connectHere">
+            {{ t('account.devices.connectThis') }}
+          </BaseButton>
         </BaseEmptyState>
 
         <div
@@ -344,6 +390,7 @@ function claudePlan(plan: string | null | undefined): string {
             />
             <template v-else>
               <span class="device__name">{{ d.name }}</span>
+              <span v-if="d.device_id === thisDeviceId" class="device__tag">{{ t('account.devices.thisDevice') }}</span>
               <BaseButton
                 v-if="mdAndUp"
                 size="sm"
@@ -354,7 +401,7 @@ function claudePlan(plan: string | null | undefined): string {
               />
             </template>
             <span class="device__state" :class="{ 'device__state--on': d.online }">
-              {{ d.online ? t('account.devices.online') : t('account.devices.offline') }}
+              {{ stateText(d) }}
             </span>
             <BaseButton v-if="mdAndUp" kind="ghost" size="sm" @click="askUnbind(d)">
               {{ t('account.devices.unbind') }}
@@ -372,11 +419,6 @@ function claudePlan(plan: string | null | undefined): string {
             </AdaptiveMenu>
           </div>
 
-          <!-- 一台设备只是一台机器，不是队友：在它上面跑的是哪些队友，看下面的「现场」。 -->
-          <div class="device__meta">
-            {{ t('account.devices.deviceId') }} · <code>{{ d.device_id }}</code>
-          </div>
-
           <!-- 机主自己的 Claude Code 有没有在这台电脑上为平台登录（#2991）。登录后它跟着机主进项目。
                只有机主自己接入的电脑会带这一项，云端的机器不带。 -->
           <div v-if="'claude_code' in d" class="device__meta" data-testid="device-claude-code">
@@ -388,8 +430,7 @@ function claudePlan(plan: string | null | undefined): string {
             </i18n-t>
           </div>
 
-          <!-- 只读的归属：这台机器在给哪些团队、以及自己名下的项目用。加机器、移出在各自的
-               「工作电脑」页里做，每一枚都直接链过去。 -->
+          <!-- 这台设备在给哪些团队、以及自己名下的项目用：每一枚链到那个团队的设备页，「修改」在这里改。 -->
           <div class="device__block">
             <div class="device__label">{{ t('account.devices.teams') }}</div>
             <div class="device__chips">
@@ -398,6 +439,9 @@ function claudePlan(plan: string | null | undefined): string {
                 {{ teamName(tid) }}
               </v-chip>
               <span v-if="!d.team_ids.length" class="device__meta">{{ t('account.devices.noTeams') }}</span>
+              <BaseButton kind="ghost" size="sm" @click="editTeams(d)">{{
+                t('account.thisDevice.teamsEdit')
+              }}</BaseButton>
             </div>
           </div>
 
@@ -419,20 +463,6 @@ function claudePlan(plan: string | null | undefined): string {
           </div>
         </div>
       </section>
-
-      <section class="settings-card">
-        <div class="settings-card__title">{{ t('account.devices.commandsTitle') }}</div>
-        <div class="settings-card__desc">{{ t('account.devices.commandsDesc') }}</div>
-        <div v-for="c in installCommands" :key="c.command" class="srow">
-          <span class="srow__k">{{ c.os }}</span>
-          <div class="install-cmd">
-            <code class="install-cmd__code">{{ c.command }}</code>
-            <BaseButton kind="ghost" size="sm" prepend-icon="mdi-content-copy" @click="copyInstall(c.command)">
-              {{ t('account.devices.copy') }}
-            </BaseButton>
-          </div>
-        </div>
-      </section>
     </template>
 
     <!-- Add a device: how this computer or another machine connects. -->
@@ -445,13 +475,11 @@ function claudePlan(plan: string | null | undefined): string {
       <!-- In the desktop app this computer connects in place; in a browser, Mac and Windows
            install the desktop app and every other machine (servers, Linux) runs the command. -->
       <template v-if="desktop">
-        <div class="t-title mt-3 mb-1">{{ t('account.devices.thisComputer') }}</div>
+        <div class="t-title mt-3 mb-1">{{ t('account.devices.thisDevice') }}</div>
         <div class="t-caption c-muted mb-3">{{ t('account.devices.thisComputerHint') }}</div>
-        <BaseButton kind="primary" :loading="thisComputer.connecting" @click="connectThisMachine">
+        <BaseButton kind="primary" :disabled="devices.some((d) => d.device_id === thisDeviceId)" @click="connectHere">
           {{ t('account.devices.connectThis') }}
         </BaseButton>
-        <div v-if="thisComputer.connecting" class="t-caption c-muted mt-2">{{ thisComputer.step }}</div>
-        <div v-if="thisComputer.error" class="t-caption c-danger mt-2">{{ thisComputer.error }}</div>
       </template>
       <template v-else>
         <div class="t-title mt-3 mb-1">{{ t('account.devices.desktopTitle') }}</div>
@@ -505,6 +533,18 @@ function claudePlan(plan: string | null | undefined): string {
       </v-card>
     </v-dialog>
 
+    <AdaptiveDialog
+      v-model="teamsOpen"
+      :title="t('account.thisDevice.teams')"
+      size="sm"
+      :primary-label="t('account.thisDevice.save')"
+      :primary-loading="savingTeams"
+      @primary="saveTeams"
+    >
+      <div class="t-caption c-muted mb-2">{{ t('account.thisDevice.teamsHint') }}</div>
+      <DeviceTeamsPicker v-model="draftTeams" :teams="myTeams" />
+    </AdaptiveDialog>
+
     <!-- Ask before unlinking: an in-app dialog, not the browser's native confirm(). -->
     <ConfirmDialog
       v-model="unbindOpen"
@@ -554,6 +594,15 @@ function claudePlan(plan: string | null | undefined): string {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.device__tag {
+  padding: 1px 8px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  background: var(--canvas);
+  border-radius: var(--radius-sm);
 }
 
 .device__dot {

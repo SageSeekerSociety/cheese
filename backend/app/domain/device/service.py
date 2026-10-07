@@ -202,6 +202,10 @@ class DeviceService:
             raise ForbiddenError("Only the device owner may manage this device")
         await self._repo.delete_device(device_id)
 
+    async def note_last_seen(self, device_id: str, at: datetime) -> None:
+        """Keep when the machine was last heard from."""
+        await self._repo.note_last_seen(device_id, at)
+
     async def rename_owned(
         self, device_id: str, name: str, *, actor_user_id: int
     ) -> Device:
