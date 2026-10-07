@@ -215,6 +215,28 @@ describe('project work computer settings', () => {
     window.removeEventListener('project-compute-updated', updated)
   })
 
+  // 存不下去的时候表单要留在原地：错误写在上面，选项还在手里，人接着换一个试，
+  // 不用再点一次「更换」把整组选项找回来。
+  it('keeps the picker open and says why when the save fails', async () => {
+    api.getProjectComputeConfigs.mockResolvedValue(configs())
+    api.saveProjectComputeConfigs.mockRejectedValue(new Error('这次没存上'))
+    const updated = vi.fn()
+    window.addEventListener('project-compute-updated', updated)
+    await mount()
+
+    await fireEvent.click(screen.getByRole('button', { name: '更换' }))
+    await fireEvent.mouseDown(screen.getByLabelText('自有设备'))
+    await fireEvent.click(await screen.findByRole('option', { name: /实验室工作站/ }))
+    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
+
+    await waitFor(() => expect(screen.getByText('这次没存上')).toBeTruthy())
+    expect(screen.getByRole('button', { name: '使用此配置' })).toBeTruthy()
+    expect(screen.getByTestId('project-default').textContent).toContain('云端环境')
+    // 没存进去就什么都不该广播出去。
+    expect(updated).not.toHaveBeenCalled()
+    window.removeEventListener('project-compute-updated', updated)
+  })
+
   it('does not offer the change to someone who cannot manage the project', async () => {
     api.getProjectComputeConfigs.mockResolvedValue(configs({ can_manage: false }))
     await mount()

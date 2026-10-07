@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import type { TaskNaming, TaskNamingMode } from '../api'
+import type { TaskNamingMode } from '@/api'
 
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, watch } from 'vue'
 
+import { useProjectTaskNaming } from '@/composables/useProjectTaskNaming'
 import { holdRevealGate } from '@/composables/useRevealGate'
-
-import { getTaskNaming, setTaskNaming } from '../api'
 
 import { t } from '@/i18n'
 
@@ -14,9 +13,7 @@ import { t } from '@/i18n'
 // 没有要一起提交的别的字段。
 const props = defineProps<{ projectId: string }>()
 
-const state = ref<TaskNaming | null>(null)
-const error = ref('')
-const busy = ref(false)
+const { state, error, busy, load, choose } = useProjectTaskNaming(() => props.projectId)
 
 const OPTIONS: { value: TaskNamingMode; title: string; detail: string }[] = [
   {
@@ -30,28 +27,6 @@ const OPTIONS: { value: TaskNamingMode; title: string; detail: string }[] = [
     detail: t('work.projectSettings.taskNaming.manualDetail'),
   },
 ]
-
-async function load() {
-  error.value = ''
-  try {
-    state.value = await getTaskNaming(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.loadFailed')
-  }
-}
-
-async function choose(mode: TaskNamingMode | null) {
-  if (!mode || !state.value?.can_manage || mode === state.value.mode) return
-  busy.value = true
-  error.value = ''
-  try {
-    state.value = await setTaskNaming(props.projectId, mode)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.saveFailed')
-  } finally {
-    busy.value = false
-  }
-}
 
 const releaseGate = holdRevealGate()
 onMounted(() => load().finally(releaseGate))
