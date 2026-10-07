@@ -364,7 +364,7 @@
   "sandboxPreparing": "Preparing the environment",
   "sandboxReady": "The environment is ready",
   "sandboxReplaced": "Preparing the environment failed; preparing it again",
-  "sandboxLost": "The machine the environment was on stopped answering, so the environment was replaced: the new one starts from what is pushed to the repository, and changes that were not pushed are gone",
+  "sandboxLost": "The environment stopped answering and was replaced: work pushed and backed up at the end of each turn comes along, and changes made after that are gone",
   "sandboxWaking": "Waking the environment",
   "sandboxRestoring": "Restoring the environment from its archive",
   "sandboxAsleep": "The environment went to sleep after {minutes} minutes without activity. Its files are kept, and the next message wakes it.",

@@ -55,13 +55,11 @@ language-specific entries, not additional levels. Select by both the behavior
 being verified and the required resources. The design report's ban on event
 loops in pure tests is not the implemented collection rule.
 
-Collection also gives each test its layer's time ceiling (`_LAYER_TIMEOUT_S`
-in `backend/tests/conftest.py`). A test over it is killed and reported as its
-xdist worker crashing, with `+++ Timeout +++` and the test's stack just before.
-A test may declare a tighter `pytest.mark.timeout`, never a looser one.
-`backend/tests/slow_tests.txt` lists the tests that were already over when the
-ceilings arrived: remove a test's line when you make it fast, and never add
-one.
+Each layer also has a time ceiling for one test, setup included
+(`_LAYER_CEILING_S` in `backend/tests/conftest.py`). A test that finishes over
+it fails with `took N s with setup, over the <layer> layer's N s ceiling`.
+`backend/tests/slow_tests.txt` lists the tests exempt from it: remove a test's
+line when you make it fast, and never add one.
 
 ## A slow test is fixed, not exempted
 
