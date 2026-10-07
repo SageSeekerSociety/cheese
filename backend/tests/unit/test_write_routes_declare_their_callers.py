@@ -8,13 +8,15 @@ rename carries it along; a route without one stops the app from starting.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.write_access import (
     CHEESE_ONLY_IN_PROJECT,
     CHEESE_ONLY_IN_ROOM,
     ROUTE_DECIDES,
+    refuse_unsealed_writes,
+    seal,
     violations,
     write_routes,
 )
@@ -66,8 +68,8 @@ def test_the_frozen_list_does_not_grow() -> None:
     assert len(UNDECLARED) == _CEILING, f"lower _CEILING to {len(UNDECLARED)}"
 
 
-def _app(*routers: APIRouter) -> FastAPI:
-    built = FastAPI()
+def _app(*routers: APIRouter, guarded: bool = False) -> FastAPI:
+    built = FastAPI(dependencies=[Depends(refuse_unsealed_writes)] if guarded else None)
     register_exception_handlers(built)
     for router in routers:
         built.include_router(router)
@@ -104,7 +106,7 @@ def test_a_router_declares_for_its_routes_and_a_route_declares_once() -> None:
     async def both(topic_id: str) -> None: ...
 
     [found] = violations(_app(twice), frozenset())
-    assert "route_decides and cheese_only_in_room" in found
+    assert "cheese_only_in_room and route_decides" in found
 
 
 def test_a_cheese_only_route_refuses_a_caller_without_a_credential() -> None:
@@ -124,3 +126,38 @@ def test_a_cheese_only_route_refuses_a_caller_without_a_credential() -> None:
             res = client.post(path, headers=headers)
             assert res.status_code == 401, (path, headers)
             assert res.json()["message"] == "invalid sandbox token"
+
+
+def test_the_main_app_refuses_writes_seal_did_not_admit() -> None:
+    assert any(
+        getattr(dep, "dependency", None) is refuse_unsealed_writes
+        for dep in app.router.dependencies
+    )
+
+
+def test_a_write_route_mounted_after_seal_is_refused_at_request_time() -> None:
+    early = APIRouter(dependencies=[ROUTE_DECIDES])
+
+    @early.post("/early")
+    async def sealed() -> dict:
+        return {"reached": True}
+
+    built = _app(early, guarded=True)
+    seal(built)
+    late = APIRouter()
+
+    @late.post("/late")
+    async def unsealed() -> dict:
+        return {"reached": True}
+
+    @late.get("/late")
+    async def read() -> dict:
+        return {"reached": True}
+
+    built.include_router(late)
+    client = TestClient(built)
+    assert client.post("/early").json() == {"reached": True}
+    assert client.get("/late").json() == {"reached": True}
+    refused = client.post("/late")
+    assert refused.status_code == 403
+    assert "write-access declaration" in refused.json()["message"]

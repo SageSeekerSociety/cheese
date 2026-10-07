@@ -22,11 +22,12 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
 from app.api.routes.admin_common import PlatformAdminDep
+from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
@@ -472,6 +473,9 @@ API_GATEWAY_MOUNT = "/api"
 
 app = FastAPI(
     title="CheeseX",
+    # Before any route's own dependencies: a write whose route `seal` (end of
+    # this module) did not admit is refused. See app/api/write_access.py.
+    dependencies=[Depends(refuse_unsealed_writes)],
     version="0.1.0",
     lifespan=lifespan,
     # A trailing slash is a 404, never a redirect — because behind this gateway a
@@ -802,6 +806,4 @@ async def app_version() -> dict:
 
 # Last, once every route is mounted: refuse to start with a write route that
 # does not say who may call it (app/api/write_access.py).
-from app.api.write_access import seal  # noqa: E402
-
 seal(app)
