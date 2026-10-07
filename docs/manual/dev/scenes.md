@@ -64,6 +64,8 @@ covers:
 
 2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。
 
+2026-10-07，`views/MarketView.vue` 拆成容器 + `MarketViewView.vue`（节点状态的 15 秒轮询搬进 `composables/useMarketNodes.ts`，`NodeBoard` 改收 props），另有两个早已是 A、一直没冻的场景（`panels/preview/PreviewPage.vue`、`views/user/settings/ThisDeviceView.vue`）一起收进基线：`--update` 之后是 **105 个 ready、76 个 debt**（此前 102 / 77），另有 43 个页面是容器。
+
 ## 从今天起它是一条闸门 {#ratchet}
 
 2026-09-30 起，「能单独跑」不只是一张表上的状态：`pnpm run lint:scenes` 会逐场景重新判一遍，该红的红、该退 2 的退 2，commit 和 CI 都跑（`--self-test` 在 `repo-guards.yml` 里）。产品定的规则是**只拦新增**：今天能单独跑的冻结下来只许多，今天跑不起来的允许继续躺着，**从今往后新加的每一个场景必须第一天就能单独跑**。
@@ -72,8 +74,8 @@ covers:
 
 | 名单 | 是什么 | 只能 |
 |---|---|---|
-| `ready` | 今天就能单独跑的场景（10 个） | 增（掉档就红） |
-| `debt` | 仓库里本来就跑不起来的场景（128 个） | 减（变 A 会提示你收紧） |
+| `ready` | 今天就能单独跑的场景（105 个，2026-10-07） | 增（掉档就红） |
+| `debt` | 仓库里本来就跑不起来的场景（76 个，2026-10-07） | 减（变 A 会提示你收紧） |
 
 不在两份名单里的场景就是**新的**——这也是为什么债务必须一条条列出来，而不是记一个数字：没有这张表，「新」和「旧」没法分。六种结果：
 
@@ -119,7 +121,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 ### 目录那条提醒 {#catalog-warning}
 
-能单独跑、但没挂进 `/demo/catalog` 的场景，检查会打一行 warning（今天 9 个：2 个页面 + 7 个面板），**不算失败**：目录里放什么由人定，页面和面板本来也不是一回事。挂上去之后，`pnpm exec vitest run src/views/demo/catalog.spec.ts` 才是「它真的能单独挂起来」的那条机械结论——加一个组件到目录的三步写在 `frontend/AGENTS.md`。
+能单独跑、但没挂进 `/demo/catalog` 的场景，检查会打一行 warning（2026-10-07 是 101 个），**不算失败**：目录里放什么由人定，页面和面板本来也不是一回事。挂上去之后，`pnpm exec vitest run src/views/demo/catalog.spec.ts` 才是「它真的能单独挂起来」的那条机械结论——加一个组件到目录的三步写在 `frontend/AGENTS.md`。
 
 ## 页面 {#pages}
 
@@ -130,7 +132,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/404.vue` | A | 只吃 props 和事件 |
 | `views/ConnectView.vue` | D | 读路由；直接取数（`api.ts`） |
 | `views/InboxView.vue` | C | 直接取数（`api.ts`） |
-| `views/MarketView.vue` | C | 直接取数（`api.ts`） |
+| `views/MarketView.vue` | 容器 | 画面在 `MarketViewView.vue`（A 级）；目录取数、节点状态轮询（`useMarketNodes`）留在本页 |
 | `views/MyArchivedProjectsView.vue` | C | 直接取数（`api.ts`）；读 store（workspace） |
 | `views/MyConnectionsView.vue` | D | 读路由；直接取数（`api.ts`）；经 `api/feishu.ts` 取数 |
 | `views/MyDevicesView.vue` | C | 直接取数（`api.ts`）；直接取数（`services/account.ts`）；经 `lib/desktop.ts` 取数 |
@@ -309,6 +311,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 两个已知偏差写在这里，免得被当成事实用：
 
 - **`import type` 那条边已经修掉（2026-09-30）。** 规约说 `import type` 不算（构建时就被抹掉，见[架构指标](/dev/arch-metrics#metrics)）；但 `lib/previewSession.ts` 整个文件只有一句 `import type { PreviewSession } from '../api'`，它到 `api.ts` 的那条边一度仍然进了传递闭包，于是 `PanelPreviewView` 被判成 C——它自己一行取数代码都没有。现在这条边不进图了。但同一次里还查出一处**过宽**：传递依赖只跟 `.ts`，`.vue` 子组件那条链被漏掉，于是「自己干净、子组件取数」的十页被判成 A 并冻进基线。两处都在 2026-09-30 修掉，基线和这一页的数字按修完的结果重算（能单独跑 20 → 10）。
+- **注释不是代码（2026-10-07 修掉）。** 判「读路由」那几条正则原来直接扫 `<script>` 原文，于是注释里写着「不 import vue-router」的组件——恰恰是因为改走了 `useNavigation()` 才写这句话的那几颗——被判成 D：`NavLink`、`UserRefLink`、`room/GettingStartedCard`、`ParentBackButton`、`TopicSidebar`。现在先去掉 `//` 和 `/* */` 注释再匹配（字符串、模板字符串、正则字面量里的 `//` 原样保留），`$parent` / 事件总线也只看去掉注释的代码和模板；`python3 .claude/scripts/frontend_grade.py --self-test` 钉着这条。全树 D 因此 98 → 93（`NavLink` 成 A，其余四颗是 C，它们确实经 composable 取数）。
 - **正则不是编译器。** 解析不出来的模块说明符当成外部依赖，不当成一条边，所以真隔着一条解析不出来的链在取数的组件会被判高一档（A 或 B）。
 
 ## 下一步 {#next}
@@ -317,4 +320,4 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 2. **A 档的先补目录**，成本几乎为零：`--list` 现在会打出 14 个没挂的（7 个页面 + 7 个面板：`ChangesFileTree`、`TodoChecklist`、`doc/DocOverlays`、`doc/DocSlashMenu`、`doc/DocSurface`、`preview/PreviewPages`、`preview/PreviewSheet`）。挂上去之后，改外观和改排版就有地方看效果。
 3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；每拆出一个就跑 `pnpm run lint:scenes:update` 把它从 `debt` 搬进 `ready`。
 4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/` 已按「参数当 props 进视图」拆完（2026-10-05），`views/workspace/`、`views/spaces/` 两块各还要一个方案，动哪块由产品定。
-5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：97 → 0。
+5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：76 → 0。

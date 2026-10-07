@@ -183,7 +183,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 | 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错 |
 | 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的） |
 
-棘轮的形状都一样：跑检查、解析报告、和基线比，**只拦新增**，`--update` 把基线降下来（`import-boundary-baseline.json` / `tsc-baseline.json` / `stylelint-baseline.json`）。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），`stylelint-baseline.json` 冻着 17 个文件的存量违规，`import-boundary-baseline.json` 冻着 47 个组件、59 条。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
+棘轮的形状都一样：跑检查、解析报告、和基线比，**只拦新增**，`--update` 把基线降下来（`import-boundary-baseline.json` / `tsc-baseline.json` / `stylelint-baseline.json`）。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），`stylelint-baseline.json` 冻着 17 个文件的存量违规，`import-boundary-baseline.json` 冻着 21 个文件、21 条（2026-10-07）。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。
 
 仓库根还有两道：调色板（`color="grey-*"`、`bg-white` 这类固定色）与 `src/` 单文件行数上限（后端 1500、前端 1000，只判与 `origin/main` 不同的文件），分别在 `.claude/scripts/check-repo-rules.sh` 和 `.claude/scripts/check-file-sizes.py`，样式表那条的存量冻在 `frontend/palette-baseline.json`。所有基线都**只能降不能升**，理由见 `docs/design-system.md` §7：一个悄悄失效的闸门和一棵干净的树，输出一模一样。那里也列了没有闸门、只能靠 review 的部分（排版、文案、动效）。
 
