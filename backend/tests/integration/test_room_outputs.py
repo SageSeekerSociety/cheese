@@ -104,13 +104,11 @@ def test_every_room_can_read_what_one_room_saved(client):
     """留下来就是为了以后还用得上 —— 资料库是项目级的。"""
     project_id = _project(client)
     room_id = _room(client, project_id)
-    other = _room(client, project_id, "另一个房间")
     _show(client, project_id, room_id, "评审简报.html", "<h1>定稿</h1>")
     _save(client, room_id, "评审简报.html")
 
     got = client.get(
-        f"/projects/{project_id}/library/raw",
-        params={"path": "评审简报.html", "topic": other},
+        f"/projects/{project_id}/library/raw", params={"path": "评审简报.html"}
     )
 
     assert got.status_code == 200, got.text

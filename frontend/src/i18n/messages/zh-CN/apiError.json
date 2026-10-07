@@ -46,6 +46,7 @@
   "topicMemberOnly": "你不是这个频道的成员，无权在此操作",
   "projectNotFound": "项目不存在",
   "projectMemberOnly": "你不是这个项目的成员，无权查看",
+  "projectReadsWithOutsiders": "这个对话里有项目以外的人，不能在这里读取项目的内容",
   "challengeViewForbidden": "你不是这道赛题的相关人员，无权查看",
   "teamMemberOnly": "你不是这个团队的成员，无权查看",
   "termsUpdatedRefresh": "协议已更新，请刷新页面后重新阅读",

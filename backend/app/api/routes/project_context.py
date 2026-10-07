@@ -131,9 +131,16 @@ async def _readable_rooms(
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
         actor = await resolver.resolve(project_id=project_id, topic_id=topic)
-        await resolver.authorize_topic(
-            actor, project_id=project_id, topic_id=topic, enforce=True
-        )
+        if resolver.turn_conversation(actor) is not None:
+            # An agent's results end up in that room: the same rule as any of
+            # its project-wide reads.
+            await resolver.authorize_reading_from(
+                actor, project_id=project_id, conversation_id=topic
+            )
+        else:
+            await resolver.authorize_topic(
+                actor, project_id=project_id, topic_id=topic, enforce=True
+            )
         if not actor.authenticated:
             # The development credential speaks as the room's own teammate.
             seat = await TopicMemberService(db).resolve_agent_handle(place.room_id)
