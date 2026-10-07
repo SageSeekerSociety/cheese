@@ -5,6 +5,8 @@
 // documented normalization rules (see fidelity.ts). A failing case here is
 // syntax converting a Markdown document into the live document would corrupt —
 // fix the editor config, or make sure compareRoundTrip reports it.
+import type { JSONContent } from '@tiptap/core'
+
 import { Editor } from '@tiptap/core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -134,12 +136,12 @@ describe('round-trip corpus', () => {
     expect(rt).not.toContain('\\*')
     expect(rt).toContain('1. **每人一份面板** {✓ 建议先做}')
     expect(rt).toContain('2. **自动转入** {! 待定}')
-    const items = editor.getJSON().content![0].content!
+    const items = (editor.getJSON() as JSONContent).content![0].content!
     expect(items).toHaveLength(2)
     const first = items[0].content![0].content!
     expect(first[0]).toMatchObject({ text: '每人一份面板', marks: [{ type: 'bold' }] })
     expect(first[2]).toMatchObject({ text: '建议先做', marks: [{ type: 'status', attrs: { kind: 'ok' } }] })
-    expect(first.map((n) => n.text).join('')).toContain('把卡汇到一处。')
+    expect(first.map((n: JSONContent) => n.text).join('')).toContain('把卡汇到一处。')
   })
 
   it('keeps the start number and marks of a list that starts past one', () => {
