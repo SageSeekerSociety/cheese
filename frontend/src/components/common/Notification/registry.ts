@@ -1,3 +1,6 @@
+// 「这条通知画成什么样」的那张表：类型 → 画它的组件、它的图标与颜色。表本身不取任何
+// 数据，也不认识路由，只决定画什么；所以它和它映射的这批渲染组件住在一起，
+// `src/services/` 留给真正跟服务端说话的那些模块（`.claude/rules/architecture.md`）。
 import type { Component } from 'vue'
 import type { Notification, NotificationType } from '@/network/api/notifications/types'
 

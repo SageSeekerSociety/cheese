@@ -159,11 +159,11 @@ import { useNavigation } from '@/composables/useNavigation'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import NotificationAvatar from './NotificationAvatar.vue'
+import { getNotificationRenderer } from './registry'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import { getNotificationRenderer } from '@/services/notification/registry'
 
 const props = defineProps<{
   notification: Notification
