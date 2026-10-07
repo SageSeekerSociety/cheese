@@ -18,6 +18,7 @@
  */
 import type { Component } from 'vue'
 
+import { defineComponent } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -82,14 +83,14 @@ const QueueChild = { template: '<div>队列内容<input /></div>' }
 const OverviewChild = { template: '<div>平台总览内容</div>' }
 /** 几页统计页共用一个组件、靠路由给的 `kind` 区分，而组件只在建出来那一刻读它（和
  *  `AdminStatsPage` 一样）。 */
-const StatsChild = {
+const StatsChild = defineComponent({
   props: { kind: { type: String, required: true } },
-  setup(props: { kind: string }) {
+  setup(props) {
     const kindAtSetup = props.kind
     return { kindAtSetup }
   },
   template: '<div>统计页：{{ kindAtSetup }}</div>',
-}
+})
 
 async function mountAt(path: string) {
   const router = createRouter({
