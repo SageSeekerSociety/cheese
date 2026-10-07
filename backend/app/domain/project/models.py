@@ -22,6 +22,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     select,
     text,
 )
@@ -272,7 +273,7 @@ class ProjectForge(UuidPk, Timestamps, Base):
 
 
 class ForgeToken(UuidPk, Timestamps, Base):
-    """Encrypted cache of access tokens with provider-enforced expiration."""
+    """Encrypted cache of the forge tokens handed to sessions."""
 
     __tablename__ = "forge_tokens"
     project_id: Mapped[uuid.UUID] = mapped_column(index=True)
@@ -280,6 +281,12 @@ class ForgeToken(UuidPk, Timestamps, Base):
     username: Mapped[str] = mapped_column(String(255))
     value: Mapped[str] = mapped_column(Text)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # Reads the repository and writes nothing: for a session whose work is not
+    # kept. The provider expires the others; the platform revokes these
+    # (`forgejo_tokens.revoke_expired_read_tokens`).
+    read_only: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
 
 
 class ProjectArtifact(UuidPk, Timestamps, Base):

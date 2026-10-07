@@ -785,7 +785,6 @@
   "feedbackCursorUnreadable": "Couldn't read the cursor. Fetch again from the start",
   "forgeCredentialMissing": "The project's code hosting credentials aren't set up yet",
   "forgeCredentialUnavailable": "The code hosting service can't issue project credentials right now",
-  "forgeWorkNotKept": "This session's changes are not kept, so it gets no credential to push code. To change the project, propose a task and do it there once its owner starts it.",
   "forgeTokenServiceUnreachable": "Can't reach the code hosting service right now",
   "workTaskNotInRoom": "This work task isn't in this channel",
   "taskBackupNotFound": "This task has no such backup",

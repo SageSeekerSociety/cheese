@@ -3,12 +3,14 @@
 On a machine that is its own it reads, runs and changes files like any session:
 that is how it finds out what is wrong. What it does there never reaches the
 project: its sync is refused, the project's MCP servers stay out of reach, and
-it is handed no credential that pushes. On a machine it shares with others it
-only reads, because what it changed would stay among their work.
+the forge token it is handed reads and never pushes. On a machine it shares
+with others it only reads, because what it changed would stay among their
+work.
 """
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -103,17 +105,21 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
     launch = mint_scoped_token(
         project_id=str(project_id), topic_id=conversation, agent_handle=seat
     )
-    bound = {
-        "session_id": session_id,
-        "lease_generation": generation,
-    }
     return {
         "conversation": conversation,
         "resource": resource,
         # What a turn of this session presents to the executor route.
-        "turn": bind_resource_token(launch, resource, **bound, scratch=True),
+        "turn": bind_resource_token(
+            launch,
+            resource,
+            session_id=session_id,
+            lease_generation=generation,
+            scratch=True,
+        ),
         # What its executor's commands present to the platform.
-        "machine": bind_resource_token(launch, resource, **bound),
+        "machine": bind_resource_token(
+            launch, resource, session_id=session_id, lease_generation=generation
+        ),
     }
 
 
@@ -178,25 +184,55 @@ async def test_on_a_shared_machine_it_only_reads(
         remote.assert_not_awaited()
 
 
-def _error_key(response) -> str | None:
-    return ((response.json().get("error") or {}).get("i18n") or {}).get("key")
+class _Forge:
+    """A forge that tells which of its tokens it handed out."""
+
+    async def installation_token(self):
+        return "pushes", "2026-10-07T12:00:00+00:00"
+
+    async def granted_permissions(self):
+        return {"contents": "write"}
+
+    async def read_token(self):
+        return "reads", "2026-10-07T12:00:00+00:00"
+
+    async def read_permissions(self):
+        return {"contents": "read"}
+
+
+def _forge_token(client, monkeypatch, held: dict) -> dict:
+    binding = SimpleNamespace(
+        kind="github_app",
+        repo="acme/app",
+        url="https://github.com/acme/app.git",
+        api_url="https://api.github.com",
+        default_branch="main",
+    )
+    monkeypatch.setattr(
+        "app.domain.project.forge.binding_for_project",
+        AsyncMock(return_value=binding),
+    )
+    monkeypatch.setattr(
+        "app.domain.project.forge.tokens_for_project",
+        AsyncMock(return_value=_Forge()),
+    )
+    response = client.get(
+        "/sandbox/forge-token", headers={"X-Cheese-Token": held["machine"]}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
 @pytest.mark.parametrize("place", ["thread", "unstarted"])
-async def test_it_is_handed_no_credential_that_pushes(client, place):
+async def test_its_forge_token_reads_and_never_pushes(client, monkeypatch, place):
     held = await _session(client, place)
-    response = client.get(
-        "/sandbox/forge-token", headers={"X-Cheese-Token": held["machine"]}
-    )
-    assert response.status_code == 403, response.text
-    assert _error_key(response) == "forgeWorkNotKept"
+    data = _forge_token(client, monkeypatch, held)
+    assert data["token"] == "reads"
+    assert data["read_only"] is True
 
 
-async def test_a_started_task_is_not_refused_the_credential_for_this(client):
+async def test_a_started_task_gets_the_token_that_pushes(client, monkeypatch):
     held = await _session(client, "started")
-    response = client.get(
-        "/sandbox/forge-token", headers={"X-Cheese-Token": held["machine"]}
-    )
-    # This project has no repository bound, so no credential comes back; what
-    # matters is that the refusal is not the one for work that is not kept.
-    assert _error_key(response) != "forgeWorkNotKept", response.text
+    data = _forge_token(client, monkeypatch, held)
+    assert data["token"] == "pushes"
+    assert data["read_only"] is False

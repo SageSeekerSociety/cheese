@@ -785,7 +785,6 @@
   "feedbackCursorUnreadable": "游标看不懂，从头取一次",
   "forgeCredentialMissing": "项目的代码托管凭据尚未配置",
   "forgeCredentialUnavailable": "代码托管服务暂时无法签发项目凭据",
-  "forgeWorkNotKept": "这条会话的改动留不下，拿不到推送代码的凭据。要改项目，请提议一个任务，等负责人开始后在任务里做。",
   "forgeTokenServiceUnreachable": "代码托管服务暂时无法连接",
   "workTaskNotInRoom": "这个频道里没有这条工作任务",
   "taskBackupNotFound": "这条任务没有此备份",

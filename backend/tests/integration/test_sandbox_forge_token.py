@@ -17,6 +17,7 @@ def configured(monkeypatch):
         repo="acme/widgets",
         url="https://github.com/acme/widgets.git",
         api_url="https://api.github.com",
+        default_branch="main",
     )
     permissions = {"contents": "write", "workflows": "write", "issues": "read"}
 
