@@ -456,7 +456,9 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
         // 等这一类的数据到货（骨架上也有文字，量骨架没有意义）。
         await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
         await expect(page.locator('.akpi__skel')).toHaveCount(0);
-        expect(await textOverlaps(page.locator('body')), `${size.width}px · ${tab}`).toEqual([]);
+        // 只量看板本身（`<main>`）。左侧导轨上的未读角标是故意压在项目图块一角的，
+        // 它出不出现取决于同一个 shard 里前面的用例有没有发过消息，和看板无关。
+        expect(await textOverlaps(page.locator('#main-content')), `${size.width}px · ${tab}`).toEqual([]);
       }
     }
   });
@@ -475,7 +477,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       await page.getByRole('button', { name: tab, exact: true }).click();
       await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
       await expect(page.locator('.akpi__skel')).toHaveCount(0);
-      expect(await textOverlaps(page.locator('body')), `1920px · ${tab}`).toEqual([]);
+      expect(await textOverlaps(page.locator('#main-content')), `1920px · ${tab}`).toEqual([]);
     }
 
     // 内容列吃满 admin 档的 1440（1920 视口去掉全局 rail 与侧栏后仍宽于 1440，居中）。
