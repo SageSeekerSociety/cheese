@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-from app.domain.agent.harness import HARNESSES, Capability
+from app.domain.agent.harness import CLAUDE_CODE, HARNESSES, Capability
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
@@ -49,13 +49,25 @@ class ComputePool:
     one backend per pair; today the pair is looked up directly.
     """
 
-    def __init__(self, backends: "list[RoomSessions]", default_name: str):
+    def __init__(
+        self,
+        backends: "list[RoomSessions]",
+        default_name: str,
+        owned: "dict[str, RoomSessions] | None" = None,
+    ):
         from app.domain.agent.harness import deployment_harnesses
 
         self._backends = {
             (backend.name, backend.harness): backend for backend in backends
         }
-        self._harnesses: list[RoomSessions] = list(self._backends.values())  # type: ignore[arg-type]
+        # A member's own coding agent runs on their own machine whatever the
+        # room chose (`owner_provider`), so these are kept apart from the
+        # machine pools a room chooses among, keyed by harness alone.
+        self._owned = dict(owned or {})
+        self._harnesses: list[RoomSessions] = [  # type: ignore[assignment]
+            *self._backends.values(),
+            *self._owned.values(),
+        ]
         # 部署列的骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，而
         # 不是等到某一轮才发现自己跑的是另一个东西（结论 28）。偏好的第一个得挂在
         # 默认机器上：没说骨架的平台工作落在这一对上。
@@ -159,7 +171,7 @@ class ComputePool:
         the caller needs no test for which machine a room is on.
         """
         seat = (topic_id, agent_handle or "")
-        for backend in self._backends.values():
+        for backend in self._runtimes():
             recover = getattr(backend, "recover_native_tools", None)
             if recover is None:
                 continue
@@ -344,6 +356,11 @@ class ComputePool:
         """
         return self.select(provider_id=provider_id) or self.default()
 
+    def owned(self, harness: str) -> "RoomSessions | None":
+        """The backend for a member's own agent of ``harness``: on the owner's
+        machine, never the room's choice."""
+        return self._owned.get(harness)
+
     def has(self, provider_id: str) -> bool:
         return provider_id in self.machines()
 
@@ -415,6 +432,7 @@ def build_compute_pool(
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.market import compute_default_name
+    from app.domain.agent.owner_provider import OwnerChannel
     from app.domain.agent.room.sessions import RoomSessions
     from app.domain.agent.session_host.host import SessionHost
 
@@ -464,4 +482,11 @@ def build_compute_pool(
         if forwards(harness)
         for channel in channels
     ]
-    return ComputePool(backends, default_name)
+    # A member's own Claude Code: the session and its hands both on the
+    # owner's machine (#2991). The executor side is the device transport.
+    owned = {
+        CLAUDE_CODE: RoomSessions(
+            OwnerChannel(DeviceChannel()), CLAUDE_CODE, host, **policy
+        )
+    }
+    return ComputePool(backends, default_name, owned)

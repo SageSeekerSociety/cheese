@@ -87,6 +87,10 @@ class MachinePlace:
     #: Which seat of the room this session takes (`place.seat_key`): empty is
     #: the agent's own, a task's session names its task.
     seat: str = ""
+    #: A member's own coding agent on their own machine (#2991): it signs in
+    #: with the login its owner gave the platform on this machine, not the
+    #: platform's.
+    own_login: bool = False
 
 
 @dataclass(frozen=True, slots=True)

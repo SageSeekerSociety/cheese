@@ -64,6 +64,7 @@ from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skills
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id
+from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -258,6 +259,8 @@ class _Machines(Protocol):
         self, project_settings: Mapping[str, Any] | None, provider_id: str | None
     ) -> tuple[str, RoomSessions | None]: ...
 
+    def owned(self, harness: str) -> RoomSessions | None: ...
+
     async def activate(self, session: SessionRef, runtime: RoomSessions) -> None: ...
 
     async def dismiss(self, topic_id: uuid.UUID, agent_handle: str) -> None: ...
@@ -435,6 +438,19 @@ class RoomTurns:
             keeps_memory=keeps_memory(harness),
         )
 
+    async def _backend_for(
+        self, session, agent, project, compute_id
+    ) -> tuple[str, RoomSessions | None]:
+        """The harness this agent's turn runs and the backend it runs on.
+
+        A member's own coding agent runs its own harness on its owner's machine
+        (`owner_provider`), whatever the room chose; every other agent runs the
+        project's harness on the room's machine."""
+        owned = await owned_instance(session, agent.instance_id)
+        if owned is not None:
+            return owned.harness, self._compute.owned(owned.harness)
+        return self._compute.choose(project.settings if project else None, compute_id)
+
     async def _launch_inputs(
         self, topic_id: uuid.UUID, agent_handle: str, *, acting: str
     ) -> _Launch | None:
@@ -458,8 +474,8 @@ class RoomTurns:
             needs_place = not _is_dm(topic)
             doc_text = await doc_text_of(session, place, needs_place=needs_place)
             role = await agents.system_prompt(agent)
-            harness, provider = self._compute.choose(
-                project.settings, resolve_compute_id(project.settings, topic)
+            harness, provider = await self._backend_for(
+                session, agent, project, resolve_compute_id(project.settings, topic)
             )
             if provider is None:
                 return None
@@ -677,8 +693,8 @@ class RoomTurns:
             compute_id = resolve_compute_id(
                 project.settings if project else None, topic, task
             )
-            wanted_harness, provider = self._compute.choose(
-                project.settings if project else None, compute_id
+            wanted_harness, provider = await self._backend_for(
+                session, agent, project, compute_id
             )
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).

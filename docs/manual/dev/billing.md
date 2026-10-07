@@ -61,14 +61,15 @@ covers:
 - 任务命名和旧记忆搬迁不在任何项目里，`project_id` 也为空，各走一把自带预算的网关 key，`cost_usd` 取网关在响应头里给的价格。
 - 记忆整理在项目里跑，行上保留 `project_id`，整理的触发阈值靠它和 `kind` 把整理自己的花费剔掉。它不用项目付钱的那把网关 key，而是项目的第二把 key（`project.settings["llm_gateway_platform_key"]`，不设预算）；一轮结束后单独结算这把 key 的新增花费（检查点在 `llm_gateway_platform_usage_ckpt`），所以整理的花费不会混进项目的 key、被下一轮对话结算到团队头上。走订阅的整理没有这把 key，它的用量由计量代理按项目记到团队上；订阅只开给 Reserve 团队，不扣额度。
 
-## 两处计量 {#metering}
+## 三处计量 {#metering}
 
 | 路 | 谁记 | 怎么进账 |
 |---|---|---|
 | 网关路 | LiteLLM 逐次记在项目虚拟 key 上 | 主 API 读取 LiteLLM 按 key、按天、按模型记的累计值（`/user/daily/activity`），只消费差值，每笔只消费一次 |
 | 订阅路 | 计量代理每个 `/v1/messages` 响应写一行 `usage.jsonl` | 主 API 定时把新行收进 `resource_usage`，和检查点在同一个事务里推进，只收一次（`subscription_ingest.py`） |
+| 成员自己的 Claude Code | 会话在每轮结束时自报（stream-json `result` 的 `usage`、`total_cost_usd`） | 一轮结束时写一行，`route` 是 `own`，额度记 0：用的是主人自己的登录，项目不付钱（`chat._close_hook_work`） |
 
-交互式的 Claude Code 自己不报告用量，所以两条路都只能在流量经过的地方计量。
+前两条路只在流量经过的地方计量：Claude Code 每轮自报的用量在这两条路上不算，算了就是同一轮扣两次。成员自己的 Claude Code 的请求两处都不经过，它的自报是唯一的记录，只记不扣。
 
 ## 折算成额度 {#credits}
 

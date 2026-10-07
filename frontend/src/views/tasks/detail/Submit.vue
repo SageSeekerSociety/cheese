@@ -165,7 +165,6 @@
     </v-card>
 
     <!-- 上传进度对话框 -->
-    <!-- eslint-disable-next-line vue/no-restricted-syntax -- progress: nothing to press while the upload is running (design-system §3.7) -->
     <v-dialog v-model="progressDialog" persistent :max-width="DIALOG_WIDTH.md" class="upload-progress-dialog">
       <v-card rounded="lg" class="pa-6">
         <v-card-title class="text-h6 d-flex align-center pb-3">

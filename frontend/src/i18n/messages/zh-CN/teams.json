@@ -38,6 +38,7 @@
     "roleLabel": "角色",
     "inviteMessageLabel": "邀请消息（可选）",
     "inviteMessagePlaceholder": "请输入邀请说明...",
+    "cancel": "取消",
     "inviteSubmit": "邀请",
     "tabMembers": "成员列表",
     "tabRequests": "加入申请",

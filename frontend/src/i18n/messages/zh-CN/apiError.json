@@ -343,6 +343,7 @@
   "screenCentralMachineOffline": "本频道的 Claude Code 中心会话机器未连接",
   "screenRoomReopenedOldEnvSkipped": "频道已经重新打开，本轮没有启动旧执行环境",
   "screenAgentIdentityMissing": "本轮 agent 身份不存在，无法启动执行机",
+  "ownerMachineOffline": "无法启动：你接入的电脑都不在线，或都没有登录 Claude Code",
   "roomBusyFinishBeforeEnvironment": "频道正在工作，请结束当前工作后再应用环境配置",
   "roomBusyRetryLater": "频道正在工作，请稍后重试",
   "computeCloudCannotNameDevice": "云配置不能指定自有设备",

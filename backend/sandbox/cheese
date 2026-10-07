@@ -4322,6 +4322,11 @@ def _sync_agents() -> None:
 def _sync_agents_core() -> None:
     if not PROJECT:
         return
+    # A member's own Claude Code runs on its owner's login, which serves its
+    # own models and none of the project's catalogue: listing the catalogue's
+    # would offer subagents models this session cannot reach.
+    if os.environ.get("CHEESE_OWN_LOGIN"):
+        return
     res = _call(
         "GET",
         f"/projects/{PROJECT}/default-model",

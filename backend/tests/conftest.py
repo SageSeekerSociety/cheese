@@ -918,7 +918,7 @@ def bearer() -> Callable[[str], dict[str, str]]:
 def _metering_proxy_ca(monkeypatch, tmp_path_factory) -> None:
     """A machine has one launch shape, and it reaches a model only through the
     metering proxy — so a backend that cannot read the proxy's CA cannot open a
-    screen at all (`device_provider._read_proxy_ca`, `machine/enrollment.py`).
+    screen at all (`screen_model_env._read_proxy_ca`, `machine/enrollment.py`).
 
     Autouse and here rather than in the files that noticed: opening a screen is
     a step in tests about system prompts, enrolment, work bindings and more, and

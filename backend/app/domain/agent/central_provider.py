@@ -120,6 +120,16 @@ class CentralChannel(DeviceChannel):
             return False
         return True
 
+    def _center(self, place, precheck: Placement) -> str | None:
+        """The machine this session's process runs on: where it already is,
+        else the deployment's session host."""
+        return place.machine if place else settings.agent_session_device_id
+
+    def _deferred_target(self, target: dict) -> dict:
+        """The execution target a session starts with before its lease, as
+        this channel hands it on."""
+        return target
+
     async def placed(self, harness: str, device_id: str | None = None) -> list[Placed]:
         """This channel's placed sessions of ``harness`` — on ``device_id``,
         when it is named: what a restarted backend reads again."""
@@ -236,7 +246,7 @@ class CentralChannel(DeviceChannel):
             )
         ):
             place = None
-        center = place.machine if place else settings.agent_session_device_id
+        center = self._center(place, precheck)
         if not center:
             raise ScreenSetupError(say("screenCentralMachineOffline"))
         await self._wait_for_session_host(center, session)
@@ -298,6 +308,7 @@ class CentralChannel(DeviceChannel):
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
+            target = self._deferred_target(target)
         else:
             target = private_chat.scratch_target(project_id, resource, device_id=center)
         # The project's remote MCP servers need no machine: the platform holds

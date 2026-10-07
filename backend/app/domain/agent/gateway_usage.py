@@ -47,6 +47,7 @@ from app.domain.agent.queries import _model_policy_call, _Proposed
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
+from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
@@ -135,6 +136,49 @@ def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dic
     return env
 
 
+#: The usage route of a member's own coding agent: its model calls go from its
+#: owner's machine on its owner's login, and nothing of them is the project's
+#: to pay (`owner_provider`).
+OWN_ROUTE = "own"
+
+# Model names the owner's own Claude Code takes: its own aliases, and the
+# vendor's ids. A teammate set to a model only the platform's gateway serves
+# runs on the account's default instead.
+_OWN_ALIASES = frozenset({"opus", "sonnet", "haiku", "fable"})
+
+
+def own_model(configured: object) -> str | None:
+    if not isinstance(configured, str) or not configured:
+        return None
+    if configured in _OWN_ALIASES or configured.startswith("claude-"):
+        return configured
+    return None
+
+
+def _own_model_kwargs(agent, acting_agent, environment) -> dict:
+    """A member's own Claude Code: the model it is set to when its owner's
+    login can run it, else the account's default; no project catalogue, no
+    tier gate and no gateway, which are about the project's credits."""
+    model = own_model(agent.configuration.get("model"))
+    env: dict[str, str] = {
+        "CHEESE_AGENT_CONFIG": hashlib.sha256(
+            json.dumps(
+                {"agent": agent.configuration, "git_author": acting_agent},
+                sort_keys=True,
+            ).encode()
+            + b":own-login-v1"
+        ).hexdigest(),
+    }
+    if model:
+        env["ANTHROPIC_MODEL"] = model
+    if environment is not None:
+        env["CHEESE_ENVIRONMENT"] = json.dumps(environment)
+    kwargs: dict = {"model": model, "env": env, "session_agent": agent.handle}
+    if acting_agent is not None:
+        kwargs["agent_handle"] = acting_agent
+    return kwargs
+
+
 async def _model_kwargs(
     service: _GatewayUsage,
     sessions: async_sessionmaker,
@@ -192,6 +236,9 @@ async def _model_kwargs(
                 if topic
                 else await agents.for_project(project)
             )
+        owned = await owned_instance(session, agent.instance_id)
+    if owned is not None:
+        return _own_model_kwargs(agent, acting_agent, environment), OWN_ROUTE
     # A saved teammate may override the project main model.
     choices = binding.catalog(project.settings)
     bound = binding.resolve(

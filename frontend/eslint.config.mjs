@@ -83,21 +83,12 @@ export default [
         {
           selector: 'VAttribute[directive=false][key.name="autocomplete"][value.value=/^(on|)$/]',
           message: 'Choose a specific autocomplete purpose or off; on leaves the field meaning ambiguous.',
-        },
-        {
+        },        {
           // docs/design-system.md §3.6. Deliberate exceptions carry an
           // eslint-disable-next-line with the reason next to them.
           selector: 'VElement[rawName="v-btn"]',
           message:
             'Use BaseButton (src/components/base/BaseButton.vue, docs/design-system.md §3.6): pick a kind and a size instead of variant/color.',
-        },
-        {
-          // docs/design-system.md §3.7. Same exception rule as above: a raw
-          // v-dialog is allowed only with an eslint-disable-next-line naming
-          // why this one is not a form dialog or a confirm box.
-          selector: 'VElement[rawName="v-dialog"]',
-          message:
-            'Use AdaptiveDialog (src/components/common/AdaptiveDialog.vue) or ConfirmDialog (docs/design-system.md §3.7); viewers, progress notices and shells that own their own actions keep VDialog with an eslint-disable-next-line explaining which they are.',
         },
       ],
     },

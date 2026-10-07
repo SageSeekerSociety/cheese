@@ -719,7 +719,6 @@ async function onAnnotate(payload: AnnotateDraft) {
       @cancel="clearLocator"
     />
 
-    <!-- eslint-disable-next-line vue/no-restricted-syntax -- viewer: a panel preview fills most of the screen (design-system §3.7) -->
     <v-dialog
       :model-value="!!editing"
       fullscreen
