@@ -126,6 +126,18 @@ def test_its_owner_calls_it_and_nobody_else_does(client):
 
     assert (mine["meta"] or {})["agent_recipient"]["mentioned"] is True
     assert (theirs["meta"] or {})["agent_recipient"]["mentioned"] is False
+    # bob is told, in the room, whose it is.
+    blocks = client.get(
+        f"/topics/{room_id}/blocks", headers=session_auth_headers("bob")
+    ).json()["data"]["data"]
+    told = [
+        b
+        for b in blocks
+        if b["kind"] == "event"
+        and "alice" in (b["content"] or "")
+        and (b.get("meta") or {}).get("in_room", True) is not False
+    ]
+    assert told, "the room says why bob's call reached nobody"
 
 
 def test_a_project_closed_to_them_stops_its_owner_calling_it(client):

@@ -2046,7 +2046,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 if attribution_id is None:
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
-                await own_calls.say_refused(session, user_block, refused)
+                await own_calls.say_refused(session, place, user_block, refused)
                 await announce_mentions(session, topic, user_block, author, roster)
                 # A reply to an agent's question goes to that agent (`recipient`).
                 answered = await answer_questions(session, user_block, recipient)

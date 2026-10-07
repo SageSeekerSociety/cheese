@@ -12,10 +12,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
+from app.domain.agent.announce import announce
+from app.domain.agent.platform_notices import (
+    EVENT_TURN_FAILED,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import allows_own_agents, may_call, owner_of
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
@@ -61,18 +66,18 @@ async def refused(session: AsyncSession, project, recipient: dict, author: str):
     return owner[1] if owner is not None else ""
 
 
-async def say_refused(session: AsyncSession, block, owner_name: str | None) -> None:
+async def say_refused(
+    session: AsyncSession, place, block, owner_name: str | None
+) -> None:
     """Beside the message, the reason it reached nobody; nothing when the call
     stood (``refused`` answered None)."""
     if owner_name is None:
         return
-    await BlockRepository(session).add(
-        project_id=block.project_id,
-        conversation_id=block.conversation_id,
-        author=block.author,
-        author_type=AuthorType.participant,
+    await announce(
+        session,
+        place_id=place.room_id,
+        task_id=place.inner_id,
         content=say("ownAgentOwnerOnly", owner=owner_name),
-        kind=BlockKind.event,
+        meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
         turn_id=block.turn_id,
-        meta={"in_room": False},
     )
