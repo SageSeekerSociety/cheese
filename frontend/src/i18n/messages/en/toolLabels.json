@@ -49,6 +49,7 @@
   "cheeseDocCommentReply": "Reply to a doc comment",
   "cheeseTask": "Propose a task",
   "cheeseWorktree": "Prepare the working directory",
+  "cheeseCheckout": "Fetch the main branch",
   "cheeseSync": "Sync task code",
   "cheeseRecover": "Restore the task backup",
   "cheeseCloseTask": "Close the task",

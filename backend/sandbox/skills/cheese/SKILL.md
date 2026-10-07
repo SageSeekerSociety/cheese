@@ -79,6 +79,7 @@ description: 在知是里交付工作时使用：提议任务、在任务里准�
 | 命令 | 用途 |
 |---|---|
 | `cheese worktree <任务 id>` | 准备或找回任务的工作目录，输出路径。进去之后 `cheese sync` 和 `cheese push-fix` 会自己认出是哪条任务 |
+| `cheese checkout` | 在 `~/.cheese/checkout` 准备项目默认分支的代码，输出路径；支线和还没开始的任务里看代码用它，这里的改动留不下 |
 | `cheese sync [--task <任务 id>] [--all]` | 推送任务的提交，并备份还没提交的文件；`--all` 同步这台机器上这个频道的全部任务目录 |
 | `cheese push-fix [--task <任务 id>] [--drop-dependency]` | 把任务的新提交推到它现有的 PR 并刷新验收卡；`--drop-dependency` 见上面「撤掉对父任务的依赖」 |
 | `cheese recover <任务 id>` | 把任务最近一次的文件备份恢复到另一个目录，原来的工作目录不动 |

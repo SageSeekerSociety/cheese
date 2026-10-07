@@ -98,6 +98,7 @@ def test_worker_discovers_every_leaf_as_a_structured_tool(worker, tmp_path):
     tools = {tool["name"]: tool for tool in receipt["result"]["tools"]}
     assert set(tools) == {
         "cheese_check",
+        "cheese_checkout",
         "cheese_convert",
         "cheese_library_get",
         "cheese_pull",
