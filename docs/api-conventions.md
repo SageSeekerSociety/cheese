@@ -126,7 +126,7 @@ assumes, and that a trailing slash never becomes a redirect.
 
 ## Request limits
 
-Every HTTP request except `/health`, `/health/*`, `/healthz` and `/metrics` is
+Every HTTP request except `/health`, `/health/*`, `/healthz`, `/readyz` and `/metrics` is
 counted against the principal it verifiably comes from
 (`backend/app/core/request_limits.py`). WebSockets are not counted.
 

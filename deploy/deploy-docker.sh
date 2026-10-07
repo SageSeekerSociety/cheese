@@ -1358,20 +1358,27 @@ else
   # build that never becomes ready makes this `up` fail. Leave that verdict to
   # the health wait below: it is the one that rolls back to $PREV_SHA, and
   # failing here would leave the broken build in place.
-  dc up -d backend frontend || log "WARNING: compose up did not complete; the health check below decides"
+  # Nothing below that assumes a serving backend runs either: the preview
+  # routes stay where they are and collab is not replaced.
+  if ! dc up -d backend frontend; then
+    log "WARNING: compose up did not complete; the health check below decides"
+    app_up=failed
+  fi
 fi
-# The legacy half of the preview kill switch. The backends above are serving
-# legacy now, so it is safe to move the routes off a still-running owner and stop
-# it — see retire_preview_connection_owner. It is a no-op in owner mode and when
-# no owner is running.
-retire_preview_connection_owner
-# After the backend it loads documents from and stores them to. Replacing it
-# closes open documents for a moment; every change is stored before it stops
-# (stop_grace_period) and the editors reconnect on their own. A box with an
-# app-router replaces it inside rollout_app, before the old frontend stops.
-if [ "$COLLAB_EXPECTED" = true ] && [ -z "$ACTIVE_BACKEND_DIR" ]; then
-  log "bringing up the collaboration service…"
-  dc up -d --no-deps collab || fail "compose up collab failed"
+if [ "${app_up:-}" != failed ]; then
+  # The legacy half of the preview kill switch. The backends above are serving
+  # legacy now, so it is safe to move the routes off a still-running owner and
+  # stop it — see retire_preview_connection_owner. It is a no-op in owner mode
+  # and when no owner is running.
+  retire_preview_connection_owner
+  # After the backend it loads documents from and stores them to. Replacing it
+  # closes open documents for a moment; every change is stored before it stops
+  # (stop_grace_period) and the editors reconnect on their own. A box with an
+  # app-router replaces it inside rollout_app, before the old frontend stops.
+  if [ "$COLLAB_EXPECTED" = true ] && [ -z "$ACTIVE_BACKEND_DIR" ]; then
+    log "bringing up the collaboration service…"
+    dc up -d --no-deps collab || fail "compose up collab failed"
+  fi
 fi
 export COLLAB_EXPECTED
 

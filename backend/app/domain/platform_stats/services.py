@@ -192,9 +192,9 @@ class PlatformStatsService:
             },
             "machines": await self._machines.counts(),
             # 「平台现在健康吗」——和上面两组的差别是**这一刻**的，不是存量也不是
-            # 窗口。复用 `/health/detailed` 那一套判据（`_REQUIRED_CHECKS` 的同一批
-            # 检查），不在这里另写一份「什么算健康」：两处各写一份的话，看板说健康、
-            # readyz 说不健康，而两边各自都看着对。
+            # 窗口。读的是 `/health/detailed` 那份报告（`health_report()`），不在这里
+            # 另写一份「什么算健康」。它比 readyz 宽：事件循环卡顿也会让它显示
+            # degraded，而 readyz 只看 `_REQUIRED_CHECKS`。
             "health": await _health_snapshot(),
             # 三样缺口：磁盘压力（**只覆盖后端这一台**）、预览连接（**进程内存**）、
             # 机器状态普查（**没有容器清单**）。各自的口径写在 `gaps.py` 上。

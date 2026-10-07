@@ -741,7 +741,7 @@ test_unready_backend_without_slots_still_rolls_back() {
     APP_TIER_SCENARIO=rollback \
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
-    APP_TIER_DOCKER_FAIL_MATCH='up -d backend frontend' \
+    APP_TIER_DOCKER_FAIL_SUFFIX='up -d backend frontend' \
     BACKEND_IMAGE=repo/backend:testsha \
     FRONTEND_IMAGE=repo/frontend:testsha COLLAB_IMAGE=repo/collab:testsha \
     DEPLOY_APP_IMAGE_SOURCE=local \
@@ -758,6 +758,12 @@ test_unready_backend_without_slots_still_rolls_back() {
   grep -Fqx \
     'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha' \
     "$docker_log" || fail "a failed compose up did not roll back to the previous images"
+  # Only the release's own `up` fails (FAIL_SUFFIX); the rollback's longer one
+  # must have been issued and, in the fake, succeeded.
+  grep -q 'up -d backend frontend collab$' "$docker_log" \
+    || fail "the rollback after a failed compose up never brought the previous release up"
+  ! grep -q 'up -d --no-deps collab' "$docker_log" \
+    || fail "collab was replaced although the backend never came up"
   rm -rf "$run_dir"
   echo "PASS: an unready backend on a box without slots still rolls back"
 }

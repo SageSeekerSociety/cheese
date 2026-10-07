@@ -45,6 +45,11 @@ fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1
 fi
+# Like the above, but only for a command that ENDS with the text — so one
+# `up` can fail while a longer one (the rollback's) still succeeds.
+if [ -n "${APP_TIER_DOCKER_FAIL_SUFFIX:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_SUFFIX" ]]; then
+  exit 1
+fi
 # APP_TIER_ROUTER_RELOAD_FAIL_FROM=N: app-router's Nth reload (counting from 1) and every one
 # after it fail, as when nginx cannot bind a port the new config listens on.
 if [ -n "${APP_TIER_ROUTER_RELOAD_FAIL_FROM:-}" ] && [ "$*" = "exec cheese-app-router nginx -s reload" ]; then

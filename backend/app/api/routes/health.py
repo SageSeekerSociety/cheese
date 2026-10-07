@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any
 
@@ -44,8 +45,9 @@ async def detailed_health_check(_admin: PlatformAdminDep) -> dict[str, Any]:
 
     Gated because it names the platform's dependencies and how each one is
     failing. The probes monitoring reads stay public (`/healthz`, `/readyz`,
-    `/health`), and `/readyz` still carries this payload in its 503 body while
-    something required is down — an outage stays diagnosable with no session.
+    `/health`); while something required is down, `/readyz`'s 503 names which
+    checks failed and each one's status, so an outage stays diagnosable with no
+    session — the error text itself is only here.
     """
     return await health_report()
 
@@ -59,8 +61,12 @@ async def health_report() -> dict[str, Any]:
     """
     checks: dict[str, Any] = {}
 
-    checks["database"] = await _check_database()
-    checks["redis"] = await _check_redis()
+    # Side by side: each probe is bounded by PROBE_TIMEOUT_S, and run one after
+    # the other two dead dependencies would outlast the rollout's 3 s curl —
+    # which would then log a timeout instead of the 503 that says why.
+    checks["database"], checks["redis"] = await asyncio.gather(
+        _check_database(), _check_redis()
+    )
     checks["routes"] = _check_routes()
     checks["event_loop"] = _check_event_loop()
 
@@ -118,7 +124,7 @@ async def _check_database() -> dict[str, Any]:
         return {"status": "up", "pool": pool_status()}
     except Exception as e:
         logger.warning("Database health check failed: %s", e)
-        return {"status": "down", "error": str(e)}
+        return {"status": "down", "error": str(e) or type(e).__name__}
 
 
 async def _check_redis() -> dict[str, Any]:
@@ -137,7 +143,7 @@ async def _check_redis() -> dict[str, Any]:
             await redis.aclose()
     except Exception as e:
         logger.warning("Redis health check failed: %s", e)
-        return {"status": "down", "error": str(e)}
+        return {"status": "down", "error": str(e) or type(e).__name__}
 
 
 @router.get("/metrics", summary="Application metrics")
