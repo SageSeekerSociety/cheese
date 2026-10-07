@@ -58,6 +58,11 @@ export function rememberThing(address: ThingAddress): void {
   if (address.number != null) byNumber.set(`${address.project_id}/${address.kind}/${address.number}`, address)
 }
 
+/** 接口回来的项目带着短名（`slug`），先记下。 */
+export function rememberProjects(rows: { id: string; slug?: string }[]): void {
+  for (const row of rows) if (row.slug) rememberProject(row.id, row.slug)
+}
+
 /** 列表里已经带着编号的东西（任务、频道、文档），先记下，点进去就不用再问一次。 */
 export function rememberNumbered(
   kind: NumberedKind,
@@ -141,7 +146,7 @@ export function shortRoute(to: RouteLocationRaw): RouteLocationRaw {
     if (found?.number != null && found.project_id === project) params[param] = String(found.number)
   }
   if ('name' in to && to.name === 'workspace-task') delete params.topicId
-  return { ...to, params }
+  return { ...to, params } as RouteLocationRaw
 }
 
 async function projectOf(ref: string): Promise<{ id: string; slug: string } | null> {
@@ -194,8 +199,10 @@ export async function canonicalAddress(to: RouteLocationNormalized): Promise<tru
   if (!project) return true
 
   // 资料库里打开文档的旧地址 `library?doc=<UUID>`。
-  if (to.name === 'project-library' && typeof to.query.doc === 'string') {
-    const { doc, ...query } = to.query
+  const doc = to.query.doc
+  if (to.name === 'project-library' && typeof doc === 'string') {
+    const query = { ...to.query }
+    delete query.doc
     const found = await thingById('docs', doc)
     return {
       name: 'project-document',

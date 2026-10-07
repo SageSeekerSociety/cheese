@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
+import { useProjectAddress } from '@/composables/useProjectAddress'
 import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
@@ -145,6 +146,7 @@ watch(
 )
 const { mdAndUp } = useDisplay()
 const router = useRouter()
+const address = useProjectAddress(() => props.projectId)
 
 /** 九栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
@@ -382,9 +384,11 @@ function close() {
 
         <ProjectAddressSection
           v-else-if="section === 'address'"
-          :project-id="projectId"
-          :slug="project?.slug ?? ''"
-          @renamed="(slug) => project && (project.slug = slug)"
+          :slug="address.slug.value"
+          :prefix="address.prefix"
+          :saving="address.saving.value"
+          :error="address.error.value"
+          @save="address.save"
         />
 
         <ProjectMcpSettings v-else-if="section === 'mcp'" :project-id="projectId" />

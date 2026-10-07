@@ -73,7 +73,12 @@ def upgrade() -> None:
             sa.text("UPDATE projects SET slug = :slug WHERE id = :id"),
             {"slug": slug, "id": project_id},
         )
-    op.alter_column("projects", "slug", nullable=False)
+    op.alter_column(
+        "projects",
+        "slug",
+        nullable=False,
+        server_default=sa.text("substr(md5(random()::text), 1, 8)"),
+    )
     op.create_unique_constraint("uq_projects_slug", "projects", ["slug"])
 
     for table, (kind, which) in _NUMBERED.items():

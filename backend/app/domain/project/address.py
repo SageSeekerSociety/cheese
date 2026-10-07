@@ -17,8 +17,9 @@ nothing outside an address ever stores them.
 import enum
 import re
 import uuid
+from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import Integer, Uuid, column, delete, null, select, table
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -131,3 +132,71 @@ async def take_number(
         .returning(ProjectCounter.last_number)
     )
     return (await session.execute(stmt)).scalar_one()
+
+
+# The numbered tables are read bare: `room_task`, `topic` and `living_doc` take
+# their numbers from here, and importing their models back would make a cycle.
+def _bare(name: str, *extra: str):
+    return table(
+        name,
+        column("id", Uuid),
+        column("project_id", Uuid),
+        column("number", Integer),
+        *(column(c, Uuid) for c in extra),
+    )
+
+
+_tasks = _bare("tasks", "room_id")
+_topics = _bare("topics")
+_documents = _bare("documents")
+#: Each kind's table, and the channel a row of it is in.
+_TABLES = {
+    Numbered.task: (_tasks, _tasks.c.room_id),
+    Numbered.channel: (_topics, _topics.c.id),
+    Numbered.document: (_documents, None),
+}
+
+
+@dataclass(frozen=True)
+class Addressed:
+    """One numbered thing, as an address names it."""
+
+    kind: Numbered
+    id: uuid.UUID
+    project_id: uuid.UUID
+    #: The channel it is in: a task's room, a channel itself; None for a document.
+    room_id: uuid.UUID | None
+    number: int | None
+
+
+async def _find(session: AsyncSession, kind: Numbered, *where) -> Addressed | None:
+    things, room = _TABLES[kind]
+    room_id = room if room is not None else null()
+    row = (
+        await session.execute(
+            select(
+                things.c.id, things.c.project_id, things.c.number, room_id.label("room")
+            ).where(*where)
+        )
+    ).first()
+    if row is None:
+        return None
+    return Addressed(kind, row.id, row.project_id, row.room, row.number)
+
+
+async def thing_by_number(
+    session: AsyncSession, project_id: uuid.UUID, kind: Numbered, number: int
+) -> Addressed | None:
+    """The task, document or channel with this number in this project."""
+    things, _ = _TABLES[kind]
+    return await _find(
+        session, kind, things.c.project_id == project_id, things.c.number == number
+    )
+
+
+async def thing_by_id(
+    session: AsyncSession, kind: Numbered, thing_id: uuid.UUID
+) -> Addressed | None:
+    """The task, document or channel with this id, and its number."""
+    things, _ = _TABLES[kind]
+    return await _find(session, kind, things.c.id == thing_id)

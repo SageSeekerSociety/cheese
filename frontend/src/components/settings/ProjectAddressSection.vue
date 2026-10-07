@@ -1,54 +1,36 @@
 <script setup lang="ts">
 // 项目地址：链接里的那个短名（`/projects/<短名>/tasks/318`）。只有项目的管理者看得到
 // 这一块，后端也只认他们。改名之后旧链接照样打开这个项目，旧短名不会给别的项目用，
-// 所以这里不用再问一句「确定吗」。
+// 所以这里不用再问一句「确定吗」。保存由页面去做（`views/ProjectSettingsView.vue`）。
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
-import { setProjectSlug } from '@/api/addresses'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { rememberProject } from '@/lib/addresses'
 
 defineOptions({ name: 'ProjectAddressSection' })
 
-const props = defineProps<{ projectId: string; slug: string }>()
-const emit = defineEmits<{ renamed: [slug: string] }>()
+const props = defineProps<{
+  /** 现在的短名。 */
+  slug: string
+  /** 链接里短名前面那一段，如 `okcheese.com/projects/`。 */
+  prefix: string
+  saving: boolean
+  /** 上一次保存为什么没成。 */
+  error: string
+}>()
+const emit = defineEmits<{ save: [slug: string] }>()
 
-const router = useRouter()
 const draft = ref(props.slug)
-const saving = ref(false)
-const error = ref('')
 watch(
   () => props.slug,
   (slug) => (draft.value = slug)
 )
 
-const link = computed(() => `${window.location.host}/projects/${draft.value.trim().toLowerCase() || props.slug}`)
-const unchanged = computed(() => draft.value.trim().toLowerCase() === props.slug)
+const typed = computed(() => draft.value.trim().toLowerCase())
+const unchanged = computed(() => typed.value === props.slug)
 
-async function save() {
-  if (unchanged.value || saving.value) return
-  saving.value = true
-  error.value = ''
-  try {
-    const { slug } = await setProjectSlug(props.projectId, draft.value.trim())
-    rememberProject(props.projectId, slug)
-    emit('renamed', slug)
-    // 地址栏里还是旧短名：换成新的，刷新、复制都是新地址。
-    const here = router.currentRoute.value
-    void router.replace({
-      name: here.name ?? undefined,
-      params: { ...here.params, projectId: slug },
-      query: here.query,
-    })
-    toast(t('work.projectSettings.address.saved'))
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.address.failed')
-  } finally {
-    saving.value = false
-  }
+function save() {
+  if (!unchanged.value && !props.saving) emit('save', typed.value)
 }
 </script>
 
@@ -78,7 +60,7 @@ async function save() {
           {{ t('work.projectSettings.address.save') }}
         </BaseButton>
       </div>
-      <p class="t-body c-muted mt-2 address-link">{{ link }}</p>
+      <p class="t-body c-muted mt-2 address-link">{{ prefix }}{{ typed || slug }}</p>
       <p class="t-body c-faint mt-1 settings-hint">{{ t('work.projectSettings.address.hint') }}</p>
     </div>
   </section>

@@ -15,8 +15,6 @@ import type { Shell } from '@/lib/shell'
 export interface Project {
   id: string
   name: string
-  // 地址里的项目名：`/projects/<slug>/...`。
-  slug: string
   created_at: string
   // 建项目的人自己写的「打算做什么」（#946 片 C）。空串 = 建的时候没答，或跳过了。
   intent?: string
@@ -67,8 +65,6 @@ export interface Topic {
   id: string
   project_id: string
   parent_id: string | null
-  // 在项目里的编号，地址 `/projects/<短名>/channels/<编号>` 用它；私聊没有。
-  number?: number | null
   title: string
   // 频道是做什么的（管理者写，没写是 null）；members_only 是私密频道，只有频道里的人看得到。
   description?: string | null
@@ -243,8 +239,6 @@ export interface RoomTask {
   id: string
   project_id: string
   room_id: string // 它挂在哪个房间里；任务不嵌套
-  // 在项目里的编号，地址 `/projects/<短名>/tasks/<编号>` 用它。
-  number?: number | null
   title: string
   // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了
   // 会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。

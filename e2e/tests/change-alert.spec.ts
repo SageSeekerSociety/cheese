@@ -33,7 +33,7 @@ test.describe('变更提醒', () => {
     const topic = (await api(page, 'post', '/topics', {
       project_id: projectId,
       title: `提醒落点 ${stamp}`,
-    })) as { id: string };
+    })) as { id: string; number: number };
 
     const title = `变更提醒 ${stamp}`;
     const body = `修了预览的转圈 ${stamp}`;
@@ -53,9 +53,7 @@ test.describe('变更提醒', () => {
     await expect(row).toContainText(body);
 
     await row.getByText(title).click();
-    await expect(page).toHaveURL(
-      new RegExp(`/projects/${projectId}/topics/${topic.id}`),
-    );
+    await expect(page).toHaveURL(new RegExp(`/channels/${topic.number}(\\?|$)`));
   });
 
   test('读过就标掉，不再留在「待办」里', async ({ page }) => {

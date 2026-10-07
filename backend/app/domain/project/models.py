@@ -35,6 +35,10 @@ from app.domain.common import Timestamps, UuidPk
 _SLUG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 
+#: The database's own default for a slug: eight random hex characters.
+SLUG_SQL_DEFAULT = text("substr(md5(random()::text), 1, 8)")
+
+
 def random_slug() -> str:
     """Eight random lowercase letters and digits: a new project's first slug.
     Project names are mostly Chinese, and a romanised one is as likely to read
@@ -56,7 +60,11 @@ class Project(UuidPk, Timestamps, Base):
     # The project's name in addresses: `/projects/<slug>/tasks/318`. Unique
     # across every project; the names it had before are in `project_slugs`, so
     # a link made before a rename still finds it (`app/domain/project/address.py`).
-    slug: Mapped[str] = mapped_column(String(32), unique=True, default=random_slug)
+    # A row written past the ORM (raw SQL in a script or a test) gets eight hex
+    # characters from the database instead.
+    slug: Mapped[str] = mapped_column(
+        String(32), unique=True, default=random_slug, server_default=SLUG_SQL_DEFAULT
+    )
     owner_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # The team this project belongs to. Its members are the project's people and
     # its machines and quota are the project's; personal work belongs to the

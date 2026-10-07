@@ -5,8 +5,6 @@
 export interface ProjectDocument {
   id: string
   project_id: string
-  // 在项目里的编号，地址 `/projects/<短名>/docs/<编号>` 用它。
-  number?: number | null
   kind: string
   title: string | null
   doc_version: number

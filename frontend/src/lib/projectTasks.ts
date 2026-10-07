@@ -11,6 +11,7 @@
 import type { ListPayload, RoomTask } from '@/cx_types'
 
 import { listProjectTasks } from '@/api'
+import { rememberNumbered } from '@/lib/addresses'
 
 interface Read {
   /** 这一次读发出去的时刻 —— 新旧按它算，它说的是「这一份反映的是哪一刻」。 */
@@ -27,7 +28,11 @@ export function readProjectTasks(projectId: string, opts: { maxAgeMs?: number } 
   if (held && (held.pending || (opts.maxAgeMs !== undefined && now - held.at < opts.maxAgeMs))) {
     return held.promise
   }
-  const read: Read = { at: now, pending: true, promise: listProjectTasks(projectId) }
+  const promise = listProjectTasks(projectId).then((page) => {
+    rememberNumbered('tasks', page.data)
+    return page
+  })
+  const read: Read = { at: now, pending: true, promise }
   latest.set(projectId, read)
   read.promise.then(
     () => {

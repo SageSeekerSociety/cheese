@@ -17,7 +17,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -32,18 +31,17 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.living_doc.models import Document
 from app.domain.membership.services import MemberService
 from app.domain.project.address import (
+    Addressed,
     Numbered,
     SlugError,
     project_by_ref,
     rename_slug,
+    thing_by_id,
+    thing_by_number,
 )
-from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
-from app.domain.room_task.models import Task
-from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/addresses", tags=["addresses"])
@@ -54,9 +52,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 _NOT_FOUND = "Not found"
 
 
-async def _readable_project(
-    db: AsyncSession, resolver: ActorResolver, ref: str
-) -> Project:
+async def _readable_project(db: AsyncSession, resolver: ActorResolver, ref: str):
     """The project ``ref`` names, if the caller may see it."""
     project = await project_by_ref(db, ref)
     if project is None:
@@ -69,46 +65,29 @@ async def _readable_project(
     return project
 
 
-def _address(project: Project, kind: Numbered, row: Task | Topic | Document) -> dict:
+def _address(slug: str, thing: Addressed) -> dict:
     """What the browser needs to show one numbered thing: its id, the room it
     hangs in (a task's channel; a channel is its own), and its short form."""
-    room_id = (
-        row.room_id
-        if isinstance(row, Task)
-        else row.id
-        if isinstance(row, Topic)
-        else None
-    )
     return {
-        "project_id": str(project.id),
-        "slug": project.slug,
-        "kind": kind.value,
-        "id": str(row.id),
-        "room_id": str(room_id) if room_id is not None else None,
-        "number": row.number,
+        "project_id": str(thing.project_id),
+        "slug": slug,
+        "kind": thing.kind.value,
+        "id": str(thing.id),
+        "room_id": str(thing.room_id) if thing.room_id is not None else None,
+        "number": thing.number,
     }
 
 
-_TABLES: dict[Numbered, type[Task] | type[Topic] | type[Document]] = {
-    Numbered.task: Task,
-    Numbered.channel: Topic,
-    Numbered.document: Document,
-}
-
-
-async def _authorize_row(
-    db: AsyncSession,
-    resolver: ActorResolver,
-    kind: Numbered,
-    row: Task | Topic | Document,
+async def _authorize_thing(
+    db: AsyncSession, resolver: ActorResolver, thing: Addressed
 ) -> None:
     """Whether the caller may see this one thing — a channel only its members
     see hides its number as it hides itself."""
     try:
-        if kind is Numbered.document:
-            await reach(db, resolver, row.id)
+        if thing.kind is Numbered.document:
+            await reach(db, resolver, thing.id)
         else:
-            place = await TopicService(db).place_or_404(row.id)
+            place = await TopicService(db).place_or_404(thing.id)
             await _actor_in_place(resolver, place)
     except ForbiddenError as refused:
         raise NotFoundError(_NOT_FOUND) from refused
@@ -132,14 +111,11 @@ async def resolve_number(
 ) -> dict:
     """The task, document or channel with this number in this project."""
     project = await _readable_project(db, resolver, ref)
-    table = _TABLES[kind]
-    row = await db.scalar(
-        select(table).where(table.project_id == project.id, table.number == number)
-    )
-    if row is None:
+    thing = await thing_by_number(db, project.id, kind, number)
+    if thing is None:
         raise NotFoundError(_NOT_FOUND)
-    await _authorize_row(db, resolver, kind, row)
-    return ok(_address(project, kind, row))
+    await _authorize_thing(db, resolver, thing)
+    return ok(_address(project.slug, thing))
 
 
 @router.get("/of/{kind}/{thing_id}")
@@ -149,12 +125,12 @@ async def address_of(
     """The short address of the task, document or channel with this id, in
     the project it is in now. ``number`` is null for one that has none yet
     (or never will: a private chat, a task's own document)."""
-    row = await db.get(_TABLES[kind], thing_id)
-    if row is None:
+    thing = await thing_by_id(db, kind, thing_id)
+    if thing is None:
         raise NotFoundError(_NOT_FOUND)
-    await _authorize_row(db, resolver, kind, row)
-    project = await ProjectService(db).get_or_404(row.project_id)
-    return ok(_address(project, kind, row))
+    await _authorize_thing(db, resolver, thing)
+    project = await ProjectService(db).get_or_404(thing.project_id)
+    return ok(_address(project.slug, thing))
 
 
 class SlugIn(BaseModel):
