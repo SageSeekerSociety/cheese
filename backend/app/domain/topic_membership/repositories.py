@@ -78,6 +78,19 @@ class TopicMembershipRepository:
         rows = (await self._session.execute(stmt)).all()
         return {topic_id: role for topic_id, role in rows}
 
+    async def counts_for_topics(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, int]:
+        """How many seats each of these topics has, in one read."""
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(TopicMembership.topic_id, func.count())
+            .where(TopicMembership.topic_id.in_(topic_ids))
+            .group_by(TopicMembership.topic_id)
+        )
+        return {t: n for t, n in (await self._session.execute(stmt)).all()}
+
     async def count_for_topic(self, topic_id: uuid.UUID) -> int:
         stmt = (
             select(func.count())

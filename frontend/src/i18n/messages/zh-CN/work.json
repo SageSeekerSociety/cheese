@@ -234,7 +234,8 @@
     "site": {
       "agents": {
         "all": "全部",
-        "label": "按队友查看"
+        "label": "按队友查看",
+        "numbered": "{name} {n}"
       },
       "output": {
         "show": "输出（{size}）",
@@ -1047,10 +1048,10 @@
       "addPlaceholder": "添加成员…",
       "allIn": "项目成员和队友都已在频道中",
       "add": "加入",
-      "readOnly": "只有频道创建者和项目管理员能修改成员",
+      "readOnly": "只有频道里的人能添加成员",
       "listSeparator": "、",
       "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
-      "creator": "创建者"
+      "creator": "管理者"
     },
     "mail": {
       "noSubject": "（无主题）",
@@ -1844,25 +1845,41 @@
       "accountConnected": "已连接 GitHub 账号"
     },
     "channels": {
-      "intro": "项目里的公开频道都在这里，项目成员都能看、能加入；私密频道只有频道里的人看得到。侧栏只列你加入的频道。一件要做成的事建成任务，不用为它新建频道。",
       "nameLabel": "频道名称",
       "create": "新建频道",
-      "activeLabel": "在用的频道",
-      "archivedLabel": "已归档",
-      "rootNote": "项目里的所有人都在，不能退出或归档",
       "rename": "重命名",
       "archive": "归档",
       "unarchive": "取消归档",
       "descriptionLabel": "频道说明（选填）",
       "describe": "编辑说明",
       "privateLabel": "设为私密频道",
-      "privateHint": "只有频道里的人能看到它和其中的任务，其他人要由频道里的人邀请",
+      "privateHint": "只有频道里的人能看到其中的消息和任务。项目管理员能看到频道名称和成员",
       "makePrivate": "设为私密",
       "makePublic": "设为公开",
       "makePrivateTitle": "将「{name}」设为私密？",
       "makePrivateBody": "设为私密后，只有频道里的人能看到它和其中的任务，其他人要由频道里的人邀请。",
       "makePublicTitle": "将「{name}」设为公开？",
-      "makePublicBody": "设为公开后，项目里的所有人都能看到它的全部历史消息和任务。"
+      "makePublicBody": "设为公开后，项目里的所有人都能看到它的全部历史消息和任务。",
+      "filterLabel": "筛选频道",
+      "activeCount": "在用的频道 · {count}",
+      "archivedCount": "已归档 · {count}",
+      "projectManagers": "项目管理员",
+      "notIn": "未加入",
+      "stepIn": "加入频道",
+      "changeManager": "更换管理者",
+      "save": "保存",
+      "actionsFor": "「{name}」的操作",
+      "renameTitle": "重命名「{name}」",
+      "describeTitle": "编辑「{name}」的说明",
+      "managerTitle": "更换「{name}」的管理者",
+      "columns": {
+        "channel": "频道",
+        "manager": "管理者",
+        "members": "成员",
+        "openTasks": "进行中的任务",
+        "active": "最近活跃",
+        "actions": "操作"
+      }
     }
   },
   "computeChoice": {
@@ -2167,5 +2184,35 @@
     "browse": "浏览频道",
     "visibilityFailed": "频道可见范围没改成",
     "privateTip": "私密频道"
+  },
+  "channelBrowse": {
+    "search": "搜索频道",
+    "filterLabel": "筛选频道",
+    "filter": {
+      "all": "全部 · {count}",
+      "joined": "已加入 · {count}",
+      "archived": "已归档 · {count}"
+    },
+    "joined": "已加入",
+    "members": "{count} 位成员",
+    "openTasks": "{count} 个进行中的任务",
+    "active": "{when}活跃",
+    "general": "默认频道",
+    "private": "私密频道",
+    "join": "加入",
+    "leave": "退出",
+    "empty": "暂无频道",
+    "noMatch": "暂无匹配的频道",
+    "loadFailed": "无法加载频道"
+  },
+  "channelDetails": {
+    "open": "「{name}」的详情",
+    "tabs": {
+      "about": "关于",
+      "settings": "设置"
+    },
+    "created": "创建时间",
+    "archive": "归档频道",
+    "archiveHint": "归档后不能发送消息，历史消息仍可查看和搜索。有进行中的任务时不能归档"
   }
 }

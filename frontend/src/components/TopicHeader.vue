@@ -22,8 +22,9 @@ import { useNavigation } from '@/composables/useNavigation'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
 import { menuActionOf, useCommands } from '@/commands'
-import { topicActions } from '@/commands/topicActions'
+import { archiveTopic, topicActions } from '@/commands/topicActions'
 import BaseButton from '@/components/base/BaseButton.vue'
+import ChannelDetailsDialog from '@/components/channel/ChannelDetailsDialog.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
@@ -153,6 +154,19 @@ function roomCommands() {
   return topicActions(props.topic, nav.router, { rename: startRename })
 }
 const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
+
+// 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
+const detailsOpen = ref(false)
+const managerName = ref<string | null>(null)
+const managesProject = computed(() => store.openedProject?.can_manage_members === true)
+function archiveFromDetails() {
+  detailsOpen.value = false
+  if (nav) void archiveTopic(props.topic, nav.router)
+}
+function leaveFromDetails() {
+  detailsOpen.value = false
+  void store.setJoined(props.topic.id, false)
+}
 useCommands(roomCommands)
 </script>
 
@@ -167,16 +181,22 @@ useCommands(roomCommands)
     <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
       <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
       <div class="topic-header__text">
-        <span class="topic-header__title t-title" :title="title"
-          ><v-icon
+        <button
+          type="button"
+          class="topic-header__title topic-header__title--button t-title"
+          :title="title"
+          :aria-label="t('work.channelDetails.open', { name: title })"
+          @click="detailsOpen = true"
+        >
+          <v-icon
             v-if="topic.members_only"
             size="14"
             class="topic-header__lock"
             icon="mdi-lock-outline"
             :title="t('work.channel.privateTip')"
             :aria-label="t('work.channel.privateTip')"
-          />{{ title }}</span
-        >
+          />{{ title }}
+        </button>
         <span v-if="mdAndUp && topic.description" class="topic-header__description" :title="topic.description">{{
           topic.description
         }}</span>
@@ -197,12 +217,31 @@ useCommands(roomCommands)
       <TopicMembers
         :topic-id="topic.id"
         :can-manage="topic.can_manage === true"
-        :can-invite="topic.members_only === true && topic.joined === true"
+        :can-invite="topic.joined === true"
         :general="!isWorkTopic"
         :project-id="topic.project_id"
         :project-members="members"
         :me="me"
         @machine-access="machineNotice = $event"
+        @manager="managerName = $event"
+      />
+
+      <ChannelDetailsDialog
+        v-if="detailsOpen"
+        v-model="detailsOpen"
+        :topic="topic"
+        :can-manage="topic.can_manage === true"
+        :manages-project="managesProject"
+        :manager-name="managerName"
+        :level="store.levelOf(topic.id)"
+        :muted-until="store.mutedUntil(topic.id)"
+        @rename="(next) => emit('rename', next)"
+        @describe="(text) => store.describe(topic.id, text)"
+        @set-private="(membersOnly) => store.setMembersOnly(topic.id, membersOnly)"
+        @archive="archiveFromDetails"
+        @unarchive="store.unarchive(topic.id)"
+        @leave="leaveFromDetails"
+        @notify="(level, until) => store.setNotifyLevel(topic.id, level, until)"
       />
 
       <ChannelNotifyMenu
@@ -338,6 +377,18 @@ useCommands(roomCommands)
   flex: 1 1 auto;
   gap: 10px;
 }
+.topic-header__title--button {
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+.topic-header__title--button:hover {
+  color: var(--accent-ink);
+}
 .topic-header__title {
   min-width: 0;
   /* 行盒不在这里定：这一格和话题列表的行共用 .t-title，也就共用它的 --lh-15
@@ -375,6 +426,11 @@ useCommands(roomCommands)
 }
 .topic-header--bar .topic-header__title {
   max-width: 100%;
+}
+/* 手机顶栏上它是一颗按钮，手指要点得中：上下撑到 44px。不用 .tap-target，那一层
+   伪元素会被标题自己截断用的 overflow: hidden 切掉。 */
+.topic-header--bar .topic-header__title--button {
+  padding-block: 12px;
 }
 /* 私密频道：标题前一把锁，和侧栏那一行同一个记号。 */
 .topic-header__lock {

@@ -799,6 +799,9 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/upstream", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/upstream", auth: "project.manager", owner: "project"}
   # app.api.routes.projects_agents
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/channels", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/channels/{topic_id}/step-in", auth: "actor.project", owner: "topic"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/channels/{topic_id}/manager", auth: "actor.project", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/agents", auth: "actor.project", owner: "agent.instances"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/agents", auth: "actor.project", owner: "agent.instances"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/agents/{agent_id}", auth: "actor.project", owner: "agent.instances"}

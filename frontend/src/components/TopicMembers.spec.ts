@@ -194,12 +194,12 @@ describe('成员名册', () => {
     expect(agentRow.querySelector('.roster__role')).toBeNull()
   })
 
-  it('建这个频道的人标着「创建者」', async () => {
+  it('管这个频道的人标着「管理者」', async () => {
     await openRoster()
     const rowOf = (handle: string) =>
       Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
-    expect(rowOf('alice').textContent).toContain('创建者')
-    expect(rowOf('bob').textContent).not.toContain('创建者')
+    expect(rowOf('alice').textContent).toContain('管理者')
+    expect(rowOf('bob').textContent).not.toContain('管理者')
   })
 })
 

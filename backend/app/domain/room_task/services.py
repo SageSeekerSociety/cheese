@@ -172,6 +172,11 @@ class TaskService:
         """
         return await self._repo.last_block_at_for_tasks(task_ids)
 
+    async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """How many open tasks each of these rooms has; a room with none is
+        absent."""
+        return await self._repo.open_counts(room_ids)
+
     async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """Every piece of work this room has dispatched, oldest first.
 

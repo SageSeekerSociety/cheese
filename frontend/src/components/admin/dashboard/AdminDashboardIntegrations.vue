@@ -174,12 +174,13 @@ const integrationsUnavailable = computed(
 
 <style scoped>
 /* KPI 网格：N 张卡合成**一条整面板**（一个外框 + 内部分隔线，卡片自己的边框
-   与写死高度在 `.ad__inner` 作用域内关掉，见 AdminKpiCard 的对应块）。边框数量
+   与写死高度在 `.ad__kpis` 作用域内关掉，见 AdminKpiCard 的对应块）。边框数量
    从 N 个变 1 个，行高对齐是天生的 —— 不再需要 92/108px 那档妥协。
    面板向左、向下各多伸 1px：第一列格子的左边线与末行格子的下边线被推出外边框、
    由 overflow 裁掉，留下的就全是「缝」。
-   窄 2 列 → ≥560 交 `auto-fit`，断点是**容器查询**（挂 `.ad__inner`），理由见
-   `.ad__inner`。 */
+   窄 2 列 → ≥560 交 `auto-fit`，断点是**容器查询**：量的是面板实际拿到多宽（后台页
+   的内容列 `.app-page__column--admin`），不是视口 —— 侧栏折叠省出的宽度视口查询
+   看不见。 */
 
 .ad__kpis {
   display: grid;

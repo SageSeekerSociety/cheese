@@ -139,7 +139,8 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
 /* 窄屏：数字缩一档。手机上是两列、每列约 150px，23px 的六位数字会把卡片撑破一点点
    （真浏览器里量到过：`204,900` 与隔壁那张的 `55` 交叠 3px）。20px 仍是「大数字」那一档
    （`.t-console-title` 的下一级），但它装得下。两条查询各司其职：@media 管没有容器
-   祖先的页面（模型页），@container 管挂在 `.ad__inner`（container-type）下的看板 ——
+   祖先的页面（模型页），@container 管后台页那一片 —— 容器就是内容列
+   `.app-page__column--admin`（`container: admin`）——
    视口 824–964px 这一带侧栏吃掉 ~240px，容器里 4 列的卡只剩 ~134–169px，纯视口查询
    在这里失效（真评审抓到的带），所以容器版按容器宽 760 降档：4 列时卡 < ~178px、
    2 列时容器 < ~416px 也一并覆盖。 */
@@ -242,11 +243,12 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
   background: var(--fill-2);
 }
 
-/* —— 看板整面板模式（§4.2 重排）：挂在看板的 `.ad__inner` 下时，N 张卡合成一条
-   整面板 —— 外框与分隔线由 `.ad__kpis` 给，卡自己的边框、圆角与写死高度全部关掉
-   （高度回到内容自适应；分隔线天生对齐，不再需要 92/108px 那档妥协）。数字升到
-   30px：分隔线给了安静的行，大数字接得住。模型页（`.amd__kpis`）保持独立卡片不变。 */
-:where(.ad__inner) .akpi {
+/* —— 看板整面板模式（§4.2 重排）：挂在看板的 KPI 面板 `.ad__kpis` 下时，N 张卡
+   合成一条整面板 —— 外框与分隔线由 `.ad__kpis` 给，卡自己的边框、圆角与写死高度
+   全部关掉（高度回到内容自适应；分隔线天生对齐，不再需要 92/108px 那档妥协）。
+   数字升到 30px：分隔线给了安静的行，大数字接得住。模型页（`.amd__kpis`）保持独立
+   卡片不变 —— 它不叫这个名字。 */
+:where(.ad__kpis) .akpi {
   justify-content: flex-start;
   height: auto;
   min-height: 0;
@@ -261,24 +263,24 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
   margin-left: -0.5px;
 }
 
-:where(.ad__inner) .akpi--rich {
+:where(.ad__kpis) .akpi--rich {
   height: auto;
 }
 
-:where(.ad__inner) .akpi__num {
+:where(.ad__kpis) .akpi__num {
   font-size: 30px;
 }
 
 /* 窄屏降档跟着整面板的列数走：4 列 ≥560、2 列以下。30px 在 ~130px 的格里装不下
    六位数字，降回 23px（`.t-console-title` 的原档）。 */
 @container (max-width: 1320px) {
-  :where(.ad__inner) .akpi__num {
+  :where(.ad__kpis) .akpi__num {
     font-size: 23px;
   }
 }
 
 @container (max-width: 760px) {
-  :where(.ad__inner) .akpi__num {
+  :where(.ad__kpis) .akpi__num {
     font-size: 20px;
   }
 }

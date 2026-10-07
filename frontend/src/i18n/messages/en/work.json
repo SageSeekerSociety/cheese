@@ -234,7 +234,8 @@
     "site": {
       "agents": {
         "all": "All",
-        "label": "View by teammate"
+        "label": "View by teammate",
+        "numbered": "{name} {n}"
       },
       "output": {
         "show": "Output ({size})",
@@ -1047,10 +1048,10 @@
       "addPlaceholder": "Add a member…",
       "allIn": "Every project member and teammate is already in this channel",
       "add": "Add",
-      "readOnly": "Only the channel's creator and the project's managers can change members",
+      "readOnly": "Only people in the channel can add members",
       "listSeparator": ", ",
       "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
-      "creator": "Creator"
+      "creator": "Manager"
     },
     "mail": {
       "noSubject": "(No subject)",
@@ -1844,25 +1845,41 @@
       "accountConnected": "GitHub account connected"
     },
     "channels": {
-      "intro": "Every public channel in the project is here, and every project member can read and join it; a private channel is seen only by the people in it. Your sidebar lists only the channels you've joined. For a piece of work, create a task rather than a channel.",
       "nameLabel": "Channel name",
       "create": "New channel",
-      "activeLabel": "Channels in use",
-      "archivedLabel": "Archived",
-      "rootNote": "Everyone in the project is here; it can't be left or archived",
       "rename": "Rename",
       "archive": "Archive",
       "unarchive": "Unarchive",
       "descriptionLabel": "Description (optional)",
       "describe": "Edit description",
       "privateLabel": "Make it a private channel",
-      "privateHint": "Only the people in it see the channel and its tasks; others join when someone in it invites them",
+      "privateHint": "Only people in the channel see its messages and tasks. Project managers see its name and members",
       "makePrivate": "Make private",
       "makePublic": "Make public",
       "makePrivateTitle": "Make “{name}” private?",
       "makePrivateBody": "Once it's private, only the people in it see the channel and its tasks, and others join when someone in it invites them.",
       "makePublicTitle": "Make “{name}” public?",
-      "makePublicBody": "Once it's public, everyone in the project can see its whole message history and its tasks."
+      "makePublicBody": "Once it's public, everyone in the project can see its whole message history and its tasks.",
+      "filterLabel": "Filter channels",
+      "activeCount": "In use · {count}",
+      "archivedCount": "Archived · {count}",
+      "projectManagers": "Project managers",
+      "notIn": "Not joined",
+      "stepIn": "Join channel",
+      "changeManager": "Change manager",
+      "save": "Save",
+      "actionsFor": "Actions for “{name}”",
+      "renameTitle": "Rename “{name}”",
+      "describeTitle": "Edit the description of “{name}”",
+      "managerTitle": "Change the manager of “{name}”",
+      "columns": {
+        "channel": "Channel",
+        "manager": "Manager",
+        "members": "Members",
+        "openTasks": "Open tasks",
+        "active": "Last active",
+        "actions": "Actions"
+      }
     }
   },
   "computeChoice": {
@@ -2167,5 +2184,35 @@
     "browse": "Browse channels",
     "visibilityFailed": "Couldn't change who can see the channel",
     "privateTip": "Private channel"
+  },
+  "channelBrowse": {
+    "search": "Search channels",
+    "filterLabel": "Filter channels",
+    "filter": {
+      "all": "All · {count}",
+      "joined": "Joined · {count}",
+      "archived": "Archived · {count}"
+    },
+    "joined": "Joined",
+    "members": "{count} members",
+    "openTasks": "{count} open tasks",
+    "active": "active {when}",
+    "general": "Default channel",
+    "private": "Private channel",
+    "join": "Join",
+    "leave": "Leave",
+    "empty": "No channels",
+    "noMatch": "No matching channels",
+    "loadFailed": "Couldn't load channels"
+  },
+  "channelDetails": {
+    "open": "Details of “{name}”",
+    "tabs": {
+      "about": "About",
+      "settings": "Settings"
+    },
+    "created": "Created",
+    "archive": "Archive channel",
+    "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived"
   }
 }

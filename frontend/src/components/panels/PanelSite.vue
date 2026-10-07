@@ -150,8 +150,24 @@ function turnAuthor(entries: Block[]): string | null {
   return who ? who.author : null
 }
 
-function agentLabel(handle: string): string {
+function baseLabel(handle: string): string {
   return props.memberNames[handle] || (isAgentHandle(handle) ? props.agentName : handle)
+}
+// 两个页签叫同一个名字（名册上没有的 AI 都落成项目队友的名字）时，从第二个起带上序号，
+// 不然点哪个都分不清。
+const agentLabels = computed(() => {
+  const seen = new Map<string, number>()
+  const labels: Record<string, string> = {}
+  for (const handle of agents.value) {
+    const base = baseLabel(handle)
+    const n = (seen.get(base) ?? 0) + 1
+    seen.set(base, n)
+    labels[handle] = n === 1 ? base : t('work.room.site.agents.numbered', { name: base, n })
+  }
+  return labels
+})
+function agentLabel(handle: string): string {
+  return agentLabels.value[handle] ?? baseLabel(handle)
 }
 
 // 此刻在干活的队友（对话栏从 socket 上学来，和输入框下面那一行是同一份）：只看

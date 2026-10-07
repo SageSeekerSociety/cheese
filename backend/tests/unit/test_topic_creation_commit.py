@@ -60,7 +60,8 @@ async def test_creation_response_follows_commit(monkeypatch, commit_fails):
         topics,
         "TopicMemberService",
         lambda session: SimpleNamespace(
-            managed_topic_ids=AsyncMock(return_value={topic.id})
+            managed_topic_ids=AsyncMock(return_value={topic.id}),
+            may_open_channels=AsyncMock(return_value=True),
         ),
     )
     resolver = SimpleNamespace(

@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
@@ -18,14 +18,23 @@ from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_TIMED_DELIVERY,
+    EVENT_TURN_FAILED,
+    SEVERITY_ERROR,
     SEVERITY_INFO,
     WHO_CHEESE,
+    WHO_HUMAN,
     notice,
 )
 from app.domain.conversation.services import room_of
-from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
+from app.domain.delivery.agent import (
+    GAVE_UP,
+    GIVE_UP_AFTER,
+    dispatch_pending,
+    instance_for_seat,
+    record_agent,
+)
 from app.domain.delivery.ledger import DeliveryEvent, Ledger
-from app.domain.delivery.models import TimedDelivery
+from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
@@ -201,7 +210,57 @@ async def deliver_due(
                 await _hand_to_person(session, row)
             materialized += 1
         await session.commit()
+    await give_up_stale(sessions, chat=chat)
     # Post-commit dispatch is optional for recovery: every scan also claims older
     # committed intent, including events created by a process that then stopped.
     dispatched = await dispatch_pending(sessions, chat=chat, runner=runner, limit=limit)
     return {"materialized": materialized, "dispatched": dispatched}
+
+
+async def give_up_stale(sessions: SessionFactory, *, chat) -> int:
+    """Fail every instruction to an AI teammate that has not started half an
+    hour after it was given (`agent.GIVE_UP_AFTER`), and say so once in each
+    conversation where a person's message went unanswered: whoever waits there
+    sees it, and 「重试」 starts a turn again. Returns how many gave up."""
+    stamp = _utcnow()
+    told: dict[uuid.UUID, str] = {}
+    async with sessions() as session:
+        rows = list(
+            await session.scalars(
+                select(Delivery)
+                .where(
+                    Delivery.agent_instance_id.is_not(None),
+                    Delivery.sent_at.is_(None),
+                    Delivery.state.in_(("pending", "claimed")),
+                    Delivery.attempts > 0,
+                    Delivery.recorded_at < stamp - GIVE_UP_AFTER,
+                    or_(Delivery.lease_until.is_(None), Delivery.lease_until <= stamp),
+                )
+                .with_for_update(skip_locked=True)
+            )
+        )
+        for row in rows:
+            row.state = "failed"
+            row.last_error = GAVE_UP
+            # Only a person's message is told: 「重试」 starts a turn from the
+            # messages still waiting, and a platform instruction is not one. A
+            # task's opening says it failed on the task page; a routine's run
+            # on its own line.
+            if (
+                row.conversation_id is not None
+                and row.type == NotificationType.MENTION.value
+            ):
+                told.setdefault(row.conversation_id, row.recipient_handle)
+        await session.commit()
+    for conversation_id, seat in told.items():
+        await chat.post_system_event(
+            conversation_id,
+            say("deliveryGaveUp", agent=f"<@{seat}>"),
+            meta=notice(
+                EVENT_TURN_FAILED,
+                severity=SEVERITY_ERROR,
+                who=WHO_HUMAN,
+                retryable=True,
+            ),
+        )
+    return len(rows)

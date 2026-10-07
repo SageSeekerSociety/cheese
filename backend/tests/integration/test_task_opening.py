@@ -133,12 +133,12 @@ def test_a_task_created_empty_has_no_first_turn(client):
 
 def test_an_instruction_not_started_in_half_an_hour_gives_up(client):
     from app.api.deps import get_chat_service, get_work_runner
-    from app.domain.delivery.agent import dispatch_pending
     from app.domain.delivery.models import Delivery
+    from app.domain.delivery.timer import deliver_due
 
     _, task = _task_from_message(client)
 
-    async def _age_and_dispatch():
+    async def _age():
         async with client.test_factory() as session:
             await session.execute(
                 update(Delivery)
@@ -152,10 +152,12 @@ def test_an_instruction_not_started_in_half_an_hour_gives_up(client):
                 )
             )
             await session.commit()
-        await dispatch_pending(
-            client.test_factory, chat=get_chat_service(), runner=get_work_runner()
-        )
 
-    asyncio.run(_age_and_dispatch())
+    asyncio.run(_age())
+    # The ledger's sweep, which runs on a clock, in the app's own loop.
+    chat = client.app.dependency_overrides[get_chat_service]()
+    client.portal.call(
+        lambda: deliver_due(chat.session_factory, chat=chat, runner=get_work_runner())
+    )
 
     assert _opening(client, task) == "failed"

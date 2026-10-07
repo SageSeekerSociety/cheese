@@ -134,6 +134,13 @@ describe('现场按队友看', () => {
     expect(who()).toEqual([])
   })
 
+  it('两个队友叫同一个名字时，页签分得开', async () => {
+    const view = await openSite(TWO.slice(0, 3), { memberNames: { 'cheese-a1': '芝士', 'cheese-b2': '芝士' } })
+
+    const tabs = view.getAllByRole('tab').map((t) => t.textContent?.trim())
+    expect(new Set(tabs).size).toBe(tabs.length)
+  })
+
   it('只有一个队友：没有这一排', async () => {
     const view = await openSite([TWO[0], TWO[2]])
 

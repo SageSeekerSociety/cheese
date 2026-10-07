@@ -266,7 +266,7 @@
       "task2": "Validate submissions",
       "task3": "Mobile layout",
       "pr": "PR #42",
-      "inProgress": "Building",
+      "inProgress": "In progress",
       "mergeRule": "Merges into main once accepted"
     }
   },
