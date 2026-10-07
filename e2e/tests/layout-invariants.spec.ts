@@ -430,10 +430,10 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     }
   });
 
-  test('看板：三个分类里，没有两处文字画在同一个坐标上', async ({ page }) => {
+  test('统计页：三页里，没有两处文字画在同一个坐标上', async ({ page }) => {
     await apiLogin(page);
 
-    // 三个分类都过一遍。宽窄两档都要：窄屏是 KPI 卡那一行最容易压的时候（卡片曾经
+    // 三页都过一遍。宽窄两档都要：窄屏是 KPI 卡那一行最容易压的时候（卡片曾经
     // 写死 263px 宽，比窗口还宽，直接压到隔壁那张上）。
     // 三档都要：1440 是设计宽度（四列正好 263），**1100 是四列但比设计窄的那一段**
     // （每列比 263 小，卡片写死宽度时就是从这里开始压到隔壁），390 是手机（两列）。
@@ -444,15 +444,8 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       { width: 390, height: 844 },
     ]) {
       await page.setViewportSize(size);
-      await page.goto('/admin/dashboard');
-      // 手机上页名在顶栏里，不是页内的标题；分类导轨两档都在。
-      await expect(page.locator('.ad__kinds')).toBeVisible();
-
-      for (const tab of ['反馈', '用量', '平台']) {
-        // `exact: true`：顶栏那颗「帮助与反馈」（另一个 PR）的可访问名字里也含「反馈」，
-        // 而 Playwright 的 `name` 默认按**子串**匹配 —— 不加这一条，'反馈' 那一轮会同时
-        // 命中它和这一页的分类页签，报 strict mode 违规。
-        await page.getByRole('button', { name: tab, exact: true }).click();
+      for (const tab of ['feedback-trends', 'usage', 'overview']) {
+        await page.goto(`/admin/${tab}`);
         // 等这一类的数据到货（骨架上也有文字，量骨架没有意义）。
         await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
         await expect(page.locator('.akpi__skel')).toHaveCount(0);
@@ -463,18 +456,16 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
     }
   });
 
-  test('看板：1920 宽档下内容列吃到 1440，KPI 网格不少于 4 轨', async ({ page }) => {
+  test('统计页：1920 宽档下内容列吃到 1440，KPI 网格不少于 4 轨', async ({ page }) => {
     await apiLogin(page);
 
     // 宽度变档的回执：1920 视口下内容列曾经停在 1100（约 1/3 是死空白）。admin 档
     // 是 1440，网格跟着容器查询升档 —— 这两条断言量的就是「宽出来的部分有人用」。
     await page.setViewportSize({ width: 1920, height: 900 });
-    await page.goto('/admin/dashboard');
-    await expect(page.getByRole('heading', { name: '看板' })).toBeVisible();
-
-    // 三个分类的文字在宽档下也不压（宽档更容易出「网格升档后列数变了」的排版事故）。
-    for (const tab of ['反馈', '用量', '平台']) {
-      await page.getByRole('button', { name: tab, exact: true }).click();
+    // 三页的文字在宽档下也不压（宽档更容易出「网格升档后列数变了」的排版事故）。
+    // 最后停在平台总览，下面量的 KPI 网格是那一页的。
+    for (const tab of ['feedback-trends', 'usage', 'overview']) {
+      await page.goto(`/admin/${tab}`);
       await expect(page.locator('.ad__kpis .akpi__num').first()).toBeVisible();
       await expect(page.locator('.akpi__skel')).toHaveCount(0);
       expect(await textOverlaps(page.locator('#main-content')), `1920px · ${tab}`).toEqual([]);
@@ -485,7 +476,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
       .locator('.app-page__column--admin')
       .evaluate((el) => el.getBoundingClientRect().width);
     expect(Math.round(innerWidth)).toBe(1440);
-    // KPI 网格在 ≥1320 容器宽升到 auto-fit：轨道数不少于 4（此刻停在「平台」类，
+    // KPI 网格在 ≥1320 容器宽升到 auto-fit：轨道数不少于 4（此刻停在平台总览，
     // 5 张卡）。
     const tracks = await page
       .locator('.ad__kpis')
@@ -527,7 +518,7 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
 
-  for (const sub of ['running', 'members', 'members/alice', 'docs/charter', 'library']) {
+  for (const sub of ['overview', 'tasks', 'members', 'members/alice', 'docs/charter', 'library']) {
     await page.goto(`${projectPath}/${sub}`);
     const head = page.locator('.app-page__head');
     await expect(head).toBeVisible();
@@ -758,7 +749,7 @@ test('手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围�
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
   await rows.first().click();
-  await page.waitForURL(/\/topics\//);
+  await page.waitForURL(/\/channels\//);
   const topicHref = new URL(page.url()).pathname;
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -867,7 +858,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
-    await page.waitForURL(/\/topics\//);
+    await page.waitForURL(/\/channels\//);
     const topicHref = new URL(page.url()).pathname;
 
     for (const size of [
@@ -1040,7 +1031,7 @@ test('房间面板的「定时与触发」那一格铺满整条面板', async ({
   await apiLogin(page);
   const rows = await openFirstProject(page);
   await rows.first().click();
-  await page.waitForURL(/\/topics\//);
+  await page.waitForURL(/\/channels\//);
   // 地址直接点名这一格（`?tab=routines`），不点页签：任务那一档的页签比这里多，面板窄了
   // 它们会收进溢出菜单——点不到不代表这一格不存在。
   await page.goto(`${new URL(page.url()).pathname}?tab=routines`);

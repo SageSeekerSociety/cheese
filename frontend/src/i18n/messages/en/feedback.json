@@ -136,8 +136,6 @@
     }
   },
   "dashboard": {
-    "sub": "How the platform is doing and where it is stuck — delivery, usage, integrations, performance.",
-    "kindsAria": "Sections",
     "window": {
       "switchAria": "Stats window",
       "d7": "7 days",
@@ -157,9 +155,7 @@
       "createdInWindow": "New ({d}d)",
       "unread": "Unread",
       "vsPrev": "Previous {d}d: {v}",
-      "urgent": "{n} of them urgent and unassigned",
-      "urgentShort": "{n} urgent",
-      "untriagedShort": "untriaged {n}"
+      "urgent": "{n} of them urgent and unassigned"
     },
     "chart": {
       "title": "New / resolved / deployed per day",
@@ -177,7 +173,7 @@
       "desc": "The platform hasn't produced any data yet."
     },
     "error": {
-      "title": "Couldn't load the dashboard"
+      "title": "Couldn't load the data"
     },
     "perf": {
       "active": "In flight",
@@ -197,7 +193,6 @@
         "errors": "Errors"
       },
       "note": "Latency per route, held in process memory: this moment only, cleared on restart, and this process only (the business API). A weekly view would have to read the request log instead.",
-      "slowest": "Slowest p95",
       "routesOf": "{shown} sampled / {total} registered",
       "routesNote": "Every registered endpoint gets a row, never-hit ones included (their call count shows an em-dash). The percentiles are exact over the last 256 samples, not lifetime.",
       "banner": "Slowest right now",
@@ -268,18 +263,7 @@
       "database": "Database",
       "redis": "Redis",
       "event_loop": "Event loop",
-      "note": "This moment only — not stock, not a window. Same checks as /health/detailed.",
-      "healthy": "Healthy",
-      "degraded": "Degraded"
-    },
-    "tab": {
-      "feedback": "Feedback",
-      "usage": "Usage",
-      "platform": "Platform",
-      "performance": "Performance",
-      "pipeline": "Delivery",
-      "product": "Product",
-      "integrations": "Integrations"
+      "note": "This moment only — not stock, not a window. Same checks as /health/detailed."
     },
     "spine": {
       "title": "Delivery chain",
@@ -301,7 +285,6 @@
         "stuck": "Stuck",
         "dwell": "Filed to decision",
         "needsYou": "Needs you",
-        "needsYouShort": "needs you {n}",
         "blockingRefile": "Refile blocked"
       },
       "station": {
@@ -364,14 +347,6 @@
         "conflict": "Merge conflict",
         "live": "Still live"
       },
-      "usefulness": {
-        "title": "Proactive usefulness",
-        "up": "Useful",
-        "down": "Not useful",
-        "unrated": "Read, no rating",
-        "unread": "Unread",
-        "note": "Feedback lives on notifications only. Most proactive speech is in-room blocks, and platform/agent announcements deliberately send no recipients — without this note, 90% useful reads as 90% of what the agent says."
-      },
       "unavailable": {
         "title": "Not computable today",
         "note": "No data source. Any number here would have to be invented.",
@@ -397,8 +372,7 @@
         "unsent": "Will retry",
         "dead": "Dead letters",
         "oldest": "Oldest pending {time}",
-        "note": "Two tiers: the first is still retried, the second is abandoned after MAX_ATTEMPTS. Collapsing them makes salvageable and hopeless look alike.",
-        "deadShort": "dead {n}"
+        "note": "Two tiers: the first is still retried, the second is abandoned after MAX_ATTEMPTS. Collapsing them makes salvageable and hopeless look alike."
       },
       "unavailable": {
         "title": "Not observable today",
@@ -770,6 +744,6 @@
     "deleteFailed": "Couldn’t delete",
     "submitFailed": "Couldn’t submit",
     "queueLoadFailed": "Couldn’t load the queue",
-    "dashboardLoadFailed": "Couldn’t load the dashboard"
+    "dashboardLoadFailed": "Couldn’t load the data"
   }
 }

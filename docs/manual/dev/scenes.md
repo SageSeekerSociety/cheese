@@ -162,7 +162,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/account/recover/password/Verify.vue` | 容器 | 画面在 `VerifyView.vue`（A 级）；取数、路由留在本页 |
 | `views/account/signup/Start.vue` | 容器 | 画面在 `StartView.vue`（A 级）；取数、路由、signup store 留在本页 |
 | `views/account/signup/VerifyEmail.vue` | 容器 | 画面在 `VerifyEmailView.vue`（A 级）；取数、路由、signup store 留在本页 |
-| `views/admin/AdminDashboardPage.vue` | D | 读路由；读 store（feedback） |
 | `views/admin/AdminFeaturePage.vue` | D | 读路由；经 `views/admin/features/registry.ts` 取数 |
 | `views/admin/AdminFeatureStatsPage.vue` | D | 读路由；经 `views/admin/features/featureApi.ts` 取数；经 `views/admin/features/registry.ts` 取数 |
 | `views/admin/AdminIntegrationsPage.vue` | C | 经 `api/feishu.ts` 取数 |
@@ -170,6 +169,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/admin/AdminMembersPage.vue` | C | 直接取数（`api.ts`） |
 | `views/admin/AdminModelsPage.vue` | C | 直接取数（`api.ts`） |
 | `views/admin/AdminQueuePage.vue` | D | 读路由；读 store（feedback） |
+| `views/admin/AdminStatsPage.vue` | 容器 | 画面在 `AdminStatsPageView.vue`（A 级）；取数（`useAdminStats`）、路由留在本页 |
 | `views/admin/AdminSpacesPage.vue` | C | 直接取数（`network/api/spaces`） |
 | `views/feedback/AdminFeedbackPage.vue` | A | 只吃 props 和事件 |
 | `views/feedback/FeedbackCenterPage.vue` | C | 读 store（feedback） |
@@ -249,7 +249,8 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/workspace/ProjectMembersView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
 | `views/workspace/ProjectShell.vue` | D | 读路由；读 store（workspace） |
 | `views/workspace/ProjectSidebar.vue` | D | 读路由；经 `lib/routePrefetch.ts` 取数；读 store（workspace） |
-| `views/workspace/RunningWorkView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
+| `views/workspace/ProjectOverview.vue` | 容器 | 画面在 `ProjectOverviewView.vue`（A 级）；取数、去任务页和文档页留在本页 |
+| `views/workspace/ProjectTasks.vue` | 容器 | 画面在 `ProjectTasksView.vue`（A 级）；取数、读地址里的频道筛选、新建任务留在本页 |
 | `views/workspace/TopicView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
 | `views/workspace/WorkspaceEntry.vue` | D | 读路由；读 store（workspace） |
 

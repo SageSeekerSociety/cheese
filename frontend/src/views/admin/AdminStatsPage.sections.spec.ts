@@ -1,6 +1,6 @@
 /**
- * 看板页的**每一屏**（`AdminDashboardPage.spec.ts` 管的是接线：打哪条路、切窗口、
- * 轮询、下钻）。这一份管的是「切过去以后那一屏上有什么」—— 七类里此前只有性能那一
+ * 统计页的**每一屏**（`AdminStatsPage.spec.ts` 管的是接线：打哪条路、切窗口、
+ * 轮询、下钻）。这几屏原来是同一页看板上的分类，现在各是后台里的一页。这一份管的是「切过去以后那一屏上有什么」—— 七类里此前只有性能那一
  * 屏被钉住，其余五屏（交付 / 产品 / 集成 / 用量 / 平台 / 反馈）的每一块都只在真机上
  * 被人眼看过。
  *
@@ -11,20 +11,21 @@
  * 钉的是**每屏的第一层读数**：KPI 行每一张卡上的数、每一块图表的段数、每一个块标题
  * 底下那几行原话。不钉像素、不钉 DOM 结构：拆分会动 DOM 的层级，但屏幕上的数不会。
  *
- * 假数据接在 `window.fetch` 上（和 `AdminDashboardPage.spec.ts` 同一套
+ * 假数据接在 `window.fetch` 上（和 `AdminStatsPage.spec.ts` 同一套
  * `installPreviewFetch`），于是「api → store → 页 → 图表组件」整条链子都真跑。
  */
 import type { Component } from 'vue'
+import type { StatsKind } from '@/api'
 
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import AdminDashboardPage from './AdminDashboardPage.vue'
+import AdminStatsPage from './AdminStatsPage.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import { installPreviewFetch } from '@/proto-preview-transport'
@@ -49,14 +50,24 @@ afterAll(() => {
   window.fetch = preview
 })
 
-const Wrapper = { components: { AdminDashboardPage }, template: '<v-app><AdminDashboardPage /></v-app>' }
+/** 屏名 → 它画的那一类。 */
+const KIND: Record<string, StatsKind> = {
+  交付: 'pipeline',
+  产品: 'product',
+  集成: 'integrations',
+  用量: 'usage',
+  平台: 'platform',
+  反馈: 'feedback',
+}
 
-/** 上列表里那一类的屏，等它到货，把容器交回来。 */
+/** 打开那一类的页，等它到货，把容器交回来。 */
 async function openTab(label: string) {
+  const kind = KIND[label]!
+  const Wrapper = { components: { AdminStatsPage }, template: `<v-app><AdminStatsPage kind="${kind}" /></v-app>` }
   const router = createRouter({
     history: createWebHashHistory(),
     routes: [
-      { path: '/admin/dashboard', component: Wrapper },
+      { path: '/admin/stats', component: Wrapper },
       // 这一页上的每一个出口都得摆出来：路由表里没有它们时 `router-link` 挂载即抛。
       { path: '/admin/queue', name: 'AdminQueue', component: { template: '<div />' } },
       { path: '/feedback/:id', name: 'FeedbackDetail', component: { template: '<div />' } },
@@ -66,19 +77,14 @@ async function openTab(label: string) {
       { path: '/admin', name: 'AdminHome', component: { template: '<div />' } },
     ],
   })
-  await router.push('/admin/dashboard')
+  await router.push('/admin/stats')
   await router.isReady()
   const vuetify = createVuetify({ components, directives })
   const pinia = createPinia()
   setActivePinia(pinia)
   const view = render(Wrapper as unknown as Component, { global: { plugins: [vuetify, pinia, router, i18n] } })
   const store = useFeedbackStore()
-  // 默认落点是交付：先等它，再从列表里点过去。
-  await waitFor(() => expect(store.stats.pipeline).not.toBeNull())
-  const kinds = view.container.querySelector('.ad__kinds')!
-  const button = Array.from(kinds.querySelectorAll('button')).find((b) => b.textContent?.includes(label))!
-  await fireEvent.click(button)
-  await waitFor(() => expect(store.stats[store.statsKind]).not.toBeNull())
+  await waitFor(() => expect(store.stats[kind]).not.toBeNull())
   return view
 }
 
@@ -97,7 +103,7 @@ function unavailableTexts(container: Element): string[] {
   return Array.from(container.querySelectorAll('.ad__split .ad__none-desc')).map((el) => el.textContent?.trim() ?? '')
 }
 
-describe('看板页 · 交付管线那一屏', () => {
+describe('统计页 · 交付管线那一屏', () => {
   it('五张 KPI 是存量的那五个数，四站导轨与三列各自到位', async () => {
     const { container } = await openTab('交付')
 
@@ -121,23 +127,23 @@ describe('看板页 · 交付管线那一屏', () => {
   })
 })
 
-describe('看板页 · 产品健康那一屏', () => {
-  it('四张 KPI、两条分布、两条「今天算不出来」', async () => {
+describe('统计页 · 产品健康那一屏', () => {
+  it('两张 KPI、一条分布、两条「今天算不出来」', async () => {
     const { container } = await openTab('产品')
 
-    expect(kpiLabels(container)).toEqual(['7 日验收通过的成果', '递卡走到了哪', '主动消息有用吗', '没用'])
-    // 38 / 30% / 80% / 2 —— 北极星合计、退回率、有用率、提案被否。
-    expect(kpiValues(container)).toEqual(['38', '30%', '80%', '2'])
+    expect(kpiLabels(container)).toEqual(['7 日验收通过的成果', '递卡走到了哪'])
+    // 38 / 30% —— 北极星合计、退回率。
+    expect(kpiValues(container)).toEqual(['38', '30%'])
 
-    // 两条分布：退回的六个桶（值 >0 的那些）与有用/没用的四档。
-    expect(container.querySelectorAll('.ash')).toHaveLength(2)
+    // 一条分布：退回的六个桶（值 >0 的那些）。
+    expect(container.querySelectorAll('.ash')).toHaveLength(1)
 
     // 「算不出来」的两条带理由，不画一个假 0。
     expect(unavailableTexts(container)).toHaveLength(2)
   })
 })
 
-describe('看板页 · 集成健康那一屏', () => {
+describe('统计页 · 集成健康那一屏', () => {
   it('四张 KPI、两条分布、一条计量、四条「算不出来」', async () => {
     const { container } = await openTab('集成')
 
@@ -150,7 +156,7 @@ describe('看板页 · 集成健康那一屏', () => {
   })
 })
 
-describe('看板页 · 用量那一屏', () => {
+describe('统计页 · 用量那一屏', () => {
   it('四张 KPI、额度燃尽的三个名单与燃烧速率、两张拆分表', async () => {
     const { container } = await openTab('用量')
 
@@ -176,7 +182,7 @@ describe('看板页 · 用量那一屏', () => {
   })
 })
 
-describe('看板页 · 平台那一屏', () => {
+describe('统计页 · 平台那一屏', () => {
   it('五张 KPI、机器四行、健康三格、配额与缺口那几块', async () => {
     const { container } = await openTab('平台')
 
@@ -206,7 +212,7 @@ describe('看板页 · 平台那一屏', () => {
   })
 })
 
-describe('看板页 · 反馈那一屏', () => {
+describe('统计页 · 反馈那一屏', () => {
   it('四栏计数、状态分布、迷你列表与三条线', async () => {
     const { container } = await openTab('反馈')
 

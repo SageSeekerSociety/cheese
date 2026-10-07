@@ -40,7 +40,7 @@ const groups = computed<ShortcutGroup[]>(() => [
       {
         keys: ['G', 'D'],
         sequence: true,
-        action: t('admin.shortcuts.goDashboard'),
+        action: t('admin.shortcuts.goOverview'),
         note: t('admin.shortcuts.within1s'),
       },
       {

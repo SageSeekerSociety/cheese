@@ -275,11 +275,11 @@ export interface RoomTask {
   created_at: string
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
+  awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
+  stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
-  // 这条活在看板上落哪一列、卡上写哪句话。**必有字段，不是可选的**：状态从今往后
-  // 只在后端算一次，前端没有一条退回本地推导的路——留一条兜底路，两个算法就会同时
-  // 存在，而且谁也说不清屏幕上那个词是哪一个算出来的。
+  // 落在哪一格、写哪句话。必有：状态只在后端算一次，前端不另推（见 lib/board.ts）。
   presentation: Presentation
   /** 从讨论转出来的任务，第一轮整理文档到哪了；文档有内容后是 null。只在单个任务上。 */
   opening?: 'drafting' | 'waiting' | 'failed' | null
@@ -488,7 +488,6 @@ export interface InboxItem {
   payload: { options?: unknown; [key: string]: unknown }
   read: boolean
   resolved_at: string | null
-  feedback: 'up' | 'down' | null
   created_at: string
 }
 
@@ -818,7 +817,6 @@ export interface Notification {
   body: string
   payload: Record<string, unknown>
   read_at: string | null
-  feedback: 'up' | 'down' | null
   created_at: string
 }
 

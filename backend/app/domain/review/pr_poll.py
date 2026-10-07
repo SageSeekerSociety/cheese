@@ -170,6 +170,7 @@ async def poll_uncarded_task_prs(
                 await announce(
                     session,
                     place_id=task.room_id,
+                    task_id=task.id,
                     content=say("prMergedDelivered", pr=number),
                     meta=notice(
                         EVENT_ACCEPT_DONE,

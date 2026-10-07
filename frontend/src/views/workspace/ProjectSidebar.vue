@@ -16,7 +16,6 @@ import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
-import BoardSummary from '@/views/workspace/BoardSummary.vue'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
@@ -38,7 +37,7 @@ const store = useWorkspaceStore()
 const layout = useWorkspaceLayout()
 
 // 两栏（平板）时，常驻的这一份在列表和房间那两层画成左边一栏：它挂在项目框的
-// sidebar 视图上，换话题时不卸载，只有右边的房间在换。别的层（看板、文档、设置）
+// sidebar 视图上，换话题时不卸载，只有右边的房间在换。别的层（总览、文档、设置）
 // 仍是一整页，这一栏不画。
 const column = computed(
   () => !props.page && layout.value === 'split' && showsTopicList(route.name) && !store.accessDenied
@@ -48,10 +47,14 @@ const column = computed(
 const ids = computed(() => routeIds(route.params))
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? ids.value.topicId ?? null : null))
 const activeTaskId = computed(() => (route.name === 'workspace-task' ? ids.value.taskId ?? null : null))
-const activeAllTasks = computed(() => (route.name === 'workspace-channel-tasks' ? ids.value.topicId ?? null : null))
+// 「全部任务」带着频道筛选打开时，那个频道下面的「全部任务」一行是选中的。
+const activeAllTasks = computed(() =>
+  route.name === 'project-tasks' && typeof route.query.channel === 'string' ? route.query.channel : null
+)
 
-// 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和看板读同一份（`readProjectTasks`），
-// 看板刚读过就拿它那一份；换了地方（新建、开始、关闭任务之后）也重读一次。
+// 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和全部任务、项目
+// 总览读同一份（`readProjectTasks`），它们刚读过就拿那一份；换了地方（新建、开始、关闭
+// 任务之后）也重读一次。
 const TASKS_REFRESH_MS = 30_000
 const tasks = ref<RoomTask[]>([])
 async function loadTasks(maxAgeMs?: number) {
@@ -85,7 +88,10 @@ watch(
   () => void loadTasks()
 )
 function openAllTasks(channelId: string) {
-  void router.push({ name: 'workspace-channel-tasks', params: { projectId: props.projectId, topicId: channelId } })
+  void router.push({ name: 'project-tasks', params: { projectId: props.projectId }, query: { channel: channelId } })
+}
+function openOverview() {
+  void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
 }
 // 「浏览频道」：全部频道都在那一页，加入、退出、新建也在那里。
 function browseChannels() {
@@ -189,11 +195,40 @@ useCommands(() => [
       @retry="store.reloadTopics()"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     >
-      <!-- 手机上进项目落在话题列表上而不是看板上，所以看板的一句话摘要放在列表最顶上，
-           点下去是看板。桌面上项目名那一行就是看板的入口。 -->
+      <!-- 手机上进项目落在频道列表上，项目名下那一行收进了菜单，所以去项目总览的那一行
+           放在列表最顶上。桌面上它就是项目名下那一行的第一格。 -->
       <template v-if="page || column" #top>
-        <BoardSummary :project-id="projectId" />
+        <button type="button" class="overview-entry t-body" data-testid="overview-entry" @click="openOverview">
+          <v-icon size="18" class="overview-entry__icon">mdi-view-dashboard-outline</v-icon>
+          <span class="overview-entry__label">{{ t('navigation.project.overview') }}</span>
+          <v-icon size="18" class="overview-entry__go">mdi-chevron-right</v-icon>
+        </button>
       </template>
     </TopicSidebar>
   </SplitListColumn>
 </template>
+
+<style scoped>
+.overview-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.overview-entry__icon,
+.overview-entry__go {
+  color: var(--faint);
+}
+.overview-entry__label {
+  flex: 1 1 auto;
+}
+</style>

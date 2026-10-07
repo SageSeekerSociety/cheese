@@ -121,6 +121,11 @@ class TaskRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_open(self) -> list[Task]:
+        """全平台还开着的任务 —— 停滞提醒每一拍问它。"""
+        stmt = select(Task).where(Task.status == TaskStatus.open)
+        return list((await self._session.scalars(stmt)).all())
+
     async def last_block_at_for_tasks(
         self, task_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:

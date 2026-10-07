@@ -197,6 +197,12 @@ class AcceptCard(UuidPk, Timestamps, Base):
     pr_merged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Which poll is advancing this card, and until when (`poll_claim.py`): one
+    # advancer per card, without a row lock held across the forge's answer.
+    poll_claim: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    poll_claimed_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # 卡上的状态＝合并态 (#718)：轮询器每拍把 verdict 镜像到这里 ——
     # {"state","who","reasons":[{kind,checks,detail}],"head_sha","checked_at",
     # "since"}。`since` 是「这个 (state, head) 组合从什么时候开始成立」，给

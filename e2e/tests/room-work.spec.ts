@@ -1,5 +1,5 @@
 /** Create tasks through the API, then verify that people can find and open each
- * task in the channel overview and project board. */
+ * task in the channel overview and the project overview. */
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { closeSync, openSync } from "node:fs";
@@ -59,70 +59,67 @@ test.describe("房间里的任务", () => {
     );
   });
 
-  test("侧栏上的项目名就是回看板的入口，进去是整个项目的视角", async ({
+  test("侧栏项目名下的「总览」打开项目总览，别的频道里的任务也在上面", async ({
     page,
   }) => {
+    const projectId = await projectIdOf(page);
     const stamp = Date.now();
     const roomId = await freshRoom(page, `跨房间 ${stamp}`);
     await dispatch(page, roomId, `跨房间的活 ${stamp}`);
 
-    // 从侧栏那个常驻入口进去，而不是直接敲地址：这一条要钉的一半正是「找得到」。
-    // 看板就是项目首页，所以侧栏上点项目名就到，不再单占一行。
-    await page.locator(".rail-header__home").click();
-    // 路由名和路径仍是 running：改地址会打断所有已经发出去的链接，改的只是这块
-    // 界面叫什么。
-    await expect(page).toHaveURL(/\/projects\/[^/]+\/running/);
+    // 从一个频道里出发，点侧栏那个常驻入口，而不是直接敲地址：这一条要钉的一半
+    // 正是「找得到」。项目名下那一行的第一格就是总览。
+    await page.goto(`/projects/${projectId}/topics/${roomId}`);
+    await page
+      .locator('[aria-label="项目页面"]')
+      .getByText("总览", { exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/overview/);
 
-    const view = page.locator(".board");
-    // 这一页只有一个标题，写在和侧栏对齐的那条页头上：它说这一页是看板，项目名在
-    // 侧栏顶上。板里不再另起标题，列头自己已经说明了它是什么。
-    await expect(page.locator(".app-page__title")).toHaveText("看板");
-    await expect(view.locator("h1, h2")).toHaveCount(0);
-    // 板是按列排的，列本身要在 —— 这一页从一张平表变成看板，列就是那个变化。
-    // 最右边那一列是「做出了什么」：三列任务从左到右是一条流水线，产物接在后面。
-    await expect(view.locator(".board-col")).not.toHaveCount(0);
-    await expect(view.locator(".board-col--made")).toContainText("做出了什么");
-    // 板要答的是「该谁动」，所以它得说出各列各有几件；一件都没有的时候要明说，
-    // 否则一块空板读起来就是「这个项目没活」——而项目里可能有几百条。
-    await expect(view).toContainText(/未开始|进行中|检查中|待处理|暂无任务/);
+    // 总览答的是「这个项目怎么样了」：四块都在。
+    for (const section of [
+      "overview-document",
+      "overview-progress",
+      "overview-people",
+      "overview-made",
+    ]) {
+      await expect(page.getByTestId(section)).toBeVisible();
+    }
+    // 它是整个项目的视角：刚在另一个频道里开始的任务出现在「最近进展」里。
+    await expect(page.getByTestId("overview-progress")).toContainText(
+      `跨房间的活 ${stamp}`,
+    );
   });
 
-  test("板上计数在活到货之前不写 0", async ({ page }) => {
+  test("全部任务上的计数在任务到货之前不写 0", async ({ page }) => {
     const projectId = await projectIdOf(page);
     const stamp = Date.now();
     const roomId = await freshRoom(page, `计数 ${stamp}`);
     await dispatch(page, roomId, `计数的活 ${stamp}`);
 
-    // 把这一页读活的那次请求按住，等断言完再放行：冷加载那一秒正是这一条要看的
-    // 窗口，而按住了才不靠时序去赌。列表一格都没有的时候列头写 0，一秒后再跳到真
-    // 值 —— 那个 0 会被读成「我的活没了」。
+    // 把读任务的那次请求按住，等断言完再放行：冷加载那一秒正是这一条要看的窗口，
+    // 按住了才不靠时序去赌。那一秒里写出来的 0 会被读成「我的活没了」。
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
-    await page.route(`**/projects/${projectId}/tasks`, async (route) => {
+    // 只按住接口那一次：页面自己的地址也是 /projects/{id}/tasks，按住它页面就打不开。
+    await page.route(`**/api/projects/${projectId}/tasks`, async (route) => {
       await gate;
       await route.continue();
     });
 
+    const chips = page.locator(".tasks__chips button");
     try {
-      await page.goto(`/projects/${projectId}/running`);
-      const view = page.locator(".board");
-      await expect(view).toBeVisible();
-      // 四条任务列的计数槽都已经就位，而这一帧任务还在路上（列里是骨架）。
-      const counts = page.locator(".board-col[data-column] .board-col__count");
-      await expect(counts).toHaveCount(4);
-      await expect(page.locator(".board-col__skel").first()).toBeVisible();
-      for (const slot of await counts.all()) {
-        await expect(slot).not.toHaveText(/\d/);
+      await page.goto(`/projects/${projectId}/tasks`);
+      await expect(chips).not.toHaveCount(0);
+      for (const chip of await chips.all()) {
+        await expect(chip).not.toHaveText(/\d/);
       }
     } finally {
       release();
     }
 
-    // 放行之后，真实的数才出现 —— 出现了就说明上面那一帧确实还没有数。
-    await expect(
-      page.locator('[data-column="building"] .board-col__count'),
-    ).toHaveText(/\d/);
-    await expect(page.locator(".board-col__skel")).toHaveCount(0);
+    // 放行之后，真实的数才出现：出现了就说明上面那一帧确实还没有数。
+    await expect(chips.first()).toHaveText(/\d/);
   });
 });
 

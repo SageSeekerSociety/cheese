@@ -41,10 +41,6 @@ const LEGACY_TOPIC_PATHS: RouteRecordRaw[] = [
     redirect: (to) => ({ name: 'workspace-thread', params: to.params, query: to.query, hash: to.hash }),
   },
   {
-    path: 'topics/:topicId/tasks',
-    redirect: (to) => ({ name: 'workspace-channel-tasks', params: to.params, query: to.query, hash: to.hash }),
-  },
-  {
     path: 'topics/:topicId/tasks/:taskId',
     redirect: (to) => ({
       name: 'workspace-task',
@@ -105,12 +101,13 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-topic' },
     },
     {
-      // 一个频道的全部任务：侧栏只挂和我有关的几条，其余在这一页。
-      name: 'workspace-channel-tasks',
-      path: `channels/:topicId${NUMBER_OR_ID}/tasks`,
-      component: () => import('@/views/workspace/ChannelTasks.vue'),
-      props: addressProps,
-      meta: { hideTabs: true, backTo: 'workspace-project' },
+      // 一个频道的全部任务就是项目的全部任务带上这个频道的筛选：发出去的旧地址落到那里。
+      path: 'topics/:topicId/tasks',
+      redirect: (to) => ({
+        name: 'project-tasks',
+        params: { projectId: to.params.projectId },
+        query: { channel: String(to.params.topicId) },
+      }),
     },
     {
       // 任务页：一个任务自己的对话和实况文档。和房间页是同一个组件——任务挂在房间下，
@@ -123,23 +120,39 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
-      // 看板: 跨房间的一块板，按「该谁动」分列。房间总览答的是「这个房间在干什么」，
-      // 而一个项目有上百个房间——「现在整个项目有什么在跑、有什么在等我」得一个个
-      // 点进去才知道，于是没人知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回
-      // 话题列表。
-      //
-      // 路由名和路径还是 running：改地址会把所有已经发出去的链接打断，而这一页答的
-      // 仍然是同一个问题——名字换了，位置没换。
-      name: 'workspace-running',
-      path: 'running',
-      component: () => import('@/views/workspace/RunningWorkView.vue'),
+      // 项目总览：进项目落在这一页（壳的 `home`）。它答的是「这个项目怎么样了」：项目
+      // 总览那份文档、最近进展、谁在做什么、做出了什么。「需要我处理」不在这里另列一
+      // 份，只在首页「待办」。
+      name: 'workspace-overview',
+      path: 'overview',
+      component: () => import('@/views/workspace/ProjectOverview.vue'),
       props: addressProps,
       meta: {
-        titleKey: 'navigation.project.board',
+        titleKey: 'navigation.project.overview',
         hideTabs: true,
         backTo: 'workspace-project',
-        palette: { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
+        palette: { label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
       },
+    },
+    {
+      // 全部任务：项目里的任务按状态分组列出来。项目总览和频道下面那一行「全部任务」
+      // 都进这里，后者在地址上带着 `?channel=`。
+      name: 'project-tasks',
+      path: 'tasks',
+      component: () => import('@/views/workspace/ProjectTasks.vue'),
+      props: addressProps,
+      meta: {
+        titleKey: 'navigation.project.tasks',
+        hideTabs: true,
+        backTo: 'workspace-project',
+        palette: { label: 'navigation.project.tasks', icon: 'mdi-format-list-checks' },
+      },
+    },
+    {
+      // 看板退役了：「这个项目怎么样了」在项目总览，「有哪些任务」在全部任务。发出去
+      // 的旧地址落到总览。
+      path: 'running',
+      redirect: (to) => ({ name: 'workspace-overview', params: { projectId: to.params.projectId } }),
     },
     {
       name: 'workspace-dm',
@@ -169,13 +182,6 @@ export const workspaceRoutes: RouteRecordRaw = {
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.docs', icon: 'mdi-file-document-outline', params: { kind: 'charter' } },
       },
-    },
-    {
-      // 总览退役了：它答的每一个问题都有一处答得更准的地方——谁在等你、交出去了
-      // 什么、对外的地址，都在项目首页上；成员在名册页；额度在项目设置里。发出去
-      // 的旧链接落到首页。
-      path: 'overview',
-      redirect: (to) => ({ name: 'workspace-running', params: { projectId: to.params.projectId } }),
     },
     {
       // 资料库：用户给这个项目的文件。项目级，所以它在项目这个框里，不在某个话题
@@ -271,9 +277,9 @@ export const workspaceRoutes: RouteRecordRaw = {
     },
     {
       // 「导出与发布」退役了：它整页只有一块「发布网站」，而发布出去的地址就是这个
-      // 项目交出去的东西之一，现在摆在首页的清单旁边。
+      // 项目交出去的东西之一，现在摆在项目总览「做出了什么」的最上面。
       path: 'delivery',
-      redirect: (to) => ({ name: 'workspace-running', params: { projectId: to.params.projectId } }),
+      redirect: (to) => ({ name: 'workspace-overview', params: { projectId: to.params.projectId } }),
     },
     {
       // 名册页和单人主页共用 `members` 这一段路径，父子关系就是它们的关系：

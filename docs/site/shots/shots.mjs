@@ -1,7 +1,7 @@
 // The docs' screenshots, taken in the example project fixture.py builds.
 //
 //   node shots.mjs                       # every shot
-//   node shots.mjs room board            # some of them
+//   node shots.mjs room overview         # some of them
 //
 // Needs a local stack (frontend on APP, default http://localhost:3000) and a
 // Playwright browser: a local Chromium, or a browser server at BROWSER_WS
@@ -60,7 +60,8 @@ const SHOTS = {
     await page.waitForTimeout(500)
     return { clip: { x: 0, y: 0, width: 720, height: 520 } }
   }],
-  board: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/running`); await settle(page); return { clip: { x: 340, y: 30, width: 1100, height: 260 } } }],
+  overview: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/overview`); await settle(page, 2000); return { clip: { x: 340, y: 30, width: 1100, height: 640 } } }],
+  tasks: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/tasks`); await settle(page); return { clip: { x: 340, y: 30, width: 1100, height: 300 } } }],
   'task-page': [desktop, async (page, { pid, rooms, tasks }) => {
     await page.goto(`${APP}/projects/${pid}/tasks/${tasks['表单字段精简']}`)
     await page.locator('.accept-dock').first().waitFor()

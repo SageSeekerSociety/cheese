@@ -4,7 +4,7 @@
 不愿意点头。spec §12 定义了三级度量，看板一条都没接 —— 管理员只能从接口快慢和
 token 曲线里猜产品好坏。
 
-**五条里有两条今天根本算不出来**，它们在响应里以 `available: false` 的形式出现，
+**四条里有两条今天根本算不出来**，它们在响应里以 `available: false` 的形式出现，
 带一句「要先加什么埋点」。这不是偷懒，是**不能造数**：一张印着数字的卡片会被当成
 事实读，而下面这两条的数字今天只能是编的：
 
@@ -32,8 +32,6 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.feedback.models import FeedbackProposalDismissal
-from app.domain.notification.models import Notification
 from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_window
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
@@ -54,7 +52,6 @@ class ProductHealthRepository:
                 buckets=buckets, since=since, until=until, prev_since=prev_since
             ),
             "rejection": await self.rejection_funnel(since=since, until=until),
-            "usefulness": await self.proactive_usefulness(since=since, until=until),
             "unavailable": self._unavailable(),
         }
 
@@ -183,63 +180,6 @@ class ProductHealthRepository:
             "returned_rate": (returned / filed) if filed else None,
             "buckets": buckets_out,
             "note_key": "product.rejectionNote",
-        }
-
-    # ---- 辅助/护栏：主动消息有用率 ------------------------------------------
-
-    async def proactive_usefulness(
-        self, *, since: datetime, until: datetime
-    ) -> dict[str, Any]:
-        """窗口内通知的 👍 / 👎 / 未评 / 未读。**反馈只存在于通知上**。
-
-        房间里的主动消息大多落在 block 上，
-        而 `announce()` 对 platform/cheese 的
-        发言**故意不投递收件人**（见 `announce.py`），所以那一大批根本进不了这里。
-        页面上那句注脚必须写明「只覆盖有通知的那部分」—— 少了它，「有用率 90%」
-        会被读成「芝士说的话 90% 有用」。
-        """
-        rows = await self._session.execute(
-            select(Notification.read, Notification.feedback, func.count())
-            .where(
-                Notification.created_at >= since,
-                Notification.created_at < until,
-                Notification.deleted_at.is_(None),
-            )
-            .group_by(Notification.read, Notification.feedback)
-        )
-        up = down = unrated_read = unread = 0
-        for read, feedback, n in rows:
-            n = int(n)
-            if feedback == "up":
-                up += n
-            elif feedback == "down":
-                down += n
-            elif read:
-                unrated_read += n
-            else:
-                unread += n
-        rated = up + down
-        dismissals = int(
-            (
-                await self._session.execute(
-                    select(func.count())
-                    .select_from(FeedbackProposalDismissal)
-                    .where(
-                        FeedbackProposalDismissal.created_at >= since,
-                        FeedbackProposalDismissal.created_at < until,
-                    )
-                )
-            ).scalar_one()
-            or 0
-        )
-        return {
-            "up": up,
-            "down": down,
-            "unrated_read": unrated_read,
-            "unread": unread,
-            "useful_rate": (up / rated) if rated else None,
-            "proposal_dismissals": dismissals,
-            "note_key": "product.usefulnessNote",
         }
 
     # ---- 今天算不出来的那两条 -----------------------------------------------

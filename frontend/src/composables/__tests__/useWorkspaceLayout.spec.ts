@@ -1,5 +1,5 @@
 // 项目工作区按屏幕宽度分三种摆法：手机上列表和房间各占一整页，平板上并排成两栏，
-// 桌面上是常驻侧栏。两栏只在列表和房间那两层：看板、文档、设置在平板上仍是一整页。
+// 桌面上是常驻侧栏。两栏只在列表和房间那两层：总览、文档、设置在平板上仍是一整页。
 import { describe, expect, it } from 'vitest'
 
 import { COMPACT_DESKTOP_MAX_WIDTH, compactDesktop, showsTopicList, workspaceLayout } from '../useWorkspaceLayout'
@@ -62,7 +62,7 @@ describe('showsTopicList', () => {
   })
 
   it('项目的其余各页仍是一整页', () => {
-    for (const name of ['workspace-running', 'project-docs', 'project-settings', 'project-members', 'workspace-dm'])
+    for (const name of ['workspace-overview', 'project-docs', 'project-settings', 'project-members', 'workspace-dm'])
       expect(showsTopicList(name)).toBe(false)
   })
 })

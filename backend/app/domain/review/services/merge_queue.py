@@ -283,6 +283,7 @@ async def _merge_pr_for_accept(
         self._notify_merge_result(
             topic,
             say("mergeRefusedOnAccept", pr=number),
+            task_id=card.task_id,
             meta=notice(
                 EVENT_MERGE_REFUSED,
                 severity=SEVERITY_ERROR,
