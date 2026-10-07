@@ -636,7 +636,7 @@ const { saving, saved, dirty, error, run } = useSaveState({
 |---|---|---|
 | stylelint 颜色规则 | 新增的写死颜色（hex / rgb / hsl / 颜色名），包括文档站的 `docs/site/src/style.css` | `frontend/stylelint.config.cjs` |
 | stylelint 圆角规则 | 不在档位里的 `border-radius` | 同上 |
-| stylelint 断点规则 | `@media` 里不在四个视口档上的宽度（只扫 `frontend/src`；`docs/site` 和 `breakpoints.scss` 是各自那套的定义处，单独放行） | 同上 |
+| stylelint 断点规则 | `@media` 里不在四个视口档上的宽度（只扫 `frontend/src`；`docs/site` 和 `breakpoints.scss` 是各自那套的定义处，单独放行；公开落地页 `views/home/` 有一层自己的排版档，存量冻在基线里） | 同上 |
 | 固定调色板闸门 | 模板和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*` | `.claude/scripts/check-repo-rules.sh` |
 | 存量棘轮 | 以上只拦**新增**；存量冻结在基线里，只能减少 | `frontend/stylelint-baseline.json`、`frontend/palette-baseline.json` |
 

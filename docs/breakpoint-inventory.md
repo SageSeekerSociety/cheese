@@ -2,7 +2,7 @@
 
 基线 `08578667` 上，`frontend/src` 里有 **47 处** CSS 宽高查询 + **4 处** JS 视口判断没用共享档位。收口的目标只有两种落法：归到 `frontend/src/styles/breakpoints.scss` 的四个视口档，或者改成挂在内容列上的容器查询。
 
-归拢那批之后还剩 **10 处**，全在营销页（第六组，走法待定）。`AdminKpiCard.vue:146` 那处已经在真浏览器里量实是死代码、删掉了（第五组），第七组那 2 处是认定过的例外，不算欠账。
+归拢那批之后还剩 **10 处**，全在营销页，已定成它自己的一套例外档（第六组）。`AdminKpiCard.vue:146` 那处已经在真浏览器里量实是死代码、删掉了（第五组），第七组那 2 处也是认定过的例外。三组都不算欠账，这张清单没有剩下的活。
 
 口径是 `frontend/src` 一个目录，不是全仓。`docs/site/`（357 行宽度查询）是独立的文档站，`backend/sandbox/skills/showcase/templates/`（8 个文件）是出图模板，两者都不进产品骨架，不在这笔账里——第四批收口那道闸也只闸 `frontend/src`。
 
@@ -110,7 +110,7 @@
 
 `AdminKpiCard.vue:146` 那条 `@media (max-width: 600px)` 的前提是错的，已在真浏览器里量实、删掉了。五页共 24 张卡（`/admin/dashboard`、`/admin/models`、`/admin/run-records`、`/admin/feature-stats/task-naming`、`/admin/feature-stats/docs-assistant`）最近的容器祖先都是 `.app-page__column--admin` 那一列，中间没有第二层容器；这一列的宽度从不超过视口（视口 800 / 770 / 600 → 列 790 / 760 / 590），字号在列宽 760 处从 23 掉到 20。`@media` 只在视口 ≤ 600 时命中，那时列已经 ≤ 590 < 760，`@container` 早把同一件事做完了——它一处都改不动，删掉渲染结果不变。
 
-## 六、营销页 `views/home/`——10 处，自成一套
+## 六、例外——营销页 `views/home/` 10 处，自成一套
 
 公开落地页不进产品骨架，它的 900 / 600 / 520 / 420 / 374 是画面自己的排版档，跟骨架的四个视口档不是一回事。
 
@@ -127,7 +127,13 @@
 | `views/home/landing.css:1039` | 374 |
 | `views/home/LandingShell.vue:53` | 900（JS `matchMedia`） |
 
-两种走法，选一种：把这 9 处也收到四个档（900→959.98 有先例），或者在 `docs/design-system.md` 里给落地页开一节，写明它自成一套、例外被承认。倾向前者，除非画面会因此变形。
+**结论：留成例外档，不折。** 三个理由，前两个是量出来的：
+
+- **六个 900 折到 959.98 会让导航提前 60 像素收起。** 那处的注释写着「链接放不下了」，可实测 900–959 这一段导航还放得下（`.site-nav` 还在 `flex`，没有溢出、没有互相盖住）。折过去等于把一段能用的导航换成菜单按钮。
+- **420 和 374 折下去改的是整段手机的样子，不是写法。** 420 是「手机上按钮和内距都让位」、374 是「品牌标缩到 22px」——两者按注释都只在**确实放不下**时才该生效。四档最低是 767.98，折过去会让 421–767 这一整段的按钮内距收紧、品牌标缩小，落地页在平板和横屏手机上跟着变样。
+- 六个 900 折掉也只剩 4 处要记例外，清不干净这笔账，却付了上面两条代价。
+
+所以 `views/home/` 自己一套阶梯被承认，写法跟第七组那两处一样：**留在源码里，把存量冻进基线**，不新开 stylelint override。往这几个文件里再塞一个档位外的值，`lint:style` 照样红。
 
 ## 七、例外——2 处
 
@@ -149,7 +155,7 @@
 | `lib/viewTransition.ts:31` | `const WIDE = '(min-width: 960px)'` | 引 `useWorkspaceLayout` 的 `MOBILE_MIN_WIDTH` |
 | `composables/useAdminQueue.ts:69` | `const WIDE_QUERY = '(min-width: 1280px)'` | 引 `useWorkspaceLayout` 的 `WIDE_MIN_WIDTH` |
 | `components/feedback/SubmitFeedbackDialog.vue:24` | `const { xs } = useDisplay()` → `:fullscreen="xs"` | 归 767.98（`useDisplay().width` 与 `SPLIT_MIN_WIDTH` 比） |
-| `views/home/LandingShell.vue:53` | `matchMedia('(width <= 900px)')` | **未动**：营销页那一组（第六组） |
+| `views/home/LandingShell.vue:53` | `matchMedia('(width <= 900px)')` | **未动**：营销页那一组例外（第六组）。它的值必须和 `landing.css` 里那三条 900 一样，跟着第六组的结论一起留 |
 
 `useAdminQueue` 这条原先只在第七组出现过（它是 `AdminQueueDetail` 那条 `@media` 的 JS 另一半），漏在第八组的表外。它的值必须和样式那条一样，所以两边各自引常量：JS 引 `WIDE_MIN_WIDTH`，CSS 保持 `1280` 不动（第七组那个例外）。
 
@@ -161,11 +167,11 @@
 
 ## 收口
 
-闸已落在 `frontend/stylelint.config.cjs`，跟颜色和圆角同一个机制：`media-feature-name-value-allowed-list` 让 `@media` 的宽度只取四个档的值，三种写法都管（`max-width`、`min-width`、`width <` 这类区间），存量冻进 `frontend/stylelint-baseline.json`，之后只许减不许增。两道 override：`styles/breakpoints.scss` 是这四个值的定义处（它自己写 `@media (max-width: $width)`），`docs/site/` 是另一套阶梯的独立站。闸门做过红绿自证：探测文件里写 601 / 900 让它红，写 767.98 / 959.98 放过。基线 23 条里，11 条是这张清单上还没清的（第六组 9 条、第七组 2 条），另 12 条是颜色和圆角那两条规则的存量；`AdminKpiCard.vue` 那条已随死代码删掉，基线从 24 收到 23。
+闸已落在 `frontend/stylelint.config.cjs`，跟颜色和圆角同一个机制：`media-feature-name-value-allowed-list` 让 `@media` 的宽度只取四个档的值，三种写法都管（`max-width`、`min-width`、`width <` 这类区间），存量冻进 `frontend/stylelint-baseline.json`，之后只许减不许增。两道 override：`styles/breakpoints.scss` 是这四个值的定义处（它自己写 `@media (max-width: $width)`），`docs/site/` 是另一套阶梯的独立站。闸门做过红绿自证：探测文件里写 601 / 900 让它红，写 767.98 / 959.98 放过。基线 23 条里，9 条是营销页那一组（第六组）、2 条是第七组的两处例外，另 12 条是颜色和圆角那两条规则的存量；`AdminKpiCard.vue` 那条已随死代码删掉，基线从 24 收到 23。这三组都是认定过的，不是待清的账。
 
 这道闸只覆盖 `@media` 和 `frontend/src`，两处留白连同这条闸已经写进 `docs/design-system.md`（§3.5 讲四个档和两处留白，§7 的表里有一行），否则下一个人会以为「闸绿了就是没有散值」：
 
 - **JS 侧**（第八组那四条）闸不到，只能靠 `useWorkspaceLayout` 的 JS 镜像常量做唯一来源（`SPLIT_MIN_WIDTH` 768、`MOBILE_MIN_WIDTH` 960、`COMPACT_DESKTOP_MAX_WIDTH` 1180、`WIDE_MIN_WIDTH` 1280）。
 - **容器查询的阈值**同样没有单一来源。整个 `frontend/src` 里有 60 多条 `@container`，散着 310 / 440 / 480 / 559 / 560 / 640 / 660 / 672 / 700 / 720 / 760 / 900 / 1000 / 1040 / 1319.98 / 1320 / 1440 等值，而且同一件事两种写法并存：后台容器一处写 `max-width: 719.98px`、另一处写 `700px`。这一批只把 7 处视口查询改成容器查询，不动既有阈值——别把「闸绿了」读成「容器阈值也清零了」。
 
-第七组那两处例外**冻在基线里，不是加进白名单**：`AdminQueueDetail.vue` 的 1280 和 `ComposerActions.vue` 的 480 各占基线一个数。往这两个文件里新添一条散值，闸门照红。
+第六组和第七组这十二处例外**冻在基线里，不是加进白名单**：`views/home/` 那 9 条 CSS、`AdminQueueDetail.vue` 的 1280、`ComposerActions.vue` 的 480，各占基线一个数。往这些文件里新添一条散值，闸门照红。
