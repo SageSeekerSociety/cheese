@@ -1055,7 +1055,8 @@
       "readOnly": "只有频道里的人能添加成员",
       "listSeparator": "、",
       "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
-      "creator": "管理者"
+      "creator": "管理者",
+      "empty": "暂无成员"
     },
     "mail": {
       "noSubject": "（无主题）",

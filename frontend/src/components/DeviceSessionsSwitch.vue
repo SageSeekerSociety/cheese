@@ -15,6 +15,7 @@ import { relTime } from '../lib/relTime'
 import { topicTitle } from '../lib/topicState'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { useDialog } from '@/plugins/dialog'
 
@@ -182,7 +183,7 @@ watch(open, (value) => {
         <p v-if="loadError" role="alert" class="bs-error">{{ loadError }}</p>
         <v-progress-linear v-else-if="loading" indeterminate />
         <template v-else>
-          <p v-if="!sessions.length" class="c-muted">{{ t('work.bulkSwitch.empty') }}</p>
+          <BaseEmptyState v-if="!sessions.length" size="compact" :title="t('work.bulkSwitch.empty')" />
           <template v-else>
             <v-checkbox
               :model-value="allSelected"

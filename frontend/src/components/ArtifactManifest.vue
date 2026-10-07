@@ -37,6 +37,7 @@ import NavLink from './common/NavLink.vue'
 import PublishedSite from './PublishedSite.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
@@ -180,8 +181,8 @@ watch(
     <!-- 网站钉在最上面：它也是交出去的东西，但只有一个，所以不排进下面那张清单。 -->
     <PublishedSite :project-id="projectId" />
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
-    <ul class="made__list">
-      <li v-if="!rows.length" class="made__empty t-body">{{ t('project.artifacts.empty') }}</li>
+    <BaseEmptyState v-if="!rows.length" size="inline" class="made__empty" :title="t('project.artifacts.empty')" />
+    <ul v-else class="made__list">
       <li
         v-for="(row, index) in rows"
         :key="row.id"
@@ -382,9 +383,9 @@ watch(
     display: block;
   }
 }
-/* 空列自己说它空。和任务列的空行同一个观感（同样的内边距、同样的 --muted）。 */
+/* 清单空着那一行走 BaseEmptyState 的 inline 档，观感和任务列的空行一致；这里只留
+   清单自己的横向内缩。 */
 .made__empty {
   padding: 8px 4px;
-  color: var(--muted);
 }
 </style>

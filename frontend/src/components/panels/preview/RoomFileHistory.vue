@@ -13,6 +13,7 @@ import i18n, { t } from '../../../i18n'
 import { userRefRoute } from '../../../lib/userRef'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRef.vue'
 
 // **只吃 props**：清单、下载、恢复都在 `composables/useRoomFileHistory.ts` 里
@@ -60,9 +61,13 @@ function when(iso: string) {
     <div v-if="props.fileHistory.loading.value && !props.fileHistory.rows.value.length" class="t-meta py-4 text-center">
       {{ t('work.room.fileHistory.loading') }}
     </div>
-    <div v-else-if="!props.fileHistory.rows.value.length" class="t-meta py-4 text-center">
-      {{ t('work.room.fileHistory.empty') }}
-    </div>
+    <BaseEmptyState
+      v-else-if="!props.fileHistory.rows.value.length"
+      size="inline"
+      align="center"
+      class="py-4"
+      :title="t('work.room.fileHistory.empty')"
+    />
     <ol v-else class="rh__list">
       <li v-for="(row, i) in props.fileHistory.rows.value" :key="row.id" class="rh__row" :data-seq="row.seq">
         <div class="rh__head">

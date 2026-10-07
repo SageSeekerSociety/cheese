@@ -29,6 +29,7 @@ import CheeseAvatar from './CheeseAvatar.vue'
 import TopicComputePicker from './TopicComputePicker.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 
 const props = defineProps<{
   topicId: string
@@ -253,6 +254,12 @@ async function onRemove(handle: string) {
       <div v-if="error" class="roster__error">{{ error }}</div>
 
       <LoadingSkeleton v-if="loading" variant="roster" />
+      <BaseEmptyState
+        v-else-if="!members.length && !error"
+        size="inline"
+        class="roster__empty"
+        :title="t('work.room.roster.empty')"
+      />
       <ul v-else class="roster__list">
         <li
           v-for="m in members"
@@ -460,7 +467,11 @@ async function onRemove(handle: string) {
   color: rgb(var(--v-theme-error, 211, 47, 47));
   background: rgba(var(--v-theme-error, 211, 47, 47), 0.08);
 }
-.roster__empty,
+/* 名册空着那一行走 BaseEmptyState 的 inline 档，这里只留名册自己的内距。 */
+.roster__empty {
+  padding: 12px 14px;
+}
+/* 下面算力那一块的说明行，和名册不是一件事，照旧。 */
 .roster__hint {
   padding: 12px 14px;
   font-size: 13px;

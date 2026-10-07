@@ -1055,7 +1055,8 @@
       "readOnly": "Only people in the channel can add members",
       "listSeparator": ", ",
       "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
-      "creator": "Manager"
+      "creator": "Manager",
+      "empty": "No members"
     },
     "mail": {
       "noSubject": "(No subject)",

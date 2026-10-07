@@ -8,6 +8,7 @@ import { useSlidesPdf } from '@/composables/useSlidesPdf'
 import { contextAround } from './markdownQuote'
 import SlideThumbRail from './SlideThumbRail.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -276,7 +277,7 @@ onBeforeUnmount(() => {
       <p>{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
       <p v-if="problem" class="t-meta">{{ problem }}</p>
     </div>
-    <div v-else-if="!count" class="slides__state">{{ t('slides.empty') }}</div>
+    <BaseEmptyState v-else-if="!count" size="page" :title="t('slides.empty')" />
     <div v-else class="slides__body">
       <SlideThumbRail
         v-if="showRail"

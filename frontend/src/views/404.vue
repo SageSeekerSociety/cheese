@@ -1,23 +1,18 @@
 <template>
   <v-container>
-    <v-row>
-      <v-col cols="12">
-        <v-sheet flat rounded="lg">
-          <v-empty-state
-            title="404"
-            :text="t('shell.notFound.text')"
-            icon="mdi-alert-circle"
-            :action-text="t('shell.notFound.home')"
-            @click:action="goHome"
-          >
-          </v-empty-state>
-        </v-sheet>
-      </v-col>
-    </v-row>
+    <BaseEmptyState
+      size="page"
+      title="404"
+      icon="mdi-alert-circle"
+      :desc="t('shell.notFound.text')"
+      :action="t('shell.notFound.home')"
+      @action="goHome"
+    />
   </v-container>
 </template>
 
 <script lang="ts" setup>
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { useNavigation } from '@/composables/useNavigation'
 
 import { t } from '@/i18n'

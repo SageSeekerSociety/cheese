@@ -23,6 +23,7 @@ import {
 } from '../api/projectSkills'
 
 import { useCommands } from '@/commands'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -408,7 +409,7 @@ useCommands(() => [
         </ul>
       </section>
 
-      <p v-if="!skills.length && !loadError" class="t-body c-muted py-8 text-center">{{ t('work.skills.empty') }}</p>
+      <BaseEmptyState v-if="!skills.length && !loadError" size="page" :title="t('work.skills.empty')" />
     </template>
 
     <SkillDetailDrawer

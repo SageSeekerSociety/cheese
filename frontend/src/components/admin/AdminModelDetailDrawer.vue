@@ -10,6 +10,7 @@ import { useGatewayModelDetail } from '@/composables/useGatewayModelDetail'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { blockedReasonText } from '@/lib/adminModels'
 import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 
@@ -218,7 +219,7 @@ function close() {
           </section>
         </template>
 
-        <p v-else class="amdd__none t-meta-read">{{ t('models.detail.empty') }}</p>
+        <BaseEmptyState v-else size="compact" :title="t('models.detail.empty')" />
       </div>
     </div>
   </v-navigation-drawer>
@@ -366,8 +367,4 @@ function close() {
   color: var(--muted);
 }
 
-.amdd__none {
-  margin: 0;
-  color: var(--muted);
-}
 </style>

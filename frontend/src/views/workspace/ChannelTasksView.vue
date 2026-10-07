@@ -7,6 +7,7 @@ import type { RoomTask } from '@/cx_types'
 import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
@@ -106,9 +107,7 @@ const nameOf = (handle: string) => props.names[handle] || handle
         {{ t('work.roomMachine.retry') }}
       </button>
     </div>
-    <div v-else-if="!shown.length" class="channel-tasks__empty t-body c-muted">
-      {{ t('work.channelTasks.empty') }}
-    </div>
+    <BaseEmptyState v-else-if="!shown.length" size="page" :title="t('work.channelTasks.empty')" />
     <ul v-else class="channel-tasks__list">
       <li v-for="task in shown" :key="task.id">
         <button type="button" class="channel-tasks__row" @click="emit('open-task', task)">
