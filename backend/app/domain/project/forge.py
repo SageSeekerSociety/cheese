@@ -217,20 +217,38 @@ async def tokens_for_project(project_id: uuid.UUID, session: AsyncSession):
 KEPT_FOR_PEOPLE = 0.2
 
 
-async def background_may_use_forge(
+async def background_quota(
     project_id: uuid.UUID, session: AsyncSession
-) -> bool:
-    """Whether background work for this project may call its forge now.
+) -> GitHubAppTokens | None:
+    """The installation whose shared quota background work for this project
+    spends, or None when there is none to protect (only a GitHub App
+    installation has one).
 
-    Only a GitHub App installation has a shared quota to protect.
+    Database reads only. Asking GitHub how much is left is a separate step
+    (`quota_serves_background`), so a caller can let go of its connection,
+    and of any row it holds, before that request is in flight.
     """
     binding = await binding_for_project(project_id, session)
     if binding is None or binding.kind != "github_app":
+        return None
+    return await github_app_tokens_for_project(project_id, session)
+
+
+async def quota_serves_background(quota: GitHubAppTokens | None) -> bool:
+    """Whether background work may spend `quota` now; True when there is no
+    shared quota to protect."""
+    return quota is None or await installation_serves_background(quota)
+
+
+def installation_known_closed(tokens: GitHubAppTokens) -> bool:
+    """What this process already knows without asking GitHub: closed while its
+    last word on the installation was a refusal that has not expired, or while
+    its last report put the quota under the share kept for people."""
+    installation = tokens.installation_id
+    if forge_quota.refused_until(installation) is not None:
         return True
-    tokens = await github_app_tokens_for_project(project_id, session)
-    if tokens is None:
-        return True
-    return await installation_serves_background(tokens)
+    seen = forge_quota.reading(installation)
+    return seen is not None and seen.remaining < seen.limit * KEPT_FOR_PEOPLE
 
 
 async def installation_serves_background(tokens: GitHubAppTokens) -> bool:
@@ -246,10 +264,7 @@ async def installation_serves_background(tokens: GitHubAppTokens) -> bool:
     is a refusal, closes the installation for the next caller.
     """
     installation = tokens.installation_id
-    if forge_quota.refused_until(installation) is not None:
-        return False
-    seen = forge_quota.reading(installation)
-    if seen is not None and seen.remaining < seen.limit * KEPT_FOR_PEOPLE:
+    if installation_known_closed(tokens):
         return False
     try:
         quota = await tokens.core_quota()

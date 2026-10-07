@@ -32,9 +32,11 @@ from app.core.db import release_read_session
 from app.core.sentences import say
 from app.domain.project.forge import (
     ForgeRateLimitedError,
-    background_may_use_forge,
+    background_quota,
     branch_head,
+    installation_known_closed,
     proposal_client,
+    quota_serves_background,
     status_client,
 )
 from app.domain.review import notes
@@ -581,7 +583,10 @@ async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> b
     cards = AcceptCardRepository(session)
     if await cards.list_for_task(task.id):
         return False
-    if not await background_may_use_forge(task.project_id, session):
+    # The row is held here, so GitHub is not asked: `_branch_ahead` asked it
+    # live a moment ago, and what it answered is in the process's quota record.
+    quota = await background_quota(task.project_id, session)
+    if quota is not None and installation_known_closed(quota):
         return False
     pr = await _open_draft_for_task(session, task)
     if pr is None:
@@ -616,11 +621,12 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
     if await AcceptCardRepository(session).list_for_task(task.id):
         return False
     project_id, branch, base = task.project_id, task.branch_name, task.base_branch
+    quota = await background_quota(project_id, session)
     if base is None:
-        # No base to compare against here: the locked path decides, as before.
-        return True
-    if not await background_may_use_forge(project_id, session):
-        return False
+        # No base to compare against here: the locked path decides, on this
+        # quota answer — it does not ask GitHub itself while holding the row.
+        await release_read_session(session)
+        return await quota_serves_background(quota)
     client = await proposal_client(project_id, session)
     if client is None:
         return False
@@ -629,6 +635,9 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
         return False
     owner, repo = binding.repo.split("/", 1)
     reader = await status_client(project_id, session)
+    await release_read_session(session)
+    if not await quota_serves_background(quota):
+        return False
     head = await branch_head(project_id, session, branch, release_session=True)
     if head is None:
         return False
