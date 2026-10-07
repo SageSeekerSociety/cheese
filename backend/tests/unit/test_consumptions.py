@@ -202,8 +202,7 @@ async def test_a_backend_leaving_mid_answer_hands_it_over_at_once(backends, plat
         if event == "words":
             told = told[: data["at"]] + data["text"]
     assert told == ANSWER
-    before_sweep = await _state(new, work)
-    assert await new.sweep() == 0, before_sweep
+    assert await new.sweep() == 0
 
 
 class _OpenSetReadEarlier:
