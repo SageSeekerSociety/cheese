@@ -57,6 +57,11 @@ covers:
 
 **Forgejo 侧**是项目账号本身：密码存在 `ProjectForge.account_password` 里，读的时候过 `forge_password` / 写的时候过 `seal_forge_password`。另外 `ensure_author_email` 会把 agent 的署名邮箱登记到那个账号上（并发登记同一个邮箱会拿 422，所以那里先读一遍再补——登记完还要求它是 verified）。
 
+改动留不下的会话（支线、还没开始的任务，`Place.keeps_work`）从同一个接口拿到的是**只读令牌**，响应里 `read_only` 为真：
+
+- GitHub 侧是只要读权限的安装令牌（`GitHubAppTokens.read_token`）：安装的每项授权都按读级别要，没有读级别的 `workflows` 不要，否则整次签发会被拒。
+- Forgejo 侧给内置 OAuth 客户端的令牌加不了范围，所以是项目账号建的带 `read:repository`、`read:issue`、`read:user` 范围的访问令牌（`ForgejoTokens.read_token`）。它在 Forgejo 上永不过期，平台在名字里写上过期时刻，签发新的和定时清理时把过期的删掉（`revoke_expired_read_tokens`），缓存行带 `read_only`。
+
 机器上那两条命令（`gh` / `fj`）由 `domain/agent/forge_cli.py` 包一层：凭据是为**这一次调用**现签的，只对绑定的 host 和 path 有效；`fj` 还会因为 0.6 版把绝对 API 路径拼在一起而起一个本地转发。
 
 ## 事件中继 {#events}

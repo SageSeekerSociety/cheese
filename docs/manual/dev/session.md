@@ -58,7 +58,7 @@ covers:
 
 执行路由由设备连接的属主服务，发布应用时属主留在旧镜像上；所以这张凭证同时带 `ro`，认不得 `scratch` 的旧属主照只读处理，换成新属主后才按上面两种走。
 
-推送不在执行路由上拦：机器上的命令拿推送凭证时，`/sandbox/forge-token` 和 GitHub 中转的 `git-receive-pack` 按凭证里的会话问 `session_keeps_work`，留不下就拒绝。
+这类会话的代码从 `cheese checkout` 来：会话的工作目录不是仓库，任务的工作目录要等任务开始，所以它在 `~/.cheese/checkout` 检出项目的默认分支。仓库凭证不在执行路由上管：机器上的 git、`gh`、`fj` 取凭证时，`/sandbox/forge-token` 按凭证里的会话问 `session_keeps_work`，留不下的拿到只读令牌（GitHub 是只要读权限的安装令牌，Forgejo 是带 `read:*` 范围的令牌，见[令牌](/dev/forge#tokens)），能读代码、PR 和 issue，推送和写都被托管方拒绝；GitHub 中转也不替它推送。支线里例行任务执行的那一轮同样只读仓库：它留得下的是交回的结果和房间里的文件，改代码要提议任务。
 
 ## 后台的 runner 与 broker {#background}
 
