@@ -208,6 +208,18 @@ def platform_program(home: Path, relative: str) -> Path:
     return (release if release else platform_dir(home)) / relative
 
 
+def private_helper(home: Path, marker: Path) -> Path:
+    """`private.py`, out of the installation the target was read from.
+
+    A seat keeps its own copy of the release — the launcher writes it into the
+    seat that owns the session (`SEATS_DIR`) — and the room level keeps none, so
+    the room-level read raised FileNotFoundError, the release never ran, and the
+    private container stayed on the machine holding its scratch for good.
+    """
+    release = sandbox_release(home)
+    return (release if release else marker.parent) / "remote-execution/private.py"
+
+
 def git_profile(rooms: list[Path]) -> str:
     """The macOS sandbox git runs in for a sandboxed room (`git`): what the
     Linux one gives it, the room's directories and none of the owner's, and
@@ -723,7 +735,12 @@ def target_markers(home: Path) -> list[Path]:
     ]
 
 
-def session_target(home: Path, resource: str) -> dict | None:
+def target_and_marker(home: Path, resource: str) -> tuple[dict, Path] | None:
+    """The executor this room has, and the file that named it.
+
+    The marker is half the answer: it is the installation the executor's own
+    programs come from, and a seat's copy is not the room's.
+    """
     for marker in target_markers(home):
         if not marker.exists():
             continue
@@ -737,8 +754,13 @@ def session_target(home: Path, resource: str) -> dict | None:
         )
         if generation != str(uuid.UUID(resource)):
             raise RuntimeError("executor belongs to another resource generation")
-        return target
+        return target, marker
     return None
+
+
+def session_target(home: Path, resource: str) -> dict | None:
+    found = target_and_marker(home, resource)
+    return found[0] if found is not None else None
 
 
 def wait_for_launcher(home: Path, state: Path) -> None:
@@ -911,7 +933,8 @@ def main() -> None:
     # device that does not keep them.
     action, project, resource, cleanup, room, *tasks = sys.argv[1:]
     home, work = resource_paths(Path.home(), project, resource)
-    executor = session_target(home, resource)
+    found = target_and_marker(home, resource)
+    executor = found[0] if found is not None else None
     if action == "prepare":
         # A timed-out command may arrive after reopening. Once this operation
         # confirmed quiescence, all its delayed retries become read-only.
@@ -959,9 +982,7 @@ def main() -> None:
         if executor is None:
             check_resource_publication(home, work)
         if executor is not None and executor["kind"] == "private":
-            helper = runpy.run_path(
-                str(platform_program(home, "remote-execution/private.py"))
-            )
+            helper = runpy.run_path(str(private_helper(home, found[1])))
             helper["release"](executor)
         if room != "-" and home.exists():
             retain_transcripts(
