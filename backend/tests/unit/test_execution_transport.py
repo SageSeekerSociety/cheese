@@ -115,9 +115,12 @@ def test_a_command_starting_while_another_takes_the_lease_has_the_token(
     monkeypatch.setenv("CHEESE_API", "http://platform.test")
     done = threading.Event()
 
+    # With the token written the way it was before #1867 (truncate, then write),
+    # the reader saw an empty file within 365 acquisitions on macOS and within
+    # one on the Linux runners, across twenty trials each.
     def take_the_lease():
         client = executor_transport.RemoteClient(dict(config))
-        for _ in range(3000):
+        for _ in range(1000):
             client.acquire(deadline=0)
         done.set()
 

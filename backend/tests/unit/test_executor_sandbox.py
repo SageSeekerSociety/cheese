@@ -173,10 +173,12 @@ def test_an_executor_from_before_stop_requests_is_still_stopped(tmp_path, throug
         process.kill()
 
 
-def test_a_stop_signals_no_process_but_the_rooms_own_service(tmp_path):
+def test_a_stop_signals_no_process_but_the_rooms_own_service(tmp_path, monkeypatch):
     """What answers on a room's socket is not proof of who is behind it: a
     sandboxed room can put anything there. A pid it names is signalled only
     when that process is the service for this room's state."""
+    # The service is left running on purpose, so the stop would wait all its time.
+    monkeypatch.setenv("CHEESE_EXECUTOR_STOP_TRIES", "5")
     bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     state, process = _previous_executor(tmp_path, named=bystander.pid)
     try:
