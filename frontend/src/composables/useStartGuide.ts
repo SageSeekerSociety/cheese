@@ -76,7 +76,9 @@ function register(name: string, el: HTMLElement) {
   anchorRevision.value += 1
 }
 
-function unregister(name: string, el: HTMLElement) {
+function unregister(name: string | null, el: HTMLElement) {
+  // 名字可能没有：指令的 `updated` 拿到的是 `oldValue`，第一次渲染时它是 null。
+  if (!name) return
   // 同一个名字被两个元素登记过（旧的还没卸、新的已经挂上）时，只清掉自己那一个。
   if (anchors.get(name) !== el) return
   anchors.delete(name)
