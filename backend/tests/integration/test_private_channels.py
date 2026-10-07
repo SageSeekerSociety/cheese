@@ -205,14 +205,10 @@ def test_an_ai_teammate_not_seated_in_it_does_not_see_it(client):
     }
 
     assert client.get(f"/topics/{tid}/blocks", headers=auth).status_code == 404
-    rooms = client.get(
-        "/topics", params={"project_id": p["id"], "topic": root}, headers=auth
-    )
+    rooms = client.get("/topics", params={"project_id": p["id"]}, headers=auth)
     assert rooms.status_code == 200, rooms.text
     assert tid not in {t["id"] for t in rooms.json()["data"]["data"]}
-    tasks = client.get(
-        f"/projects/{p['id']}/tasks", params={"topic": root}, headers=auth
-    )
+    tasks = client.get(f"/projects/{p['id']}/tasks", headers=auth)
     assert tasks.status_code == 200, tasks.text
     assert task not in {t["id"] for t in tasks.json()["data"]["data"]}
 

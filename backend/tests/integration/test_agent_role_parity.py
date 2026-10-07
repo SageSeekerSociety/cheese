@@ -8,6 +8,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from tests.ask_fixtures import active_ask
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
+    add_external_member,
     in_thread,
     join_project_team,
     post_project,
@@ -459,88 +460,119 @@ def test_review_actions_check_the_credentials_project_and_room(client):
         )
 
 
-def test_agent_reads_the_projects_record_through_the_room_it_works_in(client):
-    """写周报的那条路一直通，读回来的也要通 —— 读写要成对。
-
-    周报走 ``POST /topics/{id}/weekly``。而读只有 ``GET /projects/{id}/weeklies``
-    一条，要是它要求 ``authorize_project``：一轮里铸出来的凭据过不了那道门（见
-    ``_artifact_keeper``），于是同一个调用者写下周报、却一条也读不回来。``topic``
-    就是产物清单和资料库早就接上的那个「点名自己的位置」参数，这里用的是同一条。
-
-    每条断言都是浏览器/CLI 会收到的状态码。
-    """
+def test_agent_reads_back_the_weekly_it_wrote(client):
+    """写周报的那条路一直通，读回来的也要通 —— 读写要成对。"""
     project, origin, _ = _rooms(client)
     auth = _agent(client, project, origin)
-    pid = project["id"]
     body = {"body": "Week 38 went out"}
     assert (
         client.post(f"/topics/{origin}/weekly", json=body, headers=auth).status_code
         == 200
     )
-    listed = client.get(
-        f"/projects/{pid}/weeklies", params={"topic": origin}, headers=auth
-    )
+    listed = client.get(f"/projects/{project['id']}/weeklies", headers=auth)
     assert listed.status_code == 200, listed.text
     assert [b["content"] for b in listed.json()["data"]["data"]] == [body["body"]]
 
 
-def test_naming_a_place_does_not_widen_what_an_agent_may_read(client):
-    """不点名位置，仍然读不到；点到别人的项目、或点到自己没席位的房间，也读不到。
-
-    这条是上面那条的边界：补 ``topic`` 只是把已有的一道门接上，不是放松它。
-    """
-    project, origin, other = _rooms(client)
-    pid = project["id"]
-    auth = _agent(client, project, origin)
-    # 不点名位置：一轮的凭据本来就不是项目级凭据，照旧 403。
-    assert client.get(f"/projects/{pid}/weeklies", headers=auth).status_code == 403
-    # 点一个不属于这个项目的房间：``authorized_place`` 挡掉。
-    foreign, _, foreign_room = _rooms(client)
-    assert (
-        client.get(
-            f"/projects/{pid}/weeklies",
-            params={"topic": foreign_room},
-            headers=auth,
-        ).status_code
-        == 403
-    )
-    # 点一个自己没有席位的房间：席位即授权，所以这也不是一条进来的路。
-    handle = _teammate(client, project, origin)
-    only_here = _agent(client, project, origin, as_handle=handle)
-    assert (
-        client.get(
-            f"/projects/{pid}/weeklies", params={"topic": other}, headers=only_here
-        ).status_code
-        == 403
-    )
-    assert (
-        client.get(
-            f"/projects/{pid}/weeklies", params={"topic": origin}, headers=only_here
-        ).status_code
-        == 200
-    )
-    assert foreign["id"] != pid
-
-
 @pytest.mark.parametrize(
     "path",
-    ["/projects/{pid}/tasks", "/topics?project_id={pid}"],
+    [
+        "/projects/{pid}",
+        "/projects/{pid}/upstream",
+        "/projects/{pid}/members",
+        "/projects/{pid}/tasks",
+        "/projects/{pid}/library",
+        "/topics?project_id={pid}",
+    ],
 )
-def test_agent_finds_the_projects_rooms_and_work_through_its_place(client, path):
-    """同一个项目里别的房间、别的活，芝士点名自己的位置就读得到。
+@pytest.mark.parametrize("where", ["room", "thread"])
+def test_an_agent_reads_the_project_from_where_it_works(client, path, where):
+    """芝士在项目的一个频道里干活，就读得到这个项目的东西：项目本身、关联的仓库、
+    名册、别的频道和任务、资料库。它在频道的支线里也一样。不必在请求里再说一遍
+    自己在哪 —— 凭据里写着。"""
+    project, origin, _ = _rooms(client)
+    place = origin if where == "room" else in_thread(client, origin, "alice")
+    auth = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project["id"],
+            topic_id=place,
+            access_scope="project",
+            agent_handle=_seated_agent(client, origin),
+        )
+    }
+    response = client.get(path.format(pid=project["id"]), headers=auth)
+    assert response.status_code == 200, response.text
 
-    这是「不必让用户把项目里已有的东西逐条贴进来」的前提：房间、任务这两份
-    清单过去只认项目级凭据，一轮的凭据点了位置也是 403。不点位置、点别的项目的房间，
-    仍然读不到。
-    """
+
+def test_an_agent_reads_a_project_only_from_a_room_it_sits_in(client):
+    """读项目的资格来自它坐着的那个房间：凭据点的房间它不在，就读不到；
+    别的项目的凭据也读不到这个项目。"""
+    project, origin, other = _rooms(client)
+    pid = project["id"]
+    handle = _teammate(client, project, origin)
+    from_other = _agent(client, project, other, as_handle=handle)
+    from_origin = _agent(client, project, origin, as_handle=handle)
+    upstream = f"/projects/{pid}/upstream"
+    assert client.get(upstream, headers=from_other).status_code == 403
+    assert client.get(upstream, headers=from_origin).status_code == 200
+    foreign, foreign_room, _ = _rooms(client)
+    elsewhere = _agent(client, foreign, foreign_room)
+    assert client.get(upstream, headers=elsewhere).status_code == 403
+
+
+def test_an_agent_does_not_read_the_project_into_a_room_an_outsider_reads(client):
+    """芝士读到的东西会说进它所在的房间。房间里有项目以外的人时，它不能读项目的
+    东西 —— 否则这个人借芝士就看到了项目不给他看的。
+
+    项目外的人是这样进房间的：bob 作为外部成员和芝士开了私聊，后来退出了项目，
+    私聊还在。"""
     project, origin, _ = _rooms(client)
     pid = project["id"]
-    auth = _agent(client, project, origin)
-    url = path.format(pid=pid)
-    sep = "&" if "?" in url else "?"
-    assert client.get(url, headers=auth).status_code == 403
-    assert client.get(f"{url}{sep}topic={origin}", headers=auth).status_code == 200
-    _, _, foreign_room = _rooms(client)
-    assert (
-        client.get(f"{url}{sep}topic={foreign_room}", headers=auth).status_code == 403
+    add_external_member(client, pid, "bob", by="alice")
+    chat = client.get(
+        f"/projects/{pid}/private-chat",
+        params={"user_handle": "bob"},
+        headers=session_auth_headers("bob"),
     )
+    assert chat.status_code == 200, chat.text
+    chat_id = chat.json()["data"]["id"]
+    seat = next(
+        row["member_handle"]
+        for row in client.get(
+            f"/topics/{chat_id}/members", headers=session_auth_headers("bob")
+        ).json()["data"]["data"]
+        if row["agent"]
+    )
+    in_chat = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=pid, topic_id=chat_id, access_scope="project", agent_handle=seat
+        )
+    }
+    assert client.get(f"/projects/{pid}", headers=in_chat).status_code == 200
+    left = client.delete(
+        f"/projects/{pid}/membership", headers=session_auth_headers("bob")
+    )
+    assert left.status_code == 200, left.text
+    assert client.get(f"/projects/{pid}", headers=in_chat).status_code == 403
+    assert (
+        client.get(
+            f"/projects/{pid}/context/search",
+            params={"q": "x", "topic": chat_id},
+            headers=in_chat,
+        ).status_code
+        == 403
+    )
+    # A room with only the project's own people is unaffected.
+    in_origin = _agent(client, project, origin)
+    assert client.get(f"/projects/{pid}", headers=in_origin).status_code == 200
+
+
+def test_reading_the_project_does_not_let_an_agent_change_it(client):
+    """读得到不等于改得动：扔掉资料库里的一份，只有人能做。"""
+    project, origin, _ = _rooms(client)
+    response = client.delete(
+        f"/projects/{project['id']}/library",
+        params={"path": "预算表.xlsx"},
+        headers=_agent(client, project, origin),
+    )
+    assert response.status_code == 403, response.text

@@ -9,11 +9,10 @@ version: 1
 auth_entries:
   platform.admin: "PlatformAdminDep -> admin_common.require_platform_admin: ActorResolver.resolve, authz.policy.refuse_management_action (including agent binding), then AdminService.require_admin. Configured root admins and platform_admins are the allow-list. Source: app/api/routes/admin_common.py."
   feedback.admin: "FeedbackAdminDep -> admin_feedback.require_feedback_admin: resolve caller, refuse_management_action with IdentityService agent binding, then FeedbackService.require_admin. Source: app/api/routes/admin_feedback.py."
-  actor.project: "ActorResolver.resolve(project_id=...) then authorize_project; app/api/auth.py checks project membership when authz_enforce_topic_access is enabled, with its explicit global sandbox development override. The setting is a real limit, not an unconditional login claim."
+  actor.project: "ActorResolver.resolve(project_id=...) then authorize_project; app/api/auth.py checks project membership when authz_enforce_topic_access is enabled, with its explicit global sandbox development override. An agent per-turn credential reads (not writes) instead through its own conversation: seated in that room, and nobody the room shows things to is outside the project (auth.project_access.outsiders_reading). The setting is a real limit, not an unconditional login claim."
   actor.topic: "ActorResolver.resolve in the actual room/project then authorize_topic, directly or through topics._actor_in_place / room_files._in_room. app/api/auth.py applies the roster policy when authz_enforce_topic_access is enabled; ordinary calls do not force that setting. The actor comes from the credential only; no body or query field names it."
   actor.topic.enforced: "ActorResolver.resolve in the actual room/project then authorize_topic(enforce=True); ignores the topic-access kill switch, retaining the resolver global sandbox development override. Source: app/api/auth.py and the cited handler."
   actor.topic.verified: "Room-context ActorResolver.resolve + authorize_topic, plus an explicit authenticated-caller check or require_verified_caller in the cited handler/helper. Topic membership retains the authz_enforce_topic_access setting unless enforce=True is specified there."
-  project.reader: "api/place.project_reader: optional authorized_place verifies that the named room belongs to this project then resolves/authorizes that room; otherwise resolves and authorize_project. Room title results are filtered by readable_topic_ids where used. Source: app/api/place.py,48; resolver access setting applies."
   project.manager: "ActorResolver resolves/authorizes project and MemberService.require_manager decides management access. This is the membership service seam, not an admin router-name convention. Source: app/domain/membership/services.py and cited handler."
   project.steward: "Depends(require_project_steward), from agent_credential: verified actor and MemberService.manages(project_id, handle); project owner or owner/admin of its team. An agent with the same standing is admitted. Source: app/api/routes/agent_credential.py."
   project.owner: "projects._project_owner: require_verified_caller, project.owner_handle equality; members who are not owners are refused and outsiders get NotFound. Does not use authorize_project, so the one permitted unarchive write can cross the archive guard. Source: app/api/routes/projects.py."
@@ -278,7 +277,7 @@ owners:
   room.files: "Room retained files and shown-source composition; domain/project/room_files.py plus block/shown. The route owns composing file save and shown-block broadcast."
   project: "Project lifecycle, association, ownership and repository settings; domain/project/ProjectService and project forge/protection. Route retains request assembly."
   project.address: "Project slugs, former slugs and per-project numbers for tasks, documents and channels; domain/project/address.py."
-  project.rail: "Project rail assembly in projects.list_project_tasks: project_reader -> TaskService -> latest_cards_by_task -> beats -> asked -> one now -> presentation. Domain owners of facts remain room_task/review/block; v6 says assembly owner is the route."
+  project.rail: "Project rail assembly in projects.list_project_tasks: authorize_project -> TaskService -> latest_cards_by_task -> beats -> asked -> one now -> presentation. Domain owners of facts remain room_task/review/block; v6 says assembly owner is the route."
   project.artifacts: "Published project artifact catalogue/version comparisons; domain/project/artifacts.py, composed with library/preview/repository bytes by the route."
   project.environment: "Project/channel execution environment, its failures and their diagnosis; domain/project/environment.py and environment_diagnosis.py, domain/agent/environment_failures.py, composed with machine/device state."
   project.export: "Caller-visible offline project export; domain/project/export.create_archive owns archive construction and delegated auth."
@@ -678,10 +677,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/users/me/consents", auth: "user.session", owner: "legal"}
   - {protocol: "http", method: "POST", path: "/users/me/consents", auth: "user.session", owner: "legal"}
   # app.api.routes.library
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/raw", auth: "project.reader", owner: "library"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/versions", auth: "project.reader", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/raw", auth: "actor.project", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/versions", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library/restore", auth: "library.keeper", owner: "library"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library", auth: "project.reader", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
@@ -792,9 +791,9 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/by-task/{task_id}", auth: "task.visibility", owner: "project"}
   - {protocol: "http", method: "GET", path: "/projects/by-team/{team_id}", auth: "team.access", owner: "project"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}", auth: "actor.project", owner: "project"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/weeklies", auth: "project.reader", owner: "block"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/tasks", auth: "project.reader", owner: "project.rail"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/progress", auth: "project.reader", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/weeklies", auth: "actor.project", owner: "block"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/tasks", auth: "actor.project", owner: "project.rail"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/progress", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/memory", auth: "memory.closed.write", owner: "memory"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-chat", auth: "project.private.chat", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge", auth: "actor.project", owner: "project"}
@@ -819,10 +818,10 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/agents/{agent_id}", auth: "actor.project", owner: "agent.instances"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/default-agent", auth: "actor.project", owner: "agent.instances"}
   # app.api.routes.projects_artifacts
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts", auth: "project.reader", owner: "project.artifacts"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "project.reader", owner: "project.artifacts"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}/compare", auth: "project.reader", owner: "project.artifacts"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file", auth: "project.reader", owner: "project.artifacts"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts", auth: "actor.project", owner: "project.artifacts"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "actor.project", owner: "project.artifacts"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}/compare", auth: "actor.project", owner: "project.artifacts"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts/{artifact_id}/versions/{card_id}/file", auth: "actor.project", owner: "project.artifacts"}
   - {protocol: "http", method: "PATCH", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "artifact.keeper", owner: "project.artifacts"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/artifacts/{artifact_id}/merge", auth: "artifact.keeper", owner: "project.artifacts"}
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "artifact.keeper", owner: "project.artifacts"}
@@ -1057,7 +1056,7 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}/members/{handle}", auth: "topic.members.manage", owner: "topic.membership"}
   # app.api.routes.topics
   - {protocol: "http", method: "POST", path: "/topics", auth: "actor.project", owner: "topic"}
-  - {protocol: "http", method: "GET", path: "/topics", auth: "project.reader", owner: "topic"}
+  - {protocol: "http", method: "GET", path: "/topics", auth: "actor.project", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/names", auth: "topic.names", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}", auth: "actor.topic", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/blocks", auth: "actor.topic", owner: "topic"}

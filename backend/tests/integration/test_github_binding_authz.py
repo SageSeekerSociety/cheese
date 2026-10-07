@@ -287,7 +287,11 @@ def test_github_management_follows_participant_role_and_own_account(
     )
     connection = f"/projects/{pid}/github/connection"
     install = f"/projects/{pid}/github/install-url"
-    assert client.get(connection, headers=auth).status_code == 403
+    # Reading where the project's code lives is a project read: an agent reads
+    # it from the room it sits in, a person only as a member.
+    assert client.get(connection, headers=auth).status_code == (
+        200 if is_agent else 403
+    )
     join_project_team(client, pid, handle)
     assert client.get(connection, headers=auth).status_code == 200
     assert client.get(install, headers=auth).status_code == 403

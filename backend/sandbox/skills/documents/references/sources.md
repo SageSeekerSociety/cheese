@@ -91,7 +91,7 @@ uv run --with pdfplumber --with pymupdf --with python-docx --with python-pptx \
 
 ```
 platform_request(method="GET",
-  path="/projects/<项目 id>/context/search?q=<关键词>&topic=<CHEESE_TOPIC>")
+  path="/projects/<项目 id>/context/search?q=<关键词>")
 ```
 
 它在你有权访问的频道里找：频道名、主线和支线的消息、实况文档、任务（标题、简报、结论）、
