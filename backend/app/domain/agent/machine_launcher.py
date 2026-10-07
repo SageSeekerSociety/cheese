@@ -565,7 +565,10 @@ export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
 # Short, because programs make sockets in TMPDIR and a path stops at 108 bytes.
 TB="{SESSION_TMP}/cheese-$(id -u)"
 TD="$TB/${{CH##*/}}"
-if mkdir -p -m 700 "$TB" 2>/dev/null && [ ! -L "$TB" ] && [ -O "$TB" ] \
+# Not on Windows, where Git Bash's `/var/tmp` sits inside its own install and
+# the system's temporary directory is already the account's.
+if [ "${{OS:-}}" != Windows_NT ] \
+    && mkdir -p -m 700 "$TB" 2>/dev/null && [ ! -L "$TB" ] && [ -O "$TB" ] \
     && mkdir -p "$TD" 2>/dev/null; then
   export TMPDIR="$TD"
 fi
