@@ -198,7 +198,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 ## 边界与坑 {#traps}
 
 - **两套请求栈不是重构没做完。** 改一个接口前先确认调用方用的是 `@/api`（fetch、自己剥信封）还是 `@/network`（axios、拦截器剥），两边的重试与 401 行为不同。
-- **`retryable` 读不出东西。** 后端构造的每个错误体里它都是 `false`（见[后端结构与接口约定](/dev/backend-app#errors)），所以 `api.ts` 里「`retryable !== false` 才重试」这条条件在今天的后端上恒为真 —— 它拦不住任何一次重试。
+- **后端的错误体几乎都写着 `retryable: false`，所以几乎都不重试。** `api/http.ts` 的 GET 只在状态码是 502–504、520–530 且 `error.retryable !== false` 时重试。后端只有 `ForgeRateLimitedError`、`ForgeUnreachableError`（`backend/app/domain/project/forge.py`，都是 503）把它设成 `true`，其余错误体都是 `false`。结果是：后端自己答出的 503（比如 `GatewayUnavailableError`）不重试，会重试的只有边缘返回的非 JSON 页面、没有错误体的 5xx 和这两类代码仓库错误。想让一类错误被重试，在它的 `AppError` 子类上设 `retryable = True`。
 - **`App.vue` 之外还有第二个入口。** 改全局样式或插件时，`demo-main.ts` 那条路只装了 vuetify 和 i18n：依赖路由、登录态或任何 store 的东西在那里都没有，而文档的每次构建都会跑到它。
 - **`NotFound` 通配必须最后。** 前面插一条落不进任何 match 的路由，被它吃掉的表现是「页面打不开」，看起来像后端 404。
 - **折起来的必须还在。** `collapseNotices` 的硬约束是「信息不能丢，只能收起来」；新增一档折叠时，原文必须仍然在展开区里，不能只留一行摘要。

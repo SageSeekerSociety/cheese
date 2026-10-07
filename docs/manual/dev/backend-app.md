@@ -50,9 +50,11 @@ covers:
 |---|---|
 | 模块导入失败，`settings.environment != "production"` | 当场抛出，服务起不来 |
 | 模块导入失败，生产环境 | 记一条 ERROR 日志，模块名进 `FAILED_ROUTE_MODULES`，进程继续起 |
-| 生产环境有模块没挂上 | `GET /healthz`（`app/api/routes/health.py`）返回 `{"status": "degraded", "unmounted": [...]}` |
+| 生产环境有模块没挂上 | `GET /readyz`（`app/api/routes/health.py`）返回 503，响应体的 `checks.routes.unmounted` 列出模块；`/healthz` 照常 200 |
 
-生产环境选择「一个坏模块不拖垮整个应用」，代价是一整组接口 404 而进程照样健康 —— 所以 `/healthz` 必须把没挂上的模块报出来。历史上 `/sandbox/hooks` 就这样整组消失过（每个 agent 事件 404），而唯一的症状出现在调用方那边。
+生产环境选择「一个坏模块不拖垮整个应用」，代价是一整组接口 404。所以「路由全部挂上」是 `/readyz` 的必需检查项，和数据库、Redis 并列：发版脚本和后端容器的健康检查都等 `/readyz`，这样的版本过不了部署闸门。历史上 `/sandbox/hooks` 就这样整组消失过（每个 agent 事件 404），而唯一的症状出现在调用方那边。
+
+`/healthz` 只回答「进程活着」，依赖断开、模块没挂上都照常 200：这两件事重启修不好，存活探针为它们报错只会多出一轮重启。
 
 路由路径是**裸的**，不带 `/api`：网关那段前缀由前端 nginx 的 `location /api/ { proxy_pass http://backend:8081/; }` 剥掉，约定见[接口约定择要](#conventions)。FastAPI 用 `redirect_slashes=False` 建应用（`main.py` 里的 `app = FastAPI(...)`），尾斜杠是 404 而不是 307。
 
@@ -200,7 +202,7 @@ covers:
 - **`retryable` 恒为 `false`。** 三个构造错误体的地方都写死了它，没有任何一处会把它设成 `true`。字段在，语义不在。
 - **SSE 分支不转发 headers。** 带 `Accept: text/event-stream` 的请求出 validation 错误或 `HTTPException` 时走 `PlainTextResponse`，`DeviceOffline` 的 `X-Device-Id` 这类头不会跟着出去 —— 只有 JSON 那两支转发。
 - **`page()` 不套信封。** 它返回 `{"data", "total"}`，没有 `code`/`message`；读分页响应时别按 `ok()` 的形状解析。
-- **路由导入失败在生产是「降级」而不是「崩溃」。** 一整个模块会安静地 404，只有 `/healthz` 会说出 `unmounted` 列表 —— 健康检查若只看进程活着，看不出这件事。
+- **路由导入失败在生产是「降级」而不是「崩溃」。** 一整个模块会 404，进程照常起来；`/readyz` 因此返回 503，所以新版本过不了发版闸门。已经在服务的进程如果读到这种状态，不会被摘掉，只在 `/readyz` 和管理后台的「平台健康」里显示出来。
 - **dev 环境导入失败直接起不来。** `_discover_routers` 在 `settings.environment != "production"` 时把异常抛出去，所以本地和测试里一个坏模块是当场可见的。
 - **归属锁只有一把。** `OWNER_LOCK` 是任意一个固定 bigint，唯一要求是「这个库里没有别的东西用它」。换库时若别处也用了这个值，两个系统会互相抢锁。
 - **两个旁路进程的鉴权是共享密钥的常量比较**（`device_connection_auth_secret`、每个部署一条 relay key），没有撤销列表、没有过期；轮换一次就是换一个值。
