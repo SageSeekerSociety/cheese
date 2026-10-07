@@ -39,9 +39,12 @@ before:
     phase: 开口之前
     desc: Claude Code 自己的那一份，加上内置工具和平台工具的定义。随骨架版本变，这里是代表数。平台的系统提示词接在它后面（`--append-system-prompt-file`），开场快照在第一条消息里。
 steps:
+  - label: 名字
+    check: 你的名字是
+    desc: 这位 AI 队友在项目里的名字，告诉它成员表里哪一位是它自己。改名会换掉系统提示词，下一轮开一段新会话。
   - label: 底稿
     check: 底稿
-    desc: 部署时配置的那一段开头（`settings.agent_system_prompt`），前面是这位 AI 队友在项目里的名字（「你的名字是「Nova」」），后面每一块都接在它后面。
+    desc: 部署时配置的那一段开头（`settings.agent_system_prompt`），后面每一块都接在它后面。
   - label: 平台规矩
     check: 平台规矩
     desc: 每个托管仓库、每一轮都成立的几条：房间里的人是产品用户，回复里不提内部机制，不用 `git stash`，改仓库前先开任务，以及怎么加载一个技能。
