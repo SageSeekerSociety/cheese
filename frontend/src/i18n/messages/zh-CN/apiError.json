@@ -115,6 +115,7 @@
   "previewDisabled": "这个部署没有启用文档预览",
   "previewServiceUnreachable": "文档预览服务暂时无法访问",
   "previewNotPdf": "转换结果不是有效的 PDF",
+  "previewNotHtml": "转换结果不是有效的网页",
   "previewOver10Mb": "文件超过 10 MB，无法生成预览",
   "artifactNameEmpty": "产物的名字不能是空的",
   "artifactNameTooLong": "产物的名字最长 {max} 个字",
