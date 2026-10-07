@@ -22,7 +22,7 @@ from tests.integration.migration_replay import (
     seed_room,
 )
 
-BEFORE = "c71e5a90d4b2"
+BEFORE = "a6e2f91c4d07"
 AFTER = "5a00f11b4537"
 
 

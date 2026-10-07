@@ -1,7 +1,7 @@
 """Project slugs, and numbers for tasks, documents and channels
 
 Revision ID: 5a00f11b4537
-Revises: c71e5a90d4b2
+Revises: a6e2f91c4d07
 Create Date: 2026-10-07
 
 Addresses people can say (`app/domain/project/address.py`). Every existing
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "5a00f11b4537"
-down_revision: str | Sequence[str] | None = "c71e5a90d4b2"
+down_revision: str | Sequence[str] | None = "a6e2f91c4d07"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

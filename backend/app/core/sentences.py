@@ -137,8 +137,12 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: conversation of its own to miss (「一条答案没能送达」 stays on old rooms).
 #: A routine's run is its own message in the main line, its result written
 #: into it (「「…」完成了」 with its 「结果」 stays on old rooms).
+#: A document edit names an AI teammate by its handle, as it does a person, so
+#: the reader sees the teammate's own name (「芝士」 as the editor of every
+#: teammate's edit stays on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        "actorCheese",
         "askAnswerUndelivered",
         "askAnswerUndeliveredDetail",
         "docCommented",

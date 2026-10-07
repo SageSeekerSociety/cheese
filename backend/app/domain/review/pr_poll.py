@@ -88,7 +88,11 @@ async def poll_uncarded_task_prs(
         WHO_PLATFORM,
         notice,
     )
-    from app.domain.project.forge import background_may_use_forge, proposal_client
+    from app.domain.project.forge import (
+        background_quota,
+        proposal_client,
+        quota_serves_background,
+    )
     from app.domain.review.models import AcceptCard
     from app.domain.room_task.checkouts import after_close
     from app.domain.room_task.models import Task, TaskStatus
@@ -137,9 +141,11 @@ async def poll_uncarded_task_prs(
                 if task is None or task.pr_number is None:
                     continue
                 number, project = task.pr_number, task.project_id
-                if not await background_may_use_forge(project, session):
-                    continue
+                quota = await background_quota(project, session)
                 client = await proposal_client(project, session)
+            # Asked once the session is closed, so no connection waits on it.
+            if not await quota_serves_background(quota):
+                continue
             if client is None:
                 continue
             status = await client.pr_status(number)

@@ -2,7 +2,8 @@
 (app/domain/room_task/naming.py), over the real HTTP stack, database and Valkey.
 
 What is pinned: a task opened without a title is named from its first real
-message, and an `@` inside a sentence does not hide what the person said; the
+message — for a task turned from a message, that message and its 支线 — and an
+`@` inside a sentence does not hide what the person said; the
 name is checked once against the first turn; later changes wait for a signal
 and a throttle; a task an AI teammate proposed keeps its title until its
 direction changes; a name a person chose is never overwritten, including by a
@@ -34,6 +35,7 @@ from app.domain.room_task import naming
 from app.domain.room_task.models import Task, TaskTitle
 from tests.conftest import seed_user
 from tests.integration.conftest import (
+    post_message,
     post_project,
     room_agent_headers,
     room_agent_seat,
@@ -294,6 +296,57 @@ def test_an_unnamed_task_waits_for_something_worth_naming_it_by(client, alice, g
     )
     assert gateway["mints"] == 1
     assert _history(client, tid) == [("dev 外网访问慢排查", "auto", "name")]
+
+
+def _turned_from(client, alice, text: str, replies: tuple[str, ...] = ()) -> str:
+    """A task alice turned from her message ``text`` in a channel (转为任务),
+    with ``replies`` said under it in its 支线 first."""
+    room = _project(client, alice)["root_topic_id"]
+    said = post_message(client, room, "alice", {"content": text})
+    if replies:
+        thread = client.post(f"/blocks/{said['id']}/thread", headers=alice)
+        assert thread.status_code == 200, thread.text
+        for reply in replies:
+            post_message(
+                client, thread.json()["data"]["id"], "alice", {"content": reply}
+            )
+    r = client.post(f"/blocks/{said['id']}/upgrade", headers=alice)
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["id"]
+
+
+def test_a_task_turned_from_a_message_is_named_by_that_message(client, alice, gateway):
+    """What the task is was said in the message it was turned from; its own
+    conversation may hold nothing but its AI teammate's words."""
+    tid = _turned_from(
+        client, alice, "请在项目里新建一个 hello.md，写一句介绍这个项目的话"
+    )
+    _say(client, tid, "hello.md 里那句介绍按什么口径写？", author="cheese-0123456789ab")
+
+    gateway["answers"].append({"keep": False, "title": "hello.md 项目介绍"})
+    renamed = _run(client, tid, "turn")
+
+    assert renamed is not None
+    assert _shown(client, tid) == ("hello.md 项目介绍", "auto")
+    asked = gateway["asked"][0]
+    assert '<message role="person">请在项目里新建一个 hello.md' in asked
+    assert asked.index("新建一个 hello.md") < asked.index("按什么口径写")
+
+
+def test_a_task_turned_from_a_discussion_reads_what_was_said_under_it(
+    client, alice, gateway
+):
+    """An opener that says too little is not the whole discussion: what was said
+    under it in its 支线 before the task was made is read with it."""
+    tid = _turned_from(
+        client, alice, "在吗", replies=("dev 机器从外网访问很慢，帮我排查一下",)
+    )
+
+    gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
+    renamed = _run(client, tid, "signal")
+
+    assert renamed is not None and renamed.title == "dev 外网访问慢排查"
+    assert "从外网访问很慢" in gateway["asked"][0]
 
 
 def test_the_task_document_is_what_the_model_reads_as_its_goal(client, alice, gateway):

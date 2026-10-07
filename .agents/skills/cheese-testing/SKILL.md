@@ -55,6 +55,33 @@ language-specific entries, not additional levels. Select by both the behavior
 being verified and the required resources. The design report's ban on event
 loops in pure tests is not the implemented collection rule.
 
+Collection also gives each test its layer's time ceiling (`_LAYER_TIMEOUT_S`
+in `backend/tests/conftest.py`). A test over it is killed and reported as its
+xdist worker crashing, with `+++ Timeout +++` and the test's stack just before.
+A test may declare a tighter `pytest.mark.timeout`, never a looser one.
+`backend/tests/slow_tests.txt` lists the tests that were already over when the
+ceilings arrived: remove a test's line when you make it fast, and never add
+one.
+
+## A slow test is fixed, not exempted
+
+A test over a few seconds is almost always waiting rather than working. Before
+anything else, find what it waits for and give it a short version of that:
+
+- A production timeout, retry backoff, poll interval or deadline: make it a
+  parameter or setting the test passes small, rather than sleeping it out. Do
+  not monkeypatch a private name to do this. Where the property is that
+  something never returns, assert a hard upper bound instead of waiting for it.
+- A database: the `client` and `python_client` fixtures truncate every table and
+  start the application for each test, because their code paths commit from
+  their own sessions. A test that does not need that uses `db_session` from
+  `backend/tests/integration/conftest.py`, whose commits release a savepoint
+  and whose outer transaction rolls back after the test.
+- A real process, sandbox or harness binary: a test in `tests/unit/` that
+  starts one is the first candidate to replace with the shared doubles under
+  `backend/tests/support/`, or to move out of `tests/unit/`, which makes it an
+  integration test.
+
 ## Run through the existing entry
 
 Follow `CLAUDE.local.md`, where present, for the execution host. Run commands
@@ -100,6 +127,9 @@ under saturation. For deployment claims, exercise the actual supported versions
 and in-flight operation; same-revision in-process tests cannot establish that.
 
 For CI optimization, compare queue/setup/test/teardown time, executed selections,
-skips, cancellations, and retries. Keep required-check feedback targets and
+skips, cancellations, and retries. Per-test durations are in each backend
+shard's JUnit artifact (`backend-<layer>-*`); sum them by module or by fixture
+before adding runners, because more shards also pay setup again and compete
+for the same hosted runners. Keep required-check feedback targets and
 unfinished gate work in issues #1279 and #1300; consult their current state
 before treating a design target as an enforced budget or adding a new gate.

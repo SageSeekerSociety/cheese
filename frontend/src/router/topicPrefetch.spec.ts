@@ -4,12 +4,19 @@
 // on its way. The page modules below never finish loading, which is exactly the
 // moment the rule is about.
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { signedIn, never } = vi.hoisted(() => ({
-  signedIn: { id: '7' },
-  never: () => new Promise<never>(() => {}),
-}))
+const { signedIn, pageCode, release } = vi.hoisted(() => {
+  // 页面代码在整个文件里都还在路上；文件跑完才放行（换成空组件），不留一个永远
+  // 挂着的加载让测试环境拆掉之后还在后台读模块。
+  let open!: () => void
+  const gate = new Promise<void>((resolve) => (open = resolve))
+  return {
+    signedIn: { id: '7' },
+    pageCode: () => gate.then(() => ({ default: { render: () => null } })),
+    release: () => open(),
+  }
+})
 vi.mock('@/me', () => ({ myId: () => signedIn.id, myHandle: () => (signedIn.id ? 'alice' : '') }))
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
@@ -22,9 +29,9 @@ vi.mock('@/api/addresses', () => ({
   resolveNumber: vi.fn().mockRejectedValue(new Error('offline')),
   addressOf: vi.fn().mockRejectedValue(new Error('offline')),
 }))
-vi.mock('@/views/workspace/ProjectShell.vue', never)
-vi.mock('@/views/workspace/ProjectSidebar.vue', never)
-vi.mock('@/views/workspace/TopicView.vue', never)
+vi.mock('@/views/workspace/ProjectShell.vue', pageCode)
+vi.mock('@/views/workspace/ProjectSidebar.vue', pageCode)
+vi.mock('@/views/workspace/TopicView.vue', pageCode)
 
 import { getPreview, listBlocks } from '@/api'
 import { blockCache, setCachedWindow } from '@/lib/blockCache'
@@ -32,6 +39,11 @@ import { resetPreviewPointerCache } from '@/lib/previewPointer'
 import router from '@/router'
 
 const PROJECT = '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10'
+
+afterAll(async () => {
+  release()
+  await router.isReady().catch(() => {})
+})
 
 beforeEach(() => {
   setActivePinia(createPinia())
