@@ -88,6 +88,9 @@ class ModelSettings:
     #: latest conversation is kept verbatim when the older part is summarised.
     reserve_tokens: int | None = None
     keep_tokens: int | None = None
+    #: How long the harness waits before retrying a failed model call, in
+    #: milliseconds; each further retry waits twice as long.
+    retry_base_delay_ms: int | None = None
 
 
 @dataclass(frozen=True)

@@ -675,9 +675,15 @@ def test_a_refused_question_leaves_nothing_in_the_list(client, gateway):
     assert listed.json()["data"]["conversations"] == []
 
 
-def test_an_answer_that_fails_says_so_with_its_sentence_key(client, gateway):
+def test_an_answer_that_fails_says_so_with_its_sentence_key(
+    client, gateway, monkeypatch
+):
     """The panel says the failure in its reader's language, from the key the
     stream's ``error`` event carries beside the Chinese sentence."""
+    from app.domain.agent.personal import session as personal
+
+    # pi still retries the failing gateway three times, without the pauses.
+    monkeypatch.setattr(personal, "RETRY_BASE_DELAY_MS", 0)
     me = _auth(client, "asker")
     conversation = _start(client, _task(client), me)
     gateway.failing = True
