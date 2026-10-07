@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -144,5 +145,25 @@ func TestADirectoryNamedTmuxIsNotAccepted(t *testing.T) {
 
 	if got, err := findTmux(); err == nil {
 		t.Fatalf("accepted a directory as the tmux binary: %q", got)
+	}
+}
+
+// What a screen runs calls plain `tmux`, so the copy the connector found must be
+// the one a command started with the connector's environment finds too.
+func TestTheTmuxTheConnectorUsesIsTheOneItsCommandsFind(t *testing.T) {
+	isolateConfigDir(t)
+	withWellKnown(t)
+	shipped := t.TempDir()
+	want := fakeTmuxIn(t, shipped)
+	t.Setenv("CHEESE_TMUX", want)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("TMPDIR", t.TempDir())
+
+	if _, err := NewManager(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := exec.LookPath("tmux")
+	if err != nil || got != want {
+		t.Fatalf("a command finds tmux at %q (%v), the connector uses %q", got, err, want)
 	}
 }
