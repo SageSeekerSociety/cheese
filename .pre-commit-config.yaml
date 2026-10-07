@@ -147,7 +147,23 @@ repos:
         entry: python3 .claude/scripts/scene-ratchet.py
         language: system
         pass_filenames: false
-        files: ^(frontend/(src/(views|router|components/panels)/|scene-baseline\.json|package\.json)|\.claude/scripts/frontend_grade\.py|\.claude/scripts/scene-ratchet\.py)$
+        files: ^(frontend/(src/(views|router|components/panels)/|scene-baseline\.json|package\.json)|\.claude/scripts/(frontend_grade|scene-ratchet|ratchet_report)\.py)$
+
+      # Every .vue under frontend/src (the preview site's own excluded) that
+      # grades A is in the /demo/catalog preview site or on the pending list in
+      # frontend/catalog-baseline.json, and that list may only shrink. Any src
+      # file is in `files:` because a grade moves with the import chain, and an
+      # entry in views/demo/catalog.ts — or in a catalog*.ts volume it imports
+      # and spreads (*Fixtures.ts not read; comments stripped) — is what takes
+      # a component off the list. Same grader
+      # as scene-ratchet. The writer is `pnpm run lint:catalog:update`, which
+      # only ever removes.
+      - id: catalog-ratchet
+        name: grade-A components are in the catalog (python ratchet)
+        entry: python3 .claude/scripts/catalog-ratchet.py
+        language: system
+        pass_filenames: false
+        files: ^(frontend/(src/.*\.(vue|ts)|catalog-baseline\.json|package\.json)|\.claude/scripts/(frontend_grade|catalog-ratchet|ratchet_report)\.py)$
 
       # --- heavy: never on commit, see the note at the top ---------------
       - id: pytest

@@ -79,13 +79,12 @@ has the rule in Chinese and the recipe for pulling a fetch or a route read out
 of a scene; the short version is that data comes in as props and intent goes out
 as an event, with the fetch left in a composable the page calls.
 
-THE CATALOG WARNING. A standalone-ready component that is not in the preview
-site's registry (`frontend/src/views/demo/catalog.ts`) is provable but
-unwatchable — nothing renders it, so the next person to break it finds out from
-this check rather than from a screen. That is a warning count, never a failure:
-a page is not a panel, and the catalog carries what somebody chose to show.
-`pnpm exec vitest run src/views/demo/catalog.spec.ts` is what proves the
-registered ones really mount.
+WHAT THIS CHECK DOES NOT ASK: whether a standalone-ready scene is in the
+preview site (`/demo/catalog`). That used to be a warning here, counted
+against `catalog.ts` alone — it missed the entries split into the sibling
+`catalog*.ts` files, and it only looked at scenes when every grade-A component
+is a candidate. It is its own ratchet now, `.claude/scripts/catalog-ratchet.py`
+(`pnpm run lint:catalog`), over every component rather than every scene.
 
 Exit codes: 0 nothing to report, 1 a scene regressed or a new scene is not
 standalone-ready, 2 could not judge (no `frontend/src/` under `--root`, no
@@ -114,10 +113,6 @@ SRC_DIR = "frontend/src"
 ROUTER_DIR = "frontend/src/router"
 VIEWS_DIR = "frontend/src/views/"
 PANELS_DIR = "frontend/src/components/panels"
-
-#: The registry the catalog warning counts against, and the `file:` field in it.
-CATALOG = "frontend/src/views/demo/catalog.ts"
-CATALOG_FILE = re.compile(r"""\bfile:\s*['"]([^'"]+)['"]""")
 
 DEFAULT_BASELINE = "frontend/scene-baseline.json"
 
@@ -478,22 +473,6 @@ def grade_scenes(root: Path, reach: set[Path] | None = None) -> dict[str, Any]:
     return grades
 
 
-def catalog_entries(root: Path) -> set[str]:
-    """The `file:` paths registered in the preview site's catalog.
-
-    Unreadable or absent is an empty set, not an error: the catalog is a
-    courtesy, and a warning nobody can compute is still not a failure.
-    """
-    path = root / CATALOG
-    if not path.is_file():
-        return set()
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return set()
-    return {match for match in CATALOG_FILE.findall(text) if match.endswith(".vue")}
-
-
 # ------------------------------------------------------------------ the ratchet
 
 
@@ -538,8 +517,6 @@ class Verdict:
     new_debt: list[tuple[str, str, tuple[str, ...]]] = field(default_factory=list)
     #: (key, why) — a scene that got better, or a frozen one that is gone
     improvements: list[tuple[str, str]] = field(default_factory=list)
-    #: standalone-ready scenes with no catalog entry (a warning, never a failure)
-    uncatalogued: list[str] = field(default_factory=list)
     #: pages that are not grade A but hand their rendering to a view that is: (key, view key)
     containers: list[tuple[str, str]] = field(default_factory=list)
     ready: list[str] = field(default_factory=list)
@@ -561,7 +538,6 @@ def container_view(scene: str, grades: dict[str, Any], views: dict[str, str]) ->
 def judge(
     baseline: Baseline,
     grades: dict[str, Any],
-    catalog: set[str],
     views: dict[str, str] | None = None,
 ) -> Verdict:
     """Compare the tree against the baseline. Pure, so it is testable."""
@@ -604,7 +580,6 @@ def judge(
         if scene_of(key) not in grades:
             verdict.improvements.append((key, "is no longer in the tree"))
 
-    verdict.uncatalogued = sorted(key for key in verdict.ready if key not in catalog)
     return verdict
 
 
@@ -748,13 +723,6 @@ def format_report(verdict: Verdict, baseline: Baseline) -> str:
         lines.append("")
         lines.append("Run: pnpm run lint:scenes:update  (then commit frontend/scene-baseline.json)")
         lines.append("")
-    if verdict.uncatalogued:
-        lines.append(
-            f"warning: {len(verdict.uncatalogued)} standalone-ready scene(s) have no "
-            "/demo/catalog entry (not a failure):"
-        )
-        lines.extend(f"  {key}" for key in verdict.uncatalogued)
-        lines.append("")
     lines.append(
         f"{len(verdict.ready)} standalone-ready, {len(verdict.containers)} container(s), "
         f"{len(verdict.debt)} pre-existing debt, "
@@ -809,8 +777,6 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
         print(f"cannot judge: {exc}", file=sys.stderr)
         cannot_judge("scene-ratchet", exc)
 
-    catalog = catalog_entries(root)
-
     if update:
         next_baseline, refusals = tightened(baseline, grades, bootstrap=bootstrap, views=views)
         if refusals:
@@ -829,7 +795,7 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
         )
         return 0
 
-    verdict = judge(baseline, grades, catalog, views)
+    verdict = judge(baseline, grades, views)
     if as_json():
         # The unit here is a scene, and a scene costs at most one: `frozen` is
         # 1 for an allowance the baseline carries and `actual` is 0 once the
@@ -937,11 +903,6 @@ FIXTURE: dict[str, str] = {
     "frontend/src/components/panels/Wired.vue": (
         "<script setup lang=\"ts\">\nimport { useSpaceStore } from '@/stores/space'\n"
         "const space = useSpaceStore()\n</script>\n<template><div>{{ space.id }}</div></template>\n"
-    ),
-    "frontend/src/views/demo/catalog.ts": (
-        "export const CATALOG = [\n"
-        "  { id: 'plain', file: 'src/components/panels/Plain.vue' },\n"
-        "]\n"
     ),
 }
 

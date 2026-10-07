@@ -12,6 +12,7 @@ harness. What a harness puts IN the holes is that harness's own test.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -158,6 +159,34 @@ def test_the_environment_runner_wraps_whichever_harness_was_asked_for(tmp_path):
     assert (work / "agents").read_text() == "agent\n"
     status = json.loads((home / ".cheese-environment/status.json").read_text())
     assert status["state"] == "ready"
+
+
+def test_the_connectors_own_python_wins_over_the_systems(tmp_path):
+    """The connector placed a Python because the system's is too old, and put
+    it first on PATH; the launcher's login shell then put /usr/bin back in
+    front (macOS's path_helper). What the session runs is still the
+    connector's."""
+    _home, _work, env = _machine(tmp_path)
+    system = tmp_path / "system-bin"
+    system.mkdir()
+    (system / "python3").write_text("#!/bin/sh\nexit 1\n")
+    (system / "python3").chmod(0o755)
+    runtime = tmp_path / "runtime-bin"
+    runtime.mkdir()
+    (runtime / "python3").symlink_to(shutil.which("python3"))
+    env["PATH"] = f"{system}:{env['PATH']}"
+    env["CHEESE_RUNTIME_PATH"] = str(runtime)
+    seen = tmp_path / "seen"
+
+    result = _run(
+        tmp_path,
+        env,
+        prepare=_harness(tmp_path, f'command -v python3 > "{seen}"\n'),
+        command="$AGENT",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert seen.read_text().strip() == str(runtime / "python3")
 
 
 def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):

@@ -5,7 +5,9 @@ summary: 前端每一个「场景」——路由页和工作面板——今天�
 covers:
   - .claude/scripts/frontend_grade.py
   - .claude/scripts/scene-ratchet.py
+  - .claude/scripts/catalog-ratchet.py
   - frontend/scene-baseline.json
+  - frontend/catalog-baseline.json
   - frontend/src/components/panels/
   - frontend/src/views/demo/catalog.ts
   - frontend/src/views/demo/catalogFixtures.ts
@@ -15,7 +17,7 @@ covers:
 
 组件预览站（`/demo/catalog`）能做什么，取决于**谁被注册进去了**；而这个集合是攒出来的，没人知道还剩多少、剩下的差在哪。这一页把它翻过来数一遍：前端一共有多少个能叫「场景」的东西，几个今天就能脱离后端单独跑一遍，剩下的各卡在哪一步。
 
-> 讲：每个路由页和工作面板今天站在哪一档、卡住的原因是什么、一共多少个、下一步先动哪一批，以及**从今天起这条线怎么被机器看住**。不讲：怎么往目录里加一个组件（三步写在仓库内的 `frontend/AGENTS.md`），A/B/C/D 的判据和怎么跑（见[架构指标](/dev/arch-metrics#metrics)），组件边界那三道闸本身（见[前端结构](/dev/frontend#gates)）。
+> 讲：每个路由页和工作面板今天站在哪一档、卡住的原因是什么、一共多少个、下一步先动哪一批，以及**从今天起这条线怎么被机器看住**。不讲：怎么往目录里加一个组件（见[前端结构](/dev/frontend#catalog)），A/B/C/D 的判据和怎么跑（见[架构指标](/dev/arch-metrics#metrics)），组件边界那三道闸本身（见[前端结构](/dev/frontend#gates)）。
 
 ## 「单独渲染」是什么意思 {#standalone}
 
@@ -117,9 +119,16 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 `--update` 有两种情况会**拒绝执行**（退出 1）：有场景掉了档、有新场景不是 A。它拒绝时一个字节都不写——这不是它的脾气，是它唯一值钱的地方：能靠改基线过关的闸门等于没有。掉了档的场景只能改回去（或走 review 改规则），做不到的场景只能改到能单独跑。
 
-### 目录那条提醒 {#catalog-warning}
+### 进没进目录，归另一条检查 {#catalog-ratchet}
 
-能单独跑、但没挂进 `/demo/catalog` 的场景，检查会打一行 warning（今天 9 个：2 个页面 + 7 个面板），**不算失败**：目录里放什么由人定，页面和面板本来也不是一回事。挂上去之后，`pnpm exec vitest run src/views/demo/catalog.spec.ts` 才是「它真的能单独挂起来」的那条机械结论——加一个组件到目录的三步写在 `frontend/AGENTS.md`。
+「能单独跑、但没挂进 `/demo/catalog`」不再是这条检查的 warning，而是一条独立的棘轮：`pnpm run lint:catalog`（`.claude/scripts/catalog-ratchet.py`）。它管的不只是页面和面板，而是 `frontend/src` 下**每一个** `.vue`（预览站自己的 `src/views/demo/` 除外）：评级同样用 `frontend_grade.py`，只要是 A 级，就得**要么在目录里，要么在 `frontend/catalog-baseline.json` 的 `pending` 名单里**。
+
+- 「在目录里」看代码不看标签：从 `src/views/demo/catalog.ts` 出发，它本身、以及它 `import` 进来**并展开**进列表（`...X_ENTRIES`）的同目录 `catalog*.ts` 分册（分册再引分册也照此递归；`*Fixtures.ts` 只放数据，不读），其中某个文件 `import` 了这个 `.vue`，并且把它写成某条条目的 `component:`。`@/` 和相对路径都认。为什么从 `catalog.ts` 出发：预览站渲染的、`catalog.spec.ts` 挂载的都是那里的 `CATALOG`，分册只有被它导入并展开才上得了站。所以 `demoRouter.ts` 里路由的 `component:`、没人导入的 `catalogXxx.ts`、spec 里的 import 都不算；`//` 和 `/* */` 注释先去掉再匹配（字符串里的 `//`，比如 URL，不受影响），注释里的 `component: X` 也不算；只写了 `file:` 或只 import 没用上，同样不算。
+- `pending` 是今天欠下的账（首次生成时 277 个），**只许减少**：新组件、或者刚变成 A 级的老组件，不进目录就失败——不能把它加进名单了事，`--update` 只会从名单里划掉，碰到这种组件干脆拒绝写。
+- 名单里的组件已经进了目录、文件没了、或者不再是 A 级，检查**不失败**，只提示跑 `pnpm run lint:catalog:update` 把它划掉（和上面场景基线「变好了就提示收紧」是同一个做法）。
+- 进了目录但不是 A 级的组件不归它管：`pnpm exec vitest run src/views/demo/catalog.spec.ts` 会把每条条目真挂一遍，那才是「它真的能单独挂起来」的结论；`--list` 里会标出来。
+
+加一个组件到目录的四步见[前端结构](/dev/frontend#catalog)。
 
 ## 页面 {#pages}
 
@@ -314,7 +323,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 ## 下一步 {#next}
 
 1. **已经拆出来的三个视图挂上目录**：`PanelChangesView`、`PanelPreviewView`、`PanelDocView`，每个带 loading / 空 / 有数据 / 出错几种状态。上一版已经做了。
-2. **A 档的先补目录**，成本几乎为零：`--list` 现在会打出 14 个没挂的（7 个页面 + 7 个面板：`ChangesFileTree`、`TodoChecklist`、`doc/DocOverlays`、`doc/DocSlashMenu`、`doc/DocSurface`、`preview/PreviewPages`、`preview/PreviewSheet`）。挂上去之后，改外观和改排版就有地方看效果。
+2. **A 档的先补目录**，成本几乎为零：还没挂的 A 级组件（不止场景，所有组件）列在 `frontend/catalog-baseline.json` 的 `pending` 里，`python3 .claude/scripts/catalog-ratchet.py --list` 逐个标出来（见[上面](#catalog-ratchet)）。挂一个就跑 `pnpm run lint:catalog:update` 划掉一个；挂上去之后，改外观和改排版就有地方看效果。
 3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；每拆出一个就跑 `pnpm run lint:scenes:update` 把它从 `debt` 搬进 `ready`。
 4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/` 已按「参数当 props 进视图」拆完（2026-10-05），`views/workspace/`、`views/spaces/` 两块各还要一个方案，动哪块由产品定。
 5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：97 → 0。

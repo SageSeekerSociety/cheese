@@ -172,8 +172,7 @@ describe('哪些活该标', () => {
   const blocks = [block('b1', '2026-08-11T08:00:00Z'), block('b2', '2026-08-11T20:00:00Z')]
   const win = { blocks, hasMore: false }
 
-  // 「讨论升级 / 文档 🧩」那条路径会在源 block 上写 upgraded_to_task_id，时间线
-  // 早就把那条消息渲染成「已升级，点击查看」了。再标一行就是同一件事说两遍。
+  // 从某条消息出来的任务，卡已经挂在那条消息下面了。再标一行就是同一件事说两遍。
   it('从某条消息升级出去的活不重复标 —— 那条消息上已经有链接了', () => {
     const tasks = [task('t1', '2026-08-11T09:00:00Z', { upgraded_from_block_id: 'b1' })]
 
