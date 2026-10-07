@@ -118,7 +118,7 @@ covers:
 | `deploy.sh` | etrip 盒子的发版入口（`.github/workflows/deploy.yml` 调 `./deploy.sh <sha>`）：拉镜像、迁移、重启、健康检查 |
 | `image-tag.sh` | 打印某个 rev 的镜像 tag（完整 sha 前 7 位） |
 | `check-app-tier.sh` | 读 `docker ps` 的输出，断言 app 层跑着的镜像 tag 等于给定值；发版和 drift 巡检都用它 |
-| `check-auto-deploy.py` | 只允许不把线上往回退的自动发版 |
+| `check-auto-deploy.py` | 只允许不把线上往回退的自动发版；同一版本已在跑、后端只因数据库或 Redis 连不上而不健康时，不再重发同一版本 |
 | `release-device-connection.sh` | 单独替换常驻的设备 WebSocket owner（普通发版永不调它，因为替换会断连接） |
 | `release-gateway.sh` | 网关平面单独发版；只在 GitHub Actions 里跑，且要 `GATEWAY_ALLOW_INTERRUPT=1` 明确承认会断流 |
 | `release-metering-proxy.sh` | 计量代理平面单独发版；同样要求 `METERING_ALLOW_INTERRUPT=1` |

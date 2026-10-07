@@ -54,6 +54,7 @@ class ReleaseOrdering(unittest.TestCase):
         self.images = {}
         self.api_failed = False
         self.health = {}
+        self.readyz = {}
         self.environment = patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "PROJECT": "cheese"})
         self.environment.start()
         self.addCleanup(self.environment.stop)
@@ -71,6 +72,11 @@ class ReleaseOrdering(unittest.TestCase):
                 return self.health.get(args[-1], "healthy")
             # Retagging an unchanged image leaves this old OCI revision intact.
             return self.base
+        if args[:2] == ("docker", "exec"):
+            answer = self.readyz.get(args[2])
+            if answer is None:
+                raise subprocess.CalledProcessError(7, args)
+            return answer if isinstance(answer, str) else json.dumps(answer)
         if args[:2] == ("gh", "api"):
             if self.api_failed:
                 raise subprocess.CalledProcessError(1, args)
@@ -118,6 +124,41 @@ class ReleaseOrdering(unittest.TestCase):
         self.images = {"backend": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
         self.health = {"backend": "unhealthy"}
         self.assertFalse(self.check(self.middle))
+
+    def test_same_release_is_not_redeployed_over_a_dependency_outage(self):
+        """Unready only because Postgres or Redis is out of reach: the same build
+        released again would roll back and add a failed run, nothing more."""
+        self.images = {"backend": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
+        self.health = {"backend": "unhealthy"}
+        self.readyz = {"backend": {"status": "unready", "unready": ["database", "redis"]}}
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            self.assertTrue(self.check(self.middle))
+        self.assertIn("database, redis is out of reach", out.getvalue())
+
+    def test_same_release_is_retried_when_the_build_itself_is_unready(self):
+        self.images = {"backend": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
+        self.health = {"backend": "unhealthy"}
+        for answer in (
+            {"status": "unready", "unready": ["database", "routes"]},
+            {"status": "unready", "unready": []},
+            "<html>502</html>",
+            None,
+        ):
+            with self.subTest(answer=answer):
+                self.readyz = {"backend": answer}
+                self.assertFalse(self.check(self.middle))
+
+    def test_a_dependency_outage_does_not_hide_an_unhealthy_frontend(self):
+        self.images = {"backend": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
+        self.health = {"backend": "unhealthy", "frontend": "unhealthy"}
+        self.readyz = {"backend": {"status": "unready", "unready": ["redis"]}}
+        self.assertFalse(self.check(self.middle))
+
+    def test_a_newer_build_still_deploys_over_a_dependency_outage(self):
+        self.images = {"backend": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
+        self.health = {"backend": "unhealthy"}
+        self.readyz = {"backend": {"status": "unready", "unready": ["database"]}}
+        self.assertFalse(self.check(self.newest))
 
     def test_docs_after_queued_code_still_deploys_relative_to_running_release(self):
         self.git("checkout", "-q", "--detach", self.base)
