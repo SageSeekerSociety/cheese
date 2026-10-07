@@ -49,7 +49,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine import lease_claim
 from app.domain.machine.lease_claim import still_preparing
-from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxLifecycle
+from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
@@ -57,18 +57,14 @@ from app.domain.machine.sandbox_wait import (
     LOST_KEY,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
-    SANDBOX_RESTORE_FAILED,
-    SANDBOX_WAKING,
     VM_PREPARING,
     _cloud_progress,
-    _home_moved,
-    _home_settled,
+    _home_removed,
 )
 from app.domain.machine.services import (
     CloudKeepsFailing,
     CloudPoolFull,
     HostPool,
-    SandboxMustMove,
 )
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
@@ -728,12 +724,7 @@ async def _move_session(
             raise ConflictError(say("machineAllocationInProgress"))
     on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
     if on_cloud:
-        # A home already in the bucket keeps its archive for its room's cleanup,
-        # which retains archives for a while before deleting them; any other
-        # home goes.
-        await HostPool(db).leave(
-            session_id, kept_work=await HostPool(db).archived(session_id)
-        )
+        await HostPool(db).leave(session_id)
     # A machine that is not the platform's keeps the room's directories; the
     # room's cleanup finds them there by this lease.
     kept = [] if old is None or on_cloud else [old]
@@ -1016,7 +1007,6 @@ async def _attempt(
     if isinstance(verdict, gate.Proposal):
         raise ForbiddenError(say("machineTierNotAllowed"))
     work_resource = (lease or {}).get("resource_id") or generation
-    restoring = None
     if choice.profile == "cloud":
         allocation_actor = (
             Actor(**authorized)
@@ -1024,18 +1014,6 @@ async def _attempt(
             else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
         )
         pool = HostPool(db, hub=hub)
-        before = await pool.current_home(session_id)
-        # What the room is told while the sandbox gets ready: a sandbox asleep
-        # is woken, an archived one restored; a new one is prepared (below).
-        waking = (
-            None
-            if before is None
-            else "sandboxRestoring"
-            if before.host_id is None
-            else "sandboxWaking"
-            if before.stopped_at is not None
-            else None
-        )
         try:
             cloud_host = await pool.place(
                 session_id,
@@ -1046,23 +1024,11 @@ async def _attempt(
         except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
             await db.commit()
             return {"unavailable": str(refused)}
-        except SandboxBusy:
+        except SandboxRemoving:
+            # Its idle sandbox is being destroyed: the next attempt, once it is
+            # gone, places the session in a new one.
             await db.commit()
-            return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
-        except SandboxMustMove:
-            # Asleep on a host with no slot for it: the sandbox sweep archives
-            # it from there, which it does first for a home someone waits on,
-            # and the next attempt restores it on a host with room.
-            line = await pool.tell_waiting(session_id, "sandboxWaking")
-            await db.commit()
-            await publish_line(topic_id, line)
-            return _Preparing(SANDBOX_WAKING, partial(_home_moved, db, session_id))
-        if waking is not None:
-            line = await pool.tell_waiting(session_id, waking)
-            await db.commit()
-            await publish_line(topic_id, line)
-        placed = await pool.current_home(session_id)
-        restoring = placed.id if placed and placed.archive_key else None
+            return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
         if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
             line = await pool.tell_waiting(session_id)
             await db.commit()
@@ -1168,7 +1134,6 @@ async def _attempt(
             claim=claim,
             now=now,
             cloud_host_id=cloud_host.id if choice.profile == "cloud" else None,
-            restoring=restoring,
             owner_device=selected is not None,
             tells_agent=tells_agent,
         )
@@ -1181,9 +1146,6 @@ async def _attempt(
             VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
             partial(_cloud_progress, db, hub, cloud_host.id),
         )
-    if outcome is _SANDBOX_BUSY:
-        # Another call of the session is restoring it: wait for that one.
-        return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
     return outcome
 
 
@@ -1193,8 +1155,6 @@ _INSTALLS: set[asyncio.Future] = set()
 #: What `_install` answers when a Cloud machine dropped during setup; the
 #: request turns it into a wait on its own session.
 _CLOUD_PREPARING = object()
-#: What it answers when another call of the session is restoring its sandbox.
-_SANDBOX_BUSY = object()
 
 
 def _installed(work: asyncio.Future) -> None:
@@ -1230,7 +1190,6 @@ async def _install(
     claim,
     now,
     cloud_host_id,
-    restoring,
     owner_device,
     tells_agent=False,
 ):
@@ -1251,13 +1210,6 @@ async def _install(
         )
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
-                if restoring is not None:
-                    # An archived sandbox comes back to its new host before the
-                    # executor starts in it.
-                    restored = await SandboxLifecycle(db, hub=hub).restore(
-                        restoring, device_id
-                    )
-                    await publish_line(topic_id, restored)
                 info = await _start_executor(
                     hub,
                     lease,
@@ -1307,11 +1259,6 @@ async def _install(
             if isinstance(exc, launch.SandboxRefused):
                 # The machine cannot make the room's sandbox, and said why.
                 return {"unavailable": str(exc)}
-            if isinstance(exc, SandboxHomeError):
-                # The archive is still there; the next tool call tries again.
-                return {"unavailable": SANDBOX_RESTORE_FAILED}
-            if isinstance(exc, SandboxBusy):
-                return _SANDBOX_BUSY
             if isinstance(exc, ExecutorSetupFailed):
                 logger.warning("executor installation failed: %s", exc)
                 return {

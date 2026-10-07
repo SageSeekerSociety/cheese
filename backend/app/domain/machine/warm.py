@@ -24,7 +24,6 @@ from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
-    CloudHostHome,
     MachineStatus,
     WarmMachine,
 )
@@ -114,9 +113,7 @@ class WarmPoolService:
         self.client = client or MicroCloudClient()
         self.devices = sql_device_service(session)
 
-    async def reserve(
-        self, *, body: dict, home: dict | CloudHostHome | None
-    ) -> CloudHost | None:
+    async def reserve(self, *, body: dict, home: dict | None) -> CloudHost | None:
         """Turn a ready warm machine into a host of the pool, with ``home`` on
         it if given. Called holding the pool lock; the claim at the provider
         runs after this commits."""

@@ -28,7 +28,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.services import UNPUSHED_ARCHIVE, HostPool
+from app.domain.machine.services import HostPool
 from app.domain.repository import service as ws
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
@@ -53,14 +53,6 @@ TRANSCRIPT_RETENTION = timedelta(days=30)
 # found within the hour.
 RETRY_FIRST = timedelta(minutes=1)
 RETRY_MOST = timedelta(hours=1)
-
-# A cleanup held only by work that is in an archive and nowhere else waits for a
-# person, not for a machine: unarchiving the room restores that work and calls
-# the cleanup off, and nothing else changes it. Retrying it hourly ran two
-# commands on the room's devices each time to report the same answer (dev,
-# 2026-10-07: 22 times for one room), so it is looked at once a day instead,
-# and only in the database.
-KEPT_RECHECK = timedelta(days=1)
 
 
 def _held_back(operation: RoomCleanup, reason: str) -> bool:
@@ -93,20 +85,14 @@ def _keeps_transcripts(entry: dict) -> bool:
     )
 
 
-def _off_host(entry: dict, archived: set[str]) -> bool:
-    """A session home that went to the bucket from a host that is gone.
-
-    The inventory names the host the home was on when it was taken; archived
-    since, the home is on no machine, and its host may have been released.
-    There is nothing of it there to stop, check or remove, and asking a host
-    that will never answer again kept the cleanup failing "device … is
-    offline" on every sweep. What the home held is answered for by its
-    archive (``HostPool.unpushed_archives``). A host still online is asked
-    as usual: it may hold a copy left by a drop that failed."""
-    return (
-        entry["kind"] == "device"
-        and entry["resource_id"] in archived
-        and not device_hub.is_online(entry["device_id"])
+async def _destroyed(session, entry: dict) -> bool:
+    """A session's sandbox on one of the pool's cloud hosts that the pool has
+    destroyed since the inventory named it (``machine/lifecycle.py``), or gave
+    up with its host. Nothing of it is left there to stop, check or remove,
+    and its host may be gone: asking a host that will never answer again
+    would keep the cleanup failing "device … is offline" on every sweep."""
+    return entry["kind"] == "device" and await HostPool(session).destroyed(
+        entry["device_id"], entry["resource_id"]
     )
 
 
@@ -165,9 +151,6 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
             )
         )
     )
-    # A cloud session's home in the bucket is on no machine; the archive goes
-    # when the room's homes are forgotten, at the end.
-    archived = await HostPool(session).archived_resources(operation.topic_id)
     devices = sql_device_service(session)
     for conversation in sessions:
         leases = [
@@ -186,8 +169,8 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
             # record may come back, and is waited for.
             if (
                 not device_id
-                or resource_id in archived
                 or await devices.get_device(device_id) is None
+                or await HostPool(session).destroyed(device_id, resource_id)
             ):
                 continue
             if not device_hub.is_online(device_id) or device_id not in inventory:
@@ -366,7 +349,7 @@ async def _sweep_once(
             await session.scalars(
                 select(RoomCleanup.id).where(
                     RoomCleanup.state.in_(
-                        ["pending", "kept", "preparing", "claimed", "retained"]
+                        ["pending", "preparing", "claimed", "retained"]
                     ),
                     RoomCleanup.due_at <= datetime.now(UTC),
                 )
@@ -471,7 +454,7 @@ async def _advance(
     # The first time through, the room's sessions get their one checkpoint.
     first = operation.state == "pending" and not operation.resources
     room = await TopicRepository(session).lock(operation.topic_id)
-    if operation.state in {"pending", "kept"}:
+    if operation.state == "pending":
         # Only a room taken out of the archive wants its machine back. A room
         # whose row is gone (one that became a closed task, which never
         # reopens) leaves its old generation to be removed all the same: the
@@ -482,16 +465,6 @@ async def _advance(
             operation.state = "cancelled"
             await session.commit()
             return
-        if operation.state == "kept":
-            if await HostPool(session).unpushed_archives(
-                operation.topic_id, str(operation.resource_id)
-            ):
-                operation.due_at = datetime.now(UTC) + KEPT_RECHECK
-                await session.commit()
-                return
-            # The archive no longer holds the only copy: clean up as usual.
-            operation.state = "pending"
-            _went_on(operation)
         try:
             if not operation.resources:
                 operation.resources = await _inventory(session, operation, inventory)
@@ -527,28 +500,6 @@ async def _advance(
     )
     if first:
         await checkpoint(session, operation.topic_id)
-    archived = await HostPool(session).archived_resources(operation.topic_id)
-    if operation.state == "preparing" and await HostPool(session).unpushed_archives(
-        operation.topic_id, str(operation.resource_id)
-    ):
-        # The archive is the only copy of what was not pushed. The cleanup
-        # waits here, before it touches any machine or claims anything, so
-        # unarchiving still calls it off and the session's next tool call
-        # restores the home from the archive.
-        changed = operation.last_error != UNPUSHED_ARCHIVE
-        operation.state = "kept"
-        operation.last_error = UNPUSHED_ARCHIVE
-        operation.failures = 0
-        operation.due_at = datetime.now(UTC) + KEPT_RECHECK
-        await session.commit()
-        logger.log(
-            logging.INFO if changed else logging.DEBUG,
-            "cleanup kept operation=%s room=%s: %s",
-            cleanup_id,
-            operation.topic_id,
-            UNPUSHED_ARCHIVE,
-        )
-        return
     if operation.state == "preparing":
         stopped = False
         parking_started = any(
@@ -557,7 +508,7 @@ async def _advance(
         )
         try:
             for entry in operation.resources:
-                if entry["kind"] == "device" and not _off_host(entry, archived):
+                if entry["kind"] == "device" and not await _destroyed(session, entry):
                     await _device_action(
                         entry["device_id"],
                         operation.project_id,
@@ -631,7 +582,7 @@ async def _advance(
     for entry in operation.resources:
         if entry.get("removed"):
             continue
-        if entry["kind"] == "device" and not _off_host(entry, archived):
+        if entry["kind"] == "device" and not await _destroyed(session, entry):
             if retry_claim:
                 # A delayed append may have prevented the previous removal.
                 # Reconcile only the recorded old generation, even after reopen.
@@ -691,9 +642,7 @@ async def _advance(
         ]
         await session.commit()
     # Homes of this generation that never held a directory (a session placed
-    # on a host that was still coming up) go with the rest, and so do the
-    # archives of the ones that were archived, all of them found pushed before
-    # the claim.
+    # on a host that was still coming up) go with the rest.
     await HostPool(session).forget_room_homes(
         operation.topic_id, str(operation.resource_id)
     )

@@ -300,62 +300,6 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
     return run_command(argv, cwd=cwd)
 
 
-# `check_published`, `check_published_commits` and `check_resource_publication`
-# have one caller left, the sandbox archive (`machine/sandbox_home._published`),
-# which is being deleted with the rest of sleep and archive; nothing that
-# removes a room or a checkout asks them. They go with that caller.
-def check_published(
-    work: Path,
-    *,
-    home: Path | None = None,
-    canonical: bool = False,
-    own_branch: bool = False,
-) -> None:
-    """Refuse if `work` holds anything its remote does not.
-
-    `own_branch` limits the commit check to what this checkout has checked
-    out. A task checkout shares its repository with every other task of the
-    room, so the repository's branches are theirs too, and one of them not
-    yet pushed would otherwise keep every finished task on the disk.
-    """
-    if not work.exists():
-        return
-    if not (work / ".git").exists():
-        if any(work.iterdir()):
-            raise RuntimeError("nonempty checkout has no Git publication record")
-        return
-    dirty = git(["status", "--porcelain", "--untracked-files=all"], work, home)
-    if dirty.returncode or dirty.stdout.strip():
-        raise RuntimeError("checkout has unpublished working-tree changes")
-    if not canonical:
-        check_published_commits(
-            work, home=home, include_head=True, branches=not own_branch
-        )
-
-
-def check_published_commits(
-    repo: Path,
-    *,
-    home: Path | None = None,
-    include_head: bool = False,
-    branches: bool = True,
-) -> None:
-    unpublished = git(
-        [
-            "rev-list",
-            *(["--branches"] if branches else []),
-            *(["HEAD"] if include_head else []),
-            "--not",
-            "--remotes=origin",
-            "--glob=refs/cheese/published/*",
-        ],
-        repo,
-        home,
-    )
-    if unpublished.returncode or unpublished.stdout.strip():
-        raise RuntimeError("checkout has unpublished commits")
-
-
 def check_no_writers(paths: list[Path]) -> None:
     """Refuse if anything holds a file or a working directory under these.
 
@@ -441,24 +385,6 @@ def end_holders(paths: list[Path]) -> None:
             pids = [pid for pid in pids if pid in set(holders(paths))]
         if not pids:
             return
-
-
-def check_resource_publication(home: Path, work: Path) -> None:
-    """Check both legacy checkouts and task worktrees before deleting a home."""
-    check_published(work, home=home)
-    check_published(home / CHECKOUT_DIR, home=home)
-    tasks = home / ".cheese/tasks"
-    if tasks.is_symlink():
-        raise RuntimeError("task storage is a symlink")
-    if tasks.exists():
-        for task in tasks.iterdir():
-            if task.is_symlink() or not task.is_dir():
-                raise RuntimeError("unrecognized entry in task storage")
-            check_published(task, home=home)
-    # A removed checkout can leave the only copy of a branch in the bare cache.
-    repositories = home / ".cheese/repositories"
-    for repo in repositories.glob("*.git"):
-        check_published_commits(repo, home=home)
 
 
 def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:

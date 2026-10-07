@@ -1,9 +1,10 @@
 """What a room is told about its sessions' sandboxes on cloud.
 
-Getting ready, waking, sleeping: those are the platform's own running, kept
-as run records (`run_record`) for the 现场, not said in the conversation.
-Only what a person has to act on is said there: a sandbox stopped for want of
-credits, an archive that could not be restored.
+Getting ready, being released when idle: those are the platform's own
+running, kept as run records (`run_record`) for the 现场, not said in the
+conversation. Only what a person has to act on, or would otherwise not know,
+is said there: a sandbox released for want of credits, a sandbox replaced
+because it stopped answering.
 
 A room hears about the sandbox (or the session's whole cloud VM), never the
 host under it: which machine a session landed on, and how that machine was
@@ -74,9 +75,8 @@ async def tell_preparing(
     *,
     whole_machine: bool = False,
 ) -> dict | None:
-    """The first line of a sandbox getting ready: being prepared, woken
-    (``sandboxWaking``) or restored from its archive (``sandboxRestoring``).
-    A session's whole cloud VM is only ever prepared."""
+    """The first line of a sandbox (or a session's whole cloud VM) getting
+    ready."""
     return await _record(
         session,
         home,
@@ -123,13 +123,13 @@ async def tell_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
     )
 
 
-async def tell_asleep(
+async def tell_released(
     session: AsyncSession, home: CloudHostHome, minutes: int
 ) -> dict | None:
     return await _record(
         session,
         home,
-        say("sandboxAsleep", minutes=minutes),
+        say("sandboxReleased", minutes=minutes),
         {"event_type": "sandbox_asleep", "severity": "info"},
     )
 
@@ -138,17 +138,8 @@ async def tell_unpaid(session: AsyncSession, home: CloudHostHome) -> dict | None
     return await _line(
         session,
         home,
-        say("sandboxStoppedNoCredits"),
+        say("sandboxReleasedNoCredits"),
         {"event_type": "sandbox_asleep", "severity": "warn"},
-    )
-
-
-async def tell_archive_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
-    return await _line(
-        session,
-        home,
-        say("sandboxArchiveLost"),
-        {"event_type": "cloud_startup", "severity": "warn"},
     )
 
 
