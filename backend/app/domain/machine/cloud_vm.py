@@ -10,26 +10,22 @@ no tool since, counted from the later of its last tool call and the end of the
 room's last turn, and no command the executor runs for it in the background
 keeps it up (up to ``cloud_sandbox_background_cap_s``).
 
-**Before it goes**, the session's work is pushed exactly as a switch of work
-computer pushes it (``session_work.push_before_switch``, ``cheese sync
---all``): unpushed commits to their branches, what is not committed as a
-snapshot ``cheese recover`` restores. A VM whose push fails, or that cannot be
-reached to push, is kept and asked again ``RETRY_AFTER`` later: work that is
-only there is never released with it. Once pushed, the session's lease and
-home go, the room is told, and the pool sweep deletes the VM
-(``HostPool.maintain``).
+**Before it goes**, the VM gets the one best-effort checkpoint a switch of work
+computer gives the machine it leaves (``session_work.checkpoint``, ``cheese
+sync --all``), and goes whether or not it went through: what a lost
+checkpoint loses is held by the snapshot of the session's last turn. Then the
+session's lease and home go, the room is told, and the pool sweep deletes the
+VM (``HostPool.maintain``).
 
 The sandbox sweep runs this (``runner.SandboxSweeper``).
 """
 
 import logging
-import uuid
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.errors import ConflictError
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import lease_claim, session_work
 from app.domain.machine.models import CloudHost, CloudHostHome
@@ -40,19 +36,13 @@ from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheese.machine.cloud_vm")
 
-#: A VM whose push failed is asked again this long after.
-RETRY_AFTER = timedelta(minutes=10)
-#: VMs looked at per sweep: each may need a push of up to
+#: VMs looked at per sweep: each may need a checkpoint of up to
 #: ``session_work.PUSH_WAIT_S``.
 PER_SWEEP = 5
 
-# When each home's push last failed, in this process: the sweep runs every few
-# seconds, and a push is a command on the VM.
-_push_failed: dict[uuid.UUID, datetime] = {}
-
 
 async def release_idle(db, lifecycle) -> int:
-    """Push and release every idle VM; returns how many were released.
+    """Checkpoint and release every idle VM; returns how many were released.
     ``lifecycle`` is the ``SandboxLifecycle`` whose idle measure is used."""
     now = datetime.now(UTC)
     idle_for = timedelta(seconds=settings.cloud_vm_idle_release_s)
@@ -69,8 +59,7 @@ async def release_idle(db, lifecycle) -> int:
             .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
             .join(Topic, Topic.id == CloudHostHome.topic_id)
             .where(
-                # An archived room's VM goes with the room's cleanup, which
-                # checks its work was published before removing anything.
+                # An archived room's VM goes with the room's cleanup.
                 Topic.status != TopicStatus.archived,
                 CloudHost.whole_machine,
                 CloudHost.released_at.is_(None),
@@ -86,9 +75,6 @@ async def release_idle(db, lifecycle) -> int:
     await db.commit()
     released = 0
     for home in candidates:
-        failed = _push_failed.get(home.id)
-        if failed is not None and now - failed < RETRY_AFTER:
-            continue
         if await lifecycle._idle_since(home, now, idle_for) is None:
             continue
         if await _release(db, lifecycle, home, idle_for):
@@ -105,23 +91,10 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         await db.commit()
         return False
     if lease is not None and lease.get("state"):
-        # The VM goes only after its work is on the branches. No transaction
-        # is held while the VM runs the push.
+        # No transaction is held while the VM runs the checkpoint.
         start = await session_work.restart_executor(db, row, lease)
         await db.commit()
-        try:
-            await session_work.push_before_switch(lease, start, keeps_files=False)
-        except ConflictError as refused:
-            # Unreachable (`WorkComputerUnreachable`) or the push failed: the
-            # VM keeps the work, and is asked again later.
-            _push_failed[home.id] = datetime.now(UTC)
-            logger.warning(
-                "idle cloud vm of session %s kept: its work was not pushed: %s",
-                home.session_id,
-                refused,
-            )
-            return False
-    _push_failed.pop(home.id, None)
+        await session_work.checkpoint(lease, start)
 
     # Decide again under the room's lock, which every tool call takes first:
     # a tool call or a turn since the look above keeps the VM.

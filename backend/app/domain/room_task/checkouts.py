@@ -5,12 +5,12 @@ A room opens a checkout per task under its home on a machine
 archived, so an old room carries every task it ever had — 56 checkouts, about
 20 GB, in one room on dev.
 
-The platform knows which tasks are closed; only the machine can tell whether a
-checkout still holds something its forge does not. So the platform names the
-room's closed tasks and `resource_cleanup.remove_task_checkouts` decides per
-checkout, keeping any with uncommitted files, unpushed commits or a process
-inside. It goes over the device exec the room's own archive cleanup uses,
-which needs no executor running there: an idle session usually has none.
+The platform knows which tasks are closed, and names them;
+`resource_cleanup.remove_task_checkouts` removes each checkout that no process
+is inside. A closed task's work went to its branch and snapshot at each turn's
+checkpoint, so nothing waits on publication. It goes over the device exec the
+room's own archive cleanup uses, which needs no executor running there: an
+idle session usually has none.
 
 Two moments start it. A task closing, for every machine the room holds a
 lease on — the current ones and those it has left (`retained_leases`), whose
@@ -18,7 +18,7 @@ checkouts stay behind when a room moves. And a machine connecting, for every
 lease on it: a machine that was offline when its task closed is swept the
 moment it is back, including one the room has left and will never start an
 executor on again. Each run names all of the room's closed tasks, so a
-checkout kept once is tried again on the next run.
+checkout something still had open is tried again on the next run.
 """
 
 import json

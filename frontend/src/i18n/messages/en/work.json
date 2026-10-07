@@ -66,17 +66,14 @@
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",
-    "unavailable": "{name} · Unavailable",
-    "abandonWarning": "Changing without pushing leaves the unpushed changes on the old computer. They will not reach the new one.",
-    "abandon": "Change without pushing",
-    "abandonTitle": "Change without pushing?"
+    "unavailable": "{name} · Unavailable"
   },
   "roomMachine": {
     "taskHeading": "This task's environment",
-    "taskHint": "Changing it first pushes this task's changes to its branch and switches only once they are pushed; if they cannot be, nothing changes and the reason is shown.",
+    "taskHint": "Changing it first pushes this task's changes to its branch, and changes either way; the changes as of each turn's end are kept in a snapshot.",
     "edit": "Edit",
     "heading": "This channel's environment",
-    "hint": "Every AI teammate in the channel shares this one. Changing it pushes each teammate’s work to its branch first and switches only when all of them are pushed; otherwise nothing moves and you are told why.",
+    "hint": "All AI teammates in the channel share this environment. Changing it first pushes each teammate's changes to its branch, and changes either way; the changes as of each turn's end are kept in a snapshot.",
     "more": "Other configurations and devices",
     "projectDefault": "Project default",
     "wholeMachine": "Can access the whole computer",
@@ -88,7 +85,6 @@
     "saveFailed": "Could not choose the environment",
     "retry": "Retry",
     "here": "This channel runs on: {name}",
-    "abandon": "The old computer is unreachable: switch without pushing",
     "accessHeading": "What this channel sees of {name}",
     "isolated": "Isolated environment",
     "isolatedHint": "Its own work directory and the project's package cache. Not the owner's files, the tools installed in their home folder, or other channels.",
@@ -107,7 +103,7 @@
     "working": "Working",
     "empty": "No agents",
     "hidden": "1 more agent is in a channel you cannot open | {count} more agents are in channels you cannot open",
-    "pushFirst": "Changes not pushed on the old machine do not come along. Each agent's changes are pushed to its branch first; an agent whose push fails is not switched, and the reason is shown. Agents that are working are skipped",
+    "pushFirst": "Each agent's changes are pushed to its branch first, and it changes either way; the changes as of each turn's end are kept in a snapshot. Agents that are working are skipped",
     "done": "Switched",
     "loadFailed": "Could not load"
   },

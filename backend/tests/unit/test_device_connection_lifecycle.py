@@ -337,7 +337,7 @@ async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -
     def spawn(coro, *, name: str):
         order.append(name)
         coro.close()
-        if name == "closed task checkouts device reconnect":
+        if name == "kept room files device reconnect":
             recovered.set()
 
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
@@ -357,6 +357,7 @@ async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -
         "recover:new-cloud-machine",
         "cleanup device reconnect",
         "closed task checkouts device reconnect",
+        "kept room files device reconnect",
     ]
     await backend.close()
     await device_hub.detach_device("new-cloud-machine", connector)

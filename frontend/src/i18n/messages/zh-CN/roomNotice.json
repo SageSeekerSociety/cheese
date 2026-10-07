@@ -169,7 +169,6 @@
   "labelSaveToLibrary": "保存到资料库",
   "labelServiceWords": "服务原话",
   "labelSkillToConfirm": "待确认的技能",
-  "labelTasksNotBackedUp": "没能备份的任务",
   "labelTimedDeliveryNote": "你当时写下的",
   "labelUpgradedTo": "升级成了什么",
   "labelVoidNote": "作废说明",
@@ -349,9 +348,6 @@
   "turnWedged": "上一轮 {minutes} 分钟没有任何输出，已强制停止",
   "turnWedgedDetail": "已完成的改动都在工作区里。平台不会自动重试，因为重试会回到刚刚出问题的环境。检查过后可以重试，会从中断处继续。",
   "wideJoin": "{first}　{second}",
-  "workLeftClosedTask": "{line}（已结束的任务，文件还在原来那台上）",
-  "workLeftOnMachine": "已换环境；有已结束任务的文件没能备份，只留在原来那台电脑上",
-  "workTaskSyncFailed": "任务 {task}：{reason}",
   "workspaceVcsPerms": "本轮未开始，工作区版本库的权限不正确。",
   "workspaceVcsPermsDetail": "版本库目录属于另一个系统用户，平台无法访问。项目文件、已提交的改动和版本历史都没有受到影响。需要管理员在机器上修改一次属主（deploy/fix-workspace-ownership.sh），平台无法自行处理。把这条提示转给管理员，修复后可以重试。",
   "workspaceVcsPermsTitle": "工作区版本库权限异常",
@@ -364,7 +360,7 @@
   "sandboxPreparing": "正在准备环境",
   "sandboxReady": "环境已就绪",
   "sandboxReplaced": "环境准备失败，正在重新准备",
-  "sandboxLost": "环境所在的机器不再响应，环境已换成新的：新环境从仓库里已推送的内容开始，没推送的改动不在了",
+  "sandboxLost": "环境不再响应，已换成新的：每轮结束时推送和备份的工作会带过来，之后才做的改动不在了",
   "sandboxWaking": "正在唤醒环境",
   "sandboxRestoring": "正在从归档恢复环境",
   "sandboxAsleep": "环境 {minutes} 分钟没有活动，已休眠。文件都留着，下一条消息会唤醒它。",
@@ -378,5 +374,6 @@
   "sandboxFailingNext": "频道会留在原处，不会自动换到别处。需要有人检查这个环境里的连接器和会话，修复后可以重试。",
   "computeCloud": "云端环境",
   "computeCloudVm": "整台云虚拟机",
-  "taskQuiet": "任务「{title}」已经 {days} 天没有进展"
+  "taskQuiet": "任务「{title}」已经 {days} 天没有进展",
+  "roomFilesKept": "这里以前工作目录里的文件已另存一份，会保留到 {date}，之后删除。需要取回其中的文件，请联系平台管理员。"
 }

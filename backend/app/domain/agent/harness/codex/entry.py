@@ -23,6 +23,7 @@ async def serve(state: Path, config: dict) -> None:
     # as the Claude Code and pi launches carry them (`session_skill_files`).
     await asyncio.to_thread(tools.ship_skills, config.get("skills") or {})
     runner = Runner(state, tools, skills=tools)
+    runner.checkpointer = tools.client.checkpoint
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

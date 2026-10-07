@@ -169,7 +169,6 @@
   "labelSaveToLibrary": "Saved to the library",
   "labelServiceWords": "What the service said",
   "labelSkillToConfirm": "Skill to confirm",
-  "labelTasksNotBackedUp": "Tasks not backed up",
   "labelTimedDeliveryNote": "What you wrote then",
   "labelUpgradedTo": "Turned into",
   "labelVoidNote": "About the void",
@@ -349,9 +348,6 @@
   "turnWedged": "The last turn produced no output for {minutes} min and was stopped",
   "turnWedgedDetail": "Finished changes are all in the workspace. The platform will not retry on its own, because a retry would go back to the environment that just failed. Once someone has checked it, you can retry and it will pick up where it stopped.",
   "wideJoin": "{first}. {second}",
-  "workLeftClosedTask": "{line} (finished task; its files are still on the old computer)",
-  "workLeftOnMachine": "Switched environments; files from some finished tasks could not be backed up and remain only on the old computer",
-  "workTaskSyncFailed": "Task {task}: {reason}",
   "workspaceVcsPerms": "This turn did not start: the workspace repository has the wrong permissions.",
   "workspaceVcsPermsDetail": "The repository directory belongs to another system user, so the platform cannot access it. Project files, committed changes and history are unaffected. An admin needs to change the owner once on the machine (deploy/fix-workspace-ownership.sh); the platform cannot do it by itself. Forward this notice to an admin and retry once it is fixed.",
   "workspaceVcsPermsTitle": "Wrong permissions on the workspace repository",
@@ -364,7 +360,7 @@
   "sandboxPreparing": "Preparing the environment",
   "sandboxReady": "The environment is ready",
   "sandboxReplaced": "Preparing the environment failed; preparing it again",
-  "sandboxLost": "The machine the environment was on stopped answering, so the environment was replaced: the new one starts from what is pushed to the repository, and changes that were not pushed are gone",
+  "sandboxLost": "The environment stopped answering and was replaced: work pushed and backed up at the end of each turn comes along, and changes made after that are gone",
   "sandboxWaking": "Waking the environment",
   "sandboxRestoring": "Restoring the environment from its archive",
   "sandboxAsleep": "The environment went to sleep after {minutes} minutes without activity. Its files are kept, and the next message wakes it.",
@@ -378,5 +374,6 @@
   "sandboxFailingNext": "The channel stays where it is and won't move elsewhere on its own. Someone needs to check the connector and the session in this environment; retry once it is fixed.",
   "computeCloud": "Cloud environment",
   "computeCloudVm": "Whole cloud VM",
-  "taskQuiet": "No progress on the task \"{title}\" for {days} days"
+  "taskQuiet": "No progress on the task \"{title}\" for {days} days",
+  "roomFilesKept": "Files from this conversation's earlier working folder are kept until {date} and then deleted. To get them back, contact the platform administrator."
 }

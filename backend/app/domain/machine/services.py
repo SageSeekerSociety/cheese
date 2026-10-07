@@ -48,7 +48,6 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
-from app.domain.machine.host_wake import HostWake, waking_or_kept
 from app.domain.machine.lifecycle import SandboxBusy
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -154,16 +153,11 @@ def accepting(host: CloudHost) -> bool:
         and not host.whole_machine
         and host.status not in {MachineStatus.error, MachineStatus.deleting, *GONE}
         and not _failed_unenrolled(host)
-        and not waking_or_kept(host)
     )
 
 
 def _counts_toward_cap(host: CloudHost) -> bool:
-    # A host kept after a failed wake waits for a person; it must not keep the
-    # pool from adding the hosts its sessions need meanwhile.
-    return (
-        host.released_at is None and not host.draining and host.wake_failed_at is None
-    )
+    return host.released_at is None and not host.draining
 
 
 class HostPool:
@@ -749,10 +743,9 @@ class HostPool:
         whose sleeping homes are still on its disk is set draining, and the
         sandbox sweep archives them (``lifecycle``), after which it is
         released here. Also gives up on hosts the provider failed and on
-        enrolled ones that stopped answering (``_silent``, ``_lost``) — unless
-        MicroCloud has them suspended or stopped, which it wakes (``_away``) —
-        closes the preparing line of every room whose sandbox's host is up, and
-        adds a host when the free slots fall below that floor.
+        enrolled ones that stopped answering (``_lost``), closes the preparing
+        line of every room whose sandbox's host is up, and adds a host when the
+        free slots fall below that floor.
         """
         from app.domain.machine.lifecycle import archives_configured
 
@@ -762,44 +755,21 @@ class HostPool:
         load = await self._repo.occupancy()
         for host in hosts:
             if host.device_id is None or self._hub.is_online(host.device_id):
-                if waking_or_kept(host):
-                    logger.info("cloud pool host %s is back", host.hostname)
                 host.offline_since = None
-                host.waking_since = None
-                host.wake_requests = 0
-                host.wake_failed_at = None
             else:
                 host.offline_since = host.offline_since or now
-        failed = [host for host in hosts if _failed_unenrolled(host)]
-        silent = [
+        failed = [
             host
             for host in hosts
-            if host not in failed and await self._silent(host, now)
+            if _failed_unenrolled(host) or await self._silent(host, now)
         ]
-        lost = self._lost(
-            [host for host in hosts if host not in failed and host not in silent],
-            now,
-        )
-        waking = [
-            host
-            for host in hosts
-            if host.waking_since is not None and host.wake_failed_at is None
-        ]
-        live = [
-            host
-            for host in hosts
-            if host not in failed and host not in silent and host not in lost
-        ]
+        lost = self._lost([host for host in hosts if host not in failed], now)
+        live = [host for host in hosts if host not in failed and host not in lost]
         free = sum(free_slots(host, load) for host in live if accepting(host))
         hold = timedelta(seconds=settings.cloud_host_idle_hold_s)
         idle: list[CloudHost] = []
         for host in live:
             running, stored = load.get(host.id, Load(0, 0))
-            if waking_or_kept(host):
-                # What is on its disk waits for it to come back, or for a
-                # person: nothing is released from under it.
-                host.idle_since = None
-                continue
             if host.whole_machine:
                 # A whole VM goes the moment no home is on it: nobody else will
                 # be placed on it, and it was never part of the floor.
@@ -835,13 +805,11 @@ class HostPool:
         )
         await self._session.commit()
         for host in failed:
-            await self._give_up(host)
-        for host in silent:
-            await self._away(host, self._give_up)
+            await self._repo.lock_pool()
+            await self._session.refresh(host)
+            await self._fail(host)
         for host in lost:
-            await self._away(host, self._lose)
-        for host in waking:
-            await self._away(host, self._lose)
+            await self._lose(host)
         for host in idle:
             logger.info("cloud pool releasing idle host %s", host.hostname)
             await self._delete_at_provider(host)
@@ -881,7 +849,6 @@ class HostPool:
         if (
             host.device_id is None
             or host.draining
-            or waking_or_kept(host)
             or host.enrolled_at is None
             or now - host.enrolled_at < CONNECT_GRACE
             or self._hub.is_online(host.device_id)
@@ -907,9 +874,7 @@ class HostPool:
         platform's side — this backend just restarted, the link to the hosts is
         cut — and giving up on every host would throw away every sandbox that
         is about to come back. The provider's own error report needs no such
-        check. Whole cloud VMs are left as they are, and so is a host the pool
-        is waking or kept after its wake failed. Each one found is given up
-        only once MicroCloud has been asked about it (``_away``)."""
+        check. Whole cloud VMs are left as they are."""
         pool = [
             host
             for host in hosts
@@ -922,33 +887,17 @@ class HostPool:
         return [
             host
             for host in pool
-            if not waking_or_kept(host)
-            and (
-                host.status == MachineStatus.error
-                or (
-                    answering
-                    and host.offline_since is not None
-                    and now - host.offline_since >= LOST_AFTER
-                )
+            if host.status == MachineStatus.error
+            or (
+                answering
+                and host.offline_since is not None
+                and now - host.offline_since >= LOST_AFTER
             )
         ]
 
-    async def _give_up(self, host: CloudHost) -> None:
-        """Give up on a host nobody's sandbox is working on: it failed before
-        it was enrolled, or its connector never came (``_silent``)."""
-        await self._repo.lock_pool()
-        await self._session.refresh(host)
-        await self._fail(host)
-
-    async def _away(self, host: CloudHost, give_up) -> None:
-        """Ask MicroCloud about a host whose connector is away before giving
-        it up; a parked one is woken instead (``host_wake.HostWake``)."""
-        await HostWake(self._session, self._repo, self._client).away(host, give_up)
-
     async def _lose(self, host: CloudHost) -> None:
-        """Give up on an enrolled host found lost (``_lost``) or deleted at
-        MicroCloud while being woken (``_away``), unless its connector came
-        back meanwhile.
+        """Give up on an enrolled host found lost (``_lost``), unless its
+        connector came back meanwhile.
 
         Each session whose sandbox was there (its lease is on the host's
         device) is told so on its next tool call, which places it in a new

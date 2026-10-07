@@ -50,6 +50,7 @@ from app.domain.machine.models import AiStatus, CloudHost, CloudHostHome, Machin
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.services import HostPool
+from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.run_record.models import RunRecord
@@ -1219,7 +1220,10 @@ def room_cleanup_after_its_home_left(case, seat, monkeypatch) -> dict:
     monkeypatch.setattr(retire, "_inventory", recorded)
     monkeypatch.setattr(retire.device_hub, "exec", exec_)
     return run(
-        case, lambda: retire.sweep_retired_storage(case.client.test_request_factory)
+        case,
+        lambda: retire.sweep_retired_storage(
+            case.client.test_request_factory, checkpoint=checkpoint_room
+        ),
     )
 
 
@@ -1248,7 +1252,7 @@ def test_an_archived_rooms_unpushed_work_waits_in_the_bucket_and_comes_back(
         "pending": 1,
     }
     status = cleanup_of(cloud, seat)
-    assert status["state"] == "pending"
+    assert status["state"] == "kept"
     assert "not pushed" in status["reason"]
     assert key in cloud.bucket.objects
 

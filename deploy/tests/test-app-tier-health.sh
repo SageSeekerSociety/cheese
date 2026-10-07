@@ -1152,6 +1152,29 @@ test_rollout_rollback_returns_to_the_previous_slot() {
   echo "PASS: a rollback moves back into the previous slot with the previous images"
 }
 
+# Every other release starts while the second slots serve. The release it
+# replaces is the one running there, and a failed health check goes back to it.
+test_rollout_rollback_from_the_second_slot() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  printf 'upstream backend_active { server 127.0.0.1:18082; }\n' > "$run_dir/active/backend.conf"
+  if rollout_run "$run_dir" env APP_TIER_SCENARIO=rollback APP_TIER_SERVING_SLOT=b \
+      >"$run_dir/release.log" 2>&1; then
+    fail "rollback scenario unexpectedly passed health checks"
+  fi
+  grep -q 'deploying sha=testsha (previous=oldsha)' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "a release started while backend-b served found no previous release"; }
+  grep -Fqx 'slot-up-env backend BACKEND_IMAGE= FRONTEND_IMAGE= IMAGE_TAG=testsha APP_RELEASE=' "$docker_log" \
+    || fail "the release did not start its own images in the idle first slot"
+  grep -Fqx 'slot-up-env backend-b BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha APP_RELEASE=' "$docker_log" \
+    || { cat "$run_dir/release.log"; fail "the rollback did not start the previous images in the second slot"; }
+  grep -q 'rolled back to oldsha' "$run_dir/release.log" \
+    || fail "the release did not say it rolled back"
+  rm -rf "$run_dir"
+  echo "PASS: a rollback from a release started beside backend-b returns to backend-b"
+}
+
 # The preview owner (machine preview tunnels + preview content hosts) is a
 # separately released service, like device-connection, and the cutover has one
 # rule that matters more than any other: the owner must be up and healthy BEFORE
@@ -1723,6 +1746,7 @@ case "$CASE" in
   forge-router-recovery) test_rollout_recovers_after_forge_stops_backend ;;
   rollout-unknown-upstream) test_rollout_refuses_an_upstream_it_did_not_write ;;
   rollout-rollback) test_rollout_rollback_returns_to_the_previous_slot ;;
+  rollout-rollback-b) test_rollout_rollback_from_the_second_slot ;;
   frontend-rollout) test_frontend_rollout_switches_with_the_backend ;;
   rollout-leftovers) test_rollout_clears_an_interrupted_release ;;
   port-takeover-failure) test_failed_port_takeover_gives_the_ports_back ;;
@@ -1776,6 +1800,7 @@ case "$CASE" in
     test_rollout_recovers_after_forge_stops_backend
     test_rollout_refuses_an_upstream_it_did_not_write
     test_rollout_rollback_returns_to_the_previous_slot
+    test_rollout_rollback_from_the_second_slot
     test_frontend_rollout_switches_with_the_backend
     test_rollout_clears_an_interrupted_release
     test_failed_port_takeover_gives_the_ports_back

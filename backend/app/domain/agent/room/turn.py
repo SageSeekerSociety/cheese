@@ -60,6 +60,7 @@ from app.domain.agent.queries import (
 )
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.room.thread_context import thread_context as _thread_context
+from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skills
@@ -237,9 +238,10 @@ class _TurnContext:
     prior_progress: list[dict]
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
-    # For a 支线: the message it hangs under, what the main line said just
-    # before it, and the channel's tasks still open. None elsewhere.
+    # For a 支线: the message it hangs under and what the main line said just
+    # before it; and the channel's tasks still open. None elsewhere.
     thread_context: str | None
+    thread_tasks: str | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
     # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
@@ -796,6 +798,9 @@ class RoomTurns:
                 if root is not None
                 else None
             )
+            thread_tasks = (
+                await _thread_tasks(session, topic, root) if root is not None else None
+            )
             if place.thread is not None:
                 # So the main line hears when an AI teammate starts and stops
                 # answering in this 支线 (`InProcessBroker.publish`).
@@ -1041,6 +1046,7 @@ class RoomTurns:
             prior_progress=prior_progress,
             earlier_messages=earlier_messages,
             thread_context=thread_context,
+            thread_tasks=thread_tasks,
             project_id=project_id,
             prompt_text=prompt_text,
             provider=provider,
@@ -1143,6 +1149,7 @@ class RoomTurns:
         )
         opening = build_session_opening(
             thread=prepared.thread_context,
+            tasks=prepared.thread_tasks,
             machine=prepared.task_machine,
             doc=doc_text,
             memory=memory,

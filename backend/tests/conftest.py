@@ -1926,20 +1926,27 @@ def _needs_db(request: pytest.FixtureRequest) -> bool:
 # tests.
 _LAYERS = frozenset({"pure", "contract", "integration"})
 
-# The longest a test in each layer may run, in seconds. A test over its
-# ceiling is almost never doing more work: it is waiting out a real timer, a
-# poll interval or a process it could be given a shorter version of, and the
-# fix is to inject a shorter timer or interval, not to raise the number. The
-# ceilings sit well above what the layers' honest tests take on a hosted
-# runner, so a slow machine does not trip them; the targets the layers are
-# meant to reach are far lower (docs/plans/2026-09-19-bugs-and-testing.md §3.2).
-_LAYER_TIMEOUT_S = {"pure": 5, "contract": 15, "integration": 30}
+# The longest a test in each layer may take, setup included, in seconds. A test
+# over its ceiling is almost never doing more work: it is waiting out a real
+# timer or poll interval, and the fix is to inject a shorter one, not to raise
+# the number. The ceilings sit at about twice the slowest test outside
+# slow_tests.txt in the runs that list was measured on, so a busy machine does
+# not trip them; the targets the layers are meant to reach are far lower
+# (docs/plans/2026-09-19-bugs-and-testing.md §3.2).
+#
+# Checked once the test has finished, and reported as that test's failure with
+# its time. Not a pytest-timeout marker: its thread method ends the whole xdist
+# worker, and a worker's stderr never reaches the run's log, so a test over its
+# ceiling read as a worker lost for no reason. The suite-wide `timeout` in
+# pyproject.toml still ends a test that never finishes.
+_LAYER_CEILING_S = {"pure": 10, "contract": 15, "integration": 30}
+_CEILING = pytest.StashKey[tuple[str, float]]()
+_SETUP_S = pytest.StashKey[float]()
 
-# Tests that took over 60% of their ceiling in some run when it was
-# introduced, so variance alone could push them over it. They keep the
-# suite-wide `timeout` from pyproject.toml until they are fixed, and the list
-# only shrinks: a fixed test leaves it in the same change, and nothing is added
-# to it.
+# Tests that took over 60% of their layer's ceiling in some run, so variance
+# alone could push them over it. They are not checked against it until they are
+# fixed, and the list only shrinks: a fixed test leaves it in the same change,
+# and nothing is added to it.
 _SLOW_BASELINE = Path(__file__).with_name("slow_tests.txt")
 
 
@@ -2006,17 +2013,37 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         layer = _layer_of(item)
         item.add_marker(layer)
-        if item.nodeid in slow:
-            continue
-        # A test may ask for less time than its layer allows, never more.
-        ceiling = _LAYER_TIMEOUT_S[layer]
-        own = item.get_closest_marker("timeout")
-        if own is None or not own.args or own.args[0] > ceiling:
-            item.add_marker(pytest.mark.timeout(ceiling), append=False)
+        if item.nodeid not in slow:
+            item.stash[_CEILING] = (layer, _LAYER_CEILING_S[layer])
     if misfiled:
         raise pytest.UsageError(
             "These tests declare their own layer:\n" + "\n".join(misfiled)
         )
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Iterator[pytest.TestReport]:
+    """Fail a passing test that took longer than its layer's ceiling."""
+    report = yield
+    if call.when == "setup":
+        item.stash[_SETUP_S] = call.duration
+        return report
+    limit = item.stash.get(_CEILING, None)
+    if call.when != "call" or limit is None or not report.passed:
+        return report
+    layer, ceiling = limit
+    took = item.stash.get(_SETUP_S, 0.0) + call.duration
+    if took > ceiling:
+        report.outcome = "failed"
+        report.longrepr = (
+            f"took {took:.1f} s with setup, over the {layer} layer's {ceiling:g} s"
+            " ceiling (_LAYER_CEILING_S in tests/conftest.py). Find what it waits"
+            " for and give it a shorter timer or interval rather than adding it to"
+            " slow_tests.txt."
+        )
+    return report
 
 
 async def _terminate_open_transactions(db_name: str) -> list[dict]:
