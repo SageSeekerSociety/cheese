@@ -15,7 +15,7 @@ retry_wait="${REGISTRY_RETRY_WAIT_SECONDS:-5}"
 
 # Every image this workflow publishes, by the name of its registry path. Its
 # build job is `build-<name>`, and its output flag is the name with `_`.
-images=(backend sandbox frontend office-render browser-render gateway
+images=(backend frontend office-render browser-render gateway
   metering-proxy private-executor collab)
 
 # The tag the image built from <sha> is published under: build.yml tags
@@ -97,7 +97,6 @@ if [[ -z "${BASE_SHA+x}" && "$event_name" == push && "$ref_type" == branch ]]; t
 fi
 
 backend=false
-sandbox=false
 frontend=false
 office_render=false
 browser_render=false
@@ -125,7 +124,6 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   fi
   echo "rebuilding every image: $why" >&2
   backend=true
-  sandbox=true
   frontend=true
   browser_render=true
   office_render=true
@@ -181,18 +179,6 @@ else
         ;;
     esac
 
-    # The production backend bakes backend/sandbox into /app/sandbox, while the
-    # same directory is also the context for both runtime images.
-    case "$changed_path" in
-      backend/sandbox/skills/*)
-        # Skills ship in the backend, which seeds them into agent workspaces.
-        # The sandbox Dockerfile copies only `cheese`, not this directory.
-        ;;
-      backend/sandbox/*)
-        sandbox=true
-        ;;
-    esac
-
     # The collaboration service is built from the frontend package: its own
     # sources, the document schema it shares with the editors, and the
     # dependencies both are installed from.
@@ -226,7 +212,7 @@ fi
 # `$GITHUB_OUTPUT`, which the workflow consumes and no log shows — so an
 # image that rebuilt when nothing it owns had changed left nothing behind
 # to explain itself.
-echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
+echo "planned: backend=$backend frontend=$frontend" \
   "office_render=$office_render browser_render=$browser_render" \
   "gateway=$gateway metering_proxy=$metering_proxy" \
   "private_executor=$private_executor" "collab=$collab" \
@@ -234,7 +220,6 @@ echo "planned: backend=$backend sandbox=$sandbox frontend=$frontend" \
 
 {
   echo "backend=$backend"
-  echo "sandbox=$sandbox"
   echo "frontend=$frontend"
   echo "office_render=$office_render"
   echo "browser_render=$browser_render"

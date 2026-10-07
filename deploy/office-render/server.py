@@ -6,9 +6,8 @@ delivered. Browsers render PDF natively, so converting to PDF once, here, is
 what puts every one of those formats on screen.
 
 It is a separate service rather than a library inside the API because
-LibreOffice installs about 800MB and expects a writable profile directory. The
-sandbox image cannot carry it (that image is other people's base, and a room has
-no root to install into), and the backend image should not.
+LibreOffice installs about 800MB and expects a writable profile directory. A
+room cannot install it (it has no root), and the backend image should not.
 
 It answers two questions, both by loading the document in LibreOffice: what it
 looks like (a PDF, for showing a deliverable on screen) and what its formulas

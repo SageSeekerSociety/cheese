@@ -133,7 +133,6 @@ def test_image_builds_leave_the_service_host_and_keep_separate_external_caches()
     scopes = set()
     for name in (
         "build-backend",
-        "build-sandbox",
         "build-frontend",
         "build-office-render",
         "build-browser-render",

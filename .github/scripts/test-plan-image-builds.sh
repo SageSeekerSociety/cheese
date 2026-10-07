@@ -24,7 +24,7 @@ touch "$test_repo/backend/app/main.py" "$test_repo/backend/sandbox/cheese" \
   "$test_repo/$executor_dir/runtime.py" "$test_repo/$executor_dir/private.py" \
   "$test_repo/$executor_dir/mcp_process.py" "$test_repo/$executor_dir/private_egress.py" \
   "$test_repo/backend/app/domain/fetch/addresses.py"
-# The legacy workflow builds six images; the two added later have no job yet.
+# The legacy workflow builds five images; the two added later have no job yet.
 mkdir -p "$test_repo/.github/workflows"
 add_build_jobs() {
   local image
@@ -34,7 +34,7 @@ add_build_jobs() {
   done
 }
 printf 'jobs:\n' > "$test_repo/.github/workflows/build.yml"
-add_build_jobs backend sandbox frontend office-render browser-render gateway
+add_build_jobs backend frontend office-render browser-render gateway
 git -C "$test_repo" add .
 git -C "$test_repo" commit -qm base
 legacy_sha="$(git -C "$test_repo" rev-parse HEAD)"
@@ -61,7 +61,7 @@ assert_plan() {
       GITHUB_OUTPUT=/dev/stdout bash "$planner"
   )"
   local actual
-  actual="$(printf '%s\n' "$output" | grep -E '^(backend|sandbox|frontend|office_render|browser_render|gateway|metering_proxy|private_executor)=' | paste -sd, -)"
+  actual="$(printf '%s\n' "$output" | grep -E '^(backend|frontend|office_render|browser_render|gateway|metering_proxy|private_executor)=' | paste -sd, -)"
   if [[ "$actual" != "$expected" ]]; then
     echo "FAIL: expected $expected, got $actual" >&2
     exit 1
@@ -75,25 +75,25 @@ commit_path() {
   git -C "$test_repo" commit -qm "change $path"
 }
 
-assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' ''
+assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' ''
 
 # Even a no-diff baseline without the image cannot supply a promoted manifest.
 git -C "$test_repo" switch -q --detach "$legacy_sha"
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=true' "$legacy_sha"
+assert_plan 'backend=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=true' "$legacy_sha"
 git -C "$test_repo" switch -q --detach "$base_sha"
 
 # The first image must build even when a previously successful baseline has no image.
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=true' "$legacy_sha"
+assert_plan 'backend=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=true' "$legacy_sha"
 commit_path deploy/metering-proxy/Dockerfile
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=false' "$base_sha"
+assert_plan 'backend=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=false' "$base_sha"
 git -C "$test_repo" switch -q --detach "$base_sha"
 
 commit_path frontend/src/main.ts
-assert_plan 'backend=false,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/app/main.py
-assert_plan 'backend=true,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 # The backend renders notices from the frontend's sentence catalogs, and only
 # those: another namespace is the frontend's alone.
@@ -101,68 +101,68 @@ for catalog in roomNotice apiError global; do
   git -C "$test_repo" switch -q --detach "$base_sha"
   mkdir -p "$test_repo/frontend/src/i18n/messages/en"
   commit_path "frontend/src/i18n/messages/en/$catalog.json"
-  assert_plan 'backend=true,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+  assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 done
 git -C "$test_repo" switch -q --detach "$base_sha"
 mkdir -p "$test_repo/frontend/src/i18n/messages/en"
 commit_path frontend/src/i18n/messages/en/topic.json
-assert_plan 'backend=false,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/sandbox/cheese
-assert_plan 'backend=true,sandbox=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
+assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
 
 # The private executor rebuilds from its recipe and every file it copies in.
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/sandbox/Dockerfile.private
-assert_plan 'backend=true,sandbox=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
+assert_plan 'backend=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
 
 for executor_file in "$executor_dir/runtime.py" "$executor_dir/private.py" \
   "$executor_dir/mcp_process.py" "$executor_dir/private_egress.py" \
   backend/app/domain/fetch/addresses.py; do
   git -C "$test_repo" switch -q --detach "$base_sha"
   commit_path "$executor_file"
-  assert_plan 'backend=true,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
+  assert_plan 'backend=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=true' "$base_sha"
 done
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/sandbox/skills/cheese/SKILL.md
-assert_plan 'backend=true,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path cli/main.go
-assert_plan 'backend=true,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=true,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path deploy/browser-render/server.py
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=true,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=false,frontend=false,office_render=false,browser_render=true,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path deploy/office-render/server.py
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=true,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=false,frontend=false,office_render=true,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path docs/readme.md
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 # The docs site is built into the frontend image, so its sources rebuild it.
 git -C "$test_repo" switch -q --detach "$base_sha"
 mkdir -p "$test_repo/docs/manual"
 commit_path docs/manual/quickstart.md
-assert_plan 'backend=false,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
-assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" workflow_dispatch branch
-assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" push tag
+assert_plan 'backend=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" workflow_dispatch branch
+assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" push tag
 
 # Diff from the last successful build, not merely HEAD^, catches component
 # changes whose preceding build failed.
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path backend/app/main.py
 commit_path frontend/src/main.ts
-assert_plan 'backend=true,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 
 git -C "$test_repo" switch -q --detach "$base_sha"
 commit_path deploy/gateway/Dockerfile
-assert_plan 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=true,metering_proxy=false,private_executor=false' "$base_sha"
+assert_plan 'backend=false,frontend=false,office_render=false,browser_render=false,gateway=true,metering_proxy=false,private_executor=false' "$base_sha"
 
 # The collaboration service is built from the frontend package, from its own
 # sources, the document schema it shares with the editors, and the lockfile.
@@ -271,7 +271,7 @@ publish() {
     fi >> "$REGISTRY_TEST_TAGS"
   done
 }
-all_images=(backend sandbox frontend office-render browser-render gateway
+all_images=(backend frontend office-render browser-render gateway
   metering-proxy private-executor)
 
 lookup_plan() {
@@ -286,7 +286,7 @@ lookup_plan() {
 assert_lookup() {
   local expected_plan="$1" expected_base="$2" output actual
   output="$(lookup_plan)"
-  actual="$(printf '%s\n' "$output" | grep -E '^(backend|sandbox|frontend|office_render|browser_render|gateway|metering_proxy|private_executor)=' | paste -sd, -)"
+  actual="$(printf '%s\n' "$output" | grep -E '^(backend|frontend|office_render|browser_render|gateway|metering_proxy|private_executor)=' | paste -sd, -)"
   [[ "$actual" == "$expected_plan" ]] \
     || { echo "FAIL: expected $expected_plan, got $actual" >&2; exit 1; }
   [[ "$(printf '%s\n' "$output" | sed -n 's/^base_sha=//p')" == "$expected_base" ]] \
@@ -319,23 +319,23 @@ commit_path docs/readme.md
 # is passed over.
 : > "$REGISTRY_TEST_TAGS"
 publish "$backend_sha" "${all_images[@]}"
-publish "$frontend_sha" backend sandbox office-render browser-render gateway \
+publish "$frontend_sha" backend office-render browser-render gateway \
   metering-proxy private-executor
-assert_lookup 'backend=false,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$backend_sha"
+assert_lookup 'backend=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$backend_sha"
 
 # Once that build finishes, it is the baseline.
 publish "$frontend_sha" frontend
-assert_lookup 'backend=false,sandbox=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$frontend_sha"
+assert_lookup 'backend=false,frontend=false,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$frontend_sha"
 
 # A baseline whose workflow never built an image is complete without it, and
 # that image is built because there is nothing to promote.
 : > "$REGISTRY_TEST_TAGS"
-publish "$legacy_sha" backend sandbox frontend office-render browser-render gateway
-assert_lookup 'backend=true,sandbox=false,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=true' "$legacy_sha"
+publish "$legacy_sha" backend frontend office-render browser-render gateway
+assert_lookup 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=true,private_executor=true' "$legacy_sha"
 
 # Reaching the first commit without a complete set is a bootstrap.
 : > "$REGISTRY_TEST_TAGS"
-assert_lookup 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' ''
+assert_lookup 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' ''
 
 # A search that stops short of a complete set leaves the baseline unknown.
 publish "$base_sha" "${all_images[@]}"
@@ -346,8 +346,8 @@ REGISTRY_TEST_DOWN=1 assert_lookup_fails 'an unreachable registry'
 
 # Explicit release requests remain usable while the registry is unavailable.
 export REGISTRY_TEST_DOWN=1
-assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup workflow_dispatch branch
-assert_plan 'backend=true,sandbox=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup push tag
+assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup workflow_dispatch branch
+assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup push tag
 unset REGISTRY_TEST_DOWN
 
 echo 'PASS: image build planning contracts'

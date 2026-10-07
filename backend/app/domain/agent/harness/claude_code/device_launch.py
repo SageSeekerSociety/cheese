@@ -55,7 +55,6 @@ from app.domain.project_skill.service import (
 #     ``remote_execution/private.py`` 的 ``IMAGE``、``core/config.py`` 的
 #     ``private_chat_executor_image`` 默认值、
 #     ``.github/workflows/remote-execution.yml`` build 时打的 tag
-#   * ``sandbox/Dockerfile`` 的 ``ARG CLAUDE_CODE_VERSION``
 #     —— 以上都由 ``tests/unit/test_capability_matrix.py`` 钉住
 # ``scripts/remote_execution/package.json`` 和它的 lock 也装一个固定版本，那份没
 # 有守卫：对不上时 ``remote_execution/client.py`` 的版本闸门在 CI 里当场拒掉，

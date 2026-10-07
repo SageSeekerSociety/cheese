@@ -321,7 +321,7 @@ class Settings(BaseSettings):
 
     # LibreOffice, reached over HTTP for the same reasons as the browser above:
     # it is ~800MB and wants a writable profile directory, which rules it out of
-    # both the backend image and the sandbox image. It converts a Word or
+    # the backend image. It converts a Word or
     # PowerPoint deliverable to PDF so the room can show it instead of offering a
     # download. Unset, the preview panel says so and still hands the file over.
     office_render_endpoint: str | None = None

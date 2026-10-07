@@ -76,11 +76,11 @@ covers:
 
 ## 镜像从哪来 {#images}
 
-`.github/workflows/build.yml` 的 `plan` job 调 `.github/scripts/plan-image-builds.sh`，按「最近一个镜像齐全的提交」决定这次重建哪几个。产物一共八个：`backend`、`sandbox`、`frontend`、`office_render`、`browser_render`、`gateway`、`metering_proxy`、`private_executor`。
+`.github/workflows/build.yml` 的 `plan` job 调 `.github/scripts/plan-image-builds.sh`，按「最近一个镜像齐全的提交」决定这次重建哪几个。产物一共八个：`backend`、`frontend`、`office_render`、`browser_render`、`gateway`、`metering_proxy`、`private_executor`、`collab`。
 
 - **基线**：沿本分支的第一父链往前找，取第一个在 ghcr 里八个镜像 tag 都齐全的提交。基线那次 workflow 里没有构建任务的镜像不要求有 tag，这次直接构建。不查 workflow run 列表：那个接口会返回几周前的旧数据，基线随之跳回旧提交、八个镜像全部重建。手动构建推送的 tag 同样算数；构建还没跑完或中途失败的提交会被跳过。找到仓库第一个提交仍没有齐全的就整批重建；查满 200 个提交或 registry 不应答则计划失败，不输出构建计划。
-- **按路径映射**（`plan-image-builds.sh:135-195`）：`backend/*`、`cli/*` → backend；`frontend/*`、`docs/manual/*`、`docs/site/*`、`backend/sandbox/cheese`、`backend/app/core/config.py` → frontend（文档站是打进前端镜像的）；`deploy/gateway/*` → gateway；`deploy/metering-proxy/*` → metering_proxy；`deploy/office-render/*`、`deploy/browser-render/*` 各自；`backend/sandbox/*`（`skills/*` 除外）→ sandbox；`backend/sandbox/Dockerfile.private`、`backend/sandbox/cheese`、镜像复制进去的几个 `remote_execution/*.py` 和 `backend/app/domain/fetch/addresses.py` → private_executor；`frontend/collab/*`、`frontend/src/lib/docSchema/*`、`frontend/package.json`、`frontend/pnpm-lock.yaml` → collab。
-- **没重建的镜像不丢 tag**：workflow 把基线那次留下的镜像 `pull` + `tag` + `push` 成本次的 tag（`build.yml:88-148`），所以某次提交的八个 tag 总是齐的。
+- **按路径映射**（`plan-image-builds.sh:135-205`）：`backend/*`、`cli/*` → backend；`frontend/*`、`docs/manual/*`、`docs/site/*`、`backend/sandbox/cheese`、`backend/app/core/config.py` → frontend（文档站是打进前端镜像的）；`deploy/gateway/*` → gateway；`deploy/metering-proxy/*` → metering_proxy；`deploy/office-render/*`、`deploy/browser-render/*` 各自；`backend/sandbox/Dockerfile.private`、`backend/sandbox/cheese`、镜像复制进去的几个 `remote_execution/*.py` 和 `backend/app/domain/fetch/addresses.py` → private_executor；`frontend/collab/*`、`frontend/src/lib/docSchema/*`、`frontend/package.json`、`frontend/pnpm-lock.yaml` → collab。
+- **没重建的镜像不丢 tag**：workflow 把基线那次留下的镜像 `pull` + `tag` + `push` 成本次的 tag（`build.yml:88-147`），所以某次提交的八个 tag 总是齐的。
 - **tag 形状**由 `deploy/image-tag.sh` 定：完整 sha 的前 7 位，跟 docker/metadata-action 的 `type=sha` 一致。**不用** `git rev-parse --short=7`——那是下限，clone 里别的对象撞上前缀时它会变长，同一个提交在全量克隆和浅克隆里会得到不同的名字。
 - 判定结果同时写进 stderr，不再只进 `$GITHUB_OUTPUT`：谁重建了、基线是谁，日志里读得出来。
 

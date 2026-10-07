@@ -60,7 +60,6 @@ services:
       # The workspace root is the same absolute path inside this container and
       # on the host — hence the twin bind mount.
       - WORKSPACE_ROOT=/opt/cheese-data/workspaces
-      - SANDBOX_IMAGE=ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}
     volumes:
       - /opt/cheese-data/workspaces:/opt/cheese-data/workspaces
     depends_on:

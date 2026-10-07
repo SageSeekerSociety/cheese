@@ -94,11 +94,7 @@ def test_every_copy_of_a_pin_is_held_to_the_one_the_adapter_declares() -> None:
     assert Settings.model_fields["private_chat_executor_image"].default == private.IMAGE
     workflow = (REPO / ".github/workflows/remote-execution.yml").read_text()
     assert f"tags: {private.IMAGE}\n" in workflow
-    # The agent image bakes the same build a device launches, so "the same turn"
-    # means the same runtime on either side; and the connector's delivery e2e in
-    # CI boots the build production launches.
-    sandbox = (BACKEND / "sandbox/Dockerfile").read_text()
-    assert f"ARG CLAUDE_CODE_VERSION={claude}" in sandbox
+    # The connector's delivery e2e in CI boots the build production launches.
     connector = (REPO / ".github/workflows/cli.yml").read_text()
     assert f"@anthropic-ai/claude-code@{claude}" in connector
     # 装机脚本：引用适配层的常量会把整个 codex 包连着 ORM 一起拖进来。
