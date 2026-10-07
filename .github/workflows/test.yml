@@ -170,6 +170,9 @@ jobs:
         run: git fetch --no-tags --unshallow origin
 
       - name: Added migrations are safe under the running release
+        # The job's default working directory is backend/; the script takes
+        # repository paths.
+        working-directory: ${{ github.workspace }}
         run: python3 .claude/scripts/check-migration-safety.py
 
   test:
