@@ -134,16 +134,24 @@ export function useRoomRoster(options: {
     // 名册没到（切话题的那一瞬间）房间那半就是空的：宁可少一行，也不能把**上一个
     // 房间**的座位留在名单里——那一位的名字也写着「芝士」，@ 出来却是个不在这儿的
     // handle。人在项目名册上照样 @ 得到，缺的只是这一个房间自己的那几行。
-    const room = (rosterLoaded.value ? roomMembers.value : []).map((m) => ({
-      handle: m.member_handle,
-      label: memberName(m) || m.member_handle,
-      // 房间名册这一行就带着「他自己挑过的头像」；@ 菜单原来只配色块，所以同一个人
-      // 在菜单里只有首字母、在消息行里却有真图。没挑过就是 null，交给首字母。
-      avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
-      agent: !!m.agent,
-      external: isExternal(m.member_handle),
-      role: m.role,
-    }))
+    // 成员自己的 Claude Code 只有主人叫得动（#2991）：别人的不列；自己的就算还没坐进
+    // 这个频道也列，第一次 @ 它就会入座。
+    const ownerOf = (handle: string) => memberByHandle.value.get(handle)?.owner_handle
+    const room = (rosterLoaded.value ? roomMembers.value : [])
+      .filter((m) => {
+        const owner = ownerOf(m.member_handle)
+        return !owner || owner === options.author
+      })
+      .map((m) => ({
+        handle: m.member_handle,
+        label: memberName(m) || m.member_handle,
+        // 房间名册这一行就带着「他自己挑过的头像」；@ 菜单原来只配色块，所以同一个人
+        // 在菜单里只有首字母、在消息行里却有真图。没挑过就是 null，交给首字母。
+        avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
+        agent: !!m.agent,
+        external: isExternal(m.member_handle),
+        role: m.role,
+      }))
     const inRoom = new Set(room.map((r) => r.handle))
     // 不在这间房里的 AI 队友不列：它只在自己坐着的房间里被 @ 叫得动，在这里 @ 它
     // 什么也不会发生（后端点名只认这间房的席位），列出来就是一个点了没反应的名字。
@@ -153,7 +161,9 @@ export function useRoomRoster(options: {
     // 没加入这个频道，所以排在频道里的人后面。名册没到时说不准谁在谁不在，那一刻不分。
     const rest = options
       .members()
-      .filter((m) => !inRoom.has(m.user_handle) && !m.agent && m.active !== false)
+      .filter(
+        (m) => !inRoom.has(m.user_handle) && (!m.agent || m.owner_handle === options.author) && m.active !== false
+      )
       .map((m) => ({
         handle: m.user_handle,
         label: m.name || m.user_handle,

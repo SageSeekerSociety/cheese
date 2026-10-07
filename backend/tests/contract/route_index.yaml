@@ -816,6 +816,9 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "artifact.keeper", owner: "project.artifacts"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/artifacts/{artifact_id}/merge", auth: "artifact.keeper", owner: "project.artifacts"}
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "artifact.keeper", owner: "project.artifacts"}
+  # app.api.routes.projects_own_agents
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/own-agents", auth: "project.can_manage.read", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/own-agents", auth: "project.manager", owner: "project"}
   # app.api.routes.projects_run_config
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/default-model", auth: "project.can_manage.read", owner: "project.run_config"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/default-model", auth: "project.manager", owner: "project.run_config"}

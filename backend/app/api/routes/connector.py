@@ -54,6 +54,7 @@ from app.domain.agent.device_hub import (
     ViewerTransport,
     device_hub,
 )
+from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
@@ -94,7 +95,6 @@ _recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
 async def recover_business_state(device_id: str) -> None:
     from app.core.background import spawn
     from app.core.db import async_session_factory
-    from app.domain.agent.harness.claude_code import owner_login
     from app.domain.local_fs.enforcement import push_grants_on_connect
 
     # The machine enforces its own copy of its directory grants, so it is sent
@@ -569,7 +569,14 @@ async def my_devices(
     """List the devices the logged-in human owns, with liveness + their open agents."""
     user_id = await _require_user(resolver)
     devices = await service.list_owned(user_id)
-    return {"devices": [await _device_view(db, d) for d in devices]}
+    views = []
+    for device in devices:
+        view = await _device_view(db, device)
+        # Whether its owner's own Claude Code is logged in there for the
+        # platform (#2991): the owner's to see, not the team's.
+        view["claude_code"] = await owner_login.status(db, device.device_id)
+        views.append(view)
+    return {"devices": views}
 
 
 @router.patch("/my/devices/{device_id}")

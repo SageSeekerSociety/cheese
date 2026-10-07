@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent import death_evidence, own_limit
+from app.domain.agent import death_evidence, own_calls, own_limit
 from app.domain.agent.announce import announce, answer_questions
 from app.domain.agent.ask import publish_answered
 from app.domain.agent.cli_notices import cli_notice
@@ -1951,6 +1951,7 @@ class ChatService(SessionRecovery, RoomTurns):
             project = await ProjectRepository(session).get(topic.project_id)
             if project is None:
                 raise NotFoundError("Project not found")
+            await own_calls.seat_if_named(session, topic, content, author)
             agent = await self._agent_at(session, place)
             mentions = await person_mentions(
                 session, topic, content, agent, dm=_is_dm(topic)
@@ -2018,6 +2019,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     # A seat still under the room-derived handle names no
                     # instance, and that seat IS the agent the room points at,
                     # so the recipient resolved above is already the right one.
+                refused = await own_calls.refused(session, project, recipient, author)
                 user_block = await blocks.add(
                     project_id=topic.project_id,
                     conversation_id=place.conversation_id,
@@ -2045,6 +2047,8 @@ class ChatService(SessionRecovery, RoomTurns):
                 if attribution_id is None:
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
+                if refused is not None:
+                    await own_calls.say_refused(session, user_block, refused)
                 await announce_mentions(session, topic, user_block, author, roster)
                 # A reply to an agent's question goes to that agent (`recipient`).
                 answered = await answer_questions(session, user_block, recipient)

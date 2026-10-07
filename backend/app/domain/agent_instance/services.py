@@ -4,6 +4,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
@@ -240,6 +241,25 @@ class AgentInstanceService:
     async def list_for_project(self, project_id: uuid.UUID) -> list[AgentInstance]:
         return await self._repo.list_for_project(project_id)
 
+    async def list_team(self, project_id: uuid.UUID) -> list[AgentInstance]:
+        """The project's own teammates: every agent but its members' own, which
+        belong to a person and are not the project's to configure or default
+        to (#2991)."""
+        from app.domain.agent_instance.models import OwnAgent
+
+        own = set(
+            await self._session.scalars(
+                select(OwnAgent.instance_id)
+                .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
+                .where(AgentInstance.project_id == project_id)
+            )
+        )
+        return [
+            row
+            for row in await self._repo.list_for_project(project_id)
+            if row.id not in own
+        ]
+
     async def get_in_project(
         self, *, project_id: uuid.UUID, instance_id: uuid.UUID
     ) -> AgentInstance:
@@ -359,7 +379,7 @@ class AgentInstanceService:
         """
         active = [
             row
-            for row in await self._repo.list_for_project(project.id)
+            for row in await self.list_team(project.id)
             if row.is_active and row.id != instance.id
         ]
         if not active:
@@ -375,6 +395,8 @@ class AgentInstanceService:
     ) -> ResolvedAgent:
         if not instance.is_active:
             raise ValidationError(say("teammateInactiveNoDefault"))
+        if instance not in await self.list_team(project.id):
+            raise ValidationError(say("ownAgentNotDefault"))
         project.default_agent_instance_id = instance.id
         await self._session.flush()
         return await self.for_project(project)

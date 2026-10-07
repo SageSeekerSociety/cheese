@@ -20,6 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent_instance.own import ensure_for_member
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import (
     InvitationCreate,
@@ -29,6 +31,7 @@ from app.domain.membership.schemas import (
     MemberOut,
 )
 from app.domain.membership.services import InvitationService, MemberService
+from app.domain.project.services import ProjectService
 
 router = APIRouter(prefix="", tags=["members"])
 
@@ -62,6 +65,11 @@ async def list_members(
     成员的人打开空工作区，照样看得见所有人的脸。"""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
+    # The reader's own Claude Code follows them into the project (#2991).
+    if actor.via == "token":
+        project = await ProjectService(db).get_or_404(project_id)
+        await ensure_for_member(db, project, actor.handle, CLAUDE_CODE)
+        await db.commit()
     members, _ = await MemberService(db).list_for_project(project_id)
     # The roster is the answer; a stored row adds only its id and when it was
     # written (an external member's acceptance, a teammate's seat).

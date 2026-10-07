@@ -30,6 +30,7 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { screenAgentName } from '@/lib/agentNames'
 import accountService from '@/services/account'
+import { claudeLoginOf } from '@/types/ownAgents'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
 // it: AccountService.loggedIn (set from localStorage `accessToken` + `user` at
@@ -233,6 +234,11 @@ useCommands(() =>
       ]
     : []
 )
+
+// 订阅档位按厂商的写法首字母大写（max → Max）；API key 登录没有档位。
+function claudePlan(plan: string | null | undefined): string {
+  return plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : t('account.devices.claudeCodeApiKey')
+}
 </script>
 
 <template>
@@ -352,6 +358,18 @@ useCommands(() =>
           <!-- 一台设备只是一台机器，不是队友：在它上面跑的是哪些队友，看下面的「现场」。 -->
           <div class="device__meta">
             {{ t('account.devices.deviceId') }} · <code>{{ d.device_id }}</code>
+          </div>
+
+          <!-- 机主自己的 Claude Code 有没有在这台电脑上为平台登录（#2991）。登录后它跟着机主进项目。 -->
+          <div class="device__meta" data-testid="device-claude-code">
+            <template v-if="claudeLoginOf(d)?.logged_in">
+              {{ t('account.devices.claudeCodeLoggedIn', { plan: claudePlan(claudeLoginOf(d)?.subscription_type) }) }}
+            </template>
+            <template v-else>
+              {{ t('account.devices.claudeCodeLoggedOut') }}
+              <code>cheesehost claude login</code>
+              {{ t('account.devices.claudeCodeLoggedOutAfter') }}
+            </template>
           </div>
 
           <!-- 只读的归属：这台机器在给哪些团队、以及自己名下的项目用。加机器、移出在各自的

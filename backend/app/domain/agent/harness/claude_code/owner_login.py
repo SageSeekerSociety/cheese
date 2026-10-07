@@ -135,8 +135,19 @@ async def remember(session: AsyncSession, device_id: str, login: ClaudeLogin) ->
     )
 
 
-async def get(session: AsyncSession, device_id: str) -> DeviceClaudeLoginRow | None:
-    return await session.get(DeviceClaudeLoginRow, device_id)
+async def status(session: AsyncSession, device_id: str) -> dict | None:
+    """What the machine last said about its owner's Claude Code login, for its
+    owner to read; None when it has not been asked yet."""
+    row = await session.get(DeviceClaudeLoginRow, device_id)
+    if row is None:
+        return None
+    return {
+        "installed": row.installed,
+        "logged_in": row.logged_in,
+        "auth_method": row.auth_method,
+        "subscription_type": row.subscription_type,
+        "checked_at": row.checked_at.isoformat(),
+    }
 
 
 async def refresh(session_factory, hub, device_id: str) -> ClaudeLogin:
