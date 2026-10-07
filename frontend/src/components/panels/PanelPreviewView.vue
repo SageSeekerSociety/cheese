@@ -622,7 +622,7 @@ async function onAnnotate(payload: AnnotateDraft) {
            （表格的 /数据/B2、演示稿的 /slide[1]/shape[@id=2]），那些编号正是芝士
            改这份文件时要用的。PDF 那条路没被换掉，默认也仍然是它。 -->
       <div v-else-if="docPage" class="doc__body">
-        <PreviewPage :html="docPageHtml" />
+        <PreviewPage :html="docPageHtml ?? null" />
       </div>
       <div v-else class="doc__body">
         <PreviewSlides
