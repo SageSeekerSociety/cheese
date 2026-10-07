@@ -755,6 +755,14 @@ class Executor:
         temporary = self._record(command_id) / ("exit." + uuid.uuid4().hex)
         try:
             temporary.write_text(str(code))
+        except OSError as exc:
+            # The reader learns it was lost from the missing `exit`; raising
+            # here would only end this daemon thread with an unhandled
+            # exception nobody reads, and the disk that refused the code may
+            # refuse the event line too.
+            with contextlib.suppress(OSError):
+                self.log(command_id, "exit-unrecorded", exit_code=code, error=str(exc))
+            return
         finally:
             with self.command_lock:
                 with contextlib.suppress(OSError):
