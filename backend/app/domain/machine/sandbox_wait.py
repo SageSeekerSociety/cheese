@@ -24,8 +24,11 @@ VM_ERROR = "云虚拟机出错：供应方报告错误。对话和平台工具�
 # the first tool call that succeeds in its new sandbox (``HostPool._fail``
 # records it under ``LOST_KEY`` in the session's ``execution_request``).
 SANDBOX_LOST = (
-    "原来的沙箱所在机器失联，已换成一个新沙箱：工作区从 git 重新取出，"
-    "上次推送之后没推送的改动不在了。"
+    "沙箱环境已换成新的。每轮结束时的检查点存下的东西都还在：已推送的提交在任务"
+    "分支上，当时没提交的改动和未跟踪文件在平台快照里，用 "
+    'cd "$(cheese worktree <任务 id>)" 重新打开任务目录时自动放回，并说明放回了'
+    "什么。检查点之后才做的改动、依赖和缓存、生成目录、/tmp、正在运行的进程不在"
+    "了，需要的重新做、重新安装、重新启动。"
 )
 LOST_KEY = "sandbox_lost"
 # What a session whose sandbox's host the pool could not wake is told

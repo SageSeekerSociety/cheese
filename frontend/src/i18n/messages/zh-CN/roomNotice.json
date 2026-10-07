@@ -364,7 +364,7 @@
   "sandboxPreparing": "正在准备环境",
   "sandboxReady": "环境已就绪",
   "sandboxReplaced": "环境准备失败，正在重新准备",
-  "sandboxLost": "环境所在的机器不再响应，环境已换成新的：新环境从仓库里已推送的内容开始，没推送的改动不在了",
+  "sandboxLost": "环境不再响应，已换成新的：每轮结束时推送和备份的工作会带过来，之后才做的改动不在了",
   "sandboxWaking": "正在唤醒环境",
   "sandboxRestoring": "正在从归档恢复环境",
   "sandboxAsleep": "环境 {minutes} 分钟没有活动，已休眠。文件都留着，下一条消息会唤醒它。",
