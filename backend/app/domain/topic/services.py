@@ -40,6 +40,7 @@ from app.domain.identity.handles import (
     agent_instance_handle,
     looks_like_agent_handle,
     names_a_person,
+    recipient_seat,
 )
 from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.living_doc.services import Documents
@@ -835,7 +836,11 @@ class TopicService:
         if parent.status == TopicStatus.archived:
             raise ValidationError(say("topicArchivedFrozen"))
         # Opened unnamed: the platform names it (`room_task/naming.py`).
-        task = await self.create_task(room_id=parent.id, created_by=created_by)
+        task = await self.create_task(
+            room_id=parent.id,
+            created_by=created_by,
+            teammate=recipient_seat((block.meta or {}).get("agent_recipient")),
+        )
         task.upgraded_from_block_id = block.id
         await self._blocks.set_upgraded_to_place(block, task_id=task.id)
         return parent, task, True
@@ -880,9 +885,16 @@ class TopicService:
         title: str | None = None,
         owner_handle: str | None = None,
         proposed_by: str | None = None,
+        teammate: str | None = None,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
+
+        ``teammate`` is the seat of the AI teammate the work came from — the one
+        that proposed it, or the one a message turned into it was addressed to.
+        The task is worked by that teammate rather than the room's, so whoever
+        was asked keeps the work; a seat that is no saved teammate of the
+        project is ignored.
 
         A title typed by a person is final. A task opened unnamed is named by
         the platform (`room_task/naming.py`). A title the AI teammate
@@ -932,12 +944,32 @@ class TopicService:
         if named and proposed_by:
             task.title_calibrated = True
             tasks.record_title(task, reason="proposal", by=proposed_by)
+        if (
+            teammate
+            and project is not None
+            and await AgentInstanceService(self._session).for_seat_handle(
+                project, teammate
+            )
+        ):
+            await tasks.give_agent(task, agent_handle=teammate)
         await tasks.ensure_document(task)
         if owner:
             # Whoever the work is handed to is in its channel from then on.
             await self._members.take_in(room.id, owner)
         await self._card_block(room, task, actor=created_by or "system")
         return task
+
+    async def give_task_teammate(self, task: Task, seat: str | None) -> None:
+        """Another AI teammate works ``task`` from its next turn: one saved in
+        the task's project, named by its seat; None gives it back to its
+        room's."""
+        if seat is not None:
+            project = await self._projects.get(task.project_id)
+            if project is None or not await AgentInstanceService(
+                self._session
+            ).for_seat_handle(project, seat):
+                raise ValidationError(say("teammateHandleNotFound", handle=repr(seat)))
+        await TaskService(self._session).give_agent(task, agent_handle=seat)
 
     async def clone_from(
         self, *, target_topic_id: uuid.UUID, source_topic_id: uuid.UUID

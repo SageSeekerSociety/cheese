@@ -159,10 +159,8 @@ async def _agent_at(session: AsyncSession, place: Place) -> ResolvedAgent:
     if project is None:
         raise NotFoundError("Project not found")
     agents = AgentInstanceService(session)
-    if place.task is not None and place.task.agent_handle:
-        return agents.resolved(
-            await agents.for_handle(project, place.task.agent_handle)
-        )
+    if place.task is not None:
+        return await agents.for_task(project, place.room, place.task.agent_handle)
     return await agents.for_topic(place.room, project)
 
 
