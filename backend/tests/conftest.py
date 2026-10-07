@@ -1813,19 +1813,20 @@ def _needs_db(request: pytest.FixtureRequest) -> bool:
 # tests.
 _LAYERS = frozenset({"pure", "contract", "integration"})
 
-# The longest one test of each layer may run, in seconds. A test over its
+# The longest a test in each layer may run, in seconds. A test over its
 # ceiling is almost never doing more work: it is waiting out a real timer, a
-# poll interval or a process it should have been given a short version of, and
-# the fix is to inject the shorter one, not to raise the number. The ceilings
-# sit well above what the layers' honest tests take on a hosted runner, so a
-# slow machine does not trip them; the targets the layers are meant to reach
-# are far lower (docs/plans/2026-09-19-bugs-and-testing.md §3.2).
+# poll interval or a process it could be given a shorter version of, and the
+# fix is to inject a shorter timer or interval, not to raise the number. The
+# ceilings sit well above what the layers' honest tests take on a hosted
+# runner, so a slow machine does not trip them; the targets the layers are
+# meant to reach are far lower (docs/plans/2026-09-19-bugs-and-testing.md §3.2).
 _LAYER_TIMEOUT_S = {"pure": 5, "contract": 15, "integration": 30}
 
-# Tests that were already over their ceiling when it was introduced. They keep
-# the suite-wide `timeout` from pyproject.toml until they are fixed, and the
-# list only shrinks: a fixed test leaves it in the same change, and nothing is
-# added to it.
+# Tests that took over 60% of their ceiling in some run when it was
+# introduced, so variance alone could push them over it. They keep the
+# suite-wide `timeout` from pyproject.toml until they are fixed, and the list
+# only shrinks: a fixed test leaves it in the same change, and nothing is added
+# to it.
 _SLOW_BASELINE = Path(__file__).with_name("slow_tests.txt")
 
 

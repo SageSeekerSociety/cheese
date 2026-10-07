@@ -1,8 +1,9 @@
 """Every line of tests/slow_tests.txt names a test that still exists.
 
 A test that was deleted or renamed leaves its line behind, and the line then
-reads as debt someone still owes. This reads each node id's file and finds the
-named function (and class) in it, without collecting the suite.
+claims a fix is still owed for a test that no longer exists. This reads each
+node id's file and finds the named function (and class) in it, without
+collecting the suite.
 """
 
 import ast

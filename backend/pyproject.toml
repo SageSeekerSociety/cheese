@@ -176,8 +176,8 @@ addopts = ["--strict-markers"]
 #
 # Each layer sets a much tighter ceiling of its own at collection
 # (`_LAYER_TIMEOUT_S` in tests/conftest.py). 300s applies only to the tests in
-# tests/slow_tests.txt, which were already at or over their layer's ceiling
-# when it was introduced.
+# tests/slow_tests.txt, which took over 60% of their layer's ceiling in some
+# run when it was introduced.
 #
 # It applies locally too, deliberately: the same silence is just as unreadable
 # on a laptop, and pytest-timeout stands down on its own under a debugger.
