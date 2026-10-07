@@ -123,6 +123,7 @@ func NewManager() (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	putOnPath(filepath.Dir(bin))
 	// A STABLE per-user runtime dir — NOT a fresh MkdirTemp each start. The tmux
 	// server daemonizes and outlives the cheese process; a restarted or self-updated
 	// (syscall.Exec) cheese must reconnect to the SAME socket to find and re-adopt the
@@ -592,4 +593,24 @@ func paneState(pid int) string {
 func killPane(process *os.Process) {
 	killPaneGroup(process.Pid)
 	_ = process.Kill()
+}
+
+// putOnPath puts the directory of the tmux this connector uses first on its
+// PATH, which every screen and command it starts inherits. What runs there calls
+// plain `tmux` — the launcher naming its own screen, the cleanup ending a room's
+// — and the copy the desktop app ships on a Mac
+// (`~/Library/Application Support/cheese/bin`) is on no PATH a launchd service
+// has: found here, but "tmux: command not found" in the session.
+func putOnPath(dir string) {
+	current := os.Getenv("PATH")
+	for _, entry := range filepath.SplitList(current) {
+		if entry == dir {
+			return
+		}
+	}
+	if current == "" {
+		os.Setenv("PATH", dir)
+		return
+	}
+	os.Setenv("PATH", dir+string(os.PathListSeparator)+current)
 }
