@@ -65,7 +65,7 @@ def test_a_sweep_that_meets_a_spent_quota_leaves_the_rest_of_that_project_alone(
         )
     asked: list[str] = []
 
-    async def refused(project_id, session, branch):
+    async def refused(project_id, session, branch, **_):
         asked.append(branch)
         raise ForgeRateLimitedError("代码仓库的 API 额度暂时用完了")
 

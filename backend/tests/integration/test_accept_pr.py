@@ -602,7 +602,7 @@ def app_world(client, monkeypatch):
     async def default_branch(*args):
         return "main"
 
-    async def branch_head(project_id, session, branch):
+    async def branch_head(project_id, session, branch, **_):
         repo = git_store.path(project_id)
         head = git_store.git(repo, "rev-parse", branch).strip()
         ahead = int(git_store.git(repo, "rev-list", "--count", f"main..{head}"))
@@ -2714,6 +2714,44 @@ def test_a_batch_with_nothing_on_its_branch_gets_no_pr(client, sweeping):
     assert sweeping["opened"] == []
 
 
+def test_a_quiet_branch_is_asked_about_without_locking_its_task(
+    client, sweeping, monkeypatch
+):
+    """A sweep visits every open batch, and most have nothing new on them.
+
+    Asking the forge about one of those must not hold the batch's row (and
+    with it a database connection) for the length of the request: anyone
+    else touching that task meanwhile would wait on GitHub."""
+    from sqlalchemy import select, text
+
+    from app.domain.room_task.models import Task
+
+    _, room = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, room)))
+    locked_elsewhere: list[bool] = []
+    fake = sweeping["fake"]
+
+    async def compare_status(**_kwargs):
+        async with client.test_request_factory() as other:
+            await other.execute(text("SET LOCAL lock_timeout = '200ms'"))
+            try:
+                await other.scalar(
+                    select(Task.id).where(Task.id == task_id).with_for_update()
+                )
+                locked_elsewhere.append(False)
+            except Exception:  # noqa: BLE001 — the lock wait is the observation
+                locked_elsewhere.append(True)
+            await other.rollback()
+        return "identical"  # nothing new on the branch since its base
+
+    monkeypatch.setattr(fake, "compare_status", compare_status)
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 0, counts
+    assert locked_elsewhere == [False]
+
+
 def test_a_batch_left_open_in_an_archived_room_gets_no_pr(client, sweeping):
     """Rooms archived before archiving closed their work still hold open tasks.
 
@@ -3082,7 +3120,9 @@ def test_a_correction_never_touches_the_delivery_claim(client, sweeping):
     assert asyncio.run(_claimed()) == [str(delivery_task_id(client, tid))]
 
 
-def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweeping):
+def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(
+    client, sweeping, monkeypatch
+):
     """巡检**手里攥着树的行锁**的那一刻，采纳在 GitHub 上把这批活合掉了。
 
     这是真实的时序，不是「先把 DB 标 merged 再扫」：合并先发生（merge API 返回
@@ -3096,8 +3136,16 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(client, sweepin
     """
     import threading
 
+    from app.domain.review import pr_publish
     from app.domain.room_task.services import TaskService
 
+    async def _looks_ahead(_session, _task_id):
+        return True
+
+    # The unlocked pre-check already leaves a carded batch out. A card can
+    # still be filed between that check and the lock, so this exercises the
+    # locked path on its own.
+    monkeypatch.setattr(pr_publish, "_branch_ahead", _looks_ahead)
     fake = sweeping["fake"]
     pid, tid = _room_with_work(client)
     cid = _make_card(client, tid)
