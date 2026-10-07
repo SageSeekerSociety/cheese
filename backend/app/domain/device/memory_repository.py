@@ -6,6 +6,7 @@ production implementation with the same contract.
 
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 
 from app.domain.device.repository import AuthCode, Device, HostHealth, TopicDevice
 from app.domain.device.supply import Supply, Visibility
@@ -32,6 +33,11 @@ class InMemoryDeviceRepository:
 
     async def get_device(self, device_id: str) -> Device | None:
         return self._devices.get(device_id)
+
+    async def note_last_seen(self, device_id: str, at: datetime) -> None:
+        device = self._devices.get(device_id)
+        if device is not None:
+            device.last_seen_at = at
 
     async def get_hosted_device(self, device_id: str) -> Device | None:
         if device_id not in self._hosted_device_ids:

@@ -3,7 +3,6 @@
   "inbox": "Inbox",
   "newProject": "New {project}",
   "project": {
-    "board": "Board",
     "library": "Library",
     "channels": "Browse channels",
     "members": "Members",
@@ -12,7 +11,9 @@
     "general": "General",
     "routines": "Routines",
     "skills": "Skills",
-    "pages": "Project pages"
+    "pages": "Project pages",
+    "overview": "Overview",
+    "tasks": "All tasks"
   },
   "spaces": "Spaces",
   "teams": "Teams",

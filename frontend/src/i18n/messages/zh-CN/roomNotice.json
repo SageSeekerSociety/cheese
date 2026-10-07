@@ -373,5 +373,6 @@
   "sandboxFailing": "云端环境连续失败",
   "sandboxFailingNext": "频道会留在原处，不会自动换到别处。需要有人检查这个环境里的连接器和会话，修复后可以重试。",
   "computeCloud": "云端环境",
-  "computeCloudVm": "整台云虚拟机"
+  "computeCloudVm": "整台云虚拟机",
+  "taskQuiet": "任务「{title}」已经 {days} 天没有进展"
 }

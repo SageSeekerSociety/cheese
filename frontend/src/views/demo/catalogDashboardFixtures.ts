@@ -187,15 +187,6 @@ export const DASH_PRODUCT: StatsProduct = {
     },
     note_key: 'product.rejectionNote',
   },
-  usefulness: {
-    up: 12,
-    down: 3,
-    unrated_read: 8,
-    unread: 4,
-    useful_rate: 0.8,
-    proposal_dismissals: 2,
-    note_key: 'product.usefulnessNote',
-  },
   unavailable: [
     {
       name: 'acceptance_rate_after_summon',

@@ -56,8 +56,8 @@ class DeviceRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    # The last frame the server heard on this machine's link, written as the
-    # link goes; null until it has gone once.
+    # When the server last heard from this machine: written as it connects and
+    # at most once a minute while connected; null until it first connects.
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

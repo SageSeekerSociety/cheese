@@ -52,7 +52,8 @@ def test_direct_merge_settles_uncarded_task_once(client, app_world, manually_clo
             events = list(
                 await session.scalars(
                     select(Block).where(
-                        Block.conversation_id == row.room_id,
+                        # 合并的那一行说在任务自己的对话里，不在频道主线上。
+                        Block.conversation_id == row.id,
                         Block.meta["event_type"].as_string() == "accept_done",
                     )
                 )

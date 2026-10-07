@@ -28,6 +28,22 @@ SANDBOX_LOST = (
     "上次推送之后没推送的改动不在了。"
 )
 LOST_KEY = "sandbox_lost"
+# What a session whose sandbox's host the pool could not wake is told
+# (``host_wake.HostWake``): the host is kept with everything on it.
+SANDBOX_HOST_KEPT = (
+    "沙箱所在的机器没能唤醒，已报告平台维护人员；沙箱里的文件留在那台机器上，"
+    "没有删除。对话和平台工具仍可用。"
+)
+
+
+def waiting_on_host(host) -> str:
+    """What a tool waiting on its sandbox's host to come up is told: a host
+    the pool is waking, or kept once the wake failed, is not being prepared."""
+    if host.whole_machine:
+        return VM_PREPARING
+    if host.waking_since is not None or host.wake_failed_at is not None:
+        return SANDBOX_WAKING
+    return SANDBOX_PREPARING
 
 
 async def _home_settled(db, session_id) -> bool:
@@ -63,12 +79,16 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
                 CloudHost.enroll_attempts,
                 CloudHost.released_at,
                 CloudHost.whole_machine,
+                CloudHost.wake_failed_at,
             ).where(CloudHost.id == host_id)
         )
     ).one_or_none()
     if host is None or host.released_at:
         # The pool let go of it; the next attempt places the session again.
         return True
+    if host.wake_failed_at is not None:
+        # Kept for a person; waiting on it here would end in nothing.
+        return SANDBOX_HOST_KEPT
     if host.device_id is None:
         if host.status == MachineStatus.error or (
             (host.enroll_attempts or 0) >= MAX_ENROLL_ATTEMPTS

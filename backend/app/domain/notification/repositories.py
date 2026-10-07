@@ -352,6 +352,42 @@ class NotificationRepository:
         await self._session.flush()
         return len(items)
 
+    async def still_open(
+        self, project_ids: list[uuid.UUID], *, recipient_handle: str
+    ) -> list[Notification]:
+        """这几个项目里写给他、还没了结的通知：没拍板的决策请求和没读过的变更提醒，新的在前。
+
+        「待办」从当下的事实重算，而这两件都是事实：决策请求 `resolved_at` 为空（读过
+        不等于答过），变更提醒还没读。和 `list_inbox` 同一条判据，范围换成他能看见的
+        全部项目；验收卡不在这里，等审的改动从任务本身算。
+        """
+        if not project_ids:
+            return []
+        stmt = (
+            select(Notification)
+            .where(
+                Notification.project_id.in_(project_ids),
+                Notification.recipient_handle == recipient_handle,
+                Notification.deleted_at.is_(None),
+                or_(
+                    and_(
+                        Notification.type == NotificationType.DECISION_REQUEST.value,
+                        Notification.resolved_at.is_(None),
+                    ),
+                    and_(
+                        Notification.type == NotificationType.CHANGE_ALERT.value,
+                        Notification.read.is_(False),
+                        or_(
+                            Notification.level.is_(None),
+                            Notification.level != NotificationLevel.silent.value,
+                        ),
+                    ),
+                ),
+            )
+            .order_by(Notification.created_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def decision_topic_ids(
         self, topic_ids: list[uuid.UUID], recipient_handle: str
     ) -> dict[uuid.UUID, bool]:

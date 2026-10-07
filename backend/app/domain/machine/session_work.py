@@ -57,13 +57,12 @@ from app.domain.machine.sandbox_wait import (
     EXECUTOR_SETUP_FAILED,
     LOST_KEY,
     SANDBOX_LOST,
-    SANDBOX_PREPARING,
     SANDBOX_RESTORE_FAILED,
     SANDBOX_WAKING,
-    VM_PREPARING,
     _cloud_progress,
     _home_moved,
     _home_settled,
+    waiting_on_host,
 )
 from app.domain.machine.services import (
     CloudKeepsFailing,
@@ -1151,13 +1150,14 @@ async def _attempt(
         placed = await pool.current_home(session_id)
         restoring = placed.id if placed and placed.archive_key else None
         if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
-            line = await pool.tell_waiting(session_id)
+            message = waiting_on_host(cloud_host)
+            line = await pool.tell_waiting(
+                session_id,
+                "sandboxWaking" if message == SANDBOX_WAKING else "sandboxPreparing",
+            )
             await db.commit()
             await publish_line(topic_id, line)
-            return _Preparing(
-                VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
-                partial(_cloud_progress, db, hub, cloud_host.id),
-            )
+            return _Preparing(message, partial(_cloud_progress, db, hub, cloud_host.id))
         device_id = cloud_host.device_id
         # Provisioning releases its transaction around external calls.
         topic = await TopicService(db).lock_for_execution(topic_id)
@@ -1265,7 +1265,7 @@ async def _attempt(
     outcome = await asyncio.shield(work)
     if outcome is _CLOUD_PREPARING:
         return _Preparing(
-            VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
+            waiting_on_host(cloud_host),
             partial(_cloud_progress, db, hub, cloud_host.id),
         )
     if outcome is _SANDBOX_BUSY:

@@ -35,14 +35,14 @@ const cameFrom = computed(() => {
  * 站在项目这个框的**根**上吗？根这一层没有「上一层」可声明。
  *
  * 两端的根不是同一条路由，这不是漂移：`/projects/:projectId` 在桌面上一帧都不停，
- * WorkspaceEntry 当场 `router.replace` 去看板；所以桌面的根是看板，手机的根才是
- * 话题列表。看板在桌面上原本声明着 `backTo: 'workspace-project'`，点下去只会被弹
- * 回看板自己——一颗按了没反应的 ←。
+ * WorkspaceEntry 当场 `router.replace` 去项目总览；所以桌面的根是总览，手机的根才是
+ * 频道列表。总览在桌面上声明着 `backTo: 'workspace-project'`，点下去只会被弹回总览
+ * 自己——一颗按了没反应的 ←。
  */
 const atProjectRoot = computed(() => {
   const route = nav?.route
   if (!route || projectFrameOf(route) === null) return false
-  return route.name === (mdAndUp.value ? 'workspace-running' : 'workspace-project')
+  return route.name === (mdAndUp.value ? 'workspace-overview' : 'workspace-project')
 })
 
 /**

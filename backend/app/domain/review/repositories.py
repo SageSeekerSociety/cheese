@@ -183,6 +183,23 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def returned_since(
+        self, task_ids: list[uuid.UUID], since: datetime
+    ) -> list[AcceptCard]:
+        """这些任务上 `since` 之后被验收人退回的卡，按退回的先后。"""
+        if not task_ids:
+            return []
+        stmt = (
+            select(AcceptCard)
+            .where(
+                AcceptCard.task_id.in_(task_ids),
+                AcceptCard.status == AcceptStatus.rejected,
+                AcceptCard.decided_at >= since,
+            )
+            .order_by(AcceptCard.decided_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_live_for_places(
         self, place_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
     ) -> list[AcceptCard]:

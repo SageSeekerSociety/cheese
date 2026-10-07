@@ -14,9 +14,18 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listAwaitingMe = vi.fn()
+const resolveAlert = vi.fn()
+const markRead = vi.fn()
+const markAllAlertsRead = vi.fn()
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  return { ...actual, listAwaitingMe: (...a: unknown[]) => listAwaitingMe(...a) }
+  return {
+    ...actual,
+    listAwaitingMe: (...a: unknown[]) => listAwaitingMe(...a),
+    resolveAlert: (...a: unknown[]) => resolveAlert(...a),
+    markRead: (...a: unknown[]) => markRead(...a),
+    markAllAlertsRead: (...a: unknown[]) => markAllAlertsRead(...a),
+  }
 })
 
 const refreshProjects = vi.fn()
@@ -62,6 +71,8 @@ beforeEach(async () => {
       { path: '/', name: 'home', component: { template: '<div />' } },
       { path: '/teams', name: 'HomeTeamsExplore', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId', name: 'workspace-topic', component: { template: '<div />' } },
+      { path: '/p/:projectId/t/:topicId/tasks/:taskId', name: 'workspace-task', component: { template: '<div />' } },
+      { path: '/p/:projectId/overview', name: 'workspace-overview', component: { template: '<div />' } },
     ],
   })
   await router.push('/')
@@ -131,5 +142,116 @@ describe('待办页读不到待处理事项时', () => {
 
     await waitFor(() => expect(listAwaitingMe).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByText(t('home.inbox.loadFailed'))).toBeNull())
+  })
+})
+
+/** 待办上的一件事：点下去去哪，要你拍板的就地拍板。 */
+describe('待办上的一件事', () => {
+  const item = (over: Record<string, unknown>) => ({
+    projectId: 'p1',
+    projectName: '课程项目',
+    topicId: 'c1',
+    topicTitle: '前端',
+    taskId: null,
+    taskTitle: null,
+    taskTitleSource: null,
+    phrase: 'awaiting_review',
+    reason: 'reviewer',
+    at: '2026-10-07T10:00:00Z',
+    ...over,
+  })
+
+  it('任务的事打开任务页，不是它所在的频道', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [item({ taskId: 't1', taskTitle: '分享页加访问口令' })], total: 1 })
+    await mount()
+    const link = (await screen.findByText('分享页加访问口令')).closest('a')
+    expect(link?.getAttribute('href')).toBe('/p/p1/t/c1/tasks/t1')
+  })
+
+  it('要你拍板的：选一个就交上去，这一件随之离开清单', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [
+        item({
+          reason: 'decide',
+          phrase: 'decision',
+          alertId: 7,
+          headline: '上线前要不要先灰度',
+          options: ['先灰度', '直接上线'],
+        }),
+      ],
+      total: 1,
+    })
+    resolveAlert.mockResolvedValue({})
+    await mount()
+    await fireEvent.click(await screen.findByRole('button', { name: '先灰度' }))
+    expect(resolveAlert).toHaveBeenCalledWith(7, '先灰度')
+    await waitFor(() => expect(screen.queryByText('上线前要不要先灰度')).toBeNull())
+  })
+
+  it('芝士写给你的变更提醒：标为已读，这一件随之离开清单', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [item({ reason: 'read', phrase: 'change_alert', alertId: 8, headline: '报名表单改了' })],
+      total: 1,
+    })
+    markRead.mockResolvedValue({})
+    await mount()
+    await fireEvent.click(await screen.findByRole('button', { name: t('home.inbox.markRead') }))
+    expect(markRead).toHaveBeenCalledWith(8)
+    await waitFor(() => expect(screen.queryByText('报名表单改了')).toBeNull())
+  })
+
+  it('一个项目里有好几条变更提醒：一下全部标为已读，要你拍板的留着', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [
+        item({ reason: 'read', phrase: 'change_alert', alertId: 8, headline: '报名表单改了' }),
+        item({ reason: 'read', phrase: 'change_alert', alertId: 9, headline: '依赖升级了' }),
+        item({ reason: 'decide', phrase: 'decision', alertId: 7, headline: '要不要灰度', options: ['先灰度'] }),
+      ],
+      total: 3,
+    })
+    markAllAlertsRead.mockResolvedValue({ marked: 2 })
+    await mount()
+    await fireEvent.click(await screen.findByRole('button', { name: t('home.inbox.markAllRead') }))
+    expect(markAllAlertsRead).toHaveBeenCalledWith('p1')
+    await waitFor(() => expect(screen.queryByText('报名表单改了')).toBeNull())
+    expect(screen.queryByText('依赖升级了')).toBeNull()
+    expect(screen.getByText('要不要灰度')).toBeTruthy()
+  })
+
+  it('不指向哪个频道的变更提醒，点开去项目总览', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [
+        item({
+          reason: 'read',
+          phrase: 'change_alert',
+          alertId: 8,
+          headline: '依赖升级了',
+          topicId: null,
+          topicTitle: '',
+        }),
+      ],
+      total: 1,
+    })
+    await mount()
+    const link = (await screen.findByText('依赖升级了')).closest('a')
+    expect(link?.getAttribute('href')).toBe('/p/p1/overview')
+  })
+
+  it('交不上去时这一件留着，并说出来', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [item({ reason: 'decide', phrase: 'decision', alertId: 7, headline: '要不要灰度', options: ['先灰度'] })],
+      total: 1,
+    })
+    resolveAlert.mockRejectedValue(new Error('无法提交'))
+    await mount()
+    await fireEvent.click(await screen.findByRole('button', { name: '先灰度' }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByText('要不要灰度')).toBeTruthy()
   })
 })

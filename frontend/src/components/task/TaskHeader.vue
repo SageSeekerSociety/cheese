@@ -68,7 +68,7 @@ const collaborators = computed(() => props.task?.contributor_handles ?? [])
 const nameOf = (handle: string) => props.memberNames[handle] || handle
 // 这个人自己挑过的头像。没挑过（`avatar_id` 是 null）给空串，交给 `UserAvatar` 画按
 // handle 派生的彩色首字母：`getAvatarUrl(undefined)` 回的是全站默认那张脸，所有没挑过
-// 头像的人共用同一张，认不出是谁（同一个判据在 `useBoardMembers.avatarSrc`）。
+// 头像的人共用同一张，认不出是谁。
 function avatarOf(handle: string | null | undefined): string {
   const chosen = props.people.find((m) => m.member_handle === handle)?.avatar_id
   return chosen ? getAvatarUrl(chosen) : ''
