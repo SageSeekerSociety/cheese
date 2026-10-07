@@ -98,7 +98,7 @@
 | `components/panels/preview/RevisionList.vue:171` | 720 | 跟 `PanelPreviewView` 同一条容器线 |
 | `components/panels/doc/DocHistory.vue:342` | 640 | `@container`（宿主 `PanelDocView` 已声明） |
 
-阈值在归的时候定，不在这份清单里定：后台容器沿用 `#2634` 的 720 / 1320，面板沿用 720。
+阈值在归的时候定，不在这份清单里定。后台容器 `#2634` 落的是 `max-width: 719.98px` 和 `max-width: 1319.98px`（`AdminMembersPage.vue:745`、`AdminModelsPage.vue:261,268`），但同一套里已经混进了裸值 `700` 和视口味的 `900`（`AdminSpacesPage.vue:438`、`AdminLiveSpine.vue:185`、`AdminModelsAudit.vue:209`）——这批按 `719.98 / 1319.98` 对齐，面板沿用 720。
 
 `AdminKpiCard.vue:146` 那条 `@media (max-width: 600px)` 有个对不上的前提。文件注释说它是「给没有容器祖先的页面（模型页）兜底」，但模型页的链是 `AdminModelsPage.vue:108` → `AdminPage.vue:30` → `AppPage width="admin"` → `AppPage.vue:284` 的 `container: admin / inline-size`，**模型页是有容器祖先的**——同文件 `:152` 那条无名 `@container (max-width: 760px)` 按定义就该在模型页命中。真是这样的话这 600 是死代码，删掉即可；判断得靠真浏览器量模型页六位数字的字号，不在这份清单里下结论。
 
@@ -153,4 +153,4 @@
 这道闸只覆盖 `@media` 和 `frontend/src`，两处留白要一起写进 `docs/design-system.md`，否则下一个人会以为「闸绿了就是没有散值」：
 
 - **JS 侧**（第八组那三条）闸不到，只能靠 `breakpoints.scss` 的 JS 镜像常量做唯一来源。
-- **容器查询的阈值**同样没有单一来源，现在散着 310 / 560 / 640 / 672 / 700 / 720 / 760 / 1000 / 1040 / 1320 十来个值。这一批不动它（改成容器查询本来就是这批的目标之一），但要在文档里点名它还是一笔没归的账，别让人以为收口等于清零。
+- **容器查询的阈值**同样没有单一来源。整个 `frontend/src` 里有 60 多条 `@container`，散着 310 / 440 / 480 / 559 / 560 / 640 / 660 / 672 / 700 / 720 / 760 / 900 / 1000 / 1040 / 1319.98 / 1320 / 1440 等值，而且同一件事两种写法并存：后台容器一处写 `max-width: 719.98px`、另一处写 `700px`。这一批只把 7 处视口查询改成容器查询，不动既有阈值——但要在 `docs/design-system.md` 里点名它还是一笔没归的账，别让人以为收口等于清零。
