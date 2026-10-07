@@ -130,6 +130,7 @@ const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
   alwaysSummon: () => props.alwaysSummon,
+  answersInThread: () => threadable.value,
   showComposer: () => props.showComposer,
   members: () => props.members,
   topicList: () => props.topicList,

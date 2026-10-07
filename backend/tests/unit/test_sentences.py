@@ -152,6 +152,7 @@ def test_an_unknown_orphan_is_not_exempted(monkeypatch):
 
 def test_only_retired_notices_stored_on_old_rooms_are_historical():
     assert HISTORICAL_NOTICE_KEYS == {
+        "actorCheese",
         "askAnswerUndelivered",
         "askAnswerUndeliveredDetail",
         "docCommented",
@@ -246,10 +247,15 @@ def test_a_list_said_inside_a_sentence_keeps_its_items():
     }
 
     # An item may be a sentence of its own; unquoted items are joined bare.
-    edited = say("docEdited", actor=listing(["<@ana>", say("actorCheese")]))
-    assert edited == "<@ana>、芝士 编辑了文档"
-    assert edited.descriptor()["params"]["actor"] == {
-        "list": ["<@ana>", {"key": "actorCheese", "params": {}}],
+    created = say(
+        "taskCreated",
+        actor="<@ana>",
+        owner="<@ana>",
+        title=listing(["周报", say("taskUntitled")]),
+    )
+    assert "周报、新任务" in created
+    assert created.descriptor()["params"]["title"] == {
+        "list": ["周报", {"key": "taskUntitled", "params": {}}],
         "quoted": False,
     }
 

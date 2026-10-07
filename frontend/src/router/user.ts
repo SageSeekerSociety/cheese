@@ -62,6 +62,17 @@ export default {
           meta: { palette: { label: 'account.settings.connections', icon: 'mdi-link-variant' } },
         },
         {
+          // 「这台设备」：桌面 app 所在的这台电脑作为一台设备，接入、名称、团队、Claude Code。
+          // 浏览器里没有这一块。
+          path: 'this-device',
+          name: 'UserSettingsThisDevice',
+          component: () => import('@/views/user/settings/ThisDevice.vue'),
+          beforeEnter: async () => {
+            const { desktopCan } = await import('@/lib/desktopApp')
+            return desktopCan('device') ? true : { name: 'UserSettingsDevices' }
+          },
+        },
+        {
           // 「通用」：这台电脑上的桌面 app 自己的设置。浏览器里没有这一块。
           path: 'general',
           name: 'UserSettingsGeneral',

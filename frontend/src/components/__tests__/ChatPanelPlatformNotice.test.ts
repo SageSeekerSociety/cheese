@@ -408,19 +408,23 @@ describe('平台提示：一行 + 可展开', () => {
   })
 
   it('who 的三个码各渲染成一句人话', async () => {
-    const { container } = mountRoom([
-      ciFailed({ who: 'platform' }),
-      event('', '⚠️ 采纳时合并冲突，芝士在解（5 个文件）', {
-        event_type: 'accept_conflict',
-        who: 'human',
-        detail: 'backend/app/api/routes/accept.py',
-      }),
-    ])
-    await flush()
+    // 每一句各在自己的房间里：同一张卡后来的一句会让前一句的尾标过时（见下一组）。
+    const said = async (block: Block) => {
+      const { container } = mountRoom([block])
+      await flush()
+      return visibleText(container.querySelector('[data-testid="platform-notice"]')!)
+    }
 
-    const rows = container.querySelectorAll('[data-testid="platform-notice"]')
-    expect(visibleText(rows[0])).toContain('平台已处理')
-    expect(visibleText(rows[1])).toContain('需要手动处理')
+    expect(await said(ciFailed({ who: 'platform' }))).toContain('平台已处理')
+    expect(
+      await said(
+        event('', '⚠️ 采纳时合并冲突，芝士在解（5 个文件）', {
+          event_type: 'accept_conflict',
+          who: 'human',
+          detail: 'backend/app/api/routes/accept.py',
+        })
+      )
+    ).toContain('需要手动处理')
   })
 })
 

@@ -23,6 +23,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import (
@@ -325,6 +326,9 @@ async def agent_socket(
         # authorized per-actor). Reject with policy-violation.
         await websocket.close(code=1008, reason="unknown or missing device token")
         return
+    # Before the handshake, so the write is done before the machine can hang up.
+    await _note_seen(db, device.device_id)
+    noted_at = time.monotonic()
     await websocket.accept()
     transport = _WebSocketDeviceTransport(websocket)
     await device_hub.attach_device(
@@ -348,6 +352,9 @@ async def agent_socket(
                 device_hub.silence_allowed(device.device_id),
             )
             await device_hub.on_device_message(device.device_id, message)
+            if time.monotonic() - noted_at >= SEEN_EVERY_S:
+                await _note_seen(db, device.device_id)
+                noted_at = time.monotonic()
     except WebSocketDisconnect as disconnect:
         close_code = disconnect.code
     except TimeoutError:
@@ -383,6 +390,28 @@ async def agent_socket(
             time.monotonic() - opened_at,
         )
         await device_hub.detach_device(device.device_id, transport)
+
+
+#: How often a connected machine's last-seen time is written: often enough
+#: for "last seen 3 hours ago", rarely enough to cost nothing.
+SEEN_EVERY_S = 60
+
+
+async def _note_seen(db: AsyncSession, device_id: str) -> None:
+    """Keep that the machine is being heard from now: as it connects, then at
+    most once every `SEEN_EVERY_S`. Not as its link goes — a link that goes
+    with the server is torn down by cancelling this handler, and a database
+    write cut short there leaves the connection broken for its next user.
+    Committed at once, like the read that opened the link."""
+    from app.domain.device.wiring import sql_device_service
+
+    try:
+        await sql_device_service(db).note_last_seen(device_id, datetime.now(UTC))
+        await db.commit()
+    except Exception:
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        logger.warning("last seen not kept for %s", device_id, exc_info=True)
 
 
 # --- 现场 viewer: a browser watches a device screen's real terminal, and can type
@@ -573,6 +602,9 @@ async def _device_view(db: AsyncSession, device: Device) -> dict[str, Any]:
         # Teams this machine is registered for (为团队注册设备): every project of
         # these teams may run on it.
         "team_ids": list(device.team_ids),
+        "last_seen_at": device.last_seen_at.isoformat()
+        if device.last_seen_at
+        else None,
         "screens": await _device_screens(db, device.device_id),
     }
 

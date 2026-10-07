@@ -275,6 +275,7 @@ async def _summon_the_named(
                         names=listing(summoned.fused),
                     ),
                 ),
+                published_by_caller=True,
             )
         await session.commit()
     if fused is not None:

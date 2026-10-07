@@ -135,6 +135,7 @@ async def post_system_event(
             meta={**(meta or {}), "seat": seat} if seat else meta,
             turn_id=turn_id,
             task_id=inner_id,
+            published_by_caller=True,
         )
         if block is None:
             return None

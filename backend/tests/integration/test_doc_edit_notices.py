@@ -5,7 +5,8 @@ working on it for ten minutes stores it many times. The task reads one
 "编辑了文档" for that run: the last such line is extended while nothing else
 has been said since and it was touched within the last ten minutes. It then
 names everyone in the run, and "查看本次修改" covers the whole run. Anything
-said in between, or a longer pause, starts a new line.
+said in between, or a longer pause, starts a new line. An AI teammate is named
+by its own handle, as a person is, so the client calls it by its name.
 """
 
 import asyncio
@@ -15,7 +16,12 @@ from datetime import timedelta
 from sqlalchemy import update
 
 from app.domain.block.models import Block
-from tests.integration.conftest import chat_ws_url, open_task, session_auth_headers
+from tests.integration.conftest import (
+    chat_ws_url,
+    open_task,
+    room_agent_seat,
+    session_auth_headers,
+)
 from tests.integration.test_message_edit import _room, _say_in_task
 
 
@@ -50,6 +56,20 @@ def test_edits_in_a_row_are_one_line_naming_everyone_with_one_diff(client):
     # "查看本次修改" is the whole run: from before the first edit to now.
     diff = line["meta"]["detail"]
     assert "+第一段" in diff and "+第二段" in diff and "+第三段" in diff
+
+
+def test_an_ai_teammate_is_named_by_its_handle_like_a_person(client):
+    """The line carries the teammate's own <@handle>, the token the client draws
+    with the name the roster gives it; never one fixed name for every teammate."""
+    room, _ = _room(client)
+    task = open_task(client, room, start=False)["id"]
+    seat = room_agent_seat(client, room)
+    _store(client, task, "第一段", seat)
+    _store(client, task, "第一段\n\n第二段", "alice")
+
+    line = _edit_lines(client, task)[0]
+    assert f"<@{seat}>" in line["content"] and "<@alice>" in line["content"]
+    assert "芝士" not in line["content"]
 
 
 def test_something_said_in_between_starts_a_new_line(client):

@@ -255,6 +255,7 @@
       <DesktopPhoneDialog />
     </template>
     <CommandPalette />
+    <DeviceConnect />
     <!-- 手把手引导的第 1 步。后面四步在 ChatPanel 上（那时人已经在项目里了），这一
          步必须在壳上：目标 rail ＋ 是壳的一部分，而它只在「还没有项目」时出现。 -->
     <StartGuide v-if="startGuideStep" :step="startGuideStep" :anchors="START_GUIDE_ANCHORS" @skip="skipGuide" />
@@ -321,7 +322,7 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
-import { autoConnectThisComputer } from '@/lib/desktop'
+import { offerToConnect } from '@/lib/desktop'
 import {
   desktopBadge,
   desktopListenForNotices,
@@ -348,6 +349,7 @@ import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
+import DeviceConnect from '@/views/desktop/DeviceConnect.vue'
 import TaskInheritance from '@/views/tasks/components/TaskInheritance.vue'
 import { useTaskInheritance } from '@/views/tasks/composables/useTaskInheritance'
 
@@ -570,12 +572,12 @@ watch(
   }
 )
 
-// In the desktop app, being signed in is what makes this computer one of your
-// devices: at launch with a session, and at every sign-in (lib/desktop.ts).
+// In the desktop app, signing in asks once whether to connect this computer as a
+// device; one connected before comes back on its own (lib/desktop.ts).
 watch(
   () => AccountService.loggedIn && AccountService.user?.id,
   (userId) => {
-    if (typeof userId === 'number') void autoConnectThisComputer(userId)
+    if (typeof userId === 'number') void offerToConnect(userId)
   },
   { immediate: true }
 )

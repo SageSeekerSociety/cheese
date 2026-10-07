@@ -23,11 +23,16 @@ paths:
   `backend/scripts/seed_fusion_demo.py` (CI runs it in e2e.yml). A spec
   assuming a project tile without that seed passes locally on a dev DB and
   fails on fresh CI.
-- **Environment truths live in `playwright.config.ts` comments** (cold-compile
-  timeouts, serial workers on CI, why ports are overridable, the
-  vite-proxy-mirrors-nginx contract in `frontend/vite.config.ts`). Read them
-  before changing config; `smoke.spec.ts`'s `BACKEND_PORT` must track the
-  config's resolution by hand.
+- **Environment truths live in `playwright.config.ts` comments** (CI serves a
+  production build through `vite preview`, timeouts, serial workers on CI, why
+  ports are overridable, the vite-proxy-mirrors-nginx contract in
+  `frontend/vite.config.ts`). Read them before changing config;
+  `smoke.spec.ts`'s `BACKEND_PORT` must track the config's resolution by hand.
+- **A spec that imports `/src/...` or `/node_modules/.vite/deps/...`** mounts
+  components from the dev server, which the production build does not have.
+  List it in the config's `COMPONENT_SPECS`, or it fails on CI while passing
+  locally. A production build also prints no Vue warnings, so check what the
+  page shows (`recordUnknownElements` in `helpers.ts`), not the console.
 - **A new spec only counts once you've seen it run in CI.** The scope gate
   skips heavy jobs on squash-merged commits, and this suite once sat broken
   for days while "green" runs were skips. Check the job actually executed.

@@ -12,12 +12,5 @@
     "unknown": "未知",
     "partlyUnpriced": "另有 {tokens} token 没有单价，不计入金额",
     "allUnpriced": "{tokens} token 没有单价，因此这里不显示金额"
-  },
-  "desktop": {
-    "approveFailed": "批准失败：{reason}",
-    "preparing": "正在准备",
-    "connecting": "正在把这台电脑接入 Cheese",
-    "connected": "这台电脑已接入，可以在「设置 → 设备」里看到它",
-    "connectFailed": "这台电脑没能接入：{reason}"
   }
 }
