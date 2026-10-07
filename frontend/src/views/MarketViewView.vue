@@ -15,7 +15,7 @@
 // §3.5). `read` would be a narrower, single-column tier.
 import type { MarketNodes, MarketPools, PoolListing } from '@/cx_types'
 
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -37,7 +37,8 @@ const emit = defineEmits<{ (e: 'retry'): void }>()
 
 const { t } = useI18n()
 
-const tab = ref<'tasks' | 'pools'>('tasks')
+// The page owns the tab: the node board only starts polling once its tab is opened.
+const tab = defineModel<'tasks' | 'pools'>('tab', { default: 'tasks' })
 
 const TIER_LABEL: Record<string, string> = {
   default: 'market.tier.default',

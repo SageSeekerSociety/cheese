@@ -1,5 +1,6 @@
 // 节点状态的取数：挂上就读一次，之后每 15 秒刷一次；只有第一次读算 loading；卸载停表。
-import { defineComponent, h } from 'vue'
+// 给了 enabled：它第一次为真才读、才起表，之后它再变假也不停。
+import { defineComponent, h, nextTick, ref } from 'vue'
 import { render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,12 +15,12 @@ import { MARKET_NODES_REFRESH_MS, useMarketNodes } from './useMarketNodes'
 
 const board = { nodes: [], active_turns_total: 0, current_provider: 'cloud' }
 
-function host() {
+function host(options?: Parameters<typeof useMarketNodes>[0]) {
   let state!: ReturnType<typeof useMarketNodes>
   const view = render(
     defineComponent({
       setup() {
-        state = useMarketNodes()
+        state = useMarketNodes(options)
         return () => h('div')
       },
     })
@@ -59,5 +60,31 @@ describe('useMarketNodes', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(state.error.value).toBe('down')
     expect(state.loading.value).toBe(false)
+  })
+
+  it('waits for enabled to turn on, then keeps polling after it turns off', async () => {
+    const on = ref(false)
+    const { view } = host({ enabled: () => on.value })
+    await vi.advanceTimersByTimeAsync(MARKET_NODES_REFRESH_MS * 2)
+    expect(getMarketNodes).not.toHaveBeenCalled()
+
+    on.value = true
+    await nextTick()
+    expect(getMarketNodes).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(MARKET_NODES_REFRESH_MS)
+    expect(getMarketNodes).toHaveBeenCalledTimes(2)
+
+    on.value = false
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(MARKET_NODES_REFRESH_MS)
+    expect(getMarketNodes).toHaveBeenCalledTimes(3)
+
+    on.value = true
+    await nextTick()
+    expect(getMarketNodes).toHaveBeenCalledTimes(3)
+
+    view.unmount()
+    await vi.advanceTimersByTimeAsync(MARKET_NODES_REFRESH_MS * 2)
+    expect(getMarketNodes).toHaveBeenCalledTimes(3)
   })
 })
