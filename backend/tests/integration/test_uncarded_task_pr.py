@@ -52,7 +52,7 @@ def test_direct_merge_settles_uncarded_task_once(client, app_world, manually_clo
             events = list(
                 await session.scalars(
                     select(Block).where(
-                        Block.conversation_id == row.room_id,
+                        Block.conversation_id == row.id,
                         Block.meta["event_type"].as_string() == "accept_done",
                     )
                 )

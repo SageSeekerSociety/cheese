@@ -54,6 +54,7 @@ async def post_with_retries(
     content: str,
     source: str,
     meta: dict | None = None,
+    task_id: uuid.UUID | None = None,
 ) -> bool:
     """Internal shared entrypoint for landing a system-authored post into a
     topic's timeline, retrying transient DB failures. Returns whether it
@@ -66,6 +67,9 @@ async def post_with_retries(
     is trusted by construction, so it calls this function directly and skips
     the HTTP hop and the webhook-token check entirely — that check is for the
     external HTTP door, not a gate this function itself enforces.
+
+    ``task_id`` is the task the outcome belongs to: the line lands in that task's
+    own conversation, which is where the people following the task read it.
 
     Each attempt gets its own session, which is the point of this wrapper: the
     outcome it reports already happened elsewhere (a merge on GitHub, a CI run),
@@ -84,6 +88,7 @@ async def post_with_retries(
                 block = await announce(
                     session,
                     place_id=topic_id,
+                    task_id=task_id,
                     content=content,
                     meta={"source": source, **(meta or {})},
                     author=source,

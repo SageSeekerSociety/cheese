@@ -56,7 +56,7 @@ def _service(
     service._topics = SimpleNamespace(get=get_topic)  # type: ignore[attr-defined]
     # 房间那一行 + 展开区，一起记下来：要去看哪几间房是展开区的内容。
     service._notify_merge_result = (  # type: ignore[attr-defined]
-        lambda topic, content, meta=None: recorder.messages.append(
+        lambda topic, content, task_id, meta=None: recorder.messages.append(
             f"{content}\n{(meta or {}).get('detail') or ''}"
         )
     )
