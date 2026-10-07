@@ -106,7 +106,7 @@ it('comes back to the print view when the next file has no page to show', async 
   vi.mocked(api.readPreviewFile).mockResolvedValue(file('old.doc'))
   await ui.rerender({ ...panelProps, path: 'old.doc' })
 
-  await waitFor(() => expect(api.previewDocumentPdfSnapshot.mock.calls.length).toBeGreaterThanOrEqual(2))
+  await waitFor(() => expect(vi.mocked(api.previewDocumentPdfSnapshot).mock.calls.length).toBeGreaterThanOrEqual(2))
   expect(ui.queryByTestId('toggle-doc-page')).toBeNull()
   expect(ui.container.querySelector('iframe')).toBeNull()
   await waitFor(() => expect(ui.container.querySelector('.viewer')).not.toBeNull())
