@@ -75,8 +75,8 @@ export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$SANDBOX_IMAGE}"
 # Optional overlay compose files layered on top of the base (space-separated).
 # Bare names resolve against the committed compose dir; absolute paths pass
 # through. Set in the box-local ops/deploy.env — e.g. dev adds the subscription
-# overlay (docker.sock + workspace path parity, so a turn can spawn the agent
-# sandbox); prod leaves it empty and is untouched. Committed overlays survive the
+# overlay (workspace path parity and the metering proxy's log and CA); prod
+# leaves it empty and is untouched. Committed overlays survive the
 # runner's per-run re-checkout, so the deploy carries them itself — no box-side
 # heal hack needed to re-apply them after each CI redeploy.
 COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:-}"
@@ -180,9 +180,9 @@ ensure_preview_connection_owner() {
   fail "preview connection owner is not healthy; no route or backend was changed"
 }
 
-# A healthy owner is not enough: WORKSPACE_ROOT is a HOST path (a sandbox sibling
-# resolves its own `-v <src>` against the host daemon), so a subscription box
-# mounts the workspace tree at that same absolute path inside the backend too —
+# A healthy owner is not enough: WORKSPACE_ROOT is a HOST path in the box env, so
+# a subscription box mounts the workspace tree at that same absolute path inside
+# the backend too —
 # see deploy/compose/docker-compose.subscription.yml. Miss that mount on
 # preview-connection and the owner still reports /healthz while every static
 # preview and room-file read fails with a path that does not exist. Check the
@@ -560,7 +560,7 @@ done
 # The `-b` services are written here, from compose's own merged model after
 # every overlay, so they cannot drift from the services they copy: `extends`
 # reads one file only and would miss what an overlay adds (the subscription
-# overlay's docker socket, for one). Only the published port differs, plus the
+# overlay's workspace mirror, for one). Only the published port differs, plus the
 # network name the other services dial (`backend` for device-connection and the
 # office editor, `frontend` for the backend's docs index), which both slots of a
 # service answer to. `frontend` itself is moved to a loopback port with

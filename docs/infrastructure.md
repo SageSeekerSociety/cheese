@@ -119,9 +119,8 @@ a backend.
 
 Health is not enough on a subscription box. The owner reads static previews and
 room files off `settings.workspace_root`, which the shared env file names as a
-HOST path (a sandbox sibling resolves its own `-v <src>` against the host daemon,
-so the backend mirrors the tree at that same absolute path —
-`docker-compose.subscription.yml`). Miss that mirror on `preview-connection` and
+HOST path, so the backend mirrors the tree at that same absolute path
+(`docker-compose.subscription.yml`). Miss that mirror on `preview-connection` and
 the owner still answers `/healthz` while every preview fails on a path that was
 never mounted. So after the health probe, and still before any route or backend
 change, the deploy runs a one-shot check inside the owner against the same
