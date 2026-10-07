@@ -79,3 +79,32 @@ def test_what_a_session_opens_with_says_nothing_about_this_particular_turn() -> 
 
     assert "本轮" not in joined
     assert "本轮接着上一轮跑" in _resume_notice()
+
+
+def test_the_roster_tells_the_agent_each_persons_clock() -> None:
+    """The times an agent reads are UTC; what it writes for someone is read on
+    that person's clock. Without their zone it can only copy the UTC clock time,
+    which reads as seven hours off to someone in Los Angeles."""
+    text = build_session_opening(
+        roster=[
+            {
+                "name": "Andy",
+                "handle": "andy",
+                "agent": False,
+                "timezone": "America/Los_Angeles",
+            },
+            {"name": "Nova", "handle": "cheese-1", "agent": True},
+        ]
+    ).text
+
+    andy = next(line for line in text.splitlines() if "handle: andy" in line)
+    assert "America/Los_Angeles" in andy
+    assert "UTC" in text
+
+
+def test_a_roster_without_any_zone_adds_no_clock_advice() -> None:
+    text = build_session_opening(
+        roster=[{"name": "Andy", "handle": "andy", "agent": False}]
+    ).text
+
+    assert "UTC" not in text
