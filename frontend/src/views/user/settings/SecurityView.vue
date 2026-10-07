@@ -156,38 +156,34 @@
     </section>
 
     <!-- Changing the password -->
-    <v-dialog v-model="showChangePassword" :max-width="DIALOG_WIDTH.sm" @after-leave="resetPasswordForm">
-      <v-card :title="t('account.security.changePasswordTitle')">
-        <v-form ref="passwordForm" @submit.prevent="submitPassword">
-          <v-card-text class="pt-2">
-            <PasswordField
-              id="security-new-password"
-              v-model="newPassword"
-              autocomplete="new-password"
-              :label="t('account.field.newPassword')"
-              :hint="t('account.rule.passwordHint')"
-              persistent-hint
-              :rules="[(v: string) => REGEX_PASSWORD.test(v ?? '') || t('account.rule.passwordInvalid')]"
-              class="mb-2"
-            />
-            <PasswordField
-              id="security-confirm-password"
-              v-model="confirmPassword"
-              autocomplete="new-password"
-              :label="t('account.field.confirmPassword')"
-              :rules="[(v: string) => v === newPassword || t('account.rule.passwordsDoNotMatch')]"
-            />
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <BaseButton kind="ghost" @click="showChangePassword = false">{{ t('account.cancel') }}</BaseButton>
-            <BaseButton kind="primary" type="submit" :loading="changingPassword">
-              {{ t('account.security.changePasswordSubmit') }}
-            </BaseButton>
-          </v-card-actions>
-        </v-form>
-      </v-card>
-    </v-dialog>
+    <AdaptiveDialog
+      v-model="showChangePassword"
+      :title="t('account.security.changePasswordTitle')"
+      size="sm"
+      :primary-label="t('account.security.changePasswordSubmit')"
+      :primary-loading="changingPassword"
+      @primary="submitPassword"
+    >
+      <v-form ref="passwordForm" @submit.prevent="submitPassword">
+        <PasswordField
+          id="security-new-password"
+          v-model="newPassword"
+          autocomplete="new-password"
+          :label="t('account.field.newPassword')"
+          :hint="t('account.rule.passwordHint')"
+          persistent-hint
+          :rules="[(v: string) => REGEX_PASSWORD.test(v ?? '') || t('account.rule.passwordInvalid')]"
+          class="mb-2"
+        />
+        <PasswordField
+          id="security-confirm-password"
+          v-model="confirmPassword"
+          autocomplete="new-password"
+          :label="t('account.field.confirmPassword')"
+          :rules="[(v: string) => v === newPassword || t('account.rule.passwordsDoNotMatch')]"
+        />
+      </v-form>
+    </AdaptiveDialog>
 
     <!-- Turning on two-step verification, and showing new backup codes -->
     <v-dialog v-model="showTotp" max-width="480" persistent>
@@ -280,13 +276,14 @@
 import type { OAuthConnectionInfo } from '@/cx_types'
 import type { PasskeyInfo, SessionInfo } from '@/network/api/users/types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { REGEX_PASSWORD } from '@/utils/form'
 
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import i18n, { t } from '@/i18n'
 import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
 import { deviceOf } from '@/views/user/settings/deviceName'
@@ -357,6 +354,11 @@ function resetPasswordForm() {
   confirmPassword.value = ''
   passwordForm.value?.reset()
 }
+
+// 弹窗关上就把表单清空：`AdaptiveDialog` 不转发 `v-dialog` 的 `after-leave`，改盯状态。
+watch(showChangePassword, (open) => {
+  if (!open) resetPasswordForm()
+})
 
 const submitPassword = async () => {
   const { valid } = (await passwordForm.value?.validate()) ?? { valid: false }
