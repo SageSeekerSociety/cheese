@@ -544,7 +544,8 @@
     "copyId": "Copy device ID",
     "copiedId": "Device ID copied",
     "thisDevice": "This device",
-    "lastSeen": "Offline · last seen {when}"
+    "lastSeen": "Offline · last seen {when}",
+    "claudeCodeModelService": "Claude Code · custom model service ({model})"
   },
   "connections": {
     "lede": "Connect your own mailbox or Feishu and choose which projects' AI teammates may use it. They read mail, write drafts and edit Feishu docs as you; mail is sent only after you confirm it",
@@ -657,7 +658,7 @@
     "save": "Save",
     "teamsFailed": "Couldn't save",
     "loadFailed": "Couldn't load",
-    "claudeHint": "Runs with your own Claude account, and only you can call it in a project",
+    "claudeHint": "Runs with your own Claude account or model service, and only you can call it in a project",
     "claudeLogin": "Log in to Claude Code",
     "claudeApiKey": "Use an API key",
     "claudePreparing": "Preparing Claude Code",
@@ -670,7 +671,15 @@
     "disconnectTitle": "Disconnect this device",
     "disconnectBody": "Your AI teammates will no longer run tasks on this device, and any running here will stop",
     "disconnect": "Disconnect",
-    "disconnectConfirm": "Disconnect this device?"
+    "disconnectConfirm": "Disconnect this device?",
+    "claudeModelService": "Using a custom model service ({model})",
+    "modelServiceOpen": "Use a custom model service",
+    "modelServiceUrl": "Service address",
+    "modelServiceToken": "Key",
+    "modelServiceModel": "Model name",
+    "modelServiceSave": "Save",
+    "modelServiceHint": "Any service compatible with the Anthropic API, such as GLM, Kimi or DeepSeek. The key is kept on this computer only",
+    "modelServiceFailed": "The custom model service could not be saved. Check the address, key and model name, then try again"
   },
   "connectFlow": {
     "askTitle": "Connect this device",

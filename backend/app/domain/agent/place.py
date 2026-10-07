@@ -184,3 +184,9 @@ SANDBOXES_DIR = "sandboxes"
 #: reads it; both copies are held to this one by
 #: `tests/unit/test_footprint_root.py`.
 CLAUDE_LOGIN_DIR = "claude-login"
+
+#: In the login directory: another model service its owner set instead of the
+#: login (`cheesehost claude login --base-url`), as `{base_url, token, model}`.
+#: The launch exports it and the probe reports its model; the connector writes
+#: it (`claudecode.serviceFile`), held to this name by the same test.
+MODEL_SERVICE_FILE = "model-service.json"

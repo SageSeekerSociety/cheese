@@ -37,6 +37,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.place import (
     CHECKOUT_DIR,
     CLAUDE_LOGIN_DIR,
+    MODEL_SERVICE_FILE,
     SANDBOXES_DIR,
     STAGED_DIR,
     footprint_root,
@@ -144,6 +145,9 @@ def test_the_connector_logs_claude_code_in_where_the_backend_asks_about_it():
     declared = re.search(r'ClaudeLogin\s*=\s*"([^"]+)"', source)
     assert declared, "the connector stopped declaring the Claude Code login directory"
     assert declared.group(1) == CLAUDE_LOGIN_DIR
+    service = re.search(r'ModelService\s*=\s*"([^"]+)"', source)
+    assert service, "the connector stopped declaring the model service file"
+    assert service.group(1) == MODEL_SERVICE_FILE
 
 
 # What the sandbox CLI hangs off its own home: `Path.home() / "x"` and
