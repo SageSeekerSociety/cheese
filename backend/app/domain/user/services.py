@@ -117,6 +117,25 @@ async def timezones_by_ids(
     return {uid: user.timezone for uid, user in users.items()}
 
 
+async def timezones_by_handles(
+    session: AsyncSession, handles: Iterable[str]
+) -> dict[str, str]:
+    """handle -> 他浏览器报上来的时区；没报过的人不在结果里。"""
+    from sqlalchemy import select
+
+    wanted = set(handles)
+    if not wanted:
+        return {}
+    rows = await session.execute(
+        select(User.username, User.timezone).where(
+            User.username.in_(wanted),
+            User.timezone.is_not(None),
+            User.deleted_at.is_(None),
+        )
+    )
+    return {handle: zone for handle, zone in rows.all() if zone}
+
+
 async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> bool:
     """记下这个人浏览器所在的时区；账号不在了返回 False。取值由调用方先校验。"""
     user = await UserRepository(session).get_by_id(user_id)
