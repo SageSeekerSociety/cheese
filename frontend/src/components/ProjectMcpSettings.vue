@@ -10,6 +10,7 @@ import { holdRevealGate } from '@/composables/useRevealGate'
 import { clearMcpSecret, connectMcpServer, disconnectMcpServer, getMcpServers, setMcpSecret } from '../api'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
@@ -175,7 +176,7 @@ watch(() => props.projectId, load)
       <template v-if="list">
         <p v-if="list.problem === 'invalid'" class="t-body c-muted">{{ t('work.mcp.problem.invalid') }}</p>
         <p v-else-if="list.problem === 'unreadable'" class="t-body c-muted">{{ t('work.mcp.problem.unreadable') }}</p>
-        <p v-else-if="!list.servers.length" class="t-body c-muted">{{ t('work.mcp.empty') }}</p>
+        <BaseEmptyState v-else-if="!list.servers.length" size="inline" :title="t('work.mcp.empty')" />
         <ul v-else class="mcp-list">
           <li v-for="server in list.servers" :key="server.name" class="mcp-row" :data-server="server.name">
             <div class="mcp-row__head">

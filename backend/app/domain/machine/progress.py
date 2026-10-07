@@ -47,6 +47,7 @@ async def _line(
         place_id=await _conversation(session, home),
         content=content,
         meta={"who": "platform", "home": str(home.id), **meta},
+        published_by_caller=True,
     )
     if block is None:
         return None

@@ -107,7 +107,13 @@ echo "downloading cheesehost ($target)…"
 partial="$dest/cheesehost.part"
 rm -f "$partial"
 attempt=1
-until curl -fsSL -C - -o "$partial" "$ORIGIN/connector/latest/$target/cheesehost"; do
+# The desktop app shows how far the download has got, from curl's bar.
+progress=-s
+if [ -n "${{CHEESE_PROGRESS:-}}" ]; then
+  progress=-#
+fi
+binary="$ORIGIN/connector/latest/$target/cheesehost"
+until curl -fSL "$progress" -C - -o "$partial" "$binary"; do
   if [ "$attempt" -ge 5 ]; then
     rm -f "$partial"
     echo "download failed after $attempt attempts"

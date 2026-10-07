@@ -25,6 +25,7 @@ import { paletteAsk, paletteOpen } from './state'
 
 import { defineCommands, menuActionOf } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
@@ -484,12 +485,13 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
                 </span>
               </div>
             </template>
-            <div
+            <BaseEmptyState
               v-if="input.trim() && input.trim() !== '?' && !rows.length && !searching"
-              class="palette__empty t-body c-muted"
-            >
-              {{ t('navigation.palette.empty') }}
-            </div>
+              size="inline"
+              align="center"
+              class="palette__empty"
+              :title="t('navigation.palette.empty')"
+            />
           </div>
           <!-- 底栏只在桌面上有：手机上没有这几个键。 -->
           <div v-if="mdAndUp && (paletteAsk || selectedRow)" class="palette__foot">
@@ -749,7 +751,6 @@ const enterKey = isMac ? '⌘' : 'Ctrl'
 }
 .palette__empty {
   padding: 24px 10px;
-  text-align: center;
 }
 
 /* 手机上是一整页：高度扣掉键盘，输入框钉在顶上。 */

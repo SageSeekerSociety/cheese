@@ -103,7 +103,7 @@ fn may_install_unattended(connecting: bool, in_sight: bool) -> bool {
 }
 
 fn connecting(app: &AppHandle) -> bool {
-    app.state::<connect::Running>().0.lock().unwrap().is_some()
+    app.state::<connect::Running>().busy()
 }
 
 async fn install_when_away(app: AppHandle) {

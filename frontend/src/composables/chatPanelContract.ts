@@ -71,6 +71,9 @@ export interface ChatPanelOptions {
    *  附件仍是房间的。没有就是房间自己。 */
   conversationId?: () => string | null
   alwaysSummon: () => boolean
+  /** 这里是频道主线：叫芝士的消息在它底下的支线里回答，那一轮的开工、收工发给支线，
+   *  这里听不到。没有就是在原处回答（任务、支线、私聊、已归档的频道）。 */
+  answersInThread?: () => boolean
   showComposer: () => boolean
   members: () => ProjectMemberRow[]
   topicList: () => Topic[]

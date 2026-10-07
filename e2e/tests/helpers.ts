@@ -205,3 +205,41 @@ export function isEnvironmentNoise(entry: string, appOrigin: string): boolean {
 export function appOriginOf(baseURL: string | undefined): string {
   return new URL(baseURL!).origin;
 }
+
+/**
+ * Start recording elements the browser does not know: what Vue leaves in the
+ * page when a template names a component nobody registered. The dev build
+ * also warns `Failed to resolve component` in the console; a production build
+ * says nothing and renders the tag as it is, so the page is where both builds
+ * can be asked. Call before the first navigation; read with
+ * `unknownElements`.
+ */
+export async function recordUnknownElements(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const seen = new Set<string>();
+    (window as unknown as { __unknownElements: Set<string> }).__unknownElements = seen;
+    const note = (el: Element) => {
+      if (el instanceof HTMLUnknownElement || (el instanceof HTMLElement && el.localName.includes("-"))) {
+        seen.add(el.localName);
+      }
+    };
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (!(node instanceof Element)) continue;
+          note(node);
+          node.querySelectorAll("*").forEach(note);
+        }
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+}
+
+/** Unknown tags seen since `recordUnknownElements`, minus custom elements that were defined by now. */
+export async function unknownElements(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    [...((window as unknown as { __unknownElements?: Set<string> }).__unknownElements ?? [])].filter(
+      (name) => !customElements.get(name),
+    ),
+  );
+}

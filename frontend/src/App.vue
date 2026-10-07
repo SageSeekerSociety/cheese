@@ -255,6 +255,7 @@
       <DesktopPhoneDialog />
     </template>
     <CommandPalette />
+    <DeviceConnect />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
   </my-app>
@@ -317,7 +318,7 @@ import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
-import { autoConnectThisComputer } from '@/lib/desktop'
+import { offerToConnect } from '@/lib/desktop'
 import {
   desktopBadge,
   desktopListenForNotices,
@@ -344,6 +345,7 @@ import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
+import DeviceConnect from '@/views/desktop/DeviceConnect.vue'
 import TaskInheritance from '@/views/tasks/components/TaskInheritance.vue'
 import { useTaskInheritance } from '@/views/tasks/composables/useTaskInheritance'
 
@@ -556,12 +558,12 @@ watch(
   }
 )
 
-// In the desktop app, being signed in is what makes this computer one of your
-// devices: at launch with a session, and at every sign-in (lib/desktop.ts).
+// In the desktop app, signing in asks once whether to connect this computer as a
+// device; one connected before comes back on its own (lib/desktop.ts).
 watch(
   () => AccountService.loggedIn && AccountService.user?.id,
   (userId) => {
-    if (typeof userId === 'number') void autoConnectThisComputer(userId)
+    if (typeof userId === 'number') void offerToConnect(userId)
   },
   { immediate: true }
 )
