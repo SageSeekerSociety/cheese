@@ -297,7 +297,13 @@ class SessionHost:
                     f"hold a read (it announced {sorted(launched.capabilities)}, "
                     f"without {LONG_POLL!r}); it is not supported"
                 )
-            if running is None or running.host != host:
+            if (
+                running is None
+                or running.host != host
+                # Its reading heard the runner it had go while this one
+                # started, and let it go with it.
+                or self._running.get(ref) is not running
+            ):
                 seat, acting = _seat(ref, access)
                 running = _Running(
                     host,
@@ -753,6 +759,9 @@ class SessionHost:
         failing_since: float | None = None
         while True:
             running.woken.clear()
+            # The runner this pass asks: one started meanwhile is not the one
+            # whose answer it brings back.
+            launched = running.launched
             try:
                 await subscription.drain(wait=0 if first else READ_WAIT_S)
             except (DeviceOffline, DeviceCallError, httpx.TransportError) as exc:
@@ -818,7 +827,7 @@ class SessionHost:
                 await hand(
                     Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
                 )
-            if not heard.get("alive", True):
+            if not heard.get("alive", True) and running.launched is launched:
                 self._forget(ref, running)
                 await hand(Read(None, Ended("exited")))
                 return
