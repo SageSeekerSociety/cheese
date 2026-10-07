@@ -38,12 +38,13 @@
 |---|---|
 | 验收人 | 卡是递给他的 |
 | 提需求的人 | 他等的东西有了结果 |
+| 任务负责人 | 下一步只有他能推（`presentation.owner_acts_on`） |
 | 被问的那个人 | 芝士停在一个待确认问题上，只有他能回答 |
 | 设备的主人 | 有 agent 开始在他登记的机器上干活，让不让它继续用只有他能定（#1900） |
 | 公告的读者 | 空间发了一条公告，而公告就是写给这个空间里的每个人的 |
 
-前三条是 #1084 定的收件人。「待我处理」那份清单和投递读的是同一份判据 —— 通知负
-责把人叫回来，清单负责他回来之后不用自己翻。
+前三条是 #1084 定的收件人，第四条补上了任务负责人。「待我处理」那份清单和投递
+读的是同一份判据 —— 通知负责把人叫回来，清单负责他回来之后不用自己翻。
 
 ## 纯函数
 
@@ -65,6 +66,7 @@ from app.domain.room_task.presentation import Column
 #: 为什么是他。前端按它给「待我处理」的每一行配一句话。
 REASON_REVIEWER = "reviewer"
 REASON_REPORTER = "reporter"
+REASON_OWNER = "owner"
 REASON_ASKED = "asked"
 REASON_MACHINE_OWNER = "machine_owner"
 REASON_AUDIENCE = "audience"
@@ -113,6 +115,9 @@ class Event:
     reviewers: tuple[str, ...] = ()
     reporter: str | None = None
     asked: str | None = None
+    #: 任务负责人 —— 只在这一格的下一步在他手上时才点（`presentation.owner_acts_on`）；
+    #: 只是任务开着不点。
+    owner: str | None = None
     #: 登记了那台机器的人：他的机器上有 agent 开工了。
     machine_owner: str | None = None
     #: 一条公告写给的那些人：发布那一刻这个空间里除发布人以外的每个人。这是上面
@@ -181,6 +186,7 @@ def address(event: Event, next_hand: Hand) -> Addressed:
         (event.asked, REASON_ASKED),
         *((h, REASON_REVIEWER) for h in event.reviewers),
         (event.reporter, REASON_REPORTER),
+        (event.owner, REASON_OWNER),
         (event.machine_owner, REASON_MACHINE_OWNER),
         *((h, REASON_AUDIENCE) for h in event.audience),
     ):

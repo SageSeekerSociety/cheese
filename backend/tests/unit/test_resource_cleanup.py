@@ -631,6 +631,39 @@ def test_teardown_reads_a_target_a_seat_kept_in_its_own_directory(tmp_path):
         cleanup.session_target(home, str(uuid.uuid4()))
 
 
+def test_a_private_chats_container_is_released_out_of_the_seat_that_holds_it(
+    tmp_path,
+):
+    """The helper is read out of the installation the target came from.
+
+    A seat keeps its own copy of the release (the launcher writes it into the
+    seat that owns the session) and the room level keeps none, so reading the
+    room level raised FileNotFoundError, the release never ran, and the private
+    container stayed on the machine holding its scratch for good — the leak
+    `target_markers` reads seats to prevent.
+    """
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home, _work = cleanup.resource_paths(tmp_path, project, resource)
+    seat = home / ".cheese/seats/4b9f7d802648"
+    (seat / "remote-execution").mkdir(parents=True)
+    (seat / "remote-target.json").write_text(
+        json.dumps({"kind": "private", "topic": resource})
+    )
+    asked = tmp_path / "asked-to-release.json"
+    (seat / "remote-execution/private.py").write_text(
+        "import json\n"
+        "from pathlib import Path\n"
+        "def release(config):\n"
+        f"    Path({str(asked)!r}).write_text(json.dumps(config))\n"
+    )
+
+    removed = run_cleanup(tmp_path, "remove", project, resource)
+
+    assert removed.returncode == 0, removed.stderr
+    assert json.loads(asked.read_text()) == {"kind": "private", "topic": resource}
+    assert not home.exists()
+
+
 def test_unpublished_source_blocks_cleanup(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     (tmp_path / "source.py").write_text("work in progress")

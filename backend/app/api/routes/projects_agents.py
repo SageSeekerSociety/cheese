@@ -156,7 +156,7 @@ async def list_project_agents(
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     await service.for_project(project)
-    rows = await service.list_for_project(project_id)
+    rows = await service.list_team(project_id)
     items = [
         _agent_out(
             project_id,

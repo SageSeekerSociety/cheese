@@ -221,6 +221,21 @@ class CloudHost(UuidPk, Timestamps, Base):
     offline_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Since when the pool has been waking an enrolled host whose connector is
+    # away because MicroCloud has it suspended or stopped, its disk intact
+    # (``services.WAKE_WITHIN``); NULL once its connector is back.
+    waking_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # How many resume or start requests the pool has sent for that wake
+    # (``services.MAX_WAKE_REQUESTS``).
+    wake_requests: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # The wake did not bring the host back: it is kept with everything on it,
+    # off the pool's count, for a person to look at, and never deleted by the
+    # pool. Cleared when its connector comes back.
+    wake_failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # The provider failed it — before it was enrolled, or by reporting an
     # enrolled one in error. Counted against ``MAX_PROVIDER_ERRORS``; such a
     # host is released at once.

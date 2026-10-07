@@ -16,19 +16,22 @@
       :aria-label="t('admin.layout.sections')"
     >
       <template v-if="store.metaChecked && canEnter">
-        <v-list-item
-          v-for="section in visibleSections"
-          :key="section.to"
-          rounded="lg"
-          :prepend-icon="section.icon"
-          :to="section.to"
-          :active="isCurrent(section.name)"
-          :title="section.label()"
-        >
-          <template v-if="section.badge && unread > 0" #append>
-            <span class="side-nav__count t-num" :aria-label="t('feedback.dashboard.kpi.unread')">{{ unread }}</span>
-          </template>
-        </v-list-item>
+        <template v-for="group in visibleGroups" :key="group.key">
+          <v-list-subheader>{{ group.label() }}</v-list-subheader>
+          <v-list-item
+            v-for="section in group.sections"
+            :key="section.to"
+            rounded="lg"
+            :prepend-icon="section.icon"
+            :to="section.to"
+            :active="isCurrent(section.name)"
+            :title="section.label()"
+          >
+            <template v-if="section.badge && unread > 0" #append>
+              <span class="side-nav__count t-num" :aria-label="t('feedback.dashboard.kpi.unread')">{{ unread }}</span>
+            </template>
+          </v-list-item>
+        </template>
       </template>
 
       <!-- 回工作区，不是回反馈中心：`/` 那一格才是「工作区」的家（HomeDefault），
@@ -55,7 +58,7 @@ import { useFeedbackStore } from '@/stores/feedback'
 const { t } = useI18n()
 const { mdAndUp } = useDisplay()
 const store = useFeedbackStore()
-const { visibleSections, canEnter, isCurrent } = useAdminSections()
+const { visibleGroups, canEnter, isCurrent } = useAdminSections()
 
 const unread = computed(() => store.counts.unread ?? 0)
 </script>

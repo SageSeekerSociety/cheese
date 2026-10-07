@@ -146,10 +146,10 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('项目名下面只有看板和资料库，综合是频道分组里的第一个频道', () => {
+  it('项目名下面只有总览和资料库，综合是频道分组里的第一个频道', () => {
     const { container } = mount()
     // 其余的页在点项目名弹出的菜单里（.claude/rules/project-sidebar.md）。
-    expect(titlesIn(container, '[aria-label="项目页面"] .pinned-row')).toEqual(['看板', '资料库'])
+    expect(titlesIn(container, '[aria-label="项目页面"] .pinned-row')).toEqual(['总览', '资料库'])
     // 综合排在「频道」标题下面，和别的频道同一组。
     const heading = container.querySelector('.side-subhead')!
     const general = container.querySelector('[data-row-actions="root"]')!

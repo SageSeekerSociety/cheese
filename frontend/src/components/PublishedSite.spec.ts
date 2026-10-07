@@ -92,7 +92,10 @@ beforeEach(() => {
 afterEach(cleanup)
 
 function mount() {
-  return render(PublishedSite, { props: { projectId: 'project-a' }, global: { plugins: [vuetify] } })
+  return render(PublishedSite, {
+    props: { projectId: 'project-a', api: { read: getProjectSite, publish: publishProjectSite } },
+    global: { plugins: [vuetify] },
+  })
 }
 
 /** 行上那个按钮开对话框；对话框里那个「发布」才真的发。 */

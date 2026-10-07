@@ -81,6 +81,7 @@
     "src/views/admin/AdminCreditsPageView.vue",
     "src/views/admin/AdminRatchetPageView.vue",
     "src/views/admin/AdminRunRecordsPageView.vue",
+    "src/views/admin/AdminStatsPageView.vue",
     "src/views/legal/LegalDocumentView.vue",
     "src/views/spaces/detail/ManageDeniedView.vue",
     "src/views/spaces/detail/PublishTaskView.vue",
@@ -100,7 +101,8 @@
     "src/views/user/settings/SecurityView.vue",
     "src/views/user/settings/UsageView.vue",
     "src/views/workspace/ChannelBrowseView.vue",
-    "src/views/workspace/ChannelTasksView.vue"
+    "src/views/workspace/ProjectOverviewView.vue",
+    "src/views/workspace/ProjectTasksView.vue"
   ],
   "debt": [
     "src/views/ConnectView.vue",
@@ -120,7 +122,6 @@
     "src/views/ProjectSkillsView.vue",
     "src/views/SiteOpenView.vue",
     "src/views/TeamInviteView.vue",
-    "src/views/admin/AdminDashboardPage.vue",
     "src/views/admin/AdminFeaturePage.vue",
     "src/views/admin/AdminFeatureStatsPage.vue",
     "src/views/admin/AdminIntegrationsPage.vue",
@@ -179,7 +180,6 @@
     "src/views/workspace/ProjectMembersView.vue",
     "src/views/workspace/ProjectShell.vue",
     "src/views/workspace/ProjectSidebar.vue",
-    "src/views/workspace/RunningWorkView.vue",
     "src/views/workspace/TopicView.vue",
     "src/views/workspace/WorkspaceEntry.vue"
   ]

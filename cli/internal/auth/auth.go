@@ -124,3 +124,23 @@ func postJSON(ctx context.Context, url string, body, out any) error {
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
+
+// Forgotten reports whether the server no longer knows the device token
+// names: the machine was unbound, or the token was replaced, after this
+// machine stored it. Only the server's own refusal counts; a server that
+// cannot be reached, or answers anything else, says nothing about the token,
+// and the caller goes on as before.
+func Forgotten(ctx context.Context, base, token string) bool {
+	base = strings.TrimRight(base, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/device/me", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("X-Cheese-Session", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusUnauthorized
+}

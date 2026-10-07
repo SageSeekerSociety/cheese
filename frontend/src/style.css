@@ -488,6 +488,17 @@
   background-color: var(--canvas);
 }
 
+/* The theme's text colour starts at <body>, not at .v-application. Vuetify sets
+   it only on .v-application, and whatever is teleported to <body> — the settings
+   overlay (SettingsOverlay.vue), and anything else mounted there — sits outside
+   it. Vuetify's labels, field values, hints, chips and table cells set no colour
+   of their own, so out there they inherited the browser default (CanvasText):
+   pure white in Chrome, and black on the dark card wherever the webview resolved
+   a light colour scheme. */
+body {
+  color: var(--text);
+}
+
 /* Fusion merge: these global element overrides (html/body/#app/.v-application)
    are DISABLED here — in the merged app the original cheese shell owns the
    document-level styling; our tokens (:root) + utility classes (.t-*, .chip-*)

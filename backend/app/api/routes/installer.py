@@ -120,38 +120,52 @@ done
 mv "$partial" "$dest/cheesehost"
 chmod +x "$dest/cheesehost"
 echo "installed to $dest/cheesehost"
-case ":$PATH:" in *":$dest:"*) : ;; *) echo "add $dest to your PATH" ;; esac
+# Where cheesehost reads its config: Go's os.UserConfigDir, which on macOS
+# ignores XDG.
+case "$os" in
+  darwin) CFG_DIR="$HOME/Library/Application Support/cheese" ;;
+  *) CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese" ;;
+esac
+CFG="$CFG_DIR/config.json"
+mkdir -p "$CFG_DIR"
+# The server this came from, so a bare `cheesehost link connect` knows where to
+# go. A config that already names one keeps it: its token belongs there.
 # WS-stripping edge (e.g. a campus front proxy that only forwards HTTP): the
-# server baked a WS-capable control-channel URL above. Pre-write it into the
-# cli config's "ws" key — the login loads-then-saves, so it
-# survives login. Login/approve/API/downloads all stay on ORIGIN.
-if [ -n "$WS_URL" ]; then
-  # Where cheesehost reads it: Go's os.UserConfigDir, which on macOS ignores XDG.
-  case "$os" in
-    darwin) CFG_DIR="$HOME/Library/Application Support/cheese" ;;
-    *) CFG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/cheese" ;;
-  esac
-  CFG="$CFG_DIR/config.json"
-  mkdir -p "$CFG_DIR"
-  if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$CFG" "$WS_URL" <<'PY'
+# server baked a WS-capable control-channel URL above into "ws" — the login
+# loads-then-saves, so it survives login. Login/approve/API/downloads all stay
+# on ORIGIN.
+if [ -f "$CFG" ] && command -v python3 >/dev/null 2>&1; then
+  python3 - "$CFG" "$ORIGIN/connector" "$WS_URL" <<'PY'
 import json, sys
-path, ws = sys.argv[1], sys.argv[2]
+path, base, ws = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     cfg = json.load(open(path))
 except Exception:
     cfg = {{}}
-cfg["ws"] = ws
+if not cfg.get("base"):
+    cfg["base"] = base
+if ws:
+    cfg["ws"] = ws
 json.dump(cfg, open(path, "w"), indent=2)
 PY
-  elif [ ! -f "$CFG" ]; then
-    printf '{{\\n  "ws": "%s"\\n}}\\n' "$WS_URL" > "$CFG"
+elif [ ! -f "$CFG" ]; then
+  if [ -n "$WS_URL" ]; then
+    printf '{{\n  "base": "%s",\n  "ws": "%s"\n}}\n' \
+      "$ORIGIN/connector" "$WS_URL" > "$CFG"
   else
-    echo "note: set \\"ws\\": \\"$WS_URL\\" in $CFG by hand (python3 not found)"
+    printf '{{\n  "base": "%s"\n}}\n' "$ORIGIN/connector" > "$CFG"
   fi
+elif [ -n "$WS_URL" ]; then
+  echo "note: set \"ws\": \"$WS_URL\" in $CFG by hand (python3 not found)"
+fi
+if [ -n "$WS_URL" ]; then
   echo "control channel pinned to $WS_URL (WS-stripping edge)"
 fi
-echo "next: cheesehost link connect $ORIGIN/connector   (logs in, then stays connected)"
+# A fresh macOS, or a Linux account that has not logged in again since
+# ~/.local/bin was made, does not have it on PATH yet: name the binary by its
+# full path, so the next command works as printed.
+case ":$PATH:" in *":$dest:"*) bin=cheesehost ;; *) bin="$dest/cheesehost" ;; esac
+echo "next: $bin link connect $ORIGIN/connector   (logs in, then stays connected)"
 """
     return PlainTextResponse(script, media_type="text/x-shellscript")
 

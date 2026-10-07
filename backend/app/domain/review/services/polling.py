@@ -6,9 +6,8 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, NoReturn, cast
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
@@ -23,6 +22,7 @@ from app.domain.review.models import (
     AcceptStatus,
 )
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.services import poll_claim
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
@@ -138,7 +138,16 @@ async def _refresh_github_unseen_head(
 async def _status_client(self: pkg.AcceptService, project_id: uuid.UUID):
     from app.domain.project.forge import status_client
 
-    return await status_client(project_id, self._session)
+    return _remote(self, await status_client(project_id, self._session))
+
+
+def _remote[Client](self: pkg.AcceptService, client: Client) -> Client:
+    """A forge client as this service may call it: during a claimed poll,
+    one that gives the database connection back before each call. The
+    wrapper answers every call the client does, so it stands in as one."""
+    if client is None or not self._commits_before_remote:
+        return client
+    return cast("Client", poll_claim.CommitsBeforeRemote(client, self._session))
 
 
 async def _refresh_stale_card(
@@ -218,6 +227,7 @@ async def _app_credentials(
     tokens = await tokens_for_project(topic.project_id, self._session)
     if tokens is None:
         return None, "这个项目的代码托管凭据不可用"
+    tokens = _remote(self, tokens)
     try:
         write, _ = await tokens.write_token()
         read, _ = await tokens.installation_token()
@@ -236,13 +246,28 @@ async def advance_pr_card(
     once the rules are satisfied. Called by
     `review/pr_poll.py::poll_open_prs`; never raises for a transient GitHub
     hiccup — the next poll just retries."""
-    # A webhook and the reconciliation clock may observe the same card.
-    # Only one transaction may advance it or emit its notifications.
-    card = await self._session.scalar(
-        select(AcceptCard)
-        .where(AcceptCard.id == card_id)
-        .with_for_update(skip_locked=True)
-    )
+    # A webhook and the reconciliation clock may observe the same card; only
+    # one poll may advance it or emit its notifications (`poll_claim`).
+    token = await poll_claim.claim(self._session, card_id)
+    if token is None:
+        return
+    self._commits_before_remote = True
+    try:
+        await _advance_claimed(self, card_id, chat_service=chat_service, runner=runner)
+        await poll_claim.release(self._session, card_id, token)
+    except Exception:
+        await self._session.rollback()
+        await poll_claim.release(self._session, card_id, token)
+        await self._session.commit()
+        raise
+    finally:
+        self._commits_before_remote = False
+
+
+async def _advance_claimed(
+    self: pkg.AcceptService, card_id: uuid.UUID, *, chat_service, runner
+) -> None:
+    card = await self._session.get(AcceptCard, card_id, populate_existing=True)
     if card is None:
         return
     if (
@@ -472,7 +497,7 @@ async def _app_pr_client(self: pkg.AcceptService, topic: Topic):  # noqa: ANN202
     is not a GitHub https remote)."""
     from app.domain.project.forge import proposal_client
 
-    return await proposal_client(topic.project_id, self._session)
+    return _remote(self, await proposal_client(topic.project_id, self._session))
 
 
 async def note_poll_crashed(
@@ -527,6 +552,7 @@ async def _poll_pr_card(
             self._notify_merge_result(
                 topic,
                 say("acceptDoneAfterReturn", pr=number),
+                task_id=card.task_id,
                 meta=notice(
                     EVENT_ACCEPT_DONE,
                     severity=SEVERITY_INFO,

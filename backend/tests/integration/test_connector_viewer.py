@@ -2,6 +2,7 @@
 「我的设备」management routes (real app + DB, the shared device_hub singleton)."""
 
 import contextlib
+import json
 import time
 import uuid
 
@@ -375,3 +376,83 @@ def test_keystrokes_before_attaching_are_dropped(client, monkeypatch):
         _unregister(screen)
 
     assert sent == []
+
+
+def test_a_machine_learns_its_approval_was_withdrawn(client):
+    """A machine unbound since its approval still holds its token; asked, the
+    server says it no longer names a device, so connecting approves it again
+    instead of installing a connector every dial of which is turned away."""
+    alice = _login_real(client, "alice")
+    start = client.post("/connector/auth/device/start", json={"device_name": "mac"})
+    code = start.json()["device_code"]
+    connect = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(alice)
+    )
+    assert connect.status_code == 200, connect.text
+    token = client.post(
+        "/connector/auth/device/poll", json={"device_code": code}
+    ).json()["token"]
+    device_id = connect.json()["device_id"]
+
+    held = client.get("/connector/device/me", headers={"X-Cheese-Session": token})
+    assert held.status_code == 200 and held.json()["device_id"] == device_id
+
+    client.delete(f"/connector/my/devices/{device_id}", headers=_bearer(alice))
+    gone = client.get("/connector/device/me", headers={"X-Cheese-Session": token})
+    assert gone.status_code == 401
+    assert (
+        client.get("/connector/device/me", headers={"X-Cheese-Session": ""}).status_code
+        == 401
+    )
+
+
+def test_the_owner_sees_claude_code_logged_in_once_they_log_in_on_the_machine(
+    client, monkeypatch
+):
+    """Logging in on the machine tells the server nothing; the owner's devices
+    page asks the machine, and sees the login without waiting for the machine
+    to connect again (#2991)."""
+    alice = _login_real(client, "alice")
+    device_id = _enroll_device(client, alice)["device_id"]
+    answer = {"installed": True, "status": {"loggedIn": False}}
+
+    async def exec_(device, argv, *, stdin, timeout):
+        return {"exit": 0, "stdout": json.dumps(answer) + "\n", "stderr": ""}
+
+    monkeypatch.setattr(device_hub, "is_online", lambda device: device == device_id)
+    monkeypatch.setattr(device_hub, "exec", exec_)
+    asked = client.post(
+        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
+    )
+    assert asked.status_code == 200 and asked.json()["logged_in"] is False
+
+    answer["status"] = {"loggedIn": True, "subscriptionType": "max"}
+    asked = client.post(
+        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(alice)
+    )
+    assert asked.status_code == 200 and asked.json()["logged_in"] is True
+    listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
+    mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
+    assert mine["claude_code"]["logged_in"] is True
+
+    bob = _login_real(client, "bob")
+    theirs = client.post(
+        f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(bob)
+    )
+    assert theirs.status_code == 404
+
+
+def test_a_windows_device_is_not_offered_claude_code_it_cannot_run(client, monkeypatch):
+    """A member's own Claude Code does not run on Windows yet, so a Windows
+    device is not told to log it in; a Mac is."""
+    alice = _login_real(client, "alice")
+    device_id = _enroll_device(client, alice)["device_id"]
+
+    def line(target: str) -> bool:
+        monkeypatch.setattr(device_hub, "target", lambda device: target)
+        listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
+        mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
+        return "claude_code" in mine
+
+    assert line("darwin-arm64") is True
+    assert line("windows-amd64") is False

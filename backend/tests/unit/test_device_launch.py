@@ -1561,7 +1561,7 @@ def test_the_settings_refuse_what_the_argv_refuses():
     assert settings["permissions"]["deny"] == DISALLOWED_TOOLS
     assert LAUNCH_ARGS[LAUNCH_ARGS.index("--disallowedTools") + 1 :] == DISALLOWED_TOOLS
     assert "AskUserQuestion" in DISALLOWED_TOOLS
-    assert settings["attribution"] == {"sessionUrl": False}
+    assert settings["attribution"] == {"commit": "", "pr": "", "sessionUrl": False}
     assert settings["enableArtifact"] is False
 
 

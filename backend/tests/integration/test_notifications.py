@@ -82,7 +82,6 @@ def test_create_notification(client):
     assert data["target_handle"] == "alice"
     assert data["payload"] == {"diff": 3}
     assert data["read"] is False
-    assert data["feedback"] is None
 
 
 def test_create_notification_missing_project_404(client):
@@ -350,56 +349,4 @@ def test_mark_read_flips_read(client):
 
 def test_mark_read_missing_404(client):
     r = client.post(f"/alerts/{MISSING_ID}/read")
-    assert r.status_code == 404
-
-
-def test_feedback_up_and_down(client):
-    pid = _create_project(client)
-    n = _one(
-        client,
-        pid,
-        level="light",
-        kind="change_alert",
-        title="X",
-        target_handle="user-1",
-    )
-    headers = session_auth_headers("user-1")
-
-    r = client.post(
-        f"/alerts/{n['id']}/feedback",
-        json={"feedback": "up"},
-        headers=headers,
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["feedback"] == "up"
-
-    r = client.post(
-        f"/alerts/{n['id']}/feedback",
-        json={"feedback": "down"},
-        headers=headers,
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["feedback"] == "down"
-
-
-def test_feedback_invalid_422(client):
-    pid = _create_project(client)
-    n = _one(
-        client,
-        pid,
-        level="light",
-        kind="change_alert",
-        title="X",
-        target_handle="user-1",
-    )
-    r = client.post(
-        f"/alerts/{n['id']}/feedback",
-        json={"feedback": "meh"},
-        headers=session_auth_headers("user-1"),
-    )
-    assert r.status_code == 422
-
-
-def test_feedback_missing_404(client):
-    r = client.post(f"/alerts/{MISSING_ID}/feedback", json={"feedback": "up"})
     assert r.status_code == 404

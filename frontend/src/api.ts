@@ -68,6 +68,7 @@ import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from '
 import type { DocumentTemplate, RoomOutput } from './types/roomOutput'
 import type { SitePage } from './types/site'
 
+import { connectorRequest } from './api/connector'
 import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
 import { shareInFlight } from './lib/inflight'
 import { refusalWords } from './lib/noticeText'
@@ -96,31 +97,6 @@ export {
   RequestTimeoutError,
   tokenExpiresWithin,
 } from './api/http'
-
-// The connector lives at the origin root (`/connector/*`), not under `/api`, and its
-// responses are plain JSON (no ApiEnvelope). This mirrors `request` but skips the
-// `/api` prefix + envelope unwrap. Still sends the Bearer token for owner-gated routes.
-async function connectorRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/connector${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
-  })
-  if (!res.ok) {
-    let message = `HTTP ${res.status}`
-    try {
-      const body = await res.json()
-      message = refusalWords(body) || body?.detail || message
-    } catch {
-      // non-JSON error body — keep the status message
-    }
-    throw new Error(message)
-  }
-  return (await res.json()) as T
-}
 
 // Mirrors `request`'s envelope unwrap and auth header, minus the GET retry.
 //
@@ -803,28 +779,20 @@ export function deleteOAuthConnection(userId: string, connectionId: number, sudo
   })
 }
 
-export function getInbox(projectId: string, targetHandle: string): Promise<ListPayload<InboxItem>> {
-  return request<ListPayload<InboxItem>>(
-    `/projects/${encodeURIComponent(projectId)}/inbox?target_handle=${encodeURIComponent(targetHandle)}`
-  )
-}
-
 export function markRead(alertId: number): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${alertId}/read`, { method: 'POST' })
 }
 
-// 拍板。答复之后这一条不再等人，收件箱里就没有它了。
+// 把这个项目里写给我、还没读的通知一次标掉。没拍板的决策请求读过也还留在「待办」里。
+export function markAllAlertsRead(projectId: string): Promise<{ marked: number }> {
+  return request<{ marked: number }>(`/projects/${encodeURIComponent(projectId)}/alerts/read-all`, { method: 'POST' })
+}
+
+// 拍板。答复之后这一条不再等人，「待办」里就没有它了。
 export function resolveAlert(alertId: number, chosen: string): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${alertId}/resolve`, {
     method: 'POST',
     body: JSON.stringify({ chosen }),
-  })
-}
-
-export function sendFeedback(alertId: number, feedback: 'up' | 'down'): Promise<InboxItem> {
-  return request<InboxItem>(`/alerts/${alertId}/feedback`, {
-    method: 'POST',
-    body: JSON.stringify({ feedback }),
   })
 }
 
@@ -2254,16 +2222,6 @@ export interface StatsProduct {
       live: number
       pr_open: number
     }
-    note_key: string
-  }
-  usefulness: {
-    /** 反馈只存在于**通知**上；房间里的主动消息大多不在这里。 */
-    up: number
-    down: number
-    unrated_read: number
-    unread: number
-    useful_rate: number | null
-    proposal_dismissals: number
     note_key: string
   }
   unavailable: { name: string; reason_key: string; needs: string }[]

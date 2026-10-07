@@ -36,10 +36,6 @@ class NotificationCreate(BaseModel):
     payload: dict = Field(default_factory=dict)
 
 
-class FeedbackIn(BaseModel):
-    feedback: str
-
-
 class ResolveIn(BaseModel):
     # NB: no ``decided_by`` — the decider is the verified caller (ActorResolver),
     # never a body field. A client still sending it is silently ignored.
@@ -60,7 +56,6 @@ class NotificationOut(BaseModel):
     #: 读没读。原来是一个 `read_at` 时间戳，而收件箱只问过「读了没」。
     read: bool
     resolved_at: datetime | None = None
-    feedback: str | None
     created_at: datetime
 
     @classmethod
@@ -77,6 +72,5 @@ class NotificationOut(BaseModel):
             payload=row.metadata_payload or {},
             read=row.read,
             resolved_at=row.resolved_at,
-            feedback=row.feedback,
             created_at=row.created_at,
         )

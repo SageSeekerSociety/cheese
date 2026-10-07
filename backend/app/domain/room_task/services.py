@@ -156,6 +156,10 @@ class TaskService:
         """
         return await self._repo.list_for_project(project_id)
 
+    async def list_open(self) -> list[Task]:
+        """全平台还开着的任务，交出 ORM 行（同 `list_in_project`，**暂留**）。"""
+        return await self._repo.list_open()
+
     async def last_block_at_for_tasks(
         self, task_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
@@ -186,6 +190,23 @@ class TaskService:
         out.
         """
         return await self._repo.list_for_room(room_id)
+
+    async def open_branches_in_room(self, room_id: uuid.UUID) -> list[Task]:
+        """This room's open work that has a branch, oldest first.
+
+        A channel holds every task its project ever ran — over a thousand on
+        dev — and only the few still open take commits.
+        """
+        rows = await self._session.scalars(
+            select(Task)
+            .where(
+                Task.room_id == room_id,
+                Task.status == TaskStatus.open,
+                Task.branch_name.is_not(None),
+            )
+            .order_by(Task.created_at, Task.id)
+        )
+        return list(rows.all())
 
     async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
         """These rows, oldest first, silently skipping ids that name nothing.

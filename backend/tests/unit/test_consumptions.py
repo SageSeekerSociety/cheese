@@ -206,6 +206,45 @@ async def test_a_backend_leaving_mid_answer_hands_it_over_at_once(backends, plat
     assert await new.sweep() == 0, before_sweep
 
 
+class _OpenSetReadEarlier:
+    """A Valkey client whose sweep finds the open questions as they were when
+    ``work`` was still among them: the set is read once, and each question in
+    it is looked at in turn, so one can end between the two."""
+
+    def __init__(self, client, work: str) -> None:
+        self._client = client
+        self._work = work
+
+    async def smembers(self, name):
+        return {self._work.encode()}
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+
+@pytest.mark.anyio
+async def test_a_question_that_ends_while_a_sweep_looks_is_not_taken_up_again(
+    backends, platform, valkey
+):
+    kind, ((old, before), (new, _after)) = backends
+    platform([{"text": ANSWER}])
+    work = await _begin(old, kind)
+    await _until(lambda: _ended(before))
+    redis = valkey()
+
+    async def gone() -> bool:
+        return not await redis.sismember(
+            consumptions_module._OPEN, work
+        ) and not await redis.exists(consumptions_module._lease(work))
+
+    await _until(gone)
+    late = Consumptions(new._host, lambda: _OpenSetReadEarlier(redis, work), me="late")
+    late.serve(kind, Recorder())
+
+    assert await late.sweep() == 0
+    assert not await redis.exists(consumptions_module._lease(work))
+
+
 @pytest.mark.anyio
 async def test_a_backend_dying_mid_answer_hands_it_over_when_its_lease_lapses(
     backends, platform, monkeypatch
