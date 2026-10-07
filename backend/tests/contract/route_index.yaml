@@ -1071,6 +1071,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/attachments", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/raw", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/pdf", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/html", auth: "actor.topic", owner: "room.files"}
   # app.api.routes.topics_channel
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/join", auth: "topic.channel.self", owner: "topic.membership"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/leave", auth: "topic.channel.self", owner: "topic.membership"}
