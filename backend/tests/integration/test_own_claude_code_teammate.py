@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
-from app.domain.user.models import User
+from app.domain.user.models import User, UserProfile
 from tests.integration.conftest import (
     join_project_team,
     new_project,
@@ -205,3 +205,56 @@ def test_nobody_else_chats_with_it_privately(client):
     )
     assert theirs.status_code == 403, theirs.text
     assert mine.status_code == 200, mine.text
+
+
+def test_a_project_closed_to_them_does_not_seat_it_in_a_room(client):
+    project_id, room_id = _project_with_bob(client)
+    _log_in_claude_code(client, "alice")
+    seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
+    client.put(
+        f"/projects/{project_id}/own-agents",
+        json={"allowed": False},
+        headers=session_auth_headers("alice"),
+    )
+
+    post_message(client, room_id, "alice", {"content": f"<@{seat}> 你好"})
+
+    seated = client.get(
+        f"/topics/{room_id}/members", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    assert seat not in {row["member_handle"] for row in seated}
+
+
+def test_it_carries_its_owners_current_name(client):
+    project_id, _room = _project_with_bob(client)
+    _log_in_claude_code(client, "alice")
+    _members(client, project_id, "alice")
+
+    async def rename():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User).where(User.username == "alice"))
+            profile = await db.scalar(
+                select(UserProfile).where(
+                    UserProfile.user_id == user.id, UserProfile.deleted_at.is_(None)
+                )
+            )
+            if profile is None:
+                now = datetime.now(UTC)
+                db.add(
+                    UserProfile(
+                        user_id=user.id,
+                        nickname="小艾",
+                        intro="",
+                        avatar_id=0,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            else:
+                profile.nickname = "小艾"
+            await db.commit()
+
+    asyncio.run(rename())
+
+    own = _own_row(_members(client, project_id, "alice"), "alice")
+    assert own["name"] == "小艾的 Claude Code"

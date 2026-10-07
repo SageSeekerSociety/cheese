@@ -150,6 +150,9 @@ async def ensure_own_agent(
             )
         )
         await db.flush()
+    elif existing.display_name != own_name(nickname)[:64]:
+        # It carries its owner's name, so it follows a change of nickname.
+        existing.display_name = own_name(nickname)[:64]
     await AgentInstanceService(db).ensure_identity(existing)
     return existing
 

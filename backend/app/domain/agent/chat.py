@@ -1951,7 +1951,7 @@ class ChatService(SessionRecovery, RoomTurns):
             project = await ProjectRepository(session).get(topic.project_id)
             if project is None:
                 raise NotFoundError("Project not found")
-            await own_calls.seat_if_named(session, topic, content, author)
+            await own_calls.seat_if_named(session, project, topic, content, author)
             agent = await self._agent_at(session, place)
             mentions = await person_mentions(
                 session, topic, content, agent, dm=_is_dm(topic)

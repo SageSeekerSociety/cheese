@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
-from app.domain.agent_instance.own import may_call, owner_of
+from app.domain.agent_instance.own import allows_own_agents, may_call, owner_of
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import agent_instance_handle
@@ -22,10 +22,13 @@ from app.domain.user.services import user_by_handle
 
 
 async def seat_if_named(
-    session: AsyncSession, topic, content: str, author: str
+    session: AsyncSession, project, topic, content: str, author: str
 ) -> None:
-    """Seat the author's own agent in this room when the message names it."""
+    """Seat the author's own agent in this room when the message names it, in a
+    project that lets members bring their own."""
     if not content or "<@" not in content:
+        return
+    if not allows_own_agents(project.settings):
         return
     person = await user_by_handle(session, author)
     if person is None:

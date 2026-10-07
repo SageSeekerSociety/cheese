@@ -573,8 +573,10 @@ async def my_devices(
     for device in devices:
         view = await _device_view(db, device)
         # Whether its owner's own Claude Code is logged in there for the
-        # platform (#2991): the owner's to see, not the team's.
-        view["claude_code"] = await owner_login.status(db, device.device_id)
+        # platform (#2991): the owner's to see, not the team's. Only a machine
+        # they enrolled themselves runs it; a cloud machine says nothing.
+        if device.supply == Supply.self_hosted:
+            view["claude_code"] = await owner_login.status(db, device.device_id)
         views.append(view)
     return {"devices": views}
 

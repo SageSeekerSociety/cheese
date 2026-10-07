@@ -34,6 +34,9 @@ onMounted(() => load().finally(releaseGate))
         data-testid="own-agents-allowed"
         @update:model-value="(v) => setAllowed(Boolean(v))"
       />
+      <p v-if="!state.can_manage" class="t-body c-muted own-agents__note">
+        {{ t('work.projectSettings.ownAgents.readOnly') }}
+      </p>
       <ul v-if="state.agents.length" class="own-agents__list">
         <li v-for="a in state.agents" :key="a.handle" class="own-agents__row">
           <span class="own-agents__name">{{ a.name }}</span>
@@ -69,6 +72,7 @@ onMounted(() => load().finally(releaseGate))
   font-weight: 600;
 }
 
+.own-agents__note,
 .own-agents__empty {
   margin-top: 16px;
 }

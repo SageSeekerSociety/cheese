@@ -360,16 +360,15 @@ function claudePlan(plan: string | null | undefined): string {
             {{ t('account.devices.deviceId') }} · <code>{{ d.device_id }}</code>
           </div>
 
-          <!-- 机主自己的 Claude Code 有没有在这台电脑上为平台登录（#2991）。登录后它跟着机主进项目。 -->
-          <div class="device__meta" data-testid="device-claude-code">
+          <!-- 机主自己的 Claude Code 有没有在这台电脑上为平台登录（#2991）。登录后它跟着机主进项目。
+               只有机主自己接入的电脑会带这一项，云端的机器不带。 -->
+          <div v-if="'claude_code' in d" class="device__meta" data-testid="device-claude-code">
             <template v-if="claudeLoginOf(d)?.logged_in">
               {{ t('account.devices.claudeCodeLoggedIn', { plan: claudePlan(claudeLoginOf(d)?.subscription_type) }) }}
             </template>
-            <template v-else>
-              {{ t('account.devices.claudeCodeLoggedOut') }}
-              <code>cheesehost claude login</code>
-              {{ t('account.devices.claudeCodeLoggedOutAfter') }}
-            </template>
+            <i18n-t v-else keypath="account.devices.claudeCodeLoggedOut" tag="span">
+              <template #command><code>cheesehost claude login</code></template>
+            </i18n-t>
           </div>
 
           <!-- 只读的归属：这台机器在给哪些团队、以及自己名下的项目用。加机器、移出在各自的
