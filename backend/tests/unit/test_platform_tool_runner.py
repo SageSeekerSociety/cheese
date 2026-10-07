@@ -621,3 +621,22 @@ def test_a_docs_search_from_no_room_names_no_room():
 
     [plan] = host.requests
     assert "topic" not in plan["body"]
+
+
+def test_a_message_time_is_read_as_utc_not_as_a_wall_clock():
+    """The API answers with an instant; read bare, `07:52` looks like the time on
+    someone's wall and gets copied into a document as such."""
+    block = _message(created_at="2026-10-07T07:52:42.767338Z")
+    out = run("cheese_chat_list", {}, _history({"data": [block], "has_more": False}))
+
+    assert "2026-10-07 07:52:42 UTC" in out
+    assert "T07:52" not in out
+
+
+def test_a_time_with_an_offset_is_shown_in_utc():
+    block = _message(created_at="2026-10-07T08:17:43.639592+08:00")
+    host = Host({("GET", f"/topics/{_ROOM}/history/{block['id']}"): block})
+
+    out = run("cheese_chat_get", {"message_id": block["id"]}, host)
+
+    assert "2026-10-07 00:17:43 UTC" in out

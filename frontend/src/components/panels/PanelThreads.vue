@@ -9,6 +9,7 @@ import type { ThreadReply, ThreadRow } from '../../types/threads'
 import { replySnippet } from '../../lib/blockDisplay'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -54,7 +55,7 @@ function people(row: ThreadRow): string {
   <div class="threads">
     <LoadingSkeleton v-if="loading && !rows.length" variant="list" />
     <p v-else-if="error && !rows.length" class="threads__note t-meta" role="alert">{{ error }}</p>
-    <p v-else-if="!rows.length" class="threads__note t-meta">{{ t('work.room.thread.empty') }}</p>
+    <BaseEmptyState v-else-if="!rows.length" size="inline" class="threads__note" :title="t('work.room.thread.empty')" />
     <template v-else>
       <p class="threads__caption t-meta">{{ t('work.room.thread.listCaption') }}</p>
       <ul class="threads__list">

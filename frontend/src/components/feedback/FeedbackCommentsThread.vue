@@ -3,6 +3,7 @@ import type { FeedbackComment } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import FeedbackCommentItem from '@/components/feedback/FeedbackCommentItem.vue'
 import { t } from '@/i18n'
 
@@ -226,10 +227,14 @@ function onRemove(commentId: string) {
   <!-- 无评论（§9.5）。主副两句，和别处的四态同一副骨架：主句说「现在这样」，副句说
        「接下来会怎样」。原来是一行 `c-faint` 的 14px 灰字 —— 那一档在浅色主题下连
        3:1 都到不了（见 style.css 的 .t-meta-read），而这是要人读的一句话。 -->
-  <div v-else class="fb-thread__empty">
-    <div class="fb-thread__empty-title">{{ t('feedback.detail.comments.title') }}</div>
-    <p class="fb-thread__empty-desc">{{ t('feedback.detail.comments.desc') }}</p>
-  </div>
+  <BaseEmptyState
+    v-else
+    size="compact"
+    align="start"
+    class="fb-thread__empty"
+    :title="t('feedback.detail.comments.title')"
+    :desc="t('feedback.detail.comments.desc')"
+  />
 </template>
 
 <style scoped>
@@ -250,26 +255,12 @@ function onRemove(commentId: string) {
   font-weight: 400;
   line-height: var(--lh-14-loose);
 }
-/* 无评论那一块。和列表的空态同形，只是这里不做居中：它是评论区里的一句话，左边
-   要和上面的评论正文对齐。下边距和 `.fb-thread` 一样是 24 —— 列表在不在，底下那个
-   评论框的位置不该跟着挪。 */
+/* 无评论那一块：整块交给 BaseEmptyState 的 compact 档（§3.12）——主副两句、字号和
+   上下 32px 的留白都由这一档定，比原来手写的那一版多出左右 16px 的内缩。这里只留
+   外边距：下边距和 `.fb-thread` 一样是 24 —— 列表在不在，底下那个评论框的位置不该
+   跟着挪。 */
 .fb-thread__empty {
-  display: flex;
-  flex-direction: column;
   margin: 0 0 24px;
-  gap: 8px;
-}
-.fb-thread__empty-title {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: var(--lh-15);
-  color: var(--ink);
-}
-.fb-thread__empty-desc {
-  margin: 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
 }
 .fb-thread__top + .fb-thread__top {
   margin-top: 16px;

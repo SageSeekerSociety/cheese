@@ -1580,10 +1580,28 @@ def run_platform_tool(tool: str, args: dict, host) -> str:
     return _SAY[tool](args, data, host.environ)
 
 
+def _utc_stamp(value: str) -> str:
+    """An instant from the API, written so its zone cannot be missed.
+
+    A bare `2026-10-07T07:52:42Z` reads as a wall-clock time, and an agent copies
+    `07:52` into a document for someone whose clock said 00:52. Spelled out with
+    `UTC` it is a time to convert, not one to quote. Anything unparseable is
+    passed through as given.
+    """
+    try:
+        # `Z` is read by fromisoformat only from 3.11; this also runs on 3.9.
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return value
+    if moment.tzinfo is None:
+        return value
+    return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
 def _chat_message_text(block: dict) -> str:
     """Keep typed payloads visible, including fields added by future messages."""
     lines = [
-        f"[{block.get('created_at', '')}] {block.get('author', '')} "
+        f"[{_utc_stamp(block.get('created_at') or '')}] {block.get('author', '')} "
         f"({block.get('author_type', '')}, {block.get('kind', '')}) id={block['id']}"
     ]
     for key, value in block.items():

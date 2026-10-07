@@ -69,6 +69,7 @@ export type { ChatPanelEmit, ChatPanelOptions } from './chatPanelContract'
 
 export function useChatPanel(opts: ChatPanelOptions) {
   const { topic, alwaysSummon, showComposer, members, topicList, unreadOnOpen, focusBlock, emit } = opts
+  const answersInThread = () => opts.answersInThread?.() ?? false
   // 这一栏读的那段对话：房间自己，或房间里的一个任务（`conversationId`）。消息、连接、
   // 发送、草稿走它；名册、附件、标题还是房间的（`topic()`）。
   function place(): Topic | null {
@@ -632,8 +633,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
       enqueue({ content: trimmed, replyTo: composer.replyTarget.value?.id ?? undefined, atts, quotedContext })
     )
     composer.clearReply()
-    // Local acceptance starts the waiting indicator, before delivery.
-    if (summon) awaitingReply.value = true
+    // Local acceptance starts the waiting indicator, before delivery — where the
+    // answer comes. A summon in a channel's main line is answered in its 支线,
+    // whose turn frames this line never hears, so lit here nothing would put it
+    // out: the room would say it is working long after the answer landed.
+    if (summon && !answersInThread()) awaitingReply.value = true
     scrollToBottom()
     return true
   }
@@ -645,7 +649,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg.value = null
     paging.backToNewest()
     sentNow.add(enqueue({ content: text, replyTo: question.id }))
-    awaitingReply.value = true
+    if (!answersInThread()) awaitingReply.value = true
     scrollToBottom()
   }
 
