@@ -22,21 +22,26 @@ on that host, through the same install path that starts any executor.
 host. A sleeping home is archived after ``cloud_sandbox_archive_after_s``; as
 soon as its host is draining (idle for ``cloud_host_idle_hold_s``); and first
 of all when its session wants it back on a host that has no slot to wake it in
-(``SandboxMustMove``). The archive
-is verified before the home is deleted: the bucket must report the size and
-MD5 the host wrote. The session's next tool call places it on any host and
+(``SandboxMustMove``). A large home takes longer to write and send than a
+deploy leaves this process running, so the host does it in a job of its own
+and in parts, and each sweep only waits on it a while: the next one, in this
+process or the next, comes back to the same job and finds it further on
+(``sandbox_home.archive``). The archive is verified before the home is
+deleted: the bucket must report the size and ETag of the bytes the host
+wrote. The session's next tool call places it on any host and
 restores it there before the executor starts. Code is truth in git — every
 turn's Stop checkpoint has already run ``cheese sync --all`` — and the archive
 is a cache of the rest: what was not committed, the environment, the build.
 
-The bytes never pass through the backend: the host PUTs and GETs the object
-through a URL signed for that one object, for an hour.
+The bytes never pass through the backend: the host PUTs the parts and GETs the
+object through URLs signed for that one object.
 
 A session's whole cloud VM is neither put to sleep nor archived: idle by the
 same measure for ``cloud_vm_idle_release_s``, it is pushed and released
 (``cloud_vm``), on the same clock (``runner.SandboxSweeper``).
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -47,7 +52,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.storage import private_storage
+from app.core.storage import multipart_etag, private_storage
 from app.domain.agent import execution, resource_cleanup
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
@@ -73,8 +78,19 @@ class SandboxBusy(Exception):
 #: sweep may take it over: past the longest the host is given for the step.
 STOP_HOLD = timedelta(minutes=3)
 ARCHIVE_HOLD = timedelta(minutes=25)
-#: How long the URL a host moves an archive with is good for.
+#: How long the URL a host restores an archive with is good for.
 URL_TTL_S = 3600
+#: How long a sweep waits on a host's archive job before it moves on; the job
+#: goes on, and a later sweep comes back to it.
+ARCHIVE_WAIT_S = 120
+ARCHIVE_WAIT_HOLD = timedelta(seconds=ARCHIVE_WAIT_S + 120)
+#: An archive is sent in this many parts at most, of PART_SIZE each but the
+#: last: a dropped connection costs one part, not the whole home (S3's advice
+#: for anything over 100 MB). The URLs are good for long enough that a job
+#: outlives the sweep that signed them.
+ARCHIVE_PARTS = 64
+PART_SIZE = sandbox_home.ARCHIVE_LIMIT // ARCHIVE_PARTS
+PART_URL_TTL_S = 86400
 #: A sandbox whose background command keeps it up is asked again this often.
 RECHECK = timedelta(minutes=1)
 #: An archive that failed — a file the host cannot read, a home over the
@@ -470,32 +486,29 @@ class SandboxLifecycle:
             await self._drop(device_id, home_id, project, resource)
             await self._release(home_id)
             return True
+        # One object per sleep of the home: what this sweep finds the host
+        # doing under that name is this home as it is now, and a home woken
+        # since is archived under another.
+        job = f"{home.id.hex}-{int(home.stopped_at.timestamp() * 1_000_000)}"
+        key = f"sandbox-archives/{project}/{resource}/{job}.tar.gz"
+        home.busy_until = now + ARCHIVE_WAIT_HOLD
         await self._session.commit()
 
         bucket = self._bucket()
-        key = f"sandbox-archives/{project}/{resource}/{uuid.uuid4().hex}.tar.gz"
         try:
-            url = await bucket.presign(key, "put_object", URL_TTL_S)
-            written = await run_on_host(
-                self._hub,
-                device_id,
-                "archive",
-                timeout=ARCHIVE_HOLD.total_seconds() - 60,
-                project=project,
-                resource=resource,
-                url=url,
-            )
-            if not written.get("absent"):
-                stored = await bucket.stat(key)
-                if stored != (int(written["size"]), str(written["md5"])):
-                    raise SandboxHomeError(
-                        f"the bucket holds {stored}, the host wrote "
-                        f"{(written['size'], written['md5'])}"
-                    )
+            written = await self._send(bucket, device_id, project, resource, job, key)
+        except asyncio.CancelledError:
+            # This process is stopping. The host's job goes on, and the next
+            # sweep comes back to it: not a failed archive.
+            await self._release(home_id)
+            raise
         except BaseException as exc:
             await self._release(home_id, failed=str(exc) or type(exc).__name__)
-            await delete_archive(key)
             raise
+        if written.get("pending") or written.get("unknown"):
+            await self._release(home_id)
+            logger.info("archive of sandbox home %s under way: %s", home_id, written)
+            return False
 
         home = await self._repo.lock_home(home_id)
         if written.get("absent"):
@@ -534,6 +547,59 @@ class SandboxLifecycle:
                 ", ".join(skipped),
             )
         return True
+
+    async def _send(
+        self, bucket, device_id: str, project: str, resource: str, job: str, key: str
+    ) -> dict:
+        """Have the host send the home to ``key``, or come back to it doing so,
+        and join and verify the parts once it has. Answers the host's answer:
+        ``pending`` while it is still at it."""
+        stored = await bucket.stat(key)
+        # A finished object with no upload behind it was joined by a sweep
+        # that did not get to record it: the host's answer says whether it is
+        # this home.
+        upload = (
+            None if stored else await bucket.multipart_upload(key, "application/gzip")
+        )
+        urls = (
+            []
+            if upload is None
+            else await bucket.presign_parts(key, upload, ARCHIVE_PARTS, PART_URL_TTL_S)
+        )
+        written = await run_on_host(
+            self._hub,
+            device_id,
+            "archive",
+            timeout=ARCHIVE_WAIT_S + 60,
+            project=project,
+            resource=resource,
+            job=job,
+            upload=upload,
+            urls=urls,
+            part_size=PART_SIZE,
+            wait=ARCHIVE_WAIT_S,
+        )
+        if written.get("pending"):
+            return written
+        if written.get("absent"):
+            await bucket.abort_multipart(key)
+            return written
+        if written.get("unknown"):
+            # The host kept no record of it: it cannot be checked, so it goes,
+            # and the next sweep sends the home again.
+            await delete_archive(key)
+            return written
+        expected = (int(written["size"]), multipart_etag(written["parts"]))
+        if stored is None:
+            await bucket.complete_multipart(key, upload, written["etags"])
+            stored = await bucket.stat(key)
+        if stored != expected:
+            await delete_archive(key)
+            await bucket.abort_multipart(key)
+            raise SandboxHomeError(
+                f"the bucket holds {stored}, the host wrote {expected}"
+            )
+        return written
 
     async def _drop(
         self, device_id: str, home_id: uuid.UUID, project: str, resource: str
