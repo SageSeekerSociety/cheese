@@ -32,6 +32,7 @@ from app.domain.agent.github_app import (
 )
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.profiles import ProfileRegistry
+from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import awaiting_an_answer, weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
@@ -474,6 +475,12 @@ async def get_private_chat(
         participants = {user_handle, peer_handle} - {None}
         if actor.handle not in participants:
             raise ForbiddenError(say("directMessageOwnOnly"))
+    if peer_handle is None:
+        project = await ProjectService(db).get_or_404(project_id)
+        if not await may_chat_with(
+            db, project_id, agent_handle, user_handle, project.settings
+        ):
+            raise ForbiddenError(say("ownAgentOwnerOnlyChat"))
     topic = await TopicService(db).get_or_create_private(
         project_id=project_id,
         user_handle=user_handle,

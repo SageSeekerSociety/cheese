@@ -1615,6 +1615,17 @@
       "exhausted": "Credits are used up. Ask a team admin or whoever issues credits for more",
       "source": "Includes the team's shared credits and credits issued to this project; project credits are used first"
     },
+    "ownAgentsTitle": "Members' own Claude Code",
+    "ownAgents": {
+      "allow": "Let members connect the Claude Code on their own computers",
+      "allowDetail": "Project content goes to the model service each member set up, and the member pays for it",
+      "online": "online",
+      "offline": "offline",
+      "empty": "No member has connected their Claude Code",
+      "readOnly": "Only project admins can change this",
+      "loadFailed": "Couldn't load members' own Claude Code",
+      "saveFailed": "Couldn't save the setting"
+    },
     "taskNaming": {
       "intro": "Tasks someone has renamed are never renamed automatically",
       "autoTitle": "Smart names",

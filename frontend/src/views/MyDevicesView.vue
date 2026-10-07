@@ -22,6 +22,7 @@ import {
   thisComputer,
 } from '../lib/desktop'
 
+import { checkClaudeCode } from '@/api/ownAgents'
 import { useCommands } from '@/commands'
 import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -30,6 +31,7 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { screenAgentName } from '@/lib/agentNames'
 import accountService from '@/services/account'
+import { claudeLoginOf } from '@/types/ownAgents'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
 // it: AccountService.loggedIn (set from localStorage `accessToken` + `user` at
@@ -114,6 +116,21 @@ watch(
   }
 )
 
+// 机主在电脑上登录 Claude Code，服务器要等这台电脑下次连上才知道。页面列出它时让在线的
+// 电脑再报一次，回来了就换掉这一行；问不到就留着上次的答案。
+function recheckClaudeCode() {
+  for (const { device_id: id, online } of devices.value) {
+    const d = devices.value.find((x) => x.device_id === id)
+    if (!d || !online || !('claude_code' in d)) continue
+    checkClaudeCode(id)
+      .then((login) => {
+        const row = devices.value.find((x) => x.device_id === id)
+        if (row) Object.assign(row, { claude_code: login })
+      })
+      .catch(() => {})
+  }
+}
+
 async function load() {
   // Client-side gate: the device UI is only meaningful for a signed-in human. When
   // signed out we show the gate banner instead of firing an inevitably-401 request.
@@ -122,6 +139,7 @@ async function load() {
   error.value = null
   try {
     devices.value = (await listMyDevices()).devices
+    recheckClaudeCode()
     // Team names for the read-only chips — best-effort, never blocks the list.
     myTeams.value = await listMyTeams().catch(() => [])
   } catch (e) {
@@ -233,6 +251,11 @@ useCommands(() =>
       ]
     : []
 )
+
+// 订阅档位按厂商的写法首字母大写（max → Max）；API key 登录没有档位。
+function claudePlan(plan: string | null | undefined): string {
+  return plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : t('account.devices.claudeCodeApiKey')
+}
 </script>
 
 <template>
@@ -352,6 +375,17 @@ useCommands(() =>
           <!-- 一台设备只是一台机器，不是队友：在它上面跑的是哪些队友，看下面的「现场」。 -->
           <div class="device__meta">
             {{ t('account.devices.deviceId') }} · <code>{{ d.device_id }}</code>
+          </div>
+
+          <!-- 机主自己的 Claude Code 有没有在这台电脑上为平台登录（#2991）。登录后它跟着机主进项目。
+               只有机主自己接入的电脑会带这一项，云端的机器不带。 -->
+          <div v-if="'claude_code' in d" class="device__meta" data-testid="device-claude-code">
+            <template v-if="claudeLoginOf(d)?.logged_in">
+              {{ t('account.devices.claudeCodeLoggedIn', { plan: claudePlan(claudeLoginOf(d)?.subscription_type) }) }}
+            </template>
+            <i18n-t v-else keypath="account.devices.claudeCodeLoggedOut" tag="span">
+              <template #command><code>cheesehost claude login</code></template>
+            </i18n-t>
           </div>
 
           <!-- 只读的归属：这台机器在给哪些团队、以及自己名下的项目用。加机器、移出在各自的

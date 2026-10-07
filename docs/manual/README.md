@@ -85,7 +85,7 @@
 | `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `challenges.md` |
 | `review-changes.md` | 找到待审阅的改动，审阅、追问、采纳或退回 | 按钮的完整说明见 `accept.md` |
 | `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
-| `use-your-computer.md` | 可选：接入自己的电脑或服务器，给频道或任务换环境 | 接入与隔离的完整说明见 `devices.md` |
+| `use-your-computer.md` | 可选：接入自己的电脑或服务器，给频道或任务换环境；用自己的 Claude Code | 接入与隔离的完整说明见 `devices.md` |
 
 ### 使用 Cheese {#feature-pages}
 
