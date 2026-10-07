@@ -124,6 +124,7 @@ SHELL_START_RETRY_S = 60.0
 # How long a reader keeps retrying an executor that answers, but with an error,
 # before giving the command up.
 SHELL_ERROR_RETRY_S = 60.0
+SHELL_READ_RETRY_S = (0.5, 5.0)  # first and longest wait between read retries
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
@@ -946,13 +947,12 @@ def run_on_the_machine(target, command):
         time.sleep(1)
     offsets = {"out": 0, "err": 0}
     written = 0
-    failing_since = None
-    delay = 0.5
+    failing_since, delay = None, SHELL_READ_RETRY_S[0]
     answer = {}
     while True:
         try:
             answer = call("read", out=offsets["out"], err=offsets["err"], wait=20)
-            failing_since, delay = None, 0.5
+            failing_since, delay = None, SHELL_READ_RETRY_S[0]
         except Exception as exc:  # noqa: BLE001 — the command outlives the link
             link = isinstance(exc, MachineOutOfReach | OSError | TimeoutError)
             failing_since = failing_since or time.monotonic()
@@ -961,7 +961,7 @@ def run_on_the_machine(target, command):
                 return 1
             client = RemoteClient(current_target(target))
             time.sleep(delay)
-            delay = min(delay * 2, 5.0)
+            delay = min(delay * 2, SHELL_READ_RETRY_S[1])
             continue
         if answer.get("lost"):
             sys.stderr.write(
