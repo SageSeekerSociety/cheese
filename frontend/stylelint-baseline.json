@@ -1,7 +1,6 @@
 {
   "_comment": "Frozen design-token violations (hardcoded colours, off-ladder radii, off-tier viewport breakpoints). The ratchet blocks any NEW one; these are pre-existing and may only go down. Regenerate with `pnpm run lint:style:update`. See docs/design-system.md and docs/breakpoint-inventory.md.",
   "files": {
-    "src/components/admin/AdminKpiCard.vue": 1,
     "src/components/admin/AdminQueueDetail.vue": 1,
     "src/components/common/AvatarUploader.vue": 2,
     "src/components/common/Navigation/RailItem.vue": 2,

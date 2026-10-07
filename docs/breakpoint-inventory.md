@@ -2,7 +2,7 @@
 
 基线 `08578667` 上，`frontend/src` 里有 **47 处** CSS 宽高查询 + **4 处** JS 视口判断没用共享档位。收口的目标只有两种落法：归到 `frontend/src/styles/breakpoints.scss` 的四个视口档，或者改成挂在内容列上的容器查询。
 
-归拢那批之后还剩 **11 处**，两类：营销页 10 处（第六组，走法待定）、`AdminKpiCard.vue:146` 1 处（等真浏览器量字号）。第七组那 2 处是认定过的例外，不算欠账。
+归拢那批之后还剩 **10 处**，全在营销页（第六组，走法待定）。`AdminKpiCard.vue:146` 那处已经在真浏览器里量实是死代码、删掉了（第五组），第七组那 2 处是认定过的例外，不算欠账。
 
 口径是 `frontend/src` 一个目录，不是全仓。`docs/site/`（357 行宽度查询）是独立的文档站，`backend/sandbox/skills/showcase/templates/`（8 个文件）是出图模板，两者都不进产品骨架，不在这笔账里——第四批收口那道闸也只闸 `frontend/src`。
 
@@ -95,7 +95,7 @@
 | 文件:行 | 现值 | 落成 |
 |---|---|---|
 | `views/admin/AdminRunRecordsPageView.vue:338` | min-width 1200 | `@container admin (min-width: 900px)` |
-| `components/admin/AdminKpiCard.vue:146` | 600 | **未动**：删掉还是归 767.98，等量（见下） |
+| `components/admin/AdminKpiCard.vue:146` | 600 | **已删**：死代码，真浏览器量实（见下） |
 | `components/admin/credits/AdminPlanDialog.vue:447` | 700 | 归 767.98（不是容器，见下） |
 | `components/panels/PanelChangesView.vue:674` | 720 | `@container (max-width: 720px)`，本文件新加 `container-type` |
 | `components/panels/PanelPreviewView.vue:921` | 720 | `@container (max-width: 720px)`（本文件 714 行已声明） |
@@ -108,7 +108,7 @@
 
 阈值在归的时候定，不在这份清单里定。后台容器 `#2634` 落的是 `max-width: 719.98px` 和 `max-width: 1319.98px`（`AdminMembersPage.vue:745`、`AdminModelsPage.vue:261,268`），但同一套里已经混进了裸值 `700` 和视口味的 `900`（`AdminSpacesPage.vue:438`、`AdminLiveSpine.vue:185`、`AdminModelsAudit.vue:209`）——这批按 `719.98 / 1319.98` 对齐，面板沿用 720。
 
-`AdminKpiCard.vue:146` 那条 `@media (max-width: 600px)` 有个对不上的前提。文件注释说它是「给没有容器祖先的页面（模型页）兜底」，但模型页的链是 `AdminModelsPage.vue:108` → `AdminPage.vue:30` → `AppPage width="admin"` → `AppPage.vue:284` 的 `container: admin / inline-size`，**模型页是有容器祖先的**——同文件 `:152` 那条无名 `@container (max-width: 760px)` 按定义就该在模型页命中。真是这样的话这 600 是死代码，删掉即可；判断得靠真浏览器量模型页六位数字的字号，不在这份清单里下结论。
+`AdminKpiCard.vue:146` 那条 `@media (max-width: 600px)` 的前提是错的，已在真浏览器里量实、删掉了。五页共 24 张卡（`/admin/dashboard`、`/admin/models`、`/admin/run-records`、`/admin/feature-stats/task-naming`、`/admin/feature-stats/docs-assistant`）最近的容器祖先都是 `.app-page__column--admin` 那一列，中间没有第二层容器；这一列的宽度从不超过视口（视口 800 / 770 / 600 → 列 790 / 760 / 590），字号在列宽 760 处从 23 掉到 20。`@media` 只在视口 ≤ 600 时命中，那时列已经 ≤ 590 < 760，`@container` 早把同一件事做完了——它一处都改不动，删掉渲染结果不变。
 
 ## 六、营销页 `views/home/`——10 处，自成一套
 
@@ -161,7 +161,7 @@
 
 ## 收口
 
-闸已落在 `frontend/stylelint.config.cjs`，跟颜色和圆角同一个机制：`media-feature-name-value-allowed-list` 让 `@media` 的宽度只取四个档的值，三种写法都管（`max-width`、`min-width`、`width <` 这类区间），存量冻进 `frontend/stylelint-baseline.json`，之后只许减不许增。两道 override：`styles/breakpoints.scss` 是这四个值的定义处（它自己写 `@media (max-width: $width)`），`docs/site/` 是另一套阶梯的独立站。闸门做过红绿自证：探测文件里写 601 / 900 让它红，写 767.98 / 959.98 放过。基线 24 条里，12 条是这张清单上还没清的（第六组 9 条、`AdminKpiCard.vue:146`、第七组 2 条），另 12 条是颜色和圆角那两条规则的存量。
+闸已落在 `frontend/stylelint.config.cjs`，跟颜色和圆角同一个机制：`media-feature-name-value-allowed-list` 让 `@media` 的宽度只取四个档的值，三种写法都管（`max-width`、`min-width`、`width <` 这类区间），存量冻进 `frontend/stylelint-baseline.json`，之后只许减不许增。两道 override：`styles/breakpoints.scss` 是这四个值的定义处（它自己写 `@media (max-width: $width)`），`docs/site/` 是另一套阶梯的独立站。闸门做过红绿自证：探测文件里写 601 / 900 让它红，写 767.98 / 959.98 放过。基线 23 条里，11 条是这张清单上还没清的（第六组 9 条、第七组 2 条），另 12 条是颜色和圆角那两条规则的存量；`AdminKpiCard.vue` 那条已随死代码删掉，基线从 24 收到 23。
 
 这道闸只覆盖 `@media` 和 `frontend/src`，两处留白连同这条闸已经写进 `docs/design-system.md`（§3.5 讲四个档和两处留白，§7 的表里有一行），否则下一个人会以为「闸绿了就是没有散值」：
 
