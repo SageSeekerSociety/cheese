@@ -120,12 +120,15 @@ class Machine:
     def __init__(self, home: Path) -> None:
         self.home = home
         self.ran: list[str] = []
+        # What the hub reports connected; the cleanup sweep's own tests want
+        # none, so its pass over connected machines stays out of them.
+        self.online: list[str] = []
 
     def is_online(self, _device):
         return True
 
     def online_device_ids(self):
-        return []
+        return list(self.online)
 
     def screens_for_topic(self, _topic):
         return []
@@ -430,3 +433,29 @@ async def test_a_task_that_was_a_room_is_told_in_its_own_conversation(
             if (b.meta or {}).get("event_type") == "room_files_kept"
         ]
     assert told.conversation_id == task_id
+
+
+async def test_a_machine_connected_across_a_deploy_is_looked_at_within_the_hour(
+    client, tmp_path, bucket, monkeypatch
+):
+    """It never connects again, so the cleanup sweep's pass finds it: once the
+    backend knows a connected machine, and then not again within the hour."""
+    project_id, room_id, device_id, machine, _home = await _old_room(client, tmp_path)
+    monkeypatch.setattr(device_storage, "_everywhere_at", None)
+
+    def due():
+        return client.portal.call(
+            lambda: device_storage.keep_room_files_due(
+                client.test_request_factory, hub=machine
+            )
+        )
+
+    # Just started: no machine heard of yet, and the pass waits for one.
+    assert due() == 0
+    assert machine.ran == []
+    machine.online.append(device_id)
+    assert due() == 1
+    assert f"kept-room-files/{project_id}/{room_id}.tar.gz" in bucket.objects
+    machine.ran.clear()
+    assert due() == 0
+    assert machine.ran == []
