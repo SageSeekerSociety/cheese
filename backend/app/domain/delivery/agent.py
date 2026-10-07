@@ -175,8 +175,8 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 row.last_error = "Sender stopped before recording the receiver result"
                 continue
             if row.attempts > 0 and stamp - row.recorded_at > GIVE_UP_AFTER:
-                row.state = "failed"
-                row.last_error = GAVE_UP
+                # Not tried again; the sweep fails it and says so where people
+                # wait (`timer.give_up_stale`).
                 continue
             agent = await session.get(AgentInstance, row.agent_instance_id)
             task = await session.get(Task, row.conversation_id)

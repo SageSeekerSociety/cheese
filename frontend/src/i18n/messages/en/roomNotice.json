@@ -98,6 +98,7 @@
   "dependencyOutcomeMerged": "was merged",
   "dependencyOutcomeReturned": "was sent back and is still in progress",
   "dependencyRejection": "\nThe parent task's latest review card {card} was rejected. {why}",
+  "deliveryGaveUp": "{agent} couldn't start within 30 minutes",
   "dependencyRejectionNoNote": "The reviewer gave no reason.",
   "dependencyRejectionNote": "The rejection reason, verbatim:\n{note}",
   "deviceReconnected": "The environment is connected again",

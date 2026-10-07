@@ -98,6 +98,7 @@
   "dependencyOutcomeMerged": "已合并",
   "dependencyOutcomeReturned": "已被退回，任务仍在进行",
   "dependencyRejection": "\n父任务最近一张验收卡 {card} 被驳回。{why}",
+  "deliveryGaveUp": "{agent} 30 分钟内未能开始处理",
   "dependencyRejectionNoNote": "验收人没有填写驳回理由。",
   "dependencyRejectionNote": "驳回理由原文：\n{note}",
   "deviceReconnected": "环境已恢复连接",
