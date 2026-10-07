@@ -966,5 +966,8 @@
   "contributorNotInProject": "Only project members can be added as collaborators",
   "routineOwnerNotInProject": "{handle} isn't a project member, so the results can't be sent to them",
   "topicMuteUntilPast": "The end of a mute must be in the future",
-  "channelArchiveOpenTasks": "This channel still has open tasks. Close them before archiving it"
+  "channelArchiveOpenTasks": "This channel still has open tasks. Close them before archiving it",
+  "projectSlugFormat": "A short name uses lowercase letters, digits and hyphens, 3 to 32 characters, and does not start or end with a hyphen",
+  "projectSlugReserved": "This short name is kept for a platform page. Choose another",
+  "projectSlugTaken": "Another project has used this short name. Choose another"
 }

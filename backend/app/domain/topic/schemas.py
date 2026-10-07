@@ -43,6 +43,8 @@ class TopicOut(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     parent_id: uuid.UUID | None
+    # Its number in the project's addresses; None for a private chat.
+    number: int | None = None
     title: str
     description: str | None = None
     kind: TopicKind
