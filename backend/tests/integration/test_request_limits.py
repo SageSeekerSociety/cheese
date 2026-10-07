@@ -209,20 +209,57 @@ async def test_health_and_metrics_are_never_limited(limits) -> None:
         for path in (
             "/health",
             "/healthz",
-            "/readyz",
             "/metrics",
             "/health",
             "/healthz",
-            "/readyz",
             "/metrics",
         ):
             response = await client.get(path, headers=headers)
-            # `/metrics` 是平台管理员那一面，对这个调用者 403 就是它的正常答复；
-            # `/readyz` 依赖没起来时是 503。这里钉的是这串突发没有被限流（不是 429），
-            # 不是路由自己的判断。
-            assert response.status_code in (200, 403, 503), path
+            # `/metrics` 是平台管理员那一面，对这个调用者 403 就是它的正常答复。
+            # 这里钉的是这串突发没有被限流（不是 429），不是路由自己的判断。
+            assert response.status_code in (200, 403), path
             assert "ratelimit" not in response.headers
         assert (await client.get("/version", headers=headers)).status_code == 200
+
+
+@pytest.fixture
+def _ready(monkeypatch):
+    """`/readyz` answers without touching a dependency: only the limit is under test."""
+    from app.api.routes import health
+
+    async def _up():
+        return {"status": "up"}
+
+    monkeypatch.setattr(health, "_check_database", _up)
+    monkeypatch.setattr(health, "_check_redis", _up)
+
+
+async def test_readiness_from_outside_is_limited_like_any_route(
+    limits, monkeypatch, _ready
+) -> None:
+    """`/readyz` is public. Unlimited for anyone, it was a route a stranger
+    could call as fast as they liked; it is limited by the caller's address."""
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    limits(rate_per_s=0.2, rate_burst=2)
+    async with _client() as client:
+        answers = [(await client.get("/readyz")).status_code for _ in range(3)]
+    assert answers == [200, 200, 429]
+
+
+async def test_readiness_from_inside_is_never_limited(
+    limits, monkeypatch, _ready
+) -> None:
+    """The container healthcheck asks on loopback; the rollout's curl comes
+    through the published port, from a trusted proxy hop with no client in
+    front of it. Neither may be refused while the process is busy."""
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "172.18.0.0/16")
+    limits(rate_per_s=0.2, rate_burst=1)
+    for address in (("127.0.0.1", 4000), ("172.18.0.1", 4000)):
+        async with _client(address=address) as client:
+            for _ in range(4):
+                response = await client.get("/readyz")
+                assert response.status_code == 200, address
+                assert "ratelimit" not in response.headers
 
 
 async def test_requests_pass_while_redis_is_down(limits, monkeypatch, caplog) -> None:
