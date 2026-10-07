@@ -87,7 +87,7 @@ covers:
 
 - `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。它取类自己声明的 `wire_name`（不继承），没声明就是类名；改类名或把类并进别的类时，在类上写回旧名，客户端就不受影响。`code` 这个名字留给以后的 snake_case 错误码（`error.code`）。
 - `retryable` 取类属性，默认 `false`；只有等一会儿真会自己好的类才写 `retryable = True`（`GatewayTimeoutError`、forge 的限流和连不上）。前端对 5xx 的 GET 只在它不为 `false` 时自动重试。
-- `AppError` 和它的 `ValidationError`、`UnauthorizedError`、`GatewayUnavailableError` 已弃用：它们各自已经是替代类（`UnprocessableEntityError`、`AuthenticationRequiredError`、`UpstreamUnavailableError`）的子类，只保留「消息可省」的构造。ruff 的 TID251 禁止新代码导入它们，`backend/pyproject.toml` 里列着还在用的文件，迁完一个删一行。
+- `AppError` 和它的 `ValidationError`、`UnauthorizedError`、`GatewayUnavailableError` 已弃用：它们各自已经是替代类（`UnprocessableEntityError`、`AuthenticationRequiredError`、`UpstreamUnavailableError`）的子类，只保留「消息可省」的构造。`tests/unit/test_legacy_error_ratchet.py` 按文件记着它们的用法次数，多了少了都会红：新代码用替代类，迁完一处就把基线减下来。
 - `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <一句话>` 的 SSE 正文而不是 JSON；这条分支在 `BaseError`、`HTTPException`、请求校验三个处理器里各写了一遍，**只有 `BaseError` 和 `HTTPException` 那两支把异常的 headers 转发出去，SSE 与 validation 两支不转**。
 
 处理器一律用 `closing_the_socket` 包一层：异常发生在 WebSocket 连接上时不能返回 HTTP 响应（uvicorn 会拒绝并报「Expected ASGI message ...」），改成记一条 WARNING 后按 1011 关掉。
