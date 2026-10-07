@@ -26,8 +26,9 @@ import { computed, ref, watch } from 'vue'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { useAccountLookup } from '@/composables/useAccountLookup'
+import { useProjectMembers } from '@/composables/useProjectMembers'
+import { useProjectTransfer } from '@/composables/useProjectTransfer'
 
-import { listProjectMembers, setProjectOwner } from '@/api'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -40,9 +41,10 @@ const open = defineModel<boolean>({ required: true })
 
 const store = useWorkspaceStore()
 
-const transferring = ref(false)
-const error = ref<string | null>(null)
-const rows = ref<ProjectMemberRow[]>([])
+// 名册读在 `useProjectMembers`，交手那一趟在 `useProjectTransfer`（组件不直接碰 API
+// 层，`.claude/rules/architecture.md`）。
+const { rows, load: loadRoster } = useProjectMembers(() => props.projectId)
+const { transferring, error, transfer, clearError } = useProjectTransfer(() => props.projectId)
 
 /** Who the project is being handed to, and whether that means it moves. */
 interface Picked {
@@ -86,7 +88,7 @@ function foundFace(u: LookedUpUser): string {
 
 watch(open, (v) => {
   if (!v) return
-  error.value = null
+  clearError()
   picked.value = null
   confirming.value = false
   query.value = ''
@@ -96,10 +98,9 @@ watch(open, (v) => {
 })
 
 async function load() {
-  const pid = props.projectId
   try {
-    const payload = await listProjectMembers(pid)
-    if (props.projectId === pid && open.value) rows.value = payload.data
+    // 回来时项目已经换了、或者弹窗已经关了，这一份就不写进去（在 composable 里判）。
+    await loadRoster(() => open.value)
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('work.projectTransfer.loadFailed')
   }
@@ -155,22 +156,9 @@ function submit() {
 async function doTransfer() {
   const handle = picked.value?.handle
   if (!handle) return
-  transferring.value = true
-  error.value = null
-  try {
-    await setProjectOwner(props.projectId, handle)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectTransfer.failed')
-    transferring.value = false
-    confirming.value = false
-    return
-  }
-  open.value = false
-  // 转让一成立，项目行必须重新拉一遍（`owner_handle` 换了人，团队也可能跟着换了），
-  // 名册也跟着刷，界面上的「退出 / 转让」两颗按钮才是按新身份长的。和退出一样用
-  // allSettled——转让已经做成了，刷不成功不该把它变成失败。
-  await Promise.allSettled([store.refreshProjects(), store.refreshMembers()])
-  transferring.value = false
+  // 成了就收掉弹窗（项目行和名册在背后刷）；被拒就退回选人那一步，理由留在弹窗里。
+  if (await transfer(handle)) open.value = false
+  else confirming.value = false
 }
 </script>
 
