@@ -557,8 +557,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     ...docSource,
     enabled: () =>
       !wantPage.value &&
-      ((!!documentType.value && documentType.value.view !== 'markdown') ||
-        (!!props.path && isImageArtifact.value)),
+      ((!!documentType.value && documentType.value.view !== 'markdown') || (!!props.path && isImageArtifact.value)),
   })
   const {
     html: docPageHtml,
