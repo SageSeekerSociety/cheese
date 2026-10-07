@@ -459,3 +459,56 @@ async def test_a_machine_connected_across_a_deploy_is_looked_at_within_the_hour(
     machine.ran.clear()
     assert due() == 0
     assert machine.ran == []
+
+
+async def test_two_passes_over_the_same_home_send_and_record_it_once(
+    client, tmp_path, bucket, caplog
+):
+    """An old and a new backend during a deploy each pass over the same
+    connected machine at once."""
+    _project, room_id, device_id, machine, _home = await _old_room(client, tmp_path)
+
+    async def both():
+        return await asyncio.gather(
+            *(
+                device_storage.keep_device_room_files(
+                    client.test_request_factory, device_id, hub=machine
+                )
+                for _ in range(2)
+            )
+        )
+
+    with caplog.at_level("WARNING", logger="cheesex.agent.device_storage"):
+        client.portal.call(both)
+
+    assert machine.ran.count("keep-room") == 1
+    assert bucket.puts == 1
+    [row] = await _rows(client)
+    assert row.key is not None and row.looking_since is None
+    assert len(await _notices(client, room_id)) == 1
+    assert "not looked at" not in caplog.text
+
+
+async def test_a_home_left_mid_send_is_taken_over(client, tmp_path, bucket):
+    """A process that went away while sending leaves its claim; once that is
+    older than any send can take, the next pass sends the files."""
+    project_id, room_id, device_id, machine, _home = await _old_room(client, tmp_path)
+    async with client.test_factory() as session:
+        session.add(
+            KeptRoomFiles(
+                project_id=project_id,
+                device_id=device_id,
+                resource_id=str(room_id),
+                looking_since=datetime.now(UTC)
+                - device_storage.CLAIM_STALE
+                - timedelta(minutes=1),
+            )
+        )
+        await session.commit()
+
+    assert _keep(client, device_id, machine) == 1
+
+    [row] = await _rows(client)
+    assert row.key is not None and row.looking_since is None
+    assert bucket.puts == 1
+    assert len(await _notices(client, room_id)) == 1

@@ -31,7 +31,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import String, cast, or_, select
+from sqlalchemy import String, and_, cast, not_, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 
 from app.core.sentences import say
 from app.core.storage import private_storage
@@ -86,6 +87,9 @@ KEY_PREFIX = "kept-room-files"
 #: The largest room directory on dev was 1.2 GB: packing and sending it is
 #: minutes, not the minute a cleanup action gets.
 KEEP_ROOM_TIMEOUT_S = 1500.0
+#: A claim on a home older than this was left by a process that went away
+#: while its files were being sent; another may take the home over.
+CLAIM_STALE = timedelta(seconds=2 * KEEP_ROOM_TIMEOUT_S)
 #: How long the upload URL a machine is handed stays good.
 URL_TTL_S = 2 * 3600
 
@@ -122,6 +126,50 @@ async def _place(session, resource_id: str):
         .limit(1)
     )
     return None if conversation is None else await places.conversation(conversation)
+
+
+async def _row(session, device_id, project_id, resource_id, **values):
+    """Insert the home's row unless there is one, as one statement: two
+    processes looking at the same home at once cannot both insert it. Answers
+    whether this call inserted it."""
+    inserted = await session.execute(
+        insert(KeptRoomFiles)
+        .values(
+            project_id=project_id,
+            device_id=device_id,
+            resource_id=resource_id,
+            **values,
+        )
+        .on_conflict_do_nothing(constraint="uq_kept_room_files_home")
+        .returning(KeptRoomFiles.id)
+    )
+    return inserted.first() is not None
+
+
+async def _claim(session, device_id, project_id, resource_id) -> bool:
+    """Take the home for this process to look at: new to the table, or left
+    mid-send by a process that went away (``CLAIM_STALE``). Every other process
+    looking at it now gets False and leaves it alone."""
+    now = datetime.now(UTC)
+    claimed = (
+        await _row(session, device_id, project_id, resource_id, looking_since=now)
+        or (
+            await session.execute(
+                update(KeptRoomFiles)
+                .where(
+                    KeptRoomFiles.device_id == device_id,
+                    KeptRoomFiles.resource_id == resource_id,
+                    KeptRoomFiles.key.is_(None),
+                    KeptRoomFiles.looking_since < now - CLAIM_STALE,
+                )
+                .values(looking_since=now)
+                .returning(KeptRoomFiles.id)
+            )
+        ).first()
+        is not None
+    )
+    await session.commit()
+    return claimed
 
 
 async def room_files_upload_url(
@@ -161,20 +209,18 @@ async def record_room_files(
     what it sent, or None — and tell its conversation, once. A copy the
     bucket does not hold as sent is recorded all the same, and said in the
     log: it is the only one there is."""
+    await _row(session, device_id, project_id, resource_id)
     row = await session.scalar(
-        select(KeptRoomFiles).where(
+        select(KeptRoomFiles)
+        .where(
             KeptRoomFiles.device_id == device_id,
             KeptRoomFiles.resource_id == resource_id,
         )
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
-    if row is None:
-        row = KeptRoomFiles(
-            id=uuid.uuid4(),
-            project_id=project_id,
-            device_id=device_id,
-            resource_id=resource_id,
-        )
-        session.add(row)
+    assert row is not None
+    row.looking_since = None
     if kept is not None and row.key is None:
         key = key_for(project_id, resource_id)
         bucket = storage or _private_bucket()
@@ -213,7 +259,10 @@ async def keep_room_files(
     storage=None,
 ) -> None:
     """Look at one home once, without removing it: send its room's files to
-    the bucket if it has any, and record it either way."""
+    the bucket if it has any, and record it either way. A home another process
+    is looking at is left to it (``_claim``)."""
+    if not await _claim(session, device_id, project_id, resource_id):
+        return
     url = await room_files_upload_url(
         session, device_id, project_id, resource_id, storage=storage
     )
@@ -287,10 +336,18 @@ async def keep_device_room_files(
         device = await sql_device_service(session).get_device(device_id)
         if device is None or device.supply is not Supply.self_hosted:
             return 0
+        # Every home recorded, but one whose send was left unfinished.
         known = set(
             await session.scalars(
                 select(KeptRoomFiles.resource_id).where(
-                    KeptRoomFiles.device_id == device_id
+                    KeptRoomFiles.device_id == device_id,
+                    not_(
+                        and_(
+                            KeptRoomFiles.key.is_(None),
+                            KeptRoomFiles.looking_since
+                            < datetime.now(UTC) - CLAIM_STALE,
+                        )
+                    ),
                 )
             )
         )

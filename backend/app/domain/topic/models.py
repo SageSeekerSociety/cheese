@@ -191,7 +191,8 @@ class KeptRoomFiles(UuidPk, Timestamps, Base):
     Such a room worked in its directory directly, with no repository behind it,
     so its files are on no forge. Where it held any, they went to the private
     bucket under ``key`` and stay there until ``expires_at``; a row with no
-    ``key`` is a home that held none. ``deleted_at``: the copy is gone.
+    ``key`` (and no ``looking_since``) is a home that held none.
+    ``deleted_at``: the copy is gone.
     """
 
     __tablename__ = "kept_room_files"
@@ -208,6 +209,11 @@ class KeptRoomFiles(UuidPk, Timestamps, Base):
     task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Set while one process has the home's files being packed and sent, so no
+    # other sends them too; cleared once the answer is recorded.
+    looking_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
