@@ -48,6 +48,14 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     spot. `@/` is resolved against `frontend/src`, matching `vite.config.ts`.
   - A store is recognised by the `useXStore` naming convention. One spelled
     another way is invisible here.
+  - Comments are not code. `// 不 import vue-router` is the sentence a file
+    writes precisely BECAUSE it took its route through `useNavigation()`, and
+    reading it as a router import graded five such components D. The script
+    is matched with its `//` and `/* */` comments removed (strings, template
+    literals and regex literals are kept, so `'https://x'` is not cut at its
+    `//`); template HTML comments were already dropped by `template_blocks`.
+
+    python3 .claude/scripts/frontend_grade.py --self-test   prove the cases below
 
 `reasons` is the other half of the answer and exists for the gate: a failure
 that says "PanelCard is C" is a puzzle, and one that says "reaches the API
@@ -57,6 +65,8 @@ layer through components/room/composables/useRoomSocket.ts" is a task.
 from __future__ import annotations
 
 import re
+import sys
+import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -201,6 +211,77 @@ class Grade:
         return self.letter == STANDALONE
 
 
+#: Characters after which a `/` starts a regex literal rather than a division.
+_REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%<>~^")
+_AFTER_RETURN = re.compile(r"\breturn\s*$")
+
+
+def strip_js_comments(code: str) -> str:
+    r"""`code` with its `//` and `/* */` comments blanked out.
+
+    A comment is replaced by whitespace of the same shape (newlines kept), so
+    nothing that follows it moves. Quoted strings, template literals and regex
+    literals are copied through untouched: the `//` in `'https://x'` or in
+    `/https?:\/\//` is not a comment. A regex literal is told from a division
+    by the character before it — the usual heuristic, and the place this can
+    still be wrong is a `/` right after a keyword other than `return`.
+    """
+    out: list[str] = []
+    i, n = 0, len(code)
+    prev = ""  # last significant (non-space) character copied through
+    while i < n:
+        char = code[i]
+        nxt = code[i + 1] if i + 1 < n else ""
+        if char == "/" and nxt == "/":
+            end = code.find("\n", i)
+            end = n if end == -1 else end
+            out.append(" " * (end - i))
+            i = end
+            continue
+        if char == "/" and nxt == "*":
+            end = code.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            out.append("".join(c if c == "\n" else " " for c in code[i:end]))
+            i = end
+            continue
+        if char in "'\"`":
+            j = i + 1
+            while j < n and code[j] != char:
+                if code[j] == "\\":
+                    j += 1
+                elif char != "`" and code[j] == "\n":
+                    break  # an unterminated quote ends at the line, like JS
+                j += 1
+            out.append(code[i:j + 1])
+            i = j + 1
+            prev = char
+            continue
+        if char == "/" and (
+            prev == "" or prev in _REGEX_PRECEDERS or _AFTER_RETURN.search(code[max(0, i - 40):i])
+        ):
+            j = i + 1
+            in_class = False
+            while j < n and code[j] != "\n":
+                if code[j] == "\\":
+                    j += 1
+                elif code[j] == "[":
+                    in_class = True
+                elif code[j] == "]":
+                    in_class = False
+                elif code[j] == "/" and not in_class:
+                    break
+                j += 1
+            out.append(code[i:j + 1])
+            i = j + 1
+            prev = "/"
+            continue
+        out.append(char)
+        if not char.isspace():
+            prev = char
+        i += 1
+    return "".join(out)
+
+
 def normalise_store(name: str) -> str:
     """`useSpaceStore` -> `space`; `usePageTitleStore` -> `pageTitle`."""
     return STORE_ALIASES.get(name, name[:1].lower() + name[1:])
@@ -300,7 +381,9 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     if reach is None:
         reach = api_reach(root)
     text = path.read_text(encoding="utf-8", errors="replace")
-    script = "\n".join(SCRIPT_BLOCK.findall(text))
+    # Comments are not code: a file that says "this does not import
+    # vue-router" in a comment is not a file that imports it.
+    script = strip_js_comments("\n".join(SCRIPT_BLOCK.findall(text)))
     template = "\n".join(template_blocks(text))
     whole = script + "\n" + template
 
@@ -340,16 +423,16 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     hard = bool(
         ROUTER_USE.search(whole)
         or "vue-router" in script
-        or PARENT_USE.search(text)
-        or BUS_USE.search(text)
+        or PARENT_USE.search(whole)
+        or BUS_USE.search(whole)
         or INJECT_USE.search(script)
         or PROVIDE_USE.search(script)
     )
     if ROUTER_USE.search(whole) or "vue-router" in script:
         reasons.append("reads the route (useRoute/useRouter/$router/vue-router)")
-    if PARENT_USE.search(text):
+    if PARENT_USE.search(whole):
         reasons.append("reads $parent/$root")
-    if BUS_USE.search(text):
+    if BUS_USE.search(whole):
         reasons.append("uses an event bus")
     if INJECT_USE.search(script) or PROVIDE_USE.search(script):
         reasons.append("uses provide()/inject()")
@@ -394,3 +477,93 @@ def grade_frontend(root: Path) -> dict[str, Any]:
         },
         "grade_lines": {g: lines_by_grade.get(g, 0) for g in "ABCD"},
     }
+
+
+# ---------------------------------------------------------------- self-test
+
+#: Components whose grade the comment rule decides. Each one says "vue-router"
+#: (or `useRoute(`, `$parent`) only in a comment and is A; `Real.vue` is the
+#: control that really reads the route, and `Url.vue` keeps a `//` inside a
+#: string, which must not swallow the `useRoute()` after it on the same line.
+_FIXTURE: dict[str, str] = {
+    "frontend/src/components/LineComment.vue": (
+        "<script setup lang=\"ts\">\n"
+        "// 不 import vue-router：去处走 useNavigation()，不用 useRoute()\n"
+        "defineProps<{ to: string }>()\n</script>\n<template><a>{{ to }}</a></template>\n"
+    ),
+    "frontend/src/components/BlockComment.vue": (
+        "<script setup lang=\"ts\">\n"
+        "/**\n * `state.back` 是 vue-router 记下的上一个地址；不读 $router、$parent。\n */\n"
+        "defineProps<{ to: string }>()\n</script>\n<template><a>{{ to }}</a></template>\n"
+    ),
+    "frontend/src/components/Real.vue": (
+        "<script setup lang=\"ts\">\nimport { useRoute } from 'vue-router'\n"
+        "const route = useRoute()\n</script>\n<template><a>{{ route.path }}</a></template>\n"
+    ),
+    "frontend/src/components/Url.vue": (
+        "<script setup lang=\"ts\">\n"
+        "const home = 'https://example.com'; const route = useRoute()\n"
+        "const re = /\\/\\//g; const r2 = useRoute()\n"
+        "</script>\n<template><a :href=\"home\">{{ route }}</a></template>\n"
+    ),
+}
+
+
+def self_test() -> int:
+    """Grade the fixture components and require each letter."""
+    failures: list[str] = []
+
+    def check(label: str, got: Any, want: Any) -> None:
+        if got != want:
+            failures.append(f"{label}: got {got!r}, want {want!r}")
+
+    check(
+        "a // inside a string is not a comment",
+        strip_js_comments("a = 'http://x' // gone\n"),
+        "a = 'http://x'        \n",
+    )
+    check(
+        "a block comment keeps its newlines",
+        strip_js_comments("a /* x\ny */ b"),
+        "a     \n     b",
+    )
+    check(
+        "a regex literal keeps its //",
+        strip_js_comments("s.replace(/\\/\\//g, '') // gone"),
+        "s.replace(/\\/\\//g, '')        ",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="frontend-grade-selftest-") as raw:
+        root = Path(raw)
+        for rel, body in _FIXTURE.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        reach = api_reach(root)
+        components = root / "frontend" / "src" / "components"
+
+        def letter(name: str) -> str:
+            return grade_component(root, components / name, reach).letter
+
+        check("vue-router named in a // comment is not a router read", letter("LineComment.vue"), "A")
+        check("vue-router, $router, $parent in a /* */ comment are not read", letter("BlockComment.vue"), "A")
+        check("a real useRoute() is still D", letter("Real.vue"), "D")
+        check("a // inside a string does not hide the code after it", letter("Url.vue"), "D")
+
+    for failure in failures:
+        print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
+    if failures:
+        return 1
+    print(
+        "PASS: frontend_grade self-test (comments are not code: vue-router, $router "
+        "and $parent named in // and /* */ comments grade A, a real useRoute() "
+        "stays D, and a // inside a string or a regex is not a comment)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-test"]:
+        sys.exit(self_test())
+    print("usage: frontend_grade.py --self-test (the graders import this module)", file=sys.stderr)
+    sys.exit(2)
