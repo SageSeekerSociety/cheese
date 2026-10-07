@@ -24,6 +24,7 @@ const open = defineModel<boolean>({ required: true })
 
 const typed = ref('')
 // 弹窗里画的理由：跟着 props.error 走，但重开时清掉——上一次被拒的那句不该留到下一次。
+// 挂上时就照 props 取一次（immediate）：开着、带着理由挂起来的那一格（预览站）也画得出那句。
 const shownError = ref('')
 
 const confirmed = computed(() => typed.value.trim() === props.projectName.trim())
@@ -38,7 +39,8 @@ watch(
   () => props.error,
   (e) => {
     shownError.value = e
-  }
+  },
+  { immediate: true }
 )
 
 watch(

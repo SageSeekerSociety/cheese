@@ -344,7 +344,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         name: '两条支线',
         note: '每一行写挂着的那条消息、最后一句回复和谁说过话；有新回复的亮一个点；转成任务的那一条在回复的位置改写任务和它的状态。',
         props: {},
-        expect: '已转为任务「整理第一周的课件」',
+        expect: '任务「整理第一周的课件」',
       },
       {
         name: '读支线的时候',
