@@ -346,19 +346,19 @@ def test_a_connection_reset_mid_answer_is_not_the_machine_being_gone(
     assert not isinstance(raised.value, executor_transport.MachineOutOfReach)
 
 
-def _bound_token(*, reading: bool) -> str:
+def _bound_token(**kinds: bool) -> str:
     from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 
     launch = mint_scoped_token(project_id="project", topic_id="room")
     return bind_resource_token(
-        launch, "room", session_id="session", lease_generation="lease", reading=reading
+        launch, "room", session_id="session", lease_generation="lease", **kinds
     )
 
 
 def test_a_refusal_to_a_credential_that_only_reads_says_why_and_not_to_retry(
     monkeypatch, tmp_path
 ):
-    """还没开始的任务、支线，凭证只读工作机器；执行命令被拒时 agent 要知道是这个原因。
+    """文档芝士的凭证只读工作机器；执行命令被拒时 agent 要知道是这个原因。
 
     说成「这一个可以重试」，agent 会约时间再试并告诉人机器坏了，而机器好好的。
     """
@@ -372,6 +372,21 @@ def test_a_refusal_to_a_credential_that_only_reads_says_why_and_not_to_retry(
     assert not re.search(r"\d{3}", str(raised.value))
 
 
+def test_a_refusal_to_a_session_whose_work_is_not_kept_says_why_and_not_to_retry(
+    monkeypatch, tmp_path
+):
+    """支线、还没开始的任务，改动留不下；同步被拒时 agent 要知道是这个原因，而不是
+    当成机器出了故障去重试。"""
+    client = failing_client(monkeypatch, tmp_path, 403)
+    (tmp_path / "execution.token").write_text(_bound_token(scratch=True))
+
+    with pytest.raises(RuntimeError) as raised:
+        client.call("control")
+
+    assert str(raised.value) == executor_transport.SCRATCH_REFUSED
+    assert not re.search(r"\d{3}", str(raised.value))
+
+
 def test_a_403_to_a_credential_that_may_write_is_not_called_read_only(
     monkeypatch, tmp_path
 ):
@@ -382,3 +397,17 @@ def test_a_403_to_a_credential_that_may_write_is_not_called_read_only(
         client.call("invoke")
 
     assert str(raised.value) == executor_transport.EXECUTOR_CALL_FAILED
+
+
+def test_a_session_whose_work_is_not_kept_does_not_ask_to_sync_it(
+    monkeypatch, tmp_path
+):
+    """支线、还没开始的任务，回合结束时没有改动要同步进项目，也就不去问机器。"""
+    client = failing_client(monkeypatch, tmp_path, 403)
+    (tmp_path / "execution.token").write_text(_bound_token(scratch=True))
+
+    assert client.checkpoint("checkpoint-1") == {}
+
+    (tmp_path / "execution.token").write_text(_bound_token())
+    with pytest.raises(RuntimeError):
+        client.checkpoint("checkpoint-2")

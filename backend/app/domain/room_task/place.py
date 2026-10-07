@@ -55,6 +55,15 @@ class Place:
     def title(self) -> str:
         return self.task.title if self.task is not None else self.room.title
 
+    @property
+    def keeps_work(self) -> bool:
+        """Whether what a session does here may reach the project. Not from a
+        支线, and from a task only once its owner started it: what changes the
+        project is done in a started task or in the room's own line."""
+        if self.thread is not None:
+            return False
+        return self.task is None or self.task.started_at is not None
+
 
 class PlaceResolver:
     def __init__(self, session: AsyncSession):
@@ -109,3 +118,20 @@ async def doc_text_of(
     if needs_place and not (text or "").strip():
         text = ""
     return text
+
+
+async def session_keeps_work(session: AsyncSession, session_id: str | None) -> bool:
+    """Whether the agent session ``session_id`` may carry its work into the
+    project (`Place.keeps_work`): what a machine credential naming it asks
+    before it is handed what pushes. One naming no session, or a session that
+    is gone, has no 支线 or unstarted task to answer for, and keeps its work."""
+    from app.domain.agent_session.models import AgentSession
+
+    try:
+        row = await session.get(AgentSession, uuid.UUID(str(session_id)))
+    except ValueError:
+        return True
+    if row is None:
+        return True
+    place = await PlaceResolver(session).conversation(row.conversation_id)
+    return place is None or place.keeps_work

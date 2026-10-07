@@ -21,7 +21,7 @@ async def thread_context(
     message the 支线 hangs under and what the main line said just before it,
     and the channel's tasks still open — so a piece of work that already has a
     task is pointed to rather than proposed again. A routine's run is told
-    that this turn may keep what it produces, and that the 支线 reads only
+    that this turn may keep what it produces, and that the 支线 keeps nothing
     afterwards."""
     from app.domain.room_task.services import TaskService
 
@@ -39,14 +39,16 @@ async def thread_context(
             "这一轮就是这次执行：可以保存它要的结果文件。"
             if routine_run
             else "这次执行已经跑过了，现在是有人在这里追问。这里的人 @ 你，你才回答。"
-            "你只读：可以看代码和提交记录、查资料，不执行命令，不改项目，不交付，不摆预览；"
+            "你在这里的改动留不下：可以读代码、跑命令和测试、临时改文件、查资料，"
+            "但不推送、不交付、不摆预览；"
             "要改的事用 `cheese_task` 提议成任务。",
         ]
         parts = [*opening]
     else:
         parts = [
             f"你在频道「#{room.title}」的一条支线里。这里的人 @ 你，你才回答。"
-            "你只读：可以看代码和提交记录、查资料，不执行命令，不改项目，不交付，不摆预览；"
+            "你在这里的改动留不下：可以读代码、跑命令和测试、临时改文件、查资料，"
+            "但不推送、不交付、不摆预览；"
             "要改的事用 `cheese_task` 提议成任务。别处定过的事不记得时，用 "
             "`cheese_chat_search` 加 `channel` 搜整个频道。",
             "",

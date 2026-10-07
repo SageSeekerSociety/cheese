@@ -86,7 +86,7 @@ class Host:
 
     @asynccontextmanager
     async def prepare_session(
-        self, *, session, token, env, precheck, runtime_factory, reading=False
+        self, *, session, token, env, precheck, runtime_factory, scratch=False
     ):
         self.placed = runtime_factory(TOPIC)["state"]
         yield SimpleNamespace(

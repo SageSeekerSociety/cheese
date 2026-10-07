@@ -1,10 +1,10 @@
 """A task's session is told what it may do on the work machine.
 
-Until its owner starts the task, the session's credential only reads the
-machine, and every command it runs is refused. Told nothing, it found out by
-running one, read the refusal as a broken sandbox and booked a retry. Starting
-the task relaunches the session on the same conversation, so it is told again
-then, and only then may it act.
+Until its owner starts the task, nothing the session does on the machine is
+kept: its sync and its pushes are refused. Told nothing, it found out by being
+refused, read the refusal as a broken sandbox and booked a retry. Starting the
+task relaunches the session on the same conversation, so it is told again then,
+and only then does its work reach the project.
 """
 
 import asyncio
@@ -25,7 +25,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 
-READS_ONLY = "你对工作机器只读"
+NOT_STARTED = "这条任务还没开始"
 STARTED = "这条任务已经开始"
 
 
@@ -48,7 +48,7 @@ def _inputs(client, task: uuid.UUID) -> list[NativeInput]:
     return asyncio.run(read())
 
 
-def test_a_task_session_hears_it_only_reads_until_the_task_starts(client):
+def test_a_task_session_hears_its_work_is_not_kept_until_the_task_starts(client):
     data = post_project(client, {"name": "Reads"}, owner="alice").json()["data"]
     room = data["root_topic_id"]
     channel = StubChannel()
@@ -75,7 +75,7 @@ def test_a_task_session_hears_it_only_reads_until_the_task_starts(client):
         lambda: "这里是怎么回事" in (channel.last_prompt or ""),
         "the task's first turn never reached its session",
     )
-    assert READS_ONLY in channel.last_prompt
+    assert NOT_STARTED in channel.last_prompt
     assert STARTED not in channel.last_prompt
     _until(
         lambda: all(row.completed_at for row in _inputs(client, task_id)),
@@ -99,4 +99,4 @@ def test_a_task_session_hears_it_only_reads_until_the_task_starts(client):
     # bring one), and the read-only line never again.
     after = heard[before:]
     assert sum(STARTED in prompt for prompt in after) == 1
-    assert not any(READS_ONLY in prompt for prompt in after)
+    assert not any(NOT_STARTED in prompt for prompt in after)

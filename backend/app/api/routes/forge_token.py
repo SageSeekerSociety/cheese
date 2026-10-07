@@ -41,6 +41,7 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
 from app.domain.agent.forgejo_tokens import ForgejoTokenError
 from app.domain.agent.github_app import GitHubAppError
+from app.domain.room_task.place import session_keeps_work
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
@@ -186,6 +187,13 @@ async def forge_transport(
             "git-receive-pack",
         ):
             return Response(status_code=403)
+        # A push is advertised (`info/refs?service=git-receive-pack`) before
+        # it is sent; refuse both for a session whose work is not kept.
+        pushing = path.endswith("git-receive-pack") or (
+            request.query_params.get("service") == "git-receive-pack"
+        )
+        if pushing and not await session_keeps_work(db, claims.get("session")):
+            return Response(status_code=403)
         minter = await tokens_for_project(project_id, db)
         if minter is None:
             raise GatewayUnavailableError(say("forgeCredentialMissing"))
@@ -322,6 +330,10 @@ async def sandbox_forge_token(
         raise AuthenticationRequiredError("A scoped cheese token is required")
     project_id = uuid.UUID(claims["p"])
     await require_seated_agent(db, token, project_id=project_id, topic_id=None)
+    # The token below pushes, and opens pull requests through the API: a 支线
+    # or a task not yet started keeps nothing it does (`Place.keeps_work`).
+    if not await session_keeps_work(db, claims.get("session")):
+        raise ForbiddenError(say("forgeWorkNotKept"))
     binding = await binding_for_project(project_id, db)
     minter = await tokens_for_project(project_id, db)
     if binding is None or minter is None:

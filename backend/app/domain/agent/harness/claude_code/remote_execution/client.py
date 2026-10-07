@@ -1914,12 +1914,7 @@ def main():
                 json.dumps(payload, sort_keys=True) + str(transcript.stat().st_size)
             ).encode()
         ).hexdigest()
-        result = RemoteClient(config).control(
-            {
-                "subtype": "checkpoint",
-                "request_id": "checkpoint-" + identifier,
-            }
-        )
+        result = RemoteClient(config).checkpoint("checkpoint-" + identifier)
         if "error" in result:
             raise RuntimeError(result["error"])
     elif args.mode == "reply":

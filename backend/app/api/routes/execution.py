@@ -65,6 +65,29 @@ def _reads(method: str, params: dict) -> bool:
     return params.get("subtype") in ("git", "tool_hooks")
 
 
+def _native_read(method: str, params: dict) -> bool:
+    """A Claude Code session's own Read, which the executor answers with the
+    build's Read tool (`runtime.execute`): its file tools reach the machine
+    this way rather than through ``files``."""
+    return (
+        method == "invoke"
+        and params.get("tool") == "Read"
+        and params.get("server", "native") == "native"
+    )
+
+
+def _carries_work_off(method: str, params: dict) -> bool:
+    """Whether this call would take a session's work beyond its own machine:
+    the checkpoint syncs it into the project (`cheese sync --all`), and the
+    project's MCP servers act on systems outside the machine. Pushing from a
+    command is refused where its credential is handed out (`forge_token`)."""
+    if method == "mcp":
+        return True
+    if method == "invoke":
+        return params.get("server", "native") != "native"
+    return method == "control" and params.get("subtype") == "checkpoint"
+
+
 class ExecutionRequest(BaseModel):
     method: str
     params: dict = {}
@@ -158,7 +181,22 @@ async def execute(
         "control",
     }:
         raise ForbiddenError("This executor operation is not available to the session")
-    if claims.get("ro") and not _reads(payload.method, payload.params):
+    # A session whose work is not kept (a 支线, a task not yet started) does
+    # anything on a machine that is its own (`session_work`, ``own``) except
+    # carry the work off it. On one it shares — a person's whole machine, a
+    # Windows machine, a whole cloud VM — what it changed would stay among
+    # other work, so there it only reads. Its ``ro`` is for an owner that
+    # predates this (`bind_resource_token`).
+    if claims.get("scratch"):
+        if lease.get("own"):
+            if _carries_work_off(payload.method, payload.params):
+                raise ForbiddenError("This credential's work stays on its machine")
+        elif not (
+            _reads(payload.method, payload.params)
+            or _native_read(payload.method, payload.params)
+        ):
+            raise ForbiddenError("This credential only reads a shared machine")
+    elif claims.get("ro") and not _reads(payload.method, payload.params):
         raise ForbiddenError("This credential only reads the machine's files")
     target = lease
     if not (

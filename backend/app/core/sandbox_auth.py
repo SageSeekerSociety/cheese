@@ -126,11 +126,20 @@ def bind_resource_token(
     session_id: str | None = None,
     lease_generation: str | None = None,
     reading: bool = False,
+    scratch: bool = False,
 ) -> str:
     """Bind an existing scoped launch credential to its allocated execution.
 
     ``reading`` makes it a credential that only reads the machine's files
-    (``routes/execution.py``): a document's 芝士 looking at the room's work."""
+    (``routes/execution.py``): a document's 芝士 looking at the room's work.
+
+    ``scratch`` makes it one whose work is not kept: a 支线, or a task its
+    owner has not started. On a machine that is its session's own it does
+    anything there but carry the work into the project; on one shared with
+    others it only reads (``routes/execution.py``). It carries ``ro`` as well:
+    the executor route is served by the device connection's owner, which an
+    app release leaves on its image, and an owner that predates ``scratch``
+    reads only ``ro`` and keeps the session to reading until it is released."""
     claims = scoped_token_claims(token)
     if claims is None:
         raise ValueError("A valid scoped launch credential is required")
@@ -141,8 +150,10 @@ def bind_resource_token(
         claims["session"] = session_id
     if lease_generation is not None:
         claims["lease"] = lease_generation
-    if reading:
+    if reading or scratch:
         claims["ro"] = True
+    if scratch:
+        claims["scratch"] = True
     raw = json.dumps(claims, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
     if "session" in claims:

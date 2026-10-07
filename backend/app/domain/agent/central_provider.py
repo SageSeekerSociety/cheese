@@ -192,7 +192,7 @@ class CentralChannel(DeviceChannel):
         env,
         precheck=None,
         runtime_factory=None,
-        reading: bool = False,
+        scratch: bool = False,
     ) -> AsyncIterator[PreparedSession]:
         assert isinstance(precheck, Placement)
         project_id, topic_id = session.project_id, session.topic_id
@@ -267,14 +267,15 @@ class CentralChannel(DeviceChannel):
         # Its credential names that lease, as the one the lease hands out does:
         # the executor route admits nothing else, and this is the one the
         # session's calls carry again after each turn rewrites it.
-        # ``reading``: a task its owner has not started yet reads the
-        # machine and changes nothing on it (`routes/execution.py`).
+        # ``scratch``: a 支线, or a task its owner has not started, whose work
+        # stays on the machine and never reaches the project
+        # (`routes/execution.py`).
         token = bind_resource_token(
             token,
             str(resource),
             session_id=str(session_id),
             lease_generation=(leased or {}).get("generation"),
-            reading=reading,
+            scratch=scratch,
         )
         # 这一轮没有租手 (``precheck`` 说的)，所以它跑在这条会话自己的草稿区里：
         # 一个有界的一次性容器，开在会话机上，不是一个地点 (结论 19)。

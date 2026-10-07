@@ -21,7 +21,7 @@ from app.core.sentences import exception_text, say
 from app.domain.agent import turn_inputs
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
-    TASK_MACHINE_READS_ONLY,
+    TASK_MACHINE_NOT_STARTED,
     TASK_MACHINE_STARTED,
     UNTITLED_TASK,
     build_session_opening,
@@ -244,10 +244,11 @@ class _TurnContext:
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
-    # A task's session only reads until its owner starts it: it discusses and
-    # writes the task's document, and changes nothing in the project. A 支线's
-    # always only reads: what changes the project is done in a task.
-    reads_only: bool
+    # A 支线's work, and a task's until its owner starts it, is not kept: it
+    # may read, run and try things on its own machine, and nothing it does
+    # there reaches the project. What changes the project is done in a task
+    # its owner started.
+    keeps_nothing: bool
     # What a task's session is told it may do on the machine; None outside a
     # task. It changes when the task starts, and is told again then.
     task_machine: str | None
@@ -1012,13 +1013,13 @@ class RoomTurns:
         return _TurnContext(
             room_id=place.room_id,
             inner_id=place.inner_id,
-            # A 支线 reads only, except the turn that is a routine's run: a rule
-            # its owner confirmed, which keeps what it produces.
-            reads_only=(place.thread is not None and not routine_run)
-            or (task is not None and task.started_at is None),
+            # Except the turn that is a routine's run in a 支线: a rule its
+            # owner confirmed, which keeps what it produces.
+            keeps_nothing=not place.keeps_work
+            and not (place.thread is not None and routine_run),
             task_machine=None
             if task is None or place.thread is not None
-            else TASK_MACHINE_READS_ONLY
+            else TASK_MACHINE_NOT_STARTED
             if task.started_at is None
             else TASK_MACHINE_STARTED,
             acting_agent=acting_agent,
@@ -1363,7 +1364,7 @@ class RoomTurns:
                 env=model_kwargs.get("env"),
                 acting=acting_agent,
                 needs_place=needs_place,
-                reads_only=prepared.reads_only,
+                keeps_nothing=prepared.keeps_nothing,
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,

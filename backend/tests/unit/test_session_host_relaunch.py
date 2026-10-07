@@ -131,11 +131,11 @@ def _access() -> Access:
     return Access("token", host=HOST, owner=owner)
 
 
-def _spec(reads_only: bool) -> SessionSpec:
+def _spec(keeps_nothing: bool) -> SessionSpec:
     return SessionSpec(
         system_prompt="",
         model="m",
-        env={"CHEESE_TASK_READS_ONLY": "1" if reads_only else "0"},
+        env={"CHEESE_KEEPS_NOTHING": "1" if keeps_nothing else "0"},
     )
 
 
@@ -145,7 +145,7 @@ async def _started_task(tmp_path: Path, relaunch):
     host._drivers = {PI: cast(HarnessDriver, Driver(machine, relaunch))}
     ref = SessionRef(PI, "task-session")
     access = _access()
-    await host.start(ref, _spec(reads_only=True), access)
+    await host.start(ref, _spec(keeps_nothing=True), access)
     heard: list = []
 
     async def follow():
@@ -177,7 +177,7 @@ async def test_an_old_runner_going_during_the_relaunch_leaves_the_new_one(
         tmp_path, old_runner_goes_while_the_new_one_starts
     )
 
-    await host.start(ref, _spec(reads_only=False), access)
+    await host.start(ref, _spec(keeps_nothing=False), access)
     await host.send(ref, Prompt(uuid.uuid4(), "开始"), work_id=uuid.uuid4())
 
     assert machine.said == ["开始"]
@@ -195,7 +195,7 @@ async def test_an_old_runner_heard_going_after_the_relaunch_leaves_the_new_one(
     machine, host, ref, access, heard, reading = await _started_task(tmp_path, relaunch)
     await _until(lambda: heard)
 
-    await host.start(ref, _spec(reads_only=False), access)
+    await host.start(ref, _spec(keeps_nothing=False), access)
     # The answer the old runner gave on its way out arrives only now.
     machine.answer(False)
     await asyncio.sleep(0.05)
