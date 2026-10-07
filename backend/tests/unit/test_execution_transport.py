@@ -1592,7 +1592,7 @@ def test_a_notice_from_the_platform_reaches_the_agent_once_with_its_hands(
 
     _, work, state = executor
     generation = str(uuid.uuid4())
-    replaced = "原来的沙箱不再响应，已换成一个新沙箱。"
+    replaced = "沙箱已换成一个新的。"
     pending = [replaced]
 
     class Handler(BaseHTTPRequestHandler):

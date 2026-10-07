@@ -22,7 +22,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered, session_auth_headers
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -773,113 +773,14 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
         assert (await session.get(CloudHost, host_id)).released_at is None
 
 
-@pytest.mark.parametrize("pushed", [True, False, None])
-async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_only_once_pushed(
-    client, monkeypatch, pushed
-):
-    """A session whose home was archived holds no directory on any machine:
-    its host may be gone. The room's cleanup does not wait for that host. The
-    archive goes with the room when its host found everything in it pushed;
-    otherwise it is the only copy of that work, and the cleanup waits, still
-    cancellable by unarchiving the room. An archive with no answer (written
-    before hosts were asked) is not taken for pushed."""
-    from app.domain.agent_session.services import AgentSessionService
-    from app.domain.machine import lifecycle
-
-    class Bucket:
-        def __init__(self):
-            self.objects = {"sandbox-archives/home.tar.gz": b"archived home"}
-
-        async def delete(self, key):
-            return self.objects.pop(key, None) is not None
-
-    bucket = Bucket()
-    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket)
-    room_id, cleanup_id = await archived_room(client, monkeypatch)
-    async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        project_id, generation = operation.project_id, str(operation.resource_id)
-        resource = str(uuid.uuid4())
-        conversation = await AgentSessionService(session).ensure(
-            room_id, "worker", harness="claude-code"
-        )
-        # The lease still names the host the home was archived from.
-        conversation.work_lease = {
-            "device_id": "released-host",
-            "resource_id": resource,
-            "kind": "device",
-        }
-        session.add(
-            CloudHostHome(
-                host_id=None,
-                project_id=project_id,
-                topic_id=room_id,
-                room_resource_id=generation,
-                resource_id=resource,
-                session_id=conversation.id,
-                stopped_at=datetime.now(UTC),
-                archive_key="sandbox-archives/home.tar.gz",
-                archive_size=13,
-                archive_md5="0" * 32,
-                archive_published=pushed,
-            )
-        )
-        await session.commit()
-
-    if pushed:
-        assert _sweep(client) == {"completed": 1, "pending": 0}
-        assert bucket.objects == {}
-        async with client.test_factory() as session:
-            assert (
-                await session.scalar(
-                    select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
-                )
-            ) is None
-        return
-
-    assert _sweep(client) == {"completed": 0, "pending": 1}
-    # Kept for a person, it is not due again within the day.
-    assert _sweep(client) == {"completed": 0, "pending": 0}
-    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
-    status = client.get(
-        f"/topics/{room_id}/cleanup", headers=session_auth_headers("owner")
-    ).json()["data"]
-    assert status["state"] == "kept"
-    assert "not pushed" in status["reason"]
-    async with client.test_factory() as session:
-        await TopicService(session).unarchive(room_id, by="owner")
-        await session.commit()
-    async with client.test_factory() as session:
-        assert (await session.get(RoomCleanup, cleanup_id)).state == "cancelled"
-        kept = await session.scalar(
-            select(CloudHostHome).where(CloudHostHome.topic_id == room_id)
-        )
-        assert kept.archive_key == "sandbox-archives/home.tar.gz"
-    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
-
-
-@pytest.mark.parametrize("pushed", [True, False])
-async def test_a_room_that_became_a_task_is_still_cleaned_up(
-    client, monkeypatch, pushed
-):
+async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch):
     """A room archived before its cleanup finished became a closed task: its
     row is gone, its conversation stays. Its cleanup is not called off for
-    that: the old generation's home goes once it is found pushed, and an
-    unpushed one still holds the cleanup, as it would for a room."""
+    that, and the old generation's homes go with it."""
     from sqlalchemy import text
 
     from app.domain.agent_session.services import AgentSessionService
-    from app.domain.machine import lifecycle
 
-    class Bucket:
-        def __init__(self):
-            self.objects = {"sandbox-archives/home.tar.gz": b"archived home"}
-
-        async def delete(self, key):
-            return self.objects.pop(key, None) is not None
-
-    bucket = Bucket()
-    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket)
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
@@ -892,19 +793,31 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(
             "resource_id": resource,
             "kind": "device",
         }
+        host = CloudHost(
+            machine_id=None,
+            customer_id=1,
+            account_id=1,
+            offering_id=1,
+            hostname=f"host-{uuid.uuid4().hex[:8]}",
+            login_user="cheese",
+            cores=1,
+            memory_mb=4096,
+            disk_gb=20,
+            status=MachineStatus.provisioning,
+            ai_mode="none",
+            ai_status=AiStatus.unknown,
+        )
+        session.add(host)
+        await session.flush()
+        # Placed on a host that never came up: no directory anywhere.
         session.add(
             CloudHostHome(
-                host_id=None,
+                host_id=host.id,
                 project_id=operation.project_id,
                 topic_id=room_id,
                 room_resource_id=str(operation.resource_id),
                 resource_id=resource,
                 session_id=conversation.id,
-                stopped_at=datetime.now(UTC),
-                archive_key="sandbox-archives/home.tar.gz",
-                archive_size=13,
-                archive_md5="0" * 32,
-                archive_published=pushed,
             )
         )
         await session.commit()
@@ -926,91 +839,14 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(
         )
         await session.commit()
 
-    if pushed:
-        assert _sweep(client) == {"completed": 1, "pending": 0}
-        assert bucket.objects == {}
-        async with client.test_factory() as session:
-            assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
-            assert (
-                await session.scalar(
-                    select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
-                )
-            ) is None
-        return
-
-    assert _sweep(client) == {"completed": 0, "pending": 1}
-    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
+    assert _sweep(client) == {"completed": 1, "pending": 0}
     async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        assert operation.state == "kept"
-        assert "not pushed" in operation.last_error
-
-
-async def test_work_kept_only_in_an_archive_is_not_retried_on_the_machines(
-    client, monkeypatch
-):
-    """A cleanup held only because an archive is the sole copy of unpushed work
-    waits for a person: it asks no machine anything while it waits, counts no
-    failures, and looks again a day later. Once that copy is gone it goes on
-    like any other cleanup."""
-    from app.domain.agent_session.services import AgentSessionService
-
-    room_id, cleanup_id = await archived_room(client, monkeypatch)
-    entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
-    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
-    asked = AsyncMock()
-    monkeypatch.setattr(retire, "_device_action", asked)
-    async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        conversation = await AgentSessionService(session).ensure(
-            room_id, "worker", harness="claude-code"
-        )
-        session.add(
-            CloudHostHome(
-                host_id=None,
-                project_id=operation.project_id,
-                topic_id=room_id,
-                room_resource_id=str(operation.resource_id),
-                resource_id=str(uuid.uuid4()),
-                session_id=conversation.id,
-                stopped_at=datetime.now(UTC),
-                archive_key="sandbox-archives/home.tar.gz",
-                archive_size=13,
-                archive_md5="0" * 32,
-                archive_published=False,
+        assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
+        assert (
+            await session.scalar(
+                select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
             )
-        )
-        await session.commit()
-
-    _sweep(client)
-    async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        assert operation.state == "kept"
-        assert operation.failures == 0
-        assert operation.due_at - datetime.now(UTC) > timedelta(hours=23)
-        # Due again, it still asks no machine.
-        operation.due_at = datetime.now(UTC)
-        await session.commit()
-    _sweep(client)
-    async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        assert operation.state == "kept"
-        assert operation.failures == 0
-    assert asked.await_count == 0
-
-    # The archive stops being the only copy: the cleanup goes on as usual.
-    async with client.test_factory() as session:
-        home = await session.scalar(
-            select(CloudHostHome).where(CloudHostHome.topic_id == room_id)
-        )
-        home.archive_published = True
-        operation = await session.get(RoomCleanup, cleanup_id)
-        operation.due_at = datetime.now(UTC)
-        await session.commit()
-    _sweep(client)
-    async with client.test_factory() as session:
-        assert (await session.get(RoomCleanup, cleanup_id)).state != "kept"
-    assert asked.await_count > 0
+        ) is None
 
 
 async def test_a_cleanup_held_for_the_same_reason_backs_off(client, monkeypatch):

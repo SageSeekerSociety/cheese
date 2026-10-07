@@ -29,7 +29,6 @@ from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
-    CloudHostHome,
     MachineStatus,
     WarmMachine,
 )
@@ -476,7 +475,7 @@ def test_an_idle_host_is_released_after_the_hold_and_not_before(pool):
     [alice] = pool.room("alice", 1)
     host_id = pool.place("alice", alice)
     pool.up(host_id)
-    pool.pool("leave", alice, kept_work=False)
+    pool.pool("leave", alice)
 
     pool.pool("maintain")
     host = pool.host(host_id)
@@ -496,35 +495,6 @@ def test_an_idle_host_is_released_after_the_hold_and_not_before(pool):
 
     assert pool.host(host_id).released_at is not None
     assert pool.cloud.deleted == [pool.host(host_id).machine_id]
-
-
-def test_a_host_is_not_released_while_a_session_left_unpushed_work_on_it(pool):
-    [alice] = pool.room("alice", 1)
-    host_id = pool.place("alice", alice)
-    device = pool.up(host_id)
-    pool.pool("leave", alice, kept_work=True)
-
-    async def long_ago():
-        async with pool.client.test_request_factory() as db:
-            row = await db.get(CloudHost, host_id)
-            row.idle_since = datetime.now(UTC) - timedelta(days=1)
-            await db.commit()
-            home = await db.scalar(
-                select(CloudHostHome).where(CloudHostHome.session_id == alice)
-            )
-            return home.resource_id
-
-    resource = pool.run(long_ago)
-    pool.pool("maintain")
-
-    host = pool.host(host_id)
-    assert host.released_at is None and host.idle_since is None
-    assert pool.cloud.deleted == []
-
-    # The room's cleanup removed the directory: nothing is only there any more.
-    pool.pool("forget_device_homes", device, resource)
-    pool.pool("maintain")
-    assert pool.host(host_id).idle_since is not None
 
 
 def test_the_pool_adds_a_host_before_its_free_slots_run_out(pool, monkeypatch):

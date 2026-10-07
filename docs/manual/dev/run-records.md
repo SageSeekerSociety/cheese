@@ -28,13 +28,13 @@ covers:
 | 排队、断线后接回记录、输入已登记在核对、转入队列 | `turn_queued`、`delivery_checking`、`delivery_fallback` | 现场；还没开始的一轮在输入框上方写「排队中」 |
 | 工具通道接回、同一批消息重投 | `tools_recovered`、`prompt_replayed` | 现场 |
 | AI 服务重试、整理上下文、等机器 | `api_retry`、`context_compact`、`device_waiting` | 现场；在跑的一轮的状态行读它们 |
-| 环境的准备、就绪、唤醒、休眠 | `cloud_startup`、`cloud_provisioning`、`sandbox_asleep` | 现场 |
+| 环境的准备、就绪、空闲释放 | `cloud_startup`、`cloud_provisioning`、`sandbox_asleep` | 现场 |
 | 记忆改动、整理 | `memory_changed` | 现场，见[记忆 · 改动记在哪](/dev/memory#events) |
 | 定时投递到点 | `timed_delivery` | 现场；记录的 id 就是那条定时投递的 id，账本的事件指着它 |
 | 后端报错、前端报错 | `backend_error`、`frontend_error` | 只在管理后台；不属于任何对话，发生在哪个对话写在 `meta.conversation` |
 | 2026-10-07 之前支线以外没跑完的轮次（迁移 `52fee3dd7773` 搬过来的） | `turn_failed`、`platform_error`、`turn_timeout` | 现场；管理后台算在「报错」里 |
 
-额度用完环境被停下、归档丢了、一轮最终没答上这些要人动手的事仍然说在对话里。在频道主线上叫芝士，它在支线里回答，没答上的那一行落在支线里，主线那条消息下面写「回复失败」。
+额度用完环境被释放、环境不再响应被换掉、一轮最终没答上这些要人动手的事仍然说在对话里。在频道主线上叫芝士，它在支线里回答，没答上的那一行落在支线里，主线那条消息下面写「回复失败」。
 
 ## 怎么写、怎么推 {#writing}
 

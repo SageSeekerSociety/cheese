@@ -4,20 +4,20 @@ A sandbox is charged for the time it runs, from start to idle stop
 (``usage.compute``). This module watches the homes and tells the meter: a
 home whose sandbox runs gets an open run, and a run whose sandbox no longer
 runs is closed. It runs on a clock of its own (``runner.ComputeMeterSweeper``)
-rather than inside placement and every path that stops, archives or deletes a
+rather than inside placement and every path that destroys or deletes a
 home, so that no such path, now or added later, can leave a sandbox running
 unmetered or metered forever. A start or stop is seen within one sweep; a stop
 the lifecycle recorded is closed at the moment it recorded.
 
 A sandbox **runs** while its home is on a host the pool still holds, enrolled,
-and is neither asleep (``stopped_at``) nor waiting for its sandbox to be
-prepared, woken or restored (``waiting_since``): the room is not charged while
-it waits for a host. A whole cloud VM runs from its creation to its release,
+and is neither being destroyed (``stopped_at``) nor waiting for its sandbox to
+be prepared (``waiting_since``): the room is not charged while it waits for a
+host. A whole cloud VM runs from its creation to its release,
 since the platform pays for it all that time, priced by its size and charged
 to the project it was created for.
 
 When a project's payer has run out of credits, its running sandboxes are
-stopped as soon as their room runs no turn: the turn that was running when the
+destroyed as soon as their room runs no turn: the turn that was running when the
 credits ran out finishes, as a model turn does, and no new sandbox or VM
 starts (``usage.compute.admit_start``, asked by ``HostPool.place``). A whole
 VM is not stopped for it; the VM sweep releases it once it is idle.
@@ -164,7 +164,7 @@ async def observe(session: AsyncSession) -> dict[str, int]:
 
 async def unpaid_sandboxes(session: AsyncSession) -> list:
     """The running sandboxes whose project's payer has no credits left and
-    whose room runs no turn: those to stop. Asked at most every
+    whose room runs no turn: those to destroy. Asked at most every
     ``CREDIT_CHECK``. Commits."""
     from app.domain.agent.models import AgentTurn
     from app.domain.usage.services import UsageService
