@@ -370,6 +370,14 @@ PROJECT_SKILLS = (
 )
 
 
+def own_name(name: str) -> str:
+    """The line that tells a teammate which name on the roster is its own."""
+    return (
+        f"你的名字是「{name}」。项目成员表里叫这个名字的 AI 队友就是你；"
+        "说到自己、在文档里写谁做什么时，用这个名字称呼自己。"
+    )
+
+
 def build_system_prompt(
     base: str,
     skills: str,
@@ -377,8 +385,13 @@ def build_system_prompt(
     has_doc: bool = False,
     role: str | None = None,
     keeps_memory: bool = False,
+    name: str | None = None,
 ) -> str:
     """拼一个会话的系统提示词：只有规矩，没有项目现状。
+
+    ``name`` 是这位队友在项目里的名字，放在最前面：成员表里有好几位 AI 队友，
+    它得知道哪一位是自己，说到自己、写进文档时用自己的名字，而不是产品名。
+    改名会换掉系统提示词，下一轮因此开一段新会话，这是有意的。
 
     骨架在进程启动时读它，进程空闲退出后用 ``--resume`` 接着原来的对话重新拉起时
     再读一次。所以它在一个会话里必须一字不变：变了，从变的那个字往后、连同整段
@@ -392,6 +405,7 @@ def build_system_prompt(
     记忆。
     """
     parts = [
+        *([own_name(name)] if name else []),
         base,
         PLATFORM_RULES,
         ALWAYS_PUSH,

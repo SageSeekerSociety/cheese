@@ -428,7 +428,13 @@ class RoomTurns:
                 await self._compute.dismiss(conversation, agent.handle)
 
     def _session_system_prompt(
-        self, *, needs_place: bool, has_doc: bool, role: str | None, harness: str
+        self,
+        *,
+        needs_place: bool,
+        has_doc: bool,
+        role: str | None,
+        harness: str,
+        name: str,
     ) -> str:
         """The system prompt a session in this room starts with.
 
@@ -454,6 +460,7 @@ class RoomTurns:
             # 记忆那一段跟着这一轮跑的骨架走：写下来的文件同步不回平台的骨架，
             # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
             keeps_memory=keeps_memory(harness),
+            name=name,
         )
 
     async def _backend_for(
@@ -511,6 +518,7 @@ class RoomTurns:
                 has_doc=doc_text is not None,
                 role=role,
                 harness=provider.harness,
+                name=agent.display_name,
             ),
             resume_token=resume_token,
             model=model_kwargs.get("model"),
@@ -1140,6 +1148,7 @@ class RoomTurns:
             has_doc=doc_text is not None,
             role=role,
             harness=runtime.harness,
+            name=prepared.agent.display_name,
         )
         opening = build_session_opening(
             thread=prepared.thread_context,
