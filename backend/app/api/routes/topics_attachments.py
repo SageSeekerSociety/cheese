@@ -126,6 +126,21 @@ _PAGE_POLICY_META = (
 ).encode()
 
 
+def _head_end(page: bytes) -> int:
+    """Just past the opening `<head ...>` tag, or -1 when there is none.
+
+    Case-insensitive, and tolerant of attributes, the way `_looks_like_html`
+    reads the same bytes: a page that got this far is going to be served as
+    HTML, and the one failure this tag exists to prevent is the policy silently
+    not attaching — inside the frame it is the only policy there is.
+    """
+    at = page.lower().find(b"<head")
+    if at < 0:
+        return -1
+    end = page.find(b">", at)
+    return end + 1 if end >= 0 else -1
+
+
 def _with_policy(page: bytes) -> bytes:
     """The policy in the page itself, not only in the response headers.
 
@@ -133,10 +148,9 @@ def _with_policy(page: bytes) -> bytes:
     Authorization header and hands them to a sandboxed frame, and a response's
     CSP does not follow those bytes into the frame — the meta tag does.
     """
-    at = page.find(b"<head>")
+    at = _head_end(page)
     if at < 0:
         return page
-    at += len(b"<head>")
     return page[:at] + _PAGE_POLICY_META + page[at:]
 
 

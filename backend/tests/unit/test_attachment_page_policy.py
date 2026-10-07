@@ -50,6 +50,19 @@ def test_the_header_carries_the_sandbox_the_meta_tag_cannot():
     assert "allow-same-origin" not in _PAGE_POLICY_HEADER
 
 
+def test_the_policy_attaches_whatever_the_head_tag_looks_like():
+    """A page served as HTML is read as HTML, whatever case the tag is in.
+
+    The failure this covers is silent: no meta, so no policy inside the frame,
+    and nothing anywhere saying the policy was never applied.
+    """
+    upper = _with_policy(b"<!DOCTYPE html>\n<HTML><HEAD><TITLE>t</TITLE></HEAD>")
+    assert upper.startswith(b"<!DOCTYPE html>\n<HTML><HEAD><meta http-equiv")
+
+    attributed = _with_policy(b'<html><head lang="zh"><title>t</title>')
+    assert attributed.startswith(b'<html><head lang="zh"><meta http-equiv')
+
+
 def test_a_page_with_no_head_is_left_alone():
     """Better unstyled than mangled: inserting a tag a browser would not parse
     where it belongs changes nothing, and guessing at the position would."""
