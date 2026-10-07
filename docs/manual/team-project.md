@@ -176,8 +176,8 @@ steps:
 接下来常做的几件事：
 
 :::cards
-- [和同学分头推进](/split-work#split-work)：每人负责一个任务，在看板上看谁做到哪。
+- [和同学分头推进](/split-work#split-work)：每人负责一个任务，在「全部任务」里看谁做到哪。
 - [拉一个人进你的项目](/invite-to-project#invite-to-project)：不建团队，只请一个人进这个项目。
 - [完成一道题目](/solve-a-challenge#solve-a-challenge)：领取老师在空间里发的题目，做完后提交。
-- [任务与看板](/tasks#tasks)：任务页、负责人、协作者和看板的完整说明。
+- [任务](/tasks#tasks)：任务页、负责人、协作者和「全部任务」的完整说明。
 :::

@@ -11,14 +11,14 @@ import { apiLogin } from './helpers';
 // 等号右边是**今天**的样子，不是壳的某种理想形态：这一格、这个顺序、这一屏，就是
 // 此刻每个人打开项目看到的。改这一条等于改「老项目长什么样」，要单独想清楚。
 //
-// 项目名下只有看板和资料库，这一行不再加东西（.claude/rules/project-sidebar.md）。
-const PAGES = ['看板', '资料库'];
+// 项目名下只有总览和资料库，这一行不再加东西（.claude/rules/project-sidebar.md）。
+const PAGES = ['总览', '资料库'];
 
 // 点项目名弹出的菜单：项目文档，再按壳的顺序列其余几页。成员排第一个，「退出项目」
-// 在那一页上。
-const MENU = ['项目文档', '成员', '定时与触发', '技能'];
+// 在那一页上。default 壳没点名全部任务，它接在壳点名的那几页后面。
+const MENU = ['项目文档', '成员', '定时与触发', '技能', '全部任务'];
 
-test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一格，菜单里几页都在', async ({ page }) => {
+test('没声明壳的项目：第一屏是项目总览，侧栏就是今天这一格，菜单里几页都在', async ({ page }) => {
   await apiLogin(page);
 
   // 从 rail 点进第一个项目。`--tile` 才是一个项目；不带 `--tile` 的第一格是首页。
@@ -32,9 +32,9 @@ test('没声明壳的项目：第一屏还是看板，侧栏就是今天这一�
     await page.locator('.app-rail-item--tile').first().click({ timeout: 2_000 });
   }).toPass({ timeout: 30_000 });
 
-  // 第一屏 = default 壳的 home = 看板（路由名 workspace-running）。中转地址
+  // 第一屏 = default 壳的 home = 项目总览（路由名 workspace-overview）。中转地址
   // `/projects/:id` 自己什么都不画，它只是去第一屏路上的一瞬。
-  await page.waitForURL(/\/projects\/[^/]+\/running$/);
+  await page.waitForURL(/\/projects\/[^/]+\/overview$/);
 
   // 侧栏是常驻的，板块页上也在。等它画出来再数格子。
   const pages = page.locator('[aria-label="项目页面"] .v-list-item-title');
