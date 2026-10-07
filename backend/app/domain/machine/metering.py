@@ -174,11 +174,7 @@ async def unpaid_sandboxes(session: AsyncSession) -> list:
     if _checked_at is not None and now - _checked_at < CREDIT_CHECK:
         return []
     _checked_at = now
-    rows = (
-        await session.execute(
-            _running().add_columns(CloudHost.device_id, CloudHostHome.left_at)
-        )
-    ).all()
+    rows = (await session.execute(_running().add_columns(CloudHost.device_id))).all()
     usage = UsageService(session)
     refused: dict[uuid.UUID, bool] = {}
     for row in rows:

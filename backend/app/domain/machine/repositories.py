@@ -98,15 +98,12 @@ class CloudHostRepository:
         )
 
     async def current_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
-        """The home of the session's current placement (not one it left), as
-        the database has it now: a sweep may have started destroying it since
-        this session last read it."""
+        """The home of the session's placement, as the database has it now:
+        a sweep may have started destroying it since this session last read
+        it."""
         return await self._session.scalar(
             select(CloudHostHome)
-            .where(
-                CloudHostHome.session_id == session_id,
-                CloudHostHome.left_at.is_(None),
-            )
+            .where(CloudHostHome.session_id == session_id)
             .execution_options(populate_existing=True)
         )
 
@@ -126,7 +123,6 @@ class CloudHostRepository:
             .where(
                 CloudHostHome.topic_id == topic_id,
                 CloudHostHome.room_resource_id == room_resource_id,
-                CloudHostHome.left_at.is_(None),
             )
         )
         return [(home, host) for home, host in rows.all()]

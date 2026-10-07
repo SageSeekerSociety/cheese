@@ -247,8 +247,7 @@ class CloudHostHome(UuidPk, Timestamps, Base):
 
     Deleted once its sandbox is destroyed as idle (``lifecycle``), when the
     session moved on, when its host is given up, or when its room's cleanup
-    has removed the directory. A session that left without pushing keeps its
-    home (``left_at``) until one of those.
+    has removed the directory.
     """
 
     __tablename__ = "cloud_host_homes"
@@ -257,7 +256,7 @@ class CloudHostHome(UuidPk, Timestamps, Base):
             "uq_cloud_host_homes_current_session",
             "session_id",
             unique=True,
-            postgresql_where=text("left_at IS NULL AND session_id IS NOT NULL"),
+            postgresql_where=text("session_id IS NOT NULL"),
         ),
     )
 
@@ -280,10 +279,6 @@ class CloudHostHome(UuidPk, Timestamps, Base):
     resource_id: Mapped[str] = mapped_column(String(36))
     # NULL only for a room's directory from before session leases.
     session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    # The session moved on without pushing what it did here.
-    left_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
     # When the room was told this session's sandbox is being prepared; cleared
     # once it is told the sandbox is ready.
     waiting_since: Mapped[datetime | None] = mapped_column(
