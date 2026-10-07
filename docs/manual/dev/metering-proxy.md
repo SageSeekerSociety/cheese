@@ -25,17 +25,16 @@ covers:
 
 ## 入口 {#listeners}
 
-`deploy/metering-proxy/compose.yml` 起的是一条 mitmdump：`--mode reverse:https://api.anthropic.com@8443 --mode regular@8444 --mode reverse:https://chatgpt.com@8445 --ssl-insecure --set connection_strategy=lazy`。前两个入口对应会话把流量送进来的两种办法，第三个只给网关用（见 [ChatGPT 账号](#chatgpt)）：
+`deploy/metering-proxy/compose.yml` 起的是一条 mitmdump：`--mode regular@8444 --mode reverse:https://chatgpt.com@8445 --ssl-insecure --set connection_strategy=lazy`。第一个入口是会话把流量送进来的那一个，第二个只给网关用（见 [ChatGPT 账号](#chatgpt)）：
 
 | 入口 | 会话侧怎么被指到这里 | 宿主监听 | 归属怎么证明 |
 | --- | --- | --- | --- |
-| `:443` 反代 | 容器 `--add-host api.anthropic.com:172.17.0.1`，把域名解析到宿主机 | `172.17.0.1:443 → 8443` | 请求头里的 scoped token（`x-cheese-attr` 只在 `CHEESE_ALLOW_HEADER_ATTR=1` 时认，默认关） |
 | `:8444` CONNECT | 会话里 `HTTPS_PROXY` 指到隧道端口，隧道再走到这里 | `172.17.0.1:8444` | `Proxy-Authorization` Basic 的密码必须通过 `verify_scoped_token`，否则 407 |
 | `:8445` 反代 | 网关（LiteLLM）deployment 的 `api_base` 指到 `http://metering-proxy:8445/chatgpt/<账号>` | 不发布；只在内部网络 `cheese-meter-gateway` 上，别名 `metering-proxy` | Bearer 必须等于 `CHEESE_CHATGPT_KEY`，否则 401；没配就全拒 |
 
-为什么是两个入口：一个客户端「长什么样」决定它能被怎么牵过来。本机上的容器有 root，改 `/etc/hosts` 把 `api.anthropic.com` 指到宿主机就行，走 `:443`；裸进程没有 root、没有 docker、也没有 hosts 可写，只能走 `HTTPS_PROXY` 的 CONNECT，即 `:8444`。它们也不能改用 `ANTHROPIC_BASE_URL`：那会把 Claude Code 切成 API-key 模式，直接无视 OAuth token——订阅路的转向必须在传输层做。
+为什么是 CONNECT：会话主机上的 `claude` 是个普通进程，没有 root、也没有 hosts 可写，能被牵过来的只有 `HTTPS_PROXY`，也就是 CONNECT。它也不能改用 `ANTHROPIC_BASE_URL`：那会把 Claude Code 切成 API-key 模式，直接无视 OAuth token——订阅路的转向必须在传输层做。
 
-没有哪台机器直接拨 `:8444`：会话的 `HTTPS_PROXY` 指向机器自己回环上的隧道助手，助手经模型隧道把 CONNECT 流量带到后端，隧道再在网桥地址上连 `:8444`。所以它和 `:443` 一样只绑在网桥上。
+没有哪台机器直接拨 `:8444`：会话的 `HTTPS_PROXY` 指向座位自己回环上的隧道助手，助手经模型隧道把 CONNECT 流量带到后端，隧道再在网桥地址上连 `:8444`。所以它只发布在网桥上。
 
 - CONNECT 这道门是「关着失败」：`CHEESE_SCOPED_SECRET` 为空、或者密码验不过，一律 407，不存在放行。把会话流量引到这里的隧道见 `backend/app/domain/agent/machine_tunnel.py`。
 - 出网可以配 HTTP 代理（`claude-login.sh egress set|clear|test [n]`），平台凭据即使被取走也在 egress 后面用。egress 挂了或拒了，请求就失败，绝不改直连——只有带凭据的请求（含刷新）走它，网关路、本地回答、原样转发的东西各走各的。
@@ -121,7 +120,7 @@ covers:
 | 配置 | 留空/默认 | 后果 |
 | --- | --- | --- |
 | `CHEESE_ADMISSION_URL` | 空 | 不调准入，每个请求都走订阅路：没有预算检查、不会改道网关、也不过问绑定；只剩滚动上限兜底 |
-| `CHEESE_SCOPED_SECRET` | 空 | 没有证明项目的办法：`:8444` 的 CONNECT 全 407，`:443` 上默认不认 `x-cheese-attr` |
+| `CHEESE_SCOPED_SECRET` | 空 | 没有证明项目的办法：`:8444` 的 CONNECT 全 407 |
 | `CHEESE_TOKEN_CAP` | 0 | 滚动上限关闭（`CAP_WINDOW_S` 默认 5 小时） |
 | `CHEESE_GATEWAY_BASE` | 空 | 网关路改道的目标地址 |
 | `CHEESE_ALLOW_HEADER_ATTR` | 0 | 不接受 `x-cheese-attr` 这种自称的归属 |

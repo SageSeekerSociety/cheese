@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain.agent.device_provider import list_device_storage
+from app.domain.agent.device_storage import list_device_storage
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
@@ -78,3 +78,19 @@ async def test_device_listing_uses_one_portable_shell_and_ignores_symlinks(
         (kind, project, place) for kind in roots
     ]
     assert hub.calls == 1
+
+
+async def test_a_failed_listing_carries_the_machines_own_words():
+    class FailingHub:
+        async def exec(self, device_id, command, *, timeout):
+            return {
+                "stdout": "",
+                "stderr": "sh: 1: cd: can't cd to /home/cheese/.cheese/home\n",
+                "exit": 2,
+                "truncated": False,
+            }
+
+    with pytest.raises(RuntimeError) as failure:
+        await list_device_storage("fixture", hub=FailingHub())
+    assert "exit=2" in str(failure.value)
+    assert "can't cd to /home/cheese/.cheese/home" in str(failure.value)

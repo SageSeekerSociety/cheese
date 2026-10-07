@@ -64,6 +64,7 @@ from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.skills import load_skills
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id
+from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
@@ -145,6 +146,16 @@ def _is_dm(topic: Topic) -> bool:
     谁」，退路是项目默认的芝士；答错「这间房有没有名册」，正文就出了房间。
     """
     return topic.is_private
+
+
+async def room_roster(
+    session: "AsyncSession", project_id: uuid.UUID, topic: Topic | None
+) -> list[dict]:
+    """The names an agent's message is read against: the project roster, or
+    none at all in a private room."""
+    if topic is None or _is_dm(topic):
+        return []
+    return await roster_rows(session, project_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +268,8 @@ class _Machines(Protocol):
     def choose(
         self, project_settings: Mapping[str, Any] | None, provider_id: str | None
     ) -> tuple[str, RoomSessions | None]: ...
+
+    def owned(self, harness: str) -> RoomSessions | None: ...
 
     async def activate(self, session: SessionRef, runtime: RoomSessions) -> None: ...
 
@@ -435,6 +448,19 @@ class RoomTurns:
             keeps_memory=keeps_memory(harness),
         )
 
+    async def _backend_for(
+        self, session, agent, project, compute_id
+    ) -> tuple[str, RoomSessions | None]:
+        """The harness this agent's turn runs and the backend it runs on.
+
+        A member's own coding agent runs its own harness on its owner's machine
+        (`owner_provider`), whatever the room chose; every other agent runs the
+        project's harness on the room's machine."""
+        owned = await owned_instance(session, agent.instance_id)
+        if owned is not None:
+            return owned.harness, self._compute.owned(owned.harness)
+        return self._compute.choose(project.settings if project else None, compute_id)
+
     async def _launch_inputs(
         self, topic_id: uuid.UUID, agent_handle: str, *, acting: str
     ) -> _Launch | None:
@@ -458,8 +484,8 @@ class RoomTurns:
             needs_place = not _is_dm(topic)
             doc_text = await doc_text_of(session, place, needs_place=needs_place)
             role = await agents.system_prompt(agent)
-            harness, provider = self._compute.choose(
-                project.settings, resolve_compute_id(project.settings, topic)
+            harness, provider = await self._backend_for(
+                session, agent, project, resolve_compute_id(project.settings, topic)
             )
             if provider is None:
                 return None
@@ -677,17 +703,15 @@ class RoomTurns:
             compute_id = resolve_compute_id(
                 project.settings if project else None, topic, task
             )
-            wanted_harness, provider = self._compute.choose(
-                project.settings if project else None, compute_id
+            wanted_harness, provider = await self._backend_for(
+                session, agent, project, compute_id
             )
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
             # 回事」在下游是两种情况（见 `_HookWorkState.roster`）。问的是这间房
             # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `announce_mentions`。
-            roster = (
-                [] if _is_dm(topic) else await roster_rows(session, topic.project_id)
-            )
+            roster = await room_roster(session, topic.project_id, topic)
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
             # 两份，故意的：`topic_refs` 是 `@标题` 的**解析表**（全量，含已归档
             # ——用户自己打 @某个归档话题也必须还能变成链接）；

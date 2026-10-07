@@ -594,7 +594,8 @@ class Room:
             home_override=self.home,
             config_override=self.layout.config,
         )
-        assert Path(self.launched["cwd"]) != self.layout.project, self.launched
+        if not target.get("local"):
+            assert Path(self.launched["cwd"]) != self.layout.project, self.launched
         return self.launched
 
     def session(self, name, launch):
@@ -697,6 +698,62 @@ def relaunched(binary, layout, port):
         )
         # The same model on the other side: it goes on from the requests it
         # has answered, as it does for a session that was never relaunched.
+        run.session.server.state["requests"] = before.server.state["requests"]
+        run.session.control({"subtype": "initialize"})
+        return init["session_id"]
+
+    run.relaunch = relaunch
+    return run
+
+
+def local(binary, layout, port):
+    """A member's own Claude Code on their own machine (#2991): the session
+    and the executor on one machine, so the session starts where the executor
+    holds the project, in no namespace and with no forwarded view."""
+    room = Room(binary, layout, port)
+    launch = room.prepare(
+        {
+            "kind": "device",
+            "device_id": DEVICE_ID,
+            "url": room.relay.url,
+            "mcp_servers": [],
+            "local": True,
+        }
+    )
+    assert launch["workspace"] == str(layout.project), launch
+    assert launch["cwd"] == str(layout.project), launch
+    assert "enter" not in launch["command"], launch
+    return room.run("local", room.session("own", launch))
+
+
+def local_relaunched(binary, layout, port):
+    """`local`, started before its machine is leased, in a directory of its
+    own; relaunched at the machine's path once the lease is ready."""
+    room = Room(binary, layout, port)
+    placeholder = {
+        "kind": "deferred",
+        "workspace": client.DEFERRED_WORKSPACE,
+        "lease_path": LEASE_PATH,
+        "setup_env": {},
+        "mcp_servers": [],
+        "local": True,
+    }
+    launch = room.prepare(placeholder)
+    assert launch["cwd"] != client.DEFERRED_WORKSPACE, launch
+    assert Path(launch["cwd"]).is_dir(), launch
+    run = room.run("local_relaunched", room.session("own-deferred", launch))
+
+    def relaunch():
+        assert room.relay.leases, "the deferred window never took the lease"
+        _, init = run.session.wait(is_("system", "init"), 1)
+        before = run.session
+        before.stop()
+        again = room.prepare(dict(placeholder, workspace=str(layout.project)))
+        assert again["cwd"] == str(layout.project), again
+        run.session = room.session(
+            "own-relaunched",
+            dict(again, command=[*again["command"], "--resume", init["session_id"]]),
+        )
         run.session.server.state["requests"] = before.server.state["requests"]
         run.session.control({"subtype": "initialize"})
         return init["session_id"]
@@ -1167,7 +1224,12 @@ def free_port():
         return probe.getsockname()[1]
 
 
-RUNS = {"remote": remote, "relaunched": relaunched}
+RUNS = {
+    "remote": remote,
+    "relaunched": relaunched,
+    "local": local,
+    "local_relaunched": local_relaunched,
+}
 # The window's commands after the one that takes the lease (`window`).
 WINDOW_AFTER_THE_LEASE = (
     'mkdir -p "window here" && cd "window here" && pwd',
@@ -1266,7 +1328,7 @@ def main():
             records[name] = play_run(RUNS[name], binary, layout, port, names)
         for name in compared:
             results = []
-            documented = WINDOW if name == "relaunched" else ()
+            documented = WINDOW if name in ("relaunched", "local_relaunched") else ()
             for step in [*WINDOW, *names, "hooks"]:
                 left = records["reference"].get(step)
                 right = records[name].get(step)
@@ -1293,7 +1355,7 @@ def main():
                     print(f"{'PASS' if not found else 'FAIL'}  {name} {step}")
                     for line in found[:20]:
                         print(f"      {line}", flush=True)
-            if name == "relaunched":
+            if name in ("relaunched", "local_relaunched"):
                 resumed = records[name].get("resumed the conversation", False)
                 results.append(
                     {

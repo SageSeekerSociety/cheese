@@ -10,7 +10,15 @@ seat for it in the project's own room (结论 4).
 import enum
 import uuid
 
-from sqlalchemy import JSON, Boolean, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -60,3 +68,26 @@ class AgentInstance(UuidPk, Timestamps, Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default="true"
     )
+
+
+class OwnAgent(Base):
+    """A project's agent that is one member's own coding agent (#2991): their
+    own Claude Code, run on their own machine with the login they gave the
+    platform (`cheesehost claude login`), and called by them alone.
+
+    It is still an ``AgentInstance`` — a memory pool, a seat, a name in the
+    roster — and this row is what makes it someone's. The owner's machine is
+    not recorded here: a session goes to whichever of their machines is online
+    with that login when it starts.
+    """
+
+    __tablename__ = "own_agents"
+
+    instance_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agent_instances.id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Which harness it is: the coding agent the owner logged in on the machine.
+    harness: Mapped[str] = mapped_column(String(64), nullable=False)

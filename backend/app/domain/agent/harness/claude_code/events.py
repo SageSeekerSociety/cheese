@@ -34,6 +34,7 @@ from app.domain.agent.service import (
     AgentStepOutput,
     AgentToolResult,
     AgentToolUse,
+    AgentUsage,
     step_error,
 )
 
@@ -178,6 +179,15 @@ class Assembler:
         self.facts = facts
         self.session_id = session_id
 
+    def _rate_limit(self) -> dict | None:
+        """The account's window as the turn last heard it, taken: the next
+        turn hears its own."""
+        try:
+            info = json.loads(self.facts.pop("rate_limit", "") or "null")
+        except ValueError:
+            return None
+        return info if isinstance(info, dict) else None
+
     def _call(self, call: str) -> dict:
         try:
             return json.loads(self.facts.get(f"call:{call}") or "{}")
@@ -191,6 +201,13 @@ class Assembler:
             ended = self._result(record)
             self.facts.update(bind(record, self.facts))
             return [ended]
+        if kind == "rate_limit_event":
+            # Kept for the turn's end: a window that refused the account says
+            # when it resets, and that decides what the room is told.
+            info = record.get("rate_limit_info")
+            if isinstance(info, dict):
+                self.facts["rate_limit"] = json.dumps(info)
+            return []
         # Facts first: a record may name a call it also makes.
         self.facts.update(bind(record, self.facts))
         if kind == "system" and record.get("subtype") == "init":
@@ -296,6 +313,7 @@ class Assembler:
             "session_id": str(record.get("session_id") or "") or self.session_id,
             "agent_handle": stamp.get("agent_handle"),
             "harness": CLAUDE_CODE,
+            "rate_limit": self._rate_limit(),
         }
         if stamp.get("interrupted"):
             # Somebody took the work away. That ends the turn; it is not a
@@ -305,6 +323,7 @@ class Assembler:
             return AgentResult(
                 text=str(record.get("result") or ""),
                 input_work_completed=True,
+                usage=_usage(record),
                 **common,
             )
         # Failure is `is_error` and only that: an API error arrives with
@@ -324,3 +343,33 @@ class Assembler:
             api_error_status=status if isinstance(status, int) else None,
             **common,
         )
+
+
+def _usage(record: dict) -> AgentUsage | None:
+    """What the turn reports it used: every token it sent, cached or not, and
+    what the build prices it at. The model is the one that did most of it.
+    Charged only where nothing else meters the turn (`chat._close_hook_work`)."""
+    usage = record.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    def count(name: str) -> int:
+        value = usage.get(name)
+        return value if isinstance(value, int) else 0
+
+    by_model = record.get("modelUsage")
+    model = ""
+    if isinstance(by_model, dict) and by_model:
+        model = max(
+            by_model,
+            key=lambda name: (by_model[name] or {}).get("outputTokens") or 0,
+        )
+    cost = record.get("total_cost_usd")
+    return AgentUsage(
+        model=model,
+        input_tokens=count("input_tokens")
+        + count("cache_creation_input_tokens")
+        + count("cache_read_input_tokens"),
+        output_tokens=count("output_tokens"),
+        cost_usd=float(cost) if isinstance(cost, int | float) else 0.0,
+    )

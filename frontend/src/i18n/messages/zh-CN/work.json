@@ -654,6 +654,10 @@
       "staleDoc": "刷新失败，当前显示的是上一次的内容：{error}",
       "docPreviewDisabled": "文档预览未启用",
       "cantDisplay": "无法显示这个文件",
+      "webView": "网页视图",
+      "webViewTitle": "按屏幕排版显示，元素带可寻址的编号",
+      "printView": "分页视图",
+      "printViewTitle": "按分页排版显示，跟打印出来的一样",
       "locatorPlaceholder": "说明要改什么",
       "send": "发送",
       "cancel": "取消",
@@ -1610,6 +1614,17 @@
       "usedOfTotal": "已使用 / 共发放",
       "exhausted": "额度已用完，联系团队管理员或额度发放方补充",
       "source": "包含团队共享额度和本项目的定向额度，优先使用定向额度"
+    },
+    "ownAgentsTitle": "成员自己的 Claude Code",
+    "ownAgents": {
+      "allow": "允许成员接入自己电脑上的 Claude Code",
+      "allowDetail": "项目内容将发送至成员自己配置的模型服务，费用由成员承担",
+      "online": "在线",
+      "offline": "离线",
+      "empty": "暂无已接入的 Claude Code",
+      "readOnly": "仅项目管理员可修改",
+      "loadFailed": "加载成员自己的 Claude Code 失败",
+      "saveFailed": "保存设置失败"
     },
     "taskNaming": {
       "intro": "手动改过名的任务不会再被自动改名",

@@ -29,7 +29,9 @@ class WorkChat:
             raise RuntimeError("A turn double needs its database session factory")
         return self.session_factory
 
-    async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
+    async def work_policy(
+        self, topic_id: uuid.UUID, agent_instance_id: uuid.UUID | None = None
+    ) -> dict | None:
         return None
 
     async def _turn_seat_handle(

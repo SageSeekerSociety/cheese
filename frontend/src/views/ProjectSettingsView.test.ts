@@ -6,6 +6,7 @@ import { createPinia, getActivePinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as api from '../api'
+import * as ownAgents from '../api/ownAgents'
 import { SudoCancelledError, withSudo } from '../utils/sudo'
 
 import ProjectSettingsView from './ProjectSettingsView.vue'
@@ -21,6 +22,7 @@ const router = vi.hoisted(() => ({
 }))
 
 vi.mock('../api')
+vi.mock('../api/ownAgents')
 vi.mock('../utils/sudo', () => ({
   SudoCancelledError: class SudoCancelledError extends Error {},
   withSudo: vi.fn(),
@@ -42,6 +44,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   me.id = null
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
+  vi.mocked(ownAgents.getOwnAgents).mockResolvedValue({ allowed: true, can_manage: false, agents: [] })
   vi.mocked(api.getProject).mockResolvedValue({ id: 'p1', name: 'P', can_manage_members: false } as Project)
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
@@ -273,7 +276,7 @@ describe('project settings', () => {
   })
 
   it.each([
-    ['agents', ['AI 队友', '默认模型']],
+    ['agents', ['AI 队友', '默认模型', '成员自己的 Claude Code']],
     // 在哪运行、怎么准备、还能跑多久：环境一页说完。
     ['environment', ['默认环境', '脚本与环境变量', '额度']],
     // 分支保护是合并规则，不是仓库连接。

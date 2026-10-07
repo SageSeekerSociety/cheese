@@ -1149,15 +1149,15 @@ def projectdirs(binary, root):
     """Where the build keeps a session's transcript is named for its working
     directory, and a room's session names that directory itself when it moves
     its conversation to the path a relaunch starts it at
-    (`remote_execution/client.py` `project_dir`). A path long enough to be cut
+    (`remote_execution/release.py` `project_dir`). A path long enough to be cut
     and hashed, with a character outside the Basic Multilingual Plane in it."""
     spec = importlib.util.spec_from_file_location(
-        "execution_client",
+        "execution_release",
         HERE.parents[1]
-        / "backend/app/domain/agent/harness/claude_code/remote_execution/client.py",
+        / "backend/app/domain/agent/harness/claude_code/remote_execution/release.py",
     )
-    client = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(client)
+    release = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(release)
     home = root / "projectdirs-home"
     (home / ".claude").mkdir(parents=True)
     for name, cwd in (
@@ -1183,7 +1183,7 @@ def projectdirs(binary, root):
         found = init and transcript_path(home, init["session_id"])
         # The build names the directory it runs in as it resolves it.
         resolved = str(cwd.resolve())
-        expected = init and client.project_dir(home / ".claude", resolved) / (
+        expected = init and release.project_dir(home / ".claude", resolved) / (
             init["session_id"] + ".jsonl"
         )
         yield (

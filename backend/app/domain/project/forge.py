@@ -433,7 +433,10 @@ async def branch_head(
     release_session: bool = False,
 ):
     data = await repository_data(
-        project_id, session, f"/branches/{quote(branch, safe='')}"
+        project_id,
+        session,
+        f"/branches/{quote(branch, safe='')}",
+        release_session=release_session,
     )
     if data is None:
         return None

@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent import death_evidence
+from app.domain.agent import death_evidence, own_calls, own_limit
 from app.domain.agent.announce import announce, answer_questions
 from app.domain.agent.ask import publish_answered
 from app.domain.agent.cli_notices import cli_notice
@@ -58,6 +58,7 @@ from app.domain.agent.gateway import LlmGateway
 # 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
 # 搬走，不再是 `ChatService` 的属性。
 from app.domain.agent.gateway_usage import (
+    OWN_ROUTE,
     _gateway_project_env,
     _model_kwargs,
     _schedule_deferred_drain,
@@ -119,6 +120,8 @@ from app.domain.agent.mentions import (
 )
 from app.domain.agent.platform_notices import (
     EVENT_MCP_NOT_CONNECTED,
+    EVENT_TURN_FAILED,
+    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
     delivery_checking_notice,
@@ -161,7 +164,7 @@ from app.domain.agent.queries import (
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.turn import RoomTurns, _is_dm
+from app.domain.agent.room.turn import RoomTurns, _is_dm, room_roster
 
 # 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
 # `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
@@ -188,6 +191,7 @@ from app.domain.agent.service import (
     AgentUsage,
 )
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
+from app.domain.agent.turn_usage import record_turn_usage, reported_usage
 from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import (
     AgentInstanceService,
@@ -225,7 +229,6 @@ from app.domain.identity.handles import (
     names_a_person,
     recipient_seat,
 )
-from app.domain.membership.roster import roster_rows
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -236,8 +239,6 @@ from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.credits import spend_to_credits
-from app.domain.usage.ledger import Ledger, payer_for_project
 
 CHEESE_AUTHOR = "cheese"
 
@@ -1240,9 +1241,14 @@ class ChatService(SessionRecovery, RoomTurns):
             inner_id=inner_id,
         )
 
-    async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
-        """Admission facts the AgentWorkRunner gates on BEFORE running a turn."""
-        return await work_policy(self._sessions, self._compute, topic_id)
+    async def work_policy(
+        self, topic_id: uuid.UUID, agent_instance_id: uuid.UUID | None = None
+    ) -> dict | None:
+        """Admission facts the AgentWorkRunner gates on BEFORE running a turn,
+        for the agent it is addressed to when that is known."""
+        return await work_policy(
+            self._sessions, self._compute, topic_id, agent_instance_id
+        )
 
     async def _close_open_turns(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> None:
         """End the one open interval the Stop names (FB-56). Never raises — a
@@ -1767,11 +1773,7 @@ class ChatService(SessionRecovery, RoomTurns):
         self, state: _HookWorkState, result: AgentResult
     ) -> list[dict]:
         """Commit accounting and prompt consumption after the session stops."""
-        usage = result.usage
-        if usage is not None and not (
-            usage.input_tokens or usage.output_tokens or usage.cost_usd
-        ):
-            usage = None
+        usage = reported_usage(state.route, result)
         # One row PER MODEL, never one lump: a gateway-routed turn's spend can
         # cover several models in one drain, and collapsing them under
         # `settings.agent_model` is exactly how mimo disappeared from `by_model`.
@@ -1816,33 +1818,12 @@ class ChatService(SessionRecovery, RoomTurns):
                     native_session_id=result.session_id,
                     work_id=state.work_id,
                 )
-            if not usages:
-                await Ledger(session).record(
-                    await payer_for_project(session, state.project_id),
-                    credits=0.0,
-                    topic_id=state.topic_id,
-                    model=state.model or settings.agent_model,
-                    input_tokens=0,
-                    output_tokens=0,
-                    cost_usd=0.0,
-                    metered=False,
-                    route=state.route,
-                    turn_id=state.work_id,
-                )
-            elif state.route != "gateway" or self._gateway is None:
-                payer = await payer_for_project(session, state.project_id)
-                for u in usages:
-                    await Ledger(session).record(
-                        payer,
-                        credits=spend_to_credits(u.cost_usd),
-                        topic_id=state.topic_id,
-                        model=u.model or state.model or settings.agent_model,
-                        input_tokens=u.input_tokens,
-                        output_tokens=u.output_tokens,
-                        cost_usd=u.cost_usd,
-                        route=state.route,
-                        turn_id=state.work_id,
-                    )
+            await record_turn_usage(
+                session,
+                state,
+                usages,
+                gateway_charged=state.route == "gateway" and self._gateway is not None,
+            )
             # What this session was fed, including by a process that is gone.
             # Settled either way: a failed session must also drop the batches
             # an earlier process fed it, or a later clean Stop would read them
@@ -1855,7 +1836,19 @@ class ChatService(SessionRecovery, RoomTurns):
             elif result.harness is None:
                 # Non-native providers do not register NativeInput batches.
                 await blocks.mark_consumed(fed, state.work_id)
+            waiting = (
+                await own_limit.after_turn(session, state, result)
+                if state.route == OWN_ROUTE
+                else None
+            )
             await session.commit()
+        if waiting is not None:
+            await self.post_system_event(
+                state.topic_id,
+                waiting,
+                state.work_id,
+                meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
+            )
 
         # A task's changes are its branch's, shown on the task; the room's
         # change summary reads the room's checkout.
@@ -1957,6 +1950,7 @@ class ChatService(SessionRecovery, RoomTurns):
             project = await ProjectRepository(session).get(topic.project_id)
             if project is None:
                 raise NotFoundError("Project not found")
+            await own_calls.seat_if_named(session, project, topic, content, author)
             agent = await self._agent_at(session, place)
             mentions = await person_mentions(
                 session, topic, content, agent, dm=_is_dm(topic)
@@ -2024,6 +2018,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     # A seat still under the room-derived handle names no
                     # instance, and that seat IS the agent the room points at,
                     # so the recipient resolved above is already the right one.
+                refused = await own_calls.refused(session, project, recipient, author)
                 user_block = await blocks.add(
                     project_id=topic.project_id,
                     conversation_id=place.conversation_id,
@@ -2051,6 +2046,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 if attribution_id is None:
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
+                await own_calls.say_refused(session, place, user_block, refused)
                 await announce_mentions(session, topic, user_block, author, roster)
                 # A reply to an agent's question goes to that agent (`recipient`).
                 answered = await answer_questions(session, user_block, recipient)
@@ -2327,7 +2323,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 # instead of passing []: [] means 私聊 (no member list at all),
                 # and conflating the two flagged every @ in a recovered message
                 # as a non-member while silently dropping its notification.
-                roster = await _room_roster(session, project_id, topic)
+                roster = await room_roster(session, project_id, topic)
             text = _expand_mention_names(text, roster, topic_refs)
             if (
                 closing
@@ -2740,16 +2736,6 @@ class ChatService(SessionRecovery, RoomTurns):
         )
 
 
-async def _room_roster(
-    session: AsyncSession, project_id: uuid.UUID, topic: Topic | None
-) -> list[dict]:
-    """The names an agent's message is read against: the project roster, or
-    none at all in a private room."""
-    return (
-        [] if topic is None or _is_dm(topic) else await roster_rows(session, project_id)
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class SentText:
     """A message's text as sending it would have stored it, and how it was sent."""
@@ -2784,7 +2770,7 @@ async def text_as_sent(
         return SentText(topic, text, None, by_agent)
     if by_agent:
         text = await project_refs_text(session, topic.project_id, topic.id, content)
-        roster = await _room_roster(session, topic.project_id, topic)
+        roster = await room_roster(session, topic.project_id, topic)
         return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
     project = await ProjectRepository(session).get(topic.project_id)
     if project is None:

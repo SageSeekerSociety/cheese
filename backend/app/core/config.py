@@ -597,32 +597,19 @@ class Settings(BaseSettings):
     # `/llm/admission` per request and sends it to the subscription pool or
     # rewrites it to the gateway. A deployment without a reachable proxy has no
     # second shape to fall back to — it refuses and says so.
-    # Address the SANDBOX reaches the metering proxy at. The docker bridge address
-    # (not loopback, which no container can reach; not 0.0.0.0, which would put the
-    # subscription on the LAN).
+    # Where the model tunnel (`/llm/tunnel`) reaches the metering proxy's CONNECT
+    # (regular-mode) listener: the docker bridge address (not loopback, which the
+    # proxy's container does not share; not 0.0.0.0, which would put the
+    # subscription on the LAN). A session's `claude` goes through HTTPS_PROXY to its
+    # seat's tunnel helper, and the tunnel delivers that CONNECT traffic here.
     subscription_proxy_host: str = "172.17.0.1"
-    subscription_proxy_port: int = 8443
-    # The metering proxy's CONNECT (regular-mode) listener. Containers are steered
-    # by --add-host on 443; a DEVICE screen is a bare process with no root and no
-    # docker, so its `claude` goes through HTTPS_PROXY to the machine's tunnel
-    # helper, and the tunnel (`/llm/tunnel`) delivers that CONNECT traffic here —
-    # a listener that speaks CONNECT, which reverse mode does not.
     subscription_proxy_connect_port: int = 8444
-    # Where the proxy's own CA is mounted from. The sandbox
-    # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
-    # an opaque TLS error far from its cause.
-    subscription_ca_host_path: str = ""
-    # The proxy CA as a path THIS backend process can read (subscription_ca_host_path
-    # is a HOST path handed to `docker -v`; the backend container usually cannot open
-    # it). The device launcher embeds the CA bytes into the launch script, so device
-    # subscription turns need this set — the deploy overlay mounts the proxy's cert
-    # read-only and points this at it.
+    # The proxy's CA as a path THIS backend process can read. The proxy terminates
+    # TLS, so a session must trust its CA (an untrusted one fails as an opaque TLS
+    # error far from its cause): the launcher embeds the CA bytes into the launch
+    # script, and the deploy overlay mounts the proxy's cert read-only and points
+    # this at it.
     subscription_ca_backend_path: str = ""
-    # The `.credentials.json` that makes Claude Code run as a subscription client.
-    # ROTATES ON EVERY REFRESH and a failed refresh writes it back EMPTY, which
-    # permanently kills the subscription — so it is copied per sandbox and
-    # promoted back only after a run that kept it valid, never shared live.
-    subscription_credentials_host_path: str = ""
     # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
     # Enforced BEFORE forwarding: a cap that only reports the overspend is not a cap.
     subscription_token_cap: int = 0

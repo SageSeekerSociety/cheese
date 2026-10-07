@@ -52,7 +52,9 @@ class FakeChat(WorkChat):
         self.converse_calls: list[dict] = []
         self.release = asyncio.Event()
 
-    async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
+    async def work_policy(
+        self, topic_id: uuid.UUID, agent_instance_id: uuid.UUID | None = None
+    ) -> dict | None:
         return self.policy
 
     async def post_system_event(
@@ -598,7 +600,7 @@ async def test_received_message_lands_before_credit_refusal():
 @pytest.mark.anyio
 async def test_unsummoned_message_never_touches_turn_admission():
     class PostOnly(FakeChat):
-        async def work_policy(self, topic_id):
+        async def work_policy(self, topic_id, agent_instance_id=None):
             raise AssertionError("plain messages do not enter the turn gate")
 
     chat = PostOnly(None)
@@ -775,7 +777,7 @@ async def test_receipted_mid_session_message_has_no_second_done():
             super().__init__(None)
             self.merged: tuple | None = None
 
-        async def work_policy(self, topic_id):
+        async def work_policy(self, topic_id, agent_instance_id=None):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
         async def merge_into_running_turn(self, *args, **kwargs):
@@ -826,7 +828,7 @@ async def test_image_only_message_can_merge_into_live_session():
             super().__init__(None)
             self.merged: tuple | None = None
 
-        async def work_policy(self, topic_id):
+        async def work_policy(self, topic_id, agent_instance_id=None):
             raise AssertionError("a delivered image needs no new work item")
 
         async def merge_into_running_turn(self, *args, **kwargs):
@@ -876,7 +878,7 @@ async def test_only_a_message_to_the_agent_owes_the_running_turn_an_answer():
             super().__init__(None)
             self.owed: dict[str, bool] = {}
 
-        async def work_policy(self, topic_id):
+        async def work_policy(self, topic_id, agent_instance_id=None):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
         async def merge_into_running_turn(self, topic, ids, content, *args, **kwargs):

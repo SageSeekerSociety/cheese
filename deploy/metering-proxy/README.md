@@ -42,15 +42,11 @@ always had — never to a gateway whose per-project key it would not hold.
 
 ## Who reaches which listener
 
-Two listeners, because a client's *shape* decides how it can be steered here at
-all:
+One session listener, `:8444` CONNECT: a session's `claude` runs on the session
+host and is steered by `HTTPS_PROXY` to its seat's tunnel helper, which carries
+the CONNECT over `/llm/tunnel`.
 
-| Listener | Steered by | Who |
-|---|---|---|
-| `:443` reverse | DNS (`--add-host`) | containers on this box — needs root to write hosts |
-| `:8444` CONNECT | `HTTPS_PROXY` → the machine's tunnel helper → `/llm/tunnel` | every bare device screen, on this box or any other machine |
-
-A bare process has no root, no docker and no `/etc/hosts` to rewrite, so
+That process has no root, no docker and no `/etc/hosts` to rewrite, so
 CONNECT is its only route. It also cannot set `ANTHROPIC_BASE_URL` instead:
 that flips Claude Code into API-key mode, where it ignores the OAuth token
 entirely — so a subscription turn *must* be steered at the transport layer.
@@ -58,7 +54,7 @@ entirely — so a subscription turn *must* be steered at the transport layer.
 No machine dials `:8444` itself. Its `claude` points HTTPS_PROXY at a helper on
 its own loopback, the helper carries the CONNECT stream over the model tunnel on
 the same base the machine reaches the backend at, and the tunnel connects to
-`:8444` on the bridge address. So the listener is bridge-only, like `:443`.
+`:8444` on the bridge address. So the listener is bridge-only.
 
 ## Why the constraints are what they are
 

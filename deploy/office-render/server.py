@@ -1,4 +1,4 @@
-"""What LibreOffice knows about a document, behind two HTTP endpoints.
+"""What LibreOffice and OfficeCLI know about a document, over HTTP.
 
 A Word report, a deck or a budget is the deliverable itself, and a deliverable
 nobody can see without downloading it is most of the way to not having been
@@ -9,11 +9,18 @@ It is a separate service rather than a library inside the API because
 LibreOffice installs about 800MB and expects a writable profile directory. A
 room cannot install it (it has no root), and the backend image should not.
 
-It answers two questions, both by loading the document in LibreOffice: what it
-looks like (a PDF, for showing a deliverable on screen) and what its formulas
-come to (a workbook, recalculated). The second is here rather than anywhere
-else for the same reason as the first — nothing outside this image can evaluate
-a spreadsheet.
+It answers three questions. Two are LibreOffice, which loads the document: what
+it looks like (a PDF, for showing a deliverable on screen) and what its formulas
+come to (a workbook, recalculated). The second is here rather than anywhere else
+for the same reason as the first — nothing outside this image can evaluate a
+spreadsheet.
+
+The third is a web page, and it is OfficeCLI rather than LibreOffice. A PDF
+draws the document and then stops: the shape of a chart, the fill behind a
+header row and the fact that a paragraph is paragraph 7 all dissolve into
+pixels, and a reader who wants to say "改这一格" has nothing to point with. The
+page keeps all of it, on the elements themselves, which is what makes what a
+reader clicks here mean the same thing to the agent that has to change it.
 
 The service is READ ONLY with respect to the caller: it takes bytes, returns
 bytes, and keeps nothing. Every request works in its own directory, which is
@@ -121,6 +128,29 @@ RECALC_PROFILE = """<?xml version="1.0" encoding="UTF-8"?>
 </oor:items>
 """
 
+#: What the web view can be built from. Deliberately narrower than `SUPPORTED`:
+#: OfficeCLI reads the OOXML formats and nothing else, so a `.doc`, an `.odt` or
+#: an `.xls` has a PDF and no page. Those are the formats a room upgrades with
+#: `cheese convert` before working on them anyway.
+HTML_RENDERABLE = (".docx", ".xlsx", ".pptx")
+
+#: OfficeCLI's own bound, not `CONVERT_TIMEOUT_S`. Measured on this image: a
+#: 19-paragraph Word file 3.5s, a 27-slide deck 2.7s, a 2000-row sheet 5.1s.
+#: Slower than LibreOffice per document, and it grows with the document rather
+#: than staying flat, so the limit is what a page may cost rather than what a
+#: conversion may.
+HTML_TIMEOUT_S = float(os.environ.get("OFFICE_HTML_TIMEOUT", "60"))
+
+#: A page is markup, not a picture, and a sheet that is nothing on disk can be
+#: hundreds of megabytes of `<tr>`: 2000 rows of 14 cells — a 127KB workbook —
+#: came out at 3.0MB. Somewhere past this the reader's browser is the thing that
+#: fails, and it fails by hanging rather than by saying so.
+HTML_MAX_BYTES = int(os.environ.get("OFFICE_HTML_MAX_BYTES", str(8 * 1024 * 1024)))
+
+#: Where the Dockerfile puts it. Named here so the health check and the refusal
+#: below cannot drift from the path the image installs.
+OFFICECLI = "officecli"
+
 app = FastAPI(title="cheese office-render")
 _slots = asyncio.Semaphore(MAX_CONCURRENT)
 
@@ -129,8 +159,14 @@ _slots = asyncio.Semaphore(MAX_CONCURRENT)
 async def healthz() -> dict:
     return {
         "ok": shutil.which("soffice") is not None,
+        # Reported separately rather than folded into `ok`: the two renderers are
+        # independent, so an image with LibreOffice and no OfficeCLI is a working
+        # PDF service with a web view that answers 503, and saying "unhealthy"
+        # would take the whole container out of rotation over the second one.
+        "html": shutil.which(OFFICECLI) is not None,
         "max_concurrent": MAX_CONCURRENT,
         "formats": sorted(SUPPORTED),
+        "html_formats": sorted(HTML_RENDERABLE),
     }
 
 
@@ -183,6 +219,43 @@ def _convert(
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+class PageTooLarge(RuntimeError):
+    """The page came out past what a browser will open without hanging."""
+
+
+def _to_html(raw: bytes, suffix: str) -> bytes:
+    """Run officecli over one document, in a directory of its own."""
+    workdir = Path(tempfile.mkdtemp(prefix="html-"))
+    try:
+        source = workdir / f"document{suffix}"
+        source.write_bytes(raw)
+        out = workdir / "document.html"
+        proc = subprocess.run(
+            [OFFICECLI, "view", str(source), "html", "-o", str(out)],
+            capture_output=True,
+            timeout=HTML_TIMEOUT_S,
+            cwd=workdir,
+            # A .NET application keeps state under the user's home, and the
+            # container's one home is shared by every request in flight — the
+            # same shape of failure as two soffices sharing a profile, so it
+            # gets the same answer.
+            env={**os.environ, "HOME": str(workdir), "TMPDIR": str(workdir)},
+        )
+        if not out.exists():
+            # As with soffice, the exit code is not the signal: officecli says
+            # what it refused on stderr and the missing file is what tells us.
+            detail = (proc.stderr or proc.stdout or b"").decode("utf8", "replace")
+            raise RuntimeError(detail.strip()[:400] or "渲染没有产出文件")
+        page = out.read_bytes()
+        if len(page) > HTML_MAX_BYTES:
+            raise PageTooLarge(
+                f"这一份的网页视图超过 {HTML_MAX_BYTES // (1024 * 1024)}MB"
+            )
+        return page
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 @app.post("/render")
 async def render(request: Request, suffix: str = "") -> Response:
     """Convert one document to PDF. `suffix` names the format, e.g. `.docx`.
@@ -215,6 +288,48 @@ async def render(request: Request, suffix: str = "") -> Response:
         except Exception as exc:  # noqa: BLE001 — the message is the response
             return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
     return Response(content=pdf, media_type="application/pdf")
+
+
+@app.post("/html")
+async def html(request: Request, suffix: str = "") -> Response:
+    """Render one document as a single self-contained HTML page.
+
+    Sibling of `/render`, not a replacement: a reader who wants the page as it
+    would print still gets the PDF. This answers the other question — where is
+    the seventh paragraph, which cell is this — by handing back a page whose
+    elements carry the addresses officecli's own edit commands accept.
+    """
+    body = await request.body()
+    suffix = suffix.lower().strip()
+    if suffix not in HTML_RENDERABLE:
+        return JSONResponse(
+            {"ok": False, "error": f"网页视图不支持 {suffix or '(未指明)'}"},
+            status_code=400,
+        )
+    if not body:
+        return JSONResponse({"ok": False, "error": "没有收到文件内容"}, status_code=400)
+    if len(body) > MAX_BYTES:
+        return JSONResponse(
+            {"ok": False, "error": f"文件超过 {MAX_BYTES // (1024 * 1024)}MB"},
+            status_code=413,
+        )
+    # Checked here rather than only in healthz: an image built without the
+    # binary is still a working PDF service, and a reader who asked for the web
+    # view deserves the reason rather than an empty page.
+    if shutil.which(OFFICECLI) is None:
+        return JSONResponse(
+            {"ok": False, "error": "这个部署没有装网页渲染器"}, status_code=503
+        )
+    async with _slots:
+        try:
+            page = await asyncio.to_thread(_to_html, body, suffix)
+        except subprocess.TimeoutExpired:
+            return JSONResponse({"ok": False, "error": "渲染超时"}, status_code=504)
+        except PageTooLarge as exc:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=413)
+        except Exception as exc:  # noqa: BLE001 — the message is the response
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+    return Response(content=page, media_type="text/html; charset=utf-8")
 
 
 @app.post("/convert")

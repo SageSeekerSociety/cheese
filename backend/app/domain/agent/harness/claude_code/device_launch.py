@@ -29,7 +29,12 @@ from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
-from app.domain.agent.place import SEATS_DIR, seat_name
+from app.domain.agent.place import (
+    CLAUDE_LOGIN_DIR,
+    SEATS_DIR,
+    footprint_root,
+    seat_name,
+)
 from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
 from app.domain.project_skill.service import (
     project_skill_names,
@@ -189,8 +194,17 @@ def launch_holes(
     project_id: str | None = None,
     launch_name: str = "",
     seat: str = "",
+    own_login: bool = False,
 ) -> MachineLaunch:
     """Claude Code's half of a device launch: the four holes, and its own env.
+
+    ``own_login``: a member's own Claude Code on their own machine (#2991),
+    which authenticates with the login its owner gave the platform
+    (`cheesehost claude login`, `place.CLAUDE_LOGIN_DIR`) instead of the
+    metering proxy's. The session keeps its own config directory and reads
+    that one as its credential store; nothing of the metering proxy's — its
+    CA, its placeholder, the WebFetch transport fix made for its route — is
+    put on the owner's machine.
 
     The platform half is ``machine_launcher``; nothing below belongs to it. It
     reads a few env vars the screen is created with: ``CHEESE_HOME`` (isolated
@@ -223,7 +237,7 @@ def launch_holes(
     absolute path (an untrusted CA fails as an opaque TLS error far from its
     cause). It is the room's, not the seat's: it is the same file for every
     session of the room and is read by the probe that answers whether the
-    room's tunnel helper is up (`device_provider._DEVICE_PROXY_CA_PATH`)."""
+    room's tunnel helper is up (`screen_model_env._DEVICE_PROXY_CA_PATH`)."""
     # The seat's own directory inside the room's home, as this script spells it:
     # by the time any hole runs the skeleton has resolved CHEESE_HOME into
     # `$HOME`, so `$HOME` here is the room and this is the seat below it. One
@@ -243,6 +257,17 @@ def launch_holes(
 export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
+    webfetch_block = (
+        ""
+        if own_login
+        else f"""cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
+{webfetch_transport}CHEESE_WEBFETCH
+WEBFETCH_PRELOAD="$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"
+# Quote the whole first option: Bun skips quoted paths after another option
+# and rejects quotes after the equals sign in --preload="path".
+export BUN_OPTIONS="\\"--preload=$WEBFETCH_PRELOAD\\"${{BUN_OPTIONS:+ $BUN_OPTIONS}}"
+"""
+    )
     platform = shipped_skill_names()
     project = project_skill_names(project_id)
     prune = (
@@ -396,13 +421,7 @@ mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
 [ -e "$CLAUDE_CONFIG_DIR/projects" ] || \\
   ln -s "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR/projects"
 export DISABLE_AUTOUPDATER=1
-cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
-{webfetch_transport}CHEESE_WEBFETCH
-WEBFETCH_PRELOAD="$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"
-# Quote the whole first option: Bun skips quoted paths after another option
-# and rejects quotes after the equals sign in --preload="path".
-export BUN_OPTIONS="\\"--preload=$WEBFETCH_PRELOAD\\"${{BUN_OPTIONS:+ $BUN_OPTIONS}}"
-{skill_setup}
+{webfetch_block}{skill_setup}
 {ca_block}
 # This seat's own directory, and everything below that belongs to one session
 # rather than to the room: the prompt (one per teammate), the execution target
@@ -553,7 +572,9 @@ CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" 
     configure, prepare = holes(system_prompt, helper_sources)
     launch = MachineLaunch(
         configure=configure,
-        credentials=f"""\
+        credentials=_OWN_LOGIN_CREDENTIALS
+        if own_login
+        else f"""\
 # A session never holds a Claude credential. It boots on a placeholder that
 # authenticates nothing, and the metering proxy puts the real credential on
 # each request on its way to Anthropic when the platform has one, so logging
@@ -594,6 +615,23 @@ cheese_launch_phase credentials_selected
     return dataclasses.replace(launch, contract=contract)
 
 
+# A member's own Claude Code on their own machine reads the login its owner gave
+# the platform: the seat keeps its own CLAUDE_CONFIG_DIR, and this directory is
+# its credential store, shared by every such session on the machine so that
+# Claude Code's own refresh renews it for all of them. An inherited token or key
+# would win over it, so none is let through. A service started by launchd has no
+# USER, and Claude Code has been reported unable to find a Keychain login on
+# macOS without it (anthropics/claude-code#77213).
+_OWN_LOGIN_CREDENTIALS = f"""\
+unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+export CLAUDE_SECURESTORAGE_CONFIG_DIR=\\
+  "$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}"
+[ -n "${{USER:-}}" ] || export USER="$(id -un)"
+export CHEESE_OWN_LOGIN=1
+cheese_launch_phase credentials_selected
+"""
+
+
 def on_machine(
     place: MachinePlace,
     *,
@@ -620,6 +658,7 @@ def on_machine(
         # so a session started under the previous per-room layout is replaced
         # on its next turn instead of being handed a room-mate's files.
         seat=seat_name(place.seat or place.agent_handle),
+        own_login=place.own_login,
     )
 
 

@@ -300,7 +300,7 @@ def test_admission_refusal_retains_the_timer_for_retry(client, monkeypatch):
     assert response.status_code == 200
     chat = app.dependency_overrides[get_chat_service]()
 
-    async def exhausted(topic_id):
+    async def exhausted(topic_id, agent_instance_id=None):
         return {
             "project_id": project,
             "credits_exhausted": True,

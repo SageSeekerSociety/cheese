@@ -25,8 +25,29 @@ FROM debian:12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libreoffice-writer libreoffice-impress libreoffice-calc libreoffice-math \
       fonts-noto-cjk fonts-dejavu-core \
-      python3 python3-pip ca-certificates \
+      python3 python3-pip ca-certificates curl libstdc++6 \
  && rm -rf /var/lib/apt/lists/*
+
+# OfficeCLI turns a Word file, a workbook or a deck into one HTML page. That page
+# is what a preview shows when a reader asks for the web view, and it is the only
+# way any of these formats arrives on screen with its charts, its table fills and
+# its element addresses intact — a cell keeps `/数据/B2` on it, which is what
+# makes "点这一格" mean the same cell to the agent that wrote it.
+#
+# It sits here rather than in the backend image for the reason this container
+# exists at all: it is a document engine (35MB, .NET runtime included), it reads
+# every file a room produces, and the API image should not carry one.
+#
+# Pinned by version and by the digest from that release's SHA256SUMS, because the
+# bytes sit behind a URL nobody here controls: `latest` would let a running
+# deployment start executing a different binary without anyone choosing it.
+# Bumping the version means editing both lines.
+ARG OFFICECLI_VERSION=1.0.155
+ARG OFFICECLI_SHA256=1a5da5cb7e9d995db7a6560beb7466760c79617648f72e65f4ce55897c407f67
+RUN curl -fsSL -o /usr/local/bin/officecli \
+      "https://github.com/iOfficeAI/OfficeCLI/releases/download/v${OFFICECLI_VERSION}/officecli-linux-x64" \
+ && echo "${OFFICECLI_SHA256}  /usr/local/bin/officecli" | sha256sum -c - \
+ && chmod 0755 /usr/local/bin/officecli
 
 RUN pip3 install --break-system-packages --no-cache-dir \
       "fastapi>=0.115" \

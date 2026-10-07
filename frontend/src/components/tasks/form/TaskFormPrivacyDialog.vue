@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
-import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import BaseButton from '@/components/base/BaseButton.vue'
+import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 
 const { t } = useI18n()
 
@@ -22,159 +23,167 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <AdaptiveDialog
-    v-model="open"
-    :title="t('tasks.form.privacy.title')"
-    :primary-label="t('tasks.form.privacy.understood')"
-    persistent
-    @primary="emit('confirm')"
-    @update:model-value="(value: boolean) => !value && emit('cancel')"
-  >
-    <p class="text-subtitle-2 font-weight-medium mb-4">
-      {{ t('tasks.form.privacy.intro') }}
-    </p>
+  <v-dialog v-model="open" :max-width="DIALOG_WIDTH.md" persistent scrollable>
+    <v-card rounded="lg">
+      <v-card-title class="d-flex align-center px-4 pt-4 pb-2">
+        <v-icon color="primary" class="mr-3" size="28">mdi-shield-check</v-icon>
+        <span class="text-h5 font-weight-medium">{{ t('tasks.form.privacy.title') }}</span>
+      </v-card-title>
 
-    <!-- 信息保护卡片 -->
-    <v-card class="mb-5 privacy-protection-card" variant="flat" rounded="lg">
-      <v-card-text class="pa-0">
-        <v-row>
-          <v-col cols="12" md="6">
-            <div class="d-flex align-start pa-3">
-              <v-avatar size="36" class="primary-soft mr-3">
-                <v-icon icon="mdi-eye-off" size="20" color="primary"></v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">
-                  {{ t('tasks.form.privacy.anonymousTitle') }}
+      <v-card-text class="px-4 pb-2">
+        <p class="text-subtitle-2 font-weight-medium mb-4">
+          {{ t('tasks.form.privacy.intro') }}
+        </p>
+
+        <!-- 信息保护卡片 -->
+        <v-card class="mb-5 privacy-protection-card" variant="flat" rounded="lg">
+          <v-card-text class="pa-0">
+            <v-row>
+              <v-col cols="12" md="6">
+                <div class="d-flex align-start pa-3">
+                  <v-avatar size="36" class="primary-soft mr-3">
+                    <v-icon icon="mdi-eye-off" size="20" color="primary"></v-icon>
+                  </v-avatar>
+                  <div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('tasks.form.privacy.anonymousTitle') }}
+                    </div>
+                    <p class="text-body-2 text-medium-emphasis mb-0">
+                      {{ t('tasks.form.privacy.anonymousBody') }}
+                    </p>
+                  </div>
                 </div>
-                <p class="text-body-2 text-medium-emphasis mb-0">
-                  {{ t('tasks.form.privacy.anonymousBody') }}
-                </p>
-              </div>
-            </div>
-          </v-col>
+              </v-col>
 
-          <v-col cols="12" md="6">
-            <div class="d-flex align-start pa-3">
-              <v-avatar size="36" class="primary-soft mr-3">
-                <v-icon icon="mdi-file-document-outline" size="20" color="primary"></v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">
-                  {{ t('tasks.form.privacy.purposeTitle') }}
+              <v-col cols="12" md="6">
+                <div class="d-flex align-start pa-3">
+                  <v-avatar size="36" class="primary-soft mr-3">
+                    <v-icon icon="mdi-file-document-outline" size="20" color="primary"></v-icon>
+                  </v-avatar>
+                  <div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('tasks.form.privacy.purposeTitle') }}
+                    </div>
+                    <p class="text-body-2 text-medium-emphasis mb-0">
+                      {{ t('tasks.form.privacy.purposeBody') }}
+                    </p>
+                  </div>
                 </div>
-                <p class="text-body-2 text-medium-emphasis mb-0">
-                  {{ t('tasks.form.privacy.purposeBody') }}
-                </p>
-              </div>
-            </div>
-          </v-col>
+              </v-col>
 
-          <v-col cols="12" md="6">
-            <div class="d-flex align-start pa-3">
-              <v-avatar size="36" class="primary-soft mr-3">
-                <v-icon icon="mdi-shield-lock" size="20" color="primary"></v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">
-                  {{ t('tasks.form.privacy.encryptionTitle') }}
+              <v-col cols="12" md="6">
+                <div class="d-flex align-start pa-3">
+                  <v-avatar size="36" class="primary-soft mr-3">
+                    <v-icon icon="mdi-shield-lock" size="20" color="primary"></v-icon>
+                  </v-avatar>
+                  <div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">
+                      {{ t('tasks.form.privacy.encryptionTitle') }}
+                    </div>
+                    <p class="text-body-2 text-medium-emphasis mb-0">
+                      {{ t('tasks.form.privacy.encryptionBody') }}
+                    </p>
+                  </div>
                 </div>
-                <p class="text-body-2 text-medium-emphasis mb-0">
-                  {{ t('tasks.form.privacy.encryptionBody') }}
-                </p>
-              </div>
-            </div>
-          </v-col>
+              </v-col>
 
-          <v-col cols="12" md="6">
-            <div class="d-flex align-start pa-3">
-              <v-avatar size="36" class="primary-soft mr-3">
-                <v-icon icon="mdi-history" size="20" color="primary"></v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.privacy.accessTitle') }}</div>
-                <p class="text-body-2 text-medium-emphasis mb-0">
-                  {{ t('tasks.form.privacy.accessBody') }}
-                </p>
-              </div>
-            </div>
-          </v-col>
-        </v-row>
+              <v-col cols="12" md="6">
+                <div class="d-flex align-start pa-3">
+                  <v-avatar size="36" class="primary-soft mr-3">
+                    <v-icon icon="mdi-history" size="20" color="primary"></v-icon>
+                  </v-avatar>
+                  <div>
+                    <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.privacy.accessTitle') }}</div>
+                    <p class="text-body-2 text-medium-emphasis mb-0">
+                      {{ t('tasks.form.privacy.accessBody') }}
+                    </p>
+                  </div>
+                </div>
+              </v-col>
+            </v-row>
+          </v-card-text>
+        </v-card>
+
+        <!-- 使用场景 -->
+        <div class="mb-4">
+          <div class="text-subtitle-2 font-weight-medium mb-3">{{ t('tasks.form.privacy.scenariosTitle') }}</div>
+          <v-row dense>
+            <v-col cols="12" md="4">
+              <v-card variant="flat" rounded="lg" class="privacy-usage-card h-100">
+                <v-card-text class="pa-3">
+                  <div class="d-flex align-start h-100">
+                    <v-avatar size="36" class="primary-soft mr-3 mt-1">
+                      <v-icon icon="mdi-account-check" size="20" color="primary"></v-icon>
+                    </v-avatar>
+                    <div>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.verificationTitle') }}
+                      </div>
+                      <p class="text-body-2 text-medium-emphasis mb-0">
+                        {{ t('tasks.form.privacy.verificationBody') }}
+                      </p>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <v-col cols="12" md="4">
+              <v-card variant="flat" rounded="lg" class="privacy-usage-card h-100">
+                <v-card-text class="pa-3">
+                  <div class="d-flex align-start h-100">
+                    <v-avatar size="36" class="primary-soft mr-3 mt-1">
+                      <v-icon icon="mdi-certificate-outline" size="20" color="primary"></v-icon>
+                    </v-avatar>
+                    <div>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.certificationTitle') }}
+                      </div>
+                      <p class="text-body-2 text-medium-emphasis mb-0">
+                        {{ t('tasks.form.privacy.certificationBody') }}
+                      </p>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+
+            <v-col cols="12" md="4">
+              <v-card variant="flat" rounded="lg" class="privacy-usage-card h-100">
+                <v-card-text class="pa-3">
+                  <div class="d-flex align-start h-100">
+                    <v-avatar size="36" class="primary-soft mr-3 mt-1">
+                      <v-icon icon="mdi-trophy" size="20" color="primary"></v-icon>
+                    </v-avatar>
+                    <div>
+                      <div class="text-subtitle-2 font-weight-medium mb-1">
+                        {{ t('tasks.form.privacy.awardsTitle') }}
+                      </div>
+                      <p class="text-body-2 text-medium-emphasis mb-0">{{ t('tasks.form.privacy.awardsBody') }}</p>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-col>
+          </v-row>
+        </div>
+
+        <!-- 合规承诺 -->
+        <v-alert type="info" variant="tonal" class="privacy-rights-alert mb-3" border="start" density="comfortable">
+          <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.privacy.commitmentTitle') }}</div>
+          <p class="text-body-2 mb-0">
+            {{ t('tasks.form.privacy.commitmentBody') }}
+          </p>
+        </v-alert>
       </v-card-text>
+
+      <v-card-actions class="pa-4 pt-2">
+        <v-spacer></v-spacer>
+        <BaseButton kind="ghost" @click="emit('cancel')">{{ t('global.cancel') }}</BaseButton>
+        <BaseButton kind="primary" @click="emit('confirm')">{{ t('tasks.form.privacy.understood') }}</BaseButton>
+      </v-card-actions>
     </v-card>
-
-    <!-- 使用场景 -->
-    <div class="mb-4">
-      <div class="text-subtitle-2 font-weight-medium mb-3">{{ t('tasks.form.privacy.scenariosTitle') }}</div>
-      <v-row dense>
-        <v-col cols="12" md="4">
-          <v-card variant="flat" rounded="lg" class="privacy-usage-card h-100">
-            <v-card-text class="pa-3">
-              <div class="d-flex align-start h-100">
-                <v-avatar size="36" class="primary-soft mr-3 mt-1">
-                  <v-icon icon="mdi-account-check" size="20" color="primary"></v-icon>
-                </v-avatar>
-                <div>
-                  <div class="text-subtitle-2 font-weight-medium mb-1">
-                    {{ t('tasks.form.privacy.verificationTitle') }}
-                  </div>
-                  <p class="text-body-2 text-medium-emphasis mb-0">
-                    {{ t('tasks.form.privacy.verificationBody') }}
-                  </p>
-                </div>
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-
-        <v-col cols="12" md="4">
-          <v-card variant="flat" rounded="lg" class="privacy-usage-card h-100">
-            <v-card-text class="pa-3">
-              <div class="d-flex align-start h-100">
-                <v-avatar size="36" class="primary-soft mr-3 mt-1">
-                  <v-icon icon="mdi-certificate-outline" size="20" color="primary"></v-icon>
-                </v-avatar>
-                <div>
-                  <div class="text-subtitle-2 font-weight-medium mb-1">
-                    {{ t('tasks.form.privacy.certificationTitle') }}
-                  </div>
-                  <p class="text-body-2 text-medium-emphasis mb-0">
-                    {{ t('tasks.form.privacy.certificationBody') }}
-                  </p>
-                </div>
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-
-        <v-col cols="12" md="4">
-          <v-card variant="flat" rounded="lg" class="privacy-usage-card h-100">
-            <v-card-text class="pa-3">
-              <div class="d-flex align-start h-100">
-                <v-avatar size="36" class="primary-soft mr-3 mt-1">
-                  <v-icon icon="mdi-trophy" size="20" color="primary"></v-icon>
-                </v-avatar>
-                <div>
-                  <div class="text-subtitle-2 font-weight-medium mb-1">
-                    {{ t('tasks.form.privacy.awardsTitle') }}
-                  </div>
-                  <p class="text-body-2 text-medium-emphasis mb-0">{{ t('tasks.form.privacy.awardsBody') }}</p>
-                </div>
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-      </v-row>
-    </div>
-
-    <!-- 合规承诺 -->
-    <v-alert type="info" variant="tonal" class="privacy-rights-alert mb-3" border="start" density="comfortable">
-      <div class="text-subtitle-2 font-weight-medium mb-1">{{ t('tasks.form.privacy.commitmentTitle') }}</div>
-      <p class="text-body-2 mb-0">
-        {{ t('tasks.form.privacy.commitmentBody') }}
-      </p>
-    </v-alert>
-  </AdaptiveDialog>
+  </v-dialog>
 </template>
 
 <style scoped>

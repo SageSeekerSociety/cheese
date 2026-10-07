@@ -727,3 +727,55 @@ def forget_touched_skills(directory, config):
             if path.is_dir() and not path.is_symlink():
                 shutil.rmtree(path)
         (directory / LAZY_STATE).unlink(missing_ok=True)
+
+
+def project_dir(config, path):
+    """Where the pinned build keeps the transcripts of sessions started at
+    `path`: under its config dir, named for the path with every UTF-16 unit
+    other than an ASCII letter or digit spelled `-`, and a name longer than
+    200 cut there and followed by a hash of the path. `headless_contract.py`
+    holds this to the build."""
+    units = memoryview(path.encode("utf-16-le")).cast("H")
+    name = "".join(
+        chr(unit) if chr(unit).isascii() and chr(unit).isalnum() else "-"
+        for unit in units
+    )
+    if len(name) > 200:
+        digest = 0
+        for unit in units:
+            digest = (digest * 31 + unit) & 0xFFFFFFFF
+        digest = abs(digest - (1 << 32) if digest >= 1 << 31 else digest)
+        spelled = ""
+        while True:
+            digest, digit = divmod(digest, 36)
+            spelled = "0123456789abcdefghijklmnopqrstuvwxyz"[digit] + spelled
+            if not digest:
+                break
+        name = f"{name[:200]}-{spelled}"
+    return Path(config) / "projects" / name
+
+
+def carry_transcripts(config, before, after):
+    """A session resumed at another path keeps writing the transcript where it
+    found it, and a session started there writes it where the build keeps that
+    path's. So the conversations begun at `before` move to `after`'s, before a
+    session relaunched there resumes one."""
+    source = project_dir(config, before)
+    if source.is_dir():
+        move_into(source, project_dir(config, after))
+
+
+def move_into(source, destination):
+    """`source`'s entries into `destination`, merging the directories both
+    have. A conversation that already lived at `after` and was resumed at
+    `before` keeps its transcript where it found it, but writes its subagents'
+    transcripts and saved tool results under `before`'s directory for that
+    conversation, which `after` has too."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for entry in source.iterdir():
+        target = destination / entry.name
+        if entry.is_dir() and not entry.is_symlink() and target.is_dir():
+            move_into(entry, target)
+        else:
+            entry.replace(target)
+    source.rmdir()

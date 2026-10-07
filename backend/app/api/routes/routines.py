@@ -27,8 +27,10 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
+from app.domain.agent_instance.own import may_work_for
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
+from app.domain.project.services import ProjectService
 from app.domain.routine import service as routines
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import RoutineService, describe_trigger
@@ -321,6 +323,12 @@ async def create_routine(
     room = await TopicService(db).get(place.room_id)
     if room is None:
         raise NotFoundError("Topic not found")
+    await _own_agent_works_for(
+        db,
+        place.project_id,
+        body.agent_handle,
+        body.owner_handle or (actor.handle if _is_person(actor) else ""),
+    )
     row = await RoutineService(db).create(
         topic=room,
         by=await _speaker(db, actor, room.id),
@@ -357,6 +365,10 @@ async def update_routine(
     row, actor = await _routine_actor(db, resolver, routine_id)
     if _is_person(actor):
         await _require_manage(db, actor, row, say("routineEdit"))
+    if body.agent_handle is not None:
+        await _own_agent_works_for(
+            db, row.project_id, body.agent_handle, row.owner_handle or ""
+        )
     row = await RoutineService(db).update(
         row,
         by_agent=not _is_person(actor),
@@ -468,3 +480,10 @@ async def report_run(
     )
     await db.commit()
     return ok(_run(run))
+
+
+async def _own_agent_works_for(db, project_id, agent_handle, person: str) -> None:
+    """A routine runs a member's own agent only for that member (#2991)."""
+    project = await ProjectService(db).get_or_404(project_id)
+    if not await may_work_for(db, project_id, agent_handle, person, project.settings):
+        raise ForbiddenError(say("ownAgentOtherOwnersTask"))

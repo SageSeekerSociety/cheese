@@ -518,6 +518,7 @@ routes:
   - {protocol: "ws", method: "WS", path: "/connector/agent", auth: "device.agent.ws", owner: "device"}
   - {protocol: "ws", method: "WS", path: "/connector/session/{sid}/screen", auth: "device.viewer.ws", owner: "device"}
   - {protocol: "http", method: "GET", path: "/connector/my/devices", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/claude-code", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "PATCH", path: "/connector/my/devices/{device_id}", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/teams", auth: "device.team", owner: "device"}
@@ -816,6 +817,9 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "artifact.keeper", owner: "project.artifacts"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/artifacts/{artifact_id}/merge", auth: "artifact.keeper", owner: "project.artifacts"}
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/artifacts/{artifact_id}", auth: "artifact.keeper", owner: "project.artifacts"}
+  # app.api.routes.projects_own_agents
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/own-agents", auth: "project.can_manage.read", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/own-agents", auth: "project.manager", owner: "project"}
   # app.api.routes.projects_run_config
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/default-model", auth: "project.can_manage.read", owner: "project.run_config"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/default-model", auth: "project.manager", owner: "project.run_config"}
@@ -1071,6 +1075,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/attachments", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/raw", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/pdf", auth: "actor.topic", owner: "room.files"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/html", auth: "actor.topic", owner: "room.files"}
   # app.api.routes.topics_channel
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/join", auth: "topic.channel.self", owner: "topic.membership"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/leave", auth: "topic.channel.self", owner: "topic.membership"}
