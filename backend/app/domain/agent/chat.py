@@ -1174,7 +1174,6 @@ class ChatService(SessionRecovery, RoomTurns):
         """The remote MCP servers this session cannot use yet, its type's too,
         each said once in the room: 「<name> 需要在项目设置里连接」."""
 
-        from app.domain.agent.runtime import get_broker
         from app.domain.remote_mcp import service as remote_mcp
 
         try:
@@ -1192,11 +1191,10 @@ class ChatService(SessionRecovery, RoomTurns):
                         )
                     )
                 )
-                landed = []
                 for name in unusable:
                     if name in said:
                         continue
-                    block = await announce(
+                    await announce(
                         session,
                         place_id=topic_id,
                         content=say("mcpNotConnected", server=name),
@@ -1209,16 +1207,10 @@ class ChatService(SessionRecovery, RoomTurns):
                             "server": name,
                         },
                     )
-                    if block is not None:
-                        landed.append(_block_payload(BlockOut.model_validate(block)))
                 await session.commit()
         except Exception:  # noqa: BLE001 — a notice must never fail a turn
             logger.exception("remote MCP check failed for topic %s", topic_id)
             return ()
-        for payload in landed:
-            await get_broker().publish(
-                str(topic_id), {"type": "event_block", "block": payload}
-            )
         return unusable
 
     async def post_system_event(

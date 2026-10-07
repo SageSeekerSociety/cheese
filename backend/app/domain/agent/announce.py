@@ -87,6 +87,7 @@ async def announce(
     points_at: Event = NAMES_NOBODY,
     event_id: uuid.UUID | None = None,
     task_id: uuid.UUID | None = None,
+    published_by_caller: bool = False,
 ) -> Block | None:
     """把 `content` 说进房间，并投给这条事件点到的那些人。
 
@@ -102,6 +103,10 @@ async def announce(
     就是房间里刚落下的那一行 —— 一次性的提示说完即止，它的身份和它那一行同生。给
     得出一个更长命的身份的调用点才填它：同一件事被问第二遍仍然是同一条事件，那个
     id 不能每次新建（`domain/policy/proposals.py`）。
+
+    提交之后这一行当场推给开着那段对话的页面（`live_notices`）。
+    `published_by_caller` 是调用方自己拿返回的 block 去推、要和它自己的帧排好先后
+    的那几处（`post_system_event`：先说失败，再发 `error` 帧）：那里不再推第二遍。
 
     返回落下的 block；房间已经不在了返回 None。
     """
@@ -131,7 +136,8 @@ async def announce(
         turn_id=turn_id,
         meta=meta,
     )
-    _show_once_committed(session, block)
+    if not published_by_caller:
+        _show_once_committed(session, block)
     await _notify(
         session,
         place=place,
