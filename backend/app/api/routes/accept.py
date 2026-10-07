@@ -466,9 +466,9 @@ async def void_card(
     **它不是"放行"**：卡进的是终态，不是 `pending`。放行等于让绿勾替一段没被检查
     过的代码背书；作废 + 重递效果一样且安全。
 
-    路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS` 里——这是授权类动作，
-    给人不给芝士。但"不加白名单"本身拦不住任何东西（没列进去的写路由压根不过那个
-    中间件，症状是静默放行而不是 401），真正拦住芝士的是 `AcceptService.void` 里
+    路由**故意不**声明成芝士专用（`app/api/write_access.py`）——这是授权类动作，
+    给人不给芝士。但写权限声明只管「只许芝士进」，本身拦不住芝士（症状是静默放行
+    而不是 401），真正拦住芝士的是 `AcceptService.void` 里
     的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的
     `test_void_requires_a_logged_in_human`。
     """
@@ -495,9 +495,9 @@ async def merge_card_anyway(
     平台自己永远不走它，人点一次算一次，卡面上留下谁、什么时候、当时检查什么
     状态、为什么。
 
-    跟 `void` 同一条线：路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS`
-    里——那是给芝士的白名单，这个动作不给芝士。但"不加白名单"本身拦不住任何东西
-    （没列进去的写路由压根不过那个中间件），真正拦住芝士的是这里的登录校验加
+    跟 `void` 同一条线：路由**故意不**声明成芝士专用（`app/api/write_access.py`）
+    ——这个动作不给芝士。但写权限声明只管「只许芝士进」，本身拦不住芝士，真正
+    拦住芝士的是这里的登录校验加
     `AcceptService.merge_despite_checks` 里的 `_forbid_ai`。
     """
     actor = await _card_actor(card_id, db, resolver)
@@ -523,8 +523,8 @@ async def set_auto_merge(
     """绿了自动合 (#718)：验收人在 BLOCKED / BEHIND 时布防，规则满足时平台以
     布防人的名义合并；新提交作废采纳（dismiss_stale）同样解除布防。
 
-    授权类动作：actor 只来自 session token，路由**故意不进**
-    `_CHEESE_WRITE_PATHS`（同 void / merge-anyway），真正拦住芝士的是登录校验加
+    授权类动作：actor 只来自 session token，路由**故意不**声明成芝士专用
+    （同 void / merge-anyway），真正拦住芝士的是登录校验加
     `AcceptService.arm_auto_merge` 里的 `_forbid_ai`。
     """
     actor = await _card_actor(card_id, db, resolver)

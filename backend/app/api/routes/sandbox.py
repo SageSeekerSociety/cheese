@@ -1,7 +1,8 @@
 """What a session machine fetches or triggers: the CLI, the storage sweep.
 
-It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
-/api write paths, so these routes do their own token check.
+Its paths name no room or project for a write-access declaration
+(app/api/write_access.py) to scope a credential to, so these routes do their
+own token check.
 """
 
 import logging
