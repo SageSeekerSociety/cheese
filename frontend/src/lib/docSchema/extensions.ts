@@ -235,7 +235,26 @@ const DocListItem = ListItem.extend({
 // own ordered-list reader takes an item's content as starting two columns in
 // where `1. ` takes three, so a fenced code block under a step lost its first
 // space, and one after a second paragraph was dropped.
-const DocOrderedList = OrderedList.extend({ markdownTokenizer: null as never })
+//
+// Its items are read by the list item, as a bullet list's are. tiptap's ordered
+// list reads them itself, and takes a tight item's text token as one plain text
+// node: `1. **标题** {✓ 状态}` kept its asterisks and tag as literal characters,
+// and saving it wrote them back escaped.
+const DocOrderedList = OrderedList.extend({
+  markdownTokenizer: null as never,
+  parseMarkdown: (token, helpers) => {
+    if (token.type !== 'list' || !token.ordered) return []
+    const start = Number(token.start || 1)
+    const attrs: Record<string, unknown> = {}
+    if (start !== 1) attrs.start = start
+    if (token.typeMarker) attrs.type = token.typeMarker
+    return {
+      type: 'orderedList',
+      ...(Object.keys(attrs).length ? { attrs } : {}),
+      content: token.items ? helpers.parseChildren(token.items) : [],
+    }
+  },
+})
 
 /** The full extension list for the living-doc editor (and its tests). */
 export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
