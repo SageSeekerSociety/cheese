@@ -94,6 +94,11 @@ services:
     # waits on a process it did not start. Without this they pile up as zombies:
     # 77 `git` after 17 hours on dev (2026-09-01). They cost PIDs, not fds.
     init: true
+    # For py-spy; see the same line in compose/docker-compose.base.yml. This
+    # host runs kernel.yama.ptrace_scope=1, so py-spy cannot read uvicorn
+    # without it.
+    cap_add:
+      - SYS_PTRACE
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
       interval: 30s

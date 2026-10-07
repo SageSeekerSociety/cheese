@@ -232,6 +232,13 @@ services:
     # waits on a process it did not start. Without this they pile up as zombies:
     # 77 `git` after 17 hours on dev (2026-09-01). They cost PIDs, not fds.
     init: true
+    # For py-spy, to name what held the event loop (app/core/loop_lag.py). A
+    # host with kernel.yama.ptrace_scope=1 (Ubuntu's default, and etrip's)
+    # refuses even a same-user read without it. It is in the bounding set only:
+    # uvicorn runs as the image's app user with no effective capabilities, so
+    # only `docker exec -u 0` can use it.
+    cap_add:
+      - SYS_PTRACE
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
       interval: 15s

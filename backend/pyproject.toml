@@ -45,6 +45,11 @@ dependencies = [
     "websockets>=16.0",
     "fusepy>=3.0.1",
     "pywebpush>=2.5.0",
+    # Not imported by anything: the profiler an operator runs inside the
+    # container when `app.core.loop_lag` reports a stall, to name the code that
+    # held the loop. It has to be in the image already — a stall is over before
+    # anyone could install it — so it is a runtime dependency, not a dev one.
+    "py-spy>=0.4.2",
 ]
 
 [dependency-groups]
