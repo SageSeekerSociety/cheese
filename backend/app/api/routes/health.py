@@ -129,11 +129,12 @@ class _SharedProbe:
             database, redis = await asyncio.gather(
                 _within_budget(_check_database), _within_budget(_check_redis)
             )
-            self._answer = (database, redis)
-            self._answered_at = time.monotonic()
+            # Only the current probe answers: after `forget` this one is stale.
+            if self._running is asyncio.current_task():
+                self._answer = (database, redis)
+                self._answered_at = time.monotonic()
             return database, redis
         finally:
-            # Only its own slot: after `forget` the slot may hold a newer probe.
             if self._running is asyncio.current_task():
                 self._running = None
 

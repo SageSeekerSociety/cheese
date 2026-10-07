@@ -129,9 +129,10 @@ assumes, and that a trailing slash never becomes a redirect.
 Every HTTP request except `/health`, `/health/*`, `/healthz` and `/metrics` is
 counted against the principal it verifiably comes from
 (`backend/app/core/request_limits.py`). WebSockets are not counted. `/readyz`
-is exempt only from inside — on loopback, or from a trusted proxy hop with no
-client address in front of it, which is how the container healthcheck and the
-rollout's curl reach it; from an outside client it is counted like any route.
+is exempt only when the request carries no client address — it came from a
+trusted proxy hop with nothing forwarded, which is how the container
+healthcheck and the rollout's curl reach it; with a client address it is
+counted like any route.
 
 - **Who counts as one principal.** A bearer access token that verifies is its
   user. A sandbox credential that verifies — in `X-Cheese-Token`, or as the

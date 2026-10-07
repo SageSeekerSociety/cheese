@@ -93,6 +93,9 @@ async def test_two_hung_dependencies_are_a_503_within_the_rollout_wait(
 ) -> None:
     monkeypatch.setattr(db, "probe_engine", _CountingEngine(hold_s=60))
     monkeypatch.setattr(health, "AsyncRedis", _HangingRedis)
+    # Narrowed so a slow runner has room: what is pinned is that the budget
+    # cuts both probes off side by side, not the production number itself.
+    monkeypatch.setattr(health, "PROBE_BUDGET_S", 0.3)
 
     started = time.monotonic()
     async with _client() as client:
@@ -102,7 +105,7 @@ async def test_two_hung_dependencies_are_a_503_within_the_rollout_wait(
 
     assert response.status_code == 503
     assert set(response.json()["unready"]) == {"database", "redis"}
-    assert elapsed < 3.0
+    assert elapsed < 1.5
 
 
 async def test_a_caller_that_hangs_up_does_not_cancel_the_shared_probe(

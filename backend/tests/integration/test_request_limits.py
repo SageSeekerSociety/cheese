@@ -249,10 +249,10 @@ async def test_readiness_from_outside_is_limited_like_any_route(
 async def test_readiness_from_inside_is_never_limited(
     limits, monkeypatch, _ready
 ) -> None:
-    """The container healthcheck asks on loopback; the rollout's curl comes
-    through the published port, from a trusted proxy hop with no client in
-    front of it. Neither may be refused while the process is busy."""
-    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "172.18.0.0/16")
+    """The container healthcheck asks on loopback and the rollout's curl comes
+    through the published port: both from a trusted proxy hop with no client
+    in front of it. Neither may be refused while the process is busy."""
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "127.0.0.1,172.18.0.0/16")
     limits(rate_per_s=0.2, rate_burst=1)
     for address in (("127.0.0.1", 4000), ("172.18.0.1", 4000)):
         async with _client(address=address) as client:
@@ -260,6 +260,18 @@ async def test_readiness_from_inside_is_never_limited(
                 response = await client.get("/readyz")
                 assert response.status_code == 200, address
                 assert "ratelimit" not in response.headers
+
+
+async def test_a_loopback_address_a_client_wrote_is_still_limited(
+    limits, monkeypatch, _ready
+) -> None:
+    """Behind a proxy that appends to X-Forwarded-For, the address resolved is
+    whatever the client wrote; 127.0.0.2 is loopback, not the inside."""
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    limits(rate_per_s=0.2, rate_burst=2)
+    async with _client(address=("127.0.0.2", 4000)) as client:
+        answers = [(await client.get("/readyz")).status_code for _ in range(3)]
+    assert answers == [200, 200, 429]
 
 
 async def test_requests_pass_while_redis_is_down(limits, monkeypatch, caplog) -> None:

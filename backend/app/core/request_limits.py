@@ -20,7 +20,6 @@ draft-ietf-httpapi-ratelimit-headers-11. WebSockets are not limited.
 import asyncio
 import base64
 import binascii
-import ipaddress
 import math
 import time
 from collections import deque
@@ -55,13 +54,14 @@ CONCURRENCY = "concurrency"
 # process that is busy, which is the moment it matters most.
 _EXEMPT = ("/health", "/healthz", "/metrics")
 
-# Probes that are exempt only when they come from inside: the container's own
-# healthcheck on loopback, or the rollout's curl through the published port,
-# which reaches the app from a trusted proxy hop with no client in front of
-# it. `/readyz` is public, so a request that carries an outside client's
-# address is counted like any other — exempting it too would hand anyone an
-# unlimited route.
-_EXEMPT_FROM_INSIDE = ("/readyz",)
+# Probes that are exempt only when no client address stands behind them: the
+# rollout's curl through the published port and the container's healthcheck on
+# loopback reach the app from a trusted proxy hop with nothing forwarded.
+# `/readyz` is public, so a request that carries a client's address is counted
+# like any other — exempting it too would hand anyone an unlimited route. Not
+# "any loopback address": behind a proxy that appends to X-Forwarded-For, the
+# address resolved is the one the client wrote, and it can write 127.0.0.2.
+_EXEMPT_UNADDRESSED = ("/readyz",)
 
 # GCRA over one key: the stored value is the theoretical arrival time (TAT) in
 # milliseconds. Integers throughout — Redis turns a Lua number into a string
@@ -129,18 +129,6 @@ def principal_of(scope: Scope) -> tuple[str, str] | None:
     if address is None:
         return None
     return "ip", f"ip:{address}"
-
-
-def _from_inside(scope: Scope) -> bool:
-    """Whether no outside client stands behind the request: the address cannot
-    be told from a proxy's, or it is this host's own loopback."""
-    address = resolved_client_address(Request(scope))
-    if address is None:
-        return True
-    try:
-        return ipaddress.ip_address(address).is_loopback
-    except ValueError:
-        return False
 
 
 def _agent_key(token: str) -> str | None:
@@ -335,7 +323,10 @@ class RequestLimits:
         if path in _EXEMPT or path.startswith("/health/"):
             await self.app(scope, receive, send)
             return
-        if path in _EXEMPT_FROM_INSIDE and _from_inside(scope):
+        if (
+            path in _EXEMPT_UNADDRESSED
+            and resolved_client_address(Request(scope)) is None
+        ):
             await self.app(scope, receive, send)
             return
         principal = principal_of(scope)
