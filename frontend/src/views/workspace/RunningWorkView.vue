@@ -98,6 +98,9 @@ async function load(silent = false) {
       errorReason.value = ''
     }
   } catch (e) {
+    // 401/403 不是「没读出来」：登录没了，或者人已经不在这个项目里。重试换不来
+    // 别的答案，所以交给整页那一屏（ProjectAccessNotice），它给的是去登录的路。
+    if (props.projectId === pid && store.noteAccess(e)) return
     if (!silent && props.projectId === pid) {
       failed.value = true
       errorReason.value = e instanceof Error ? e.message : ''
