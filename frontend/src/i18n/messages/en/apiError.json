@@ -115,6 +115,7 @@
   "previewDisabled": "Document preview isn't enabled on this deployment",
   "previewServiceUnreachable": "The document preview service can't be reached right now",
   "previewNotPdf": "The conversion didn't produce a valid PDF",
+  "previewNotHtml": "The conversion didn't produce a valid web page",
   "previewOver10Mb": "The file is over 10 MB, so no preview can be made",
   "artifactNameEmpty": "An artifact name can't be empty",
   "artifactNameTooLong": "An artifact name can be at most {max} characters",

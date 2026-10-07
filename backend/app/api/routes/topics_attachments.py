@@ -4,9 +4,11 @@ First slice of `app/api/routes/topics.py` (arch review C-backend.md §3.3).
 topics.py is 4,022 lines against a 1,500-line cap that only ratchets down. The
 block that moves is the one concept "a file attached to a message": the upload
 (`POST /topics/{topic_id}/attachments`), the bytes an `<img>` reads back (`GET
-/topics/{topic_id}/attachments/raw`), and the PDF a browser can draw in place of
-a download for a Word or PowerPoint deliverable (`GET
-/topics/{topic_id}/attachments/pdf`), with the two image-mime tables and the
+/topics/{topic_id}/attachments/raw`), the PDF a browser can draw in place of a
+download for a Word or PowerPoint deliverable (`GET
+/topics/{topic_id}/attachments/pdf`), and the web page the same container
+renders for a Word file, a workbook or a deck (`GET
+/topics/{topic_id}/attachments/html`), with the two image-mime tables and the
 size ceiling nothing else in the tree names.
 
 Where the shared names went. The three names this module used to read from
@@ -51,7 +53,9 @@ from app.domain.library import service as library
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
+    is_html_renderable,
     is_renderable,
+    render_to_html,
     render_to_pdf,
 )
 from app.domain.project.room_files import (
@@ -91,6 +95,49 @@ _EXT_IMAGE_MIME = {
     ".webp": "image/webp",
 }
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+#: What a rendered page may do. It is a document, not an app, and it arrives
+#: carrying inline styles and a little inline script of officecli's own: without
+#: `style-src` it would lose every bit of its formatting, and without
+#: `script-src` a workbook's sheet tabs would stop switching sheets.
+#:
+#: Everything else is closed. Those pages also reach for a font CDN, a formula
+#: CDN and a WebGL library on the vendor's host, and a reader opening a room's
+#: internal document should not be made to call out to any of them. What that
+#: costs is the two features that need them: a formula falls back to its source
+#: text and a 3D model does not draw, both of which the page's own script
+#: already handles as failure cases. Fonts are not a cost at all — the stack
+#: names Microsoft YaHei, PingFang SC and STHeiti, which the readers who open
+#: Chinese documents have.
+_PAGE_POLICY = (
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+    "img-src data:; font-src data:"
+)
+
+#: The same policy for a page navigated to directly. `sandbox` is a header-only
+#: directive — a meta tag cannot carry it, and browsers ignore it there — so it
+#: rides in the header; the frame the panel actually uses is sandboxed by the
+#: iframe element's own attribute (no `allow-same-origin`, so the page lands in
+#: an opaque origin and cannot reach this one).
+_PAGE_POLICY_HEADER = _PAGE_POLICY + "; sandbox allow-scripts"
+
+_PAGE_POLICY_META = (
+    f'<meta http-equiv="Content-Security-Policy" content="{_PAGE_POLICY}">'
+).encode()
+
+
+def _with_policy(page: bytes) -> bytes:
+    """The policy in the page itself, not only in the response headers.
+
+    The panel does not navigate to this route. It fetches the bytes with the
+    Authorization header and hands them to a sandboxed frame, and a response's
+    CSP does not follow those bytes into the frame — the meta tag does.
+    """
+    at = page.find(b"<head>")
+    if at < 0:
+        return page
+    at += len(b"<head>")
+    return page[:at] + _PAGE_POLICY_META + page[at:]
 
 
 @router.post("/{topic_id}/attachments")
@@ -259,6 +306,65 @@ async def attachment_as_pdf(
             "Content-Disposition": "inline",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
+            "Cache-Control": "no-store",
+            "X-Cheese-Source-Version": content_version(data),
+        },
+    )
+
+
+@router.get("/{topic_id}/attachments/html")
+async def attachment_as_html(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
+) -> Response:
+    """A Word file, a workbook or a deck as one web page.
+
+    The PDF above answers what the document looks like. This answers what it is
+    made of: every element on the page carries the address officecli's own
+    `set`/`add`/`remove` take — `/body/p[7]`, `/数据/B2`,
+    `/slide[1]/shape[@id=2]` — so "改这一格" names one cell to the reader who
+    said it and to whoever has to change it. A chart arrives as a chart, and a
+    header row keeps the fill it is drawn with.
+
+    A workbook is here and not in the PDF route, for the reason it is not there:
+    this is the shape a sheet can be shown in without losing its cell addresses.
+    """
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await TopicService(db).place_or_404(topic_id)).room
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    topic_id = topic.id
+    clean = clean_artifact_path(path)
+    if not is_html_renderable(clean):
+        raise ValidationError(say("previewFormatUnsupported"))
+    if task is not None:
+        await TaskService(db).require_source_in_room(topic_id, task)
+    data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
+    if len(data) > MAX_ARTIFACT_BYTES:
+        raise ValidationError(
+            say("previewTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+        )
+    try:
+        page = await render_to_html(data, clean, settings.office_render_endpoint)
+    except OfficeRenderUnavailable as exc:
+        # 503, like the PDF route: the renderer is absent or unreachable, which
+        # the panel reports as its own state, unlike "这份文件转换不了".
+        raise SystemBusyError(exception_text(exc)) from exc
+    except OfficeRenderFailed as exc:
+        raise ValidationError(exception_text(exc)) from exc
+    return Response(
+        content=_with_policy(page),
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": _PAGE_POLICY_HEADER,
             "Cache-Control": "no-store",
             "X-Cheese-Source-Version": content_version(data),
         },

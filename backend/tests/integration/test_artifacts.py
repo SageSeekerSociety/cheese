@@ -534,3 +534,81 @@ def test_a_deployment_without_a_renderer_says_so_rather_than_failing(client):
 
     assert r.status_code == 503, r.text
     assert "文档预览" in r.json()["message"]
+
+
+def test_a_sheet_is_served_as_a_web_page_where_no_pdf_is_made(client, monkeypatch):
+    """The page is the second reading of a document, and a workbook is the case
+    the PDF route deliberately has no answer for — which is why it is here."""
+    import base64
+
+    from app.api.routes import topics_attachments
+    from app.domain.textfile import content_version
+
+    _pid, tid = _topic(client)
+    raw = b"PK\x03\x04a workbook"
+    client.post(
+        f"/topics/{tid}/shown",
+        json={"path": "预算表.xlsx", "content_b64": base64.b64encode(raw).decode()},
+    )
+
+    seen: dict = {}
+
+    async def fake_render(data, path, endpoint, timeout=90.0):
+        seen["data"], seen["path"], seen["endpoint"] = data, path, endpoint
+        return b"<!DOCTYPE html><html><head></head><body>x</body></html>"
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://renderer:8901")
+    monkeypatch.setattr(topics_attachments, "render_to_html", fake_render)
+
+    r = client.get(f"/topics/{tid}/attachments/html", params={"path": "预算表.xlsx"})
+
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/html")
+    # The file's own bytes go to the renderer, not a path it cannot reach.
+    assert seen["data"] == raw
+    assert seen["path"] == "预算表.xlsx"
+    assert r.headers["x-cheese-source-version"] == content_version(raw)
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_the_page_restricts_itself_because_a_header_would_not_follow(
+    client, monkeypatch
+):
+    """The panel fetches these bytes with the Authorization header and hands
+    them to a sandboxed frame; a response's CSP does not travel with bytes into
+    that frame, so the page has to carry the policy itself."""
+    import base64
+
+    from app.api.routes import topics_attachments
+
+    _pid, tid = _topic(client)
+    client.post(
+        f"/topics/{tid}/shown",
+        json={
+            "path": "报告.docx",
+            "content_b64": base64.b64encode(b"PK\x03\x04").decode(),
+        },
+    )
+
+    async def fake_render(data, path, endpoint, timeout=90.0):
+        return (
+            b"<!DOCTYPE html><html><head><title>t</title></head><body>x</body></html>"
+        )
+
+    monkeypatch.setattr(settings, "office_render_endpoint", "http://renderer:8901")
+    monkeypatch.setattr(topics_attachments, "render_to_html", fake_render)
+
+    r = client.get(f"/topics/{tid}/attachments/html", params={"path": "报告.docx"})
+
+    assert r.status_code == 200, r.text
+    page = r.content
+    assert page.startswith(b"<!DOCTYPE html><html><head><meta http-equiv")
+    # 页面自有脚本要放行：表格的多工作表标签靠它切换。
+    assert b"script-src 'unsafe-inline'" in page
+    # 外网不放行：这些页面会去字体 CDN、公式 CDN 和厂商主机取东西。
+    assert b"default-src 'none'" in page
+    assert b"https:" not in page.split(b'content="', 1)[1].split(b'"', 1)[0]
+
+    header = r.headers["content-security-policy"]
+    assert "sandbox allow-scripts" in header
+    assert "allow-same-origin" not in header, "网页就在 API 这个源上，不能给它同源"
