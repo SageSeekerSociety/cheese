@@ -61,7 +61,7 @@ describe('resyncTail', () => {
 
   it('does not count a missing thread row as a change', () => {
     const thread = { id: 'th', replies: 2 }
-    const shown = [block('a', 1, 'a', { thread } as Partial<Block>)]
+    const shown = [block('a', 1, 'a', { thread } as unknown as Partial<Block>)]
     const out = resyncTail(shown, { blocks: [block('a', 1)], hasMore: false })
     expect(out.upserts).toEqual([])
   })
