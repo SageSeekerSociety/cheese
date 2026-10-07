@@ -95,10 +95,26 @@ it('a project with nothing in it is told where to start', async () => {
   expect(await screen.findByText('进入对话')).toBeTruthy()
 })
 
+// 数据到齐之前，这一屏会被整块换掉（先画板，再换成这块空态，取数两趟就是两轮）。
+// `findByText` 一看见就返回，抓到的可能是下一帧就被替换掉的那个节点——点在上面的
+// 话，空态那颗按钮的 `emit` 会落在已经卸载的实例上，被 Vue 丢掉，什么都不会发生。
+// 所以先等页面静下来（连续两次快照一样），再取一次当时在文档里的那颗按钮。
+async function settle() {
+  let prev = document.body.innerHTML
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 5))
+    const now = document.body.innerHTML
+    if (now === prev) return
+    prev = now
+  }
+  throw new Error('页面一直在变，没能等到它静下来')
+}
+
 it('the way in actually goes to the home room', async () => {
   mount()
 
-  await fireEvent.click(await screen.findByText('进入对话'))
+  await settle()
+  await fireEvent.click(screen.getByText('进入对话'))
 
   expect(push).toHaveBeenCalledWith({
     name: 'workspace-topic',
