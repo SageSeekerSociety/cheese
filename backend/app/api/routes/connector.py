@@ -589,8 +589,10 @@ async def my_devices(
         view = await _device_view(db, device)
         # Whether its owner's own Claude Code is logged in there for the
         # platform (#2991): the owner's to see, not the team's. Only a machine
-        # they enrolled themselves runs it; a cloud machine says nothing.
-        if device.supply == Supply.self_hosted:
+        # they enrolled themselves runs it; a cloud machine says nothing, and
+        # neither does a Windows one, where it does not run yet.
+        windows = device_hub.target(device.device_id).startswith("windows")
+        if device.supply == Supply.self_hosted and not windows:
             view["claude_code"] = await owner_login.status(db, device.device_id)
         views.append(view)
     return {"devices": views}

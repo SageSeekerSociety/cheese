@@ -440,3 +440,19 @@ def test_the_owner_sees_claude_code_logged_in_once_they_log_in_on_the_machine(
         f"/connector/my/devices/{device_id}/claude-code", headers=_bearer(bob)
     )
     assert theirs.status_code == 404
+
+
+def test_a_windows_device_is_not_offered_claude_code_it_cannot_run(client, monkeypatch):
+    """A member's own Claude Code does not run on Windows yet, so a Windows
+    device is not told to log it in; a Mac is."""
+    alice = _login_real(client, "alice")
+    device_id = _enroll_device(client, alice)["device_id"]
+
+    def line(target: str) -> bool:
+        monkeypatch.setattr(device_hub, "target", lambda device: target)
+        listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
+        mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
+        return "claude_code" in mine
+
+    assert line("darwin-arm64") is True
+    assert line("windows-amd64") is False

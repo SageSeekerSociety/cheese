@@ -97,7 +97,7 @@ slug: use-your-computer
 
 开始前，这台电脑要已经接入知是（见[接入电脑](#connect)），系统是 macOS 或 Linux，并且你有 Claude 订阅或 Anthropic API key。Windows 暂不支持。
 
-1. 在这台电脑上运行 `cheesehost claude login`。
+1. 在这台电脑的终端里运行 `~/.local/bin/cheesehost claude login`。
 2. 按提示在浏览器里登录你的 Claude 账号。
 
 完成后：设置 → 设备里这台电脑下面写着「Claude Code · 已登录」，在频道里输入 `@`，候选里出现「<你的昵称>的 Claude Code」。
