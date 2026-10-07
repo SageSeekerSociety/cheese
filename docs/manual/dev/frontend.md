@@ -1,7 +1,7 @@
 ---
 title: 前端结构
 kind: 参考
-summary: 两个入口（含组件预览站）、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求的两套栈、i18n 债务表和五道质量闸。
+summary: 两个入口、组件预览站和它的收录闸、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求的两套栈、i18n 债务表和五道质量闸。
 covers:
   - frontend/src/main.ts
   - frontend/src/demo-main.ts
@@ -16,6 +16,7 @@ covers:
   - frontend/src/composables/useNavigation.ts
   - frontend/src/views/demo/catalog.ts
   - frontend/src/views/demo/DemoCatalog.vue
+  - frontend/scripts/catalog-scaffold.mjs
   - frontend/src/stores/
   - frontend/src/api.ts
   - frontend/src/network/
@@ -42,7 +43,7 @@ covers:
 
 `demo-main.ts` 的存在理由是「越轻越好」：文档把这一页嵌进 iframe，后端没起来它也不能挂，而整个应用那条入口两样都做不到。它照样 `.use(vuetify).use(i18n)`，所以画面用的是产品自己的组件和主题，和真界面长得一样。地址是 `/demo/<名字>`，不带就放第一个场景。
 
-同一条入口上还有**组件预览站**：`/demo/catalog` 是目录，`/demo/catalog/<id>` 是一个组件、一格里一种状态。注册表在 `views/demo/catalog.ts`（页面和测试读的是同一份），形状数据由 `views/demo/catalogFixtures.ts` 从产品自己的剧本里搭出来。它不起后端、不登录、不读环境变量，`pnpm dev` 打开就能看；往目录里加一个组件的三步写在仓库内的 `frontend/AGENTS.md`。
+同一条入口上还有**组件预览站** `/demo/catalog`，见下一节。
 
 nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files $uri $uri/ /index.html`（SPA 兜底），`location /demo/` 走 `try_files /demo.html =404`。dev server 在 `vite.config.ts` 里做同样的事（`req.url` 以 `/demo` 开头就改写成 `/demo.html`）。文档站的 location 在 `frontend/nginx/docs/`，在 `/docs/` 下还是在自己的域名上由 `DOCS_ORIGIN` 决定，见[文档站与问芝士](/dev/docs-site#build)。
 
@@ -50,6 +51,32 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 
 - `watchForStaleBuild()` / `clearStaleBuildGuard()`：一个标签页跨过一次发版之后，懒加载的 chunk 在新构建里已经不存在，点一下就是一个 rejected import 而不是一页。启动时先接住这个失败，挂载成功就是「刷一下确实修好了」的证据，于是把一次性开关放开给下一次发版。
 - `installErrorReporter(app)`：浏览器侧的报错上报进当前话题的「现场」，这样读不到用户控制台的 agent 也能拿到它。
+
+## 组件预览站 {#catalog}
+
+[okcheese.com/demo/catalog](https://okcheese.com/demo/catalog) 是组件预览站：一个组件一页，一格里一种状态，用产品真实形状的数据渲染。它不连后端、不登录、不读环境变量；本地 `pnpm dev` 后打开同一路径也能看。
+
+- **找组件**：目录页按源码目录分组，顶上的搜索框按名字、说明或路径筛。卡片上写着它在哪个文件、单独渲染要装哪几样（Vuetify、语言包、路由、store）。
+- **提调整**：打开 `/demo/catalog/<id>`，每一格下有一句说明这一格在讲什么。看到不对的地方，把这个地址和格名发给负责前端的人或芝士。
+- **注册表**：`views/demo/catalog.ts` 和它展开进来的 `catalog*.ts` 分册，页面和测试读同一份。示例数据放在各分册的 `*Fixtures.ts`，尽量取自产品自己的演示剧本。
+
+条目和 Storybook 的 CSF 一一对应，以后换工具或做视觉回归能机械迁移：
+
+| 预览站 | CSF |
+|---|---|
+| 条目的 `component`、`title`、`args` | default export 的同名字段 |
+| `states` 里的一格 | 一个命名 story |
+| 一格的 `props` | 这个 story 的 `args`，叠在条目的 `args` 上 |
+| 一格的 `slot` | 默认插槽 |
+
+加一个组件：
+
+1. `node scripts/catalog-scaffold.mjs <src/...vue>` 按 props 打出骨架；`--pending <目录前缀>` 一次打出白名单里这个目录下的全部。
+2. 把骨架贴进一个 `catalog*.ts` 分册，补上 `about`、每格的名字和说明，换上真实形状的示例数据。骨架里的 `TODO(catalog)` 不改完，目录测试会报红。
+3. 跑 `pnpm exec vitest run src/views/demo/catalog.spec.ts`。它按每格声明的插件逐格挂载，有任何 warning 或 error 就红。
+4. 跑 `pnpm run lint:catalog:update`，把这个组件从白名单里划掉。
+
+**收录闸**（`pnpm run lint:catalog`，CI 里跑）：评级为 A（只靠 props 和事件就能渲染，判据见[架构指标](/dev/arch-metrics#metrics)）的组件，要么进目录，要么在白名单 `frontend/catalog-baseline.json` 里。白名单是今天的存量，只许缩短：新写的或刚改成 A 级的组件，从第一个提交起就要进目录。
 
 ## 壳与路由 {#shell}
 
