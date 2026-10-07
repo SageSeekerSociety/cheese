@@ -1165,6 +1165,9 @@ wait_for_ready() {
     sleep "$HEALTH_INTERVAL_SECONDS"
     waited=$((waited + step))
   done
+  # The 503 body names what is not ready (and which route modules did not
+  # mount); without it the log would only say that the wait ran out.
+  log "$what is not ready on :$port: $(curl -sS -m 3 "http://127.0.0.1:${port}/readyz" 2>&1 | head -c 600)"
   return 1
 }
 
@@ -1351,7 +1354,11 @@ if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   fi
 else
   log "bringing up backend + frontend…"
-  dc up -d backend frontend || fail "compose up failed"
+  # The frontend waits on the backend's healthcheck, which is /readyz, so a
+  # build that never becomes ready makes this `up` fail. Leave that verdict to
+  # the health wait below: it is the one that rolls back to $PREV_SHA, and
+  # failing here would leave the broken build in place.
+  dc up -d backend frontend || log "WARNING: compose up did not complete; the health check below decides"
 fi
 # The legacy half of the preview kill switch. The backends above are serving
 # legacy now, so it is safe to move the routes off a still-running owner and stop

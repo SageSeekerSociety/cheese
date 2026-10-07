@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from app.api.routes.admin_common import PlatformAdminDep
 from app.core.config import settings
-from app.db.session import AsyncSessionLocal
+from app.core.db import PROBE_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
@@ -110,11 +110,11 @@ def _check_event_loop() -> dict[str, Any]:
 
 
 async def _check_database() -> dict[str, Any]:
-    from app.core.db import pool_status
+    from app.core.db import pool_status, probe_engine
 
     try:
-        async with AsyncSessionLocal() as session:
-            await session.execute(text("SELECT 1"))
+        async with probe_engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
         return {"status": "up", "pool": pool_status()}
     except Exception as e:
         logger.warning("Database health check failed: %s", e)
@@ -123,7 +123,13 @@ async def _check_database() -> dict[str, Any]:
 
 async def _check_redis() -> dict[str, Any]:
     try:
-        redis = AsyncRedis.from_url(settings.redis_url)
+        # Bounded like the database probe: an unreachable Redis that drops
+        # packets would otherwise hold each probe for the TCP timeout.
+        redis = AsyncRedis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=PROBE_TIMEOUT_S,
+            socket_timeout=PROBE_TIMEOUT_S,
+        )
         try:
             await redis.ping()
             return {"status": "up"}
@@ -158,22 +164,23 @@ async def readiness_check() -> Any:
     feature for a total outage.
 
     The 503 is a plain JSON response, not an `HTTPException`: the app's error
-    envelope would replace the report with a generic "HTTP error", and the
-    report is what makes an outage diagnosable with no session.
+    envelope would replace the body with a generic "HTTP error". The body names
+    which required checks failed and each check's status, plus the modules that
+    did not mount — enough for a rollout log to say why. The error text of a
+    failing dependency stays behind `/health/detailed`: this route is public,
+    and that text can carry internal hosts and users.
     """
     result = await health_report()
+    checks = result["checks"]
     unready = [
-        name
-        for name in _REQUIRED_CHECKS
-        if result["checks"].get(name, {}).get("status") != "up"
+        name for name in _REQUIRED_CHECKS if checks.get(name, {}).get("status") != "up"
     ]
     if unready:
+        public = {name: {"status": body.get("status")} for name, body in checks.items()}
+        if "unmounted" in checks.get("routes", {}):
+            public["routes"]["unmounted"] = checks["routes"]["unmounted"]
         return JSONResponse(
             status_code=503,
-            content={
-                "status": "unready",
-                "unready": unready,
-                "checks": result["checks"],
-            },
+            content={"status": "unready", "unready": unready, "checks": public},
         )
     return {"status": "ready"}

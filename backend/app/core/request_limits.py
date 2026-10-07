@@ -52,7 +52,7 @@ CONCURRENCY = "concurrency"
 
 # Infrastructure probes. Counting them would refuse the health check of a
 # process that is busy, which is the moment it matters most.
-_EXEMPT = ("/health", "/healthz", "/metrics")
+_EXEMPT = ("/health", "/healthz", "/readyz", "/metrics")
 
 # GCRA over one key: the stored value is the theoretical arrival time (TAT) in
 # milliseconds. Integers throughout — Redis turns a Lua number into a string

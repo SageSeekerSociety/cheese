@@ -267,8 +267,8 @@ async def _health_snapshot() -> dict:
     判据本身在 `health_report()` 里，这里做的是同一件事的第二次回答 —— 所以它只取
     「状态 + 一句话」，绝不重算健康与否：`status` 原样带出来，页面照读。
 
-    `overall` 是三者里最差的那一个（up < stalling < down），而不是「多数票」：
-    一个 down 的 Redis 不该被两个 up 投成「healthy」。
+    `overall` 原样取 `health_report()` 的结论：任何一项不是 up/skipped 就是
+    「degraded」，不是「多数票」—— 一个 down 的 Redis 不该被其余几项投成「healthy」。
     """
     from app.api.routes import health as health_routes
 

@@ -730,6 +730,38 @@ test_rollback_restores_exact_previous_images() {
   echo "PASS: rollback restores exact previous image references"
 }
 
+# Without app-router the frontend waits on the backend's healthcheck (/readyz),
+# so a build that never becomes ready fails `compose up` itself. That must
+# still end in the rollback, not in an exit that leaves the build in place.
+test_unready_backend_without_slots_still_rolls_back() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/unready-rollback.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=rollback \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_DOCKER_FAIL_MATCH='up -d backend frontend' \
+    BACKEND_IMAGE=repo/backend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha COLLAB_IMAGE=repo/collab:testsha \
+    DEPLOY_APP_IMAGE_SOURCE=local \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >"$run_dir/release.log" 2>&1; then
+    rm -rf "$run_dir"
+    fail "a release whose compose up failed was reported as deployed"
+  fi
+  grep -Fq 'HEALTH CHECK FAILED' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "a failed compose up skipped the health check"; }
+  grep -Fqx \
+    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha' \
+    "$docker_log" || fail "a failed compose up did not roll back to the previous images"
+  rm -rf "$run_dir"
+  echo "PASS: an unready backend on a box without slots still rolls back"
+}
+
 # A box with an app-router (ACTIVE_BACKEND_DIR) releases by rollout: the idle
 # slot comes up beside the serving one, app-router is switched once, the old
 # slot drains and is stopped. These tests pin that order and the failures that
@@ -1752,6 +1784,7 @@ case "$CASE" in
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist
     test_rollback_restores_exact_previous_images
+    test_unready_backend_without_slots_still_rolls_back
     test_ownership_handover_is_the_last_step_before_up
     test_rollback_hands_the_mounts_back
     test_rollback_leaves_an_already_migrated_box_alone
