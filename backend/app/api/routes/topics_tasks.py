@@ -51,6 +51,7 @@ from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.living_doc.services import Documents
 from app.domain.mentions import canonicalize_refs
+from app.domain.review.task_landing import tell_origin
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.proposals import ProposalState, TaskProposals
 from app.domain.room_task.schemas import TaskOut
@@ -304,21 +305,50 @@ async def conclude_task(
             ),
         )
     task = await tasks.close_thread(task, conclusion=conclusion)
-    # The task's own conversation hears how it ended; the channel's one line for
-    # this task updates in place (`DispatchedMarker`).
+    # The task's own conversation hears how it ended, and so does the
+    # discussion it came from; the channel's card for it updates in place.
+    ended = (
+        say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
+        if task.conclusion
+        else say("taskClosed", title=said_title(task))
+    )
     await announce(
         db,
         place_id=place.room_id,
         task_id=task.id,
-        content=(
-            say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
-            if task.conclusion
-            else say("taskClosed", title=said_title(task))
-        ),
+        content=ended,
         meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
+    )
+    await tell_origin(db, task, ended)
+    out = await _task_out(db, chat, task)
+    await db.commit()
+    await announce_stale(place.room_id, "topics")
+    return ok(out)
+
+
+@router.post("/{topic_id}/reopen")
+async def reopen_task(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """重新打开：the owner takes a closed task up again. Its AI teammate goes on
+    from the project's latest code when it has landed something."""
+    place, actor, task = await task_conversation(db, resolver, topic_id)
+    if not actor.authenticated or actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
+    task = await TaskService(db).reopen(task)
+    await announce(
+        db,
+        place_id=place.room_id,
+        task_id=task.id,
+        content=say("taskReopened", actor=f"<@{actor.handle}>", title=said_title(task)),
+        meta={"platform": True, "action": "task_reopened", "task_id": str(task.id)},
     )
     out = await _task_out(db, chat, task)
     await db.commit()
+    await announce_stale(place.room_id, "topics")
     return ok(out)
 
 

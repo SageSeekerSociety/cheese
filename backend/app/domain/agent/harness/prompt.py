@@ -638,6 +638,18 @@ def task_started_prompt(*, title: str, actor: str) -> str:
     )
 
 
+def task_next_step_prompt(*, title: str, task_id) -> str:
+    """What a task's agent is told when one of its deliveries lands and the
+    task goes on."""
+    return (
+        f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
+        f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
+        "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
+        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
+        "这一步是最后一步时 completes_task 填 true。"
+    )
+
+
 PLATFORM_NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
 
 

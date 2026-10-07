@@ -31,9 +31,11 @@ class TaskStatus(enum.StrEnum):
     word nothing writes and nothing acts on — see the module docstring on
     dependencies for the same reasoning.
 
-    Acceptance closes the task, while a task may also close without delivery.
-    `accepted_at` records approval and `delivered_head` retains the merged
-    revision even if that approval is later revoked.
+    A task may deliver in several steps: accepting the step its card calls the
+    last closes the task, accepting an earlier one leaves it open
+    (`review/task_landing.py`). A task may also close without delivery.
+    `accepted_at` records the latest approval and `delivered_head` the latest
+    merged revision, kept even if that approval is later revoked.
     """
 
     open = "open"
@@ -262,7 +264,8 @@ class Task(UuidPk, Timestamps, Base):
     # 关闭时留下的一句话：做成了什么，或者为什么不做了。
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # 交付标记, stamped when the work merges. Independent of `status`, above.
+    # 交付标记, stamped each time a delivery merges: the latest one. An open
+    # task with it set has landed earlier steps and goes on.
     accepted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

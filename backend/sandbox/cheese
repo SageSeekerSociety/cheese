@@ -475,7 +475,8 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_close_task",
-            "放弃或撤销当前任务时显式关闭；正常交付在采纳后自动关闭。",
+            "放弃或撤销当前任务，或者任务的结论不是一次合并（调研、讨论出的决定）时，"
+            "显式关闭；最后一步的交付采纳后任务自动关闭。",
             {
                 "conclusion": _text("关闭原因或最终说明"),
                 "reported_by": _text("需求提出者的 handle"),
@@ -486,6 +487,8 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_accept_request",
             "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
+            "任务可以分几步交付：completes_task 说这次是不是最后一步。最后一步采纳后任务"
+            "完成并关闭；不是最后一步，采纳后任务还开着，平台会叫你从最新代码接着做下一步。"
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
@@ -509,8 +512,12 @@ PLATFORM_TOOLS = ToolTable(
                 "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
                 "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
                 "deliver_url": _text("交出去的地址"),
+                "completes_task": {
+                    "type": "boolean",
+                    "description": "这次交付做完了整个任务填 true；分步做、后面还有步骤填 false",
+                },
             },
-            ["subject"],
+            ["subject", "completes_task"],
         ),
         _tool(
             "cheese_describe",
@@ -1264,6 +1271,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                     "about",
                     "deliver",
                     "deliver_url",
+                    "completes_task",
                 ),
             },
         }
@@ -1936,8 +1944,10 @@ def _accept_request(args: dict, host) -> str:
     # 递卡之后的那一段（等采纳、PR 红了怎么修）在这一刻最有用，所以跟着返回说。
     lines.append(
         "接下来等验收人采纳。PR 的检查失败或和目标分支冲突时平台会叫你：在这条任务"
-        "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，不要为这条任务再递一张卡。"
+        "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，这一步不要再递一张卡。"
     )
+    if args.get("completes_task") is False:
+        lines.append("这不是最后一步：采纳后任务还开着，平台会叫你接着做下一步。")
     return "\n".join(lines)
 
 
@@ -3088,6 +3098,7 @@ def _task_worktree(task_id: str) -> Path:
             "exec cheese sync\n"
         )
         hook.chmod(0o755)
+        _follow_task_branch(task_dir, data)
     # The room has no checkout. Branch dependencies belong to this task and
     # must be prepared on every open, including after local branch changes.
     if (Path.home() / ".cheese-environment/config.json").exists():
@@ -3102,6 +3113,64 @@ def _task_worktree(task_id: str) -> Path:
         if result.returncode:
             raise SystemExit(result.returncode)
     return task_dir
+
+
+def _follow_task_branch(worktree: Path, data: dict) -> None:
+    """Move a checkout still on one of its task's earlier branches onto the
+    current one.
+
+    A task that delivers in steps gets a new branch, cut from the project's
+    latest code, each time a step lands. What this checkout has that did not
+    land comes along: the commits made after the landed head (`landed`), and
+    the files not yet committed. A checkout an agent moved to a branch of its
+    own is left alone; `cheese sync` refuses to deliver it as before.
+    """
+    branch = data["branch"]
+    try:
+        found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+    except RuntimeError:
+        return
+    earlier = "task/" + uuid.UUID(data["task_id"]).hex[:8]
+    if found == branch or not (found == earlier or found.startswith(earlier + "-")):
+        return
+    head = _git_task(worktree, "rev-parse", "HEAD")
+    landed = data.get("landed")
+    since = landed if landed and _is_ancestor(worktree, landed, head) else head
+    quiet = ("-c", "core.hooksPath=/dev/null")
+    dirty = bool(_git_task(worktree, "status", "--porcelain", "--untracked-files=all"))
+    if dirty:
+        _git_task(worktree, "add", "-A")
+        _git_task(
+            worktree, *quiet, "commit", "-q", "--no-verify", "-m", "cheese: carry over"
+        )
+    _git_task(worktree, *quiet, "switch", "-q", "-C", branch)
+    try:
+        _git_task(
+            worktree,
+            *quiet,
+            "rebase",
+            "-q",
+            "--onto",
+            f"refs/remotes/origin/{data['base']}",
+            since,
+        )
+    except RuntimeError as exc:
+        try:
+            _git_task(worktree, *quiet, "rebase", "--abort")
+        except RuntimeError:
+            pass
+        _git_task(worktree, *quiet, "switch", "-q", found)
+        _git_task(worktree, "branch", "-q", "-D", branch)
+        if dirty:
+            _git_task(worktree, "reset", "-q", "HEAD~1")
+        raise SystemExit(
+            f"[cheese] 这条任务上一次的交付已经合并，下一步要在新分支 {branch} 上做，"
+            f"但这里还没合并的改动和最新代码冲突，没能带过去（{exc}）。"
+            f"在 {found} 上把冲突解决掉（和 origin/{data['base']} 合并或变基），"
+            "再执行一次 cheese worktree。"
+        ) from exc
+    if dirty:
+        _git_task(worktree, "reset", "-q", "HEAD~1")
 
 
 class _BranchQueued(RuntimeError):
@@ -3378,6 +3447,10 @@ def _sync_task(task_id: str) -> list[str]:
                 return left_out
             branch = data["branch"]
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+            if found != branch:
+                # A step of the task landed since this checkout was opened.
+                _task_worktree(task_id)
+                found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
                 raise RuntimeError(f"Expected task branch {branch}, found {found}")
             _once_more_if_transient(

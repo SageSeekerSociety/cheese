@@ -101,6 +101,7 @@ class AcceptService:
         about: str | None = None,
         deliver: str | None = None,
         deliver_url: str | None = None,
+        completes_task: bool = True,
         admits_reviewer: ReviewerAdmission,
     ) -> AcceptCard:
         return await cards.create_card(
@@ -116,6 +117,7 @@ class AcceptService:
             about=about,
             deliver=deliver,
             deliver_url=deliver_url,
+            completes_task=completes_task,
             admits_reviewer=admits_reviewer,
         )
 
