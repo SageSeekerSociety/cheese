@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { api, appOriginOf, isEnvironmentNoise, apiLogin } from './helpers';
+import { api, appOriginOf, isEnvironmentNoise, apiLogin, recordUnknownElements, unknownElements } from './helpers';
 
 // 反馈的两条全流程，真的从界面走一遍：提交者提一条，管理员把它办完。
 //
@@ -26,13 +26,15 @@ test.describe.configure({ timeout: 180_000 });
 // 起因是一个真漏出来的 bug：给管理端抽屉加头像时只写了模板没写 import，Vue 只在
 // 控制台打一句「Failed to resolve component: FeedbackAuthorAvatar」，页面上那个位置
 // 就是空的——typecheck 不看模板、eslint 不看模板、单测没渲染过那个抽屉，三边全绿。
-// 这类事只有真的把页面打开才看得见，所以就在这里看着。
+// 这类事只有真的把页面打开才看得见，所以就在这里看着：看页面上留下的未知标签
+// （helpers 的 `recordUnknownElements`）。那句警告只有开发构建打，CI 跑的是生产构建。
 const consoleNoise: string[] = [];
 
-test.beforeEach(({ page }) => {
+test.beforeEach(async ({ page }) => {
   consoleNoise.length = 0;
+  await recordUnknownElements(page);
   page.on('console', (msg) => {
-    if (msg.type() === 'error' || msg.text().includes('Failed to resolve component')) {
+    if (msg.type() === 'error') {
       // 带上资源地址：控制台那句「Failed to load resource」不带 URL，光看它认不出是
       // 哪一次请求挂了。
       consoleNoise.push(`[console] ${msg.text()} @ ${msg.location().url || '?'}`);
@@ -45,10 +47,11 @@ test.beforeEach(({ page }) => {
 //
 // 这是环境的缺口，不是反馈这功能带来的：头像表里 2/3/4 号（猫咪/柴犬/熊猫，都是
 // predefined）有行、`uploads/avatars/` 下却没有对应文件，于是取图就是 404。浏览器
-test.afterEach(() => {
+test.afterEach(async ({ page }) => {
   const appOrigin = appOriginOf(test.info().project.use.baseURL);
   const ours = consoleNoise.filter((entry) => !isEnvironmentNoise(entry, appOrigin));
-  expect(ours, '浏览器控制台不该有报错，也不该有没注册的组件').toEqual([]);
+  expect(ours, '浏览器控制台不该有报错').toEqual([]);
+  expect(await unknownElements(page), '页面上不该有没注册的组件').toEqual([]);
 });
 
 // 用户侧支持按钮的可见文字会在点下去之后从「支持这个反馈」变成「已支持」，所以

@@ -40,6 +40,11 @@ export default defineConfig({
       wsEndpoint: process.env.E2E_BROWSER_WS_ENDPOINT,
       exposeNetwork: '<loopback>',
     } : undefined,
+    // The production build registers a service worker that precaches the
+    // whole bundle. Every test opens a fresh context, so each one would
+    // install it again and download every chunk; no spec is about offline
+    // behaviour.
+    serviceWorkers: process.env.CI ? 'block' : 'allow',
     // Existing workspace scenarios assert Chinese UI labels explicitly.
     locale: 'zh-CN',
     baseURL: process.env.BASE_URL || `http://localhost:${FRONTEND_PORT}`,
@@ -104,7 +109,13 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      command: `cd ../frontend && pnpm exec vite --port ${FRONTEND_PORT} --strictPort`,
+      // CI serves the production build e2e.yml made (`vite preview`, which
+      // applies the same `server.proxy` table); a local run keeps the dev
+      // server and its hot reload. Preview fails loudly when frontend/dist is
+      // missing, so CI cannot fall back to the dev server unnoticed.
+      command: process.env.CI
+        ? `cd ../frontend && pnpm exec vite preview --port ${FRONTEND_PORT} --strictPort`
+        : `cd ../frontend && pnpm exec vite --port ${FRONTEND_PORT} --strictPort`,
       url: `http://localhost:${FRONTEND_PORT}`,
       // VITE_API_BASE_URL=/api makes the 知是 1.0 layer prefix its calls with
       // /api (so /users/auth/login → /api/users/auth/login), which the proxy's
@@ -113,8 +124,8 @@ export default defineConfig({
       // are relative (/users/...), miss the /api proxy entirely, and hit the SPA.
       env: { BACKEND_URL, COLLAB_URL: COLLAB_URL.replace(/^http/, 'ws'), VITE_API_BASE_URL: '/api' },
       reuseExistingServer: !process.env.CI,
-      // Same 180s the backend gets: a cold vite start pre-bundles deps and runs
-      // the legacy plugin, on a runner that is also building and deploying.
+      // Same 180s the backend gets: a cold dev server pre-bundles deps before
+      // it answers. Preview answers in seconds.
       timeout: 180_000,
     },
   ],

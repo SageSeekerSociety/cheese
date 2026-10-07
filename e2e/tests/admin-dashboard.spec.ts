@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { appOriginOf, isEnvironmentNoise, apiLogin } from './helpers';
+import { appOriginOf, isEnvironmentNoise, apiLogin, recordUnknownElements, unknownElements } from './helpers';
 
 // 管理后台的统计页（平台总览、交付流水线、用量、性能……，原来是同一页看板上的几屏）。
 //
@@ -32,14 +32,19 @@ function unexpectedNoise(allowed500Path?: string): string[] {
   });
 }
 
-test.beforeEach(({ page }) => {
+test.beforeEach(async ({ page }) => {
   consoleNoise.length = 0;
+  await recordUnknownElements(page);
   page.on('console', (msg) => {
-    if (msg.type() === 'error' || msg.text().includes('Failed to resolve component')) {
+    if (msg.type() === 'error') {
       consoleNoise.push(`[console] ${msg.text()} @ ${msg.location().url || '?'}`);
     }
   });
   page.on('pageerror', (err) => consoleNoise.push(`[pageerror] ${err.message}`));
+});
+
+test.afterEach(async ({ page }) => {
+  expect(await unknownElements(page), '页面上不该有没注册的组件').toEqual([]);
 });
 
 /** 记下这一页打过哪几条看板接口，连同它们的响应码与 query（窗口切换钉的是 query）。 */
