@@ -528,7 +528,6 @@
     "renameFailed": "Couldn't rename",
     "unbindFailed": "Couldn't unlink",
     "close": "Close",
-    "thisComputer": "This device",
     "thisComputerHint": "Installs the connector and approves it for you, no terminal needed",
     "desktopTitle": "A Mac or Windows device",
     "desktopHint": "Download the desktop app, sign in, and connect this device when asked, no terminal needed",
@@ -705,7 +704,8 @@
       "at": "\"{step}\" didn't finish. Try again later",
       "tools": "The Command Line Developer Tools aren't installed yet. Install them, then try again",
       "start": "The device couldn't reach the platform. Check the network and try again",
-      "removeOld": "The old connector wasn't removed, so this device can't connect"
+      "removeOld": "The old connector wasn't removed, so this device can't connect",
+      "busy": "This device is already connecting. Try again later"
     }
   }
 }

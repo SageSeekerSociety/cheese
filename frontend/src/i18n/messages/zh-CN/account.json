@@ -528,7 +528,6 @@
     "renameFailed": "重命名失败",
     "unbindFailed": "解绑失败",
     "close": "关闭",
-    "thisComputer": "这台设备",
     "thisComputerHint": "自动安装连接程序并完成批准，无需打开终端",
     "desktopTitle": "Mac 或 Windows 设备",
     "desktopHint": "下载桌面端，登录后按提示接入这台设备，无需打开终端",
@@ -705,7 +704,8 @@
       "at": "「{step}」未能完成，稍后重试",
       "tools": "命令行开发者工具未安装完成，安装后重试",
       "start": "设备未能连上平台，检查网络后重试",
-      "removeOld": "旧版连接程序未能移除，无法接入这台设备"
+      "removeOld": "旧版连接程序未能移除，无法接入这台设备",
+      "busy": "这台设备正在接入，稍后重试"
     }
   }
 }

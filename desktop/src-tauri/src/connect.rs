@@ -129,6 +129,11 @@ pub async fn run(
     on_percent: &(dyn Fn(u8) + Send + Sync),
     on_line: &mut (dyn FnMut(&str) + Send),
 ) -> Result<(), String> {
+    // Its own process group, so a cancel takes what it started too: the curl
+    // behind install.sh, the claude waiting on a browser sign-in. Left behind
+    // they hold the pipes open, and this would wait on them for ever.
+    #[cfg(unix)]
+    cmd.process_group(0);
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

@@ -73,7 +73,11 @@ describe('signing in to the desktop app', () => {
   })
 
   it('brings back a computer connected before, without asking', async () => {
-    listMyDevices.mockResolvedValue({ devices: [{ device_id: 'd1', online: false }] })
+    const away = { devices: [{ device_id: 'd1', online: false }] }
+    listMyDevices
+      .mockResolvedValueOnce(away)
+      .mockResolvedValueOnce(away)
+      .mockResolvedValue({ devices: [{ device_id: 'd1', online: true }] })
     const invoke = desktopHost('d1')
     await offerToConnect(10)
     expect(invoke).toHaveBeenCalledWith('connect_this_machine', expect.objectContaining({ knownDeviceIds: ['d1'] }))
@@ -83,6 +87,30 @@ describe('signing in to the desktop app', () => {
   it('does nothing in a browser', async () => {
     await offerToConnect(10)
     expect(listMyDevices).not.toHaveBeenCalled()
+    expect(deviceFlow.open).toBe(false)
+  })
+})
+
+describe('bringing back a computer connected before', () => {
+  it('shows the dialog only when a step needs the person', async () => {
+    listMyDevices.mockResolvedValue({ devices: [{ device_id: 'd1', online: false }] })
+    const invoke = desktopHost('d1')
+    invoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>): Promise<unknown> => {
+      if (cmd === 'this_device') return 'd1'
+      if (cmd !== 'connect_this_machine') return
+      const progress = args!.progress as { onmessage: (m: Message) => void }
+      progress.onmessage({ kind: 'step', id: 'removeOld' })
+      throw { step: 'removeOld', detail: 'User canceled.' }
+    })
+    await offerToConnect(10)
+    expect(deviceFlow.open).toBe(true)
+    expect(deviceFlow.stage).toBe('failed')
+  })
+
+  it('stays out of sight when it fails without needing anyone', async () => {
+    listMyDevices.mockResolvedValue({ devices: [{ device_id: 'd1', online: false }] })
+    desktopHost('d1', { step: 'download', detail: 'offline' })
+    await offerToConnect(10)
     expect(deviceFlow.open).toBe(false)
   })
 })

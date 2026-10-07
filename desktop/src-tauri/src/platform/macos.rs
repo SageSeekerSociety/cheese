@@ -35,8 +35,12 @@ pub fn cheesehost() -> Command {
     cmd
 }
 
+/// Ends what `connect::run` started: it leads its own process group, and the
+/// whole group goes.
 pub fn kill(pid: u32) {
-    let _ = std::process::Command::new("/bin/kill").arg(pid.to_string()).status();
+    let _ = std::process::Command::new("/bin/kill")
+        .args(["-TERM", "--", &format!("-{pid}")])
+        .status();
 }
 
 /// Runs a sh script, handed over on stdin. Braces make sh read all of it

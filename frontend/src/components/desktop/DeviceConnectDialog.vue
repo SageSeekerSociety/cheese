@@ -106,6 +106,7 @@ function failedAt(f: ConnectFailure) {
   if (f.step === 'tools') return t('account.connectFlow.failed.tools')
   if (f.step === 'start') return t('account.connectFlow.failed.start')
   if (f.step === 'removeOld') return t('account.connectFlow.failed.removeOld')
+  if (f.step === 'busy') return t('account.connectFlow.failed.busy')
   const step = (['download', 'approve', 'runtime'] as string[]).includes(f.step) ? f.step : 'approve'
   return t('account.connectFlow.failed.at', { step: t(`account.connectFlow.step.${step}`) })
 }

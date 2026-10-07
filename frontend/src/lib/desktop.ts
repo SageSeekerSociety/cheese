@@ -167,7 +167,12 @@ export const deviceFlow = reactive({
 const CORE_STEPS: ConnectStep[] = ['download', 'approve', 'start']
 const ORDER: ConnectStep[] = ['removeOld', 'tools', 'download', 'approve', 'runtime', 'start']
 
+// A reconnect at launch runs out of sight, until a step needs the person: the
+// password for removing an old connector, or Apple's tools to install.
+let quiet = false
+
 function enter(step: ConnectStep) {
+  if (quiet && (step === 'removeOld' || step === 'tools')) deviceFlow.open = true
   if (!deviceFlow.steps.includes(step)) {
     deviceFlow.steps = ORDER.filter((s) => s === step || deviceFlow.steps.includes(s))
   }
@@ -185,11 +190,23 @@ async function untilOnline(deviceId: string | null): Promise<boolean> {
   return false
 }
 
-/** Connects this computer, showing each step in the dialog. */
-export async function startConnecting() {
+/** Connects this computer, showing each step in the dialog; `quiet`, for a
+ *  computer connected before, shows the dialog only when a step needs the
+ *  person, and closes it again once connected. Asked while one is under way,
+ *  it shows that one. */
+export async function startConnecting(options: { quiet?: boolean } = {}) {
   const bridge = desktopBridge()
-  if (!bridge || deviceFlow.stage === 'progress') return
-  Object.assign(deviceFlow, { open: true, stage: 'progress', failure: null, deviceId: null, percent: null })
+  if (!bridge) return
+  if (deviceFlow.stage === 'progress') {
+    // Asked for while a reconnect runs out of sight: show it, through to the end.
+    if (!options.quiet) {
+      deviceFlow.open = true
+      quiet = false
+    }
+    return
+  }
+  quiet = !!options.quiet
+  Object.assign(deviceFlow, { open: !quiet, stage: 'progress', failure: null, deviceId: null, percent: null })
   deviceFlow.steps = [...CORE_STEPS]
   deviceFlow.current = null
   try {
@@ -205,21 +222,31 @@ export async function startConnecting() {
     enter('start')
     deviceFlow.deviceId = await bridge.thisDevice()
     if (!(await untilOnline(deviceFlow.deviceId))) {
-      deviceFlow.failure = { step: 'start', detail: '' }
-      deviceFlow.stage = 'failed'
+      stop({ step: 'start', detail: '' })
       return
     }
     deviceFlow.current = null
-    deviceFlow.stage = 'done'
-  } catch (err) {
-    const why = failure(err)
-    if (why.step === 'cancelled') {
+    if (quiet) {
       deviceFlow.open = false
-      return
-    }
-    deviceFlow.failure = why
-    deviceFlow.stage = 'failed'
+      deviceFlow.stage = 'ask'
+    } else deviceFlow.stage = 'done'
+  } catch (err) {
+    stop(failure(err))
+  } finally {
+    quiet = false
   }
+}
+
+// Stopped: a cancel closes the dialog; a failure shows in it, unless nobody
+// was ever shown a dialog (a reconnect at launch that failed stays quiet).
+function stop(why: ConnectFailure) {
+  if (why.step === 'cancelled' || (quiet && !deviceFlow.open)) {
+    deviceFlow.open = false
+    deviceFlow.stage = 'ask'
+    return
+  }
+  deviceFlow.failure = why
+  deviceFlow.stage = 'failed'
 }
 
 export async function cancelConnecting() {
@@ -256,24 +283,10 @@ export async function offerToConnect(userId: number) {
   const mine = stored ? devices.find((d) => d.device_id === stored) : undefined
   if (mine?.online) return
   if (mine) {
-    // Connected before: bring it back quietly, without the dialog.
-    await bridge
-      .connectThisMachine({
-        knownDeviceIds: devices.map((d) => d.device_id),
-        onStep: () => {},
-        onPercent: () => {},
-        approve: async (code) => {
-          await connectDevice(code)
-        },
-      })
-      .catch(() => {})
+    // Connected before: bring it back without asking.
+    await startConnecting({ quiet: true })
     return
   }
   if (asked(userId)) return
   Object.assign(deviceFlow, { open: true, stage: 'ask', failure: null, steps: [], current: null, percent: null })
-}
-
-// Whether a device in the list is the computer this app runs on.
-export async function isThisComputer(deviceId: string) {
-  return (await desktopBridge()?.thisDevice()) === deviceId
 }

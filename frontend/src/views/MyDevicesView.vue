@@ -475,7 +475,7 @@ function claudePlan(plan: string | null | undefined): string {
       <!-- In the desktop app this computer connects in place; in a browser, Mac and Windows
            install the desktop app and every other machine (servers, Linux) runs the command. -->
       <template v-if="desktop">
-        <div class="t-title mt-3 mb-1">{{ t('account.devices.thisComputer') }}</div>
+        <div class="t-title mt-3 mb-1">{{ t('account.devices.thisDevice') }}</div>
         <div class="t-caption c-muted mb-3">{{ t('account.devices.thisComputerHint') }}</div>
         <BaseButton kind="primary" :disabled="devices.some((d) => d.device_id === thisDeviceId)" @click="connectHere">
           {{ t('account.devices.connectThis') }}
