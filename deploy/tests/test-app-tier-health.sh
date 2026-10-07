@@ -712,6 +712,8 @@ test_rollback_restores_exact_previous_images() {
     APP_TIER_SCENARIO=rollback \
     APP_TIER_MAIN_SHA=testsha \
     APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_PREVIOUS_RELEASE=prevrelease \
+    APP_RELEASE=thisrelease \
     BACKEND_IMAGE=repo/backend:testsha \
     FRONTEND_IMAGE=repo/frontend:testsha COLLAB_IMAGE=repo/collab:testsha \
     DEPLOY_APP_IMAGE_SOURCE=local \
@@ -723,9 +725,13 @@ test_rollback_restores_exact_previous_images() {
     rm -rf "$run_dir"
     fail "rollback scenario unexpectedly passed health checks"
   fi
+  # An image named outright is not the release's, so it does not claim to be.
   grep -Fqx \
-    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha' \
-    "$docker_log" || fail "rollback did not restore the exact previous images"
+    'compose-up-env BACKEND_IMAGE=repo/backend:testsha FRONTEND_IMAGE=repo/frontend:testsha IMAGE_TAG=testsha APP_RELEASE=' \
+    "$docker_log" || fail "an image named by BACKEND_IMAGE was started as the release"
+  grep -Fqx \
+    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha APP_RELEASE=prevrelease' \
+    "$docker_log" || fail "rollback did not restore the exact previous images and the release they ran as"
   rm -rf "$run_dir"
   echo "PASS: rollback restores exact previous image references"
 }
@@ -1130,12 +1136,13 @@ test_rollout_rollback_returns_to_the_previous_slot() {
   local run_dir docker_log
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
-  if rollout_run "$run_dir" env APP_TIER_SCENARIO=rollback >"$run_dir/release.log" 2>&1; then
+  if rollout_run "$run_dir" env APP_TIER_SCENARIO=rollback APP_RELEASE=thisrelease \
+      APP_TIER_PREVIOUS_RELEASE=prevrelease >"$run_dir/release.log" 2>&1; then
     fail "rollback scenario unexpectedly passed health checks"
   fi
-  grep -Fqx 'slot-up-env backend-b BACKEND_IMAGE= FRONTEND_IMAGE= IMAGE_TAG=testsha' "$docker_log" \
-    || fail "the release did not start its own images in the idle slot"
-  grep -Fqx 'slot-up-env backend BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha' "$docker_log" \
+  grep -Fqx 'slot-up-env backend-b BACKEND_IMAGE= FRONTEND_IMAGE= IMAGE_TAG=testsha APP_RELEASE=thisrelease' "$docker_log" \
+    || fail "the release did not start its own images, as its own release, in the idle slot"
+  grep -Fqx 'slot-up-env backend BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha APP_RELEASE=prevrelease' "$docker_log" \
     || { cat "$run_dir/release.log"; fail "the rollback did not start the previous images in the first slot"; }
   [ "$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log")" = 2 ] \
     || fail "release plus rollback did not switch exactly twice"

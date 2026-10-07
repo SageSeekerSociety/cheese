@@ -33,6 +33,7 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
 	"github.com/SageSeekerSociety/cheese/cli/internal/localfs"
+	"github.com/SageSeekerSociety/cheese/cli/internal/runtimepath"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
 )
@@ -310,6 +311,11 @@ func (h *Host) createSession(m link.Msg) {
 	// otherwise hand the session the PATH it started with.
 	if path := os.Getenv("PATH"); path != "" {
 		env = append(env, "PATH="+path)
+	}
+	// The same directories again, for the launcher to put back in front after
+	// its login shell has reordered PATH (`runtimepath`).
+	if dirs := os.Getenv(runtimepath.Var); dirs != "" {
+		env = append(env, runtimepath.Var+"="+dirs)
 	}
 	for k, v := range m.Env {
 		env = append(env, k+"="+v)
