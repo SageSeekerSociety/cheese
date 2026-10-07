@@ -255,6 +255,9 @@
       <DesktopPhoneDialog />
     </template>
     <CommandPalette />
+    <!-- 手把手引导的第 1 步。后面四步在 ChatPanel 上（那时人已经在项目里了），这一
+         步必须在壳上：目标 rail ＋ 是壳的一部分，而它只在「还没有项目」时出现。 -->
+    <StartGuide v-if="startGuideStep" :step="startGuideStep" :anchors="START_GUIDE_ANCHORS" @skip="skipGuide" />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
   </my-app>
@@ -282,6 +285,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
 import { useSessionRestore } from '@/composables/useSessionRestore'
+import { useStartGuide } from '@/composables/useStartGuide'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
@@ -312,6 +316,7 @@ import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import SessionRestoreGate from '@/components/common/SessionRestoreGate.vue'
 import { appShortcutSheetOpen } from '@/components/common/shortcutSheet'
+import StartGuide from '@/components/common/StartGuide.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
@@ -438,6 +443,11 @@ const hasSidebar = computed(() => currentRoute.matched.some((record) => record.c
 // (话题/群聊/doc/agent)。两端各拿到哪些格子由 Navigation/destinations.ts 说了算。
 const cxProjects = ref<Project[]>(loadCachedProjects(myHandle()))
 
+// 「项目清单问完了」——成功、失败都算问过（和 workspace store 里那个同名标志一个
+// 意思）。第 1 步引导据此说「这个人一个项目都还没有」，不拿「手上是空的」当答案：
+// 冷启动时缓存本来就是空的，用它会先给老用户冒一句「从这里开一个项目」再收回去。
+const cxProjectsSettled = ref(false)
+
 // 服务端那份清单是 created_at desc，rail 画的是这个人自己拖出来的顺序。两者分开
 // 存：拖过之后再刷新项目列表，排法不会被服务端的顺序盖掉。
 const projectOrder = ref<string[]>(loadProjectOrder(myHandle()))
@@ -453,6 +463,7 @@ async function loadCxProjects() {
   // Public visitors have no project list; a 401 here would interrupt the landing page.
   if (!AccountService.loggedIn) {
     cxProjects.value = []
+    cxProjectsSettled.value = true
     return
   }
   try {
@@ -465,6 +476,10 @@ async function loadCxProjects() {
       duration: 8000,
       action: { label: t('work.newProject.retry'), onClick: () => void loadCxProjects() },
     })
+  } finally {
+    // 失败也算问完了：这时候 rail 上确实一个项目都没有，和「这个人还没有项目」在界
+    // 面上是同一件事——新建项目那条路本来也照常摆着。
+    cxProjectsSettled.value = true
   }
 }
 onMounted(loadCxProjects)
@@ -669,6 +684,17 @@ const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // tile appears, then open its workspace. The same dialog is what a team page's
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
 const { open: newProjectDialog, presetTeam, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
+
+// 手把手引导的第 1 步：一个项目都还没有，气泡指着 rail 上那颗「＋」。它和后面四步是
+// 同一条链子，只是那四步住在一个项目里（ChatPanel 那层），这一步住在壳上——这时还
+// 没有项目可住。对话框开着时收起来：浮层压上去会挡住人正在填的东西。
+const { skipped: guideSkipped, skip: skipGuide } = useStartGuide()
+const START_GUIDE_ANCHORS = ['rail-add', 'new-project']
+const startGuideStep = computed<'project' | null>(() =>
+  cxProjectsSettled.value && !cxProjects.value.length && !guideSkipped.value && !newProjectDialog.value
+    ? 'project'
+    : null
+)
 // 从一道题建项目时那份「会继承什么」(#944)。取数按 `sourceTask` 走：对话框换个
 // 来源就重新问一次，没来源时不发请求。
 const { inheritance: sourceInheritance, loading: sourceInheritanceLoading } = useTaskInheritance(

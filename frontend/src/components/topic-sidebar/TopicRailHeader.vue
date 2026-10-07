@@ -9,6 +9,8 @@
 // 项目名下那一行里。
 //
 // 这里只画：这个项目叫什么、露出来了哪几页、转不转得动项目，都是父级算好递进来的。
+import { vGuideAnchor } from '@/composables/useStartGuide'
+
 import TopicRailBadge from './TopicRailBadge.vue'
 
 import { t } from '@/i18n'
@@ -58,6 +60,7 @@ const emit = defineEmits<{
       <!-- 手机：同一个入口从底部升起一张面板（见父级的 MobileActionSheet）。 -->
       <button
         v-if="page"
+        v-guide-anchor="'project-menu'"
         type="button"
         class="rail-header__home tap-target"
         :class="{ 'rail-header__home--active': menuOpen }"
@@ -75,6 +78,7 @@ const emit = defineEmits<{
         <template #activator="{ isActive, props: menuProps }">
           <!-- 名字是省略号截断的，title 留着全名。 -->
           <button
+            v-guide-anchor="'project-menu'"
             v-bind="menuProps"
             type="button"
             class="rail-header__home"

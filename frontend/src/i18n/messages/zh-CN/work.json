@@ -57,6 +57,12 @@
     },
     "settingsNote": "AI 队友和代码仓库都在项目里配：进项目后打开「项目设置」，第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
   },
+  "startGuide": {
+    "aria": "上手引导",
+    "project": "从这里开一个项目",
+    "materials": "资料库里放也行",
+    "skip": "跳过引导"
+  },
   "sessionMachine": {
     "machine": "换到",
     "confirm": "推送并更换",

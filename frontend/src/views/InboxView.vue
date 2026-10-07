@@ -4,6 +4,7 @@ import type { WaitingItem } from '@/cx_types'
 import { computed, onMounted, ref } from 'vue'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
+import { vGuideAnchor } from '@/composables/useStartGuide'
 
 import { listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -172,7 +173,7 @@ async function dismissAll(projectId: string) {
             <span class="inbox__path-title">{{ t('work.startPaths.project.title', projectTerm) }}</span>
             <span class="inbox__path-body">{{ t('work.startPaths.project.body') }}</span>
           </div>
-          <BaseButton kind="primary" size="sm" @click="showNewProjectDialog()">
+          <BaseButton v-guide-anchor="'new-project'" kind="primary" size="sm" @click="showNewProjectDialog()">
             {{ t('navigation.newProject', projectTerm) }}
           </BaseButton>
         </li>

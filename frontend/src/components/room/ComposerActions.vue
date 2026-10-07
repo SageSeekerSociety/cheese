@@ -16,6 +16,8 @@ import type { MenuAction } from '@/components/common/menuAction'
 import { computed, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
+import { vGuideAnchor } from '@/composables/useStartGuide'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { openShortcutSheet } from '@/components/common/shortcutSheet'
@@ -151,6 +153,7 @@ const summonText = computed(() => ({
     <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
            时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
     <BaseButton
+      v-guide-anchor="'composer-attach'"
       kind="ghost"
       class="composer-icon"
       icon="mdi-paperclip"

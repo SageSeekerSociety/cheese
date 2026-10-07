@@ -6,6 +6,7 @@
   <v-card
     v-if="item.type === 'item'"
     ref="tileRef"
+    v-guide-anchor="item.add ? 'rail-add' : ''"
     :to="item.to"
     rounded="lg"
     :border="false"
@@ -84,6 +85,7 @@ import { type ComponentPublicInstance, computed, ref, toRefs } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { useNavigation } from '@/composables/useNavigation'
+import { vGuideAnchor } from '@/composables/useStartGuide'
 
 import { railShortcut } from './destinations'
 import { NavGenericItem } from './types'

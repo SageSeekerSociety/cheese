@@ -57,6 +57,12 @@
     },
     "settingsNote": "AI teammates and code repositories are set up inside a project: open Project settings — the first section is AI teammates, and the repository is under “Repository and credit”."
   },
+  "startGuide": {
+    "aria": "Getting-started tip",
+    "project": "Start a project here",
+    "materials": "Or drop it in the library",
+    "skip": "Skip the tour"
+  },
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",
