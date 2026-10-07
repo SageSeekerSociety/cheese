@@ -70,6 +70,7 @@ import type { SitePage } from './types/site'
 
 import { connectorRequest } from './api/connector'
 import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
+import { rememberNumbered, rememberProject } from './lib/addresses'
 import { shareInFlight } from './lib/inflight'
 import { refusalWords } from './lib/noticeText'
 import { createPreviewPdfReader } from './lib/previewPdf'
@@ -226,7 +227,10 @@ export function screenWsUrl(sid: string): string {
 
 export function listProjects(teamId?: number): Promise<ListPayload<Project>> {
   const q = teamId != null ? `?team_id=${teamId}` : ''
-  return request<ListPayload<Project>>(`/projects${q}`)
+  return request<ListPayload<Project>>(`/projects${q}`).then((page) => {
+    for (const project of page.data) rememberProject(project.id, project.slug)
+    return page
+  })
 }
 
 /** 待我处理：跨项目、点到我的那些事项，最近动过的在前。
@@ -298,7 +302,10 @@ export function listProjectsForTask(taskId: number): Promise<ListPayload<Project
 
 // Single project card.
 export function getProject(projectId: string): Promise<Project> {
-  return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}`).then((project) => {
+    rememberProject(project.id, project.slug)
+    return project
+  })
 }
 
 /** 归档项目：只有所有者能做。项目从所有人的列表里消失、不能再修改，里面的内容都保留。 */
@@ -422,6 +429,7 @@ export function listTopics(
     }
     if (!result.data) throw new Error('empty topic list response')
     topicListCache.set(path, { etag: result.etag, payload: result.data })
+    rememberNumbered('channels', result.data.data)
     return result.data
   })
 }
@@ -437,7 +445,10 @@ export async function listTopicNames(): Promise<TopicName[]> {
 // 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
 // → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
 export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
-  return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`)
+  return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`).then((page) => {
+    rememberNumbered('tasks', page.data)
+    return page
+  })
 }
 
 /** Tasks in this room, each with its own branch and delivery. */

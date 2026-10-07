@@ -16,6 +16,12 @@ vi.mock('@/api', async (importOriginal) => ({
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
   getPreview: vi.fn().mockResolvedValue(null),
 }))
+// 地址换短名要问后端；这里没有后端，换不成就照原地址打开。
+vi.mock('@/api/addresses', () => ({
+  resolveProject: vi.fn().mockRejectedValue(new Error('offline')),
+  resolveNumber: vi.fn().mockRejectedValue(new Error('offline')),
+  addressOf: vi.fn().mockRejectedValue(new Error('offline')),
+}))
 vi.mock('@/views/workspace/ProjectShell.vue', never)
 vi.mock('@/views/workspace/ProjectSidebar.vue', never)
 vi.mock('@/views/workspace/TopicView.vue', never)
@@ -42,14 +48,14 @@ describe('opening a topic', () => {
   // 多忙，不是消息有没有提前取，所以等待按「编译要多久」给（同 workspaceRoutes.spec.ts）。
   it('fetches its newest messages while the page code is still loading', async () => {
     const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b01'
-    void router.push(`/projects/${PROJECT}/topics/${topic}`)
+    void router.push(`/projects/${PROJECT}/channels/${topic}`)
     await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(topic, expect.anything()), { timeout: 20_000 })
   }, 30_000)
 
   it('fetches nothing for a topic whose messages are already on hand', async () => {
     const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b02'
     setCachedWindow(topic, { blocks: [], hasMore: false })
-    void router.push(`/projects/${PROJECT}/topics/${topic}`)
+    void router.push(`/projects/${PROJECT}/channels/${topic}`)
     await new Promise((r) => setTimeout(r, 20))
     expect(listBlocks).not.toHaveBeenCalled()
   })
@@ -57,7 +63,7 @@ describe('opening a topic', () => {
   it('fetches nothing when nobody is signed in', async () => {
     signedIn.id = ''
     const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b03'
-    void router.push(`/projects/${PROJECT}/topics/${topic}`)
+    void router.push(`/projects/${PROJECT}/channels/${topic}`)
     await new Promise((r) => setTimeout(r, 20))
     expect(listBlocks).not.toHaveBeenCalled()
   })
@@ -67,14 +73,14 @@ describe('opening a topic', () => {
   // 挂上来（实测冷开一个房间要 9 秒）。
   it('asks for the topic preview while the page code is still loading', async () => {
     const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b04'
-    void router.push(`/projects/${PROJECT}/topics/${topic}`)
+    void router.push(`/projects/${PROJECT}/channels/${topic}`)
     await vi.waitFor(() => expect(getPreview).toHaveBeenCalledWith(topic), { timeout: 20_000 })
   }, 30_000)
 
   it('asks for no preview when nobody is signed in', async () => {
     signedIn.id = ''
     const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b05'
-    void router.push(`/projects/${PROJECT}/topics/${topic}`)
+    void router.push(`/projects/${PROJECT}/channels/${topic}`)
     await new Promise((r) => setTimeout(r, 20))
     expect(getPreview).not.toHaveBeenCalled()
   })

@@ -10,6 +10,7 @@ import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLa
 import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
+import { routeIds } from '@/lib/addresses'
 import { readProjectTasks } from '@/lib/projectTasks'
 import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
@@ -44,9 +45,10 @@ const column = computed(
 )
 
 // Active state is read off the URL, never off a local flag.
-const activeTopicId = computed(() => (route.name === 'workspace-topic' ? String(route.params.topicId) : null))
-const activeTaskId = computed(() => (route.name === 'workspace-task' ? String(route.params.taskId) : null))
-const activeAllTasks = computed(() => (route.name === 'workspace-channel-tasks' ? String(route.params.topicId) : null))
+const ids = computed(() => routeIds(route.params))
+const activeTopicId = computed(() => (route.name === 'workspace-topic' ? ids.value.topicId ?? null : null))
+const activeTaskId = computed(() => (route.name === 'workspace-task' ? ids.value.taskId ?? null : null))
+const activeAllTasks = computed(() => (route.name === 'workspace-channel-tasks' ? ids.value.topicId ?? null : null))
 
 // 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和看板读同一份（`readProjectTasks`），
 // 看板刚读过就拿它那一份；换了地方（新建、开始、关闭任务之后）也重读一次。

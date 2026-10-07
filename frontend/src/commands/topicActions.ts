@@ -14,6 +14,7 @@ import { copyLink, linkOf } from './copy'
 
 import { createRoomTask } from '@/api/tasks'
 import { t } from '@/i18n'
+import { routeIds } from '@/lib/addresses'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 export interface TopicActionHandlers {
@@ -119,7 +120,7 @@ export async function archiveTopic(topic: Topic, router: Router): Promise<void> 
   // 归档可能失败（store 只记下错误、不抛）：本地这一行没变成 archived 就什么都不做。
   if (store.topics.find((row) => row.id === topic.id)?.status !== 'archived') return
   const here = router.currentRoute.value
-  if (here.name === 'workspace-topic' && here.params.topicId === topic.id)
+  if (here.name === 'workspace-topic' && routeIds(here.params).topicId === topic.id)
     void router.replace({ name: 'workspace-project', params: { projectId: topic.project_id } })
   // 归档是就地发生的一件事：不说一声，人就以为菜单点错了、房间凭空没了。撤销把刚
   // 才那一下退回去——时间给够，因为它要人读一句再决定是不是点。
