@@ -10,12 +10,11 @@
  * `frontend/src` 那一千行的上限；和 `catalogRail.ts` 同一个理由（见那边开头）。
  *
  * 为什么这八件能在预览站里单独画：它们是「只吃 props」的那种组件（`frontend_grade.py`
- * 的 A 级），取数全在 `composables/useAdminDashboard.ts` 里 —— 所以这里给的就是一份
+ * 的 A 级），取数全在 `composables/useAdminStats.ts` 里 —— 所以这里给的就是一份
  * 现成的 props，不用起假后端。
  */
 import type {
   PendingRow,
-  PulseRow,
   StatsDays,
   StatsFeedback,
   StatsIntegrations,
@@ -47,67 +46,12 @@ const week = <K extends string>(values: number[], key: K): ({ date: string } & R
 
 // --- 页头 ------------------------------------------------------------------
 
-export const DASH_KINDS: StatsKind[] = [
-  'pipeline',
-  'product',
-  'feedback',
-  'usage',
-  'platform',
-  'performance',
-  'integrations',
-]
-
-/** 分类 → 词条键。和 `useAdminDashboard.ts` 的 `TAB_KEY` 是同一张表（那边不让组件
- *  import，这里抄一份给预览站看）。 */
-export const DASH_TABS: Record<string, string> = {
-  pipeline: 'feedback.dashboard.tab.pipeline',
-  product: 'feedback.dashboard.tab.product',
-  feedback: 'feedback.dashboard.tab.feedback',
-  usage: 'feedback.dashboard.tab.usage',
-  platform: 'feedback.dashboard.tab.platform',
-  performance: 'feedback.dashboard.tab.performance',
-  integrations: 'feedback.dashboard.tab.integrations',
-}
-
-/** 页面算好递进来的那两串：页签的 title（口径句 + 更新时刻）和导轨的短值。 */
-export const DASH_TITLES: Record<string, string> = {
-  pipeline: '等你处理 · 更新于 06:13',
-  product: '30 日验收通过的成果 · 更新于 06:13',
-  feedback: '待分诊 · 更新于 06:13',
-  usage: '窗口内的 token · 更新于 06:13',
-  platform: '平台健康 · 更新于 06:13',
-  performance: '最慢那条的 p95 · 更新于 06:13',
-  integrations: '死信 · 更新于 06:13',
-}
-
-export const DASH_PULSE: Record<string, PulseRow> = {
-  pipeline: { key: 'pipeline', value: '等你 8', hint: '等你处理', tone: 'ink' },
-  product: { key: 'product', value: '38', hint: '30 日验收通过的成果', tone: 'ink' },
-  feedback: { key: 'feedback', value: '急件 9', hint: '其中 9 条是无人认领的急件', tone: 'warn' },
-  usage: { key: 'usage', value: '921.1K', hint: '窗口内的 token', tone: 'ink' },
-  platform: { key: 'platform', value: '正常', hint: '平台健康', tone: 'ok' },
-  performance: { key: 'performance', value: '61.2ms', hint: '最慢那条 p95', tone: 'ink' },
-  integrations: { key: 'integrations', value: '死信 1', hint: '投递账本', tone: 'warn' },
-}
-
 /** 页头那一格的整串 props（换的只是 `current` / `days`）。 */
 export function dashHeaderProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     windowed: true,
     days: 30,
     stamp: '06:13',
-    ...over,
-  }
-}
-
-/** 分类导轨：七类、每一格的短值与提示句，停在交付。 */
-export function dashKindsProps(over: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    kinds: DASH_KINDS,
-    tabs: DASH_TABS,
-    titles: DASH_TITLES,
-    pulse: DASH_PULSE,
-    current: 'pipeline',
     ...over,
   }
 }

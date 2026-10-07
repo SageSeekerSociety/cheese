@@ -177,7 +177,7 @@
       "desc": "The platform hasn't produced any data yet."
     },
     "error": {
-      "title": "Couldn't load the dashboard"
+      "title": "Couldn't load the data"
     },
     "perf": {
       "active": "In flight",
@@ -770,6 +770,6 @@
     "deleteFailed": "Couldn’t delete",
     "submitFailed": "Couldn’t submit",
     "queueLoadFailed": "Couldn’t load the queue",
-    "dashboardLoadFailed": "Couldn’t load the dashboard"
+    "dashboardLoadFailed": "Couldn’t load the data"
   }
 }

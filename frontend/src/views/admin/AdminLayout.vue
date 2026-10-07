@@ -5,6 +5,8 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { useAdminSections } from '@/composables/useAdminSections'
 
+import { PLATFORM_LANDING } from '@/lib/adminSections'
+
 import AdminShortcutSheet from '@/components/admin/AdminShortcutSheet.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -23,7 +25,7 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 于是子页**不需要**再问一次「我是不是管理员」：子页只要被画出来，就一定过了这道门。
 // 各块自己的接口后面还会各自判一次（服务端不信客户端），那是服务端的事。
 //
-// 进了后台却落在一块自己进不去的分区上（`/admin` 默认去队列），会换到第一块能进的 ——
+// 进了后台却落在一块自己进不去的分区上，会换到这个人的落地页 ——
 // 那件事现在在**路由**里（`router/feedback.ts` 里 `/admin` 的 `beforeEnter`），不藏在这
 // 一层的 `watch` 里：静悄悄改地址看不出是「按权限改道」，声明式的重定向读得到。
 defineOptions({ name: 'AdminLayout' })
@@ -38,7 +40,7 @@ const { canEnter } = useAdminSections()
 const shortcutOpen = ref(false)
 
 /** `G` 之后那一颗（§8 的序列键）。1s 内有效，超时就算没按过 —— 不然「按了 G 去泡咖啡、
- *  回来顺手按了个 D」会把人送去看板。 */
+ *  回来顺手按了个 D」会把人送去平台总览。 */
 let gPressedAt = 0
 const SEQUENCE_MS = 1000
 
@@ -50,7 +52,7 @@ function isTyping(target: EventTarget | null): boolean {
 
 function refreshCurrent() {
   // `R` 是全局键（§8），而「当前这一页该重拉什么」只有路由知道。
-  if (route.name === 'AdminDashboard') void store.loadStats()
+  if (route.meta.statsKind) void store.loadStats()
   else if (route.name === 'AdminQueue' || route.name === 'AdminFeedback') void store.loadAdmin()
 }
 
@@ -85,7 +87,7 @@ function onKeydown(event: KeyboardEvent) {
     void router.push('/admin/queue')
   } else if (key === 'd') {
     event.preventDefault()
-    void router.push('/admin/dashboard')
+    void router.push(PLATFORM_LANDING)
   } else if (key === 'f') {
     event.preventDefault()
     void router.push('/feedback')
@@ -127,7 +129,11 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <RouterView v-else />
+    <!-- 按路由名给子页一个 key：几页统计页是同一个组件（`AdminStatsPage`），不加 key 时
+         从一页切到另一页会复用同一个实例，`kind` 换了、取数还停在上一类。 -->
+    <RouterView v-else v-slot="{ Component, route: child }">
+      <component :is="Component" :key="child.name" />
+    </RouterView>
 
     <AdminShortcutSheet v-model="shortcutOpen" />
   </div>

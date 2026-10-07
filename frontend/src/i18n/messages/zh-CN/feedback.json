@@ -177,7 +177,7 @@
       "desc": "平台还没有产生数据。"
     },
     "error": {
-      "title": "看板加载失败"
+      "title": "数据加载失败"
     },
     "perf": {
       "active": "正在处理",
@@ -770,6 +770,6 @@
     "deleteFailed": "删除失败",
     "submitFailed": "提交失败",
     "queueLoadFailed": "管理队列加载失败",
-    "dashboardLoadFailed": "看板加载失败"
+    "dashboardLoadFailed": "数据加载失败"
   }
 }

@@ -11,6 +11,14 @@ import type { FeedbackMeta } from '@/cx_types'
 // 清单是**写死的**，不从路由表算：路由表里还有 `/feedback/*` 三条用户侧的页，按路由表
 // 算会把它们画进后台的导航里。
 
+export type AdminGroupKey = 'pending' | 'run' | 'delivery' | 'cost' | 'product' | 'settings'
+
+export interface AdminGroupDef {
+  key: AdminGroupKey
+  /** i18n 键，字面量写全（理由同 `AdminSectionDef.labelKey`）。 */
+  labelKey: string
+}
+
 export interface AdminSectionDef {
   /** 分区主路由的地址。 */
   to: string
@@ -22,53 +30,30 @@ export interface AdminSectionDef {
   labelKey: string
   /** 这一项旁边挂未读数（只有队列）。 */
   badge: boolean
+  /** 归在侧栏哪一组。 */
+  group: AdminGroupKey
 }
 
-// 顺序：每天要看的队列在最前；看数的几块（看板、运行记录、功能数据、棘轮）挨着；模型和看板看的
-// 是同一条链，方案与额度紧跟着模型；飞书应用是只填一次的设置，排在最后。
+// 侧栏按「来后台要干什么」分组，组的顺序就是这里的顺序：要人动手的事在最前，然后是平台
+// 此刻正不正常、改动走到哪了、花了多少、产品做得怎么样，只填一次的设置排在最后。
+export const ADMIN_GROUPS: AdminGroupDef[] = [
+  { key: 'pending', labelKey: 'navigation.admin.group.pending' },
+  { key: 'run', labelKey: 'navigation.admin.group.run' },
+  { key: 'delivery', labelKey: 'navigation.admin.group.delivery' },
+  { key: 'cost', labelKey: 'navigation.admin.group.cost' },
+  { key: 'product', labelKey: 'navigation.admin.group.product' },
+  { key: 'settings', labelKey: 'navigation.admin.group.settings' },
+]
+
+// 组内顺序就是这里的顺序；同一组的项写在一起。
 export const ADMIN_SECTIONS: AdminSectionDef[] = [
-  { to: '/admin/queue', name: 'AdminQueue', icon: 'mdi-tray-full', labelKey: 'navigation.admin.queue', badge: true },
   {
-    to: '/admin/dashboard',
-    name: 'AdminDashboard',
-    icon: 'mdi-chart-line',
-    labelKey: 'navigation.admin.dashboard',
-    badge: false,
-  },
-  {
-    to: '/admin/run-records',
-    name: 'AdminRunRecords',
-    icon: 'mdi-pulse',
-    labelKey: 'navigation.admin.runRecords',
-    badge: false,
-  },
-  {
-    to: '/admin/feature-stats',
-    name: 'AdminFeatureStats',
-    icon: 'mdi-chart-box-outline',
-    labelKey: 'navigation.admin.featureStats',
-    badge: false,
-  },
-  {
-    to: '/admin/ratchet',
-    name: 'AdminRatchet',
-    icon: 'mdi-chart-timeline-variant',
-    labelKey: 'navigation.admin.ratchet',
-    badge: false,
-  },
-  {
-    to: '/admin/models',
-    name: 'AdminModels',
-    icon: 'mdi-cube-outline',
-    labelKey: 'navigation.admin.models',
-    badge: false,
-  },
-  {
-    to: '/admin/credits',
-    name: 'AdminCredits',
-    icon: 'mdi-wallet-outline',
-    labelKey: 'navigation.admin.credits',
-    badge: false,
+    to: '/admin/queue',
+    name: 'AdminQueue',
+    icon: 'mdi-tray-full',
+    labelKey: 'navigation.admin.queue',
+    badge: true,
+    group: 'pending',
   },
   {
     to: '/admin/spaces',
@@ -76,6 +61,95 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     icon: 'mdi-check-decagram-outline',
     labelKey: 'navigation.admin.spaces',
     badge: false,
+    group: 'pending',
+  },
+  {
+    to: '/admin/overview',
+    name: 'AdminOverview',
+    icon: 'mdi-heart-pulse',
+    labelKey: 'navigation.admin.overview',
+    badge: false,
+    group: 'run',
+  },
+  {
+    to: '/admin/run-records',
+    name: 'AdminRunRecords',
+    icon: 'mdi-pulse',
+    labelKey: 'navigation.admin.runRecords',
+    badge: false,
+    group: 'run',
+  },
+  {
+    to: '/admin/performance',
+    name: 'AdminPerformance',
+    icon: 'mdi-speedometer',
+    labelKey: 'navigation.admin.performance',
+    badge: false,
+    group: 'run',
+  },
+  {
+    to: '/admin/pipeline',
+    name: 'AdminPipeline',
+    icon: 'mdi-source-merge',
+    labelKey: 'navigation.admin.pipeline',
+    badge: false,
+    group: 'delivery',
+  },
+  {
+    to: '/admin/ratchet',
+    name: 'AdminRatchet',
+    icon: 'mdi-chart-timeline-variant',
+    labelKey: 'navigation.admin.ratchet',
+    badge: false,
+    group: 'delivery',
+  },
+  {
+    to: '/admin/usage',
+    name: 'AdminUsage',
+    icon: 'mdi-chart-areaspline',
+    labelKey: 'navigation.admin.usage',
+    badge: false,
+    group: 'cost',
+  },
+  {
+    to: '/admin/models',
+    name: 'AdminModels',
+    icon: 'mdi-cube-outline',
+    labelKey: 'navigation.admin.models',
+    badge: false,
+    group: 'cost',
+  },
+  {
+    to: '/admin/credits',
+    name: 'AdminCredits',
+    icon: 'mdi-wallet-outline',
+    labelKey: 'navigation.admin.credits',
+    badge: false,
+    group: 'cost',
+  },
+  {
+    to: '/admin/product',
+    name: 'AdminProduct',
+    icon: 'mdi-chart-line',
+    labelKey: 'navigation.admin.product',
+    badge: false,
+    group: 'product',
+  },
+  {
+    to: '/admin/feedback-trends',
+    name: 'AdminFeedbackTrends',
+    icon: 'mdi-message-text-outline',
+    labelKey: 'navigation.admin.feedbackTrends',
+    badge: false,
+    group: 'product',
+  },
+  {
+    to: '/admin/feature-stats',
+    name: 'AdminFeatureStats',
+    icon: 'mdi-chart-box-outline',
+    labelKey: 'navigation.admin.featureStats',
+    badge: false,
+    group: 'product',
   },
   {
     to: '/admin/members',
@@ -83,6 +157,7 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     icon: 'mdi-account-multiple-outline',
     labelKey: 'navigation.admin.members',
     badge: false,
+    group: 'settings',
   },
   {
     to: '/admin/integrations',
@@ -90,8 +165,20 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     icon: 'mdi-connection',
     labelKey: 'navigation.admin.integrations',
     badge: false,
+    group: 'settings',
+  },
+  {
+    to: '/admin/integration-health',
+    name: 'AdminIntegrationHealth',
+    icon: 'mdi-lan-check',
+    labelKey: 'navigation.admin.integrationHealth',
+    badge: false,
+    group: 'settings',
   },
 ]
+
+/** 平台管理员进后台落在哪：平台总览（健康状态在那一页）。 */
+export const PLATFORM_LANDING = '/admin/overview'
 
 // 路由名 -> 分区名。两块各对两个路由名：`/admin/feedback` 是队列的旧地址，功能数据是
 // 「目录 + 每一页」—— 两个名字都算在同一项上，不然从老书签或从目录点进来时旁边一条都不亮。
@@ -117,7 +204,8 @@ export function canEnterAdmin(meta: FeedbackMeta | null | undefined): boolean {
   return !!meta?.is_admin || !!meta?.is_platform_admin
 }
 
-/** 这个人进得去的第一块分区的地址；一块都进不去时 null。 */
-export function firstVisibleAdminSectionTo(meta: FeedbackMeta | null | undefined): string | null {
+/** 这个人进后台该落在哪：平台管理员落平台总览，只有反馈权限的人落队列；一块都进不去时 null。 */
+export function adminLandingFor(meta: FeedbackMeta | null | undefined): string | null {
+  if (meta?.is_platform_admin) return PLATFORM_LANDING
   return ADMIN_SECTIONS.find((section) => isAdminSectionVisible(section.name, meta))?.to ?? null
 }

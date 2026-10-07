@@ -1,16 +1,18 @@
 import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from 'vue-router'
+import type { StatsKind } from '@/lib/adminStats'
 
 import {
+  adminLandingFor,
   adminSectionForRouteName,
   canEnterAdmin,
-  firstVisibleAdminSectionTo,
   isAdminSectionVisible,
+  PLATFORM_LANDING,
 } from '@/lib/adminSections'
 import { useFeedbackStore } from '@/stores/feedback'
 
 /**
  * `/admin` 父路由的守卫：进了后台却落在一块自己**进不去**的分区上时（例如平台管理员
- * 点开 `/admin/queue`，而队列只归反馈管理员），把人领到第一块进得去的分区。
+ * 点开 `/admin/queue`，而队列只归反馈管理员），把人领到他的落地页（`adminLandingFor`）。
  *
  * 拎成一个具名函数是为了让 `AdminLayout.spec`（或将来的守卫测试）用**同一份**实现 ——
  * 把这段判据在测试里再抄一遍，测的就是抄本，不是产品走的那条路。
@@ -29,8 +31,19 @@ export async function adminSectionGuard(to: RouteLocationNormalized): Promise<Ro
   if (!canEnterAdmin(meta)) return true
   const section = adminSectionForRouteName(to.name as string | undefined)
   if (!section || isAdminSectionVisible(section, meta)) return true
-  const landing = firstVisibleAdminSectionTo(meta)
+  const landing = adminLandingFor(meta)
   return landing && landing !== to.path ? landing : true
+}
+
+/** 看板拆出来的一页：同一个容器，`kind` 决定画哪一类统计。 */
+function statsRoute(path: string, name: string, kind: StatsKind, titleKey: string): RouteRecordRaw {
+  return {
+    path,
+    name,
+    component: () => import('@/views/admin/AdminStatsPage.vue'),
+    props: { kind },
+    meta: { titleKey, isFullPage: true, statsKind: kind },
+  }
 }
 
 /**
@@ -57,16 +70,12 @@ export async function adminSectionGuard(to: RouteLocationNormalized): Promise<Ro
  * 是抽屉），内容区是 `AdminLayout`（门、全局键）里装的子页。所以 `/admin` 是一条带
  * `children` 的父路由。
  *
- * `/admin/queue` 和 `/admin/dashboard` 是这一轮新加的两条：
+ * `/admin/feedback` 是队列的老地址，**留着**、渲染一个薄壳（`AdminFeedbackPage` →
+ * `AdminQueuePage`）：老书签、老通知、别人贴在聊天里的链接都指到这里，重定向会把地址栏
+ * 里那个旧地址悄悄换掉。`/admin/dashboard` 是拆成各页之前的看板，跳到平台总览。
  *
- * - `queue` 是「反馈管理」这个模块改叫「队列」之后的家。换地址而不是原地换内容，因为
- *   「反馈管理」这个名字说的是「一页管所有反馈」，而它其实是按状态往前推的分诊队列，
- *   旁边还站着看板和成员 —— 三个平级的模块挤在同一个名字底下，链接分享出去对不上话。
- * - `dashboard` 是看板，同一层里的第三块。
- * - `/admin/feedback` **留着**，渲染一个薄壳（`AdminFeedbackPage` → `AdminQueuePage`）。
- *   老书签、老通知、别人贴在聊天里的链接都指到这里，删掉就是一个 404；而重定向会把
- *   地址栏里那个旧地址悄悄换掉，用户回头再复制一次时会以为自己记错了。留着它，代价
- *   是六行。
+ * 看板原来的七屏各是一页（`statsRoute`），同一个容器 `AdminStatsPage` 按 `kind` 画其中
+ * 一类；分在侧栏哪一组见 `@/lib/adminSections`。
  *
  * `isFullPage: true` 是给顶栏用的：AppBar 取层级里第一个 isFullPage 的标题作为
  * 中间那行字（见 components/common/Navigation/AppBar.vue 的 updateTitle），
@@ -110,8 +119,9 @@ export default [
     },
     // 手机上分区侧栏是抽屉，所以顶栏给汉堡。
     meta: { drawer: true },
-    // 只写地址不写组件：`/admin` 本身没有内容，直接落进队列 —— 后台里用得最多的那一块。
-    redirect: '/admin/queue',
+    // 只写地址不写组件：`/admin` 本身没有内容，落进平台总览；只有反馈权限的人进不去
+    // 那一页，由下面的守卫领回队列。
+    redirect: PLATFORM_LANDING,
     // 进了后台却落在一块自己**进不去**的分区上时（例如平台管理员点开 `/admin/queue`，
     // 而队列只归反馈管理员），在这里把人领到第一块进得去的分区。原先这事藏在
     // `AdminLayout` 的 `watch` 里静悄悄 `router.replace`，地址栏自己变了、看不出是
@@ -125,12 +135,19 @@ export default [
         component: () => import('@/views/admin/AdminQueuePage.vue'),
         meta: { titleKey: 'navigation.admin.queue', isFullPage: true },
       },
-      {
-        path: 'dashboard',
-        name: 'AdminDashboard',
-        component: () => import('@/views/admin/AdminDashboardPage.vue'),
-        meta: { titleKey: 'navigation.admin.dashboard', isFullPage: true },
-      },
+      statsRoute('overview', 'AdminOverview', 'platform', 'navigation.admin.overview'),
+      statsRoute('performance', 'AdminPerformance', 'performance', 'navigation.admin.performance'),
+      statsRoute('pipeline', 'AdminPipeline', 'pipeline', 'navigation.admin.pipeline'),
+      statsRoute('usage', 'AdminUsage', 'usage', 'navigation.admin.usage'),
+      statsRoute('product', 'AdminProduct', 'product', 'navigation.admin.product'),
+      statsRoute('feedback-trends', 'AdminFeedbackTrends', 'feedback', 'navigation.admin.feedbackTrends'),
+      statsRoute(
+        'integration-health',
+        'AdminIntegrationHealth',
+        'integrations',
+        'navigation.admin.integrationHealth'
+      ),
+      { path: 'dashboard', redirect: PLATFORM_LANDING },
       {
         // 运行记录（`/admin/run-records`）：平台的报错，和它在各个项目里自己处理掉的事。
         // 这些不进任何对话，在这里看。

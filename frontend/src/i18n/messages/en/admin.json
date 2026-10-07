@@ -20,7 +20,7 @@
     "notInInputs": "Not while typing",
     "refresh": "Refresh the list or dashboard",
     "goQueue": "Go to the queue",
-    "goDashboard": "Go to the dashboard",
+    "goOverview": "Go to platform overview",
     "goFeedbackCenter": "Go to the feedback center (user view)",
     "within1s": "Within 1s",
     "openSheet": "Open this sheet",
