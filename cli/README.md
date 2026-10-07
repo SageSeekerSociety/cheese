@@ -48,6 +48,9 @@ cheese link auto-connect         connect now and reconnect on every boot
 cheese link no-auto-connect      disconnect and stop reconnecting on boot
 
 cheese status                    login, connection and screen count at a glance
+cheese claude login              log in your own Claude Code for the platform
+cheese claude status             whether that login is good
+cheese claude logout             log it out (your own ~/.claude is untouched)
 cheese api <operation> [args]    the server's full request/response API
 cheese update                    update the binary to the latest published build
 cheese uninstall                 remove the CLI entirely (service, config, binary)

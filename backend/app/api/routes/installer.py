@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from app.core.config import settings
 from app.domain.agent import connector_build, toolchain
+from app.domain.agent.harness.claude_code import CLAUDE_PINNED_VERSION
 from app.domain.machine import claude_dist, pi_dist, toolchain_dist
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -234,6 +235,15 @@ async def install_powershell(request: Request) -> PlainTextResponse:
 # The platform string is the vendor's (`linux-x64`, `linux-arm64-musl`, …), not
 # our `<os>-<arch>` connector target: only the machine knows whether its libc is
 # musl, and our target names cannot express that distinction.
+# Which Claude Code the platform runs, for a machine about to fetch it: the
+# connector's `cheesehost claude login` downloads this build before its owner
+# logs it in, so the login and every session after it use the one the runner's
+# protocol is pinned to.
+@router.get("/claude/pin")
+async def claude_pin() -> dict[str, str]:
+    return {"version": CLAUDE_PINNED_VERSION}
+
+
 @router.get("/claude/{version}/{platform}/{name}")
 async def download_claude(version: str, platform: str, name: str) -> Response:
     if not claude_dist.VERSION_RE.match(version):

@@ -353,6 +353,7 @@ async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -
     await asyncio.wait_for(recovered.wait(), 1)
     assert order == [
         "local grants device reconnect",
+        "claude login device reconnect",
         "recover:new-cloud-machine",
         "cleanup device reconnect",
         "closed task checkouts device reconnect",

@@ -127,6 +127,12 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 
 平台字符串用**厂商的词汇**（`linux-x64`、`linux-arm64-musl`），不是我们的 `<os>-<arch>`——我们的命名表达不了 musl，而只有机器知道自己的 libc。
 
+### 机主自己的 Claude Code 登录
+
+机主可以把自己的 Claude 账号或 API key 交给这台机器上平台运行的 Claude Code（#2991）：在机器上运行 `cheesehost claude login`。它先向服务器问平台钉的版本（`GET <origin>/connector/claude/pin`），机器上没有就从上面那条路由下载到 `~/.cheese/claude/versions/<version>`，再以 `CLAUDE_CONFIG_DIR=~/.cheese/claude-login` 运行 `claude auth login`。登录只在这个目录里，机主自己的 `~/.claude` 不读也不写，两边各有一对 token、各自续期。`cheesehost claude status` 和 `cheesehost claude logout` 查看和注销这份登录。
+
+机器每次连上，后端经 `hub.exec(["python3", "-"])` 在机器上跑 `claude auth status`（不调用模型），把答案记进 `device_claude_login`（`harness/claude_code/owner_login.py`）。只问人接入的机器，云机器不问。
+
 **入册时缺任何一样都是 fatal**，理由同 §0：留到后面发现的失败，全都出现在没人看的地方。
 
 ---

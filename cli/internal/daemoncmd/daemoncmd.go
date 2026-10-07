@@ -6,7 +6,8 @@
 //	                auto-connect / no-auto-connect)
 //
 // plus the top-level `cheese status` (login + connection + screens at a
-// glance), `cheese api` (the server's generated API), `cheese update` and
+// glance), `cheese claude` (the owner's own Claude Code, logged in for the
+// platform), `cheese api` (the server's generated API), `cheese update` and
 // `cheese uninstall`. Every
 // command tries to meet the user where they are: connect logs you in first if
 // needed, disconnect warns when screens are still running, and each success
@@ -48,6 +49,7 @@ func Commands() []*cobra.Command {
 		authCmd(&cfgPath, withConfig),
 		linkCmd(&cfgPath, withConfig),
 		statusCmd(&cfgPath, withConfig),
+		claudeCmd(&cfgPath, withConfig),
 		runCmd(&cfgPath, withConfig),
 		updateCmd(&cfgPath, withConfig),
 		uninstallCmd(&cfgPath, withConfig),

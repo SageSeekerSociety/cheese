@@ -6,7 +6,9 @@ Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 (short-lived device-flow codes), ``device_project`` (device↔project assignments),
 ``device_team`` (device↔team bindings — compute belongs to the team, v4) and
 ``device_topic`` (a topic's pinned device — affinity, v4) and ``device_health``
-(a machine's rolling failure streak / quarantine — #186). ``SqlDeviceRepository``
+(a machine's rolling failure streak / quarantine — #186) and
+``device_claude_login`` (whether its owner's own Claude Code is logged in for
+the platform — #2991). ``SqlDeviceRepository``
 converts between these rows and the dataclasses; the service never sees them.
 """
 
@@ -179,4 +181,30 @@ class DeviceHealthRow(Base):
     )
     quarantined_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class DeviceClaudeLoginRow(Base):
+    """Whether the owner's own Claude Code on a machine is logged in for the
+    platform (`cheesehost claude login`), as the machine last answered.
+
+    One row per machine, written each time the backend asks it — when it
+    connects, and before a session of the owner's Claude Code starts on it. The
+    machine is the source of truth; this is what it said, and when.
+    """
+
+    __tablename__ = "device_claude_login"
+
+    device_id: Mapped[str] = mapped_column(
+        ForeignKey("device.device_id", ondelete="CASCADE"), primary_key=True
+    )
+    # The pinned build is on the machine. Without it nothing is logged in yet.
+    installed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    logged_in: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # What `claude auth status` names: `claude.ai` for a subscription login, or
+    # the API key kind, and for a subscription its plan (`max`, `pro`, …).
+    auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
     )

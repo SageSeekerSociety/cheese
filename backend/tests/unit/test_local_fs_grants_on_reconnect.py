@@ -27,6 +27,7 @@ from app.core import background
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
+from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.local_fs.enforcement import PushOutcome, push_grants
 from app.domain.local_fs.paths import Platform
@@ -47,8 +48,14 @@ class _Sessions:
         return 0
 
 
+async def _no_login_check(*_args) -> None:
+    """Whether the machine's owner has logged in their own Claude Code is not
+    what these tests are about either."""
+
+
 @pytest.fixture
 def hub(monkeypatch, db_factory):
+    monkeypatch.setattr(owner_login, "refresh_on_connect", _no_login_check)
     monkeypatch.setattr(device_hub, "_devices", {})
     monkeypatch.setattr(device_hub, "_screens", {})
     monkeypatch.setattr(device_hub, "_by_screen_token", {})
