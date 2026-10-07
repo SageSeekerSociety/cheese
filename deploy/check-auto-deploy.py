@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -62,9 +63,29 @@ def ci_ready(candidate: str) -> bool:
         latest = max(runs, key=lambda run: (run["updated_at"], run["id"]), default=None)
         if (latest is None or any(run["status"] != "completed" for run in runs)
                 or latest["conclusion"] != "success"):
-            print(f"Not deploying {candidate}: {workflow} has no successful latest attempt.")
+            seen = ", ".join(f"{run['id']} {run['status']}/{run['conclusion']}" for run in runs) or "none"
+            print(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
             ready = False
     return ready
+
+
+# GitHub's per-workflow run list can trail the runs themselves: it reported no
+# successful build 11-70 s after the build's own completion event said success
+# (deploy runs 37441064545, 37612979820 and three more), and the same query
+# answered success minutes later. So a refusal is read again for up to two
+# minutes before it stands; every caller's job timeout leaves room for that.
+SETTLE_SECONDS = 120
+SETTLE_INTERVAL = 15
+
+
+def ci_ready_settled(candidate: str) -> bool:
+    deadline = time.monotonic() + SETTLE_SECONDS
+    while not ci_ready(candidate):
+        if time.monotonic() + SETTLE_INTERVAL > deadline:
+            return False
+        print(f"Reading {candidate}'s runs again in {SETTLE_INTERVAL} s.")
+        time.sleep(SETTLE_INTERVAL)
+    return True
 
 
 def should_skip(candidate: str) -> bool:
@@ -122,16 +143,16 @@ def should_skip(candidate: str) -> bool:
 
 def main() -> None:
     if sys.argv[1] == "--require-ci":
-        if not ci_ready(sys.argv[2]):
+        if not ci_ready_settled(sys.argv[2]):
             raise SystemExit("The release commit no longer has successful validation.")
         return
     if sys.argv[1] == "--ci-only":
-        key, value = "ready", ci_ready(sys.argv[2])
+        key, value = "ready", ci_ready_settled(sys.argv[2])
     else:
         # CI may have been rerun while this job waited for the deploy runner.
         # That release did not happen, so the job fails: a skip would leave it
         # green, and a green deploy job reads as "this commit is on dev".
-        if not ci_ready(sys.argv[1]):
+        if not ci_ready_settled(sys.argv[1]):
             raise SystemExit(f"Not deploying {sys.argv[1]}: its validation is no longer successful.")
         key, value = "skip", should_skip(sys.argv[1])
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:

@@ -190,8 +190,27 @@ class ReleaseOrdering(unittest.TestCase):
         self.assertEqual(checkout["if"], "steps.release.outputs.skip != 'true'")
 
 
+class Clock:
+    """Stands in for the time module: sleeping advances it instantly."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
 class CandidateCI(unittest.TestCase):
     candidate = "a" * 40
+
+    def setUp(self):
+        self.clock = Clock()
+        patcher = patch.object(GUARD, "time", self.clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def run_record(self, **changes):
         return {"id": 10, "head_sha": self.candidate, "head_branch": "main",
@@ -269,6 +288,43 @@ class CandidateCI(unittest.TestCase):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app"}), patch.object(GUARD, "workflow_runs", side_effect=OSError("API unavailable")):
             with self.assertRaises(OSError):
                 GUARD.ci_ready(self.candidate)
+
+    def eligibility(self, answers):
+        """Run the eligibility entry point while each read of the run lists
+        gives the next of `answers`, then keeps giving the last one. Returns
+        the output and the time of each read."""
+        reads = []
+
+        def workflow_runs(_repository, workflow, _candidate):
+            if workflow == "build.yml":
+                reads.append(self.clock.now)
+            build, ci = answers[min(len(reads) - 1, len(answers) - 1)]
+            return build if workflow == "build.yml" else ci
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GITHUB_OUTPUT": str(output)}), \
+                    patch.object(GUARD.sys, "argv", ["check-auto-deploy.py", "--ci-only", self.candidate]), \
+                    patch.object(GUARD, "workflow_runs", side_effect=workflow_runs):
+                GUARD.main()
+            return output.read_text(), reads
+
+    def test_a_run_list_that_still_shows_the_finished_build_running_does_not_refuse(self):
+        lagging = ([self.run_record(status="in_progress", conclusion=None)], [self.queue_record()])
+        missing = ([], [self.queue_record()])
+        settled = ([self.run_record()], [self.queue_record()])
+        for stale in (lagging, missing):
+            with self.subTest(stale=stale[0]):
+                self.clock.now = 0.0
+                output, reads = self.eligibility([stale, stale, settled])
+                self.assertEqual(output, "ready=true\n")
+                self.assertLessEqual(reads[-1], 60)
+
+    def test_a_build_that_really_failed_is_refused_within_a_bounded_wait(self):
+        failed = ([self.run_record(conclusion="failure")], [self.queue_record()])
+        output, reads = self.eligibility([failed])
+        self.assertEqual(output, "ready=false\n")
+        self.assertGreater(len(reads), 1)
+        self.assertLessEqual(reads[-1], 180)
 
     def test_workflow_checks_eligibility_before_reserving_deploy_runner(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
