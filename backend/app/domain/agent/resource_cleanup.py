@@ -981,9 +981,9 @@ def main() -> None:
         check_no_writers([home, work])
         if executor is None:
             check_resource_publication(home, work)
-        if executor is not None and executor["kind"] == "private":
+        if found is not None and found[0]["kind"] == "private":
             helper = runpy.run_path(str(private_helper(home, found[1])))
-            helper["release"](executor)
+            helper["release"](found[0])
         if room != "-" and home.exists():
             retain_transcripts(
                 home, retained_transcripts(Path.home(), project, room, resource)
