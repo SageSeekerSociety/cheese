@@ -249,11 +249,12 @@ def format_error_response(
     ``name`` is what a caller switches on when the status alone does not say
     which condition it was. The top-level ``message`` is the sentence alone:
     the web client shows it as it is (``refusalWords``), so a class name in
-    front of it reached the screen."""
+    front of it reached the screen. There is no top-level ``data``: a refusal
+    carries nothing of what was asked for, and what it does carry about
+    itself is ``error.data``."""
     return {
         "code": status_code,
         "message": message,
-        "data": None,
         "error": _with_key(
             {
                 "name": name,
@@ -553,7 +554,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         Without this, Starlette answers with a 21-byte ``Internal Server Error``
         in plain text — a shape no client of ours can read, from a failure
         nobody logged. The two facts that make such a 500 diagnosable are the
-        traceback in the backend's log and the same ``{code, message, data}``
+        traceback in the backend's log and the same ``{code, message, error}``
         envelope every other error uses, so the frontend reports 「出错了」
         rather than parsing a JSON that isn't there.
 

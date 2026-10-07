@@ -181,7 +181,7 @@ class TestUnhandledExceptionHandler:
         assert response.headers["content-type"].startswith("application/json")
         body = response.json()
         assert body["code"] == 500
-        assert body["data"] is None
+        assert "data" not in body
         assert body["message"]
 
     def test_unhandled_error_does_not_leak_its_message(self) -> None:

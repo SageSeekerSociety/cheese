@@ -89,7 +89,7 @@ def test_both_families_answer_with_the_same_envelope(exc: BaseError) -> None:
     body = response.json()
     assert body["code"] == 422
     assert body["message"] == "bad input"
-    assert body["data"] is None
+    assert "data" not in body
     assert body["error"]["name"] == type(exc).__name__
     assert body["error"]["message"] == "bad input"
     assert body["error"]["retryable"] is False

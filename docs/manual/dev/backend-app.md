@@ -75,7 +75,7 @@ covers:
 
 | 异常 | 状态码 | 响应体 |
 |---|---|---|
-| `BaseError` 及其子类（`BadRequestError`、`NotFoundError`、`ForbiddenError`、`ConflictError`、`UnprocessableEntityError`、`UpstreamUnavailableError` …） | 异常自带 `status_code` | `{"code", "message": 原话, "data": null, "error": {"name": 类的 code, "message", "data", "retryable": 类的 retryable}}` |
+| `BaseError` 及其子类（`BadRequestError`、`NotFoundError`、`ForbiddenError`、`ConflictError`、`UnprocessableEntityError`、`UpstreamUnavailableError` …） | 异常自带 `status_code` | `{"code", "message": 原话, "error": {"name": 类的 code, "message", "data", "retryable": 类的 retryable}}` |
 | `StarletteHTTPException`（路由里 `raise HTTPException(...)`） | 原状态码 | 走 `format_error_response`，`name` 恒为 `"Error"`；**异常自带 headers 会带出去** |
 | `RequestValidationError`（请求体不合模型） | 400（不是 FastAPI 默认的 422） | `BadRequestError` 的形状，细节在 `error.data.details` |
 | `DeviceOffline` | 409 | 带 `X-Device-Id` 头 —— 客户端靠它区分「机器不在」和「调用出错」，见[设备与机器接入](/dev/machines#failure)。子类 `LinkInterrupted`（链路断在调用半路，结果未知）另带 `X-Device-Link: interrupted` |
