@@ -123,7 +123,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 「能单独跑、但没挂进 `/demo/catalog`」不再是这条检查的 warning，而是一条独立的棘轮：`pnpm run lint:catalog`（`.claude/scripts/catalog-ratchet.py`）。它管的不只是页面和面板，而是 `frontend/src` 下**每一个** `.vue`（预览站自己的 `src/views/demo/` 除外）：评级同样用 `frontend_grade.py`，只要是 A 级，就得**要么在目录里，要么在 `frontend/catalog-baseline.json` 的 `pending` 名单里**。
 
-- 「在目录里」看代码不看标签：`src/views/demo/` 下某个 `catalog*.ts`（`*.spec.ts` 不算）`import` 了这个 `.vue`，并且把它写成某条条目的 `component:`。`@/` 和相对路径都认；只写了 `file:` 或只 import 没用上，都不算。
+- 「在目录里」看代码不看标签：从 `src/views/demo/catalog.ts` 出发，它本身、以及它 `import` 进来**并展开**进列表（`...X_ENTRIES`）的同目录 `catalog*.ts` 分册（分册再引分册也照此递归；`*Fixtures.ts` 只放数据，不读），其中某个文件 `import` 了这个 `.vue`，并且把它写成某条条目的 `component:`。`@/` 和相对路径都认。为什么从 `catalog.ts` 出发：预览站渲染的、`catalog.spec.ts` 挂载的都是那里的 `CATALOG`，分册只有被它导入并展开才上得了站。所以 `demoRouter.ts` 里路由的 `component:`、没人导入的 `catalogXxx.ts`、spec 里的 import 都不算；`//` 和 `/* */` 注释先去掉再匹配（字符串里的 `//`，比如 URL，不受影响），注释里的 `component: X` 也不算；只写了 `file:` 或只 import 没用上，同样不算。
 - `pending` 是今天欠下的账（首次生成时 277 个），**只许减少**：新组件、或者刚变成 A 级的老组件，不进目录就失败——不能把它加进名单了事，`--update` 只会从名单里划掉，碰到这种组件干脆拒绝写。
 - 名单里的组件已经进了目录、文件没了、或者不再是 A 级，检查**不失败**，只提示跑 `pnpm run lint:catalog:update` 把它划掉（和上面场景基线「变好了就提示收紧」是同一个做法）。
 - 进了目录但不是 A 级的组件不归它管：`pnpm exec vitest run src/views/demo/catalog.spec.ts` 会把每条条目真挂一遍，那才是「它真的能单独挂起来」的结论；`--list` 里会标出来。

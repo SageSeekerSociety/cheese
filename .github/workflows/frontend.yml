@@ -149,8 +149,12 @@ jobs:
       # component that is new, or that just became A, has to get a catalog
       # entry (frontend/AGENTS.md, "The component preview site").
       #
-      # "In the catalog" is read from the code — a catalog*.ts that imports the
-      # .vue and uses it as an entry's `component:` — not from a `file:` label.
+      # "In the catalog" is read from the code, not from a `file:` label:
+      # src/views/demo/catalog.ts, or a catalog*.ts volume it imports and
+      # spreads into CATALOG (transitively; *Fixtures.ts not read), imports the
+      # .vue and uses it as an entry's `component:`. Comments are stripped
+      # first; a `component:` in demoRouter.ts or an unimported volume counts
+      # for nothing.
       # python3 stdlib only, like the Scenes step.
       #
       # Read-only like every other step here; the writer is

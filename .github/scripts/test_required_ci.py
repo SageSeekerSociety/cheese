@@ -132,6 +132,19 @@ class RequiredCITest(unittest.TestCase):
         self.assertTrue(selected["backend"] and selected["e2e"])
         self.assertFalse(selected["frontend"])
 
+    def test_frontend_ratchet_scripts_run_the_frontend_suite(self):
+        # lint:catalog and lint:scenes run these scripts against the real tree
+        # only in the frontend suite; guards alone never runs them there.
+        for path in (
+            ".claude/scripts/frontend_grade.py",
+            ".claude/scripts/catalog-ratchet.py",
+            ".claude/scripts/scene-ratchet.py",
+            ".claude/scripts/ratchet_report.py",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["frontend"])
+        self.assertFalse(gate.select([".claude/scripts/check.sh"])["frontend"])
+
     def test_combined_merge_group_checks_every_changed_area(self):
         selected = gate.select(["frontend/src/main.ts", "cli/main.go"])
         self.assertTrue(all(selected[k] for k in ("frontend", "cli", "e2e")))

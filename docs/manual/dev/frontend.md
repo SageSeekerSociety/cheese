@@ -72,11 +72,11 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 加一个组件：
 
 1. `node scripts/catalog-scaffold.mjs <src/...vue>` 按 props 打出骨架；`--pending <目录前缀>` 一次打出白名单里这个目录下的全部。
-2. 把骨架贴进一个 `catalog*.ts` 分册，补上 `about`、每格的名字和说明，换上真实形状的示例数据。骨架里的 `TODO(catalog)` 不改完，目录测试会报红。
+2. 把骨架贴进一个已被 `catalog.ts` 导入并展开的 `catalog*.ts` 分册（新开分册就要在 `catalog.ts` 里 `import` 它的数组并 `...` 展开进 `CATALOG`，否则页面、测试和收录闸都看不见它），补上 `about`、每格的名字和说明，换上真实形状的示例数据。骨架里的 `TODO(catalog)` 不改完，目录测试会报红。
 3. 跑 `pnpm exec vitest run src/views/demo/catalog.spec.ts`。它按每格声明的插件逐格挂载，有任何 warning 或 error 就红。
 4. 跑 `pnpm run lint:catalog:update`，把这个组件从白名单里划掉。
 
-**收录闸**（`pnpm run lint:catalog`，CI 里跑）：评级为 A（只靠 props 和事件就能渲染，判据见[架构指标](/dev/arch-metrics#metrics)）的组件，要么进目录，要么在白名单 `frontend/catalog-baseline.json` 里。白名单是今天的存量，只许缩短：新写的或刚改成 A 级的组件，从第一个提交起就要进目录。
+**收录闸**（`pnpm run lint:catalog`，CI 里跑）：评级为 A（只靠 props 和事件就能渲染，判据见[架构指标](/dev/arch-metrics#metrics)）的组件，要么进目录，要么在白名单 `frontend/catalog-baseline.json` 里。白名单是今天的存量，只许缩短：新写的或刚改成 A 级的组件，从第一个提交起就要进目录。「进目录」看代码不看 `file:` 标签：`catalog.ts` 本身或它导入并展开的分册（递归；`*Fixtures.ts` 不读）里，`import` 了这个 `.vue` 并写成某条条目的 `component:`。`demoRouter.ts` 里路由的 `component:`、没被导入的分册、注释里的 `component:` 都不算。详见[场景清单](/dev/scenes#catalog-ratchet)。
 
 ## 壳与路由 {#shell}
 

@@ -46,14 +46,28 @@ today". `--init` writes the first list and only when the file does not exist;
 deleting the file to re-run it is visible in the diff.
 
 WHAT "CATALOGUED" MEANS. Read from the code, not from the `file:` field — a
-label can be wrong, an import cannot. A component is catalogued when a `.ts`
-under `frontend/src/views/demo/` (spec and test files excluded: a spec that
-imports a component to test it does not put it on the site) both
-value-imports it (`import X from '@/components/X.vue'`, or relative
-`./`/`../`, resolved the way `frontend_grade.resolve_spec` resolves `@/`) and
-uses that binding as an entry's component (`component: X`, also
+label can be wrong, an import cannot. A component is catalogued when a
+catalog file both value-imports it (`import X from '@/components/X.vue'`, or
+relative `./`/`../`, resolved the way `frontend_grade.resolve_spec` resolves
+`@/`) and uses that binding as an entry's component (`component: X`, also
 `component: X as ...` or `component: markRaw(X)`). An import that no entry
 renders is not an entry.
+
+The catalog files are `frontend/src/views/demo/catalog.ts` and the
+`catalog*.ts` volumes beside it that it value-imports AND spreads
+(`import { X_ENTRIES } from './catalogX'` ... `...X_ENTRIES`), followed
+transitively from each volume the same way; `catalog*Fixtures.ts` files are
+data and are not read. WHY START FROM catalog.ts: `CATALOG` there is what
+the preview site renders and what `catalog.spec.ts` mounts, and a volume
+gets into it only by being imported and spread there. Scanning every `.ts`
+under `views/demo/` instead counted things the site never shows — a
+`component:` on a route in `demoRouter.ts`, a `catalogOrphan.ts` nobody
+imports, a spec that mounts a component to test it. Both the imports and the
+`component:` uses are read with `//` and `/* */` comments stripped (a `//`
+inside a string such as a URL is kept), so `// component: X` or a
+commented-out import catalogues nothing. Still a regex reading: the spread
+is recognised anywhere in the importing file, not proven to land in the
+`CATALOG` array itself.
 
 STANDALONE means grade A from `.claude/scripts/frontend_grade.py` — the same
 function `arch-metrics.py` reports and `scene-ratchet.py` gates on, so the
@@ -93,6 +107,9 @@ DEFAULT_BASELINE = "frontend/catalog-baseline.json"
 
 #: A spec file puts nothing on the site, whatever it imports.
 SPEC = re.compile(r"\.(spec|test)\.(ts|js)$")
+
+#: A catalog volume: `catalog.ts` itself or `catalogAccept.ts`, `catalogBase.ts`, ...
+VOLUME = re.compile(r"^catalog[A-Za-z0-9_]*\.ts$")
 
 #: An import with its clause: `import A from 'x'`, `import A, { b } from 'x'`.
 IMPORT_CLAUSE = re.compile(
@@ -167,22 +184,149 @@ def default_local(clause: str) -> str | None:
     return match.group(1) if match else None
 
 
+def strip_comments(text: str) -> str:
+    """`text` with every `//` and `/* */` comment blanked, strings kept.
+
+    A small scanner, not a regex: `'https://x'` holds a `//` that is not a
+    comment, and a comment can hold a quote that opens no string. Template
+    literals are followed through `${ ... }` (code again, braces counted), so
+    a comment inside an interpolation is stripped and a backtick inside one
+    does not end the outer literal. Regex literals are not recognised — the
+    catalog has none, and the failure mode is keeping text, not losing it.
+    Newlines inside a comment are kept so line structure survives.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    # Each frame is a template literal we are inside; its value is the brace
+    # depth of the `${` we are currently in (0 = in the literal's text).
+    templates: list[int] = []
+    while i < n:
+        ch = text[i]
+        in_template_text = bool(templates) and templates[-1] == 0
+        if in_template_text:
+            if ch == "\\":
+                out.append(text[i : i + 2])
+                i += 2
+            elif ch == "`":
+                templates.pop()
+                out.append(ch)
+                i += 1
+            elif text.startswith("${", i):
+                templates[-1] = 1
+                out.append("${")
+                i += 2
+            else:
+                out.append(ch)
+                i += 1
+            continue
+        if text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            stop = n if end == -1 else end + 2
+            out.append("".join(c for c in text[i:stop] if c == "\n"))
+            out.append(" ")
+            i = stop
+            continue
+        if ch in "'\"":
+            j = i + 1
+            while j < n and text[j] != ch and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+            continue
+        if ch == "`":
+            templates.append(0)
+            out.append(ch)
+            i += 1
+            continue
+        if templates and ch == "{":
+            templates[-1] += 1
+        elif templates and ch == "}":
+            templates[-1] -= 1  # back to 0: the interpolation closed
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def named_locals(clause: str) -> list[str]:
+    """The local names an import clause binds: `A, { b, c as d }` -> [A, b, d]."""
+    clause = clause.strip()
+    head, _, brace = clause.partition("{")
+    names = []
+    head = head.strip().rstrip(",").strip()
+    if head and not head.startswith("*"):
+        names.append(head)
+    for part in brace.rstrip("} \n").split(","):
+        part = re.sub(r"^\s*type\s+", "", part).strip()
+        if part:
+            names.append(part.split(" as ")[-1].strip())
+    return names
+
+
+def catalog_files(root: Path) -> list[Path]:
+    """`catalog.ts` and every `catalog*.ts` volume it value-imports, transitively.
+
+    Only what `catalog.ts` reaches is on the site: `DemoCatalog.vue` and
+    `catalog.spec.ts` both read `CATALOG` from it, and a volume reaches
+    `CATALOG` only by being imported and spread there. So a volume is followed
+    only when one of the names it is imported as is spread (`...X_ENTRIES`) in
+    the importing file; a `.ts` beside it that nobody imports (an orphan
+    volume), or imports without spreading, the router, the scene modules and
+    the fixture files (`catalog*Fixtures.ts` — data, never entries) are not
+    walked. Imports are read after `strip_comments`, so a commented-out
+    import or spread follows nothing.
+    """
+    demo = root / DEMO_DIR
+    entry = demo / "catalog.ts"
+    if not entry.is_file():
+        return []
+    seen: list[Path] = []
+    todo = [entry]
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen.append(path)
+        try:
+            text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError as exc:
+            raise Unjudgeable(f"cannot read {path}: {exc}") from exc
+        for type_only, clause, spec in IMPORT_CLAUSE.findall(text):
+            if type_only or not spec.startswith("./"):
+                continue
+            name = spec[2:]
+            if "/" in name:
+                continue
+            if not name.endswith(".ts"):
+                name += ".ts"
+            if not VOLUME.match(name) or name.endswith("Fixtures.ts") or SPEC.search(name):
+                continue
+            if not any(
+                re.search(r"\.\.\.\s*" + re.escape(local) + r"(?![\w$])", text)
+                for local in named_locals(clause)
+            ):
+                continue  # imported, but none of its arrays is spread into a list
+            target = demo / name
+            if target.is_file():
+                todo.append(target)
+    return sorted(seen)
+
+
 def catalogued(root: Path, grade_module: Any) -> dict[str, list[str]]:
     """`{component rel: [catalog files that render it]}`.
 
-    A component is catalogued by a non-spec `.ts` under the preview site that
-    value-imports it AND uses that binding as an entry's `component:`.
+    A component is catalogued by a file `catalog_files` reaches from
+    `catalog.ts` that value-imports it AND uses that binding as an entry's
+    `component:` — both read with comments stripped.
     """
     src = root / "frontend" / "src"
-    demo = root / DEMO_DIR
     found: dict[str, list[str]] = {}
-    if not demo.is_dir():
-        return found
-    for path in sorted(demo.rglob("*.ts")):
-        if not path.is_file() or SPEC.search(path.name):
-            continue
+    for path in catalog_files(root):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
         except OSError as exc:
             raise Unjudgeable(f"cannot read {path}: {exc}") from exc
         here = path.relative_to(root).as_posix()
@@ -484,6 +628,16 @@ FIXTURE_PENDING = [
 ]
 
 
+def _spread_into_catalog(name: str, spec: str) -> str:
+    """The fixture's catalog.ts, also importing `name` from `spec` and spreading it."""
+    return (
+        FIXTURE["frontend/src/views/demo/catalog.ts"]
+        .replace("import { MORE } from './catalogMore'\n",
+                 f"import {{ MORE }} from './catalogMore'\nimport {{ {name} }} from '{spec}'\n")
+        .replace("  ...MORE,\n", f"  ...MORE,\n  ...{name},\n")
+    )
+
+
 def _fixture(root: Path, changes: dict[str, str] | None = None) -> None:
     """Write FIXTURE into `root`, then apply `changes` (a value of '' deletes)."""
     files = dict(FIXTURE)
@@ -574,10 +728,94 @@ def self_test() -> int:
                 "import Brand from '@/components/Brand.vue'\n"
                 "export const B = [{ id: 'brand', component: Brand }]\n"
             ),
+            "frontend/src/views/demo/catalog.ts": _spread_into_catalog("B", "./catalogBrand"),
         })
         check("catalogued, the new component passes", run_cli(root, baseline).returncode, 0)
         (root / "frontend/src/components/Brand.vue").unlink()
         (root / "frontend/src/views/demo/catalogBrand.ts").unlink()
+
+        # -- 1b. only what catalog.ts reaches counts, and comments never do ---
+        #    Each case adds a grade-A NewA and "catalogues" it one way. The
+        #    ways the site never renders must fail; the controls must pass.
+        catalog_ts = "frontend/src/views/demo/catalog.ts"
+        base_catalog = FIXTURE[catalog_ts]
+        with_import = base_catalog.replace(
+            "import { MORE } from './catalogMore'\n",
+            "import { MORE } from './catalogMore'\nimport NewA from '@/components/NewA.vue'\n",
+        )
+        volume = (
+            "import NewA from '@/components/NewA.vue'\n"
+            "export const NEW_ENTRIES = [{ id: 'new-a', component: NewA }]\n"
+        )
+        spread = _spread_into_catalog("NEW_ENTRIES", "./catalogNew")
+        cases: list[tuple[str, dict[str, str], int]] = [
+            ("(a) a route's `component:` in demoRouter.ts does not catalogue it", {
+                "frontend/src/views/demo/demoRouter.ts": (
+                    "import NewA from '@/components/NewA.vue'\n"
+                    "export const routes = [{ path: '/demo/new', component: NewA }]\n"
+                ),
+            }, 1),
+            ("(b) a catalog*.ts that catalog.ts does not import does not catalogue it", {
+                "frontend/src/views/demo/catalogOrphan.ts": volume,
+            }, 1),
+            ("(b) a volume catalog.ts imports but never spreads does not catalogue it", {
+                "frontend/src/views/demo/catalogNew.ts": volume,
+                catalog_ts: spread.replace("  ...NEW_ENTRIES,\n", "") + "void NEW_ENTRIES\n",
+            }, 1),
+            ("(b) a commented-out spread does not reach the volume", {
+                "frontend/src/views/demo/catalogNew.ts": volume,
+                catalog_ts: spread.replace("  ...NEW_ENTRIES,\n", "  // ...NEW_ENTRIES,\n"),
+            }, 1),
+            ("(b) a *Fixtures.ts file's `component:` does not catalogue it", {
+                "frontend/src/views/demo/catalogNewFixtures.ts": volume,
+                catalog_ts: _spread_into_catalog("NEW_ENTRIES", "./catalogNewFixtures"),
+            }, 1),
+            ("(c) `// component: NewA` in catalog.ts does not catalogue it", {
+                catalog_ts: with_import + "// { id: 'n', component: NewA },\n",
+            }, 1),
+            ("(c) `component: NewA` in a /* */ block does not catalogue it", {
+                catalog_ts: with_import + "/*\n  { id: 'n', component: NewA },\n*/\n",
+            }, 1),
+            ("(c) a commented-out import does not catalogue it", {
+                catalog_ts: base_catalog.replace(
+                    "  ...MORE,\n", "  { id: 'n', component: NewA },\n  ...MORE,\n")
+                + "// import NewA from '@/components/NewA.vue'\n",
+            }, 1),
+            ("control: an entry in catalog.ts itself catalogues it", {
+                catalog_ts: with_import.replace(
+                    "  ...MORE,\n", "  { id: 'n', component: NewA },\n  ...MORE,\n"),
+            }, 0),
+            ("control: a `//` inside a string or template is not a comment", {
+                catalog_ts: with_import.replace(
+                    "  ...MORE,\n",
+                    "  { id: 'u', note: `a ${'/*'} // c`, href: 'https://x.test/a', component: NewA },\n"
+                    "  ...MORE,\n"),
+            }, 0),
+            ("control: an imported and spread volume catalogues it", {
+                "frontend/src/views/demo/catalogNew.ts": volume,
+                catalog_ts: spread,
+            }, 0),
+            ("control: a volume reached through another volume catalogues it", {
+                "frontend/src/views/demo/catalogNew.ts": volume,
+                "frontend/src/views/demo/catalogMore.ts": FIXTURE[
+                    "frontend/src/views/demo/catalogMore.ts"].replace(
+                    "export const MORE = [\n",
+                    "import { NEW_ENTRIES } from './catalogNew'\n"
+                    "export const MORE = [\n  ...NEW_ENTRIES,\n"),
+            }, 0),
+        ]
+        for label, changes, want in cases:
+            _fixture(root, {"frontend/src/components/NewA.vue": _A, **changes})
+            result = run_cli(root, baseline)
+            check(label, result.returncode, want)
+            if want == 1:
+                check(f"{label}: and names it", "  src/components/NewA.vue" in result.stdout, True)
+            (root / "frontend/src/components/NewA.vue").unlink()
+            for rel in changes:
+                if rel not in FIXTURE:
+                    (root / rel).unlink()
+            _fixture(root)
+        check("the fixture passes again after the 1b cases", run_cli(root, baseline).returncode, 0)
 
         # -- 2. a component that becomes A is new too -------------------------
         _fixture(root, {"frontend/src/components/Fetching.vue": _A})
@@ -590,6 +828,7 @@ def self_test() -> int:
                 "import Waiting from '@/components/Waiting.vue'\n"
                 "export const W = [{ id: 'w', component: Waiting }]\n"
             ),
+            "frontend/src/views/demo/catalog.ts": _spread_into_catalog("W", "./catalogWaiting"),
             "frontend/src/components/OnlySpec.vue": "",
             "frontend/src/components/OnlyImported.vue": _C,
         })
@@ -657,8 +896,10 @@ def self_test() -> int:
     print(
         "PASS: catalog-ratchet self-test (a new uncatalogued grade-A component fails "
         "and so does one that just became A; catalogued means import + component: "
-        "via @/, a relative path and an `as` cast, never a `file:` label, an unused "
-        "import or a spec; stale pending entries — catalogued, gone, no longer A — "
+        "via @/, a relative path and an `as` cast, read only from catalog.ts and the "
+        "volumes it imports and spreads (never demoRouter.ts, an orphan or unspread "
+        "volume, a Fixtures file or a spec) with comments stripped and strings kept, "
+        "never a `file:` label or an unused import; stale pending entries — catalogued, gone, no longer A — "
         "are reported and crossed off; --update never adds and refuses over a new "
         "one; --init only without a file; a relative root grades like an absolute "
         "one; no baseline, a bad baseline and a wrong root are a 2)"

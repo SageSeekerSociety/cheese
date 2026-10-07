@@ -76,17 +76,25 @@ To add a component:
 
 Rendering the site writes nothing to the source tree.
 
-The entries live in `views/demo/catalog.ts` and the `catalog*.ts` files split
-out beside it; any of them will do.
+The entries live in `views/demo/catalog.ts` and the `catalog*.ts` volumes split
+out beside it. A volume counts only once `catalog.ts` imports it and spreads its
+array into `CATALOG` (`import { X_ENTRIES } from './catalogX'`, then
+`...X_ENTRIES`); a volume may pull in another the same way.
 
 **Every grade-A component has to be in the catalog.** `pnpm run lint:catalog`
 (`.claude/scripts/catalog-ratchet.py`) grades every `.vue` under `src/` except
 the preview site's own `src/views/demo/`, with the same grader as the scene
-ratchet below. A grade-A one must be catalogued — some non-spec `.ts` under
-`views/demo/` imports the `.vue` and uses it as an entry's `component:` (a
-`file:` label alone does not count) — or be listed in `pending` in
+ratchet below. A grade-A one must be catalogued — `catalog.ts` or a volume it
+imports and spreads (above) imports the `.vue` and uses it as an entry's
+`component:` — or be listed in `pending` in
 `catalog-baseline.json`, which is the backlog from the day the check was added
 and may only shrink:
+
+The check reads only those files, from `catalog.ts` outward, because `CATALOG`
+is what the site renders and `catalog.spec.ts` mounts. A `component:` anywhere
+else — a route in `demoRouter.ts`, a `catalog*.ts` nobody imports, a
+`*Fixtures.ts`, a spec — does not count, nor does one inside a `//` or `/* */`
+comment, nor a `file:` label alone.
 
 ```bash
 pnpm run lint:catalog           # what CI runs
