@@ -628,10 +628,10 @@ e2e 从来没有断言过「agent 回了一句话」，更没有跑过一次工�
 `grep -rn 'reply|回复|assistant'` 在整个 `e2e/tests/` 里零命中。
 
 **三条硬约束：**
-1. **跑生产构建，不跑 vite dev server。** 今天单 worker 是故意的（`playwright.config.ts:24`：
-   并行 worker 会同时触发冷编译把 per-test timeout 打爆），per-test timeout 拉到 60 秒、
-   webServer 启动预算 180 秒，全是在给冷编译让路——**也就是说今天 e2e 跑的前端和真正部署出去的不是同一个东西**。
-   换成生产构建之后并行不再触发冷编译，4 worker、per-test 15 秒、全套 ≤ 4 分钟。
+1. **跑生产构建，不跑 vite dev server。** 已做：CI 上由 `vite preview` 服务 `e2e.yml` 构建出的产物，
+   per-test 超时 45 秒（实测最慢一条 22.9 秒的两倍）。只有直接从开发服务器挂载源码组件的两个 spec
+   （`playwright.config.ts` 的 `COMPONENT_SPECS`）还用开发服务器。
+   未做：4 worker（各 spec 共用一个后端、都以 alice 登录，并发跑没有验证过）与 per-test 15 秒。
 2. **`retries: 0`。** 最近一次 run 是 `1 flaky / 19 passed`，flaky 的是 `login()` 的 `page.getByLabel('密码')` 60 秒超时——
    冷启动的 vite 现编路由，跟产品没关系。日常噪声压过真信号，人就不看它了。
 3. **选择器限定在被测组件 root 内**，一条 lint 规则禁止 page 级 `getByRole`——
