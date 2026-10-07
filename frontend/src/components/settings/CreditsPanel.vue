@@ -5,18 +5,16 @@
 // 设置那一页，和运行环境、仓库连接并排。拿不到额度信息时这一块说「暂无额度信
 // 息」而不是消失：分不出「没有上限」和「读不到」的话，一个用完了的项目看起来和
 // 一个不限量的项目一模一样。
-import type { ProjectCredits } from '@/cx_types'
+import { computed, watch } from 'vue'
 
-import { computed, ref, watch } from 'vue'
-
+import { useProjectCredits } from '@/composables/useProjectCredits'
 import { holdRevealGate } from '@/composables/useRevealGate'
 
-import { getProjectCredits } from '@/api'
 import { t } from '@/i18n'
 
 const props = defineProps<{ projectId: string }>()
 
-const credits = ref<ProjectCredits | null>(null)
+const { credits, load } = useProjectCredits()
 
 const usedPct = computed<number>(() => {
   const c = credits.value
@@ -35,24 +33,14 @@ function fmt(n: number): string {
   return n.toFixed(4)
 }
 
-async function load() {
-  const projectId = props.projectId
-  try {
-    const got = await getProjectCredits(projectId)
-    if (props.projectId !== projectId) return
-    credits.value = got
-  } catch {
-    if (props.projectId === projectId) credits.value = null
-  }
-}
-
 // 首次取数期间占住设置页的显示闸，见 useRevealGate。
 const releaseGate = holdRevealGate()
 watch(
   () => props.projectId,
   () => {
+    // 换了项目就先把旧的清掉，免得旧项目的额度在新项目名下多显示一会儿。
     credits.value = null
-    void load().finally(releaseGate)
+    void load(props.projectId).finally(releaseGate)
   },
   { immediate: true }
 )

@@ -1,19 +1,16 @@
 <script setup lang="ts">
-import type { AdminCandidate } from '@/api'
+import { computed } from 'vue'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useAdminCandidateSearch } from '@/composables/useAdminCandidateSearch'
 
-import { searchAdminCandidates } from '@/api'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { t } from '@/i18n'
 
 /**
  * AdminAssigneeSelect.vue — 分诊面板里的「指派给谁」。
  *
- * 数据源是 `searchAdminCandidates`（`GET /admin/users?q=`，按 handle 与昵称搜账号、
- * 带 `avatar_id`），**不是**管理员名单 `GET /admin/admins` —— 那张表是「谁能进后台」，
- * 和「这条反馈归谁」是两件事，能分诊的人不必是管理员。用法与 `AdminMembersPage` 的
- * 那个搜索框同源，连防抖与竞态处理都是同一套。
+ * 搜谁、防抖、竞态都在 `useAdminCandidateSearch` 里（数据源是 `searchAdminCandidates`
+ * 而不是管理员名单，理由记在那儿）。
  *
  * `:no-filter="true"` 是这里**必须**写的一行（AdminMembersPage 那里记着这个 bug 的
  * 完整来历）：`v-autocomplete` 默认会拿输入串再筛一次自己的 `items`，筛的是
@@ -37,47 +34,12 @@ const props = withDefaults(
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: string | null): void }>()
 
-const search = ref('')
-const candidates = ref<AdminCandidate[]>([])
-const searching = ref(false)
+const { search, candidates, searching } = useAdminCandidateSearch()
 
 /** 输入框里什么都没有 / 正在搜 / 搜完了没人，是三句不同的话，下拉里只能出现一句。 */
 const hint = computed(() => {
   if (searching.value) return t('admin.assignee.searching')
   return search.value.trim() ? t('admin.assignee.noMatch') : t('admin.assignee.placeholder')
-})
-
-// 250ms 防抖：每敲一个字打一次接口，一次指派会打出十几个请求，而只有最后一个的
-// 结果会被看见。与名册页同一个间隔。
-let searchTimer: ReturnType<typeof setTimeout> | null = null
-watch(search, (q) => {
-  if (searchTimer) clearTimeout(searchTimer)
-  const wanted = q.trim()
-  if (!wanted) {
-    // 空串不发请求：接口会把它当成「列前 20 个账号」，那不是一个搜索结果。
-    candidates.value = []
-    searching.value = false
-    return
-  }
-  searching.value = true
-  searchTimer = setTimeout(async () => {
-    try {
-      const page = await searchAdminCandidates(wanted)
-      // 慢的那个请求后到会盖掉新结果，只认当前这串字的答案。
-      if (search.value.trim() === wanted) candidates.value = page.items
-    } catch {
-      // 搜不到人是常态（打到一半、拼音打错），为它弹一个错误气泡反而把面板搞脏；
-      // 清空候选，下拉里就会显示「没找到这个人」。
-      candidates.value = []
-    } finally {
-      searching.value = false
-    }
-  }, 250)
-})
-
-// 面板会被关掉：关掉之后那次待发的请求没有必要再打出去。
-onBeforeUnmount(() => {
-  if (searchTimer) clearTimeout(searchTimer)
 })
 </script>
 
