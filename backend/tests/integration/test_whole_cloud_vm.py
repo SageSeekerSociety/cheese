@@ -727,3 +727,21 @@ def test_no_whole_vm_is_created_for_a_size_with_no_price(cloud, monkeypatch):
     )
     assert case.provider.created == []
     assert _host(case, seat) is None
+
+
+def test_only_a_sessions_own_sandbox_is_marked_as_its_own(cloud):
+    """A 支线 or a task not yet started runs freely only on a machine nothing
+    else works in (the lease's ``own``): its sandbox on a pool host. A whole VM
+    is not marked, and such a session only reads there."""
+    case = cloud
+    boxed = _room(case, SANDBOX, "Sandbox")
+    _working(case, boxed)
+    on_vm = _room(case, WHOLE_VM, "VM")
+    _working(case, on_vm)
+
+    async def lease(seat):
+        async with case.client.test_request_factory() as db:
+            return (await AgentSessionService(db).by_id(seat.session)).work_lease
+
+    assert case.client.portal.call(lease, boxed)["own"] is True
+    assert case.client.portal.call(lease, on_vm)["own"] is False

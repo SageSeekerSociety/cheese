@@ -30,7 +30,7 @@ covers:
 
 `agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room` 或 `task`，id 就是话题或任务自己的 id，由数据库触发器在话题、任务插入和删除时维护，应用不写它。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<话题十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把话题交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
 
-任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions.py`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；任务还没「开始」时凭证对工作机器只读（文档照样能写），启动环境里是 `CHEESE_TASK` 和 `CHEESE_TASK_READS_ONLY`，开始之后空闲的会话带着可写的凭证重开。broker 上任务的频道就是任务 id。
+任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions.py`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；任务还没「开始」时凭证带 `scratch`：改动留不下（见[支线与未开始的任务](#scratch)），启动环境里是 `CHEESE_TASK` 和 `CHEESE_KEEPS_NOTHING`，开始之后空闲的会话带着改动留得下的凭证重开。broker 上任务的频道就是任务 id。
 
 ## 一轮是一个区间 {#turn}
 
@@ -48,6 +48,17 @@ covers:
 `AgentSession.runtime_location` 是这条会话的进程落在哪台会话机上，连同开它的通道和骨架自己的运行状态（平台不解析）；`place()` 是读它的唯一入口，没有它就没有地点，下一轮重新租，而不是去猜房间上记着什么。`placed_at` 排的是「谁最后开的屏」——不能拿 `updated_at` 排：那一列每轮存 `resume_token` 时也在动，「最后开屏的」会变成「最后说过话的」。
 
 `work_lease` 是另一回事，它是算力选择落到这条会话上的那一份。一个话题一个容器（2026-09-28 决定，推翻结论 60 的后半）：一间房只有一条算力选择；任务没有自己的选择（`tasks.compute_config`）时用房间那一项，有就用自己的。解析时问的是选择本身，不问这一列。选自有设备时每条会话都工作在它算出来的那台机器上；选云端时每条会话各有一个沙箱，落在平台云主机池的哪台宿主机上由池子决定。为什么这么定、几个队友共用一台机器怎么不打架，见[同一话题里的几个 AI 队友](/dev/turn#seats)。
+
+### 支线与未开始的任务 {#scratch}
+
+支线的会话，和负责人还没「开始」的任务的会话，改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），支线里例行任务执行的那一轮除外。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
+
+- 机器是这条会话独占的（它自己的沙箱，租约上 `own` 为真）：读、跑命令、改文件都照常，只拒绝把改动带出机器的调用——同步检查点和项目的 MCP 服务。
+- 机器和别的会话或机器主人共用（整台机器授权的设备、Windows、整台云虚拟机）：只能读，和文档芝士借房间机器时一样，外加 Claude Code 自己的 `Read`。
+
+执行路由由设备连接的属主服务，发布应用时属主留在旧镜像上；所以这张凭证同时带 `ro`，认不得 `scratch` 的旧属主照只读处理，换成新属主后才按上面两种走。
+
+这类会话的代码从 `cheese checkout` 来：会话的工作目录不是仓库，任务的工作目录要等任务开始，所以它在 `~/.cheese/checkout` 检出项目的默认分支。仓库凭证不在执行路由上管：机器上的 git、`gh`、`fj` 取凭证时，`/sandbox/forge-token` 按凭证里的会话问 `session_keeps_work`，留不下的拿到只读令牌（GitHub 是只要读权限的安装令牌，Forgejo 是带 `read:*` 范围的令牌，见[令牌](/dev/forge#tokens)），能读代码、PR 和 issue，推送和写都被托管方拒绝；GitHub 中转也不替它推送。支线里例行任务执行的那一轮同样只读仓库：它留得下的是交回的结果和房间里的文件，改代码要提议任务。
 
 ## 后台的 runner 与 broker {#background}
 

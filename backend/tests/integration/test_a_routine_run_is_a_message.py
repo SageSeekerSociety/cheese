@@ -35,12 +35,12 @@ class Screen(StubChannel):
 
     def __init__(self, **policy: float) -> None:
         super().__init__(**policy)
-        self.reading: list[bool] = []
+        self.scratch: list[bool] = []
 
     @asynccontextmanager
-    async def prepare_session(self, *, reading=False, **kwargs):
-        self.reading.append(reading)
-        async with super().prepare_session(reading=reading, **kwargs) as prepared:
+    async def prepare_session(self, *, scratch=False, **kwargs):
+        self.scratch.append(scratch)
+        async with super().prepare_session(scratch=scratch, **kwargs) as prepared:
             yield prepared
 
     async def send_prompt(self, screen: uuid.UUID, prompt: str) -> bool:
@@ -82,7 +82,7 @@ def _fired(client):
     return room, routine, runs["runs"][0], conversation, submitted
 
 
-def test_the_run_keeps_its_results_and_a_question_after_it_reads_only(client, tmp_path):
+def test_the_run_keeps_its_results_and_a_question_after_it_does_not(client, tmp_path):
     room, _routine, _run, conversation, submitted = _fired(client)
     screen = Screen()
     svc = ChatService(
@@ -107,7 +107,7 @@ def test_the_run_keeps_its_results_and_a_question_after_it_reads_only(client, tm
         await settle_turn(svc, thread)
 
     client.portal.call(run)
-    assert screen.reading and screen.reading[-1] is False, "这次执行不能存结果"
+    assert screen.scratch and screen.scratch[-1] is False, "这次执行不能存结果"
 
     async def ask():
         async for _ in svc.converse(
@@ -117,7 +117,7 @@ def test_the_run_keeps_its_results_and_a_question_after_it_reads_only(client, tm
         await settle_turn(svc, thread)
 
     client.portal.call(ask)
-    assert screen.reading[-1] is True, "追问的那一轮不是只读"
+    assert screen.scratch[-1] is True, "追问那一轮的改动留得下"
     assert "卡住的那个写上预计时间" in screen.told, "换成只读之后，追问那一轮没有跑起来"
 
 

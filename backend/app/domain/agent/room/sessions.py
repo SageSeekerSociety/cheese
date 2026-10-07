@@ -771,13 +771,14 @@ class RoomSessions:
         env: dict[str, str] | None = None,
         acting: str | None = None,
         needs_place: bool = True,
-        reads_only: bool = False,
+        keeps_nothing: bool = False,
         phases: dict[str, float] | None = None,
     ) -> Live:
         """The seat's session, started where the room's placement puts it if it
-        has to be. ``reads_only``: a task's session before its owner starts it,
-        which may read the machine and change nothing on it. ``phases``, when
-        given, receives how long each step took (`send` logs it)."""
+        has to be. ``keeps_nothing``: a 支线's session, or a task's before its
+        owner starts it, whose work stays on the machine and never reaches the
+        project. ``phases``, when given, receives how long each step took
+        (`send` logs it)."""
         mark = Stopwatch(phases)
         seat = self._seat_of(session)
         previous = self.live.get(seat)
@@ -826,7 +827,7 @@ class RoomSessions:
             env=env,
             precheck=precheck,
             runtime_factory=place,
-            reading=reads_only,
+            scratch=keeps_nothing,
         ) as prepared:
             ref = CoreRef(self.harness, _home(placed["state"]))
             spec = SessionSpec(
@@ -841,9 +842,9 @@ class RoomSessions:
                     "CHEESE_TOPIC": str(session.conversation_id),
                     "CHEESE_AUTHOR": prepared.agent_handle,
                     # Part of the launch, so starting the task relaunches
-                    # an idle session with a credential that may write.
+                    # an idle session with a credential whose work is kept.
                     **(
-                        {"CHEESE_TASK_READS_ONLY": "1" if reads_only else "0"}
+                        {"CHEESE_KEEPS_NOTHING": "1" if keeps_nothing else "0"}
                         if session.inner_id is not None
                         else {}
                     ),
@@ -900,7 +901,7 @@ class RoomSessions:
         env: dict[str, str] | None = None,
         acting: str | None = None,
         needs_place: bool = True,
-        reads_only: bool = False,
+        keeps_nothing: bool = False,
         images: list[dict] | None = None,
         owes_reply: bool = False,
         session_opening: str = "",
@@ -936,7 +937,7 @@ class RoomSessions:
                 env=env,
                 acting=acting,
                 needs_place=needs_place,
-                reads_only=reads_only,
+                keeps_nothing=keeps_nothing,
                 phases=mark.phases,
             )
             mark.lap()

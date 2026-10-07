@@ -647,3 +647,52 @@ def test_sync_agents_never_breaks_the_session(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, "_call", boom)
     cli.main()
     assert "sync-agents 跳过" in capsys.readouterr().err
+
+
+def test_checkout_brings_the_default_branch_and_keeps_what_was_changed(
+    monkeypatch, tmp_path, capsys
+):
+    """A 支线 reads the project's code from `cheese checkout`: a copy of the
+    default branch, brought up to date on the next call unless something in it
+    was changed there."""
+    import subprocess
+
+    def git(cwd, *args):
+        subprocess.run(
+            ["git", "-C", str(cwd), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+            check=True,
+            capture_output=True,
+        )
+
+    work = tmp_path / "work"
+    work.mkdir()
+    git(work, "init", "-q", "-b", "trunk")
+    (work / "app.py").write_text("v1\n")
+    git(work, "add", ".")
+    git(work, "commit", "-qm", "one")
+    forge = tmp_path / "forge.git"
+    git(tmp_path, "clone", "-q", "--bare", str(work), str(forge))
+
+    cli = _load()
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    token = {"data": {"url": str(forge), "kind": "none", "default_branch": "trunk"}}
+    monkeypatch.setattr(cli, "_call", lambda *_args, **_kw: token)
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "checkout"])
+
+    cli.main()
+    checkout = Path(capsys.readouterr().out.strip())
+    assert (checkout / "app.py").read_text() == "v1\n"
+
+    (work / "app.py").write_text("v2\n")
+    git(work, "commit", "-qam", "two")
+    git(work, "push", "-q", str(forge), "trunk")
+    cli.main()
+    assert (checkout / "app.py").read_text() == "v2\n"
+
+    (checkout / "app.py").write_text("trying something\n")
+    (work / "app.py").write_text("v3\n")
+    git(work, "commit", "-qam", "three")
+    git(work, "push", "-q", str(forge), "trunk")
+    cli.main()
+    assert (checkout / "app.py").read_text() == "trying something\n"

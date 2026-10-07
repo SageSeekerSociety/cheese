@@ -21,6 +21,13 @@ CLIENT_ID = "a4792ccc-144e-407e-86c9-5e7d8d9c3269"
 REDIRECT_URI = "http://127.0.0.1:9/"
 
 
+#: A read-only token (`ForgejoTokens.read_token`): what it may read, how long
+#: the platform lets it live, and the name that carries its expiry upstream.
+READ_SCOPES = ("read:repository", "read:issue", "read:user")
+READ_TOKEN_TTL = timedelta(hours=1)
+READ_TOKEN_PREFIX = "cheese-read-"
+
+
 class ForgejoTokenError(RuntimeError):
     pass
 
@@ -177,6 +184,18 @@ class ForgejoTokens:
             )
 
     async def installation_token(self) -> tuple[str, str]:
+        return await self._cached(read_only=False, mint=self._authorize)
+
+    async def read_token(self) -> tuple[str, str]:
+        """A token that reads the repository and its issues and writes nothing:
+        what ``/sandbox/forge-token`` hands a session whose work is not kept.
+        Forgejo grants no scope to the OAuth client the other tokens come from,
+        so this is a scoped access token of the project account, which never
+        expires on its own: the platform revokes it once it is past
+        ``READ_TOKEN_TTL`` (`revoke_expired_read_tokens`)."""
+        return await self._cached(read_only=True, mint=self._scoped_token)
+
+    async def _cached(self, *, read_only: bool, mint) -> tuple[str, str]:
         async with self.sessions() as session:
             cached = await session.scalar(
                 select(ForgeToken)
@@ -184,6 +203,7 @@ class ForgejoTokens:
                     ForgeToken.project_id == self.binding.project_id,
                     ForgeToken.api_url == self.binding.api_url,
                     ForgeToken.username == self.binding.repo.split("/", 1)[0],
+                    ForgeToken.read_only.is_(read_only),
                     ForgeToken.expires_at > datetime.now(UTC) + timedelta(minutes=5),
                 )
                 .order_by(ForgeToken.expires_at.desc())
@@ -192,7 +212,7 @@ class ForgejoTokens:
             if cached is not None:
                 return open_forge_token(cached), cached.expires_at.isoformat()
             await session.rollback()
-            token, expires_at = await self._authorize()
+            token, expires_at = await mint()
             username = self.binding.repo.split("/", 1)[0]
             session.add(
                 ForgeToken(
@@ -203,10 +223,67 @@ class ForgejoTokens:
                         self.binding.project_id, self.binding.api_url, username, token
                     ),
                     expires_at=expires_at,
+                    read_only=read_only,
                 )
             )
             await session.commit()
             return token, expires_at.isoformat()
+
+    def _account(self) -> tuple[str, httpx.BasicAuth]:
+        username = self.binding.repo.split("/", 1)[0]
+        return username, httpx.BasicAuth(username, forge_password(self.binding))
+
+    async def _scoped_token(self) -> tuple[str, datetime]:
+        await self.revoke_expired_read_tokens()
+        username, auth = self._account()
+        expires_at = datetime.now(UTC) + READ_TOKEN_TTL
+        async with httpx.AsyncClient(transport=self.transport, timeout=20) as client:
+            response = await client.post(
+                f"{self.binding.api_url}/users/{username}/tokens",
+                auth=auth,
+                json={
+                    # Forgejo refuses a second token of the same name.
+                    "name": f"{READ_TOKEN_PREFIX}{int(expires_at.timestamp())}"
+                    f"-{secrets.token_hex(3)}",
+                    "scopes": list(READ_SCOPES),
+                },
+            )
+        if response.status_code != 201 or not isinstance(
+            token := response.json().get("sha1"), str
+        ):
+            raise ForgejoTokenError(
+                f"Forgejo refused a read-only token (HTTP {response.status_code})"
+            )
+        return token, expires_at
+
+    async def revoke_expired_read_tokens(self) -> int:
+        """Delete the project account's read-only tokens that are past their
+        time, found by the expiry their name carries: a mint or a purge that
+        failed midway leaves nothing a later one does not find. How many."""
+        username, auth = self._account()
+        now = datetime.now(UTC).timestamp()
+        base = f"{self.binding.api_url}/users/{username}/tokens"
+        revoked = 0
+        async with httpx.AsyncClient(transport=self.transport, timeout=20) as client:
+            response = await client.get(base, auth=auth, params={"limit": 50})
+            if response.status_code != 200:
+                raise ForgejoTokenError(
+                    f"Forgejo did not list the account's tokens "
+                    f"(HTTP {response.status_code})"
+                )
+            for listed in response.json():
+                name = str(listed.get("name") or "")
+                expiry = name.removeprefix(READ_TOKEN_PREFIX).split("-", 1)[0]
+                if (
+                    not name.startswith(READ_TOKEN_PREFIX)
+                    or not expiry.isdigit()
+                    or int(expiry) > now
+                ):
+                    continue
+                gone = await client.delete(f"{base}/{listed['id']}", auth=auth)
+                if gone.status_code in (204, 404):
+                    revoked += 1
+        return revoked
 
     async def write_token(self) -> tuple[str, str]:
         return await self.installation_token()
@@ -214,9 +291,41 @@ class ForgejoTokens:
     async def granted_permissions(self) -> dict[str, str]:
         return {"project account": "owner"}
 
+    async def read_permissions(self) -> dict[str, str]:
+        return {scope.removeprefix("read:"): "read" for scope in READ_SCOPES}
 
-async def purge_expired_tokens(sessions: SessionFactory) -> dict[str, int]:
-    """Remove expired cache entries; this job does not control upstream validity."""
+
+async def purge_expired_tokens(
+    sessions: SessionFactory, transport: httpx.AsyncBaseTransport | None = None
+) -> dict[str, int]:
+    """Remove expired cache entries. Upstream, the provider expires every token
+    but the read-only ones on Forgejo, which this revokes first."""
+    async with sessions() as session:
+        projects = set(
+            await session.scalars(
+                select(ForgeToken.project_id).where(
+                    ForgeToken.read_only.is_(True),
+                    ForgeToken.expires_at <= datetime.now(UTC),
+                )
+            )
+        )
+        bindings = list(
+            await session.scalars(
+                select(ProjectForge).where(
+                    ProjectForge.project_id.in_(projects),
+                    ProjectForge.kind == "forgejo",
+                )
+            )
+        )
+    revoked = 0
+    for binding in bindings:
+        try:
+            revoked += await ForgejoTokens(
+                binding, sessions=sessions, transport=transport
+            ).revoke_expired_read_tokens()
+        except (ForgejoTokenError, httpx.HTTPError):
+            # The next read-only mint for this project finds them by name.
+            continue
     async with sessions() as session:
         ids = list(
             await session.scalars(
@@ -226,4 +335,4 @@ async def purge_expired_tokens(sessions: SessionFactory) -> dict[str, int]:
             )
         )
         await session.commit()
-    return {"deleted": len(ids)}
+    return {"deleted": len(ids), "revoked": revoked}

@@ -18,10 +18,11 @@ covers:
 `backend/sandbox/cheese` 是一个 Python 文件，一份两用：
 
 - **会话侧**把它当模块读：`PLATFORM_TOOLS` 是平台 MCP 的工具表，`run_platform_tool` 执行其中一项。聊天、任务卡、验收、通知这些只要平台就能做的动作都在这里，其余的平台接口经表上的 `platform_request` 找到再调，所以机器够不着时它们照样能用。这张表怎么变成每种骨架手里的工具，见[平台工具与会话侧 MCP](/dev/mcp)。
-- **机器上**它是 `cheese` 命令，只保留必须在那台机器上作为进程跑的动作。顶层子命令共 13 个：
+- **机器上**它是 `cheese` 命令，只保留必须在那台机器上作为进程跑的动作。顶层子命令共 14 个：
 
 ```text
 cheese worktree <任务 id>      准备任务工作目录并输出路径
+cheese checkout                准备项目默认分支的代码并输出路径（支线、未开始的任务）
 cheese sync                    同步任务提交并备份未提交的文件
 cheese recover <任务 id>       把最近一次备份恢复到一个独立目录
 cheese push-fix                把任务的新提交同步到它的 PR
@@ -38,7 +39,7 @@ cheese recalc <文件>           重算一份 .xlsx 里的公式
 
 三个命令带下一级动作：`library get`、`mail attachment`、`template list|new`。每个子命令的 `--help` 是权威的那一份（它和代码同源，不会过期）。
 
-身份靠启动器注入的环境变量：`CHEESE_API`（平台地址）、`CHEESE_TOKEN`（这个会话的短期令牌）、`CHEESE_PROJECT`、`CHEESE_TOPIC`、`CHEESE_AUTHOR`，以及 `CHEESE_TURN`（让命令产生的记录归到这一轮）。任务自己的会话还带 `CHEESE_TASK`（这条任务的 id，令牌也只能对它动手）和 `CHEESE_TASK_READS_ONLY`（任务还没开始时为 `1`，令牌对工作机器只读）。
+身份靠启动器注入的环境变量：`CHEESE_API`（平台地址）、`CHEESE_TOKEN`（这个会话的短期令牌）、`CHEESE_PROJECT`、`CHEESE_TOPIC`、`CHEESE_AUTHOR`，以及 `CHEESE_TURN`（让命令产生的记录归到这一轮）。任务自己的会话还带 `CHEESE_TASK`（这条任务的 id，令牌也只能对它动手）和 `CHEESE_KEEPS_NOTHING`（任务还没开始时为 `1`，这时的改动留不下）。
 
 判断一个动作放哪一边：只需要平台 API 的放会话侧工具；要读写这台机器上的文件或进程的放命令行。
 

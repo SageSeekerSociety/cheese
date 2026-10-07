@@ -54,12 +54,21 @@ OWNER_DRAINING_HEADER = "X-Device-Connection-Draining"
 # 里找 bug。数字和响应体进的是进程日志 —— agent 读不到它们，平台读得到。
 EXECUTOR_CALL_FAILED = "这次调用失败了，机器还在：其他工具照常可用，这一个可以重试。"
 
-# 这次会话的凭证只读工作机器（还没开始的任务、支线），而这一次要的是读以外的事
+# 这次会话的凭证只读工作机器（文档芝士借房间的机器），而这一次要的是读以外的事
 # （`routes/execution.py` 的 `_reads`）。说成「可以重试」，agent 会照着去重试、
 # 约时间再试，并告诉人机器坏了；可机器好好的，重试只会再被拒一次。
 READ_ONLY_REFUSED = (
     "这个会话对工作机器只读：可以看文件和 git 记录，不能执行命令、不能改文件。"
-    "这不是故障，重试结果一样；还没开始的任务要等负责人开始之后才能动手。"
+    "这不是故障，重试结果一样。"
+)
+
+# 这次会话的改动留不下（支线、还没开始的任务，`sandbox_auth` 的 ``scratch``），
+# 而这一次要把改动带出机器（同步、项目的 MCP 服务），或者机器不归它独占、它只能读
+# （`routes/execution.py`）。两种都不是故障。
+SCRATCH_REFUSED = (
+    "这个会话的改动留不下：不能同步改动，也不能用项目的 MCP 服务；工作机器不归这个"
+    "会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。这不是故障，重试"
+    "结果一样；要改项目，提议一个任务。"
 )
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
@@ -89,16 +98,23 @@ def _device_is_offline(response) -> bool:
     return response.status == 409 and response.getheader("X-Device-Id") is not None
 
 
-def _reads_only(token: str) -> bool:
-    """Whether this execution credential was issued to only read the machine
-    (``sandbox_auth.bind_resource_token``'s ``ro`` claim). Read off the token's
-    own claims: the refusal's body is the backend's wording, not a contract."""
+def _claimed(token: str, claim: str) -> bool:
+    """Whether this execution credential carries ``claim``
+    (``sandbox_auth.bind_resource_token``): ``ro``, issued to only read the
+    machine, or ``scratch``, whose work is not kept. Read off the token's own
+    claims: the refusal's body is the backend's wording, not a contract."""
     body = token.rpartition(".")[0].removeprefix("cxss_")
     try:
         claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     except ValueError:
         return False
-    return isinstance(claims, dict) and claims.get("ro") is True
+    return isinstance(claims, dict) and claims.get(claim) is True
+
+
+def keeps_nothing(token: str) -> bool:
+    """Whether this execution credential's work stays on its machine: a 支线's,
+    or a task's its owner has not started."""
+    return _claimed(token, "scratch")
 
 
 def _link_interrupted(response) -> bool:
@@ -1031,10 +1047,12 @@ class RemoteClient:
                             or _device_is_offline(response)
                         ):
                             raise MachineOutOfReach
-                        if response.status == 403 and _reads_only(
-                            self.execution_token()
-                        ):
-                            raise RuntimeError(READ_ONLY_REFUSED)
+                        if response.status == 403:
+                            token = self.execution_token()
+                            if keeps_nothing(token):
+                                raise RuntimeError(SCRATCH_REFUSED)
+                            if _claimed(token, "ro"):
+                                raise RuntimeError(READ_ONLY_REFUSED)
                         raise RuntimeError(EXECUTOR_CALL_FAILED)
                     return json.loads(data)
                 except ConnectionRefusedError as exc:
@@ -1081,3 +1099,11 @@ class RemoteClient:
 
     def control(self, request, preparing=None):
         return self.call("control", dict(request), preparing=preparing)
+
+    def checkpoint(self, request_id):
+        """A turn's Stop checkpoint: its work synced into the project. A
+        session whose work is not kept (a 支线, a task not yet started) has none
+        to sync, and the executor route would refuse it."""
+        if keeps_nothing(self.execution_token()):
+            return {}
+        return self.control({"subtype": "checkpoint", "request_id": request_id})

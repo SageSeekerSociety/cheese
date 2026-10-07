@@ -200,7 +200,7 @@ class SeatChannel:
 
     @asynccontextmanager
     async def prepare_session(
-        self, *, session, token, env, precheck, runtime_factory, reading=False
+        self, *, session, token, env, precheck, runtime_factory, scratch=False
     ) -> AsyncIterator[PreparedSession]:
         agent = token_agent_handle(token) or precheck.agent_handle
         placed = runtime_factory(session.topic_id)

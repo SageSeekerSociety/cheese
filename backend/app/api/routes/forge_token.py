@@ -41,6 +41,7 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
 from app.domain.agent.forgejo_tokens import ForgejoTokenError
 from app.domain.agent.github_app import GitHubAppError
+from app.domain.room_task.place import session_keeps_work
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
@@ -186,11 +187,21 @@ async def forge_transport(
             "git-receive-pack",
         ):
             return Response(status_code=403)
+        # A session whose work is not kept fetches and never pushes. A push is
+        # advertised (`info/refs?service=git-receive-pack`) before it is sent.
+        kept = await session_keeps_work(db, claims.get("session"))
+        pushing = path.endswith("git-receive-pack") or (
+            request.query_params.get("service") == "git-receive-pack"
+        )
+        if pushing and not kept:
+            return Response(status_code=403)
         minter = await tokens_for_project(project_id, db)
         if minter is None:
             raise GatewayUnavailableError(say("forgeCredentialMissing"))
         try:
-            access_token, _ = await minter.installation_token()
+            access_token, _ = await (
+                minter.installation_token() if kept else minter.read_token()
+            )
         except (GitHubAppError, httpx.HTTPError) as error:
             raise GatewayUnavailableError(say("forgeCredentialUnavailable")) from error
         authorization = (
@@ -322,13 +333,21 @@ async def sandbox_forge_token(
         raise AuthenticationRequiredError("A scoped cheese token is required")
     project_id = uuid.UUID(claims["p"])
     await require_seated_agent(db, token, project_id=project_id, topic_id=None)
+    # A 支线, or a task not yet started, keeps nothing it does
+    # (`Place.keeps_work`): its token reads the repository, its issues and pull
+    # requests, and the forge refuses its pushes and its writes.
+    kept = await session_keeps_work(db, claims.get("session"))
     binding = await binding_for_project(project_id, db)
     minter = await tokens_for_project(project_id, db)
     if binding is None or minter is None:
         raise GatewayUnavailableError(say("forgeCredentialMissing"))
     try:
-        access_token, expires_at = await minter.installation_token()
-        granted = await minter.granted_permissions()
+        if kept:
+            access_token, expires_at = await minter.installation_token()
+            granted = await minter.granted_permissions()
+        else:
+            access_token, expires_at = await minter.read_token()
+            granted = await minter.read_permissions()
     except (GitHubAppError, ForgejoTokenError, httpx.HTTPError) as error:
         raise GatewayUnavailableError(say("forgeCredentialUnavailable")) from error
     response.headers["Cache-Control"] = "no-store"
@@ -338,9 +357,14 @@ async def sandbox_forge_token(
             "project_id": str(project_id),
             "token": access_token,
             "expires_at": expires_at,
-            "expiry_enforcement": "provider",
+            # Forgejo's read-only tokens are revoked by the platform.
+            "expiry_enforcement": "platform"
+            if not kept and binding.kind == "forgejo"
+            else "provider",
+            "read_only": not kept,
             "repo": binding.repo,
             "url": binding.url,
+            "default_branch": binding.default_branch,
             "api_url": binding.api_url,
             "username": "x-access-token"
             if binding.kind == "github_app"

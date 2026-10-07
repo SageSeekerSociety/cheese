@@ -1365,6 +1365,12 @@ async def _install(
                     "desired_release": info.get("desired_release"),
                     "workspace": info["workspace"],
                     "mcp_servers": info["mcp_servers"],
+                    # Whether nothing but this session works in what the
+                    # executor can write: its own sandbox. The executor route
+                    # lets a session whose work is not kept run freely only
+                    # there (`routes/execution.py`). A whole VM is not one: a
+                    # room's sessions land on the room's machine.
+                    "own": sandbox,
                     "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
                 }
                 target.pop("claim")

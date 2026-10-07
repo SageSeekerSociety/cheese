@@ -400,3 +400,35 @@ async def test_user_installation_lookup_uses_user_authority_and_all_pages(monkey
     assert len(repos) == 101
     assert repos[-1]["full_name"] == "acme/last"
     assert len(seen) == 3
+
+
+@pytest.mark.anyio
+async def test_a_session_whose_work_is_not_kept_gets_a_token_that_only_reads(
+    rsa_key_pem,
+):
+    """A 支线 or a task not yet started reads the repository, its pull requests
+    and its CI, and writes nothing. GitHub enforces the levels it is minted
+    with, and refuses the whole mint over a level it has no read for."""
+    key_path, public = rsa_key_pem
+    mints: list[dict] = []
+    minter = GitHubAppTokens(
+        app_id=4533864,
+        private_key_path=key_path,
+        installation_id=152342238,
+        transport=_github(mints, public),
+    )
+    reading, _ = await minter.read_token()
+    working, _ = await minter.installation_token()
+
+    assert reading != working
+    read_mint, full_mint = mints
+    assert read_mint["body"] == {
+        "permissions": {
+            "actions": "read",
+            "checks": "read",
+            "contents": "read",
+            "metadata": "read",
+            "pull_requests": "read",
+        }
+    }
+    assert full_mint["body"] == {"permissions": _CHEESEX_APP_GRANTS}

@@ -54,6 +54,9 @@ _WRITE_PERMISSIONS = {
     "pull_requests": "write",
     "workflows": "write",
 }
+# The grants GitHub offers at the write level only. A read-only mint asking
+# for one of them at `read` is refused whole (`read_permissions`).
+_WRITE_ONLY_PERMISSIONS = frozenset({"workflows"})
 # GitHub caps app JWTs at 10 minutes; stay clear of clock-skew rejections.
 _JWT_TTL_S = 540
 # Re-mint when the cached token has less life left than a long agent turn.
@@ -138,6 +141,23 @@ class GitHubAppTokens:
         see the module docstring.
         """
         return await self._mint("installation", self.granted_permissions)
+
+    async def read_token(self) -> tuple[str, str]:
+        """An installation token that reads what the installation may read and
+        writes nothing: what ``/sandbox/forge-token`` hands a session whose
+        work is not kept (a 支线, a task not yet started). GitHub enforces it,
+        so a push or a new pull request from such a session is refused there."""
+        return await self._mint("read", self.read_permissions)
+
+    async def read_permissions(self) -> dict[str, str]:
+        """Every grant of the installation at its read level. A grant GitHub
+        has no read level for (`workflows`) is left out: asking for it would
+        fail the whole mint."""
+        return {
+            key: "read"
+            for key in await self.granted_permissions()
+            if key not in _WRITE_ONLY_PERMISSIONS
+        }
 
     async def write_token(self) -> tuple[str, str]:
         """The named write set, used by PR-based accept.
