@@ -375,3 +375,31 @@ def test_keystrokes_before_attaching_are_dropped(client, monkeypatch):
         _unregister(screen)
 
     assert sent == []
+
+
+def test_a_machine_learns_its_approval_was_withdrawn(client):
+    """A machine unbound since its approval still holds its token; asked, the
+    server says it no longer names a device, so connecting approves it again
+    instead of installing a connector every dial of which is turned away."""
+    alice = _login_real(client, "alice")
+    start = client.post("/connector/auth/device/start", json={"device_name": "mac"})
+    code = start.json()["device_code"]
+    connect = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(alice)
+    )
+    assert connect.status_code == 200, connect.text
+    token = client.post(
+        "/connector/auth/device/poll", json={"device_code": code}
+    ).json()["token"]
+    device_id = connect.json()["device_id"]
+
+    held = client.get("/connector/device/me", headers={"X-Cheese-Session": token})
+    assert held.status_code == 200 and held.json()["device_id"] == device_id
+
+    client.delete(f"/connector/my/devices/{device_id}", headers=_bearer(alice))
+    gone = client.get("/connector/device/me", headers={"X-Cheese-Session": token})
+    assert gone.status_code == 401
+    assert (
+        client.get("/connector/device/me", headers={"X-Cheese-Session": ""}).status_code
+        == 401
+    )

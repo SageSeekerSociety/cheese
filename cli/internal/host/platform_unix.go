@@ -12,6 +12,10 @@ import (
 
 var errNoScreens = errors.New("this machine hosts no screens")
 
+// CanHostScreens reports whether the service will find the tmux it does not
+// start without.
+func CanHostScreens() error { return terminal.Present() }
+
 // newTerminalManager is the private tmux every screen lives in. The connector
 // does not start without it here: screens are part of what it offers.
 func newTerminalManager() (*terminal.Manager, error) { return terminal.NewManager() }

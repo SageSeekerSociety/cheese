@@ -106,6 +106,13 @@ func findTmux() (string, error) {
 		strings.Join(searched, ", "))
 }
 
+// Present reports whether a tmux can be found where NewManager will look; the
+// error names every place it searched.
+func Present() error {
+	_, err := findTmux()
+	return err
+}
+
 // NewManager locates tmux and provisions a private, short-path socket dir. It
 // writes a tiny config that keeps a pane after its program exits: read when the
 // server first starts (via -f), so it applies before any command can run and a

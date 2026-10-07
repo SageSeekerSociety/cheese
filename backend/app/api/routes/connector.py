@@ -284,6 +284,21 @@ class _WebSocketDeviceTransport:
             raise ConnectionError(str(exc)) from exc
 
 
+@router.get("/device/me")
+async def device_me(
+    db: DbSession,
+    x_cheese_session: str | None = Header(default=None, alias="X-Cheese-Session"),
+) -> dict[str, Any]:
+    """Which device a machine's stored token still names. A machine unbound
+    since its approval keeps the token on disk, and `link connect` asks here
+    before trusting it, rather than installing a connector the server will
+    turn away on every dial."""
+    device = await owner_reads.device_for_token(db, x_cheese_session or "")
+    if device is None:
+        raise UnauthorizedError("unknown or missing device token")
+    return {"device_id": device.device_id, "name": device.name}
+
+
 @router.websocket("/agent")
 async def agent_socket(
     websocket: WebSocket,

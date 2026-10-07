@@ -114,7 +114,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 | **bash** | 启动器本身就是 `bash -lc` 脚本 | 必须 |
 | **node** | 启动器用 node 写 `~/.claude.json` 的 per-project trust 闸门（动态 key，shell heredoc 做不到） | 必须 |
 | **curl** | `install.sh` 用 curl 下二进制 | 必须 |
-| **tmux** | 把 runner 和它握着的 `claude` 养在持久会话里，链路掉线不丢进程 | 必须。连接器**没有 tmux 就直接退出**，而 `link connect` 仍报成功（systemd 在进程倒下之前就返回了），所以缺它表现为"机器永远不上线"，不是任何一条错误信息 |
+| **tmux** | 把 runner 和它握着的 `claude` 养在持久会话里，链路掉线不丢进程 | 必须。连接器没有 tmux 就直接退出，所以 `link connect` 在批准之前先找一遍 tmux，找不到就停下并说明怎么装；桌面端在 Mac 上自带一份 |
 | **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
 | **python3** | 平台发到机器上跑的那几个小工具：计量隧道（订阅轮次）、运行环境预览的隧道（`cheese serve`）。只用标准库，机器上不需要 venv、不需要 `pip install` | 轮次不需要它，这两样功能需要。缺它则订阅轮次到不了计量端、`cheese serve` 起不来通道——两边都会明说，不会静默 |
 | **claude** (Claude Code CLI) | Central model session, or native file tools on an executor | Required; supplied by the platform |
