@@ -424,6 +424,11 @@ useCommands(roomCommands)
 .topic-header--bar .topic-header__title {
   max-width: 100%;
 }
+/* 手机顶栏上它是一颗按钮，手指要点得中：上下撑到 44px。不用 .tap-target，那一层
+   伪元素会被标题自己截断用的 overflow: hidden 切掉。 */
+.topic-header--bar .topic-header__title--button {
+  padding-block: 12px;
+}
 /* 私密频道：标题前一把锁，和侧栏那一行同一个记号。 */
 .topic-header__lock {
   margin-right: 4px;
