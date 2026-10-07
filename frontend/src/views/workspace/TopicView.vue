@@ -345,7 +345,7 @@ const panelRef = ref<{
 } | null>(null)
 const chatColumn = ref<{
   connected: boolean
-  reloadAccept: (silent?: boolean) => void
+  reloadAccept: () => void
   reloadFeedback: () => void
   reloadSkills: () => void
   reloadProposals: () => void
@@ -474,8 +474,7 @@ function handleStateChanged(resource: string) {
     if (props.taskId) void taskPage.load(true)
     else void channelOverview.loadTasks()
   } else if (resource === 'pins') void channelOverview.loadPins()
-  // silent：卡是这一刻递上来的，框里原有的留在屏幕上换新，不先清空再长出来。
-  else if (resource === 'accept') chatColumn.value?.reloadAccept(true)
+  else if (resource === 'accept') chatColumn.value?.reloadAccept()
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   // 技能的提议落下、被保存或被拒：那张卡跟着变。
@@ -511,7 +510,7 @@ async function handleOpenResource(
     focusMode.value = false
     onPanelTab('changes')
   } else if (resource === 'accept') {
-    chatColumn.value?.reloadAccept(true)
+    chatColumn.value?.reloadAccept()
   } else if (resource === 'doc') {
     // B1 Phase 2: highlight the exact paragraphs this turn changed (falls back to
     // a whole-doc pulse when the turn's blocks aren't tagged). Leaving focus mode

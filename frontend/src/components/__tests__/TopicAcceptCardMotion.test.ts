@@ -83,12 +83,12 @@ async function flush() {
 }
 
 /** 房间那一侧：拿着卡的 ref，能像 TopicView 那样叫它重读。 */
-let reload: (silent?: boolean) => Promise<void>
+let reload: () => Promise<void>
 
 function mount() {
   const Host = defineComponent(() => {
-    const box = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
-    reload = (silent) => box.value!.reload(silent)
+    const box = ref<{ reload: () => Promise<void> } | null>(null)
+    reload = () => box.value!.reload()
     return () => h(TopicAcceptCard, { ref: box, topicId: 't1', topicStatus: 'active' })
   })
   // transition: false —— Vue Test Utils 默认把 <Transition> 换成一个什么都不做的桩，
@@ -140,7 +140,7 @@ describe('验收卡的出现', () => {
     // 芝士这一刻递了卡：房间静默重读（TopicView 收到 accept 的状态变更时就这么做）。
     getAcceptCards.mockResolvedValue({ data: [card({})], has_more: false })
     const seen = watchClasses(container)
-    await reload(true)
+    await reload()
     await flush()
 
     expect(seen.join(' ')).toContain('accept-fold-enter-active')

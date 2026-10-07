@@ -33,6 +33,7 @@ import {
 import { t } from '@/i18n'
 import { mergeBadgeOf, visibleReasons } from '@/lib/mergeState'
 import { noteTone } from '@/lib/noteTone'
+import { reconcile } from '@/lib/reconcile'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -225,33 +226,44 @@ export function useAcceptCard(props: AcceptCardHost) {
       )
   )
 
-  async function loadAcceptCard(silent = false) {
-    // silent = a background refresh (the PR-checks poll / after a vote): keep the
-    // current cards on screen instead of blanking the box for a beat.
-    if (!silent) {
-      animate.value = false
-      acceptCards.value = []
-      loaded.value = false
-      showRejectInput.value = false
-      rejectNote.value = ''
-      showGateOutput.value = false
-      expanded.value = false
-    }
+  // 两件事分开做：换了话题（或任务）才清空，那时屏幕上的卡属于别处；其余每一次重读
+  // ——轮询、点完一个按钮、宿主说「重新拉一次」——都把读回来的那份合到屏幕上那份上，
+  // 卡一直在，没变的卡连对象都不换（lib/reconcile.ts）。以前是一个 silent 开关由调
+  // 用方自己选，按钮那几处选了不静默，于是每点一下整张卡消失、再带着入场动画长回来。
+  function resetForTopic() {
+    animate.value = false
+    acceptCards.value = []
+    loaded.value = false
+    showRejectInput.value = false
+    rejectNote.value = ''
+    showGateOutput.value = false
+    expanded.value = false
+  }
+
+  // 后发的请求先回来、先发的后回来时，晚到的那份是旧的，不许盖掉新的。
+  let requested = 0
+  let applied = 0
+
+  async function loadAcceptCard() {
     const tid = props.topicId
     const task = props.taskId
     if (!tid) return
+    const seq = ++requested
     try {
       // A task's cards are read through the task's own conversation.
       const payload = await getAcceptCards(task ?? tid)
-      if (props.topicId === tid && props.taskId === task) {
-        acceptCards.value = payload.data.filter((card) =>
-          props.taskId ? card.task_id === props.taskId : !card.task_id
-        )
-        loaded.value = true
-        if (!silent) void nextTick(() => (animate.value = true))
-      }
+      if (props.topicId !== tid || props.taskId !== task || seq < applied) return
+      applied = seq
+      const first = !loaded.value
+      acceptCards.value = reconcile(
+        acceptCards.value,
+        payload.data.filter((card) => (props.taskId ? card.task_id === props.taskId : !card.task_id))
+      )
+      loaded.value = true
+      // 这个话题第一次读到的卡本来就在，不演入场；之后再出现、再收走的才演。
+      if (first) void nextTick(() => (animate.value = true))
     } catch {
-      // Best-effort; the banner just stays hidden.
+      // Best-effort; the cards on screen stay as they were.
     }
   }
 
@@ -293,7 +305,7 @@ export function useAcceptCard(props: AcceptCardHost) {
           // merge_state.py）。可这里原本没有下一轮，于是那颗按钮就一直灰着，验收人
           // 只能靠刷新页面或切一次话题才点得动。实测 #888：01:23 还是 unstable，
           // 01:24 已经 clean，后端确实在收敛，看不见的是界面。
-          void loadAcceptCard(true)
+          void loadAcceptCard()
         }, 15000)
       } else if (!active && prPollTimer !== null) {
         window.clearInterval(prPollTimer)
@@ -333,7 +345,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     acceptBusy.value = true
     try {
       await approveCard(card.id, AUTHOR)
-      await loadAcceptCard(true)
+      await loadAcceptCard()
     } catch (e) {
       store.reportError(e, t('topic.accept.approveFailed'))
     } finally {
@@ -375,7 +387,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       store.reportError(e, needsPr.value ? t('topic.accept.createPrFailed') : t('topic.accept.acceptFailed'))
       // 被拒的原因可能正是「你看到的版本已过时」——那就把屏幕换成新的那一版，
       // 否则人只能对着同一张旧卡再点一次，再被拒一次。
-      await loadAcceptCard(true)
+      await loadAcceptCard()
     } finally {
       acceptBusy.value = false
     }
@@ -406,7 +418,7 @@ export function useAcceptCard(props: AcceptCardHost) {
       await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
     } catch (e) {
       store.reportError(e, t('topic.accept.acceptFailed'))
-      await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
+      await loadAcceptCard() // 见 onAcceptCard：过时的那一版要换掉
     } finally {
       acceptBusy.value = false
     }
@@ -419,10 +431,10 @@ export function useAcceptCard(props: AcceptCardHost) {
     acceptBusy.value = true
     try {
       await setAutoMerge(card.id, !!enabled, card.merge_state.head_sha)
-      await loadAcceptCard(true)
+      await loadAcceptCard()
     } catch (e) {
       store.reportError(e, t('topic.accept.autoMergeFailed'))
-      await loadAcceptCard(true) // 见 onAcceptCard：过时的那一版要换掉
+      await loadAcceptCard() // 见 onAcceptCard：过时的那一版要换掉
     } finally {
       acceptBusy.value = false
     }
@@ -462,7 +474,10 @@ export function useAcceptCard(props: AcceptCardHost) {
 
   watch(
     () => [props.topicId, props.taskId],
-    () => void loadAcceptCard(),
+    () => {
+      resetForTopic()
+      void loadAcceptCard()
+    },
     { immediate: true }
   )
 
