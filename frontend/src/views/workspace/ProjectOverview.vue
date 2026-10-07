@@ -54,8 +54,9 @@ async function loadProgress() {
   try {
     const listed = await listProjectProgress(pid)
     if (props.projectId === pid) progress.value = listed.data
-  } catch {
-    if (props.projectId === pid) progressFailed.value = true
+  } catch (e) {
+    // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
+    if (props.projectId === pid && !store.noteAccess(e)) progressFailed.value = true
   }
 }
 async function loadTasks(maxAgeMs?: number) {

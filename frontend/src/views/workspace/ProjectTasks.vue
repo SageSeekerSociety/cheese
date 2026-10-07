@@ -34,8 +34,10 @@ async function load() {
   try {
     const listed = await readProjectTasks(pid, { maxAgeMs: 2_000 })
     if (props.projectId === pid) tasks.value = listed.data
-  } catch {
-    if (props.projectId === pid) failed.value = true
+  } catch (e) {
+    // 401/403 不是「没读出来」：登录没了，或者人已经不在这个项目里。重试换不来别的
+    // 答案，交给整页那一屏（ProjectAccessNotice），它给的是去登录的路。
+    if (props.projectId === pid && !store.noteAccess(e)) failed.value = true
   } finally {
     if (props.projectId === pid) loading.value = false
   }
