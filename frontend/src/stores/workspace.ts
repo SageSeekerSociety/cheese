@@ -370,8 +370,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
         forgetMissingTopic(pid, payload.data)
         noteArchived(payload.data)
       }
-    } catch {
-      // Best-effort background refresh; ignore.
+    } catch (e) {
+      // Best-effort background refresh: a network blip leaves the list as it was.
+      // A 401/403 is not a blip — the sign-in ended or the seat was taken away
+      // while the page stayed open, and the list on screen is no longer one this
+      // person may read.
+      if (epoch === projectEpoch && projectId.value === pid) noteAccess(e)
     }
   }
 
@@ -763,6 +767,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     projects,
     projectsSettled,
     accessDenied,
+    noteAccess,
     openedProject,
     topics,
     tasksChanged,

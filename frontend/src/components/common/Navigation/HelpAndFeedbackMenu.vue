@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 
 import { useDesktopApp } from '@/composables/useDesktopApp'
 
+import { PLATFORM_LANDING } from '@/lib/adminSections'
 import { inDesktopApp, openInBrowser } from '@/lib/desktopApp'
 import { docsUrl } from '@/lib/docsSite'
 import AccountService from '@/services/account'
@@ -59,7 +60,7 @@ const items = computed(() => {
   if (store.isAdmin) {
     all.push({ key: 'admin', to: '/admin/feedback', label: t('navigation.feedback.admin') })
   } else if (store.meta?.is_platform_admin) {
-    all.push({ key: 'admin', to: '/admin/dashboard', label: t('navigation.feedback.admin') })
+    all.push({ key: 'admin', to: PLATFORM_LANDING, label: t('navigation.feedback.admin') })
   }
   // 「了解知是」讲的是这个产品，不是「我」，所以住在这里而不在用户菜单里。
   // 桌面 app 里它是「关于」：app 和网页的版本、检查更新；推广页只在浏览器里开。
