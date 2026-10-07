@@ -128,6 +128,24 @@ describe('round-trip corpus', () => {
     expectClean('1. 起草提纲\n2. 收集资料\n3. 完成初稿')
   })
 
+  it('reads the inline marks of a numbered item: bold, a status tag, and a line written on under it', () => {
+    const md = '1. **每人一份面板** {✓ 建议先做}\n把卡汇到一处。\n2. **自动转入** {! 待定}\n有人提到。'
+    const rt = roundTrip(md)
+    expect(rt).not.toContain('\\*')
+    expect(rt).toContain('1. **每人一份面板** {✓ 建议先做}')
+    expect(rt).toContain('2. **自动转入** {! 待定}')
+    const items = editor.getJSON().content![0].content!
+    expect(items).toHaveLength(2)
+    const first = items[0].content![0].content!
+    expect(first[0]).toMatchObject({ text: '每人一份面板', marks: [{ type: 'bold' }] })
+    expect(first[2]).toMatchObject({ text: '建议先做', marks: [{ type: 'status', attrs: { kind: 'ok' } }] })
+    expect(first.map((n) => n.text).join('')).toContain('把卡汇到一处。')
+  })
+
+  it('keeps the start number and marks of a list that starts past one', () => {
+    expect(roundTrip('3. 第三\n4. **第四**')).toBe('3. 第三\n4. **第四**')
+  })
+
   it('nested mixed list', () => {
     expectClean('- 外层一\n  - 内层 a\n  - 内层 b\n- 外层二\n  1. 步骤一\n  2. 步骤二')
   })
