@@ -15,14 +15,30 @@ const page = '<html><head><title>t</title></head><body>整页</body></html>'
 
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
-  return { ...actual, readPreviewFile: vi.fn(), previewDocumentPdfSnapshot: vi.fn() }
+  return {
+    ...actual,
+    readPreviewFile: vi.fn(),
+    previewDocumentPdfSnapshot: vi.fn(),
+    documentRevisions: vi.fn(),
+  }
 })
 // 网页那一份不在 `api.ts` 里：那一份已经超了长度上限，只能变短。
 vi.mock('../../lib/previewHtml', () => ({ previewDocumentPageSnapshot: vi.fn() }))
 // 三个阅读器都换掉：它们拿到字节就会去画，而这里问的是「该不该取字节、取哪一种」。
 // 留一个类名，因为「字节取回来了、却没有任何一支去画它」正是要抓的那种空白。
 vi.mock('./preview/PreviewSlides.vue', () => ({ default: { props: ['data'], template: '<div class="viewer" />' } }))
-vi.mock('./preview/PreviewPages.vue', () => ({ default: { props: ['data'], template: '<div class="viewer" />' } }))
+vi.mock('./preview/PreviewPages.vue', () => ({
+  default: {
+    props: ['data'],
+    // 真组件把 clearMark 交出来（抹掉指过的那一点）；替身也得有，不然面板清位置时炸
+    // ——而清位置是在一次 props 更新里做的，炸掉的那一次更新会把整个面板的 DOM 留在
+    // 旧那一支上（换网页视图换不过去，看到的还是分页视图）。
+    setup(_props: unknown, { expose }: { expose: (api: { clearMark: () => void }) => void }) {
+      expose({ clearMark: () => {} })
+    },
+    template: '<div class="viewer" />',
+  },
+}))
 vi.mock('./preview/PreviewSheet.vue', () => ({ default: { props: ['data'], template: '<div class="viewer" />' } }))
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
 
@@ -31,6 +47,9 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.mocked(api.readPreviewFile).mockResolvedValue(file('report.docx'))
   vi.mocked(api.previewDocumentPdfSnapshot).mockResolvedValue({ bytes: new ArrayBuffer(8), sourceVersion: version })
+  // 面板对每一份 .docx 都会问一次修订清单（取数那一层里的 `useDocumentRevisions`）；这一条
+  // 不接住，测试网络守卫就会把它算成一次没人接的请求。
+  vi.mocked(api.documentRevisions).mockResolvedValue({ path: 'report.docx', version, revisions: [] })
   vi.mocked(pageReader.previewDocumentPageSnapshot).mockResolvedValue({ html: page, sourceVersion: version })
 })
 afterEach(cleanup)
