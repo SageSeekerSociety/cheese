@@ -326,13 +326,11 @@ p90 94 分钟、最长 339 分钟（150 次运行，`audit-gates.md` §1.5）；
    剩下 6818 条摊掉 3055 个 worker-秒，**平均 0.45 秒一条**。对一套以单测为主的套件来说这个均值本身就是结论。
    这些用例慢不是因为它们在算什么，是因为它们跟 `client` fixture 混在一个 run 里。
    把不需要 DB 也不需要 ASGI 的那部分（估计 4000 条以上，推论）搬进 pure 层，目标 30 秒内跑完。
-2. **砍每条 client 用例的固定开销，不是砍用例。** `backend/tests/conftest.py:434` 每次：
-   建新 engine（NullPool）→ `_truncate_all` **TRUNCATE 109 张表** RESTART IDENTITY CASCADE →
-   `ensure_agent_user` 重新 seed → 起 `TestClient(app)` 进 lifespan（启动所有周期任务）→
-   退出时 `wait_work_idle()` 轮询 → `pytest_runtest_teardown` 再开一条到维护库的连接查 `idle in transaction`。
-   **1274 个 test def 的签名点名 `client`/`python_client`。**
-   改法：contract 层一条用例一个事务、结束 rollback（不 TRUNCATE）；integration 层保留 TRUNCATE 但只清用例声明的表子集；
-   lifespan 每个 worker 起一次而不是每条用例一次。
+2. **砍每条 client 用例的固定开销，不是砍用例。** 清库已经不再 TRUNCATE 全部表：
+   `_clear_client_db` 只删有数据的表、只重置动过的序列，跑在每个 worker 一条常驻连接上，
+   清完再查一遍库是干净的（实测每条约 10 ms，原来约 250 ms）。剩下的固定开销是
+   `ensure_agent_user` 重新 seed、每条用例起一次 `TestClient(app)` 的 lifespan、
+   teardown 里的 `idle in transaction` 检查和遗留执行器的进程扫描。
 3. **DB 模板克隆已经到位，别再投入。** `conftest.py:645` 按 alembic versions 目录的 sha256 建一次
    `cheesex_tpl_<fingerprint>`，其余全部 `CREATE DATABASE ... TEMPLATE` 克隆。
    这就是「integration 的并行模板库」，收益已经吃掉了；代价只在 migration 变了的第一次。
