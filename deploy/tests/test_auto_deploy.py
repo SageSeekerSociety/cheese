@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import ssl
 from pathlib import Path
 import subprocess
 import tempfile
@@ -245,6 +246,54 @@ class CandidateCI(unittest.TestCase):
             self.assertIn(f"page={number}", request.full_url)
             self.assertIn(f"head_sha={self.candidate}", request.full_url)
             self.assertEqual(request.get_header("Authorization"), "Bearer test-token")
+
+    def github(self, *answers):
+        """A GitHub API that gives each answer in turn: an exception is raised,
+        anything else is the JSON body. Returns the patcher and the URLs read."""
+        reads = []
+
+        def urlopen(request, timeout):
+            reads.append(request.full_url)
+            answer = answers[min(len(reads), len(answers)) - 1]
+            if isinstance(answer, BaseException):
+                raise answer
+            return io.BytesIO(json.dumps(answer).encode())
+        return patch.object(GUARD, "urlopen", side_effect=urlopen), reads
+
+    def test_a_dropped_connection_is_read_again(self):
+        # Deploy run 37667147156 failed its metering release on exactly this,
+        # after the app had already been released.
+        dropped = GUARD.URLError(ssl.SSLEOFError(8, "[SSL: UNEXPECTED_EOF_WHILE_READING]"))
+        build = {"workflow_runs": [self.run_record()]}
+        ci = {"workflow_runs": [self.queue_record()]}
+        github, reads = self.github(dropped, build, ci)
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "t"}), \
+                patch.object(GUARD.sys, "argv", ["check-auto-deploy.py", "--require-ci", self.candidate]), github:
+            GUARD.main()
+        self.assertEqual(len(reads), 3)
+        self.assertEqual(reads[0], reads[1])
+
+    def test_a_connection_that_keeps_dropping_still_stops_the_release(self):
+        github, reads = self.github(ConnectionResetError("reset by peer"))
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "t"}), github:
+            with self.assertRaises(ConnectionResetError):
+                GUARD.ci_ready(self.candidate)
+        self.assertEqual(len(reads), 3)
+
+    def test_a_refusal_is_not_read_again(self):
+        refused = GUARD.HTTPError("https://api.github.com/x", 403, "rate limited", {}, io.BytesIO(b""))
+        github, reads = self.github(refused)
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "t"}), github:
+            with self.assertRaises(GUARD.HTTPError):
+                GUARD.ci_ready(self.candidate)
+        self.assertEqual(len(reads), 1)
+
+    def test_a_server_error_is_read_again(self):
+        failed = GUARD.HTTPError("https://api.github.com/x", 502, "bad gateway", {}, io.BytesIO(b""))
+        github, reads = self.github(failed, {"workflow_runs": [self.run_record()]}, {"workflow_runs": [self.queue_record()]})
+        with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "t"}), github:
+            self.assertTrue(GUARD.ci_ready(self.candidate))
+        self.assertEqual(len(reads), 3)
 
     def test_both_completion_orders_require_both_successes(self):
         done = [self.run_record()]

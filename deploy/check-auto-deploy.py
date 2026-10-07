@@ -8,12 +8,42 @@ import re
 import subprocess
 import sys
 import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
 def command(*args: str) -> str:
     return subprocess.check_output(args, text=True, timeout=30).strip()
+
+
+# The dev box reaches api.github.com over a path that sometimes drops a TLS
+# connection mid-read (deploy run 37667147156: SSL UNEXPECTED_EOF after the app
+# was already released, so the metering image was not). A dropped connection or
+# a 5xx is read again; a 4xx, or the same failure three times, still fails the
+# job, because a release must not go ahead on validation it could not read.
+API_WAITS = (5, 15)
+
+
+def github_json(url: str) -> dict:
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    for wait in (*API_WAITS, None):
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except (URLError, ConnectionError, TimeoutError) as error:
+            if wait is None or (isinstance(error, HTTPError) and error.code < 500):
+                raise
+            print(f"Reading {url} failed ({error}); reading it again in {wait} s.")
+            time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
@@ -24,16 +54,9 @@ def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
         # No branch filter: a merge-queue run belongs to the queue's temporary
         # branch, not to main. ci_ready checks each run's branch itself.
         query = urlencode({"head_sha": candidate, "per_page": 100, "page": page})
-        request = Request(
-            f"https://api.github.com/repos/{repository}/actions/workflows/{workflow}/runs?{query}",
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        )
-        with urlopen(request, timeout=30) as response:
-            batch = json.load(response)["workflow_runs"]
+        batch = github_json(
+            f"https://api.github.com/repos/{repository}/actions/workflows/{workflow}/runs?{query}"
+        )["workflow_runs"]
         runs.extend(batch)
         if len(batch) < 100:
             return runs
