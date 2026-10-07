@@ -52,7 +52,12 @@ logger = logging.getLogger("cheesex.review")
 
 
 def _notify_merge_result(
-    session_factory, topic: Topic, content: str, *, meta: dict | None = None
+    session_factory,
+    topic: Topic,
+    content: str,
+    *,
+    task_id: uuid.UUID | None,
+    meta: dict | None = None,
 ) -> None:
     """merge 后结果回房间: post the accept's merge outcome into the topic
     timeline via the webhook primitive's internal function (卡1) — no HTTP
@@ -85,6 +90,7 @@ def _notify_merge_result(
         webhook_service.post_with_retries(
             session_factory,
             topic_id=topic.id,
+            task_id=task_id,
             content=content,
             source="accept",
             meta=meta,

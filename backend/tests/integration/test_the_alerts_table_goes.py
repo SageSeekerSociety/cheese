@@ -133,8 +133,8 @@ def test_what_the_window_left_on_an_already_moved_row_comes_over(client):
     # 拍过板的不再挂在「等你处理的事」里 —— 挂着就会被再拍一次
     assert "要不要上" not in [row["title"] for row in _pending(client, pid, "alice")]
 
-    seen = {row["title"]: row for row in _inbox(client, pid, "bob")}["看一眼"]
-    assert seen["feedback"] == "up"
+    # 通知上的赞已经不再读出来，这一行照样搬过来。
+    assert "看一眼" in [row["title"] for row in _inbox(client, pid, "bob")]
     assert not _alerts_exists(client)
 
 
@@ -185,26 +185,20 @@ def test_what_the_person_did_in_the_new_inbox_survives(client):
         f"/alerts/{bob['看一眼']['id']}/read", headers=session_auth_headers("bob")
     )
     assert r.status_code == 200, r.text
-    r = client.post(
-        f"/alerts/{bob['看一眼']['id']}/feedback",
-        json={"feedback": "down"},
-        headers=session_auth_headers("bob"),
-    )
-    assert r.status_code == 200, r.text
 
     decided = {row["title"]: row for row in _inbox(client, pid, "alice")}["要不要上"]
     reacted = {row["title"]: row for row in _inbox(client, pid, "bob")}["看一眼"]
     assert decided["resolved_at"] is not None
     assert decided["payload"]["resolved_choice"] == "上"
-    # 新那一侧按的是「down」，旧行上冻着的是「up」；旧行的 `read_at` 是空的
-    assert (reacted["feedback"], reacted["read"]) == ("down", True)
+    # 新那一侧读过了；旧行的 `read_at` 是空的
+    assert reacted["read"] is True
 
     _upgrade(client, DROP_MIGRATION)
 
     after_alice = {row["title"]: row for row in _inbox(client, pid, "alice")}
     after_bob = {row["title"]: row for row in _inbox(client, pid, "bob")}
     assert after_alice["要不要上"] == decided  # 拍板、选的那一项，一字没动
-    assert after_bob["看一眼"] == reacted  # 赞和已读，一字没动
+    assert after_bob["看一眼"] == reacted  # 已读，一字没动
     # 拍过板的不回到「等你处理的事」里 —— 回去就会被再拍一次
     assert "要不要上" not in [row["title"] for row in _pending(client, pid, "alice")]
     assert not _alerts_exists(client)

@@ -1,7 +1,7 @@
 """When each machine was last heard from
 
 Revision ID: b7e3c9d1f4a2
-Revises: 7e3c1b9d4a52
+Revises: c71e5a90d4b2
 Create Date: 2026-10-07
 
 ``device.last_seen_at``: written as a machine connects and at most once a
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b7e3c9d1f4a2"
-down_revision: str | Sequence[str] | None = "7e3c1b9d4a52"
+down_revision: str | Sequence[str] | None = "c71e5a90d4b2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

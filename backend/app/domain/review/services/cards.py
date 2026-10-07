@@ -296,6 +296,7 @@ async def _warn_about_a_second_pending_migration(
     self._notify_merge_result(
         topic,
         say("migrationCollision"),
+        task_id=task_id,
         meta=notice(
             EVENT_MIGRATION_COLLISION,
             severity=SEVERITY_WARN,

@@ -16,7 +16,7 @@ async function openFirstTopic(page: Page) {
   const rosterLoaded = page.waitForResponse(
     (r) => /\/topics\/[^/]+\/members(\?|$)/.test(r.url()) && r.ok()
   );
-  // 进项目落在看板，所以要显式打开一个话题。
+  // 进项目落在项目总览，所以要显式打开一个话题。
   await rows.first().click();
   // 先等聊天区挂出来再等输入框：话题这条路由把 tiptap 那一堆拖进来，冷启动的
   // vite 要现编，第一次进来可以慢到几十秒（见 playwright.config.ts 的 timeout

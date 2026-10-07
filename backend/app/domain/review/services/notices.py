@@ -91,10 +91,15 @@ async def _announce_new_artifact(
 
 
 def _notify_merge_result(
-    self: pkg.AcceptService, topic: Topic, content: str, *, meta: dict | None = None
+    self: pkg.AcceptService,
+    topic: Topic,
+    content: str,
+    *,
+    task_id: uuid.UUID | None,
+    meta: dict | None = None,
 ) -> None:
     return _notify_merge_result_from_room(
-        pkg.async_session_factory, topic, content, meta=meta
+        pkg.async_session_factory, topic, content, task_id=task_id, meta=meta
     )
 
 

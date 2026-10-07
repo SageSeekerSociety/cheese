@@ -217,10 +217,15 @@ class AcceptService:
         )
 
     def _notify_merge_result(
-        self, topic: Topic, content: str, *, meta: dict | None = None
+        self,
+        topic: Topic,
+        content: str,
+        *,
+        task_id: uuid.UUID | None,
+        meta: dict | None = None,
     ) -> None:
         return notices._notify_merge_result(
-            self, topic=topic, content=content, meta=meta
+            self, topic=topic, content=content, task_id=task_id, meta=meta
         )
 
     @staticmethod

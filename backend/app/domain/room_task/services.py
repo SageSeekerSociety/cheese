@@ -156,6 +156,10 @@ class TaskService:
         """
         return await self._repo.list_for_project(project_id)
 
+    async def list_open(self) -> list[Task]:
+        """全平台还开着的任务，交出 ORM 行（同 `list_in_project`，**暂留**）。"""
+        return await self._repo.list_open()
+
     async def last_block_at_for_tasks(
         self, task_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:

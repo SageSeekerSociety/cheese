@@ -142,6 +142,15 @@ class BlockRepository:
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
 
+    async def contents(self, block_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """{block id: 正文} —— 一次查完。"""
+        if not block_ids:
+            return {}
+        rows = await self._session.execute(
+            select(Block.id, Block.content).where(Block.id.in_(block_ids))
+        )
+        return {block_id: content or "" for block_id, content in rows.all()}
+
     async def client_delivery(
         self, conversation_id: uuid.UUID, *, author: str, client_id: str
     ) -> list[Block]:

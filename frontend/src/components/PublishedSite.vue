@@ -1,30 +1,40 @@
 <script setup lang="ts">
 // 网站 —— 这个项目对外的那个地址，以及把已采纳的版本发上去的那一下。
 //
-// 它钉在首页「做出了什么」那一列的最上面，不在一个叫「导出与发布」的页面里：一个
+// 它钉在项目总览「做出了什么」那一块的最上面，不在一个叫「导出与发布」的页面里：一个
 // 发布出去的网站就是交出去的东西之一，和那一列里的几项答的是同一个问题。而那一页
 // 除了这一块之外什么都没有，于是「导出」两个字答应了一件它从来没做过的事。
 //
 // 它不排进下面那张清单，因为它只有一个：清单上一项是一样东西的历代版本，而网站只
 // 有「线上这一版」这一个状态。
 //
-// 没发布过、也没有东西可发布时这一行不出现——那一列此时只剩产物，或者「暂无产物」。
+// 没发布过、也没有东西可发布时这一行不出现——那一块此时只剩产物，或者「暂无产物」。
 // 芝士 在已采纳的版本里备好一个静态站点，这一行自己就出现了。
 //
-// 发布入口和已采纳的版本摆在一个对话框里：一个季度按几次的动作不值得在首页常驻一
+// 发布入口和已采纳的版本摆在一个对话框里：一个季度按几次的动作不值得在总览常驻一
 // 个表单，而该发哪一版、发哪个入口是按下去之前必须看清的两件事。
-import type { ProjectSiteInfo } from '@/cx_types'
+import type { ProjectSite, ProjectSiteInfo } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { ApiError, getProjectSite, publishProjectSite } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
-const props = defineProps<{ projectId: string }>()
+/** 读和发布由页面给：组件自己不碰接口层（`docs/manual/dev/scenes.md`）。 */
+export interface SiteApi {
+  read(projectId: string): Promise<ProjectSiteInfo>
+  publish(projectId: string, body: { directory: string; expected_source_revision: string }): Promise<ProjectSite>
+}
+
+const props = defineProps<{
+  projectId: string
+  api: SiteApi
+  /** handle → 名册上的名字：「谁发布的」写名字，不写 handle。 */
+  names?: Record<string, string>
+}>()
 
 const info = ref<ProjectSiteInfo | null>(null)
 const directory = ref('')
@@ -64,7 +74,7 @@ const canPublish = computed(
 async function load() {
   const projectId = props.projectId
   try {
-    const result = await getProjectSite(projectId)
+    const result = await props.api.read(projectId)
     if (props.projectId !== projectId) return
     info.value = result
     if (!result.candidates.some((candidate) => candidate.directory === directory.value)) {
@@ -74,7 +84,7 @@ async function load() {
         ''
     }
   } catch {
-    // 读不到发布信息不该把首页变成一条错误：这一块只在真有网站可说时出现。
+    // 读不到发布信息不该把总览变成一条错误：这一块只在真有网站可说时出现。
     if (props.projectId === projectId) info.value = null
   }
 }
@@ -87,7 +97,7 @@ async function publish() {
   publishing.value = true
   publishError.value = ''
   try {
-    const site = await publishProjectSite(projectId, {
+    const site = await props.api.publish(projectId, {
       directory: directory.value,
       expected_source_revision: current.source_revision,
     })
@@ -95,7 +105,7 @@ async function publish() {
     info.value = { ...current, site }
   } catch (error) {
     if (props.projectId !== projectId) return
-    if (error instanceof ApiError && error.status === 409) {
+    if ((error as { status?: number } | null)?.status === 409) {
       // 已采纳的版本在这中间变了。把新的读回来摆在人眼前，再发布是他下一次点击的
       // 事——替他决定发哪一版，等于替他决定发了什么。
       await load()
@@ -150,7 +160,8 @@ watch(
     </div>
     <p v-if="info.site" class="site-row__when t-meta c-faint">
       <code :title="info.site.source_revision">{{ info.site.source_revision.slice(0, 8) }}</code>
-      · <UserRef :handle="info.site.published_by" /> · {{ relTime(info.site.published_at) }}
+      · <UserRef :handle="info.site.published_by" :name="names?.[info.site.published_by]" /> ·
+      {{ relTime(info.site.published_at) }}
     </p>
     <p v-if="publishError" role="alert" class="site__error t-meta">{{ publishError }}</p>
 

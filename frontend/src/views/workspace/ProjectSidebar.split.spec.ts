@@ -64,9 +64,9 @@ vi.mock('@/views/workspace/TopicView.vue', async () => {
     }),
   }
 })
-vi.mock('@/views/workspace/RunningWorkView.vue', async () => {
+vi.mock('@/views/workspace/ProjectOverview.vue', async () => {
   const { defineComponent, h } = await import('vue')
-  return { default: defineComponent({ setup: () => () => h('div', { 'data-testid': 'board' }) }) }
+  return { default: defineComponent({ setup: () => () => h('div', { 'data-testid': 'overview' }) }) }
 })
 vi.mock('@/lib/routePrefetch', () => ({ prefetchOnHover: vi.fn(), cancelPrefetch: vi.fn() }))
 
@@ -125,7 +125,7 @@ describe('平板上的两栏', () => {
   it('项目的其余各页在平板上仍是一整页', async () => {
     const router = await openProjectAt(820)
     await screen.findByTestId('topic-list')
-    await router.push('/projects/p1/running').catch(() => {})
+    await router.push('/projects/p1/overview').catch(() => {})
     await waitFor(() => expect(screen.queryByTestId('topic-list')).toBeNull())
   })
 

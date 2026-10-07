@@ -38,7 +38,7 @@ import enum
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from app.core.errors import ValidationError
@@ -515,7 +515,73 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         shown = _card_presentation(facts.card)
         if shown is not None:
             return shown
+        # 退回、闸门判红：卡结算了，球交回给芝士去改。此刻没有一轮在改（`running`
+        # 在上面已经答过），也没有新卡递上来，这件事就停在了负责人手上 —— 侧栏把它
+        # 标成没人处理，这里不能还说「已开始」。
+        if facts.card.status in _BOUNCED_TO_AGENT:
+            return _show(NeedsYou.bounced)
     return _show(Building.started)
+
+
+#: 负责人自己要动手的那几格（「需要我处理」的负责人那一条）：芝士把任务文档写好了
+#: 等他点「开始」，检查红了芝士清不掉，被退回之后没人接着改。只是任务开着、在等别人
+#: 审阅或回答，都不算 —— 那是别人手上的事。
+_OWNER_ACTS_ON = frozenset(
+    {
+        NotStarted.discussing.value,
+        NeedsYou.checks_failed.value,
+        NeedsYou.bounced.value,
+    }
+)
+
+
+def owner_acts_on(shown: Presentation, *, running: bool) -> bool:
+    """这一格的下一步是不是在负责人手上。
+
+    「讨论中」还在跑的那一段是芝士在写任务文档初稿，写完之前没有东西可以开始。
+    """
+    if running:
+        return False
+    return shown.phrase in _OWNER_ACTS_ON
+
+
+# —— 停滞 ——————————————————————————————————————————————————————
+#
+# 「这一轮卡住了」有好几处在管（侧栏的红、输入框上方的计时），这里管的是另一件：
+# 这件事好几天没人动了。一个判据，三处用：三天提醒负责人一次，十四天从侧栏收起、
+# 在任务列表里收进「已停滞」、在项目总览的进展里记一笔。
+
+#: 多久没有动静，提醒负责人一次。
+QUIET_NOTICE_AFTER = timedelta(days=3)
+#: 多久没有动静算「已停滞」。
+STALLED_AFTER = timedelta(days=14)
+
+#: 在等别人审阅、等人回答：球在别人手上，这件事不是没人管。
+_WAITING_ON_SOMEONE = frozenset(
+    {NeedsYou.awaiting_review.value, NeedsYou.awaiting_answer.value}
+)
+
+
+def quiet_since(
+    shown: Presentation, *, running: bool, last_activity: datetime
+) -> datetime | None:
+    """这件事从什么时候起没有动静。None = 不算：有一轮在跑、已经结束、在等别人。
+
+    `last_activity` 是最后一次有人或芝士在任务里说话的时刻。
+    """
+    if running or shown.column in (Column.done, Column.archived):
+        return None
+    if shown.phrase in _WAITING_ON_SOMEONE:
+        return None
+    return last_activity
+
+
+def is_stalled(
+    shown: Presentation, *, running: bool, last_activity: datetime, now: datetime
+) -> bool:
+    """已停滞：`STALLED_AFTER` 这么久没有动静。"""
+    since = quiet_since(shown, running=running, last_activity=last_activity)
+    return since is not None and now - since >= STALLED_AFTER
 
 
 # —— 一个房间 ——————————————————————————————————————————————————
