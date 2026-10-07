@@ -17,7 +17,7 @@
  *     in_room: bool | None,                     # 露不露面；缺省 = 露面，见 showsInRoom
  *     event_type: str,                          # 类别码
  *     severity: 'info' | 'warn' | 'error',
- *     who: 'platform' | 'cheese' | 'human',     # 谁在管这件事（码，不是文案）；只有最新的一句画出来
+ *     who: 'platform' | 'cheese' | 'human',     # 谁在管这件事（码，不是文案）；卡的提示只有最新的一句画出来
  *     detail: str | None,                       # 原话 / 日志尾巴 / traceback
  *     detail_label: str | None,                 # 展开区标题，如 "CI 日志"
  *     ...已有字段一律保持: platform/action/code/title/retryable/stack/where/request_id/count
@@ -581,19 +581,53 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
 }
 
 /**
- * 「谁在管这件事」只对最新的那一句成立。
+ * 一张验收卡从递上来到合并（或作废）一路上的那些提示。它们说的是同一件事 —— 这张卡
+ * 现在停在哪、归谁 —— 所以后一句会让前一句过时。
+ */
+const CARD_EVENTS = new Set([
+  'card_filed',
+  'card_rejected',
+  'card_voided',
+  'card_redescribed',
+  'ci_failed',
+  'gate_failed',
+  'gate_blocked',
+  'gate_abandoned',
+  'pr_review',
+  'pr_conflict',
+  'upstream_conflict',
+  'merge_refused',
+  'merge_withheld',
+  'migration_collision',
+  'accept_ready',
+  'accept_conflict',
+  'accept_stopped',
+  'accept_dismissed',
+  'accept_done',
+  'force_merged',
+  'pr_closed',
+])
+
+function aboutTheCard(block: Block): boolean {
+  return block.kind === 'event' && CARD_EVENTS.has(str(meta(block)?.event_type))
+}
+
+/**
+ * 卡上的「谁在管这件事」只对最新的那一句成立。
  *
- * `who` 是写下这一行那一刻的事实：「等 andy 采纳 · 需要手动处理」「退回了 · 芝士正在
- * 处理」。之后这段对话里又有一行说了现在归谁（芝士重新递了卡、PR 合了），前一句的
- * 尾标就过时了 —— 留着它，一张早已采纳的卡还在说等人手动处理。所以尾标只留在最后
- * 一句说了归谁的那一行上，更早的只剩那件事本身。
+ * `who` 是写下这一行那一刻的事实：「等 alice 采纳 · 需要手动处理」「退回了 · 芝士正在
+ * 处理」。之后这段对话里关于这张卡又有一句说了现在归谁（芝士重新递了卡、PR 合了），
+ * 前一句的尾标就过时了 —— 留着它，一张早已采纳的卡还在说等人手动处理。所以卡的那
+ * 些提示里，尾标只留在最后一句说了归谁的那一行上，更早的只剩那件事本身。别的提示
+ * （某位队友这一轮怎么了）各说各的事，不受影响。
  */
 function settleOwners(rows: NoticeRow[]): void {
   let superseded = false
   for (let i = rows.length - 1; i >= 0; i -= 1) {
     const row = rows[i]
+    if (!aboutTheCard(row.block)) continue
     if (superseded && row.notice?.mode === 'fold') row.notice = { ...row.notice, who: '', whoLabel: '' }
-    if (row.run.some((block) => block.kind === 'event' && whoTag(block))) superseded = true
+    if (row.run.some((block) => aboutTheCard(block) && whoTag(block))) superseded = true
   }
 }
 

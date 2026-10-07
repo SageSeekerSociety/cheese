@@ -80,6 +80,15 @@ describe('提示行的尾标', () => {
     expect(lines[2]).toContain('平台已处理')
   })
 
+  it('一位队友这一轮出的事不归卡管，后面卡又往下走了，它照常说归谁', () => {
+    const lines = seen([
+      notice('t', 'Nova 这一轮失败了', 'turn_failed', 'human'),
+      notice('f', '递了验收卡，等 alice 采纳', 'card_filed', 'human'),
+    ])
+
+    expect(lines[0]).toContain('需要手动处理')
+  })
+
   it('还没人接手的最新一行照常说归谁', () => {
     const lines = seen([notice('r', 'alice 退回了验收卡', 'card_rejected', 'cheese')])
 
