@@ -115,9 +115,12 @@ def test_a_command_starting_while_another_takes_the_lease_has_the_token(
     monkeypatch.setenv("CHEESE_API", "http://platform.test")
     done = threading.Event()
 
+    # With the token written the way it was before #1867 (truncate, then write),
+    # the reader saw an empty file within 365 acquisitions on macOS and within
+    # one on the Linux runners, across twenty trials each.
     def take_the_lease():
         client = executor_transport.RemoteClient(dict(config))
-        for _ in range(3000):
+        for _ in range(1000):
             client.acquire(deadline=0)
         done.set()
 
@@ -1592,7 +1595,7 @@ def test_a_notice_from_the_platform_reaches_the_agent_once_with_its_hands(
 
     _, work, state = executor
     generation = str(uuid.uuid4())
-    replaced = "原来的沙箱不再响应，已换成一个新沙箱。"
+    replaced = "沙箱已换成一个新的。"
     pending = [replaced]
 
     class Handler(BaseHTTPRequestHandler):

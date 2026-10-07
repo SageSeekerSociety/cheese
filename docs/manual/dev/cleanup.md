@@ -25,7 +25,7 @@ covers:
 
 - 没归档的房间保留它正在跑的环境。**归档创建一条持久的回收操作，不立刻销毁机器**：默认宽限五分钟（`TOPIC_ARCHIVE_CLEANUP_DELAY_S=300`，改它只影响以后的归档）。
 - 停下会话之前，房间的每条会话在它的机器上做一次尽力而为的 checkpoint（`session_work.checkpoint_room`，由启动这次清理的一方交给 `sweep_retired_storage`），推没推上去都照常往下走：推不上去丢的只是上一轮 Stop checkpoint 之后的改动，那一轮的快照在平台上。清理不检查发布，不因为没推送的改动保留目录。
-- 云端宿主机上的房间目录删掉之后，它们在宿主机上占的位置还给云主机池（`HostPool.forget_device_homes`）。已经归档到对象存储的会话目录不在任何机器上：清理不等它原来那台宿主机（那台已经不在线的就不再去问），最后把归档从存储里删掉（`HostPool.forget_room_homes`）。只删宿主机写归档时确认全部推送过的归档（`archive_published`）：没推送的，归档就是那份工作唯一的副本，清理停在认领之前、原因写明，取消归档后会话下一次调用工具时从归档恢复目录。宿主机本身由池子在空闲一段时间后释放，房间清理从不删宿主机。
+- 云端宿主机上的房间目录删掉之后，它们在宿主机上占的位置还给云主机池（`HostPool.forget_device_homes`）。宿主机本身由池子在空闲一段时间后释放，房间清理从不删宿主机。
 - 进度从 `GET /topics/{id}/cleanup` 读：阶段、期限、已完成的资源数、最近一次失败。
 
 ## 项目归档 {#project-archive}
@@ -63,7 +63,7 @@ covers:
 
 有执行器之前的房间直接在自己的目录（home 下的 `room/`）里干活，后面没有仓库，那里的文件不在任何分支、也不在任何快照里。这样的 home（没有执行器标记、`room/` 不是 git 检出又不是空的，`resource_cleanup.kept_room_files`）在删之前，`room/` 打成一个 tar.gz 送进私有存储（`kept-room-files/<项目>/<资源>.tar.gz`），保留三十天（`device_storage.RETENTION`），到期由清理的定时器删掉。
 
-- 两个时机。自有设备每次连上来，它上面还没看过的每个 home 都看一次（`keep_device_room_files`），有文件的当场送走，并在那段对话里说一次文件保留到哪天、找平台管理员取回；没文件的也记一行，下次不再看。房间清理删 home 时把上传地址交给 `remove`（`room_files_upload_url`），还没送过的在同一条命令里先送再删；已经送过的传 `-`，不再送一遍。所以这样的 home 不会在没有副本时被删。
+- 两个时机。自有设备每次连上来，以及房间清理的定时器每小时最多一次扫一遍已连着的自有设备（`keep_room_files_due`，一台跨过部署一直连着的设备不会再连一次），它上面还没看过的每个 home 都看一次（`keep_device_room_files`），有文件的当场送走，并在那段对话里说一次文件保留到哪天、找平台管理员取回；没文件的也记一行，下次不再看。房间清理删 home 时把上传地址交给 `remove`（`room_files_upload_url`），还没送过的在同一条命令里先送再删；已经送过的传 `-`，不再送一遍。所以这样的 home 不会在没有副本时被删。
 - 记在 `kept_room_files` 表里：哪台设备、哪个 home、存储里的键、大小、到期时间、告诉了哪段对话。
 - 没配私有存储时，有这种文件的 home 不删，清理停在那里并写明原因。
 - 取回：在服务器上 `python -m scripts.retained_files rooms list` 列出还在保留的，`rooms download <键> [--out 路径]` 下载。

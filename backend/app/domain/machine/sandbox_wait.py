@@ -1,8 +1,6 @@
 """What a tool call waiting on its session's cloud sandbox, or its whole cloud
 VM, watches, and what it is told meanwhile (``session_work._attempt``)."""
 
-from datetime import UTC, datetime
-
 from sqlalchemy import select
 
 from app.domain.machine.models import (
@@ -15,14 +13,13 @@ from app.domain.machine.models import (
 
 # What a tool waiting on its cloud sandbox is told.
 SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
-SANDBOX_WAKING = "沙箱正在唤醒；对话和平台工具仍可用。"
-SANDBOX_RESTORE_FAILED = "沙箱没能从归档恢复，稍后会再试；对话和平台工具仍可用。"
 EXECUTOR_SETUP_FAILED = "工作电脑上的执行器没能装好：{reason}；对话和平台工具仍可用。"
 VM_PREPARING = "云虚拟机正在准备；对话和平台工具仍可用。"
 VM_ERROR = "云虚拟机出错：供应方报告错误。对话和平台工具仍可用。"
-# What a session whose sandbox's host the pool gave up on is told, once, with
-# the first tool call that succeeds in its new sandbox (``HostPool._fail``
-# records it under ``LOST_KEY`` in the session's ``execution_request``).
+# What a session is told, once, with the first tool call that succeeds in a
+# new sandbox: its old one was destroyed when idle (``lifecycle``) or given up
+# with its host (``HostPool._fail``). Either records it under ``LOST_KEY`` in
+# the session's ``execution_request``.
 SANDBOX_LOST = (
     "沙箱环境已换成新的。每轮结束时的检查点存下的东西都还在：已推送的提交在任务"
     "分支上，当时没提交的改动和未跟踪文件在平台快照里，用 "
@@ -33,27 +30,15 @@ SANDBOX_LOST = (
 LOST_KEY = "sandbox_lost"
 
 
-async def _home_settled(db, session_id) -> bool:
-    """Whatever was moving the session's home has finished, or given up."""
-    busy = await db.scalar(
-        select(CloudHostHome.busy_until).where(
+async def _home_removed(db, session_id) -> bool:
+    """The sandbox being destroyed is gone, so the next attempt places the
+    session in a new one."""
+    stopped = await db.scalar(
+        select(CloudHostHome.stopped_at).where(
             CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
         )
     )
-    return busy is None or busy <= datetime.now(UTC)
-
-
-async def _home_moved(db, session_id) -> bool:
-    """The sleeping home has left the host that had no slot for it, or was
-    woken there after all."""
-    home = (
-        await db.execute(
-            select(CloudHostHome.host_id, CloudHostHome.stopped_at).where(
-                CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
-            )
-        )
-    ).one_or_none()
-    return home is None or home.host_id is None or home.stopped_at is None
+    return stopped is None
 
 
 async def _cloud_progress(db, hub, host_id) -> str | bool:

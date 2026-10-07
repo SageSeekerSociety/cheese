@@ -942,6 +942,8 @@ def test_a_launch_whose_skills_cannot_be_fetched_starts_and_says_so(tmp_path):
         owner, session, _work, _claude, env = _machine(tmp_path, api=api)
         (tmp_path / "bin/curl").write_text("#!/bin/sh\nexit 1\n")
         (tmp_path / "bin/curl").chmod(0o755)
+        # Three attempts still happen; only the pauses between them go.
+        env["CHEESE_SKILL_FETCH_BACKOFF_S"] = "0"
         result = _launch(tmp_path, env)
 
     digest = hashlib.sha256(session_skill_bundle(None)).hexdigest()

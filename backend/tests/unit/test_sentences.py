@@ -166,6 +166,7 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "blockUpgradedToRoom",
         "blockUpgradedRoomId",
         "labelUpgradedTo",
+        "mailDrafted",
         "labelResult",
         "routineResult",
         "subagentStart",

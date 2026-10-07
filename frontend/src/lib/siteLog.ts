@@ -114,7 +114,7 @@ export function isNarration(meta?: NarrationMeta | null): boolean {
 export interface SiteTurn<T> {
   /** 分组键：轮次 id，没有 id 的那些用它们头一条的 id。 */
   key: string
-  /** 不属于任何一轮的一条平台记录（环境休眠了、某人改了文档）：只占一行，不成组。 */
+  /** 不属于任何一轮的一条平台记录（环境空闲释放了、某人改了文档）：只占一行，不成组。 */
   loose: boolean
   entries: T[]
   /** 这一组头一条的时间，组头显示它。 */

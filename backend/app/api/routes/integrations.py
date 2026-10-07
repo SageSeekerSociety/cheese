@@ -571,7 +571,9 @@ async def mail_draft(
         if draft.attachments
         else say("mailDraftSummary", to=", ".join(draft.to), subject=draft.subject)
     )
-    line = say("mailDrafted", account=row.label, owner=row.owner_handle)
+    line = say(
+        "mailDraftedBy", who=f"<@{speaker}>", account=row.label, owner=row.owner_handle
+    )
     block_id = uuid.uuid4()
     db.add(
         Block(

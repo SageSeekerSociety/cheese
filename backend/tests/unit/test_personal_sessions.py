@@ -325,7 +325,7 @@ async def test_an_idle_session_exits_and_comes_back_with_its_conversation(
     host, platform, monkeypatch
 ):
     hub, sessions = host
-    monkeypatch.setattr(personal, "IDLE_EXIT_S", 1.0)
+    monkeypatch.setattr(personal, "IDLE_EXIT_S", 0.5)
     fake = platform([{"text": "记住了。"}, {"text": "PINEAPPLE。"}])
     launch = _launch(7)
     state = launch.ref.state
@@ -400,11 +400,12 @@ async def _first_word(sessions, launch, text) -> float:
 async def test_an_answer_starts_as_soon_as_the_model_does(host, platform, monkeypatch):
     """The first words reach the reader within a fraction of a second of the
     model producing them, on a running session: the read waits at the runner
-    for them rather than polling for them. Measured with a model that takes
-    as long to start as the gateway's does; the timings are printed."""
+    for them rather than polling for them. The model starts after a delay of
+    its own so that what the reader adds on top is what is measured; the
+    timings are printed."""
     hub, sessions = host
-    first_token_s = 0.8
-    monkeypatch.setattr(personal, "IDLE_EXIT_S", 1.0)
+    first_token_s = 0.3
+    monkeypatch.setattr(personal, "IDLE_EXIT_S", 0.5)
     platform([], first_token_s=first_token_s)
     launch = _launch(7)
 

@@ -1,8 +1,8 @@
 """A session's whole cloud VM is released once the session is idle.
 
 A VM is disposable: nothing on it outlives the session's use of it, and code
-is truth in git. So it is not kept asleep the way a sandbox's home is, and the
-session's next tool call prepares a new one.
+is truth in git. Like a sandbox it goes once idle, and the session's next tool
+call prepares a new one.
 
 **Idle** is a sandbox's definition (``SandboxLifecycle._idle_since``), held for
 ``cloud_vm_idle_release_s``: the room runs no turn, the session has asked for
@@ -132,7 +132,7 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         row.work_lease = None
     minutes = int(idle_for.total_seconds() // 60)
     line = await tell_vm_released(db, current, minutes)
-    await HostPool(db).leave(home.session_id, kept_work=False)
+    await HostPool(db).leave(home.session_id)
     await db.commit()
     await publish_line(home.topic_id, line)
     logger.info("released the idle cloud vm of session %s", home.session_id)

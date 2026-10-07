@@ -78,7 +78,7 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" text 报告.docx
 
 # 2. 改。默认写成 Word 修订：用户能看出哪句是新加、哪句删了，也能一键拒绝
 uv run --with lxml python3 "$SKILL/scripts/office.py" edit 报告.docx -o 改后.docx \
-    --replace "旧的说法=新的说法" --author 芝士
+    --replace "旧的说法=新的说法" --author "<你的名字>"
 
 # 3. 交付前验一遍：拒绝全部修订，正文能逐字回到原文档吗
 uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --base 报告.docx
@@ -127,7 +127,7 @@ git show "$(git merge-base HEAD <目标分支>):报告.docx" > 共同起点.docx
 
 # 2. 把你这一轮那几条替换原样再跑一遍，原文换成他那一版
 uv run --with lxml python3 "$SKILL/scripts/office.py" edit 他那一版.docx -o 报告.docx \
-    --replace "旧的说法=新的说法" --author 芝士
+    --replace "旧的说法=新的说法" --author "<你的名字>"
 
 # 3. 验：拒绝掉全部修订，正文要能逐字回到**共同起点**
 uv run --with lxml python3 "$SKILL/scripts/office.py" validate 报告.docx --base 共同起点.docx
