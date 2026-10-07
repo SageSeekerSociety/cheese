@@ -87,6 +87,7 @@ jobs:
           # ports; two runs on one machine would take the same ones.
           echo "E2E_BACKEND_PORT=$((8791 + slot))" >> "$GITHUB_ENV"
           echo "E2E_FRONTEND_PORT=$((3100 + slot))" >> "$GITHUB_ENV"
+          echo "E2E_COMPONENT_PORT=$((3300 + slot))" >> "$GITHUB_ENV"
           echo "E2E_STUB_GATEWAY_PORT=$((4010 + slot))" >> "$GITHUB_ENV"
           echo "E2E_COLLAB_PORT=$((8902 + slot))" >> "$GITHUB_ENV"
           echo "CHEESE_E2E_DB=cheese_e2e_$slot" >> "$GITHUB_ENV"
@@ -131,6 +132,24 @@ jobs:
         with:
           node-version: 22
 
+      # Keep the store outside setup-pnpm, which the setup action deletes each run.
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
+
+      # The browser runs against a production build served by `vite preview`
+      # (playwright.config.ts), not the dev server, which compiled every route
+      # on its first visit. The build needs nothing from the backend steps
+      # below, so it runs alongside them and the wait step joins it.
+      # VITE_API_BASE_URL is baked in at build time, as in production.
+      - name: Start the frontend build
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: /api
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          nohup bash -c 'pnpm exec vite build > "$RUNNER_TEMP/frontend-build.log" 2>&1; echo $? > "$RUNNER_TEMP/frontend-build.status"' > /dev/null 2>&1 &
+
       # Build a fresh venv for this job on the hosted runner's filesystem.
       - name: Point uv at a per-job venv
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
@@ -158,15 +177,17 @@ jobs:
         working-directory: backend
         run: uv run python -m scripts.seed_fusion_demo
 
-      # Keep the store outside setup-pnpm, which the setup action deletes each run.
-
-      - name: Install frontend deps
-        working-directory: frontend
-        run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
-
       - name: Install E2E deps
         working-directory: e2e
         run: pnpm install --frozen-lockfile --store-dir "$HOME/.local/share/pnpm/store"
+
+      - name: Wait for the frontend build
+        timeout-minutes: 5
+        run: |
+          until [ -f "$RUNNER_TEMP/frontend-build.status" ]; do sleep 1; done
+          tail -5 "$RUNNER_TEMP/frontend-build.log"
+          status=$(cat "$RUNNER_TEMP/frontend-build.status")
+          [ "$status" = 0 ] || { cat "$RUNNER_TEMP/frontend-build.log"; exit "$status"; }
 
       # Keep explicit ports aligned with the browser fixture and local runs.
       - name: Run E2E tests

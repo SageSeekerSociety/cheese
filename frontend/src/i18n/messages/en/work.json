@@ -230,7 +230,6 @@
       "invalid": "Unsupported link format",
       "readonly": "Document is read-only"
     },
-    "noTasks": "No tasks",
     "site": {
       "agents": {
         "all": "All",
@@ -1044,7 +1043,8 @@
     },
     "roster": {
       "loadFailed": "Couldn't load members",
-      "count": "No members | 1 member | {count} members",
+      "count": "1 member | {count} members",
+      "empty": "No members",
       "agentBadge": "AI teammate",
       "failed": "Something went wrong",
       "title": "Channel members",
@@ -1272,20 +1272,13 @@
       "archived": "Archived",
       "completed": "Completed"
     },
-    "loadFailed": "Couldn't load",
-    "unknownRoom": "Unknown channel",
-    "noneMine": "No tasks assigned to you",
-    "emptyColumn": "No tasks in {column}",
-    "mineOnly": "Only mine",
-    "openChat": "Open the chat",
     "noAssignee": "No assignee",
-    "queued": "Queued",
-    "running": "Running",
     "made": "What was made",
-    "findPlaceholder": "Find by title (/)",
-    "findLabel": "Find tasks on the board by title",
-    "findNone": "No task titles in this column contain “{text}”",
-    "clearFilter": "Clear filter"
+    "mine": {
+      "discussing": "Ready for you to start",
+      "awaiting_review": "Awaiting your review",
+      "awaiting_answer": "Awaiting your answer"
+    }
   },
   "publishedSite": {
     "revisionChanged": "The project's accepted version changed. Check it, then publish",
@@ -2026,18 +2019,6 @@
     "cloud": "Cloud environment",
     "current": "Used when nothing is chosen"
   },
-  "needsYou": {
-    "changeAlert": "Change alert",
-    "waiting": "Waiting for your answer",
-    "answerFailed": "Couldn't answer",
-    "dismissFailed": "Couldn't dismiss",
-    "feedbackFailed": "Couldn't send feedback",
-    "next": "Next",
-    "open": "Open channel",
-    "dismiss": "Dismiss",
-    "helpful": "Helpful",
-    "notHelpful": "Not helpful"
-  },
   "push": {
     "ask": "This run may take a while. Get notified when it finishes",
     "enable": "Turn on notifications",
@@ -2229,5 +2210,41 @@
     "created": "Created",
     "archive": "Archive channel",
     "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived"
+  },
+  "overview": {
+    "document": "Project overview",
+    "edit": "Edit",
+    "expand": "Show all",
+    "collapse": "Collapse",
+    "noDocument": "No project overview yet",
+    "write": "Write one",
+    "progress": "Recent progress",
+    "progressFailed": "Unable to load recent progress",
+    "noProgress": "No progress in the last two weeks",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "date": "{month}/{day}",
+    "kind": {
+      "created": "New",
+      "started": "Started",
+      "accepted": "Accepted",
+      "completed": "Completed",
+      "closed": "Closed",
+      "returned": "Returned",
+      "stalled": "Stalled",
+      "version": "New version"
+    },
+    "versionOf": "{name} version {version}",
+    "earlier": "Show earlier",
+    "people": "Who is doing what",
+    "allTasks": "All tasks {count}",
+    "nobody": "No tasks in progress",
+    "moreOf": "{count} more"
+  },
+  "projectTasks": {
+    "allChannels": "All channels",
+    "channel": "Channel",
+    "stalled": "Stalled",
+    "stalledNote": "No progress for 14 days or more"
   }
 }

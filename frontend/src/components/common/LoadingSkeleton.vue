@@ -28,14 +28,13 @@ withDefaults(
      * - `chat`   聊天消息行（`RoomMessage` 的 `.im-row`，28px 头像 + 名字 + 一两行正文，全部靠左）
      * - `roster` 名册行（`TopicMembers` 的 `.roster__item`，26px 头像 + 两行字 + 小标）
      * - `entry`  支线进度（`TaskProgress`：一条分组小标 + 若干 55px 的 `.task-row`）
-     * - `card`   看板的卡（`RunningWorkView` 的 `.board-card`，101px 的带框块）
      * - `site`   现场的一条动作（`PanelSite` 的 `.site-act`，8px 圆点 + 动作 + 参数）
      * - `doc`    实况文档的正文（`DocEditor` 的 `.doc-prose`：小标题 + 几段 28.8px 的行）
      * - `feedback` 反馈中心的一条（`FeedbackCard` 的 `.fb-card`：左边支持按钮 + 标题 + 两行摘要 + 元信息一行）
      * - `detail` 反馈详情页整页（`FeedbackDetailPage` 的 `.fb-layout`：标题 + 芯片 + 正文几段 + 右边一栏两格）
      * - `text`   一段正文
      */
-    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'card' | 'site' | 'doc' | 'feedback' | 'detail' | 'text'
+    variant?: 'list' | 'chat' | 'roster' | 'entry' | 'site' | 'doc' | 'feedback' | 'detail' | 'text'
     /** 画几行。默认值按各自最常见的一屏给，调用点通常不用传。 */
     rows?: number
   }>(),
@@ -48,7 +47,6 @@ const DEFAULT_ROWS: Record<string, number> = {
   chat: 4,
   roster: 3,
   entry: 3,
-  card: 2,
   site: 5,
   doc: 3,
   feedback: 6,
@@ -110,24 +108,6 @@ function width(i: number): string {
       </div>
     </template>
 
-    <!-- 看板的卡。这里画的是**一个带框的块**，不是几条灰线：一列卡的轮廓本身就是
-         「这儿有几件事」这个信息，只画线的话到货那一刻整列会重排一次。 -->
-    <template v-else-if="variant === 'card'">
-      <div v-for="i in rows || DEFAULT_ROWS.card" :key="i" class="skel__card" :style="{ '--skel-i': i }">
-        <div class="skel__bone skel__bone--line" :style="{ width: width(i) }" />
-        <div class="skel__card-row">
-          <div class="skel__bone skel__bone--meta" :style="{ width: width(i + 2) }" />
-          <div class="skel__bone skel__bone--pill" />
-        </div>
-        <div class="skel__card-rule" />
-        <div class="skel__card-row">
-          <div class="skel__bone skel__bone--dot skel__bone--dot-flat" />
-          <div class="skel__bone skel__bone--meta skel__bone--phrase" />
-          <div class="skel__bone skel__bone--when" />
-        </div>
-      </div>
-    </template>
-
     <!-- 现场的一条动作：一行里是圆点 + 动词 + 参数。参数那一截照常画——「读了哪
          个文件」「跑了什么命令」是常态，不带参数的工具调用才是例外。时间不画：
          它悬停才出现，画上去就是承诺一个静止时没有的东西。 -->
@@ -152,8 +132,7 @@ function width(i: number): string {
     <!-- 反馈中心的一条（`FeedbackCard` 的 `.fb-card`）：竖着一列 —— 标题、两行摘要、
          底行（头像 + 作者 · 时间 + 标签 + 状态 + 支持）。**左边那一列没有了**：支持按钮
          在卡片上已经挪到底行最右边，骨架左边还留着它的话，真数据到货那一刻整列会重排
-         一次（正文变宽、那颗按钮从左边跳到右下），而这份骨架存在的全部理由就是不重排。
-         它和 `card` 不是一回事：看板的卡没有两行摘要。 -->
+         一次（正文变宽、那颗按钮从左边跳到右下），而这份骨架存在的全部理由就是不重排。 -->
     <template v-else-if="variant === 'feedback'">
       <div v-for="i in rows || DEFAULT_ROWS.feedback" :key="i" class="skel__fb" :style="{ '--skel-i': i }">
         <div class="skel__fb-main">
@@ -413,58 +392,6 @@ function width(i: number): string {
    .task-row 的 55px。 */
 .skel__entry-main .skel__bone--line {
   margin-bottom: 5px;
-}
-
-/* RunningWorkView 的 .board-card：padding 10px、margin-bottom 8px、gap 4px、
-   1px 边框 + --radius-md，白底，坐在 --fill 的泳道里。里面四样东西照着卡自己的顺序来：
-   标题（可两行，这里画一行）/ 房间·队友·负责人 / 一条分隔线 / 状态 + 时间。
-   合计 10+23+4+19+4+7+4+19+10+2 = 102px，真卡 101px。 */
-.skel__card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px;
-  margin-bottom: 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-/* 卡里的标题行盒 22.7px（.t-body 14px × 1.62），比正文默认那根少 1px —— 两张卡
-   叠起来那 1px 就会看出来。 */
-.skel__card > .skel__bone--line {
-  margin-bottom: 5px;
-}
-.skel__card-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-/* .board-card__rule：1px 的线，margin 4px 0 2px。它是真线不是骨头——一条 1px
-   的灰线扫光看不出来，反而会让这一处比真卡多一次闪。 */
-.skel__card-rule {
-  height: 1px;
-  margin: 4px 0 2px;
-  background: var(--line);
-}
-/* .board-card__avatar：18px 的圆。 */
-.skel__bone--pill {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  border-radius: var(--radius-pill);
-}
-/* 状态短语（「等你采纳」「在跑」）占的宽度远短于一行。 */
-.skel__bone--phrase {
-  width: 72px;
-  flex: none;
-}
-/* 右端那个时间：.board-card__when / .site-act__time 都是 11px 的一小截。 */
-.skel__bone--when {
-  width: 40px;
-  height: 10px;
-  flex: none;
-  margin-left: auto;
 }
 
 /* PanelSite 的 .site-log：padding 12px、gap 4px（列）。一条 .site-act 是一行：

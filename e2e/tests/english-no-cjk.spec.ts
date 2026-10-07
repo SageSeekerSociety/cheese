@@ -35,7 +35,8 @@ test.use({ locale: "en-US" });
 // Parallel so CI shards split this file by test rather than handing one shard
 // all of it: each test seeds what it needs, and one CI worker still runs them
 // one at a time.
-test.describe.configure({ mode: "parallel", timeout: 240_000 });
+// 90 s: the workspace sweep, the longest test here, took 39.7 s on CI.
+test.describe.configure({ mode: "parallel", timeout: 90_000 });
 
 type Screen = {
   /** What a reader would call the screen; the failure names it. */
@@ -296,7 +297,7 @@ test.beforeEach(async ({ page }) => {
   await apiLogin(page, "en");
 });
 
-test("workspace: inbox, board, room, accept card, library, project settings", async ({
+test("workspace: inbox, overview, tasks, room, accept card, library, project settings", async ({
   page,
 }) => {
   const { projectId, roomId, taskId } = await seed(page);
@@ -304,9 +305,14 @@ test("workspace: inbox, board, room, accept card, library, project settings", as
   await check(page, [
     { name: "inbox", path: "/inbox" },
     {
-      name: "project board",
-      path: `${project}/running`,
-      ready: visible(".board"),
+      name: "project overview",
+      path: `${project}/overview`,
+      ready: visible('[data-testid="overview-people"]'),
+    },
+    {
+      name: "project tasks",
+      path: `${project}/tasks`,
+      ready: visible('[data-testid="tasks-channel"]'),
     },
     {
       name: "room with platform notices",

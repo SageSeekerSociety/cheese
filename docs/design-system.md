@@ -549,6 +549,7 @@ const { saving, saved, dirty, error, run } = useSaveState({
 
 - 属性：`title`、`desc`、`icon`（给空字符串不画图标）、`action`（一颗 `secondary` 小按钮，点了发 `@action`）、`tone`（`error` 只换图标色）、`align`（`center` / `start`）。动作要别的角色或带图标，放默认插槽。
 - `inline` 不带外边距，由所在那块决定：设置卡片里加 `class="settings-empty"`（只管 16px 24px 内距）。
+- `v-empty-state` 有闸门（`frontend/eslint.config.mjs`）：这一批迁完，全树已经没有一处在用。真要再用，在那一行上面写 `eslint-disable-next-line` 加原因，和 §3.6 一样。
 - 读失败不是空状态，用 §3.10 的 `BaseLoadError`。
 - `AdminEmptyState` 是它的别名（`compact` 布尔值映射成 `size="compact"`），新代码直接用 `BaseEmptyState`。
 
@@ -633,6 +634,7 @@ const { saving, saved, dirty, error, run } = useSaveState({
 | stylelint 颜色规则 | 新增的写死颜色（hex / rgb / hsl / 颜色名），包括文档站的 `docs/site/src/style.css` | `frontend/stylelint.config.cjs` |
 | stylelint 圆角规则 | 不在档位里的 `border-radius` | 同上 |
 | 固定调色板闸门 | 模板和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*` | `.claude/scripts/check-repo-rules.sh` |
+| 组件闸门 | 裸 `<v-btn>`（§3.6）和裸 `<v-empty-state>`（§3.12）；每一处例外都要上一行带原因的 `eslint-disable-next-line`。它只看得见 `.vue` 模板里带前缀的裸标签名，所以 `.ts` 的 `template:` 字符串、`<VDialog>` 这类别名、以及不带原因的 disable 注释都拦不到——那三种情况靠 review | `frontend/eslint.config.mjs` |
 | 存量棘轮 | 以上只拦**新增**；存量冻结在基线里，只能减少 | `frontend/stylelint-baseline.json`、`frontend/palette-baseline.json` |
 
 ```bash

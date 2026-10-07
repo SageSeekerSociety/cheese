@@ -181,6 +181,7 @@ async def redescribe(
     self._notify_merge_result(
         topic,
         say("cardRedescribed", actor=actor),
+        task_id=card.task_id,
         meta=notice(
             EVENT_CARD_REDESCRIBED,
             severity=SEVERITY_INFO,
@@ -521,6 +522,7 @@ async def _override_github_checks(
     self._notify_merge_result(
         topic,
         say("forceMerged", actor=f"<@{decided_by}>", pr=number),
+        task_id=card.task_id,
         meta=notice(
             EVENT_FORCE_MERGED,
             severity=SEVERITY_WARN,

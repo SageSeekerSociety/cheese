@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+
 // 审计行的「查看改动」：before/after 两份字段快照的字段级 diff。
 //
 // 审计区从「谁动了」升级成「动了什么」就靠这一块。三条规定：
@@ -103,7 +105,7 @@ const rows = computed<DiffRow[]>(() => {
 
 <template>
   <div class="aadiff">
-    <p v-if="!rows.length" class="aadiff__empty t-meta-read">{{ t('models.audit.diff.empty') }}</p>
+    <BaseEmptyState v-if="!rows.length" size="inline" :title="t('models.audit.diff.empty')" />
     <ul v-else class="aadiff__rows">
       <li v-for="row in rows" :key="row.field" class="aadiff__row">
         <span class="aadiff__field">{{ row.label }}</span>
@@ -127,11 +129,6 @@ const rows = computed<DiffRow[]>(() => {
 <style scoped>
 .aadiff {
   padding: 4px 0 2px;
-}
-
-.aadiff__empty {
-  margin: 0;
-  color: var(--muted);
 }
 
 .aadiff__rows {

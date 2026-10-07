@@ -261,7 +261,7 @@ class S3StorageBackend(StorageBackend):
 
     async def presign(self, key: str, operation: str, expires_s: int) -> str:
         """A URL that lets whoever holds it do one thing to one object for a
-        while (``get_object`` or ``put_object``), with no credential of ours:
+        while (``get_object``), with no credential of ours:
         a machine that moves a large file to or from the bucket is handed this
         rather than the key, and the bytes do not pass through the backend."""
         async with self._get_client() as client:
@@ -271,9 +271,78 @@ class S3StorageBackend(StorageBackend):
                 ExpiresIn=expires_s,
             )
 
+    async def multipart_upload(self, key: str, content_type: str) -> str:
+        """The id of the multipart upload in progress to ``key``, started if
+        there is none: whoever comes back to an object it was sending goes on
+        with the parts the bucket already holds. Of several, the one listed
+        first, so that two callers settle on the same one."""
+        async with self._get_client() as client:
+            listed = await client.list_multipart_uploads(
+                Bucket=self._bucket, Prefix=key
+            )
+            for upload in listed.get("Uploads", []):
+                if upload["Key"] == key:
+                    return str(upload["UploadId"])
+            started = await client.create_multipart_upload(
+                Bucket=self._bucket, Key=key, ContentType=content_type
+            )
+            return str(started["UploadId"])
+
+    async def presign_parts(
+        self, key: str, upload_id: str, count: int, expires_s: int
+    ) -> list[str]:
+        """URLs to PUT parts 1 to ``count`` of ``upload_id`` with, as
+        ``presign`` is for a whole object: each part is signed on its own."""
+        async with self._get_client() as client:
+            return [
+                await client.generate_presigned_url(
+                    "upload_part",
+                    Params={
+                        "Bucket": self._bucket,
+                        "Key": key,
+                        "UploadId": upload_id,
+                        "PartNumber": number,
+                    },
+                    ExpiresIn=expires_s,
+                )
+                for number in range(1, count + 1)
+            ]
+
+    async def complete_multipart(
+        self, key: str, upload_id: str, etags: list[str]
+    ) -> None:
+        """Join the parts, in order, given each part's ETag as the bucket
+        answered it."""
+        async with self._get_client() as client:
+            await client.complete_multipart_upload(
+                Bucket=self._bucket,
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={
+                    "Parts": [
+                        {"PartNumber": number, "ETag": etag}
+                        for number, etag in enumerate(etags, start=1)
+                    ]
+                },
+            )
+
+    async def abort_multipart(self, key: str) -> None:
+        """Drop every unfinished upload to ``key`` and the parts it holds."""
+        async with self._get_client() as client:
+            listed = await client.list_multipart_uploads(
+                Bucket=self._bucket, Prefix=key
+            )
+            for upload in listed.get("Uploads", []):
+                if upload["Key"] == key:
+                    await client.abort_multipart_upload(
+                        Bucket=self._bucket, Key=key, UploadId=upload["UploadId"]
+                    )
+
     async def stat(self, key: str) -> tuple[int, str] | None:
         """The object's size and ETag, or None for an object that is not there.
-        An object written in one PUT has its bytes' MD5 as ETag."""
+        An object written in one PUT has its bytes' MD5 as ETag; one joined from
+        parts, the MD5 of its parts' MD5s and ``-`` the number of parts
+        (``multipart_etag``)."""
         async with self._get_client() as client:
             try:
                 head = await client.head_object(Bucket=self._bucket, Key=key)
@@ -289,6 +358,12 @@ class S3StorageBackend(StorageBackend):
         if self._endpoint_url:
             return f"{self._endpoint_url}/{self._bucket}/{key}"
         return f"https://{self._bucket}.s3.{self._region}.amazonaws.com/{key}"
+
+
+def multipart_etag(part_md5s: list[str]) -> str:
+    """The ETag S3 and R2 give an object joined from parts with these MD5s."""
+    joined = b"".join(bytes.fromhex(md5) for md5 in part_md5s)
+    return f"{hashlib.md5(joined).hexdigest()}-{len(part_md5s)}"  # noqa: S324
 
 
 def generate_storage_key(filename: str, prefix: str = "uploads") -> str:

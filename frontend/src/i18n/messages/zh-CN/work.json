@@ -230,7 +230,6 @@
       "invalid": "链接格式不受支持",
       "readonly": "当前文档只读"
     },
-    "noTasks": "暂无任务",
     "site": {
       "agents": {
         "all": "全部",
@@ -1045,6 +1044,7 @@
     "roster": {
       "loadFailed": "加载成员失败",
       "count": "{count} 位",
+      "empty": "暂无成员",
       "agentBadge": "AI 队友",
       "failed": "操作失败",
       "title": "频道成员",
@@ -1272,20 +1272,13 @@
       "archived": "已归档",
       "completed": "已完成"
     },
-    "loadFailed": "加载失败",
-    "unknownRoom": "未知频道",
-    "noneMine": "暂无分配给你的任务",
-    "emptyColumn": "暂无{column}的任务",
-    "mineOnly": "只看我的",
-    "openChat": "进入对话",
     "noAssignee": "暂无负责人",
-    "queued": "排队中",
-    "running": "正在运行",
     "made": "做出了什么",
-    "findPlaceholder": "按标题找（/）",
-    "findLabel": "在看板上按标题找",
-    "findNone": "这一列没有标题含「{text}」的任务",
-    "clearFilter": "清除筛选"
+    "mine": {
+      "discussing": "待你开始",
+      "awaiting_review": "待你审阅",
+      "awaiting_answer": "待你回答"
+    }
   },
   "publishedSite": {
     "revisionChanged": "项目已采纳的版本变了，确认之后再发布",
@@ -2026,18 +2019,6 @@
     "cloud": "云端环境",
     "current": "没有选择时落在这里"
   },
-  "needsYou": {
-    "changeAlert": "变更提醒",
-    "waiting": "等你回答",
-    "answerFailed": "未能答复",
-    "dismissFailed": "未能收起",
-    "feedbackFailed": "未能提交反馈",
-    "next": "下一条",
-    "open": "去频道",
-    "dismiss": "收起",
-    "helpful": "有帮助",
-    "notHelpful": "没帮助"
-  },
   "push": {
     "ask": "这次运行时间可能较长，完成后通知你",
     "enable": "开启通知",
@@ -2229,5 +2210,41 @@
     "created": "创建时间",
     "archive": "归档频道",
     "archiveHint": "归档后不能发送消息，历史消息仍可查看和搜索。有进行中的任务时不能归档"
+  },
+  "overview": {
+    "document": "项目总览",
+    "edit": "编辑",
+    "expand": "展开全文",
+    "collapse": "收起",
+    "noDocument": "暂无项目总览",
+    "write": "写一份",
+    "progress": "最近进展",
+    "progressFailed": "无法读取最近进展",
+    "noProgress": "最近两周暂无进展",
+    "today": "今天",
+    "yesterday": "昨天",
+    "date": "{month} 月 {day} 日",
+    "kind": {
+      "created": "新建",
+      "started": "开始",
+      "accepted": "采纳",
+      "completed": "完成",
+      "closed": "关闭",
+      "returned": "退回",
+      "stalled": "停滞",
+      "version": "新版本"
+    },
+    "versionOf": "{name} 第 {version} 版",
+    "earlier": "查看更早",
+    "people": "谁在做什么",
+    "allTasks": "全部任务 {count}",
+    "nobody": "暂无进行中的任务",
+    "moreOf": "其余 {count} 个"
+  },
+  "projectTasks": {
+    "allChannels": "所有频道",
+    "channel": "频道",
+    "stalled": "已停滞",
+    "stalledNote": "14 天以上没有进展"
   }
 }

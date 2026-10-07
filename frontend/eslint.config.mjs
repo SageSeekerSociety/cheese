@@ -83,12 +83,21 @@ export default [
         {
           selector: 'VAttribute[directive=false][key.name="autocomplete"][value.value=/^(on|)$/]',
           message: 'Choose a specific autocomplete purpose or off; on leaves the field meaning ambiguous.',
-        },        {
+        },
+        {
           // docs/design-system.md §3.6. Deliberate exceptions carry an
           // eslint-disable-next-line with the reason next to them.
           selector: 'VElement[rawName="v-btn"]',
           message:
             'Use BaseButton (src/components/base/BaseButton.vue, docs/design-system.md §3.6): pick a kind and a size instead of variant/color.',
+        },
+        {
+          // docs/design-system.md §3.12. The tree has no raw v-empty-state left
+          // after the empty-state pass; a new one needs an eslint-disable-next-line
+          // naming why BaseEmptyState's three sizes do not fit.
+          selector: 'VElement[rawName="v-empty-state"]',
+          message:
+            'Use BaseEmptyState (src/components/base/BaseEmptyState.vue, docs/design-system.md §3.12): pick size page/compact/inline instead of Vuetify empty-state props.',
         },
       ],
     },

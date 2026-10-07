@@ -3,7 +3,7 @@ several products without forking it.
 
 **Why this exists.** The platform has exactly one entry today: everybody who
 opens any project gets the same interface, and the desktop first screen is
-always 看板. 办公 and 课程 are the same base with a different 壳, and this module
+always 总览. 办公 and 课程 are the same base with a different 壳, and this module
 is the shared ground they stand on.
 
 **A 壳 may only open, close, reorder and rename. It may never add a capability,
@@ -69,17 +69,17 @@ class Shell:
     terms: dict[str, str] = field(default_factory=dict)
 
 
-#: 现状, verbatim: the desktop first screen is 看板 and both app-level lists are in
+#: 现状, verbatim: the desktop first screen is 总览 and both app-level lists are in
 #: their existing order. A project that declares no 壳 must be indistinguishable
 #: from today, screen by screen — that equality is the acceptance test for this
 #: whole mechanism, which is why this declaration is edited whenever 「today」
-#: moves upstream. The bar under the project name holds only 看板 (the `home`)
+#: moves upstream. The bar under the project name holds only 总览 (the `home`)
 #: and 资料库, a rule the frontend keeps (`PROJECT_BAR_PAGES`); every other page
 #: is in the menu the project name opens, in the order `nav.project` gives.
 #: 成员 comes first there because 「退出项目」 lives on that page.
 _DEFAULT = Shell(
     name=DEFAULT_SHELL_NAME,
-    home="workspace-running",
+    home="workspace-overview",
     nav=Nav(
         rail=("home", "projects", "add"),
         tabs=("home", "workspace", "inbox"),
@@ -95,14 +95,14 @@ _DEFAULT = Shell(
 #: 办公: a project is a 工作, a topic is an 议题, and the day starts in 工作区.
 _WORKBENCH = Shell(
     name="workbench",
-    home="workspace-running",
+    home="workspace-overview",
     nav=Nav(
         rail=("home", "projects", "add"),
         tabs=("workspace", "home", "inbox"),
         project=(
             "project-library",
             "project-routines",
-            "workspace-running",
+            "project-tasks",
             "project-members",
             "project-skills",
         ),
@@ -110,37 +110,37 @@ _WORKBENCH = Shell(
     terms={"project": "工作", "topic": "议题"},
 )
 
-#: 课程 (成员): first screen is 看板 for now — the course template's real first
+#: 课程 (成员): first screen is 总览 for now — the course template's real first
 #: screen (本周任务, or the 助教 conversation in an 答疑 course) is a page this
 #: build does not have yet, and `home` may only name a route that exists. When
 #: that page lands, this one line moves and nothing else does. 提问 is the noun
 #: students are actually taught, so 话题 reads as 提问 here.
 _COURSE_STUDENT = Shell(
     name="course-student",
-    home="workspace-running",
+    home="workspace-overview",
     nav=Nav(
         rail=("home", "projects", "add"),
         tabs=("workspace", "inbox", "home"),
         project=(
             "project-library",
             "project-members",
-            "workspace-running",
+            "project-tasks",
             "project-routines",
         ),
     ),
     terms={"project": "课程", "topic": "提问"},
 )
 
-#: 课程 (管理员): the board first — a teacher's question is 「这个班现在有什么在等
-#: 我」, which is exactly the column the board sorts by. 名册 second.
+#: 课程 (管理员): 全部任务 first in the menu — a teacher's question is 「这个班现在
+#: 有什么在等我」, which is the first group that list shows. 名册 second.
 _COURSE_TEACHER = Shell(
     name="course-teacher",
-    home="workspace-running",
+    home="workspace-overview",
     nav=Nav(
         rail=("home", "projects", "add"),
         tabs=("workspace", "inbox", "home"),
         project=(
-            "workspace-running",
+            "project-tasks",
             "project-members",
             "project-routines",
         ),
