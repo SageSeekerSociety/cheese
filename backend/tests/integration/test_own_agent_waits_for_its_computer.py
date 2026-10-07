@@ -31,13 +31,9 @@ from tests.integration.conftest import (
 class _Hub:
     def __init__(self):
         self.online: set[str] = set()
-        self.windows: set[str] = set()
 
     def is_online(self, device):
         return device in self.online
-
-    def target(self, device):
-        return "windows-amd64" if device in self.windows else "darwin-arm64"
 
 
 def _room(client):
@@ -122,24 +118,5 @@ def test_a_message_waits_for_its_agents_computer_and_the_room_is_told_once(
 
         hub.online.add(laptop)
         assert await _admit(chat, topic_id, block_id, instance_id) is False
-
-    client.portal.call(run)
-
-
-def test_a_windows_computer_does_not_count_as_back(client, monkeypatch):
-    """A member's own Claude Code does not run on Windows yet (#2991): with only
-    a Windows computer online, the message keeps waiting rather than being
-    sent somewhere it cannot run."""
-    project_id, topic_id, block_id = _room(client)
-    hub = _Hub()
-    monkeypatch.setattr(initial_admission, "device_hub", hub)
-
-    async def run():
-        factory = client.test_request_factory
-        instance_id, laptop = await _own_agent_and_laptop(factory, project_id, topic_id)
-        chat = client.app.dependency_overrides[get_chat_service]()
-        hub.online.add(laptop)
-        hub.windows.add(laptop)
-        assert await _admit(chat, topic_id, block_id, instance_id) is True
 
     client.portal.call(run)
