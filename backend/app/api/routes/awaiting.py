@@ -261,24 +261,24 @@ async def waiting_items(
             )
         )
 
-    # 写给他、还没了结的通知：芝士请他拍板还没拍的，和芝士说了改了什么他还没读的。两种
-    # 都记在频道上（`alerts.create_notification` 把任务、支线都折成它们所在的频道）；
-    # 看不见的、归档了的频道里的不算。
+    # 写给他、还没了结的通知：芝士请他拍板还没拍的，和芝士说了改了什么他还没读的。
+    # 指向频道的记在频道上（`alerts.create_notification` 把任务、支线都折成它们所在
+    # 的频道），看不见的、归档了的频道里的不算；不指向哪个频道的，记在项目上。
     for alert in await ProjectNotificationService(db).still_open(
         project_ids, recipient_handle=handle
     ):
         room = rooms.get(alert.topic_id) if alert.topic_id else None
-        if room is None:
+        if alert.project_id is None or (alert.topic_id and room is None):
             continue
         decision = asks_for_decision(alert)
         listed = (alert.metadata_payload or {}).get("options") if decision else None
         options = listed or []
         items.append(
             awaiting.WaitingItem(
-                project_id=room.project_id,
-                project_name=names.get(room.project_id, ""),
-                topic_id=room.id,
-                topic_title=room.title,
+                project_id=alert.project_id,
+                project_name=names.get(alert.project_id, ""),
+                topic_id=room.id if room else None,
+                topic_title=room.title if room else "",
                 task_id=None,
                 task_title=None,
                 task_title_source=None,

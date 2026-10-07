@@ -38,7 +38,8 @@ class WaitingItem:
 
     project_id: uuid.UUID
     project_name: str
-    topic_id: uuid.UUID
+    #: 在哪个频道。来自通知的那几件可以不指向频道，那时是 None，标题空着。
+    topic_id: uuid.UUID | None
     topic_title: str
     #: 这是房间自己的事（None），还是房间里某一条活的事。
     task_id: uuid.UUID | None
@@ -67,7 +68,7 @@ class WaitingItem:
         return {
             "projectId": str(self.project_id),
             "projectName": self.project_name,
-            "topicId": str(self.topic_id),
+            "topicId": None if self.topic_id is None else str(self.topic_id),
             "topicTitle": self.topic_title,
             "taskId": None if self.task_id is None else str(self.task_id),
             "taskTitle": self.task_title,

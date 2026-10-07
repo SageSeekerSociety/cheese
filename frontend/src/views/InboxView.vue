@@ -5,7 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
-import { listAwaitingMe, markRead, resolveAlert } from '@/api'
+import { listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -104,6 +104,8 @@ function linkTo(item: WaitingItem) {
       query,
     }
   }
+  // 不指向哪个频道的通知，打开它所在项目的总览。
+  if (!item.topicId) return { name: 'workspace-overview', params: { projectId: item.projectId } }
   return { name: 'workspace-topic', params: { projectId: item.projectId, topicId: item.topicId }, query }
 }
 
@@ -135,6 +137,22 @@ async function settle(item: WaitingItem, send: (alertId: number) => Promise<unkn
 }
 const decide = (item: WaitingItem, chosen: string) => settle(item, (id) => resolveAlert(id, chosen))
 const dismiss = (item: WaitingItem) => settle(item, markRead)
+
+// 一个项目里攒了好几条变更提醒时，一下全部标为已读，不用一条一条点。
+const unreadIn = (group: { items: WaitingItem[] }) => group.items.filter((item) => item.reason === 'read').length
+const clearing = ref<string | null>(null)
+async function dismissAll(projectId: string) {
+  clearing.value = projectId
+  actionError.value = ''
+  try {
+    await markAllAlertsRead(projectId)
+    items.value = items.value.filter((item) => item.projectId !== projectId || item.reason !== 'read')
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : t('home.inbox.actionFailed')
+  } finally {
+    clearing.value = null
+  }
+}
 </script>
 
 <template>
@@ -203,10 +221,20 @@ const dismiss = (item: WaitingItem) => settle(item, markRead)
     <template v-else>
       <p v-if="actionError" role="alert" class="inbox__error t-meta">{{ actionError }}</p>
       <section v-for="group in byProject" :key="group.projectId" class="inbox__project">
-        <h3 class="inbox__project-name">
-          <span data-user-content>{{ group.projectName }}</span>
-          <span class="inbox__count">{{ group.items.length }}</span>
-        </h3>
+        <div class="inbox__project-head">
+          <h3 class="inbox__project-name">
+            <span data-user-content>{{ group.projectName }}</span>
+            <span class="inbox__count">{{ group.items.length }}</span>
+          </h3>
+          <BaseButton
+            v-if="unreadIn(group) > 1"
+            size="sm"
+            :loading="clearing === group.projectId"
+            @click="dismissAll(group.projectId)"
+          >
+            {{ t('home.inbox.markAllRead') }}
+          </BaseButton>
+        </div>
         <ul class="inbox__list">
           <li
             v-for="item in group.items"
@@ -223,9 +251,10 @@ const dismiss = (item: WaitingItem) => settle(item, markRead)
                 }}</span>
               </span>
               <span v-if="item.detail" class="inbox-item__detail t-body" data-user-content>{{ item.detail }}</span>
-              <span class="inbox-item__where" :data-user-content="item.topicTitle || undefined">
+              <span v-if="item.topicId" class="inbox-item__where" :data-user-content="item.topicTitle || undefined">
                 # {{ topicTitle({ title: item.topicTitle }) }} · {{ relTime(item.at) }}
               </span>
+              <span v-else class="inbox-item__where">{{ relTime(item.at) }}</span>
             </NavLink>
             <div v-if="item.reason === 'decide' && item.options?.length" class="inbox-item__options">
               <BaseButton
@@ -338,10 +367,17 @@ const dismiss = (item: WaitingItem) => settle(item, markRead)
 .inbox__project {
   margin-bottom: 24px;
 }
+.inbox__project-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 4px 4px;
+  border-bottom: 1px solid var(--line-2);
+}
 .inbox__project-name {
   margin: 0;
-  padding: 0 4px 8px;
-  border-bottom: 1px solid var(--line-2);
   font-size: 13px;
   line-height: var(--lh-13);
   font-weight: 600;

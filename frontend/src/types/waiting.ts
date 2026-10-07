@@ -9,7 +9,8 @@ import type { BoardPhrase } from '../cx_types'
 export interface WaitingItem {
   projectId: string
   projectName: string
-  topicId: string
+  /** 在哪个频道；来自通知、不指向频道的那几件没有。 */
+  topicId: string | null
   topicTitle: string
   taskId: string | null
   taskTitle: string | null

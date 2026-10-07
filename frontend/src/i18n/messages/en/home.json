@@ -15,7 +15,8 @@
       "read": "Change alert"
     },
     "markRead": "Mark as read",
-    "actionFailed": "Something went wrong"
+    "actionFailed": "Something went wrong",
+    "markAllRead": "Mark all as read"
   },
   "nav": {
     "teamProjects": "Projects",

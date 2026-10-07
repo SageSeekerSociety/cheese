@@ -163,7 +163,7 @@ def test_a_change_alert_waits_until_i_read_it(client):
     project = _project(client)
     channel = _channel(client, project)
 
-    def alert(level: str, title: str) -> dict:
+    def alert(level: str, title: str, topic: str | None) -> dict:
         r = client.post(
             f"/projects/{project}/alerts",
             json={
@@ -172,23 +172,30 @@ def test_a_change_alert_waits_until_i_read_it(client):
                 "title": title,
                 "body": "报名表单少了两个字段",
                 "target_handle": "alice",
-                "topic_id": channel,
+                "topic_id": topic,
             },
         )
         assert r.status_code == 200, r.text
         return r.json()["data"]["data"][0]
 
-    told = alert("light", "报名表单改了")
-    alert("silent", "只记一笔")
+    told = alert("light", "报名表单改了", channel)
+    alert("silent", "只记一笔", channel)
+    nowhere = alert("light", "依赖升级了", None)
 
-    (item,) = _mine(client, "alice")
-    assert item["reason"] == "read"
-    assert item["topicId"] == channel
-    assert item["headline"] == "报名表单改了"
-    assert item["options"] == []
+    by_title = {item["headline"]: item for item in _mine(client, "alice")}
+    assert set(by_title) == {"报名表单改了", "依赖升级了"}
+    assert by_title["报名表单改了"]["reason"] == "read"
+    assert by_title["报名表单改了"]["topicId"] == channel
+    assert by_title["报名表单改了"]["options"] == []
+    # 不指向哪个频道的也在：记在项目上。
+    assert by_title["依赖升级了"]["topicId"] is None
+    assert by_title["依赖升级了"]["projectId"] == project
 
-    r = client.post(f"/alerts/{told['id']}/read", headers=session_auth_headers("alice"))
-    assert r.status_code == 200, r.text
+    for row in (told, nowhere):
+        r = client.post(
+            f"/alerts/{row['id']}/read", headers=session_auth_headers("alice")
+        )
+        assert r.status_code == 200, r.text
     assert _mine(client, "alice") == []
 
 

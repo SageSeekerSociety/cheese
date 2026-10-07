@@ -15,7 +15,8 @@
       "read": "变更提醒"
     },
     "markRead": "标为已读",
-    "actionFailed": "操作失败"
+    "actionFailed": "操作失败",
+    "markAllRead": "全部标为已读"
   },
   "nav": {
     "teamProjects": "项目",
