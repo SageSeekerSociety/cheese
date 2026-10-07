@@ -13,7 +13,6 @@
     "src/components/common/VersionBadge.vue": 1,
     "src/components/DeviceLiveViewer.vue": 1,
     "src/components/DeviceSessionsSwitch.vue": 1,
-    "src/components/LeaveProjectDialog.vue": 1,
     "src/components/NeedsYou.vue": 1,
     "src/components/NodeBoard.vue": 1,
     "src/components/ProjectComputeSettings.vue": 1,
@@ -24,12 +23,10 @@
     "src/components/PublishedSite.vue": 1,
     "src/components/PushPermissionPrompt.vue": 1,
     "src/components/room/composables/useRoomSocket.ts": 1,
-    "src/components/settings/AgentTeamSettings.vue": 1,
     "src/components/tasks/TaskSubmissionHistory.vue": 1,
     "src/components/TopicComputePicker.vue": 1,
     "src/components/TopicHeader.vue": 1,
     "src/components/TopicMembers.vue": 1,
-    "src/components/TransferProjectDialog.vue": 1,
     "src/components/WorkPanel.vue": 1
   }
 }

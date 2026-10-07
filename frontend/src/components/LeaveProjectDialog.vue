@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 「退出项目」的确认框，从成员页打开。「点了之后发生什么」只有这一份：确认、
-// DELETE /projects/{id}/membership、刷新名册和项目列表、离开这个项目。
-import { computed, ref, watch } from 'vue'
+// 「退出项目」的确认框，从成员页打开。「点了之后发生什么」只有这一份：
+// `useLeaveProject`（确认、DELETE /projects/{id}/membership、刷新名册和项目列表、
+// 离开这个项目），名册读在 `useProjectMembers`。
+import { computed, watch } from 'vue'
 
-import { useNavigation } from '@/composables/useNavigation'
+import { useLeaveProject } from '@/composables/useLeaveProject'
+import { useProjectMembers } from '@/composables/useProjectMembers'
 
-import { leaveProject, listProjectMembers } from '@/api'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
@@ -14,7 +15,6 @@ import { useWorkspaceStore } from '@/stores/workspace'
 const props = defineProps<{ projectId: string }>()
 const open = defineModel<boolean>({ required: true })
 
-const navigation = useNavigation()
 const store = useWorkspaceStore()
 
 // 「退出的是项目不是团队」只对随团队进来的人成立：被邀请进来的外部成员、自己名下
@@ -22,17 +22,18 @@ const store = useWorkspaceStore()
 //
 // 读的是**要退的那个项目**的名册：从 rail 右键退的可能不是正开着的这个，store 里那份
 // 名册是正开着那个的。不是同一个就打开时读一次；读到之前、读不到，都按不提团队说。
-const otherRoster = ref<{ user_handle: string; source?: string }[] | null>(null)
-const roster = computed(() => (props.projectId === store.projectId ? store.members : otherRoster.value ?? []))
+const { rows: otherRoster, load: loadOtherRoster, reset: resetOtherRoster } = useProjectMembers(() => props.projectId)
+const roster = computed(() => (props.projectId === store.projectId ? store.members : otherRoster.value))
 const viaTeam = computed(() => roster.value.find((member) => member.user_handle === myHandle())?.source === 'team')
 watch(
   [open, () => props.projectId],
   async ([isOpen, projectId]) => {
     if (!isOpen || projectId === store.projectId) return
-    otherRoster.value = null
+    // 打开时先退回「还不知道」：上一次那一份措辞不该顶到这一次读回来。
+    resetOtherRoster()
     try {
-      const rows = (await listProjectMembers(projectId)).data
-      if (props.projectId === projectId) otherRoster.value = rows
+      // 回来时项目已经换了，这一份就不写进去（在 composable 里判）。
+      await loadOtherRoster()
     } catch {
       // 只是确认框里的一句措辞，读不到就用不提团队的那一句。
     }
@@ -40,36 +41,14 @@ watch(
   { immediate: true }
 )
 
-const leaving = ref(false)
-const error = ref<string | null>(null)
+const { leaving, error, leave, clearError } = useLeaveProject(() => props.projectId)
 watch(open, (v) => {
-  if (v) error.value = null
+  if (v) clearError()
 })
 
 async function confirmLeave() {
-  leaving.value = true
-  error.value = null
-  try {
-    await leaveProject(props.projectId)
-  } catch (e) {
-    // 只有退出本身失败才算是失败。拒绝的理由（需要先转让、还是某个话题唯一的 owner）
-    // 就是用户要的全部内容，原样留在弹窗里 —— 弹窗不关：人还没退成，「取消」仍然有
-    // 意义，而那句话正是他要的下一步。
-    error.value = e instanceof Error ? e.message : t('project.leave.failed')
-    leaving.value = false
-    return
-  }
-  open.value = false
-  // 退出的那一刻，这条请求已经成功了：**接下来做什么都不能再把它变成失败**。
-  // 两份刷新是为了让别的页面不拿着旧数据把我送回这个项目（名册里没有我了，项目
-  // 列表里也没有这个项目了），但它们是锦上添花 —— 刷新接口抖一下，用 allSettled
-  // 让失败就地咽掉，人照样是退出成功的，照样该离开。用 Promise.all 的话一次刷新
-  // 失败会走到 catch 里，挂出「退出失败」，而人其实已经退掉了 —— 他再点一次只会
-  // 拿到 409。
-  await Promise.allSettled([store.refreshMembers(), store.refreshProjects()])
-  // replace：退出成功后再按回退键，人不该又落回这个项目 —— 名册里已经没有他了。
-  navigation?.navigate({ name: 'HomeSpaces' }, { replace: true })
-  leaving.value = false
+  // 成了就收掉确认框（刷新和跳转在背后做）；被拒就不关，理由留在框里。
+  if (await leave()) open.value = false
 }
 </script>
 
