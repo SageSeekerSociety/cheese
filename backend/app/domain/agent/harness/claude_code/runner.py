@@ -28,6 +28,7 @@ import asyncio
 import contextlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -41,6 +42,10 @@ from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL
 from app.domain.agent.harness.driven import runner
+
+if sys.platform == "win32":
+    # Shipped at the archive's root (`driven/bundle.py`).
+    import portable
 from app.domain.memory.files import (
     INDEX_NAME,
     MEMORY_ROOT,
@@ -159,6 +164,34 @@ def sessions_on(config_dir: Path, agent_handle: str | None) -> list[int]:
         if marker in detail.split() and owner in detail.split():
             found.append(int(pid))
     return found
+
+
+#: Where a runner on Windows names the agent it started: there a process's
+#: environment cannot be read, so `sessions_on` has nothing to find it by.
+AGENT_FILE = "agent.json"
+
+
+def remember_agent(state: Path, pid: int) -> None:
+    """Name the agent this runner started, for the next runner here (Windows)."""
+    assert sys.platform == "win32"
+    started = portable.created(pid)
+    (state / AGENT_FILE).write_text(json.dumps({"pid": pid, "started": started}))
+
+
+def end_left_agent(state: Path) -> None:
+    """End the agent an earlier runner here started and left running: a runner
+    on Windows that dies does not take its children with it (Windows)."""
+    assert sys.platform == "win32"
+    try:
+        left = json.loads((state / AGENT_FILE).read_text())
+    except (OSError, ValueError):
+        return
+    pid, started = left["pid"], left.get("started")
+    pids = portable.tree([(pid, started)])
+    if portable.created(pid) != started:
+        # The pid names a later process now; only what the agent left counts.
+        pids = [p for p in pids if p != pid]
+    portable.terminate(pids)
 
 
 def end(pids: list[int]) -> None:
@@ -405,7 +438,10 @@ class Runner(runner.Runner[Journal]):
         self.claim()
         self.config_dir = Path(env["CLAUDE_CONFIG_DIR"])
         self.execution = env.get("CHEESE_EXECUTION_CONFIG")
-        end(sessions_on(self.config_dir, agent_handle))
+        if sys.platform == "win32":
+            end_left_agent(self.state)
+        else:
+            end(sessions_on(self.config_dir, agent_handle))
         saved = self.journal.recall("session_id")
         failed = self.journal.recall("resume_failed")
         resumed = next(
@@ -442,7 +478,8 @@ class Runner(runner.Runner[Journal]):
         self.errors_from = self.errors.tell()
         self.launched_at = time.monotonic()
         self.process = await asyncio.create_subprocess_exec(
-            "sh",
+            # CreateProcess looks in System32 before PATH; Git Bash's sh is on PATH.
+            shutil.which("sh") or "sh" if sys.platform == "win32" else "sh",
             "-c",
             f"exec {command} {flag}",
             # The session's own helpers reach this runner here, to change the
@@ -452,8 +489,12 @@ class Runner(runner.Runner[Journal]):
             stdout=asyncio.subprocess.PIPE,
             stderr=self.errors,
             limit=LINE_LIMIT,
-            start_new_session=True,
+            # A session of its own, so ending it ends what it started; Windows
+            # has none and ends the tree instead (`end_left_agent`, procscreen).
+            start_new_session=sys.platform != "win32",
         )
+        if sys.platform == "win32":
+            remember_agent(self.state, self.process.pid)
         self.listener = asyncio.create_task(self._read())
         self.helpers = [
             asyncio.create_task(self._tail()),

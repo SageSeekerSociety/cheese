@@ -25,7 +25,6 @@ const props = defineProps<{
   deviceName: string
   teams: MyTeam[]
   teamIds: number[]
-  claudeCodeHere: boolean
   claudeLoggedIn: boolean
   claudePlan: string | null
   claudeState: 'idle' | 'preparing' | 'browser'
@@ -187,7 +186,7 @@ function failedAt(f: ConnectFailure) {
         <div class="flow__hint">{{ t('account.thisDevice.teamsHint') }}</div>
         <DeviceTeamsPicker :teams="teams" :model-value="teamIds" @update:model-value="(ids) => emit('teams', ids)" />
       </div>
-      <div v-if="claudeCodeHere" class="flow__section flow__section--line">
+      <div class="flow__section flow__section--line">
         <div class="flow__label">Claude Code</div>
         <ClaudeCodeLogin
           :logged-in="claudeLoggedIn"

@@ -49,7 +49,6 @@ function mount(stage: 'ask' | 'progress' | 'done') {
     deviceName: 'MacBook Air',
     teams: [],
     teamIds: [],
-    claudeCodeHere: true,
     claudeLoggedIn: false,
     claudePlan: null,
     claudeState: 'idle' as const,

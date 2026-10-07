@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import types
 from importlib.metadata import distribution
 from pathlib import Path
@@ -69,6 +70,10 @@ def sources():
         name: (directory / name).read_text()
         for name in (
             "client.py",
+            "shell_stop.py",
+            # Windows' locks, process trees and detached starts, which the two
+            # above load from beside them there.
+            "portable.py",
             "proxy.js",
             "private.py",
             "runtime.py",
@@ -318,10 +323,17 @@ class _Locked:
         self.path = Path(directory) / "skills.lock"
 
     def __enter__(self):
-        import fcntl
-
         self.stream = self.path.open("a")
-        fcntl.flock(self.stream, fcntl.LOCK_EX)
+        if sys.platform == "win32":
+            import runpy
+
+            # The Windows lock shipped beside this file, as runtime.py loads it.
+            portable = runpy.run_path(str(Path(__file__).with_name("portable.py")))
+            portable["lock"](self.stream)
+        else:
+            import fcntl
+
+            fcntl.flock(self.stream, fcntl.LOCK_EX)
 
     def __exit__(self, *_):
         self.stream.close()

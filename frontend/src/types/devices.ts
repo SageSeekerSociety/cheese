@@ -4,3 +4,8 @@ import type { MyDevice } from '@/cx_types'
 export function lastSeenOf(device: MyDevice): string | null {
   return (device as MyDevice & { last_seen_at?: string | null }).last_seen_at ?? null
 }
+
+/** 这台设备的系统（`windows`、`darwin`、`linux`），它的连接程序上次说的；没连上过时为 null。 */
+export function systemOf(device: MyDevice): string | null {
+  return (device as MyDevice & { system?: string | null }).system ?? null
+}

@@ -95,9 +95,12 @@ slug: use-your-computer
 
 这一节讲怎么让你电脑上的 Claude Code 用你自己的账号在项目里干活。它和芝士并列，是你个人的 AI 队友，名字是「<你的昵称>的 Claude Code」。
 
-开始前，这台电脑要已经接入知是（见[接入电脑](#connect)），系统是 macOS 或 Linux，并且你有 Claude 订阅或 Anthropic API key。Windows 暂不支持。
+开始前，这台电脑要已经接入知是（见[接入电脑](#connect)），并且你有 Claude 订阅或 Anthropic API key。
 
-1. 在桌面端打开「设置 → 这台设备」，点「登录 Claude Code」；用 API key 的点「使用 API key」。没有桌面端的电脑，在终端里运行 `~/.local/bin/cheesehost claude login`。
+> [!NOTE]
+> Windows 电脑上没有隔离环境。要它在某个频道里干活，需要你给那个频道整台电脑的访问权限，见[自有设备上 AI 队友能看到什么](/devices#machine-access)。
+
+1. 在桌面端打开「设置 → 这台设备」，点「登录 Claude Code」；用 API key 的点「使用 API key」。没有桌面端的电脑，在终端里运行 `~/.local/bin/cheesehost claude login`，Windows 上是 `cheesehost claude login`。
 2. 在打开的浏览器里登录你的 Claude 账号，登录后自动回到知是。
 
 完成后：「设置 → 这台设备」里写着「已登录」，在频道里输入 `@`，候选里出现「<你的昵称>的 Claude Code」。

@@ -21,7 +21,6 @@ import json
 import logging
 import os
 import re
-import select
 import shlex
 import shutil
 import signal
@@ -40,10 +39,18 @@ if __package__:
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
+        dial_runner,
         read_file_on_the_machine,
         session_path,
         session_servers,
         stat_file_on_the_machine,
+    )
+    from app.domain.agent.harness.claude_code.remote_execution.shell_stop import (
+        CAUGHT,
+        KILL,
+        current_target,
+        deliver_stop,
+        start_watcher,
     )
 else:
     # Source scripts find the shared module in agent/; deployed bundles ship
@@ -56,11 +63,18 @@ else:
         MachineOutOfReach,
         PlatformHost,
         RemoteClient,
+        dial_runner,
         read_file_on_the_machine,
         session_path,
         session_servers,
         stat_file_on_the_machine,
     )
+
+    # Its siblings sit beside it, which a script run has first on sys.path and
+    # a file loaded by path has not.
+    if str(Path(__file__).resolve().parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from shell_stop import CAUGHT, KILL, current_target, deliver_stop, start_watcher
 
 PINNED_VERSION = "2.1.282"
 # Where a session's execution target is written. The launcher names it, so the
@@ -110,9 +124,6 @@ SHELL_START_RETRY_S = 60.0
 # How long a reader keeps retrying an executor that answers, but with an error,
 # before giving the command up.
 SHELL_ERROR_RETRY_S = 60.0
-# After a stop reaches the executor, how long the command gets to end before
-# it is killed outright.
-SHELL_STOP_GRACE_S = 5.0
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
@@ -184,15 +195,11 @@ def reply_hook(payload: dict) -> dict | None:
     """The Stop hook: may this turn end? The runner decides (`driven/runner.py`
     `insist`), reached on the socket it gave this session. A session with no
     runner, or one that does not answer, ends as it would have."""
-    import socket
-
     path = os.environ.get(SESSION_SOCKET)
     if not path or payload.get("stop_hook_active"):
         return None
     try:
-        with socket.socket(socket.AF_UNIX) as connection:
-            connection.settimeout(10)
-            connection.connect(path)
+        with dial_runner(path, 10) as connection:
             connection.sendall(
                 json.dumps({"method": "reply_check", "params": {}}).encode() + b"\n"
             )
@@ -741,6 +748,27 @@ def _write_all(fd, data):
         view = view[os.write(fd, view) :]
 
 
+def run_in_place(argv, env=None):
+    """Run argv as this process: exec it, where there is exec.
+
+    Windows has none. Its os.exec* starts a new process and ends this one, and
+    whoever waits on this one — the runner on its agent, Claude Code on a
+    command — takes the program for ended while it runs on, outside the tree
+    that is ended with the session. There it runs as a child, on the handles
+    this process holds, and this process ends the way it ended."""
+    if sys.platform != "win32":
+        if env is None:
+            os.execvp(argv[0], argv)
+        os.execvpe(argv[0], argv, env)
+    path = (env if env is not None else os.environ).get("PATH")
+    program = shutil.which(argv[0], path=path) or argv[0]
+    try:
+        code = subprocess.call([program, *argv[1:]], env=env)
+    except KeyboardInterrupt:
+        code = 130
+    raise SystemExit(code)
+
+
 def _under(path, root):
     return bool(root) and (path == root or path.startswith(root + "/"))
 
@@ -767,7 +795,7 @@ def shell(target_path, command):
         in ("bridge", "guard", "context", "checkpoint", "transport", "reply")
         and words[3] == str(target_path)
     ):
-        os.execvp(words[0], words)
+        run_in_place(words)
     commands = {
         hook["command"]
         for groups in target.get("central_hooks", {}).values()
@@ -776,7 +804,7 @@ def shell(target_path, command):
         if hook.get("type") == "command"
     }
     if command in commands:
-        os.execvp("sh", ["sh", "-c", command])
+        run_in_place(["sh", "-c", command])
     # The build hands this process's stdout and stderr to the command: they
     # are the command's output, and nothing of the platform's may be in them.
     # What the transport logs on its way through a retry (a 409 while the
@@ -877,16 +905,16 @@ def run_on_the_machine(target, command):
     # send it: the build follows its TERM with a KILL about a second later, and
     # a command whose start was still on its way would otherwise run on with
     # nobody left to stop it. So a watcher that outlives this process delivers
-    # it (`_deliver_stop`), told through a pipe: `stop <n>` when the build asks,
-    # `done` when the command has ended, and nothing — the pipe closing — when
-    # this process was killed first.
-    watcher = _start_watcher(target, command_id)
+    # it (`shell_stop.deliver_stop`), told through a pipe: `stop <n>` when the
+    # build asks, `done` when the command has ended, and nothing — the pipe
+    # closing — when this process was killed first.
+    watcher = start_watcher(target, command_id)
 
     def on_signal(number, _frame):
         with contextlib.suppress(OSError):
             os.write(watcher, f"stop {number}\n".encode())
 
-    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    for number in CAUGHT:
         signal.signal(number, on_signal)
 
     # Started once, whatever it takes: the id makes a retried start the same start.
@@ -931,7 +959,7 @@ def run_on_the_machine(target, command):
             if not link and time.monotonic() - failing_since > SHELL_ERROR_RETRY_S:
                 sys.stderr.write(f"{exc}\n")
                 return 1
-            client = RemoteClient(_current_target(target))
+            client = RemoteClient(current_target(target))
             time.sleep(delay)
             delay = min(delay * 2, 5.0)
             continue
@@ -946,7 +974,7 @@ def run_on_the_machine(target, command):
             written += len(data)
             if written > SHELL_OUTPUT_BYTES:
                 with contextlib.suppress(Exception):
-                    call("signal", signal=int(signal.SIGKILL))
+                    call("signal", signal=KILL)
                 sys.stderr.write(
                     f"\nOutput passed {SHELL_OUTPUT_BYTES // (1024 * 1024)} MiB; "
                     "the command was stopped.\n"
@@ -955,7 +983,7 @@ def run_on_the_machine(target, command):
             _write_all(fd, data)
         if "exit" in answer:
             break
-    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    for number in CAUGHT:
         signal.signal(number, signal.SIG_IGN)
     with contextlib.suppress(OSError):
         os.write(watcher, b"done\n")
@@ -964,6 +992,9 @@ def run_on_the_machine(target, command):
     with contextlib.suppress(Exception):
         call("forget")
     code = answer["exit"]
+    if code < 0 and sys.platform == "win32":
+        # No signal to end with here: the shell's way of saying it, 128 + n.
+        return 128 - code
     if code < 0:
         # Killed by a signal there: end the same way here, as the shell the
         # build started would have.
@@ -972,91 +1003,6 @@ def run_on_the_machine(target, command):
             signal.signal(-code, signal.SIG_DFL)
         os.kill(os.getpid(), -code)
     return code
-
-
-def _current_target(target):
-    """Where the session's commands go now. A session started before its
-    machine was rented holds a placeholder until the lease names the machine
-    (`RemoteClient.call`), which writes the target file anew; a process that
-    read the placeholder before then reads the machine from there."""
-    with contextlib.suppress(KeyError, OSError, ValueError):
-        return json.loads(Path(target["target_file"]).read_text())
-    return target
-
-
-def _start_watcher(target, command_id):
-    """Fork the process that stops the command when this one cannot; the
-    write end of its pipe. It is detached before the command is started, so
-    the build's kill of this process and its children never reaches it."""
-    read_end, write_end = os.pipe()
-    first = os.fork()
-    if first == 0:
-        try:
-            os.setsid()
-            if os.fork() == 0:
-                os.close(write_end)
-                # Nothing of the build's: holding its output file or a hook's
-                # pipes open would keep the call from ending.
-                quiet = os.open(os.devnull, os.O_RDWR)
-                for fd in (0, 1, 2):
-                    os.dup2(quiet, fd)
-                for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-                    signal.signal(number, signal.SIG_IGN)
-                _deliver_stop(target, command_id, read_end)
-        finally:
-            os._exit(0)
-    os.close(read_end)
-    os.waitpid(first, 0)
-    return write_end
-
-
-def _deliver_stop(target, command_id, pipe):
-    """Wait on the prefix; stop its command unless it says it has ended.
-
-    `stop <n>` or the pipe closing without `done` stops it: signal n (TERM
-    when the prefix was killed), then KILL after the grace if it still runs.
-    A stop the executor gets before the start is kept there, and the start is
-    refused (`runtime.py` `shell`). Delivery is retried across a dropped link
-    for as long as the executor would keep the command for its reader.
-    """
-    received, number = b"", None
-    while number is None:
-        chunk = os.read(pipe, 256)
-        received += chunk
-        if b"done" in received:
-            return
-        found = re.search(rb"stop (\d+)", received)
-        if found:
-            number = int(found.group(1))
-        elif not chunk:
-            number = int(signal.SIGTERM)
-    if _current_target(target).get("kind") == "unavailable":
-        return  # a session with no machine started nothing there
-    client = RemoteClient(_current_target(target))
-
-    def send(signalled):
-        started = time.monotonic()
-        nonlocal client
-        while time.monotonic() < started + 600:
-            try:
-                return client.call(
-                    "control",
-                    {
-                        "subtype": "shell",
-                        "operation": "signal",
-                        "command_id": command_id,
-                        "signal": int(signalled),
-                    },
-                )
-            except Exception:  # noqa: BLE001 — link down or refused: retry, backing off
-                client = RemoteClient(_current_target(target))
-                time.sleep(min(30.0, max(1.0, time.monotonic() - started)))
-
-    send(number)
-    ready = select.select([pipe], [], [], SHELL_STOP_GRACE_S)[0]
-    if ready and b"done" in received + os.read(pipe, 256):
-        return
-    send(signal.SIGKILL)
 
 
 def _report_directory(target, client, final, spelled):
@@ -1876,6 +1822,7 @@ def main():
             "release",
             "transport",
             "reply",
+            "watch",
         ],
     )
     parser.add_argument("config", type=Path)
@@ -1903,7 +1850,7 @@ def main():
             bridge(None, args.args[0], call=RemoteClient(config).call)
         else:
             command = RemoteClient(config).command("bridge", args.args[0])
-            os.execvp(command[0], command)
+            run_in_place(command)
     elif args.mode == "checkpoint":
         import hashlib
 
@@ -1944,6 +1891,10 @@ def main():
         )
     elif args.mode == "shell":
         raise SystemExit(shell(args.config, args.args[0]))
+    elif args.mode == "watch":
+        # Windows' watcher for one command (`shell_stop.start_watcher`): what
+        # to do comes on stdin, and stdin closing is the prefix gone.
+        deliver_stop(config, args.args[0], sys.stdin.fileno())
     elif args.mode == "enter":
         enter(args.config, args.args)
     elif args.mode == "bootstrap":
@@ -1962,9 +1913,7 @@ def main():
             workspace_override=os.environ["CHEESE_WORK"],
         )
         os.chdir(launch["cwd"])
-        os.execvpe(
-            launch["command"][0], launch["command"], dict(os.environ, **launch["env"])
-        )
+        run_in_place(launch["command"], dict(os.environ, **launch["env"]))
     elif args.mode == "context":
         sync_context(args.config)
     elif args.mode == "catch-up":
@@ -1983,7 +1932,7 @@ def main():
     else:
         env = dict(os.environ, **config["env"])
         os.chdir(config["cwd"])
-        os.execvpe(config["command"][0], config["command"], env)
+        run_in_place(config["command"], env)
 
 
 if __name__ == "__main__":

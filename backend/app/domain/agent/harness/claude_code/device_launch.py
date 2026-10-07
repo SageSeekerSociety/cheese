@@ -418,8 +418,17 @@ export CLAUDE_CONFIG_DIR="$SEAT/.claude"
 mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
 # Conversation transcripts belong to the room for resume and transfer, while
 # settings, skills and generated instructions belong to this seat.
-[ -e "$CLAUDE_CONFIG_DIR/projects" ] || \\
-  ln -s "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR/projects"
+if [ ! -e "$CLAUDE_CONFIG_DIR/projects" ]; then
+  case "$(uname -s)" in
+    # Git Bash's `ln -s` copies where Windows withholds symlinks, and a copy
+    # would keep this seat's transcripts from the room: a junction is the link
+    # every account may make.
+    MINGW*|MSYS*|CYGWIN*) cmd //c mklink /J \\
+      "$(cygpath -w "$CLAUDE_CONFIG_DIR/projects")" \\
+      "$(cygpath -w "$ROOM_CONFIG_DIR/projects")" >/dev/null ;;
+    *) ln -s "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR/projects" ;;
+  esac
+fi
 export DISABLE_AUTOUPDATER=1
 {webfetch_block}{skill_setup}
 {ca_block}
@@ -447,7 +456,9 @@ cat > "$SEAT/cheese-system-prompt.md" <<'SYSPROMPT'
 # re-provisioning and no owner action. Non-fatal: the chain below still runs,
 # and the floor check still refuses a build that is too old. A screen created
 # without CHEESE_API skips this.
-_pin="$REAL_HOME/.cheese/claude/versions/{pinned_version}"
+_cexe=""
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) _cexe=".exe" ;; esac
+_pin="$REAL_HOME/.cheese/claude/versions/{pinned_version}$_cexe"
 if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
   case "$(uname -m)" in
     x86_64|amd64) _carch=x64 ;;
@@ -455,18 +466,19 @@ if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
     *) _carch="" ;;
   esac
   if [ -n "$_carch" ]; then
-    if [ "$(uname -s)" = "Linux" ]; then
-      if ldd /bin/ls 2>&1 | grep -q musl; then
-        _cplat="linux-$_carch-musl"
-      else
-        _cplat="linux-$_carch"
-      fi
-    else
-      _cplat="darwin-$_carch"
-    fi
+    case "$(uname -s)" in
+      Linux)
+        if ldd /bin/ls 2>&1 | grep -q musl; then
+          _cplat="linux-$_carch-musl"
+        else
+          _cplat="linux-$_carch"
+        fi ;;
+      MINGW*|MSYS*|CYGWIN*) _cplat="win32-$_carch" ;;
+      *) _cplat="darwin-$_carch" ;;
+    esac
     mkdir -p "$(dirname "$_pin")"
     if curl -fsSL --retry 3 --retry-delay 2 -m 300 \\
-        "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude" \\
+        "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
         -o "$_pin.new" && [ -s "$_pin.new" ]; then
       chmod +x "$_pin.new" && mv "$_pin.new" "$_pin"
     else

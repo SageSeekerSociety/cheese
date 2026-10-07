@@ -21,7 +21,7 @@ from app.core.sentences import say
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent_instance.own import owned_by_seat, owned_instance
+from app.domain.agent_instance.own import owned_by_session, owned_instance
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDeviceRow
 from app.domain.device.supply import Supply
@@ -45,14 +45,14 @@ class OwnerChannel(CentralChannel):
 
     async def _resolve_session_host(self, db, session: SessionRef) -> str:
         topic = await TopicService(db).get_or_404(session.topic_id)
-        owned = await owned_by_seat(db, topic.project_id, session.agent_handle)
+        owned = await owned_by_session(db, topic.project_id, session.agent_handle)
         if owned is None:
             raise ScreenSetupError(say("screenAgentIdentityMissing"))
         place = await AgentSessionService(db).place(
             session.topic_id, session.agent_handle, harness=session.harness
         )
         machines = await owners_machines(db, owned.owner_user_id)
-        online = [device for device in machines if can_run_here(self._hub, device)]
+        online = [device for device in machines if self._hub.is_online(device)]
         if place is not None and place.machine in online:
             return place.machine
         if online:
@@ -77,12 +77,6 @@ class OwnerChannel(CentralChannel):
             # machine, and none of the metering proxy's environment is set.
             prepared.env["CHEESE_OWN_LOGIN"] = "1"
             yield prepared
-
-
-def can_run_here(hub, device_id: str) -> bool:
-    """Whether a member's own Claude Code can run on this machine now: it is
-    online, and not Windows, where it does not run yet (#2991)."""
-    return hub.is_online(device_id) and not hub.target(device_id).startswith("windows")
 
 
 async def owners_machines(db, owner_user_id: int) -> list[str]:
@@ -113,4 +107,4 @@ async def owner_is_away(db, instance_id, hub) -> bool:
     if owned is None:
         return False
     machines = await owners_machines(db, owned.owner_user_id)
-    return not any(can_run_here(hub, device) for device in machines)
+    return not any(hub.is_online(device) for device in machines)

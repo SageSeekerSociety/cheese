@@ -22,6 +22,30 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'merge_group' }}
 
 jobs:
+  windows:
+    # A member's own Claude Code runs on its owner's machine (#2991), and a
+    # Windows machine has none of what the rest of this workflow assumes: tmux,
+    # Unix sockets, fork. What runs there is held to it on Windows itself, with
+    # plain Python and nothing of the backend's installed, as on the machine.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: cli/go.mod
+          cache: false
+      - name: The connector keeps screens as processes
+        working-directory: cli
+        run: go test ./internal/procscreen/...
+      - name: The runner and the session's helpers
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest tests/unit/session_machine --noconftest -q -p no:cacheprovider
+
   private-chat:
     runs-on: ubuntu-latest
     timeout-minutes: 30

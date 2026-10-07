@@ -29,8 +29,13 @@ async def serve(state: Path) -> None:
     runner = Runner(state, launch=env.pop(LAUNCH, ""))
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        loop.add_signal_handler(sig, stopped.set)
+    if sys.platform == "win32":
+        # No SIGTERM or SIGHUP to be sent, and no loop handlers to take them:
+        # the screen is ended by ending this process tree (procscreen).
+        signal.signal(signal.SIGINT, lambda *_: loop.call_soon_threadsafe(stopped.set))
+    else:
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            loop.add_signal_handler(sig, stopped.set)
     waits: list[asyncio.Task] = []
     try:
         await runner.start(

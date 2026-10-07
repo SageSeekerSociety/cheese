@@ -124,6 +124,7 @@ def _deliver(monkeypatch, answer, written):
     after its prefix wrote `written` and went away. Returns each attempt as
     (time, signal)."""
     client = _load("client")
+    stop = _load("shell_stop")
     clock = _Clock()
     attempts = []
 
@@ -135,14 +136,14 @@ def _deliver(monkeypatch, answer, written):
             attempts.append((clock.now, params["signal"]))
             return answer(clock.now, client)
 
-    monkeypatch.setattr(client, "time", clock)
-    monkeypatch.setattr(client, "RemoteClient", Executor)
-    monkeypatch.setattr(client, "_current_target", lambda target: target)
+    monkeypatch.setattr(stop, "time", clock)
+    monkeypatch.setattr(stop, "RemoteClient", Executor)
+    monkeypatch.setattr(stop, "current_target", lambda target: target)
     read_end, write_end = os.pipe()
     os.write(write_end, written)
     os.close(write_end)
     try:
-        client._deliver_stop({"kind": "device"}, "shell-stopped", read_end)
+        stop.deliver_stop({"kind": "device"}, "shell-stopped", read_end)
     finally:
         os.close(read_end)
     return attempts

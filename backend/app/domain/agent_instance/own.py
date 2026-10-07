@@ -54,6 +54,27 @@ async def owned_by_seat(
     return None
 
 
+async def owned_by_session(
+    db: AsyncSession, project_id: uuid.UUID, session_handle: str | None
+) -> Owned | None:
+    """The owner of the agent a session in this project runs for. A session
+    names its agent by the instance's own handle (``AgentInstance.handle``),
+    not by the seat it is listed under."""
+    if not session_handle:
+        return None
+    row = (
+        await db.execute(
+            select(AgentInstance.id, OwnAgent.owner_user_id, OwnAgent.harness)
+            .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+            .where(
+                AgentInstance.project_id == project_id,
+                AgentInstance.handle == session_handle,
+            )
+        )
+    ).first()
+    return Owned(*row) if row is not None else None
+
+
 async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | None:
     row = await db.get(OwnAgent, instance_id)
     if row is None:
