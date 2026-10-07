@@ -581,6 +581,32 @@ async def my_devices(
     return {"devices": views}
 
 
+@router.post("/my/devices/{device_id}/claude-code")
+async def check_my_claude_code(
+    device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+) -> dict[str, Any] | None:
+    """Ask one of the caller's machines again whether their own Claude Code is
+    logged in there (#2991). They log in on the machine itself, which tells the
+    server nothing; the page showing that machine asks, rather than leaving the
+    answer from its last connection standing."""
+    user_id = await _require_user(resolver)
+    owned = {d.device_id: d for d in await service.list_owned(user_id)}
+    device = owned.get(device_id)
+    if device is None or device.supply != Supply.self_hosted:
+        raise NotFoundError(say("deviceNotYours"))
+    if device_hub.is_online(device_id):
+        try:
+            login = await owner_login.ask(device_hub, device_id)
+        except Exception:
+            # Gone or slow to answer: what it said last still stands.
+            logger.warning("claude login not checked on %s", device_id, exc_info=True)
+            login = None
+        if login is not None:
+            await owner_login.remember(db, device_id, login)
+            await db.commit()
+    return await owner_login.status(db, device_id)
+
+
 @router.patch("/my/devices/{device_id}")
 async def rename_my_device(
     device_id: str,

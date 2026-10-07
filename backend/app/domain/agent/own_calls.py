@@ -61,8 +61,11 @@ async def refused(session: AsyncSession, project, recipient: dict, author: str):
     return owner[1] if owner is not None else ""
 
 
-async def say_refused(session: AsyncSession, block, owner_name: str) -> None:
-    """Beside the message, the reason it reached nobody."""
+async def say_refused(session: AsyncSession, block, owner_name: str | None) -> None:
+    """Beside the message, the reason it reached nobody; nothing when the call
+    stood (``refused`` answered None)."""
+    if owner_name is None:
+        return
     await BlockRepository(session).add(
         project_id=block.project_id,
         conversation_id=block.conversation_id,

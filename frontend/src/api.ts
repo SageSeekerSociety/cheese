@@ -68,6 +68,7 @@ import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from '
 import type { DocumentTemplate, RoomOutput } from './types/roomOutput'
 import type { SitePage } from './types/site'
 
+import { connectorRequest } from './api/connector'
 import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
 import { shareInFlight } from './lib/inflight'
 import { refusalWords } from './lib/noticeText'
@@ -96,31 +97,6 @@ export {
   RequestTimeoutError,
   tokenExpiresWithin,
 } from './api/http'
-
-// The connector lives at the origin root (`/connector/*`), not under `/api`, and its
-// responses are plain JSON (no ApiEnvelope). This mirrors `request` but skips the
-// `/api` prefix + envelope unwrap. Still sends the Bearer token for owner-gated routes.
-async function connectorRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/connector${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
-  })
-  if (!res.ok) {
-    let message = `HTTP ${res.status}`
-    try {
-      const body = await res.json()
-      message = refusalWords(body) || body?.detail || message
-    } catch {
-      // non-JSON error body — keep the status message
-    }
-    throw new Error(message)
-  }
-  return (await res.json()) as T
-}
 
 // Mirrors `request`'s envelope unwrap and auth header, minus the GET retry.
 //

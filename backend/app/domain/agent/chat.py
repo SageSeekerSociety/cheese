@@ -164,7 +164,7 @@ from app.domain.agent.queries import (
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.turn import RoomTurns, _is_dm
+from app.domain.agent.room.turn import RoomTurns, _is_dm, room_roster
 
 # 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
 # `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
@@ -229,7 +229,6 @@ from app.domain.identity.handles import (
     names_a_person,
     recipient_seat,
 )
-from app.domain.membership.roster import roster_rows
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -2047,8 +2046,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 if attribution_id is None:
                     attribution_id = user_block.id
                     user_block.turn_id = attribution_id
-                if refused is not None:
-                    await own_calls.say_refused(session, user_block, refused)
+                await own_calls.say_refused(session, user_block, refused)
                 await announce_mentions(session, topic, user_block, author, roster)
                 # A reply to an agent's question goes to that agent (`recipient`).
                 answered = await answer_questions(session, user_block, recipient)
@@ -2325,7 +2323,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 # instead of passing []: [] means 私聊 (no member list at all),
                 # and conflating the two flagged every @ in a recovered message
                 # as a non-member while silently dropping its notification.
-                roster = await _room_roster(session, project_id, topic)
+                roster = await room_roster(session, project_id, topic)
             text = _expand_mention_names(text, roster, topic_refs)
             if (
                 closing
@@ -2738,16 +2736,6 @@ class ChatService(SessionRecovery, RoomTurns):
         )
 
 
-async def _room_roster(
-    session: AsyncSession, project_id: uuid.UUID, topic: Topic | None
-) -> list[dict]:
-    """The names an agent's message is read against: the project roster, or
-    none at all in a private room."""
-    return (
-        [] if topic is None or _is_dm(topic) else await roster_rows(session, project_id)
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class SentText:
     """A message's text as sending it would have stored it, and how it was sent."""
@@ -2782,7 +2770,7 @@ async def text_as_sent(
         return SentText(topic, text, None, by_agent)
     if by_agent:
         text = await project_refs_text(session, topic.project_id, topic.id, content)
-        roster = await _room_roster(session, topic.project_id, topic)
+        roster = await room_roster(session, topic.project_id, topic)
         return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
     project = await ProjectRepository(session).get(topic.project_id)
     if project is None:

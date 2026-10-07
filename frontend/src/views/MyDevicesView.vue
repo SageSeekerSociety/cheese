@@ -22,6 +22,7 @@ import {
   thisComputer,
 } from '../lib/desktop'
 
+import { checkClaudeCode } from '@/api/ownAgents'
 import { useCommands } from '@/commands'
 import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -115,6 +116,21 @@ watch(
   }
 )
 
+// 机主在电脑上登录 Claude Code，服务器要等这台电脑下次连上才知道。页面列出它时让在线的
+// 电脑再报一次，回来了就换掉这一行；问不到就留着上次的答案。
+function recheckClaudeCode() {
+  for (const { device_id: id, online } of devices.value) {
+    const d = devices.value.find((x) => x.device_id === id)
+    if (!d || !online || !('claude_code' in d)) continue
+    checkClaudeCode(id)
+      .then((login) => {
+        const row = devices.value.find((x) => x.device_id === id)
+        if (row) Object.assign(row, { claude_code: login })
+      })
+      .catch(() => {})
+  }
+}
+
 async function load() {
   // Client-side gate: the device UI is only meaningful for a signed-in human. When
   // signed out we show the gate banner instead of firing an inevitably-401 request.
@@ -123,6 +139,7 @@ async function load() {
   error.value = null
   try {
     devices.value = (await listMyDevices()).devices
+    recheckClaudeCode()
     // Team names for the read-only chips — best-effort, never blocks the list.
     myTeams.value = await listMyTeams().catch(() => [])
   } catch (e) {
