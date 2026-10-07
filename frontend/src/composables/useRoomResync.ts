@@ -1,6 +1,6 @@
 /**
  * 断线重连后，房间怎么在原地对上服务端：屏幕上一直留着断线前的那一份，这里只做
- * 就地的增删改。进房间才清空（房间壳的 loadTopic），那时屏幕上是别的房间。
+ * 就地的增删改。进房间才清空（useChatPanel 的 loadTopic），那时屏幕上是别的房间。
  *
  * 两半：
  * - 时间线：读回来的最新一页合进屏幕上的窗口（变了的换掉、新来的接上、断线期间
@@ -10,21 +10,22 @@
  *   其余原样留着。
  */
 
-import type { Block } from '../../../cx_types'
-import type { BlockWindow } from '../../../lib/blockPaging'
-import type { RoomStateFrame } from '../../../types/roomSocket'
-import type { useHistoryReads } from './useHistoryReads'
-import type { useLiveSteps } from './useLiveSteps'
-import type { useRoomActivity } from './useRoomActivity'
-import type { useRoomTurns } from './useRoomTurns'
-import type { useRunRecords } from './useRunRecords'
-import type { useTimeline } from './useTimeline'
-import type { useTypingPreview } from './useTypingPreview'
+import type { Ref } from 'vue'
+import type { useHistoryReads } from '../components/room/composables/useHistoryReads'
+import type { useLiveSteps } from '../components/room/composables/useLiveSteps'
+import type { useRoomActivity } from '../components/room/composables/useRoomActivity'
+import type { useRoomTurns } from '../components/room/composables/useRoomTurns'
+import type { useRunRecords } from '../components/room/composables/useRunRecords'
+import type { useTimeline } from '../components/room/composables/useTimeline'
+import type { useTypingPreview } from '../components/room/composables/useTypingPreview'
+import type { Block } from '../cx_types'
+import type { BlockWindow } from '../lib/blockPaging'
+import type { RoomStateFrame } from '../types/roomSocket'
 
-import { ensureFreshToken, listBlocks } from '../../../api'
-import { setCachedWindow } from '../../../lib/blockCache'
-import { applyLiveChanges, PAGE_SIZE } from '../../../lib/blockPaging'
-import { resyncTail } from '../../../lib/tailResync'
+import { ensureFreshToken, listBlocks } from '../api'
+import { setCachedWindow } from '../lib/blockCache'
+import { applyLiveChanges, PAGE_SIZE } from '../lib/blockPaging'
+import { resyncTail } from '../lib/tailResync'
 
 /**
  * 断线重连：屏幕上正是这间房，什么都不清。读回最新一页就地合进时间线，再开 socket；
@@ -37,17 +38,24 @@ export function useRoomResync(room: {
   runRecords: ReturnType<typeof useRunRecords>
   /** 读回来的块里有断线期间没收到回执的自己发的那条：发件箱据此收尾。 */
   settle: (block: Block) => void
-  /** 来了新的：读的人停在底部就跟上。 */
-  follow: () => void
-  /** 开 socket（连接被拒过就不开）。 */
-  connect: (topicId: string) => void
-  close: () => void
+  scroll: {
+    atBottom: Ref<boolean>
+    /** 跟到最新：来了新的而读的人停在底部时。 */
+    follow: () => void
+    /** 一屏没画满就往回补（最新一带常常整页不露面）。 */
+    fill: () => Promise<unknown>
+  }
+  socket: {
+    /** 开 socket（连接被拒过就不开）。 */
+    connect: (topicId: string) => void
+    close: () => void
+  }
   /** 读失败：说出来，能重试的排一次重连。 */
   failed: (topicId: string, error: unknown) => void
 }) {
   return async function resync(topicId: string) {
     const read = room.history.begin(topicId)
-    room.close()
+    room.socket.close()
     try {
       await ensureFreshToken()
       if (!read.stillHere()) return
@@ -55,11 +63,14 @@ export function useRoomResync(room: {
       if (!read.stillHere()) return
       const fresh = { blocks: payload.data, hasMore: !!payload.has_more }
       fresh.blocks = applyLiveChanges(fresh, read.changes, read.reactions)
+      // 排队中的那几轮核对不了：断线期间可能已经跑完了。
+      room.runRecords.forgetWaiting()
       const grew = mergeResyncedPage(room.timeline, room.runRecords, fresh)
       for (const block of fresh.blocks) room.settle(block)
       setCachedWindow(topicId, room.timeline.newest())
-      if (grew) room.follow()
-      room.connect(topicId)
+      if (grew && room.scroll.atBottom.value) room.scroll.follow()
+      room.socket.connect(topicId)
+      void room.scroll.fill()
     } catch (e) {
       if (read.stillHere()) room.failed(topicId, e)
     } finally {
@@ -78,7 +89,7 @@ export function mergeResyncedPage(
   // 带着轮次 id。
   for (const block of fresh.blocks) if (block.turn_id) runRecords.turnBegan(block.turn_id)
   const newestBefore = timeline.newest().blocks.at(-1)?.id
-  const plan = resyncTail(timeline.newest().blocks, fresh)
+  const plan = resyncTail(timeline.newest().blocks, fresh, timeline.newestSeenAt())
   if (plan.gap) {
     // 断线期间来了不止一页：中间那截没读过，接上会留一个看不见的洞。
     timeline.show(fresh)

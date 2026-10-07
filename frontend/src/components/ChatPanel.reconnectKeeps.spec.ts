@@ -92,8 +92,10 @@ async function flush() {
 }
 
 function mountPanel() {
+  // 每次一间新房：页面级的历史缓存按房间记，同一间房第二次进来就不再出骨架屏。
+  const room = { ...topic, id: crypto.randomUUID() }
   return render(ChatPanel, {
-    props: { topic, topicList: [topic], members: [], showComposer: true },
+    props: { topic: room, topicList: [room], members: [], showComposer: true },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
@@ -196,5 +198,19 @@ describe('a reconnect keeps the room on screen', () => {
     second.emit({ type: 'room_state', turn_ids: [], members: [] })
     await flush()
     expect(busyLines(view)).toEqual([])
+  })
+  it('a drop before the room finished opening opens it again, so the skeleton goes away', async () => {
+    const first = deferred<ReturnType<typeof page>>()
+    listBlocks.mockReturnValue(first.promise)
+    const view = mountPanel()
+    await flush()
+    const socket = FakeWebSocket.instances.at(-1)!
+    expect(view.container.querySelectorAll('.skel').length, 'opening shows the skeleton').toBeGreaterThan(0)
+    listBlocks.mockResolvedValue(page([message('m1', 1, 'arrived late')]))
+    await drop(socket)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(textOf(view, 'arrived late')).toBeTruthy()
+    expect(view.container.querySelectorAll('.skel')).toHaveLength(0)
+    first.resolve(page([]))
   })
 })

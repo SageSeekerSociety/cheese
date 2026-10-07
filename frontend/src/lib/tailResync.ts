@@ -39,14 +39,17 @@ function unchanged(before: Block, fresh: Block): boolean {
 /**
  * @param shown 屏幕上最新的那一段（停在历史中间时，是背后收着的那段）。
  * @param fresh 刚读回来的最新一页，断线期间的实时帧已经合进去。
+ * @param seenAt 那一段读到过的最新一块的时刻，不露面的块也算（useTimeline.newestSeenAt）。
  */
-export function resyncTail(shown: Block[], fresh: BlockWindow): TailResync {
+export function resyncTail(shown: Block[], fresh: BlockWindow, seenAt: string | null = null): TailResync {
   const page = fresh.blocks
   if (!page.length) return { gap: false, upserts: [], removed: [] }
   const from = at(page[0])
-  // 这一页一直读到了历史开头，或者屏幕上有一块不比它最老那块旧（两段在时间上重叠）：
-  // 接得上。否则两段之间可能有没读过的块。
-  const meets = !fresh.hasMore || shown.some((block) => at(block) >= from)
+  // 这一页一直读到了历史开头，或者屏幕上那段读到过的块不比它最老那块旧（两段在时间上
+  // 重叠）：接得上。否则两段之间可能有没读过的块。读到过的要算上不露面的：最新那一带
+  // 常常整页都是不露面的事件，只看露面的会把「什么都没来」误判成断档。
+  const reached = Math.max(seenAt ? Date.parse(seenAt) : -Infinity, ...shown.map(at))
+  const meets = !fresh.hasMore || reached >= from
   if (!meets) return { gap: true, upserts: page, removed: [] }
 
   const inPage = new Set(page.map((block) => block.id))

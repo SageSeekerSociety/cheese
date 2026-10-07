@@ -28,7 +28,6 @@ import { ApiError, attachmentRawUrl, downloadFile, ensureFreshToken, isRetryable
 import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
-import { applyRoomState, useRoomResync } from '../components/room/composables/roomResync'
 import { useActivityLines } from '../components/room/composables/useActivityLines'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
 import { useHistoryReads } from '../components/room/composables/useHistoryReads'
@@ -60,6 +59,7 @@ import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
+import { applyRoomState, useRoomResync } from './useRoomResync'
 import { useRoomTasks } from './useRoomTasks'
 
 import i18n, { t } from '@/i18n'
@@ -231,7 +231,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     },
     reconnect: (topicId) => {
       const current = place()
-      if (current?.id === topicId) void resync(topicId)
+      if (current?.id === topicId) void (history.entered(topicId) ? resync(topicId) : loadTopic(current))
     },
     errorMsg,
   })
@@ -412,19 +412,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) retryLater(roomId)
   }
 
-  const resync = useRoomResync({
-    history,
-    timeline,
-    runRecords,
-    settle: (b: Block) => settleOutbox(b),
-    follow: () => atBottom.value && autoScroll(),
-    connect: (id: string) => connectRefused.value || connectSocket(id),
-    close: closeSocket,
-    failed: historyReadFailed,
-  })
-
   async function loadTopic(room: Topic, entering = false) {
-    const { changes, reactions, stillHere, end } = history.begin(room.id)
+    const { changes, reactions, stillHere, done, end } = history.begin(room.id, true)
     // 地址点名了一条消息：落到它上面，而不是上次停的地方。
     const focus = focusBlock() ?? null
     errorMsg.value = null
@@ -543,6 +532,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // 最新那一段几乎全是 `in_room:false` 的回合事件，一页 50 块常常只画得出一两行，补完
       // 之前露出来就是「一条消息飘在半空」，补完再露才是首屏一屏历史。见 useChatPaging。
       await paging.fillViewportIfNeeded()
+      done()
     } catch (e) {
       if (stillHere()) historyReadFailed(room.id, e)
     } finally {
@@ -687,6 +677,16 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom,
     rowsPending: () => rowBatch.pending.value,
   })
+  const resync = useRoomResync({
+    history,
+    timeline,
+    runRecords,
+    settle: (b: Block) => settleOutbox(b),
+    scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
+    socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
+    failed: historyReadFailed,
+  })
+
   const { loadingOlder, loadingNewer, openAt, onTimelineScroll } = paging
 
   const motion = useTimelineMotion({

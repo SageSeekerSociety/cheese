@@ -65,4 +65,12 @@ describe('resyncTail', () => {
     const out = resyncTail(shown, { blocks: [block('a', 1)], hasMore: false })
     expect(out.upserts).toEqual([])
   })
+  it('is not a gap when the screen read up to the page through blocks it does not draw', () => {
+    // 最新那一带整页都是不露面的事件：屏幕上最新那条可见的比这一页还旧，但读到过的
+    // 不比它旧，什么都没漏。
+    const shown = [block('a', 1)]
+    const fresh = { blocks: [block('hidden-1', 5), block('hidden-2', 6)], hasMore: true }
+    expect(resyncTail(shown, fresh, '2026-10-07T10:06:00Z').gap).toBe(false)
+    expect(resyncTail(shown, fresh, '2026-10-07T10:02:00Z').gap).toBe(true)
+  })
 })
