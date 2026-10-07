@@ -518,7 +518,7 @@ class Settings(BaseSettings):
     # out of balance. The chosen profile must have credentials or boot fails fast.
     agent_default_profile: str = "default"
     agent_system_prompt: str = (
-        "你是「芝士」，知是平台里的 AI 队友。你贯穿一个项目的全过程，"
+        "你是知是平台里的 AI 队友。你贯穿一个项目的全过程，"
         "了解项目的频道、任务、决策和进展。用自然清楚的语言交流，"
         "根据读者补齐必要背景和陌生术语，少说废话。"
         "当你引用项目记忆里的事实时，自然地点明依据。"
@@ -659,8 +659,7 @@ class Settings(BaseSettings):
     # The size every cloud host is created with. Every value is clamped into the
     # chosen offering's own range, so these are preferences, not guarantees.
     # Four sandboxes at their full 3 GiB limit fit in 16 GiB less the host's own
-    # quarter (`models.capacity`); a 4 GiB host held one. Disk keeps eight homes
-    # at `cloud_sandbox_disk_gb`, running or asleep.
+    # quarter (`models.capacity`); a 4 GiB host held one.
     microcloud_default_cores: int = 4
     microcloud_default_memory_mb: int = 16384
     microcloud_default_disk_gb: int = 40
@@ -699,32 +698,22 @@ class Settings(BaseSettings):
     microcloud_initial_funds: float = 1000.0
     # Sandbox slots per host core: how many sessions' sandboxes one host runs at
     # once, unless its memory holds fewer at `cloud_sandbox_memory_mb` each
-    # (`models.capacity`). A sandbox holds its slot while it runs; one asleep
-    # holds only disk.
+    # (`models.capacity`). A sandbox holds its slot for as long as it exists.
     cloud_host_slots_per_core: int = Field(default=2, ge=1, le=16)
-    # The disk a session's home is budgeted on its host. A host keeps at most
-    # `disk_gb // this` homes, running or asleep (never fewer than its slots).
-    cloud_sandbox_disk_gb: int = Field(default=5, ge=1, le=1024)
-    # A cloud sandbox is stopped once its room has run no turn and the session
-    # has asked for no tool for this long; its home stays on the host's disk and
-    # the next tool call starts it again.
+    # A cloud sandbox is destroyed once its conversation has run no turn and
+    # its session has asked for no tool for this long; the next tool call gets
+    # a new one (`machine/lifecycle.py`).
     cloud_sandbox_idle_stop_s: int = Field(default=600, ge=60, le=86400)
     # A command the executor still runs for the session (a Bash call sent to the
     # background) keeps an otherwise idle sandbox up, but no longer than this
     # after the session's last activity.
     cloud_sandbox_background_cap_s: int = Field(default=3600, ge=0, le=7 * 86400)
-    # A home asleep this long is archived to the private bucket and deleted
-    # from its host; the session's next tool call restores it on any host.
-    cloud_sandbox_archive_after_s: int = Field(
-        default=7 * 86400, ge=3600, le=365 * 86400
-    )
     # Pre-scale: when the free slots of the pool's live hosts fall below this,
     # the pool sweep claims (or creates) the next host before anyone waits on it.
     cloud_pool_min_free_slots: int = Field(default=2, ge=0, le=64)
-    # How long a host that runs no sandbox is kept. Then its sleeping homes are
-    # archived and it is released.
+    # How long a host that has no sandbox on it is kept before it is released.
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
-    # The most hosts the pool holds at once, legacy hosts draining excluded. It
+    # The most hosts the pool holds at once. It
     # protects the MicroCloud cluster; a session that finds the pool full is told
     # capacity is tight and to try later. Ten hosts' disks written full are
     # 400 GB, within what 119pve's shared thin pool had free (464 GB, 2026-10-06);
@@ -1040,8 +1029,9 @@ class Settings(BaseSettings):
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
     # The private bucket, for task snapshot bundles (room_task/snapshots.py)
-    # and archived cloud sandbox homes (machine/lifecycle.py); the public upload
-    # bucket is never used for them. The name is the bucket's first use: it also
+    # and the cloud sandbox home archives kept for a while
+    # (machine/retained_archives.py); the public upload bucket is never used
+    # for them. The name is the bucket's first use: it also
     # holds the transcript objects `raw_transcripts` indexes.
     transcript_s3_bucket: str = ""
     s3_endpoint_url: str | None = None

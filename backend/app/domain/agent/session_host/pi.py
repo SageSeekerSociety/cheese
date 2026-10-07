@@ -54,9 +54,9 @@ def launch(ref: SessionRef, spec: SessionSpec, access: Access, api: str) -> Host
     if spec.footprint is not None:
         host["group_limit"] = spec.footprint.group_limit
         host["memory_max"] = f"{spec.footprint.memory_mb}M"
-    compaction = _compaction(settings)
-    if compaction is not None:
-        host["settings"] = compaction
+    pi_settings = _pi_settings(settings)
+    if pi_settings is not None:
+        host["settings"] = pi_settings
     config: dict = {
         "opening": {
             "system_prompt": spec.system_prompt,
@@ -124,16 +124,19 @@ def _models(api: str, model: str, settings: ModelSettings) -> str | None:
     return json.dumps(shape, ensure_ascii=False, indent=2)
 
 
-def _compaction(settings: ModelSettings) -> str | None:
-    """pi's settings file, when compaction is not pi's default."""
-    if settings.reserve_tokens is None and settings.keep_tokens is None:
-        return None
+def _pi_settings(settings: ModelSettings) -> str | None:
+    """pi's settings file, when compaction or retry is not pi's default."""
+    written: dict = {}
     compaction: dict = {}
     if settings.reserve_tokens is not None:
         compaction["reserveTokens"] = settings.reserve_tokens
     if settings.keep_tokens is not None:
         compaction["keepRecentTokens"] = settings.keep_tokens
-    return json.dumps({"compaction": compaction})
+    if compaction:
+        written["compaction"] = compaction
+    if settings.retry_base_delay_ms is not None:
+        written["retry"] = {"baseDelayMs": settings.retry_base_delay_ms}
+    return json.dumps(written) if written else None
 
 
 class PiDriver:

@@ -2,7 +2,7 @@
 
 import shutil
 import uuid
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
@@ -58,7 +58,7 @@ from app.domain.room_task.services import (
 )
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
-from app.domain.thread.services import onto_rooms, threads_of_rooms
+from app.domain.thread.services import onto_rooms, thread_opening, threads_of_rooms
 from app.domain.topic.models import Topic
 from app.domain.topic.repositories import (
     SortOrder,
@@ -603,11 +603,27 @@ async def list_topic_blocks(
     )
 
 
+async def _opening_ids(db: AsyncSession, conversation_id: uuid.UUID) -> list[uuid.UUID]:
+    """The blocks a 支线 reads besides its own: the message it hangs under and
+    the files sent with it. They stay in the main line and they are the 支线's
+    own first input, so reading the 支线 has to reach them — the agent tools
+    read this endpoint, and the session is held to answer what is here.
+
+    Empty for a channel's main line and for a task's line.
+    """
+    return [block.id for block in await thread_opening(db, conversation_id)]
+
+
 async def _history_block(
-    repo: BlockRepository, conversation_id: uuid.UUID, block_id: uuid.UUID
+    repo: BlockRepository,
+    conversation_id: uuid.UUID,
+    block_id: uuid.UUID,
+    also: Collection[uuid.UUID] = (),
 ) -> Block:
     block = await repo.get(block_id)
-    if block is None or block.conversation_id != conversation_id:
+    if block is None or (
+        block.conversation_id != conversation_id and block.id not in also
+    ):
         raise NotFoundError("Message not found in this conversation")
     return block
 
@@ -649,19 +665,22 @@ async def read_chat_history(
     if before is not None and after is not None:
         raise ValidationError("Use before or after, not both")
     repo = BlockRepository(db)
+    # The channel-wide read has the main line in scope already.
+    also = [] if channel else await _opening_ids(db, place.conversation_id)
     parent = None
     if reply_to is not None:
-        parent = await _history_block(repo, place.conversation_id, reply_to)
+        parent = await _history_block(repo, place.conversation_id, reply_to, also)
     cursor = None
     if cursor_id := before or after:
         cursor = (
             await _channel_block(db, repo, place.room_id, cursor_id)
             if channel
-            else await _history_block(repo, place.conversation_id, cursor_id)
+            else await _history_block(repo, place.conversation_id, cursor_id, also)
         )
     result = await repo.page_for_topic(
         place.conversation_id,
         whole_room=place.room_id if channel else None,
+        also=also,
         limit=limit,
         before=cursor if before else None,
         after=cursor if after else None,
@@ -702,7 +721,8 @@ async def read_chat_message(
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
-    block = await _history_block(repo, place.conversation_id, block_id)
+    also = await _opening_ids(db, place.conversation_id)
+    block = await _history_block(repo, place.conversation_id, block_id, also)
     item = BlockOut.model_validate(block).model_dump(mode="json")
     item["reactions"] = await repo.reactions_for_block(block_id)
     return ok(item)

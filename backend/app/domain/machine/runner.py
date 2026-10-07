@@ -7,14 +7,14 @@ looking must still become a device — so it must not share a switch with
 anything a deployment might want off. See ``app.core.background.PeriodicRunner``
 for the clock.
 
-Putting idle sandboxes to sleep, archiving homes and releasing idle whole
-cloud VMs (``SandboxSweeper``) is the same plumbing on the same switch, in a
-loop of its own: an archive or a VM's push takes minutes, and a host that came
-up must not wait that long to be enrolled.
+Destroying idle sandboxes and releasing idle whole cloud VMs
+(``SandboxSweeper``) is the same plumbing on the same switch, in a loop of its
+own: a VM's push takes minutes, and a host that came up must not wait that
+long to be enrolled.
 
 Metering the sandboxes that run and charging their time
-(``ComputeMeterSweeper``) has a loop of its own for the same reason: a stop or
-a deletion is seen within one sweep only if no archive is in the way.
+(``ComputeMeterSweeper``) has a loop of its own for the same reason: a
+destroyed sandbox is seen within one sweep only if nothing slow is in the way.
 """
 
 import logging
@@ -56,17 +56,18 @@ class SandboxSweeper:
         self._sessions = session_factory
 
     async def sweep(self) -> dict[str, int]:
-        from app.domain.machine import cloud_vm
+        from app.domain.machine import cloud_vm, retained_archives
         from app.domain.machine.lifecycle import SandboxLifecycle
         from app.domain.machine.microcloud import MicroCloudClient
 
         if not MicroCloudClient().configured:
-            return {"asleep": 0, "archived": 0, "vms_released": 0}
+            return {"destroyed": 0, "vms_released": 0}
         async with self._sessions() as session:
             lifecycle = SandboxLifecycle(session)
             result = await lifecycle.sweep()
             # A session's whole cloud VM is released by the same idle measure.
             result["vms_released"] = await cloud_vm.release_idle(session, lifecycle)
+            result.update(await retained_archives.sweep(session))
             return result
 
 

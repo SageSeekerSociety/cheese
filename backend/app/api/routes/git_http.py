@@ -105,6 +105,7 @@ async def latest_task_snapshot(
             "snapshot_sha": row.snapshot_sha,
             "head_sha": row.head_sha,
             "digest": row.digest,
+            "created_at": row.created_at.isoformat(),
         }
     )
 

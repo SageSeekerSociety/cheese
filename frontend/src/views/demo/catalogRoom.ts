@@ -10,9 +10,6 @@
  * （#2143），想看其中任何一段都得先把整个输入区拉起来 —— 而输入区要话题、要名册、
  * 要 socket。拆开之后每一件都只吃 props、只往上发事件，于是能单独摆在预览站里。
  *
- * 末尾另收主线上的任务卡那两件（`TaskCard`、`TaskCreatedPost`，数据见
- * `catalogRoomFixtures.ts`）：同样是房间里的行，同样只吃 props、点了往外 emit。
- *
  * 这里没有重复登记整张输入区：`components/` 下的东西（`panels/` 以外）本来就不是
  * 场景，`scene-ratchet.py` 不看它，预览站里也没有它的条目。登记的是拆出来的那几件。
  *
@@ -20,21 +17,12 @@
  * 值，运行时不构成循环。
  */
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
+import type { TaskLine } from '@/lib/channelTasks'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
 
 import { AGENT_NAME } from './catalogFixtures'
-import {
-  TASK_BY_AGENT,
-  TASK_CLOSED,
-  TASK_DONE,
-  TASK_MINE,
-  TASK_RUNNING,
-  TASK_STUCK,
-  TASK_WAITING,
-  taskPostProps,
-} from './catalogRoomFixtures'
 
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
@@ -139,6 +127,74 @@ function askBlock(answerLog: Record<string, unknown>[]) {
     },
   }
 }
+
+// ---- 任务卡（TaskCard / TaskCreatedPost）--------------------------------------
+
+/** 频道里的一件任务，画成卡片时用到的那几样。 */
+function taskLine(over: Partial<TaskLine>): TaskLine {
+  return {
+    id: 'task-week-1',
+    title: '整理第一周的课件',
+    owner: 'cheese',
+    creator: 'bob',
+    status: '进行中',
+    tone: 'running',
+    accepted: null,
+    at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    ...over,
+  }
+}
+
+const TASK_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'room-task-card',
+    title: 'TaskCard',
+    about: '频道里的一件任务：标题、谁负责、现在到哪一步，点一下打开这件任务。',
+    file: 'src/components/room/TaskCard.vue',
+    component: TaskCard,
+    needs: UI_T,
+    states: [
+      {
+        name: '进行中',
+        note: '状态那一枚跟着任务走：在跑的是一个点，做完是一个勾，关掉是一道横。',
+        props: { task: taskLine({}), ownerName: AGENT_NAME },
+        expect: '整理第一周的课件',
+      },
+      {
+        name: '采纳过几步',
+        note: '还开着、已经采纳过的任务在状态前面写采纳了几次。',
+        props: {
+          task: taskLine({ accepted: '已采纳 2 次', status: '待 波比 审阅', tone: 'waiting' }),
+          ownerName: AGENT_NAME,
+        },
+        expect: '已采纳 2 次',
+      },
+    ],
+  },
+  {
+    id: 'room-task-created-post',
+    title: 'TaskCreatedPost',
+    about: '主线上「谁新建了任务」那一条：署新建它的人，下面是那件任务的卡片。',
+    file: 'src/components/room/TaskCreatedPost.vue',
+    component: TaskCreatedPost,
+    needs: UI_T,
+    states: [
+      {
+        name: '新建了一件',
+        note: '和一条消息一样署名、写时间，后面一句「新建了任务」。',
+        props: {
+          task: taskLine({}),
+          creator: 'bob',
+          creatorName: '波比',
+          ownerName: AGENT_NAME,
+          avatar: null,
+          time: '10:24',
+        },
+        expect: '新建了任务',
+      },
+    ],
+  },
+]
 
 export const ROOM_ENTRIES: CatalogEntry[] = [
   {
@@ -315,92 +371,5 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
     ],
   },
-  {
-    id: 'room-task-card',
-    title: 'TaskCard',
-    about: '频道主线上的一张任务卡：标题、谁负责、此刻到哪一步、上一次变化是什么时候。点它打开任务。',
-    file: 'src/components/room/TaskCard.vue',
-    component: TaskCard,
-    // 状态那一格的勾和横线是 `v-icon`；「某某 负责」和相对时间都读当前语言。
-    needs: UI_T,
-    args: { ownerName: '王长鑫' },
-    states: [
-      {
-        name: '运行中',
-        note: '芝士在干活：状态前一颗呼吸的点。',
-        props: { task: TASK_RUNNING },
-        expect: '运行中',
-      },
-      {
-        name: '在等别人',
-        note: '等的是一个人时写出他的名字，而不是笼统的「待审阅」。',
-        props: { task: TASK_WAITING, ownerName: '李甘' },
-        expect: '待 李甘 审阅',
-      },
-      {
-        name: '在等你，已经采纳过两步',
-        note: '等的就是看的这个人：卡加一道强调边、说成「待你审阅」；还开着又采纳过的，挂「已采纳 2 次」。',
-        props: { task: TASK_MINE },
-        expect: '已采纳 2 次',
-      },
-      {
-        name: '检查没过',
-        note: '闸门红了：点换成警示色。',
-        props: { task: TASK_STUCK },
-        expect: '检查未通过',
-      },
-      {
-        name: '做完了',
-        note: '采纳合并：点换成一个勾，状态写出是哪个 PR。',
-        props: { task: TASK_DONE },
-        expect: '已采纳 · PR #128',
-      },
-      {
-        name: '关了，没人负责',
-        note: '没做就关的：一道横线；没有负责人时那一段不画。',
-        props: { task: TASK_CLOSED, ownerName: null },
-        expect: '已关闭',
-      },
-      {
-        name: '支线区里的一行',
-        note: '`inList` 时它是几行中的一行，不单独画边框，也不加「在等你」那道边。',
-        props: { task: TASK_MINE, inList: true },
-        expectSelector: '.task-card--row',
-      },
-    ],
-  },
-  {
-    id: 'room-task-created-post',
-    title: 'TaskCreatedPost',
-    about: '有人在频道里单独新建了一件任务：主线上署他的名，「新建了任务」下面一张任务卡。',
-    file: 'src/components/room/TaskCreatedPost.vue',
-    component: TaskCreatedPost,
-    needs: UI_T,
-    states: [
-      {
-        name: '人新建的',
-        note: '头像、名字、时间、「新建了任务」，下面是那张卡。',
-        props: taskPostProps(TASK_RUNNING),
-        expect: '新建了任务',
-      },
-      {
-        name: '接着上一件',
-        note: '同一个人接连新建的几件归在同一个名字下面（cont）：不再重复头像和署名，只剩卡。',
-        props: taskPostProps(TASK_WAITING, { cont: true }),
-        expectSelector: '.im-row--cont',
-      },
-      {
-        name: 'AI 队友新建的',
-        note: '新建它的是 AI 队友时，头像换成芝士的那一个。',
-        props: taskPostProps(TASK_BY_AGENT),
-        expect: '讨论中',
-      },
-      {
-        name: '认不出是谁',
-        note: '新建的人认不出来（creator 为 null）时不署名，只留时间和那张卡。',
-        props: taskPostProps(TASK_DONE, { creator: null }),
-        expect: '已采纳 · PR #128',
-      },
-    ],
-  },
+  ...TASK_ENTRIES,
 ]

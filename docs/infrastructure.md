@@ -517,10 +517,9 @@ Two mechanisms, deliberately different in kind:
 
   Being unreachable is not what makes it safe to delete; being **published** is.
   A pre-#936 checkout can hold commits or edits that never left the box. So each
-  directory goes through `check_no_writers` and `check_published` — imported from
-  `resource_cleanup`, the module archival uses, so there is one definition of
-  "safe to delete" rather than two — and anything that fails either check is kept
-  and reported with the reason.
+  directory goes through `check_no_writers` (from `resource_cleanup`) and the
+  script's own `check_published`, and anything that fails either check is kept
+  and reported with the reason. Room cleanup itself no longer checks publication.
 
 What filled `cheese-dev-env6-app` (measured 2026-08-11 at **92%**, 2.6G free):
 docker build cache 3.0G (71 entries, none in use) · apt archives 1.7G · Go build

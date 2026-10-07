@@ -180,14 +180,15 @@ def fit_doc_to_budget(text: str, budget: int, *, full_read_hint: str) -> str:
 
 
 #: 结论 52：「prompt 里必须有随时 push，包括主 agent 也是」。它进系统提示词而不是
-#: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的那台机器上，子 agent 与
-#: 起它的进程同生同死，机器一回收就只剩分支上已经推走的东西，而恢复的办法是从分支
-#: 重派一次（结论 43）。只 commit 不 push 的活过不了这台机器。
+#: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的沙箱里，子 agent 与
+#: 起它的进程同生同死，沙箱一换就只剩分支上推走的东西和每轮结束时的快照
+#: （`cheese worktree` 在新环境里放回）。一轮当中还没到检查点的活过不了这个沙箱。
 ALWAYS_PUSH = (
     "## 随时 push（所有 agent，主 agent 也一样）\n"
-    "干活期间**随时 push**，不要攒到交付那一下才推。你的工作树在这台机器上，而机器"
-    "随时可能被回收；接着干下去的办法是从分支上重来一次，所以没推上去的改动，到不了"
-    "下一轮，也到不了任何别人手里。提交了却没推等于没有。"
+    "干活期间**随时 push**，不要攒到交付那一下才推。你的环境随时可能被换掉。每轮结束"
+    "时平台会推一次，并把没提交的改动存一份快照，新环境里打开任务目录时放回来；可这"
+    "一轮里还没到那一步的改动、子 agent 手里的改动，环境一换就没有了，而且只有推上去"
+    "的，别人才拿得到。提交了却没推等于没有。"
 )
 
 #: 步骤清单是平台工具，每个 harness 都是同一个 `todo_write`；各自自带的那一套在启动
@@ -370,6 +371,14 @@ PROJECT_SKILLS = (
 )
 
 
+def own_name(name: str) -> str:
+    """The line that tells a teammate which name on the roster is its own."""
+    return (
+        f"你的名字是「{name}」。项目成员表里叫这个名字的 AI 队友就是你；"
+        "说到自己、在文档里写谁做什么时，用这个名字称呼自己。"
+    )
+
+
 def build_system_prompt(
     base: str,
     skills: str,
@@ -377,8 +386,13 @@ def build_system_prompt(
     has_doc: bool = False,
     role: str | None = None,
     keeps_memory: bool = False,
+    name: str | None = None,
 ) -> str:
     """拼一个会话的系统提示词：只有规矩，没有项目现状。
+
+    ``name`` 是这位队友在项目里的名字，放在最前面：成员表里有好几位 AI 队友，
+    它得知道哪一位是自己，说到自己、写进文档时用自己的名字，而不是产品名。
+    改名会换掉系统提示词，下一轮因此开一段新会话，这是有意的。
 
     骨架在进程启动时读它，进程空闲退出后用 ``--resume`` 接着原来的对话重新拉起时
     再读一次。所以它在一个会话里必须一字不变：变了，从变的那个字往后、连同整段
@@ -392,6 +406,7 @@ def build_system_prompt(
     记忆。
     """
     parts = [
+        *([own_name(name)] if name else []),
         base,
         PLATFORM_RULES,
         ALWAYS_PUSH,
@@ -418,7 +433,15 @@ def build_system_prompt(
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
 #: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
-TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory", "machine")
+TRACKED_SECTIONS = (
+    "tasks",
+    "topics",
+    "artifacts",
+    "roster",
+    "overview",
+    "memory",
+    "machine",
+)
 
 #: 任务会话对工作机器能做什么。它随任务开始而变（开始后会话带着留得下改动的凭证重开，
 #: 但接着的是同一条对话，开场不会再发），所以是一段会再告诉一次的现状，而不是写死在开场
@@ -484,6 +507,7 @@ def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str
 def build_session_opening(
     *,
     thread: str | None = None,
+    tasks: str | None = None,
     doc: str | None = None,
     memory: MemoryIndex | None = None,
     roster: list[dict] | None = None,
@@ -498,10 +522,14 @@ def build_session_opening(
 ) -> SessionOpening:
     """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。
 
-    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。"""
+    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。
+    ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
+    变，所以和支线那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
     if thread:
         sections["thread"] = "## 这条支线\n" + thread
+    if tasks:
+        sections["tasks"] = tasks
     if machine:
         sections["machine"] = machine
     if teaching is not None and (section := teaching_section(teaching)):

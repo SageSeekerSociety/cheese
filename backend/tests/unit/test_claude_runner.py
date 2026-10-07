@@ -536,6 +536,7 @@ def test_replacing_one_seat_does_not_stop_a_room_mates_claude(tmp_path):
         command,
         env={**os.environ, "CLAUDE_CONFIG_DIR": str(config), "CHEESE_AUTHOR": "seat-b"},
     )
+    _reaped(second)
     try:
         end(sessions_on(config, "seat-b"))
         assert second.wait(timeout=10) is not None
@@ -545,6 +546,14 @@ def test_replacing_one_seat_does_not_stop_a_room_mates_claude(tmp_path):
             if process.poll() is None:
                 process.kill()
             process.wait()
+
+
+def _reaped(process: subprocess.Popen) -> None:
+    """Reap ``process`` the moment it exits. It is this test's child, so once it
+    ends it stays a zombie that `end` still finds alive, and `end` would wait
+    out its SIGTERM and SIGKILL graces for it; the claude a runner replaces is
+    no child of the runner's, and leaves no zombie."""
+    threading.Thread(target=process.wait, daemon=True).start()
 
 
 async def _started(machine, monkeypatch, **options) -> Runner:
@@ -591,6 +600,7 @@ async def test_starting_one_seat_does_not_end_another_seat_on_the_same_config_di
             "CHEESE_AUTHOR": AGENT,
         },
     )
+    _reaped(same)
     try:
         runner = await _started(machine, monkeypatch)
         try:
