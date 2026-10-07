@@ -317,9 +317,9 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
     {
       name: "room with platform notices",
       path: `${project}/topics/${roomId}`,
-      // The platform's line for the new task (roomNotice `taskCreated`).
+      // The card of the task its creator made on its own (「新建了任务」).
       ready: (page) =>
-        page.getByText("created the task").first().waitFor({ timeout: 45_000 }),
+        page.getByTestId("task-created-post").first().waitFor({ timeout: 45_000 }),
     },
     {
       name: "room's members and work computer",
