@@ -242,7 +242,9 @@ class ForgejoTokens:
                 f"{self.binding.api_url}/users/{username}/tokens",
                 auth=auth,
                 json={
-                    "name": f"{READ_TOKEN_PREFIX}{int(expires_at.timestamp())}",
+                    # Forgejo refuses a second token of the same name.
+                    "name": f"{READ_TOKEN_PREFIX}{int(expires_at.timestamp())}"
+                    f"-{secrets.token_hex(3)}",
                     "scopes": list(READ_SCOPES),
                 },
             )
@@ -271,8 +273,12 @@ class ForgejoTokens:
                 )
             for listed in response.json():
                 name = str(listed.get("name") or "")
-                expiry = name.removeprefix(READ_TOKEN_PREFIX)
-                if name == expiry or not expiry.isdigit() or int(expiry) > now:
+                expiry = name.removeprefix(READ_TOKEN_PREFIX).split("-", 1)[0]
+                if (
+                    not name.startswith(READ_TOKEN_PREFIX)
+                    or not expiry.isdigit()
+                    or int(expiry) > now
+                ):
                     continue
                 gone = await client.delete(f"{base}/{listed['id']}", auth=auth)
                 if gone.status_code in (204, 404):

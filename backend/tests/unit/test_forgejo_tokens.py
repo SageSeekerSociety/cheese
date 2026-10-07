@@ -192,7 +192,7 @@ async def test_a_read_only_token_is_scoped_to_reading_and_kept_apart(db_factory)
 async def test_a_read_only_token_past_its_time_is_revoked_upstream(db_factory):
     now = int(datetime.now(UTC).timestamp())
     listed = [
-        {"id": 1, "name": f"cheese-read-{now - 60}"},
+        {"id": 1, "name": f"cheese-read-{now - 60}-a1b2c3"},
         {"id": 2, "name": f"cheese-read-{now + 3600}"},
         {"id": 3, "name": "someone-elses-token"},
     ]
