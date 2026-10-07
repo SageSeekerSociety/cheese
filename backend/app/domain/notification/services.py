@@ -34,8 +34,6 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
 
-_VALID_FEEDBACK = {"up", "down"}
-
 
 @dataclass(slots=True)
 class _EntityPointer:
@@ -226,6 +224,11 @@ class NotificationQueryService:
         )
 
 
+def asks_for_decision(notification: Notification) -> bool:
+    """这一条是不是要人拍板的决策请求（另一种进「待办」的是读过就了结的变更提醒）。"""
+    return notification.type == NotificationType.DECISION_REQUEST.value
+
+
 class ProjectNotificationService:
     """项目收件箱 —— 平台报告自己的那一侧（spec §8.5/8.6）。
 
@@ -238,6 +241,14 @@ class ProjectNotificationService:
         self._repo = NotificationRepository(session)
         self._projects = ProjectRepository(session)
         self._prefs = PreferencesRepository(session)
+
+    async def still_open(
+        self, project_ids: list[uuid.UUID], *, recipient_handle: str
+    ) -> list[Notification]:
+        """这几个项目里写给他、还没了结的决策请求和变更提醒（「待办」那一份清单读它）。"""
+        return await self._repo.still_open(
+            project_ids, recipient_handle=recipient_handle
+        )
 
     async def create(
         self,
@@ -407,10 +418,3 @@ class ProjectNotificationService:
                 {"type": "event_block", "block": block_payload},
             )
         return saved
-
-    async def set_feedback(self, notification_id: int, feedback: str) -> Notification:
-        if feedback not in _VALID_FEEDBACK:
-            raise ValidationError("feedback must be 'up' or 'down'")
-        row = await self.get_or_404(notification_id)
-        row.feedback = feedback
-        return await self._repo.save(row)

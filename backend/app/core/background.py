@@ -380,6 +380,7 @@ def periodic_jobs(
     from app.domain.routine.service import sweep as sweep_routines
     from app.domain.run_record.service import purge_expired as purge_run_records
     from app.domain.task.deadline_scheduler import sweep_expired_deadlines
+    from app.domain.task_quiet.sweep import remind_quiet_tasks
     from app.domain.usage.subscription_ingest import ingest_once
 
     usage_log = settings.subscription_usage_log.strip()
@@ -398,6 +399,13 @@ def periodic_jobs(
             "forge orphan account sweep",
             3600,
             lambda: sweep_orphan_accounts(sessions),
+        ),
+        # 好几天没人动的任务提醒负责人一次（`room_task.presentation.quiet_since`）。
+        # 判据按天算，一小时一拍足够；同一段安静由投递账本去重，多跑不会多打扰。
+        PeriodicRunner(
+            "quiet task reminder",
+            3600,
+            lambda: remind_quiet_tasks(sessions),
         ),
         # 合并态轮询 (#718): mirrors pending PR cards' merge state — PR CI
         # → merge → deploy workflow → archive.

@@ -58,3 +58,15 @@ describe('railTasksByChannel', () => {
     expect(channel.total).toBe(1)
   })
 })
+
+describe('railTasksByChannel: 停住的任务', () => {
+  it('十四天没动静的从侧栏收起，「全部任务」里的件数照算', () => {
+    const quiet = task({ room_id: 'side', owner_handle: 'me', stalled: true })
+    const going = task({ room_id: 'side', owner_handle: 'me' })
+
+    const rail = railTasksByChannel([quiet, going], 'me').side
+
+    expect(rail.shown.map((t) => t.id)).toEqual([going.id])
+    expect(rail.total).toBe(2)
+  })
+})

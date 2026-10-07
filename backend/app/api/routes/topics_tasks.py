@@ -304,10 +304,12 @@ async def conclude_task(
             ),
         )
     task = await tasks.close_thread(task, conclusion=conclusion)
-    # The room hears how it ended: done with a conclusion, or put down.
+    # The task's own conversation hears how it ended; the channel's one line for
+    # this task updates in place (`DispatchedMarker`).
     await announce(
         db,
         place_id=place.room_id,
+        task_id=task.id,
         content=(
             say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
             if task.conclusion
@@ -395,6 +397,7 @@ async def start_task(
     await announce(
         db,
         place_id=place.room_id,
+        task_id=task.id,
         content=say("taskStarted", actor=f"<@{actor.handle}>", title=said_title(task)),
         meta={"platform": True, "action": "task_started", "task_id": str(task.id)},
     )

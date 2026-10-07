@@ -190,7 +190,7 @@ export const CATALOG: CatalogEntry[] = [
       {
         name: '去不成的去处',
         note: '目标的名字在、必需参数不在（`resolve` 会抛）：这里什么都不画成链接 —— 不是死代码，是真会走到的退路。',
-        props: { to: { name: 'workspace-running', params: {} } },
+        props: { to: { name: 'workspace-overview', params: {} } },
         slot: '去看看',
         expect: '去看看',
       },

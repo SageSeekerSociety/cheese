@@ -277,7 +277,7 @@ def test_unread_count_refuses_someone_elses_badge(client):
     assert r.status_code == 403, r.text
 
 
-# ---- Per-notification actions (/read /feedback /resolve) ----------------------
+# ---- Per-notification actions (/read /resolve) -------------------------------
 
 
 def _decision(client, project_id: str, title: str, target: str) -> dict:
@@ -305,8 +305,6 @@ def test_notification_actions_require_a_verified_caller(client):
     r = client.post(f"/alerts/{n['id']}/read")
     assert r.status_code == 401, r.text
     assert "机密内容" not in r.text
-    r = client.post(f"/alerts/{n['id']}/feedback", json={"feedback": "up"})
-    assert r.status_code == 401, r.text
     r = client.post(
         f"/alerts/{n['id']}/resolve",
         json={"chosen": "B", "decided_by": "mallory"},
@@ -317,9 +315,7 @@ def test_notification_actions_require_a_verified_caller(client):
     mine = client.get(
         f"/projects/{pid}/alerts", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
-    assert [(x["read"], x["resolved_at"], x["feedback"]) for x in mine] == [
-        (False, None, None)
-    ]
+    assert [(x["read"], x["resolved_at"]) for x in mine] == [(False, None)]
 
 
 def test_notification_actions_refuse_a_non_recipient(client):
@@ -330,8 +326,6 @@ def test_notification_actions_refuse_a_non_recipient(client):
     r = client.post(f"/alerts/{n['id']}/read", headers=bob)
     assert r.status_code == 403, r.text
     assert "机密内容" not in r.text
-    r = client.post(f"/alerts/{n['id']}/feedback", json={"feedback": "up"}, headers=bob)
-    assert r.status_code == 403, r.text
     r = client.post(f"/alerts/{n['id']}/resolve", json={"chosen": "B"}, headers=bob)
     assert r.status_code == 403, r.text
 

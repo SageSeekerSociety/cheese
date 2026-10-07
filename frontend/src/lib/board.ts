@@ -1,25 +1,17 @@
-// 看板的呈现规则 —— **这里没有一行在算状态**。
+// 任务状态的呈现规则 —— **这里没有一行在算状态**。
 //
-// 一条活落哪一列、卡上写哪句话，全部由后端算好放在 `presentation` 里。前端这边只
-// 留下和后端无关的三件事：列怎么排、列叫什么、同一列里谁排前面。
+// 一件任务落哪一格、写哪句话，全部由后端算好放在 `presentation` 里。前端这边只留下
+// 和后端无关的几件事：格子叫什么、那句话怎么说、色点长什么样。
 //
 // 前端不再自己推一遍，是因为两个算法算同一个东西必然会走散，而屏幕上那个词到底是
 // 哪一个算出来的，看的人分辨不了——他只会得出「界面在骗我」这一个结论。
 //
-// 列的判据是「**该谁动**」，不是「事情进行到哪一步」。这是整块板和一张表的区别：
-// 表回答「有哪些活、它们各是什么状态」，板回答「现在轮到谁」。同一个客观事实——
-// 比如快检红了——下一步在平台手上就落 `delivering`，在人手上就落 `needs_you`。
+// 格子的判据是「**该谁动**」，不是「事情进行到哪一步」。同一个客观事实——比如快检
+// 红了——下一步在平台手上就落 `delivering`，在人手上就落 `needs_you`。
 
 import type { BoardColumn, BoardPhrase } from '@/cx_types'
 
 import i18n, { t } from '@/i18n'
-
-export interface BoardColumnSpec {
-  key: BoardColumn
-  label: string
-  /** Class suffix the host styles: `board-dot--building` 等。 */
-  cls: string
-}
 
 // 列名按当前语言现取，不存成常量：切换语言后要跟着变。
 export function columnLabel(column: BoardColumn): string {
@@ -32,10 +24,10 @@ export function phraseLabel(phrase: BoardPhrase): string {
   return i18n.global.te(`work.board.phrase.${phrase}`, 'zh-CN') ? t(`work.board.phrase.${phrase}`) : phrase
 }
 
-/** 色点的 class。列色是这套界面里唯一说「该谁动」的颜色，所以看板、房间总览、侧栏
- *  用的是同一个函数——三处对不上，看的人就得在脑子里做一次翻译。 */
-export function columnDotClass(column: BoardColumn): string {
-  return `board-dot--${column.replace('_', '-')}`
+/** 等的是**看的这个人**时卡面那一句：「待审阅」对他说成「待你审阅」，「讨论中」说成
+ *  「待你开始」—— 文档写好了，下一步是他点开始。没有专门说法的照通用那一句。 */
+export function myPhraseLabel(phrase: BoardPhrase): string {
+  return i18n.global.te(`work.board.mine.${phrase}`, 'zh-CN') ? t(`work.board.mine.${phrase}`) : phraseLabel(phrase)
 }
 
 /** 色点长什么样。
@@ -56,66 +48,14 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
   return { borderColor: 'var(--line-2)' }
 }
 
-/** 板上并排的那几列。
+/** 还有人要管的那些任务：去掉已归档频道里没走完的。
  *
- *  `done` 不在里面：它收进页面底部那条折叠行，板面留给还需要人看的东西。`archived`
- *  也不在：任务不归档（只有房间会），一个任务永远落不到那一列。 */
-export const BOARD_COLUMNS: BoardColumnSpec[] = (['not_started', 'building', 'delivering', 'needs_you'] as const).map(
-  (key) => ({
-    key,
-    get label() {
-      return columnLabel(key)
-    },
-    cls: columnDotClass(key),
-  })
-)
-
-/** 同一列里的先后。
- *
- *  新动过的排前面，**时间一样就比 id** —— 少了这条 tie-break，两条同秒更新的活谁
- *  在前面取决于数组原本的顺序，而那个顺序每次请求都可能不同，于是板会在两次刷新
- *  之间自己跳。排序必须是全序，不能只是「差不多有序」。 */
-export interface SortableTask {
-  id: string
-  updated_at?: string | null
-  created_at?: string | null
-}
-
-export function compareTasks(a: SortableTask, b: SortableTask): number {
-  const at = Date.parse(a.updated_at ?? a.created_at ?? '')
-  const bt = Date.parse(b.updated_at ?? b.created_at ?? '')
-  const byTime = (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at)
-  if (byTime !== 0) return byTime
-  return a.id.localeCompare(b.id)
-}
-
-/** 板上真正要看的那些活：去掉已归档房间里没走完的活。
- *
- *  活不归档，房间归档：一个房间收了尾，里面没走完的活（已退回、待回答）后端照样
- *  按它自己的状态落在未开始 / 进行中 / 检查中 / 待处理里，一挂就是几周。可房间归档
- *  了，就没人会再去动它们——四列答的是「接下来谁要动什么」，它们不该在上面。已完成不筛：
- *  那是交付过的东西，房间归档了也还是交付过。
- *
- *  看板和话题列表顶上那一行摘要都从这一份出发：两处数字对不上，看的人就不知道信
- *  哪个。 */
-export function liveBoardTasks<T extends { room_id: string; presentation: { column: BoardColumn } }>(
+ *  任务不归档，频道归档：一个频道收了尾，里面没走完的任务后端照样按它自己的状态落在
+ *  未开始 / 进行中 / 检查中 / 待处理里，可频道归档了就没人会再去动它们——全部任务答的
+ *  是「接下来谁要动什么」，它们不该在上面。已完成不筛：那是交付过的东西。 */
+export function liveTasks<T extends { room_id: string; presentation: { column: BoardColumn } }>(
   tasks: readonly T[],
   archivedRoomIds: ReadonlySet<string>
 ): T[] {
   return tasks.filter((task) => task.presentation.column === 'done' || !archivedRoomIds.has(task.room_id))
-}
-
-/** 板面三列各有几件，按「该你动」的那一列打头：摘要里第一眼要看到的是它。数为零
- *  的列不列。 */
-export function boardColumnCounts(
-  tasks: readonly { room_id: string; presentation: { column: BoardColumn } }[],
-  archivedRoomIds: ReadonlySet<string>
-): { key: BoardColumn; label: string; count: number }[] {
-  const counts = new Map<BoardColumn, number>()
-  for (const task of liveBoardTasks(tasks, archivedRoomIds)) {
-    counts.set(task.presentation.column, (counts.get(task.presentation.column) ?? 0) + 1)
-  }
-  return (['needs_you', 'not_started', 'building', 'delivering'] as const)
-    .map((key) => ({ key, label: columnLabel(key), count: counts.get(key) ?? 0 }))
-    .filter((column) => column.count > 0)
 }

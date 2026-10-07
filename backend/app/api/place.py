@@ -45,6 +45,15 @@ async def rooms_seen(
     return {room.id for room in rooms}
 
 
+async def live_rooms_seen(
+    db: AsyncSession, resolver: ActorResolver, actor: Actor, project_id: uuid.UUID
+) -> set[uuid.UUID]:
+    """``rooms_seen`` without the archived channels: what is still going on."""
+    viewer = None if resolver.on_the_dev_credential(actor) else actor.handle
+    rooms = await TopicRepository(db).list_for_project(project_id, only_seen_by=viewer)
+    return {room.id for room in rooms if str(room.status) != "archived"}
+
+
 async def channels_unseen(
     db: AsyncSession, resolver: ActorResolver, actor: Actor, project_id: uuid.UUID
 ) -> set[uuid.UUID]:

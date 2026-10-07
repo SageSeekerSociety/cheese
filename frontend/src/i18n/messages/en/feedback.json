@@ -347,14 +347,6 @@
         "conflict": "Merge conflict",
         "live": "Still live"
       },
-      "usefulness": {
-        "title": "Proactive usefulness",
-        "up": "Useful",
-        "down": "Not useful",
-        "unrated": "Read, no rating",
-        "unread": "Unread",
-        "note": "Feedback lives on notifications only. Most proactive speech is in-room blocks, and platform/agent announcements deliberately send no recipients — without this note, 90% useful reads as 90% of what the agent says."
-      },
       "unavailable": {
         "title": "Not computable today",
         "note": "No data source. Any number here would have to be invented.",
