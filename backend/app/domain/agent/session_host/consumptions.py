@@ -104,6 +104,20 @@ if redis.call('GET', KEYS[1]) == ARGV[1] then
 end
 return 0
 """
+#: Take the lease on a question that is still open. A sweep reads the open set
+#: once and then looks at each question in turn, and one can end in between:
+#: its reader takes it out of the set and only then gives its lease up
+#: (``_end``), so a free lease on a question still in the set means nobody is
+#: finishing it, while a free lease alone does not.
+_TAKE = """
+if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then
+  return 0
+end
+if redis.call('SET', KEYS[2], ARGV[2], 'NX', 'PX', ARGV[3]) then
+  return 1
+end
+return 0
+"""
 
 
 @dataclass(frozen=True)
@@ -463,7 +477,9 @@ class Consumptions:
                 # going away, mid-rollout — or to none: one that reaches it
                 # takes it up.
                 continue
-            if not await redis.set(_lease(work), self._me, nx=True, px=_ms(LEASE_S)):
+            if not await redis.eval(  # type: ignore[misc]
+                _TAKE, 2, _OPEN, _lease(work), work, self._me, _ms(LEASE_S)
+            ):
                 continue
             logger.info(
                 "%s taking up question %s (%s)", self._me, work, consumption.kind
