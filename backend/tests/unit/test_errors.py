@@ -46,7 +46,7 @@ class TestBaseError:
         error = BadRequestError("Invalid input", {"field": "name"})
         body = error.to_response_body()
         assert body["code"] == HTTP_400_BAD_REQUEST
-        assert body["message"] == "BadRequestError: Invalid input"
+        assert body["message"] == "Invalid input"
         assert body["error"]["name"] == "BadRequestError"
         assert body["error"]["message"] == "Invalid input"
         assert body["error"]["data"] == {"field": "name"}

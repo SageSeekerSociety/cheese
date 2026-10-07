@@ -251,6 +251,7 @@ ignore = ["UP042"]
 "tests/unit/test_machine_enrollment.py" = ["TID251"]
 "tests/unit/test_mail_host_guard.py" = ["TID251"]
 "tests/unit/test_mail_server.py" = ["TID251"]
+"tests/unit/test_one_error_tree.py" = ["TID251"]
 "tests/unit/test_review_forge.py" = ["TID251"]
 "tests/unit/test_room_send_timing.py" = ["TID251"]
 "tests/unit/test_routine_schedule.py" = ["TID251"]
@@ -262,10 +263,10 @@ ignore = ["UP042"]
 "tests/unit/test_work_model_binding.py" = ["TID251"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"app.core.errors.AppError".msg = "Deprecated: subclass or raise a BaseError class from app.core.errors."
+"app.core.errors.AppError".msg = "Deprecated: subclass or raise a BaseError class (app.core.errors)."
 "app.core.errors.ValidationError".msg = "Deprecated, and shadows pydantic's: raise UnprocessableEntityError."
 "app.core.errors.UnauthorizedError".msg = "Deprecated: raise AuthenticationRequiredError."
-"app.core.errors.GatewayUnavailableError".msg = "Deprecated: raise a BaseError 503 class from app.core.errors."
+"app.core.errors.GatewayUnavailableError".msg = "Deprecated: raise UpstreamUnavailableError."
 
 # FastAPI's dependency-injection markers are CALLED in parameter defaults
 # (`x = Depends(dep)`, `q = Query(...)`) — that's the framework's idiom, not the

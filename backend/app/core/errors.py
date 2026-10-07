@@ -80,21 +80,18 @@ class BaseError(Exception):
     def name(self) -> str:
         return self.code
 
+    @property
+    def message(self) -> str:
+        return self.args[0]
+
     def to_response_body(self) -> dict:
-        return {
-            "code": self.status_code,
-            "message": f"{self.name}: {self.args[0]}",
-            "data": None,
-            "error": _with_key(
-                {
-                    "name": self.name,
-                    "message": self.args[0],
-                    "data": self.data,
-                    "retryable": self.retryable,
-                },
-                self.args[0],
-            ),
-        }
+        return format_error_response(
+            self.status_code,
+            self.args[0],
+            self.name,
+            data=self.data,
+            retryable=self.retryable,
+        )
 
 
 class BadRequestError(BaseError):
@@ -209,12 +206,22 @@ class QuotaExceededError(BaseError):
 
 
 class SystemBusyError(BaseError):
-    retryable = True
-
     def __init__(
         self,
         message: str = "System is busy, please try again later",
         data: Any | None = None,
+    ) -> None:
+        super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
+
+
+class UpstreamUnavailableError(BaseError):
+    """Something we depend on is not there to answer: a gateway, a forge, a
+    model pool. Not retryable by default — most of these are a missing or
+    refused configuration, which waiting does not fix; a subclass for an
+    outage that passes on its own says ``retryable = True``."""
+
+    def __init__(
+        self, message: str = "Upstream unavailable", data: Any | None = None
     ) -> None:
         super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
 
@@ -229,18 +236,30 @@ class GatewayTimeoutError(BaseError):
         super().__init__(HTTP_504_GATEWAY_TIMEOUT, message, None)
 
 
-def format_error_response(status_code: int, message: str, name: str = "Error") -> dict:
-    """The envelope every client of ours parses. ``name`` is what a caller
-    switches on when the status alone does not say which condition it was."""
+def format_error_response(
+    status_code: int,
+    message: str,
+    name: str = "Error",
+    *,
+    data: Any | None = None,
+    retryable: bool = False,
+) -> dict:
+    """The envelope every client of ours parses, and the one place it is built.
+
+    ``name`` is what a caller switches on when the status alone does not say
+    which condition it was. The top-level ``message`` is the sentence alone:
+    the web client shows it as it is (``refusalWords``), so a class name in
+    front of it reached the screen."""
     return {
         "code": status_code,
-        "message": f"{name}: {message}",
+        "message": message,
+        "data": None,
         "error": _with_key(
             {
                 "name": name,
-                "retryable": False,
                 "message": message,
-                "data": None,
+                "data": data,
+                "retryable": retryable,
             },
             message,
         ),
@@ -339,42 +358,45 @@ _log = get_logger("app.errors")
 
 
 class AppError(BaseError):
-    """Deprecated: raise a BaseError subclass instead.
+    """Deprecated: raise the BaseError class each subclass names instead.
 
     What is left of the second error framework the cheesex merge brought in.
-    It is a BaseError now, answered by the same handler with the same body;
-    what it keeps is its constructor — the message may be left out, and the
-    class's ``message`` stands in — so the call sites that raise it did not
-    have to change at once. They move to the BaseError classes domain by
-    domain, and ruff's banned-api rule (TID251, backend/pyproject.toml) keeps
-    any new code from reaching for these names meanwhile.
+    Each subclass is already the BaseError class it is being replaced by
+    (ValidationError is an UnprocessableEntityError, and so on), so an
+    ``except`` written for either catches both while the raises move over one
+    domain at a time. What AppError keeps is its constructor — the message
+    may be left out, and the class's ``message`` stands in — and ruff's
+    banned-api rule (TID251, backend/pyproject.toml) keeps new code from
+    reaching for these names meanwhile.
     """
 
     status_code: int = HTTP_400_BAD_REQUEST
-    message: str = "Bad request"
+    message: str = "Bad request"  # type: ignore[assignment]
 
     def __init__(self, message: str | None = None) -> None:
         if message is not None:
             self.message = message
-        super().__init__(type(self).status_code, self.message, None)
+        # Not super(): the next class in a subclass's MRO is its replacement,
+        # whose constructor takes (message, data).
+        BaseError.__init__(self, type(self).status_code, self.message, None)
 
 
-class ValidationError(AppError):
+class ValidationError(AppError, UnprocessableEntityError):
     """Deprecated, and shadows pydantic's: raise UnprocessableEntityError."""
 
     status_code = HTTP_422_UNPROCESSABLE_CONTENT
     message = "Validation failed"
 
 
-class UnauthorizedError(AppError):
+class UnauthorizedError(AppError, AuthenticationRequiredError):
     """Deprecated: raise AuthenticationRequiredError."""
 
     status_code = HTTP_401_UNAUTHORIZED
     message = "Unauthorized"
 
 
-class GatewayUnavailableError(AppError):
-    """Deprecated: a 503 for an upstream that did not answer."""
+class GatewayUnavailableError(AppError, UpstreamUnavailableError):
+    """Deprecated: raise UpstreamUnavailableError."""
 
     status_code = HTTP_503_SERVICE_UNAVAILABLE
     message = "AI gateway unavailable"
@@ -546,14 +568,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         message = say("serverInternalError")
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "code": HTTP_500_INTERNAL_SERVER_ERROR,
-                "message": message,
-                "data": None,
-                "error": _with_key(
-                    {"name": "InternalServerError", "message": message}, message
-                ),
-            },
+            content=format_error_response(
+                HTTP_500_INTERNAL_SERVER_ERROR, message, "InternalServerError"
+            ),
         )
 
     for exc_type, handler in (
