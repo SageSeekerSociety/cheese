@@ -15,6 +15,7 @@ from sqlalchemy import delete, select
 import app.models  # noqa: F401 — every table, so any FK on the ones below resolves
 from app.core.db import async_session_factory
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.project.address import Numbered, take_number
 from app.domain.project.forge import provision_repository
 from app.domain.project.models import (
     AiMode,
@@ -74,8 +75,11 @@ async def seed() -> None:
             s.add(project)
             await s.flush()
 
+            # Made directly, past TopicRepository.add, so each takes its
+            # channel number here.
             root = Topic(
                 project_id=project.id,
+                number=await take_number(s, project.id, Numbered.channel),
                 title="项目总览 · 芝士本体",
                 kind=TopicKind.root,
                 status=TopicStatus.active,
@@ -92,6 +96,7 @@ async def seed() -> None:
 
             work = Topic(
                 project_id=project.id,
+                number=await take_number(s, project.id, Numbered.channel),
                 title=first_topic,
                 kind=TopicKind.topic,
                 status=TopicStatus.active,

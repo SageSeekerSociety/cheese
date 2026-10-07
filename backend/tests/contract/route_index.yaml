@@ -83,6 +83,7 @@ auth_entries:
   delegated.self: "ActorResolver.resolve(); the caller must be authenticated with a user id: a person's login, or a delegated credential (sandbox_auth.DelegatedClaims, cxdg_ prefix) that api.auth.DELEGATED_ROUTES admits here and resolves to the person the 芝士 answers for. Lists only that person's own rows. Source: app/api/routes/tasks/participation.py; app/api/auth.py."
   document.human: "document_agent._asker uses api/doc_access.reach(enforce=True) and doc_identity.human_operation_actor (verified human, not agent identity); a box conversation is held in Valkey with its asker and document, and only that person on that document may go on with it, stop it, or put its answer into a thread they started. Source: app/api/routes/document_agent.py; app/domain/agent/document/box.py; app/api/doc_identity.py."
   collab.service: "living_docs._service: the bearer derived from COLLAB_SECRET (living_doc.collab.verify_service); only the collaboration service holds it. Identity in a store comes from the actors it carries, which the service took from backend-signed tickets or from the backend's own replace call. Source: app/api/routes/living_docs.py."
+  address.reader: "addresses._readable_project resolves the project a slug, former slug or id names, then ActorResolver.resolve(read_only) and authorize_project; a refusal is answered as NotFound so an address reveals no project. A numbered task or channel is then held to its room through topics._actor_in_place, a document through api/doc_access.reach, again refused as NotFound. Source: app/api/routes/addresses.py."
   project.documents: "living_docs project routes resolve in the project then api/doc_access.authorize_in_project: a member (authorize_project), or 芝士 with its session credential naming one of the project's rooms, refused once taken off that room (refuse_unseated_agent). Creating also requires an authenticated actor and refuses an archived project. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
   document.own: "living_docs._own: api/doc_access.reach(enforce=True), refuses a room's living document (docBelongsToRoom), then doc_access.require_writable. Rename and delete apply only to the project's own documents. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
   living.document: "living_docs resolves through api/doc_access.reach (room roster for a room's document, project membership, or 芝士's session credential in the project, for one in no room); state-changing/history/receipt/restore branches enforce it and use doc_identity.operation_actor, and writes refuse an archived room or project (doc_access.require_writable). Source: app/api/routes/living_docs.py; app/api/doc_access.py. Endpoint-specific branch is kept in the map below."
@@ -276,6 +277,7 @@ owners:
   living_doc: "Documents: canonical journal, receipts, history, restoration and comment threads; domain/living_doc/DocumentJournal and living_doc/comments, with block/document persistence. Versions are recorded only by the collaboration service's store (api/doc_store.py); other writers go through living_doc/collab.replace."
   room.files: "Room retained files and shown-source composition; domain/project/room_files.py plus block/shown. The route owns composing file save and shown-block broadcast."
   project: "Project lifecycle, association, ownership and repository settings; domain/project/ProjectService and project forge/protection. Route retains request assembly."
+  project.address: "Project slugs, former slugs and per-project numbers for tasks, documents and channels; domain/project/address.py."
   project.rail: "Project rail assembly in projects.list_project_tasks: project_reader -> TaskService -> latest_cards_by_task -> beats -> asked -> one now -> presentation. Domain owners of facts remain room_task/review/block; v6 says assembly owner is the route."
   project.artifacts: "Published project artifact catalogue/version comparisons; domain/project/artifacts.py, composed with library/preview/repository bytes by the route."
   project.environment: "Project/channel execution environment, its failures and their diagnosis; domain/project/environment.py and environment_diagnosis.py, domain/agent/environment_failures.py, composed with machine/device state."
@@ -375,6 +377,11 @@ routes:
   - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/merge-anyway", auth: "review.card", owner: "review"}
   - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/auto-merge", auth: "review.card", owner: "review"}
   - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/revoke", auth: "review.card", owner: "review"}
+  # app.api.routes.addresses
+  - {protocol: "http", method: "GET", path: "/addresses/projects/{ref}", auth: "address.reader", owner: "project.address"}
+  - {protocol: "http", method: "GET", path: "/addresses/projects/{ref}/{kind}/{number}", auth: "address.reader", owner: "project.address"}
+  - {protocol: "http", method: "GET", path: "/addresses/of/{kind}/{thing_id}", auth: "address.reader", owner: "project.address"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/slug", auth: "project.manager", owner: "project.address"}
   # app.api.routes.admin_feature_stats
   - {protocol: "http", method: "GET", path: "/admin/feature-stats", auth: "platform.admin", owner: "feature_stats"}
   - {protocol: "http", method: "GET", path: "/admin/feature-stats/{feature_id}", auth: "platform.admin", owner: "feature_stats"}

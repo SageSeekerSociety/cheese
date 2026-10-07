@@ -47,11 +47,16 @@ class DocumentRepository:
         return list(rows)
 
     async def create(
-        self, *, project_id: uuid.UUID, title: str | None = None, author: str = "system"
+        self,
+        *,
+        project_id: uuid.UUID,
+        title: str | None = None,
+        author: str = "system",
+        number: int | None = None,
     ) -> Document:
         """A new document in no room, empty (version 0): the project's own, or
         one a task points at (which goes by the task's title)."""
-        doc = Document(project_id=project_id, title=title, author=author)
+        doc = Document(project_id=project_id, title=title, author=author, number=number)
         self._session.add(doc)
         await self._session.flush()
         return doc

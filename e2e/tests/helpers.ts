@@ -143,6 +143,14 @@ export async function api(
   return payload.data ?? {};
 }
 
+/** The id of the project the page is in. The address bar carries the project's
+ * short name (`/projects/<slug>/...`); the API takes its id. */
+export async function projectIdOf(page: Page): Promise<string> {
+  const ref = /\/projects\/([^/?#]+)/.exec(page.url())?.[1];
+  if (!ref) throw new Error(`not on a project page: ${page.url()}`);
+  return (await api(page, "get", `/addresses/projects/${ref}`)).id as string;
+}
+
 // Opens the first project from the rail and waits for its topic sidebar to
 // finish loading, returning the count of visible (non-archived) topic rows.
 export async function openFirstProject(page: Page) {

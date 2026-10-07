@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject } from './helpers';
+import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
 
 // 任务命名 (backend room_task/naming.py), watched from the sidebar: a task
 // opened without a title gets a name from its first message, a name a person
@@ -9,15 +9,10 @@ import { api, apiLogin, openFirstProject } from './helpers';
 
 const activeTitle = (page: Page) => page.locator('.rail-task--selected .rail-task__title');
 
-function projectIdOf(page: Page): string {
-  const id = /\/projects\/([^/]+)/.exec(page.url())?.[1];
-  if (!id) throw new Error(`not on a project page: ${page.url()}`);
-  return id;
-}
 
 /** A task with no title, in a channel of its own, opened. */
 async function newTask(page: Page): Promise<string> {
-  const projectId = projectIdOf(page);
+  const projectId = await projectIdOf(page);
   const room = (await api(page, 'post', '/topics', {
     project_id: projectId,
     title: `命名 ${Date.now()}`,
@@ -75,7 +70,7 @@ test.describe('Task naming', () => {
 
   test('a project on manual naming is left alone', async ({ page }) => {
     await openFirstProject(page);
-    const projectId = projectIdOf(page);
+    const projectId = await projectIdOf(page);
     try {
       await page.goto(`/projects/${projectId}/settings/task-naming`);
       const manual = page.getByRole('radio', { name: /手动命名/ });

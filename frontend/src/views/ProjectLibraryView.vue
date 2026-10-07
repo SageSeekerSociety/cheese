@@ -50,7 +50,8 @@ import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import LibraryVersionsDialog from '@/views/library/LibraryVersionsDialog.vue'
 
-const props = defineProps<{ projectId: string }>()
+// `docId`：从 `/docs/<编号>` 进来时，整页打开的那一份文档。
+const props = defineProps<{ projectId: string; docId?: string }>()
 
 const route = useRoute()
 const router = useRouter()
@@ -186,6 +187,7 @@ function docMeta(doc: ProjectDocument): string {
 
 const { selectedDocId, openDocument, openRoom, openDoc, closeDoc, titled } = useOpenLibraryDocument(
   () => props.projectId,
+  () => props.docId,
   docs,
   (message) => (actionError.value = message)
 )
@@ -208,7 +210,8 @@ async function removeDoc() {
   actionError.value = ''
   try {
     await docs.remove(doc.id)
-    if (selectedDocId.value === doc.id) void router.replace({ query: {} })
+    if (selectedDocId.value === doc.id)
+      void router.replace({ name: 'project-library', params: { projectId: props.projectId } })
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.deleteFailed')
   }

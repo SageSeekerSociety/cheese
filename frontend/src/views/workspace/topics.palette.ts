@@ -14,6 +14,7 @@ import { copyLink, linkOf } from '@/commands/copy'
 import { paletteAsk } from '@/commands/palette/state'
 import { topicActions } from '@/commands/topicActions'
 import { t } from '@/i18n'
+import { routeIds } from '@/lib/addresses'
 import { phraseLabel } from '@/lib/board'
 import { channelGlyph, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
@@ -142,7 +143,8 @@ const source: PaletteSource = {
   items: itemsOf,
   fromRoute(route, ctx) {
     if (route.name !== 'workspace-topic' || !ctx.projectId) return null
-    const topic = topicsOf(ctx).find((row) => row.id === route.params.topicId)
+    const topicId = routeIds(route.params).topicId
+    const topic = topicsOf(ctx).find((row) => row.id === topicId)
     return topic ? itemOf(topic, ctx.projectId, ctx.router) : null
   },
 }

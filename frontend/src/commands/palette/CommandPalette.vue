@@ -28,6 +28,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import { t } from '@/i18n'
+import { routeIds } from '@/lib/addresses'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const router = useRouter()
@@ -43,7 +44,7 @@ let returnFocus: HTMLElement | null = null
 // 在哪个项目里找。默认跟着当前页；空着按退格去掉范围（跨项目只找名字），在一个项目
 // 上按 Tab 进到那个项目里。每次打开都回到当前页所在的项目。
 const routeCtx = computed<SourceContext>(() => ({
-  projectId: typeof route.params.projectId === 'string' ? route.params.projectId : null,
+  projectId: routeIds(route.params).projectId ?? null,
   router,
 }))
 const scope = ref<string | null | undefined>(undefined)

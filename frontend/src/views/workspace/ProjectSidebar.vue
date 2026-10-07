@@ -10,6 +10,7 @@ import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLa
 import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
+import { routeIds } from '@/lib/addresses'
 import { readProjectTasks } from '@/lib/projectTasks'
 import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
@@ -43,8 +44,9 @@ const column = computed(
 )
 
 // Active state is read off the URL, never off a local flag.
-const activeTopicId = computed(() => (route.name === 'workspace-topic' ? String(route.params.topicId) : null))
-const activeTaskId = computed(() => (route.name === 'workspace-task' ? String(route.params.taskId) : null))
+const ids = computed(() => routeIds(route.params))
+const activeTopicId = computed(() => (route.name === 'workspace-topic' ? ids.value.topicId ?? null : null))
+const activeTaskId = computed(() => (route.name === 'workspace-task' ? ids.value.taskId ?? null : null))
 // 「全部任务」带着频道筛选打开时，那个频道下面的「全部任务」一行是选中的。
 const activeAllTasks = computed(() =>
   route.name === 'project-tasks' && typeof route.query.channel === 'string' ? route.query.channel : null

@@ -82,7 +82,7 @@ const back = (q: { queryByRole: (r: string, o: { name: RegExp }) => HTMLElement 
 
 describe('返回上一级', () => {
   it.each([
-    ['/projects/project-a/topics/topic-b', '/projects/project-a'],
+    ['/projects/project-a/channels/7', '/projects/project-a'],
     ['/projects/project-a/settings', '/projects/project-a'],
     ['/projects/project-a/agents', '/projects/project-a'],
     ['/projects/project-a/docs/weeklies', '/projects/project-a'],
@@ -115,7 +115,7 @@ describe('返回上一级', () => {
   // 它指向的是**父**地址，而 vue-router 的非精确匹配认为「站在子路由上时父链接
   // 是激活的」，于是 Vuetify 一直给它盖一层 12% 的实底遮罩——顶栏左上角一个永远
   // 按下去的灰方块。返回是「离开这一层」，不是「你在这儿」。
-  it.each(['/projects/project-a/topics/topic-b', '/projects/project-a/settings', '/spaces/42/tasks/7'])(
+  it.each(['/projects/project-a/channels/7', '/projects/project-a/settings', '/spaces/42/tasks/7'])(
     'does not sit in a pressed state on %s',
     async (path) => {
       const { getByRole } = await open(path)
@@ -124,7 +124,7 @@ describe('返回上一级', () => {
   )
 
   it('updates the parent when navigating to another project', async () => {
-    const { router, getByRole } = await open('/projects/project-a/topics/topic-b')
+    const { router, getByRole } = await open('/projects/project-a/channels/7')
     await router.push('/projects/project-c/settings')
     expect(getByRole('link', { name: '返回上一级' }).getAttribute('href')).toBe('/projects/project-c')
   })
@@ -231,16 +231,16 @@ describe('页面接管 ←', () => {
     widthIs(PHONE)
     const onBack = vi.fn()
     topBarBack.value = { label: '返回对话', onBack }
-    const { router, getByRole } = await open('/projects/project-a/topics/topic-b')
+    const { router, getByRole } = await open('/projects/project-a/channels/7')
     await fireEvent.click(getByRole('button', { name: '返回对话' }))
     expect(onBack).toHaveBeenCalledOnce()
-    expect(router.currentRoute.value.path).toBe('/projects/project-a/topics/topic-b')
+    expect(router.currentRoute.value.path).toBe('/projects/project-a/channels/7')
   })
 
   it('桌面上照旧回上一层', async () => {
     const onBack = vi.fn()
     topBarBack.value = { label: '返回对话', onBack }
-    const view = await open('/projects/project-a/topics/topic-b')
+    const view = await open('/projects/project-a/channels/7')
     expect(back(view)?.getAttribute('href')).toBe('/projects/project-a')
   })
 })
@@ -265,7 +265,7 @@ describe('声明了父级时，← 走层级而不是来路', () => {
     [
       '从一个话题跳到另一个话题',
       '/projects/project-a/topics/topic-a',
-      '/projects/project-a/topics/topic-b',
+      '/projects/project-a/channels/7',
       '/projects/project-a',
     ],
     ['从小队页进项目设置', '/teams/12/members', '/projects/project-a/settings', '/projects/project-a'],

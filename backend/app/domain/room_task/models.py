@@ -14,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -132,7 +133,10 @@ class Task(UuidPk, Timestamps, Base):
     # (room_id, created_at) is the room's task list, and it is read on every
     # room open — the same shape as ix_blocks_topic_id_created_at, for the same
     # reason: this must not degrade into a scan as tasks accumulate.
-    __table_args__ = (Index("ix_tasks_room_id_created_at", "room_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_tasks_room_id_created_at", "room_id", "created_at"),
+        UniqueConstraint("project_id", "number", name="uq_tasks_project_number"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
@@ -143,6 +147,9 @@ class Task(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(300))
+    # Its number among the project's tasks, for addresses (`project_counters`).
+    # NULL until one is taken; the address falls back to the id meanwhile.
+    number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Title bookkeeping for the platform's naming (app/domain/room_task/naming.py).
     # `title_version` moves on every rename, by anyone: an automatic rename is
     # written only if it still matches the version it was computed from, so a
