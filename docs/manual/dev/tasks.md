@@ -92,6 +92,7 @@ covers:
 2. 在 `~/.cheese/repositories/<project>.git` 造/复用一个裸仓，凭证由 `!cheese git-credential` 现取；`fetch --filter=blob:none` 只取提交不取历史 blob（注释里记着实测：同一份仓库整下 195 MB、这样 9.6 MB；一个 169 MB 的 fetch 曾冻住后端 3.7 秒）。历史仍在，`git log` 和与基准的 diff 照常，某个文件的旧内容真被读时才取。
 3. `git worktree add` 到 `/work/<task_id>`，起点是远端分支（还没开出来就是基准分支）。
 4. 写两个钩子：`post-commit` → `cheese sync`，`prepare-commit-msg` → `cheese git-attribution`。钩子装在裸仓上，同一裸仓的每个工作目录都会跑它们，包括在任务目录旁边用 `git worktree add` 另开的那种；只有带任务标记（`cheese-task.json`）的任务目录才署名、才同步，其余目录照普通 git 提交，不碰任何任务。
+5. 这个环境里第一次建出这个目录时，把平台上这条任务最新的快照恢复进来（[新环境里的自动恢复](#restore)），在准备依赖之前：恢复回来的改动可能改了要装什么。
 
 两处守卫写在注释里：创建期要拿 `<project>.lock` 串行化（同一台机器上几条会话会并发要工作目录，一个被打断的 clone 会被当成完整仓库）；这台机器上有 `~/.cheese-environment/config.json` 却找不到准备脚本时**直接失败**——静默跳过会交出一个依赖从没装过的工作目录。
 
@@ -111,6 +112,22 @@ covers:
 备份不是每次都往对象存储打——`_backup_task_snapshot` 先看 `rev-list --count <snapshot> ^<base>`，是 0 说明每个对象都已经在托管平台上，就地返回；再问一次后端这条任务最新那份备份（`GET …/snapshots/latest`），它的 head 和文件树跟现在一样，也不再发——快照提交每次现做，不问这一句，没动过的已结束任务每次 sync 都会重新打包上传一遍，换机时的推送就等着它们。问不通、还没有备份、本机已经没有那份快照，都照常上传。叠在另一条任务分支上的任务，底座分支合并后会被删掉（这里 fetch `--prune` 也跟着删），这时改成扣掉 `--remotes=origin`：托管平台任何一条分支上见过的提交都不进备份。真要备份的，进 `refs/cheese/snapshots/<task_id>`、打成 bundle、随 `PUT /projects/{id}/git/tasks/{id}/snapshots/{sha}` 交给后端（`room_task/snapshots.py` 的 `save`），落进**私有** bucket（`task-snapshots/<project>/<task>/<sha>/<digest>.bundle`），单次上限 512 MiB（超了回「请将大文件移入附件存储」；未跟踪文件已经被[预算](#backup-contents)挡住，能超的只剩提交过、托管平台上还没有的内容和跟踪文件的改动），服务端按 sha256 复核 digest、并校验它真是个 git bundle。同一份内容再交一次不会再存一遍；它要是已经不是最新那份（文件改动过又改了回去），就新记一行指向原来那个对象，让它重新成为最新——否则恢复出来的是那次已经撤掉的改动，下一轮 sync 也会因为「最新」对不上而每次都重传。bundle 每次现打，上传完不论成败都删：底座会前进，留下一份被拒的原样再发，只会每轮都被拒。
 
 同步失败**会在房间里说一句**（`_report_sync_failure`）：一轮结束时改动还在机器上，和一轮成功长得一模一样——这正是「一次被拒的推送被读成了一个完成的回合」的由来，直到机器被回收、改动跟着没了。成功不发消息，那会是训练人跳过它的噪音。
+
+### 每轮的检查点 {#checkpoint}
+
+每一轮结束时，会话让机器跑一次 checkpoint（执行器的 `checkpoint` 控制，跑的是 `cheese sync --all`）：这台机器上每个有东西没推的任务目录都备份、推送一遍。三个骨架是同一个动作，只是谁在一轮结束时去要它不同：Claude Code 用平台装的 Stop 钩子（`remote_execution/client.py` 的 `checkpoint`），Codex 和 pi 由 runner 在一轮结束时要（`driven/runner.py` 的 `turn_ended`）。runner 不让这一轮等它：房间在 agent 停下时就看到这一轮结束，checkpoint 在后面跑，一次只跑一个，跑的时候又结束了一轮就跑完再来一次；失败由 `cheese sync` 自己在房间里说。
+
+### 新环境里的自动恢复 {#restore}
+
+沙箱用完就扔，换上的新环境里没有任务目录。`cheese worktree` 第一次在这个环境里建出某条任务的目录时，在它的 git 目录里留一个 `cheese-restore-pending`，然后（`_restore_snapshot`）：
+
+1. 问平台这条任务最新的快照（`GET …/snapshots/latest`，带 `created_at`）。没有，或者快照里的提交已经都在分支上，就什么都不做。
+2. 下载、校验 sha256、按提交 id 取前置提交、`bundle unbundle` 进本机的裸仓。
+3. 快照的 head 就是分支尖，或者分支尖在它的历史里（上次推送没成功），而且目录是干净的：先把分支快进到 head（这些提交下次 sync 推上去），再用 `read-tree -m -u <head> <快照>` 把快照的文件放进工作区、`reset` 把暂存区还回 HEAD。改过的文件回来是未暂存的改动，新文件回来是未跟踪的。
+4. 其余情况——目录里已经有改动、分支在快照之后又前进了（快照里有没提交的改动时）、两边分叉——一律不套用，免得覆盖：快照原样检出到 `~/.cheese/recovered/<task>-<快照前 12 位>`，和 `cheese recover` 是同一个目录。
+5. 恢复了什么、没恢复什么打到 stderr，跑 `cheese worktree` 的 agent 在工具结果里读到：哪条任务、快照的时间、几个文件、几个提交；依赖和缓存、生成目录、任务目录以外的文件（包括 `/tmp`）、正在运行的进程不在快照里，不会回来；备份时就略过的未跟踪文件照快照提交的说明列出来。
+
+做完才删掉 `cheese-restore-pending`。没做完（平台一时连不上）就留着，下一次 `cheese worktree` 或 `cheese sync` 再试；**留着它的时候这个目录不备份**：一个还没恢复的新目录备份上去，会成为最新的快照，把要恢复的那份顶掉。已结束的任务直接跳过备份，平台上那份快照就是它的备份。
 
 `cheese recover <task_id>` 把最近一次备份恢复到 `~/.cheese/recovered/<task>-<snapshot 前 12 位>`，**不动原工作目录和评审分支**；bundle 的 sha256 对不上就一个文件都不恢复。备份缺的历史（bundle 头里的前置提交）按提交 id 从托管平台取，不经底座分支：叠放任务的底座合并后就被删了，而一台从没检出过这条任务的机器除了提交 id 没有别的可取。合并过的 PR 在托管平台上留着它的头，这些提交还在。
 
@@ -182,4 +199,4 @@ covers:
 
 - 「待回答」是唯一会**中断运行**的一格，它压过「运行中」——列表上显示「运行中」正是让人不来看的那句话。
 - `Task.model` / `effort` 今天**只有卡片渲染读，没有任何接口写**，任务会话的执行路径也不读它们。卡上显示哪个模型从 `usage` 里这条任务最后一行算出来（`presentation.card_model`），不存一列。
-- 备份与工作目录都绑在**那一台机器**上：机器被回收而同步没成功，改动就没有了——房间里那句失败通知是唯一的信号。
+- 上一次检查点之后的改动只在那个沙箱里：沙箱换掉时它们就没有了；那次检查点的同步失败了也一样——房间里那句失败通知是唯一的信号。

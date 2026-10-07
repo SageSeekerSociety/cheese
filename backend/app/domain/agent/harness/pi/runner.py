@@ -175,6 +175,7 @@ class Runner(runner.Runner[Journal]):
             reason = None if self.aborting else self.insist()
             if reason is None:
                 self.reply_settled()
+                self.turn_ended()
             else:
                 self.continuing = asyncio.ensure_future(self._hold_to_reply(reason))
         elif kind == "auto_retry_start":
@@ -734,6 +735,7 @@ class Runner(runner.Runner[Journal]):
             target, shipped=self.state / "skills", mirror=mirror, scratch=scratch
         )
         self.workspace = self.machine.workspace
+        self.checkpointer = self.machine.client.checkpoint
         session_id = self._session_id(opening)
         # The room's system prompt reaches pi as a FILE it is pointed at, never
         # as argv: it is assembled per room and runs to multiple KB, and argv is

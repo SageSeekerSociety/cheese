@@ -172,6 +172,19 @@ REPLY_INSIST = (
 )
 
 
+# --- a turn's checkpoint --------------------------------------------------------
+#
+# A turn ends with its work in the project: on the room's machine every task
+# checkout holding something unpushed is backed up to the platform and pushed
+# (the executor's ``checkpoint`` control, which runs ``cheese sync --all``).
+# That is what a sandbox replaced after the turn comes back from, so it is the
+# same for every harness. Claude Code asks for it from its Stop hook
+# (``remote_execution/client.py``); a driven harness has no hook a turn ends
+# through, so its runner asks once the turn has ended (``turn_ended``). The turn
+# is not held for it: the room sees the turn end when the agent stops, and a
+# checkpoint that fails is told to the room by ``cheese sync`` itself.
+
+
 def reply_owed_path(state: Path) -> Path:
     return state / "reply-owed.json"
 
@@ -241,6 +254,11 @@ class Runner(Generic[J]):  # noqa: UP046
         self.live_work: str | None = None
         self.live_epoch = uuid.uuid4().hex[:12]
         self.live_count = 0
+        # What checkpoints a turn's work on the room's machine, given a request
+        # id (``RemoteClient.checkpoint``); None for a session without hands.
+        self.checkpointer: Callable[[str], dict] | None = None
+        self.checkpointing: asyncio.Task | None = None
+        self.checkpoint_again = False
 
     def claim(self) -> None:
         """Take the state directory, or fail if another runner holds it."""
@@ -310,6 +328,34 @@ class Runner(Generic[J]):  # noqa: UP046
             return None
         self.insisted.add(self.owed)
         return REPLY_INSIST
+
+    # --- a turn's checkpoint -------------------------------------------------
+
+    def turn_ended(self) -> None:
+        """The session's turn ended: checkpoint its work. One at a time; a turn
+        that ends while one runs gets one more once it is done, which covers
+        whatever that turn changed."""
+        if self.checkpointer is None:
+            return
+        if self.checkpointing is not None and not self.checkpointing.done():
+            self.checkpoint_again = True
+            return
+        self.checkpointing = asyncio.ensure_future(self._checkpoint())
+
+    async def _checkpoint(self) -> None:
+        assert self.checkpointer is not None
+        while True:
+            self.checkpoint_again = False
+            try:
+                result = await asyncio.to_thread(
+                    self.checkpointer, f"checkpoint-{uuid.uuid4().hex}"
+                )
+                if isinstance(result, dict) and result.get("error"):
+                    raise RuntimeError(result["error"])
+            except Exception as error:  # noqa: BLE001 — the next turn's tries again
+                print(f"turn checkpoint failed: {error!r}", file=sys.stderr, flush=True)
+            if not self.checkpoint_again:
+                return
 
     async def yield_foreground(self) -> None:
         """Give the model its turn back: what it is waiting on moves to the
@@ -484,7 +530,10 @@ class Runner(Generic[J]):  # noqa: UP046
             now = time.monotonic()
             # A record counts when it is written (``_grew``); work still going
             # on counts until now.
-            if self.inputs or self.busy():
+            checkpointing = (
+                self.checkpointing is not None and not self.checkpointing.done()
+            )
+            if self.inputs or self.busy() or checkpointing:
                 self.active_at = now
                 continue
             if now - self.active_at < self.idle_exit_s:
@@ -623,7 +672,7 @@ class Runner(Generic[J]):  # noqa: UP046
         # closing while a connection is being handled.
         self.closing = True
         self.announce()
-        for task in (self.idler, self.ender):
+        for task in (self.idler, self.ender, self.checkpointing):
             if task is not None:
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
