@@ -8,8 +8,7 @@ That commit moved it: a room's cwd became a scratch directory under its own home
 ``cheese worktree`` puts under ``<room home>/.cheese/tasks``.
 
 So nothing writes ``~/.cheese/work`` any more — ``device_work_dir()`` has had no
-caller since, and `agent/resource_cleanup.py` already calls what is there
-"legacy checkouts". On dev, 2026-09-17, it was still 107GB across 102 rooms.
+caller since. On dev, 2026-09-17, it was still 107GB across 102 rooms.
 
 Archival removes these along with the rest of a room, but only once somebody
 archives the room, and nothing archives a room for being idle. This reclaims
@@ -17,11 +16,11 @@ them where they stand, without touching the room.
 
 WHAT MAKES IT SAFE is not that they are unreachable — it is that they are
 PUBLISHED. A pre-#936 checkout can hold commits or edits that never left the
-box, and those are the user's only copy. So every directory goes through the
-same two checks archival uses before it deletes anything, from the same module,
-so there is one definition of "this is safe to delete" and not two:
+box, and those are the user's only copy. So every directory goes through two
+checks before it is deleted:
 
-    check_no_writers   nothing holds a file or a cwd in there
+    check_no_writers   nothing holds a file or a cwd in there (the device-side
+                       check room cleanup uses, from its module)
     check_published    no uncommitted changes, and no commits that are not
                        already on origin or in refs/cheese/published/*
 
@@ -57,6 +56,35 @@ def load_resource_cleanup(path: Path = RESOURCE_CLEANUP):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def check_published(work: Path) -> None:
+    """Refuse if `work` holds anything its remote does not: a directory with no
+    git checkout at all and something in it, uncommitted changes, or commits
+    on no remote branch and under no `refs/cheese/published/*`."""
+    if not (work / ".git").exists():
+        if any(work.iterdir()):
+            raise RuntimeError("nonempty checkout has no Git publication record")
+        return
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args], cwd=work, capture_output=True, text=True, check=False
+        )
+
+    dirty = git("status", "--porcelain", "--untracked-files=all")
+    if dirty.returncode or dirty.stdout.strip():
+        raise RuntimeError("checkout has unpublished working-tree changes")
+    unpublished = git(
+        "rev-list",
+        "--branches",
+        "HEAD",
+        "--not",
+        "--remotes=origin",
+        "--glob=refs/cheese/published/*",
+    )
+    if unpublished.returncode or unpublished.stdout.strip():
+        raise RuntimeError("checkout has unpublished commits")
 
 
 def size_of(path: Path) -> int:
@@ -117,7 +145,7 @@ def reclaim(root: Path, *, apply: bool, cleanup, out=sys.stdout) -> int:
                 skipped += 1
                 continue
             try:
-                cleanup.check_published(work)
+                check_published(work)
             except RuntimeError as exc:
                 hold(exc)
                 continue

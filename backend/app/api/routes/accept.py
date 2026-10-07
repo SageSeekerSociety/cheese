@@ -143,6 +143,7 @@ async def create_accept_card(
         about=body.about,
         deliver=body.deliver,
         deliver_url=body.deliver_url,
+        completes_task=body.completes_task,
         task_id=task_id,
     )
     # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is the

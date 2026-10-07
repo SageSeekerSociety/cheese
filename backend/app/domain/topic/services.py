@@ -820,27 +820,16 @@ class TopicService:
         *,
         block_id: uuid.UUID,
         created_by: str | None = None,
-    ) -> tuple[Topic, Task, bool]:
+    ) -> tuple[Topic, Task]:
         """转为任务: a message in a channel becomes a task in that channel,
-        owned by whoever turned it; the message becomes a live link to it. Its
-        agent drafts the task's document from the message and what was said
-        around it (the caller hands it that). A private chat's messages stay
-        where they are.
-
-        Returns (room, task, created): created=False on an idempotent
-        re-upgrade, so the caller doesn't start the task's agent twice."""
+        owned by whoever turned it. A message, or the 支线 under it, can become
+        any number of tasks; each hangs under the message in the main line.
+        Its agent drafts the task's document from the message and what was
+        said around it (the caller hands it that). A private chat's messages
+        stay where they are."""
         block = await self._blocks.get(block_id)
         if block is None:
             raise NotFoundError("Block not found")
-        tasks = TaskService(self._session)
-        # Idempotent: a second 升级 on the same block just returns what it
-        # already created (so a double-click navigates instead of erroring).
-        if block.upgraded_to_task_id is not None:
-            existing_task = await tasks.get(block.upgraded_to_task_id)
-            if existing_task is not None:
-                room = await self._repo.get(existing_task.room_id)
-                if room is not None:
-                    return room, existing_task, False
         parent = await self._repo.get(
             await room_of(self._session, block.conversation_id)
         )
@@ -854,10 +843,17 @@ class TopicService:
             room_id=parent.id,
             created_by=created_by,
             teammate=recipient_seat((block.meta or {}).get("agent_recipient")),
+            origin_block_id=await self._main_line_message(block),
         )
-        task.upgraded_from_block_id = block.id
-        await self._blocks.set_upgraded_to_place(block, task_id=task.id)
-        return parent, task, True
+        return parent, task
+
+    async def _main_line_message(self, block: Block) -> uuid.UUID:
+        """The main-line message ``block`` is under: itself, or the message its
+        支线 hangs under. A task from either shows under that message."""
+        from app.domain.thread.models import Thread
+
+        thread = await self._session.get(Thread, block.conversation_id)
+        return thread.root_block_id if thread is not None else block.id
 
     async def _card_block(self, room: Topic, task: Task, *, actor: str) -> Block:
         """The room's timeline says a task was created here, and whose it is.
@@ -898,22 +894,27 @@ class TopicService:
         created_by: str | None,
         title: str | None = None,
         owner_handle: str | None = None,
-        proposed_by: str | None = None,
         teammate: str | None = None,
+        named_by_teammate: bool = False,
+        origin_block_id: uuid.UUID | None = None,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
 
         ``teammate`` is the seat of the AI teammate the work came from — the one
-        that proposed it, or the one a message turned into it was addressed to.
+        that created it, or the one a message turned into it was addressed to.
         The task is worked by that teammate rather than the room's, so whoever
         was asked keeps the work; a seat that is no saved teammate of the
         project is ignored.
 
         A title typed by a person is final. A task opened unnamed is named by
-        the platform (`room_task/naming.py`). A title the AI teammate
-        ``proposed_by`` wrote with its proposal is the platform's too: kept
-        unless the task changes direction.
+        the platform (`room_task/naming.py`). A title the AI teammate wrote
+        when it created the task (``named_by_teammate``) is the platform's
+        too: kept unless the task changes direction.
+
+        ``origin_block_id`` is the main-line message the task was made from;
+        the task shows under it. A task made on its own is announced in the
+        main line instead.
 
         The owner is the person named, else the person creating it, else — when
         no person is identifiable — the room's owner, then the project's. A task
@@ -950,14 +951,15 @@ class TopicService:
             title_source=TaskTitleSource.placeholder
             if not named
             else TaskTitleSource.auto
-            if proposed_by
+            if named_by_teammate
             else TaskTitleSource.human,
             owner_handle=owner,
             created_by=created_by,
         )
-        if named and proposed_by:
+        task.upgraded_from_block_id = origin_block_id
+        if named and named_by_teammate:
             task.title_calibrated = True
-            tasks.record_title(task, reason="proposal", by=proposed_by)
+            tasks.record_title(task, reason="teammate", by=teammate)
         if (
             teammate
             and project is not None
@@ -970,7 +972,9 @@ class TopicService:
         if owner:
             # Whoever the work is handed to is in its channel from then on.
             await self._members.take_in(room.id, owner)
-        await self._card_block(room, task, actor=created_by or "system")
+        if origin_block_id is None:
+            await self._card_block(room, task, actor=created_by or "system")
+        await self._session.flush()
         return task
 
     async def give_task_teammate(self, task: Task, seat: str | None) -> None:

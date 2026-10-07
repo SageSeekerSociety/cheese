@@ -6,7 +6,7 @@ import type { TopicComputeProfile } from '@/types/compute'
 import { computed, ref } from 'vue'
 
 import { ApiError, getTopicComputeProfile } from '@/api'
-import { closeTask, compareDocumentVersions, getTask, renameTask, startTask, updateTask } from '@/api/tasks'
+import { closeTask, compareDocumentVersions, getTask, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 
@@ -74,13 +74,24 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     }
   }
 
-  // ---- 负责人：转交、关闭 ----
+  // ---- 负责人：转交、关闭、重新打开 ----
   const actionError = ref<string | null>(null)
   async function close(conclusion: string): Promise<boolean> {
     if (!task.value) return false
     actionError.value = null
     try {
       task.value = { ...task.value, ...(await closeTask(task.value.id, conclusion.trim() || undefined)) }
+      return true
+    } catch (e) {
+      actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
+      return false
+    }
+  }
+  async function reopen(): Promise<boolean> {
+    if (!task.value) return false
+    actionError.value = null
+    try {
+      task.value = { ...task.value, ...(await reopenTask(task.value.id)) }
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -177,6 +188,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     start,
     actionError,
     close,
+    reopen,
     handOver,
     rename,
     machine,

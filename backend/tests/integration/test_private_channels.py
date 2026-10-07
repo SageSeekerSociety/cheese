@@ -450,7 +450,7 @@ def test_a_new_artifact_said_in_another_channel_does_not_list_its_items(
     root = p["root_topic_id"]
     _file_card(client, root, new_artifact="公开报告")
 
-    listed = _notice_detail(client, root, "公开报告")
+    listed = _notice_detail(client, root, "新建了产物《公开报告》")
     assert "公开报告" in listed
     assert "机密报告" not in listed
 

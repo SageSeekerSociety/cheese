@@ -195,6 +195,8 @@ services:
       # sign-in, the links it hands out) and the frontend below (which server
       # answers it), so it lives in the deploy environment, not in backend/.env.
       - DOCS_ORIGIN=${DOCS_ORIGIN:-}
+      # The commit this release ships, for /api/version (deploy-docker.sh).
+      - APP_RELEASE=${APP_RELEASE:-}
     volumes:
       # Host NIC counters for the board's uplink plane (read-only, no privileges).
       # Missing mount (Docker Desktop, CI) degrades to the container's own

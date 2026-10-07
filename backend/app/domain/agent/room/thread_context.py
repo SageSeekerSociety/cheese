@@ -18,13 +18,10 @@ async def thread_context(
     session: "AsyncSession", room: Topic, root, *, routine_run: bool = False
 ) -> str:
     """What a 支线's session is told about where it is: the channel, the
-    message the 支线 hangs under and what the main line said just before it,
-    and the channel's tasks still open — so a piece of work that already has a
-    task is pointed to rather than proposed again. A routine's run is told
-    that this turn may keep what it produces, and that the 支线 keeps nothing
-    afterwards."""
-    from app.domain.room_task.services import TaskService
-
+    message the 支线 hangs under and what the main line said just before it.
+    A routine's run is told that this turn may keep what it produces, and that
+    the 支线 keeps nothing afterwards. The channel's tasks are a section of
+    their own (`thread_tasks`)."""
     run = (await routine_runs_of(session, [root.id])).get(root.id)
 
     def line(block) -> str:
@@ -38,13 +35,13 @@ async def thread_context(
             "执行完交回的结果会写进那条消息。",
             "这一轮就是这次执行：可以保存它要的结果文件。要看代码，用 "
             "`cheese checkout` 取一份主干代码；要改代码的事用 `cheese_task` "
-            "提议成任务。"
+            "创建成任务。"
             if routine_run
             else "这次执行已经跑过了，现在是有人在这里追问。这里的人 @ 你，你才回答。"
             "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
             "跑命令和测试、临时改，也能查资料、PR 和 issue；但不推送、不交付、"
             "不摆预览；"
-            "要改的事用 `cheese_task` 提议成任务。",
+            "要改的事用 `cheese_task` 创建成任务。",
         ]
         parts = [*opening]
     else:
@@ -53,7 +50,7 @@ async def thread_context(
             "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
             "跑命令和测试、临时改，也能查资料、PR 和 issue；但不推送、不交付、"
             "不摆预览；"
-            "要改的事用 `cheese_task` 提议成任务。别处定过的事不记得时，用 "
+            "要改的事用 `cheese_task` 创建成任务。别处定过的事不记得时，用 "
             "`cheese_chat_search` 加 `channel` 搜整个频道。",
             "",
             "支线挂在主线的这条消息下面：",
@@ -61,20 +58,43 @@ async def thread_context(
         ]
     if earlier:
         parts += ["", "这条消息之前，主线上说的是：", *map(line, earlier)]
+    return "\n".join(parts)
+
+
+async def thread_tasks(session: "AsyncSession", room: Topic, root) -> str:
+    """The channel's tasks still open, as a 支线's session reads them, so work
+    that already has a task is pointed to rather than made into a second one.
+    The ones made from the message the 支线 hangs under are marked: they are
+    this conversation's own.
+
+    A section of the session opening that is told again when it changes
+    (`TRACKED_SECTIONS`). A task made while the 支线's session was already
+    open — a person turning the message into a task after the teammate first
+    answered — otherwise never reached it, and the teammate, asked to do the
+    work, made a second task under the same message."""
+    from app.domain.room_task.services import TaskService
+
     open_tasks = [
         task
         for task in await TaskService(session).list_in_room(room.id)
         if task.status == TaskStatus.open
     ]
-    if open_tasks:
-        parts += [
-            "",
-            "这个频道里还在进行的任务（要做的事已经有任务了，就告诉人去那个任务，"
-            "不再提议）：",
+    head = "## 这个频道里还在进行的任务\n"
+    if not open_tasks:
+        return head + "现在没有。"
+    return head + "\n".join(
+        [
+            "要做的事已经有任务了，就告诉人去那个任务，不再新建。标着「从这条支线的"
+            "消息建的」的任务，就是为这条支线说的事建的。",
             *(
                 f"- {task.title}"
                 + (f"（负责人 @{task.owner_handle}）" if task.owner_handle else "")
+                + ("（从这条支线的消息建的）" if _made_from(task, root) else "")
                 for task in open_tasks
             ),
         ]
-    return "\n".join(parts)
+    )
+
+
+def _made_from(task, root) -> bool:
+    return task.upgraded_from_block_id == root.id

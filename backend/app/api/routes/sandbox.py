@@ -23,11 +23,15 @@ async def trigger_storage_sweep(x_cheese_token: str = Header(default="")) -> dic
     from app.core.background import spawn
     from app.core.db import async_session_factory
     from app.core.sandbox_auth import is_global_sandbox_token
+    from app.domain.machine.session_work import checkpoint_room
     from app.domain.topic.retire import sweep_retired_storage
 
     if not is_global_sandbox_token(x_cheese_token):
         raise UnauthorizedError("Cleanup trigger requires the server credential")
-    spawn(sweep_retired_storage(async_session_factory), name="archived-room cleanup")
+    spawn(
+        sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
+        name="archived-room cleanup",
+    )
     return {"code": 200, "data": {"scheduled": True}}
 
 

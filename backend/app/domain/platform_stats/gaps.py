@@ -317,13 +317,12 @@ class GapRepository:
                 CloudHost.enroll_error.is_not(None),
                 CloudHost.enroll_error != "",
             ),
-            # A slot is a running sandbox; one asleep holds only disk.
+            # A slot is a sandbox; one being destroyed holds it until it goes.
             "host_slots_used": await _count(
                 CloudHostHome,
                 CloudHostHome.host_id.in_(
                     [host.id for host in live if not host.whole_machine]
                 ),
-                CloudHostHome.stopped_at.is_(None),
             ),
             "host_slots_total": sum(capacity(host) for host in live),
             "note_key": "platform.machinesNote",

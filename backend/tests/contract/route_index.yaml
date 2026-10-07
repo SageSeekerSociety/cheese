@@ -1141,15 +1141,13 @@ routes:
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/reopen", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/start", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/teammate-tasks", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/opening", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/related", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/accept", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_threads
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/threads", auth: "actor.topic", owner: "thread"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/thread", auth: "actor.topic", owner: "thread"}

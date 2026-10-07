@@ -66,17 +66,14 @@
   "sessionMachine": {
     "machine": "换到",
     "confirm": "推送并更换",
-    "unavailable": "{name} · 不可用",
-    "abandonWarning": "不推送直接更换的话，原来那台上没推送的改动会留在那台电脑上，不会跟到新电脑。",
-    "abandon": "不推送，直接更换",
-    "abandonTitle": "不推送直接更换？"
+    "unavailable": "{name} · 不可用"
   },
   "roomMachine": {
     "taskHeading": "这个任务的环境",
-    "taskHint": "更换时先把这个任务的改动推送到分支，推上去才换；推不上去就不换，并说明原因。",
+    "taskHint": "更换前先把这个任务的改动推送到分支，推没推上去都会更换；每一轮结束时的改动都有快照保存。",
     "edit": "改",
     "heading": "这个频道的环境",
-    "hint": "频道里所有 AI 队友共用这一台。更换时每个队友先把改动推送到分支，全部推上去才换；推不上去就整个不换，并说明原因。",
+    "hint": "频道里所有 AI 队友共用这一个环境。更换前每个队友先把改动推送到分支，推没推上去都会更换；每一轮结束时的改动都有快照保存。",
     "more": "其他配置与设备",
     "projectDefault": "项目默认",
     "wholeMachine": "能访问整台电脑",
@@ -88,7 +85,6 @@
     "saveFailed": "选择环境失败",
     "retry": "重试",
     "here": "本频道运行在：{name}",
-    "abandon": "原来那台连不上：不推送，直接更换",
     "accessHeading": "这个频道在 {name} 上能看到什么",
     "isolated": "隔离环境",
     "isolatedHint": "只有自己的工作目录和本项目的包缓存；看不到电脑主人的文件、装在主人用户目录里的工具，也看不到别的频道。",
@@ -107,7 +103,7 @@
     "working": "正在运行任务",
     "empty": "暂无 agent",
     "hidden": "另有 {count} 个 agent 在你打不开的频道里",
-    "pushFirst": "原来那台上没推送的改动不会跟过去。换之前先把每个 agent 的改动推送到分支；推送失败的不换，并说明原因。正在运行任务的先不换",
+    "pushFirst": "更换前先把每个 agent 的改动推送到分支，推没推上去都会更换；每一轮结束时的改动都有快照保存。正在运行任务的先不换",
     "done": "已更换",
     "loadFailed": "加载失败"
   },
@@ -394,6 +390,7 @@
       "createPr": "创建 PR",
       "retryAccept": "重新采纳",
       "acceptAction": "采纳",
+      "acceptAndComplete": "采纳并完成任务",
       "sendBack": "退回",
       "void": "作废",
       "autoMerge": "检查通过后自动合并",
@@ -483,7 +480,6 @@
       "upgrade": "转为任务",
       "downloadFile": "下载 {name}",
       "openFile": "打开 {name}",
-      "upgradedToTask": "已转为任务",
       "upgradedToTopic": "已转为频道",
       "showMore": "展开",
       "showLess": "收起",
@@ -520,12 +516,6 @@
         "md": "存为 .md",
         "keep": "保留为文字"
       }
-    },
-    "dispatched": {
-      "created": "新建任务",
-      "title": "《{title}》",
-      "done": "已完成",
-      "running": "进行中"
     },
     "checklist": {
       "updatedAt": "清单更新于 {time}",
@@ -1210,10 +1200,9 @@
       "replyingStatus": "{name} {status}",
       "lastReply": "{name}：{text}",
       "toTask": "转为任务",
+      "taskLink": "任务「{title}」",
       "backToThread": "返回支线",
       "process": "这一轮的过程",
-      "becameTask": "已转为任务「{title}」",
-      "openTask": "打开任务",
       "close": "关闭",
       "placeholder": "在支线中回复",
       "loadFailed": "加载失败，稍后重试",
@@ -1247,6 +1236,16 @@
       "current": "项目当前版本 · 只读",
       "missing": "项目当前版本里没有这个文件",
       "inTask": "在任务「{title}」里看"
+    },
+    "taskCard": {
+      "owner": "{name} 负责",
+      "created": "新建了任务",
+      "waitingReview": "待 {name} 审阅",
+      "waitingAnswer": "待 {name} 回答",
+      "waitingStart": "待 {name} 开始",
+      "acceptedPr": "已采纳 · PR #{pr}",
+      "acceptedTimesPr": "已采纳 {n} 次 · PR #{pr}",
+      "acceptedTimes": "已采纳 {n} 次"
     }
   },
   "board": {
@@ -2110,14 +2109,9 @@
       "untitled": "未命名文档",
       "by": "{name}"
     },
-    "proposal": {
-      "byline": "{name} 提议了一个任务",
-      "accept": "创建任务",
-      "dismiss": "不用",
-      "failed": "操作失败，稍后重试"
-    },
     "more": "更多操作",
     "close": "关闭任务",
+    "reopen": "重新打开任务",
     "closeTitle": "关闭这个任务？",
     "closeBody": "写下结论表示已经做完；不写表示不再做。",
     "handOver": "转交",

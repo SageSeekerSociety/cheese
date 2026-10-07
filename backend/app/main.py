@@ -157,6 +157,7 @@ async def lifespan(application: FastAPI):
         ComputeMeterSweeper,
         SandboxSweeper,
     )
+    from app.domain.machine.session_work import checkpoint_room
     from app.domain.topic.retire import sweep_retired_storage
 
     # The running work — sessions to listen to, turns to watch, sweeps on a
@@ -266,7 +267,7 @@ async def lifespan(application: FastAPI):
         for job in jobs:
             job.start(runs, last_runs.get(job.name))
         background.spawn(
-            sweep_retired_storage(async_session_factory),
+            sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
             name="cleanup startup recovery",
         )
         if settings.forge_event_relay_url:
@@ -913,17 +914,20 @@ async def health() -> dict:
 
 @app.get("/version")
 async def app_version() -> dict:
-    """The running build, for the UI's 内测 version badge. Public, unauthenticated
-    — it exposes only a commit sha, and only when the box opts in. `badge` is the
-    flag the frontend honours; the sha is always returned so a curl can check a
-    deploy regardless of the badge."""
-    sha = settings.app_version
+    """The running release, for the UI's 内测 version badge and for anything
+    asking whether a commit is live. Public, unauthenticated — it exposes only
+    commit shas. `badge` is the flag the frontend honours; the sha is always
+    returned so a curl can check a deploy regardless of the badge. `build` is
+    the commit the image was built from, older than `sha` when the release
+    reused an unchanged image."""
+    sha = settings.released_commit
     return {
         "code": 200,
         "message": "ok",
         "data": {
             "sha": sha,
             "short": sha[:7] if sha and sha != "dev" else sha,
+            "build": settings.app_version,
             "badge": settings.show_version_badge,
         },
     }

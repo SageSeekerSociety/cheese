@@ -187,7 +187,3 @@ class MicroCloudClient:
 
     async def resume_machine(self, machine_id: int) -> dict[str, Any]:
         return await self._call("POST", f"/machine/{machine_id}/resume")
-
-    async def start_machine(self, machine_id: int) -> dict[str, Any]:
-        """Boot a stopped machine on its existing disks."""
-        return await self._call("POST", f"/machine/{machine_id}/start")

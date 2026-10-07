@@ -508,7 +508,7 @@ def test_a_vm_goes_once_its_room_moves_off_it_after_a_push(cloud):
     assert case.provider.deleted == [machine]
 
 
-def test_a_vm_left_without_a_push_keeps_its_work(cloud):
+def test_a_vm_left_when_it_cannot_be_reached_goes_all_the_same(cloud):
     case = cloud
     seat = _room(case, WHOLE_VM)
     device_id, _ = _working(case, seat)
@@ -518,26 +518,14 @@ def test_a_vm_left_without_a_push_keeps_its_work(cloud):
     moved = case.client.put(
         f"/topics/{seat.room}/compute-profile",
         headers=session_auth_headers("alice"),
-        json={"choice": SANDBOX, "abandon_unpushed": True},
+        json={"choice": SANDBOX},
     )
 
     assert moved.status_code == 200, moved.text
+    assert not _pushed_on(case, device_id)
+    assert _host(case, seat) is None
     _sweep(case)
-    assert case.provider.deleted == []
-
-    async def homes():
-        async with case.client.test_request_factory() as db:
-            return list(
-                await db.scalars(
-                    select(CloudHostHome).where(
-                        CloudHostHome.session_id == seat.session
-                    )
-                )
-            )
-
-    [kept] = case.client.portal.call(homes)
-    assert kept.left_at is not None
-    assert machine in case.provider.machines
+    assert case.provider.deleted == [machine]
 
 
 def test_a_vm_goes_once_the_rooms_cleanup_removed_its_directory(cloud):
@@ -613,27 +601,23 @@ def test_a_vm_is_kept_while_its_session_or_room_is_at_work(cloud):
     assert case.provider.deleted == []
 
 
-def test_an_idle_vm_whose_push_fails_is_kept_with_its_work(cloud, monkeypatch):
+def test_an_idle_vm_whose_checkpoint_fails_is_released_all_the_same(cloud):
     case = cloud
     seat = _room(case, WHOLE_VM)
     device_id, _ = _working(case, seat)
+    machine = _host(case, seat).machine_id
     _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
-    monkeypatch.setattr(cloud_vm, "_push_failed", {})
     case.calls.side_effect = lambda lease, method, *a, **k: (
         running() if method == "ping" else {"error": "remote rejected the push"}
     )
 
-    assert _release_idle(case) == 0
+    assert _release_idle(case) == 1
 
     assert _pushed_on(case, device_id)
-    assert _host(case, seat) is not None
-    assert _session_lease(case, seat)["device_id"] == device_id
+    assert _session_lease(case, seat) is None
+    assert _host(case, seat) is None
     _sweep(case)
-    assert case.provider.deleted == []
-    # Not asked again on the very next sweep.
-    case.calls.reset_mock()
-    assert _release_idle(case) == 0
-    assert not _pushed_on(case, device_id)
+    assert case.provider.deleted == [machine]
 
 
 # --- what it costs -----------------------------------------------------------

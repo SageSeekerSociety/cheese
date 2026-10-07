@@ -30,7 +30,7 @@ Run it with lxml available:
 
     uv run --with lxml python3 office.py text 报告.docx
     uv run --with lxml python3 office.py edit 报告.docx -o 改后.docx \\
-        --replace "旧的说法=新的说法" --author 芝士
+        --replace "旧的说法=新的说法" --author "<你的名字>"
     uv run --with lxml python3 office.py validate 改后.docx --base 报告.docx
 """
 

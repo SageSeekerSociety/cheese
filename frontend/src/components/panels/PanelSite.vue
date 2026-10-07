@@ -545,7 +545,7 @@ function isLive(index: number): boolean {
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
-/* 不属于哪一轮的那一条（环境休眠了、某人改了文档）只是一行：没有组头，上下也不
+/* 不属于哪一轮的那一条（环境空闲释放了、某人改了文档）只是一行：没有组头，上下也不
    像一轮那样隔开。 */
 .turn--loose + .turn,
 .turn + .turn--loose {

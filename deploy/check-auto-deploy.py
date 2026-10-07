@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -37,6 +38,35 @@ def unready_dependencies(container: str) -> set[str]:
     return set(unready)
 
 
+# The dev box reaches api.github.com over a path that sometimes drops a TLS
+# connection mid-read (deploy run 37667147156: SSL UNEXPECTED_EOF after the app
+# was already released, so the metering image was not). A dropped connection or
+# a 5xx is read again; a 4xx, or the same failure three times, still fails the
+# job, because a release must not go ahead on validation it could not read.
+API_WAITS = (5, 15)
+
+
+def github_json(url: str) -> dict:
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    for wait in (*API_WAITS, None):
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except (URLError, ConnectionError, TimeoutError) as error:
+            if wait is None or (isinstance(error, HTTPError) and error.code < 500):
+                raise
+            print(f"Reading {url} failed ({error}); reading it again in {wait} s.")
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
 def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
     """Read every run for one commit without relying on runner-installed gh."""
     runs = []
@@ -45,23 +75,16 @@ def workflow_runs(repository: str, workflow: str, candidate: str) -> list[dict]:
         # No branch filter: a merge-queue run belongs to the queue's temporary
         # branch, not to main. ci_ready checks each run's branch itself.
         query = urlencode({"head_sha": candidate, "per_page": 100, "page": page})
-        request = Request(
-            f"https://api.github.com/repos/{repository}/actions/workflows/{workflow}/runs?{query}",
-            headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        )
-        with urlopen(request, timeout=30) as response:
-            batch = json.load(response)["workflow_runs"]
+        batch = github_json(
+            f"https://api.github.com/repos/{repository}/actions/workflows/{workflow}/runs?{query}"
+        )["workflow_runs"]
         runs.extend(batch)
         if len(batch) < 100:
             return runs
         page += 1
 
 
-def ci_ready(candidate: str) -> bool:
+def ci_ready(candidate: str, say=print) -> bool:
     """Check the latest build and required-CI attempts for this exact main SHA."""
     if not re.fullmatch(r"[0-9a-f]{40}", candidate):
         raise ValueError("the automatic release must name a full commit SHA")
@@ -85,7 +108,7 @@ def ci_ready(candidate: str) -> bool:
         if (latest is None or any(run["status"] != "completed" for run in runs)
                 or latest["conclusion"] != "success"):
             seen = ", ".join(f"{run['id']} {run['status']}/{run['conclusion']}" for run in runs) or "none"
-            print(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
+            say(f"Not deploying {candidate}: {workflow} has no successful latest attempt (runs: {seen}).")
             ready = False
     return ready
 
@@ -109,7 +132,34 @@ def ci_ready_settled(candidate: str) -> bool:
     return True
 
 
-def should_skip(candidate: str) -> bool:
+def newer_on_main(candidate: str) -> list[str]:
+    """The commits on main after the candidate, newest first."""
+    repository = os.environ["GITHUB_REPOSITORY"]
+    comparison = github_json(f"https://api.github.com/repos/{repository}/compare/{candidate}...main?per_page=100")
+    if comparison["status"] not in ("ahead", "identical"):
+        raise ValueError(f"candidate {candidate} is not on main: {comparison['status']}")
+    return [commit["sha"] for commit in reversed(comparison["commits"])]
+
+
+# Only one deploy may wait for the deploy-dev group, and a newly waiting one
+# cancels the one already waiting, whichever commit each releases. Builds do
+# not finish in merge order, so an older commit's late build used to cancel a
+# newer commit's waiting deploy and leave main's newest commit off dev until
+# the next merge (runs 37646273755 and 37646390290). An older candidate whose
+# newer commit can already be released is superseded: its run stops here,
+# before it asks for the group, and the newer commit's run releases both.
+def superseded_by(candidate: str) -> str:
+    for newer in newer_on_main(candidate):
+        if ci_ready(newer, say=lambda _line: None):
+            return newer
+    return ""
+
+
+def should_skip(candidate: str, rebuilt: bool = False) -> bool:
+    """Whether this automatic release must not run. `rebuilt`: the candidate's
+    images were just rebuilt under the tag they already had (desktop.yml does
+    this to ship new installers), so the box running that tag runs the images
+    being replaced, and a healthy box on it is not a duplicate."""
     if not re.fullmatch(r"[0-9a-f]{40}", candidate):
         raise ValueError("the automatic release must name a full commit SHA")
     project = os.environ.get("PROJECT", "cheese")
@@ -161,6 +211,9 @@ def should_skip(candidate: str) -> bool:
             raise ValueError(f"candidate {candidate} is not a descendant of running release {version}: {status}")
         print(f"Candidate {candidate} is {status} relative to running release {version}.")
         all_identical = all_identical and status == "identical"
+    if all_identical and rebuilt:
+        print(f"Releasing {candidate} again: its images were rebuilt under the tag it runs.")
+        return False
     if all_identical and all_healthy and healthy_services == {"backend", "frontend"}:
         print(f"Skipping duplicate release {candidate}: both application services are healthy.")
         return True
@@ -186,16 +239,24 @@ def main() -> None:
             raise SystemExit("The release commit no longer has successful validation.")
         return
     if sys.argv[1] == "--ci-only":
-        key, value = "ready", ci_ready_settled(sys.argv[2])
-    else:
-        # CI may have been rerun while this job waited for the deploy runner.
-        # That release did not happen, so the job fails: a skip would leave it
-        # green, and a green deploy job reads as "this commit is on dev".
-        if not ci_ready_settled(sys.argv[1]):
-            raise SystemExit(f"Not deploying {sys.argv[1]}: its validation is no longer successful.")
-        key, value = "skip", should_skip(sys.argv[1])
+        ready = ci_ready_settled(sys.argv[2])
+        newer = superseded_by(sys.argv[2]) if ready else ""
+        if newer:
+            print(f"Not deploying {sys.argv[2]}: {newer}, newer on main, has its images and Required CI, "
+                  "and its own run releases both.")
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+            output.write(f"ready={str(ready).lower()}\nsuperseded={newer}\n")
+        return
+    rebuilt = sys.argv[1] == "--rebuilt"
+    candidate = sys.argv[2] if rebuilt else sys.argv[1]
+    # CI may have been rerun while this job waited for the deploy runner.
+    # That release did not happen, so the job fails: a skip would leave it
+    # green, and a green deploy job reads as "this commit is on dev".
+    if not ci_ready_settled(candidate):
+        raise SystemExit(f"Not deploying {candidate}: its validation is no longer successful.")
+    skip = should_skip(candidate, rebuilt=rebuilt)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
-        output.write(f"{key}={str(value).lower()}\n")
+        output.write(f"skip={str(skip).lower()}\n")
 
 
 if __name__ == "__main__":

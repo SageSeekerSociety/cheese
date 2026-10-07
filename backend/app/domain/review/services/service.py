@@ -101,6 +101,7 @@ class AcceptService:
         about: str | None = None,
         deliver: str | None = None,
         deliver_url: str | None = None,
+        completes_task: bool = True,
         admits_reviewer: ReviewerAdmission,
     ) -> AcceptCard:
         return await cards.create_card(
@@ -116,6 +117,7 @@ class AcceptService:
             about=about,
             deliver=deliver,
             deliver_url=deliver_url,
+            completes_task=completes_task,
             admits_reviewer=admits_reviewer,
         )
 
@@ -126,8 +128,12 @@ class AcceptService:
             self, topic=topic, card=card, task=task, artifact=artifact
         )
 
-    async def _announce_new_artifact(self, topic: Topic, name: str) -> None:
-        return await notices._announce_new_artifact(self, topic=topic, name=name)
+    async def _announce_new_artifact(
+        self, topic: Topic, name: str, *, task_id: uuid.UUID
+    ) -> None:
+        return await notices._announce_new_artifact(
+            self, topic=topic, name=name, task_id=task_id
+        )
 
     async def _warn_about_a_second_pending_migration(
         self, topic: Topic, task_id: uuid.UUID
