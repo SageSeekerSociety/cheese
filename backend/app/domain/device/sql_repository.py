@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import (
@@ -76,6 +76,16 @@ class SqlDeviceRepository:
                 self._session.add(hosted)
             hosted.owner_user_id = device.owner_user_id
         await self._session.flush()
+
+    async def note_last_seen(self, device_id: str, at: datetime) -> None:
+        # This one column, not the row: it is written while a machine is
+        # connected, which during a deploy may be while a migration has
+        # dropped another.
+        await self._session.execute(
+            update(DeviceRow)
+            .where(DeviceRow.device_id == device_id)
+            .values(last_seen_at=at)
+        )
 
     async def _to_device(self, row: DeviceRow) -> Device:
         project_ids = list(

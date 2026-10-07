@@ -4,8 +4,9 @@ Revision ID: b7e3c9d1f4a2
 Revises: 7e3c1b9d4a52
 Create Date: 2026-10-07
 
-``device.last_seen_at``: written as a machine's link goes, from the last frame
-the server heard on it, so the devices page can say how long one has been away.
+``device.last_seen_at``: written as a machine connects and at most once a
+minute while it stays connected, so the devices page can say how long one has
+been away.
 """
 
 from collections.abc import Sequence
