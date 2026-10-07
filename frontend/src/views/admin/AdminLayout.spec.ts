@@ -18,6 +18,7 @@
  */
 import type { Component } from 'vue'
 
+import { defineComponent } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -44,13 +45,15 @@ vi.mock('@/api', async () => {
 // 不是「画的是哪句中文」，所以只换掉取词入口、键原样返回 —— 仓库里既有的做法（见
 // `views/spaces/Index.spec.ts`）。词条本身对不对由 `i18n/catalog.spec.ts` 管。
 //
-// 例外是侧栏那五个分区名（`navigation.admin.*`）：下面「三块都在」「选中项带
-// aria-current」两条是按**分区名**认链接的，键原样返回它们就认不出来了 —— 所以 mock
-// 单把这五个键翻回它们画的词，其余照旧。门口那两句（确认权限中 / 不是管理员）也一样：
+// 例外是侧栏的分区名和组名（`navigation.admin.*`）：下面几条是按**名字**认链接和组的，
+// 键原样返回它们就认不出来了 —— 所以 mock 单把这些键翻回它们画的词，其余照旧。门口那两句（确认权限中 / 不是管理员）也一样：
 // 下面按它们认这一帧画的是哪一种。
 const SECTION_LABELS: Record<string, string> = {
   'navigation.admin.queue': '队列',
-  'navigation.admin.dashboard': '看板',
+  'navigation.admin.overview': '平台总览',
+  'navigation.admin.group.pending': '待处理',
+  'navigation.admin.group.run': '运行',
+  'navigation.admin.group.settings': '设置',
   'navigation.admin.models': '模型',
   'navigation.admin.credits': '方案与额度',
   'navigation.admin.spaces': '空间申请',
@@ -77,7 +80,17 @@ setLocale('zh-CN')
 const FeedbackChild = { template: '<div>反馈管理的表</div>' }
 const MembersChild = { template: '<div>成员管理的名单</div>' }
 const QueueChild = { template: '<div>队列内容<input /></div>' }
-const DashboardChild = { template: '<div>看板内容</div>' }
+const OverviewChild = { template: '<div>平台总览内容</div>' }
+/** 几页统计页共用一个组件、靠路由给的 `kind` 区分，而组件只在建出来那一刻读它（和
+ *  `AdminStatsPage` 一样）。 */
+const StatsChild = defineComponent({
+  props: { kind: { type: String, required: true } },
+  setup(props) {
+    const kindAtSetup = props.kind
+    return { kindAtSetup }
+  },
+  template: '<div>统计页：{{ kindAtSetup }}</div>',
+})
 
 async function mountAt(path: string) {
   const router = createRouter({
@@ -89,8 +102,10 @@ async function mountAt(path: string) {
         children: [
           { path: 'feedback', name: 'AdminFeedback', component: FeedbackChild },
           { path: 'queue', name: 'AdminQueue', component: QueueChild },
-          { path: 'dashboard', name: 'AdminDashboard', component: DashboardChild },
+          { path: 'overview', name: 'AdminOverview', component: OverviewChild },
           { path: 'members', name: 'AdminMembers', component: MembersChild },
+          { path: 'usage', name: 'AdminUsage', component: StatsChild, props: { kind: 'usage' } },
+          { path: 'performance', name: 'AdminPerformance', component: StatsChild, props: { kind: 'performance' } },
         ],
       },
       { path: '/feedback', component: { template: '<div>反馈中心</div>' } },
@@ -163,7 +178,7 @@ describe('管理后台外壳', () => {
     expect(queryByText('反馈管理的表')).toBeNull()
     // 侧栏里也没有分区：进不去的地方不给入口。
     expect(queryByText('队列')).toBeNull()
-    expect(queryByText('看板')).toBeNull()
+    expect(queryByText('平台总览')).toBeNull()
   })
 
   it('是管理员就画分区，切分区换的是右边那一块', async () => {
@@ -174,10 +189,14 @@ describe('管理后台外壳', () => {
     expect(await findByText('反馈管理的表')).toBeTruthy()
     // 三块都在，用户侧那几条路由不在（列表是写死的，不从路由表算）。
     expect(queryByText('队列')).toBeTruthy()
-    expect(queryByText('看板')).toBeTruthy()
+    expect(queryByText('平台总览')).toBeTruthy()
     expect(queryByText('成员')).toBeTruthy()
     expect(queryByText('方案与额度')).toBeTruthy()
     expect(queryByText('反馈中心')).toBeNull()
+    // 分区按用途分组，组名画在各组上面。
+    expect(queryByText('待处理')).toBeTruthy()
+    expect(queryByText('运行')).toBeTruthy()
+    expect(queryByText('设置')).toBeTruthy()
     // 未读数来自 `counts`，不是从列表长度推的 —— 列表那一页只有 20 条。
     expect(await findByText('12')).toBeTruthy()
 
@@ -185,6 +204,19 @@ describe('管理后台外壳', () => {
 
     expect(await findByText('成员管理的名单')).toBeTruthy()
     expect(queryByText('反馈管理的表')).toBeNull()
+  })
+})
+
+describe('同一个组件的两页', () => {
+  it('从一页统计页换到另一页，子页重新建出来，不沿用上一页的那一类', async () => {
+    getFeedbackMeta.mockResolvedValue({ is_admin: false, is_platform_admin: true, hot_min_items: 5 })
+    const { findByText, queryByText, router } = await mountAt('/admin/usage')
+    expect(await findByText('统计页：usage')).toBeTruthy()
+
+    await router.push('/admin/performance')
+
+    expect(await findByText('统计页：performance')).toBeTruthy()
+    expect(queryByText('统计页：usage')).toBeNull()
   })
 })
 
@@ -206,9 +238,9 @@ describe('外壳上的全局键', () => {
 
   it('`G` 之后 `Q` 换到队列，当前那一项带 aria-current', async () => {
     getFeedbackMeta.mockResolvedValue({ is_admin: true, is_platform_admin: true, hot_min_items: 5 })
-    const { findByText, router } = await mountAt('/admin/dashboard')
-    await findByText('看板')
-    await findByText('看板内容')
+    const { findByText, router } = await mountAt('/admin/overview')
+    await findByText('平台总览')
+    await findByText('平台总览内容')
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g' }))
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q' }))
@@ -219,6 +251,18 @@ describe('外壳上的全局键', () => {
     // 不是靠类名 —— 类名只是皮肤，读屏和眼睛看到的是同一处。
     const current = document.body.querySelector('[aria-current="page"]')
     expect(current?.textContent).toContain('队列')
+  })
+
+  it('`G` 之后 `D` 换到平台总览', async () => {
+    getFeedbackMeta.mockResolvedValue({ is_admin: true, is_platform_admin: true, hot_min_items: 5 })
+    const { findByText, router } = await mountAt('/admin/queue')
+    await findByText('队列内容')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'g' }))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'd' }))
+
+    expect(await findByText('平台总览内容')).toBeTruthy()
+    expect(router.currentRoute.value.name).toBe('AdminOverview')
   })
 
   it('光标在输入框里时，单键一个都不算', async () => {
@@ -237,22 +281,25 @@ describe('外壳上的全局键', () => {
   it('只是平台管理员：画平台那几块，队列那一块不画', async () => {
     getFeedbackMeta.mockResolvedValue({ is_admin: false, is_platform_admin: true, hot_min_items: 5 })
 
-    const { findByText, queryByText } = await mountAt('/admin/dashboard')
+    const { findByText, queryByText } = await mountAt('/admin/overview')
 
-    expect(await findByText('看板内容')).toBeTruthy()
+    expect(await findByText('平台总览内容')).toBeTruthy()
     expect(queryByText('反馈管理的表')).toBeNull()
     // 队列只归反馈管理员：不在名单里，侧栏上就没有入口。
     expect(queryByText('队列')).toBeNull()
     expect(queryByText('成员')).toBeTruthy()
   })
 
-  it('只是反馈管理员：只有队列那一块，平台的那几块不画', async () => {
+  it('只是反馈管理员：只有「待处理」一组里的队列，别的组整组不画', async () => {
     getFeedbackMeta.mockResolvedValue({ is_admin: true, is_platform_admin: false, hot_min_items: 5 })
 
     const { findByText, queryByText } = await mountAt('/admin/queue')
 
     expect(await findByText('队列内容')).toBeTruthy()
-    expect(queryByText('看板')).toBeNull()
+    expect(queryByText('待处理')).toBeTruthy()
+    expect(queryByText('运行')).toBeNull()
+    expect(queryByText('设置')).toBeNull()
+    expect(queryByText('平台总览')).toBeNull()
     expect(queryByText('成员')).toBeNull()
     expect(queryByText('方案与额度')).toBeNull()
   })

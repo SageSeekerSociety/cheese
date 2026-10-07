@@ -4,6 +4,9 @@
  *
  * 这一层是容器：取数、跟着筛选重取、点开一种时取它的详情。画面在
  * `AdminRunRecordsPageView.vue`。
+ *
+ * 它在侧栏「运行」组里，看的是此刻，所以每 60 秒自己重拉一次（标签页不可见时不拉）。
+ * 重拉不清掉已有的数：画面只在还没有数据时画骨架。
  */
 import type {
   RunRecordDetail,
@@ -13,7 +16,7 @@ import type {
   RunRecordWindow,
 } from '@/views/admin/runRecordsApi'
 
-import { onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import AdminRunRecordsPageView from '@/views/admin/AdminRunRecordsPageView.vue'
 import { getRunRecordDetail, getRunRecords } from '@/views/admin/runRecordsApi'
@@ -67,7 +70,15 @@ watch(query, () => {
   clearTimeout(typing)
   typing = setTimeout(() => void load(), 300)
 })
-onMounted(load)
+const POLL_MS = 60_000
+let pollTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  void load()
+  pollTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') void load()
+  }, POLL_MS)
+})
+onBeforeUnmount(() => clearInterval(pollTimer))
 </script>
 
 <template>
