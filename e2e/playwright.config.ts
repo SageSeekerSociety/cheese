@@ -9,6 +9,12 @@ import { defineConfig } from '@playwright/test';
 // must be kept in step with the resolution below by hand.
 const BACKEND_PORT = process.env.E2E_BACKEND_PORT ?? '8081';
 const FRONTEND_PORT = process.env.E2E_FRONTEND_PORT ?? '3000';
+// Specs that mount source components straight from the dev server
+// (`/src/...`, `/node_modules/.vite/deps/...`) rather than visiting the app.
+// A production build has no such paths, so on CI they get a dev server of
+// their own; locally the one frontend server is already a dev server.
+const COMPONENT_SPECS = ['chat-file-reference-hit-area.spec.ts', 'design-region-note.spec.ts'];
+const COMPONENT_PORT = process.env.CI ? (process.env.E2E_COMPONENT_PORT ?? '3300') : FRONTEND_PORT;
 const STUB_GATEWAY_PORT = process.env.E2E_STUB_GATEWAY_PORT ?? '4010';
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const STUB_GATEWAY_URL = `http://127.0.0.1:${STUB_GATEWAY_PORT}`;
@@ -59,7 +65,15 @@ export default defineConfig({
     video: 'retain-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { browserName: 'chromium' } },
+    { name: 'chromium', use: { browserName: 'chromium' }, testIgnore: COMPONENT_SPECS },
+    {
+      name: 'components',
+      use: { browserName: 'chromium', baseURL: `http://localhost:${COMPONENT_PORT}` },
+      testMatch: COMPONENT_SPECS,
+      // The dev server compiles a component and everything it imports on the
+      // first request for it, which can take tens of seconds on a cold start.
+      timeout: 60_000,
+    },
   ],
   webServer: [
     {
@@ -128,5 +142,17 @@ export default defineConfig({
       // it answers. Preview answers in seconds.
       timeout: 180_000,
     },
+    ...(process.env.CI
+      ? [
+          {
+            // The component specs' dev server. Their fixtures replace fetch and
+            // WebSocket, so it needs no proxy target.
+            command: `cd ../frontend && pnpm exec vite --port ${COMPONENT_PORT} --strictPort`,
+            url: `http://localhost:${COMPONENT_PORT}`,
+            reuseExistingServer: false,
+            timeout: 180_000,
+          },
+        ]
+      : []),
   ],
 });
