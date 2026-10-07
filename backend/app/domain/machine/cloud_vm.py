@@ -52,7 +52,6 @@ async def release_idle(db, lifecycle) -> int:
                 CloudHostHome.id,
                 CloudHostHome.session_id,
                 CloudHostHome.topic_id,
-                CloudHostHome.left_at,
                 CloudHostHome.active_at,
                 CloudHost.device_id,
             )
@@ -64,7 +63,6 @@ async def release_idle(db, lifecycle) -> int:
                 CloudHost.whole_machine,
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
-                CloudHostHome.left_at.is_(None),
                 CloudHostHome.session_id.is_not(None),
                 CloudHostHome.active_at < now - idle_for,
             )
@@ -106,11 +104,7 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    if (
-        current is None
-        or current.left_at is not None
-        or current.active_at != home.active_at
-    ):
+    if current is None or current.active_at != home.active_at:
         await db.commit()
         return False
     # Looked at with the room locked: no turn has started since.
