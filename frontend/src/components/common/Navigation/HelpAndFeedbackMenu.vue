@@ -4,8 +4,8 @@ import { useI18n } from 'vue-i18n'
 
 import { useDesktopApp } from '@/composables/useDesktopApp'
 
-import { inDesktopApp, openInBrowser } from '@/lib/desktopApp'
 import { PLATFORM_LANDING } from '@/lib/adminSections'
+import { inDesktopApp, openInBrowser } from '@/lib/desktopApp'
 import { docsUrl } from '@/lib/docsSite'
 import AccountService from '@/services/account'
 import { useFeedbackStore } from '@/stores/feedback'

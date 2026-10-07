@@ -136,8 +136,6 @@
     }
   },
   "dashboard": {
-    "sub": "平台最近怎么样、卡在哪 —— 交付、用量、集成、性能各一段。",
-    "kindsAria": "分类",
     "window": {
       "switchAria": "统计窗口",
       "d7": "7 天",
@@ -157,9 +155,7 @@
       "createdInWindow": "{d} 日新增",
       "unread": "未读",
       "vsPrev": "上一周期（再前 {d} 天）：{v}",
-      "urgent": "其中 {n} 条是无人认领的急件",
-      "urgentShort": "急件 {n}",
-      "untriagedShort": "待分诊 {n}"
+      "urgent": "其中 {n} 条是无人认领的急件"
     },
     "chart": {
       "title": "每天新增 / 解决 / 上线",
@@ -197,7 +193,6 @@
         "errors": "出错"
       },
       "note": "接口耗时按路由统计，数在进程内存里：只有此刻的、重启就清零，而且只覆盖这一个进程（业务 API）。要「过去一周怎么变的」得另做——原料在请求日志里。p50/p95/p99 是最近 256 个样本上的精确分位，不是全生命期。",
-      "slowest": "最慢那条 p95",
       "routesOf": "有样本 {shown} / 共 {total}",
       "routesNote": "每一条注册过的端点都占一行，没被访问过的也在（次数画破折号）。分位数是最近 256 个样本上的精确分位。",
       "banner": "此刻最慢",
@@ -268,18 +263,7 @@
       "database": "数据库",
       "redis": "Redis",
       "event_loop": "事件循环",
-      "note": "这一刻的状态，和上面的存量/窗口不是一回事。判据与 /health/detailed 同源。",
-      "healthy": "正常",
-      "degraded": "降级"
-    },
-    "tab": {
-      "feedback": "反馈",
-      "usage": "用量",
-      "platform": "平台",
-      "performance": "性能",
-      "pipeline": "交付",
-      "product": "产品",
-      "integrations": "集成"
+      "note": "这一刻的状态，和上面的存量/窗口不是一回事。判据与 /health/detailed 同源。"
     },
     "spine": {
       "title": "交付主链",
@@ -301,7 +285,6 @@
         "stuck": "卡住了",
         "dwell": "递卡到决议",
         "needsYou": "等你处理",
-        "needsYouShort": "等你 {n}",
         "blockingRefile": "递卡受阻"
       },
       "station": {
@@ -397,8 +380,7 @@
         "unsent": "还会补发",
         "dead": "死信",
         "oldest": "最早待补发 {time}",
-        "note": "两档必须分开：前者补发扫描还会再试，后者试满次数后已放弃。合成一个「未送达」会让有救的和没救的看起来一样。",
-        "deadShort": "死信 {n}"
+        "note": "两档必须分开：前者补发扫描还会再试，后者试满次数后已放弃。合成一个「未送达」会让有救的和没救的看起来一样。"
       },
       "unavailable": {
         "title": "今天查不到",

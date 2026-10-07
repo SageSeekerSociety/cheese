@@ -1,8 +1,8 @@
+import type { AdminGroupKey } from '@/lib/adminSections'
+
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-
-import type { AdminGroupKey } from '@/lib/adminSections'
 
 import {
   ADMIN_GROUPS,

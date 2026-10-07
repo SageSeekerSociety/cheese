@@ -5,10 +5,9 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { useAdminSections } from '@/composables/useAdminSections'
 
-import { PLATFORM_LANDING } from '@/lib/adminSections'
-
 import AdminShortcutSheet from '@/components/admin/AdminShortcutSheet.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import { PLATFORM_LANDING } from '@/lib/adminSections'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 管理后台的内容区（`/admin/*` 的默认视图）。分区在侧栏（`AdminSidebar`），这一层管的是

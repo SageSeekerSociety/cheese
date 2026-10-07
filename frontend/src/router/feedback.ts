@@ -141,12 +141,7 @@ export default [
       statsRoute('usage', 'AdminUsage', 'usage', 'navigation.admin.usage'),
       statsRoute('product', 'AdminProduct', 'product', 'navigation.admin.product'),
       statsRoute('feedback-trends', 'AdminFeedbackTrends', 'feedback', 'navigation.admin.feedbackTrends'),
-      statsRoute(
-        'integration-health',
-        'AdminIntegrationHealth',
-        'integrations',
-        'navigation.admin.integrationHealth'
-      ),
+      statsRoute('integration-health', 'AdminIntegrationHealth', 'integrations', 'navigation.admin.integrationHealth'),
       { path: 'dashboard', redirect: PLATFORM_LANDING },
       {
         // 运行记录（`/admin/run-records`）：平台的报错，和它在各个项目里自己处理掉的事。
