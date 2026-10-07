@@ -95,6 +95,11 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 .ask-replies__option:hover {
   background: var(--fill);
 }
+/* 选项和说明是模型写的，常带一个 URL 或一长串不断开的词：窄屏上它会撑出卡片。 */
+.ask-replies__text,
+.ask-replies__explain {
+  overflow-wrap: anywhere;
+}
 .ask-replies__text {
   color: var(--ink);
 }
