@@ -79,7 +79,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 async function mountDoc(html: string, askAgent = true) {
-  const topicId = ref(`surface-comment-${++serial}`)
+  const topicId = ref<string | null>(`surface-comment-${++serial}`)
   const editable = ref(true)
   const canComment = ref(true)
   const openThreads = ref<ReadonlySet<string>>(new Set())
@@ -337,6 +337,16 @@ describe('production surface comment selections', () => {
     expect(document.querySelector('.doc-comment-cta')).not.toBeNull()
     await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.format.highlight') }))
     expect(f.ed.getHTML()).toContain('<mark>一千万</mark>')
+  })
+
+  it('offers the bar on a library document, which belongs to no conversation', async () => {
+    const f = await mountDoc('<p>资料库里的一段话</p>')
+    f.topicId.value = null
+    await nextTick()
+    await select(f.ed, '一段话')
+    expect(screen.getByRole('button', { name: t('work.room.doc.format.bold') })).toBeTruthy()
+    await fireEvent.click(commentAction())
+    expect(f.captured).toEqual([expect.objectContaining({ quote: '一段话' })])
   })
 
   it('changes the paragraph style of every paragraph the selection touches, and no other', async () => {
