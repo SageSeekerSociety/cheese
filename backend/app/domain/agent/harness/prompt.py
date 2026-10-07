@@ -551,13 +551,24 @@ def build_session_opening(
             )
     if roster:
         lines = "\n".join(
-            f"- {m['name']}（{_standing(m)}，handle: {m['handle']}）" for m in roster
+            f"- {m['name']}（{_standing(m)}，handle: {m['handle']}"
+            + (f"，时区 {m['timezone']}" if m.get("timezone") else "")
+            + "）"
+            for m in roster
+        )
+        zones = (
+            "工具里读到的时刻都是 UTC。写给人看的时刻（文档、消息里的「几点」）"
+            "换成读它的人的当地时间再写——他的时区见下表，那是他自己的设置，"
+            "不要写出来；读的人不在同一个时区，或者下表没写他的时区，就照原样写"
+            "并标明 UTC。\n"
+            if any(m.get("timezone") for m in roster)
+            else ""
         )
         sections["roster"] = (
             "## 项目成员 & 怎么点名\n"
             "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
             "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
-            "只写名字而不加 @ 只是普通文字，不会通知。\n" + lines
+            "只写名字而不加 @ 只是普通文字，不会通知。\n" + zones + lines
         )
     if overview_doc:
         # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目

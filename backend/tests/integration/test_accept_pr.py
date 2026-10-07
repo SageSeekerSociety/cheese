@@ -206,6 +206,11 @@ def _room_settled(client, topic_id: str, needle: str, *, tries: int = 40) -> str
     return text
 
 
+def _task_settled(client, topic_id: str, needle: str) -> str:
+    """一张卡的结局说在递它的那个任务里，频道主线上那件任务只占一行。"""
+    return _room_settled(client, str(delivery_task_id(client, topic_id)), needle)
+
+
 class FakeGitHubPrClient:
     """#718 的假 GitHub —— no real calls. State is plain dicts keyed by PR
     number / commit sha so a test can move it forward between polls.
@@ -922,7 +927,7 @@ def test_merge_connection_failure_keeps_card_retryable_and_reconciles_remote_res
     assert card["status"] == "pending"
     assert card["approvals"] == []
     assert _topic(client, tid)["status"] == "active"
-    assert "采纳未完成" in _room_settled(client, tid, "采纳未完成")
+    assert "采纳未完成" in _task_settled(client, tid, "采纳未完成")
     monkeypatch.setattr(fake, "merge_pull_request", merge)
     retried = _accept(client, cid)
     assert retried.status_code == 200, retried.text
@@ -2052,7 +2057,7 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert _room_open_tree_branch(client, tid) is None
     assert _branch_of_record(client, tid) == branch
     assert fake.merge_calls == []
-    room = _room_settled(client, tid, "原退回记录保留")
+    room = _task_settled(client, tid, "原退回记录保留")
     assert "原退回记录保留" in room
     assert "本地同步待补" not in room
 
@@ -2752,6 +2757,55 @@ def test_a_quiet_branch_is_asked_about_without_locking_its_task(
     assert locked_elsewhere == [False]
 
 
+def test_github_is_asked_about_its_quota_without_the_task_locked(
+    client, sweeping, monkeypatch
+):
+    """Before a sweep opens a draft PR it asks GitHub how much of the
+    installation's hour is left. That request must not run while the task's
+    row is held: the sweep's locked step relies on the answer the unlocked
+    look already got, and anyone touching the task meanwhile would otherwise
+    wait on GitHub."""
+    from sqlalchemy import select, text
+
+    from app.domain.room_task.models import Task
+
+    _, room = _room_with_work(client)
+    task_id = _uuid.UUID(str(delivery_task_id(client, room)))
+    locked_while_asked: list[bool] = []
+
+    async def core_quota(_self):
+        async with client.test_request_factory() as other:
+            await other.execute(text("SET LOCAL lock_timeout = '200ms'"))
+            try:
+                await other.scalar(
+                    select(Task.id).where(Task.id == task_id).with_for_update()
+                )
+                locked_while_asked.append(False)
+            except Exception:  # noqa: BLE001 — the lock wait is the observation
+                locked_while_asked.append(True)
+            await other.rollback()
+        return 5000, 5000
+
+    monkeypatch.setattr(_FakeTokens, "core_quota", core_quota)
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 1, counts
+    assert locked_while_asked and not any(locked_while_asked), locked_while_asked
+
+
+def test_a_quota_github_already_reported_spent_keeps_the_sweep_away(client, sweeping):
+    """Once GitHub has put the installation under the share kept for people,
+    background work leaves the rest to them: no draft PR is opened."""
+    _room_with_work(client)
+    _FakeTokens.quota_left = 100  # of 5000: under the share kept for people
+
+    counts = _sweep(client)
+
+    assert counts["opened"] == 0, counts
+    assert sweeping["opened"] == []
+
+
 def test_a_batch_left_open_in_an_archived_room_gets_no_pr(client, sweeping):
     """Rooms archived before archiving closed their work still hold open tasks.
 
@@ -3076,7 +3130,7 @@ def test_a_correction_is_validated_like_the_original_subject(client, sweeping):
     assert sweeping["patched"] == []
 
 
-def test_a_correction_leaves_a_trace_in_the_room(client, sweeping):
+def test_a_correction_leaves_a_trace_in_the_task(client, sweeping):
     """谁在什么时候把它从什么改成了什么。这条入口能改「这次改动会在历史里说
     什么」，所以它自己必须可追溯。"""
     pid, tid = _room_with_work(client)
@@ -3085,7 +3139,7 @@ def test_a_correction_leaves_a_trace_in_the_room(client, sweeping):
     r = _describe(client, tid, change_subject="fix(accept): corrected subject")
     assert r.status_code == 200, r.text
 
-    room = _room_settled(client, tid, "fix(accept): corrected subject")
+    room = _task_settled(client, tid, "fix(accept): corrected subject")
     assert "chore(test): file an accept card" in room
     assert "fix(accept): corrected subject" in room
 

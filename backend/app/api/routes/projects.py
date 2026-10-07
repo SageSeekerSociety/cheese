@@ -13,7 +13,12 @@ from app.api.deps import (
     get_chat_service,
     get_profile_registry,
 )
-from app.api.place import project_reader, rooms_seen
+from app.api.place import (
+    channels_unseen,
+    live_rooms_seen,
+    project_reader,
+    rooms_seen,
+)
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -35,6 +40,7 @@ from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import awaiting_an_answer, weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
+from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
@@ -56,6 +62,7 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
+from app.domain.project_progress import feed as progress_feed
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.room_task import naming, presentation
 from app.domain.room_task.schemas import TaskOut
@@ -412,11 +419,36 @@ async def list_project_tasks(
             ),
             now=now,
         )
+        last_activity = said_at or task.created_at
+        is_running = task.id in running
+        # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
+        # 点和任务列表的橙字都读它，不各自从列再推一遍。
+        awaits = address(
+            Event(
+                reviewers=(
+                    ()
+                    if card is None or not card.reviewer_handle
+                    else (card.reviewer_handle,)
+                ),
+                reporter=task.reporter_handle,
+                asked=asked.get(task.id),
+                owner=(
+                    task.owner_handle
+                    if presentation.owner_acts_on(shown, running=is_running)
+                    else None
+                ),
+            ),
+            hand_of(shown.column),
+        ).reason_for(actor.handle or "")
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
                 "presentation": shown.as_dict(),
-                "last_activity_at": (said_at or task.created_at).isoformat(),
+                "awaits_me": awaits is not None,
+                "stalled": presentation.is_stalled(
+                    shown, running=is_running, last_activity=last_activity, now=now
+                ),
+                "last_activity_at": last_activity.isoformat(),
                 "card": None
                 if card is None
                 else {
@@ -428,6 +460,30 @@ async def list_project_tasks(
             }
         )
     return ok(page(items, len(items)))
+
+
+@router.get("/{project_id}/progress")
+async def project_progress(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """项目总览的「最近进展」：最近两周这个项目里发生了什么，新的在前。
+
+    每一条都从已有的事实算出来（`project_progress.feed`）；读者看不见的私密频道、
+    已经归档的频道里的事不在里面。
+    """
+    actor = await project_reader(db, resolver, project_id, "")
+    await ProjectService(db).get_or_404(project_id)
+    happened = await progress_feed.recent(
+        db,
+        project_id,
+        rooms=await live_rooms_seen(db, resolver, actor, project_id),
+        hidden_rooms=await channels_unseen(db, resolver, actor, project_id),
+        now=datetime.now(UTC),
+    )
+    rows = [h.as_dict() for h in happened]
+    return ok(page(rows, len(rows)))
 
 
 @router.post("/{project_id}/memory")

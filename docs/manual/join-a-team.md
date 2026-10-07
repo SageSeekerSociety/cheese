@@ -56,6 +56,6 @@ slug: join-a-team
 
 :::cards
 - [和同学一起做一个项目](/team-project#team-project)：在团队的项目里开任务、和芝士把作业做完。
-- [和同学分头推进](/split-work#split-work)：每人负责一个任务，在看板上看谁做到哪。
+- [和同学分头推进](/split-work#split-work)：每人负责一个任务，在「全部任务」里看谁做到哪。
 - [团队](/teams#teams)：团队页面、成员角色和权限。
 :::

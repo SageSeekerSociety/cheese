@@ -552,6 +552,7 @@ async def _poll_pr_card(
             self._notify_merge_result(
                 topic,
                 say("acceptDoneAfterReturn", pr=number),
+                task_id=card.task_id,
                 meta=notice(
                     EVENT_ACCEPT_DONE,
                     severity=SEVERITY_INFO,

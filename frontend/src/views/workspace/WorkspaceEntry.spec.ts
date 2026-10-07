@@ -1,8 +1,8 @@
 /** 进项目的第一屏。
  *
  * `/projects/:id` 自己不显示任何东西，它把人送到一个说得出自己在显示什么的地址。
- * 桌面上那个地址**由这个项目的壳说**（default 壳说：看板）——第一眼该答的是「整个
- * 项目现在什么在跑、什么在等我」，而落进大本营答的是「这一个房间里最近说了什么」。
+ * 桌面上那个地址**由这个项目的壳说**（default 壳说：项目总览）——第一眼该答的是「这个
+ * 项目怎么样了」，而落进「综合」答的是「这一个频道里最近说了什么」。
  *
  * 这一层因此有个新麻烦：以前第一屏是个常量，抬脚就能走；现在它是一份**还没到货的
  * 数据**。所以这份用例真正在盯的是那三种到货方式——浏览器上次见过这个项目（同步）、
@@ -54,7 +54,7 @@ import WorkspaceEntry from './WorkspaceEntry.vue'
 
 const Entry = WorkspaceEntry as unknown as Component
 
-const HOME = 'workspace-running' // default 壳的第一屏
+const HOME = 'workspace-overview' // default 壳的第一屏
 // 一个**编出来**的壳：真壳的名字不该出现在组件或它的用例里。
 const OTHER = {
   name: 'my-shell',
@@ -83,7 +83,7 @@ function mount() {
 }
 
 describe('桌面端: 第一屏听壳的', () => {
-  it('没声明壳的项目落在看板上 —— 今天的行为，一个字没变', async () => {
+  it('没声明壳的项目落在项目总览上 —— 今天的行为，一个字没变', async () => {
     cache = [project('p1')]
     mount()
     await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
@@ -123,7 +123,7 @@ describe('桌面端: 第一屏听壳的', () => {
 
   it('清单还没到货就等着，不拿 default 去猜', async () => {
     // 缓存没有、清单也没到 —— 此刻**没有任何**关于这个壳的信息。猜 default 的
-    // 代价是：课程项目的人被送到看板，而第一屏只有一次机会（跳完这一层就卸载了，
+    // 代价是：课程项目的人被送到项目总览，而第一屏只有一次机会（跳完这一层就卸载了，
     // 没人能再纠一次）。
     mount()
     await new Promise((r) => setTimeout(r, 20))
@@ -152,7 +152,7 @@ describe('桌面端: 第一屏听壳的', () => {
   })
 
   it('已经不在 `/projects/:id` 上了就不跳 —— 跳转结束后视图还活着一小会儿', async () => {
-    name = 'workspace-running'
+    name = 'workspace-overview'
     cache = [project('p1')]
     mount()
     await waitFor(() => expect(replace).not.toHaveBeenCalled())

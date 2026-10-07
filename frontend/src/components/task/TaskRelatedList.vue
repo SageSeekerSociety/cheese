@@ -6,6 +6,7 @@ import type { TaskRelated } from '@/types/taskOrigin'
 import { computed } from 'vue'
 
 import { t } from '@/i18n'
+import { plainRefs } from '@/lib/refChip'
 
 const props = defineProps<{
   related: TaskRelated | null
@@ -23,6 +24,10 @@ const materials = computed(() => props.related?.materials ?? [])
 
 function nameOf(handle: string): string {
   return props.memberNames[handle] || handle
+}
+// 引的那句话里 @ 过的人、提过的话题、指过的文件，读成名字，和对话里 chip 上的字一样。
+function quoted(text: string): string {
+  return plainRefs(text, { mentionNames: props.memberNames, topicTitles: {} })
 }
 function fileName(path: string): string {
   return path.split('/').pop() || path
@@ -44,7 +49,7 @@ function fileName(path: string): string {
           : t('work.task.related.fromChannel')
       }}</span>
       <span v-if="origin.root" class="t-body related__quote">
-        {{ t('work.task.related.quote', { name: nameOf(origin.root.author), text: origin.root.content }) }}
+        {{ t('work.task.related.quote', { name: nameOf(origin.root.author), text: quoted(origin.root.content) }) }}
       </span>
     </button>
     <ul v-if="materials.length" class="related__materials">

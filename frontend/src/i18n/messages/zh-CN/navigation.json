@@ -3,7 +3,6 @@
   "inbox": "待办",
   "newProject": "新建{project}",
   "project": {
-    "board": "看板",
     "library": "资料库",
     "channels": "浏览频道",
     "members": "成员",
@@ -12,7 +11,9 @@
     "general": "综合",
     "routines": "定时与触发",
     "skills": "技能",
-    "pages": "项目页面"
+    "pages": "项目页面",
+    "overview": "总览",
+    "tasks": "全部任务"
   },
   "spaces": "空间",
   "teams": "团队",

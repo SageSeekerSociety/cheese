@@ -139,8 +139,8 @@ def test_default_is_todays_interface_verbatim() -> None:
     project without 壳 sees today.
     """
     default = CATALOG[DEFAULT_SHELL_NAME]
-    assert default.home == "workspace-running"
-    # 资料库摆在项目名下那一行（和 home 看板一起），其余按这个顺序进项目名菜单。
+    assert default.home == "workspace-overview"
+    # 资料库摆在项目名下那一行（和 home 总览一起），其余按这个顺序进项目名菜单。
     assert default.nav.project == (
         "project-library",
         "project-members",
@@ -158,7 +158,7 @@ def test_every_shell_names_only_known_keys() -> None:
     known_tabs = {"home", "workspace", "inbox"}
     # The project pages a 壳 may name — the route names of `workspaceRoutes.ts`.
     known_project = {
-        "workspace-running",
+        "project-tasks",
         "project-library",
         "project-routines",
         "project-members",

@@ -32,7 +32,6 @@ from app.domain.agent.runtime import announce_stale
 from app.domain.notification.models import Notification
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
-    FeedbackIn,
     NotificationCreate,
     NotificationOut,
     ResolveIn,
@@ -218,21 +217,6 @@ async def mark_notification_read(
     read = await service.mark_read(notification_id)
     await db.commit()
     return ok(_dump(read))
-
-
-@router.post("/alerts/{notification_id}/feedback")
-async def set_notification_feedback(
-    notification_id: int,
-    body: FeedbackIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    service = ProjectNotificationService(db)
-    row = await service.get_or_404(notification_id)
-    await _acting_recipient(resolver, row)
-    marked = await service.set_feedback(notification_id, body.feedback)
-    await db.commit()
-    return ok(_dump(marked))
 
 
 @router.post("/alerts/{notification_id}/resolve")

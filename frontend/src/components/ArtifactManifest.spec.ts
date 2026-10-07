@@ -1,9 +1,6 @@
 /**
- * 项目首页上「做出了什么」那一列的内容。
- *
- * 列的框和列头在 RunningWorkView 那边（三列任务加这一列共用 `.board-col`），所以
- * 这里只钉它里面的东西：一项一行、点得进去、空了说「暂无产物」、件数报上去，以及
- * 那三件只有人做得了的判断（改名、合并、删除）。
+ * 项目总览上「做出了什么」那一块的内容：一项一行、点得进去、空了说「暂无产物」、
+ * 件数报上去，以及那三件只有人做得了的判断（改名、合并、删除）。
  */
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -31,9 +28,23 @@ vi.mock('../api', () => ({
   ApiError: class extends Error {},
 }))
 
-const { deleteProjectArtifact, listProjectArtifacts, mergeProjectArtifacts, renameProjectArtifact } = await import(
-  '../api'
-)
+const {
+  deleteProjectArtifact,
+  getProjectSite,
+  listProjectArtifacts,
+  mergeProjectArtifacts,
+  publishProjectSite,
+  renameProjectArtifact,
+} = await import('../api')
+
+// 组件不碰接口层，读写由页面递进来；这里递的就是上面那几个假的。
+const api = {
+  list: listProjectArtifacts,
+  rename: renameProjectArtifact,
+  merge: mergeProjectArtifacts,
+  remove: deleteProjectArtifact,
+  site: { read: getProjectSite, publish: publishProjectSite },
+}
 
 const vuetify = createVuetify({ components, directives })
 
@@ -92,7 +103,7 @@ beforeEach(() => {
 })
 
 function mount() {
-  return render(ArtifactManifest, { props: { projectId: 'p1' }, global: { plugins: [vuetify, router] } })
+  return render(ArtifactManifest, { props: { projectId: 'p1', api }, global: { plugins: [vuetify, router] } })
 }
 
 function menuItem(title: string): HTMLElement | undefined {

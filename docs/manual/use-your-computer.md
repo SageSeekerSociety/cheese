@@ -117,6 +117,6 @@ slug: use-your-computer
 
 :::cards
 - [设备与环境](/devices#topic-environment)：更换环境和隔离环境的完整说明。
-- [任务与看板](/tasks#task-page)：任务页上的负责人、协作者和环境。
+- [任务](/tasks#task-page)：任务页上的负责人、协作者和环境。
 - [额度](/quota#compute)：云端环境和模型调用各怎么算额度。
 :::

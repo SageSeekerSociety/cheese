@@ -128,7 +128,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 角色只有一处来源：`stores/space.ts` 的 `myRole` / `isManager` / `isOwner`，拿登录的人跟 `space.admins` 对出来。界面按它决定露不露管理入口，真正把关的是接口。
 
-看板列是怎么推出来的见[看板](/dev/boards#board)，待处理清单见[任务与工作目录](/dev/tasks#awaiting)。
+任务列表的列是怎么推出来的见[看板](/dev/boards#board)，待处理清单见[任务与工作目录](/dev/tasks#awaiting)。
 
 ## 状态与请求：并存的两套栈 {#state-network}
 

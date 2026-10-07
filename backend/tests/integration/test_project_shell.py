@@ -39,10 +39,10 @@ def test_a_project_reports_the_shell_its_category_declared(client):
     assert shell["name"] == "course-student"
     # The RESOLVED declaration, not just the name: the frontend must not own a
     # second copy of the catalog for a 壳 added server-side to reach the browser.
-    # 看板, because the course first screen this 壳 really wants (本周任务) is a
+    # 总览, because the course first screen this 壳 really wants (本周任务) is a
     # page this build does not have yet — a 壳's `home` may only name a route
-    # that exists, so it points at the board until that page lands.
-    assert shell["home"] == "workspace-running"
+    # that exists, so it points at the project overview until that page lands.
+    assert shell["home"] == "workspace-overview"
     assert shell["terms"] == {"project": "课程", "topic": "提问"}
     assert "project-library" in shell["nav"]["project"]
     assert shell["nav"]["tabs"][0] == "workspace"
@@ -57,7 +57,7 @@ def test_a_project_with_no_shell_anywhere_gets_the_default(client):
     shell = _get(client, project["id"])["shell"]
 
     assert shell["name"] == "default"
-    assert shell["home"] == "workspace-running"
+    assert shell["home"] == "workspace-overview"
     # 「零感知」 means the default declares what the product ALREADY does: 资料库
     # under the project name, then the menu in this order, 成员 first because
     # 「退出项目」 lives on that page.
@@ -109,7 +109,7 @@ def test_the_projects_own_setting_outranks_the_whole_protocol(client):
     shell = _get(client, project["id"])["shell"]
 
     assert shell["name"] == "course-teacher"
-    assert shell["home"] == "workspace-running"
+    assert shell["home"] == "workspace-overview"
 
 
 def test_the_list_route_carries_each_projects_own_shell(client):
@@ -127,4 +127,4 @@ def test_the_list_route_carries_each_projects_own_shell(client):
 
     assert by_id[declared["id"]]["name"] == "workbench"
     assert by_id[plain["id"]]["name"] == "default"
-    assert by_id[plain["id"]]["home"] == "workspace-running"
+    assert by_id[plain["id"]]["home"] == "workspace-overview"

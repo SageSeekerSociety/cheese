@@ -296,7 +296,7 @@ test.beforeEach(async ({ page }) => {
   await apiLogin(page, "en");
 });
 
-test("workspace: inbox, board, room, accept card, library, project settings", async ({
+test("workspace: inbox, overview, tasks, room, accept card, library, project settings", async ({
   page,
 }) => {
   const { projectId, roomId, taskId } = await seed(page);
@@ -304,9 +304,14 @@ test("workspace: inbox, board, room, accept card, library, project settings", as
   await check(page, [
     { name: "inbox", path: "/inbox" },
     {
-      name: "project board",
-      path: `${project}/running`,
-      ready: visible(".board"),
+      name: "project overview",
+      path: `${project}/overview`,
+      ready: visible('[data-testid="overview-people"]'),
+    },
+    {
+      name: "project tasks",
+      path: `${project}/tasks`,
+      ready: visible('[data-testid="tasks-channel"]'),
     },
     {
       name: "room with platform notices",

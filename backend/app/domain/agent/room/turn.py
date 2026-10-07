@@ -92,6 +92,7 @@ from app.domain.thread.services import thread_opening, threads_of_rooms
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
 from app.domain.usage.ledger import team_terms
+from app.domain.user.services import timezones_by_handles
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -155,7 +156,16 @@ async def room_roster(
     none at all in a private room."""
     if topic is None or _is_dm(topic):
         return []
-    return await roster_rows(session, project_id)
+    rows = await roster_rows(session, project_id)
+    # A person's zone goes with their row: the times an agent reads are UTC,
+    # and what it writes for someone is read on that person's clock.
+    zones = await timezones_by_handles(
+        session, [row["handle"] for row in rows if not row["agent"]]
+    )
+    return [
+        {**row, "timezone": zones[row["handle"]]} if row["handle"] in zones else row
+        for row in rows
+    ]
 
 
 @dataclass(frozen=True, slots=True)
