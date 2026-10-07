@@ -1248,7 +1248,7 @@ def test_an_archived_rooms_unpushed_work_waits_in_the_bucket_and_comes_back(
         "pending": 1,
     }
     status = cleanup_of(cloud, seat)
-    assert status["state"] == "pending"
+    assert status["state"] == "kept"
     assert "not pushed" in status["reason"]
     assert key in cloud.bucket.objects
 
