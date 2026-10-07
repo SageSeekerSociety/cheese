@@ -1170,10 +1170,22 @@ class Settings(BaseSettings):
     # ARG GIT_SHA → ENV APP_VERSION), so the image is self-describing — a stale
     # or mis-tagged deploy can't lie about its version. "dev" for a local run.
     app_version: str = "dev"
+    # The commit the deploy released, which deploy/deploy-docker.sh passes in.
+    # It differs from app_version after a merge that changed no image: the
+    # build gives the previous image the new commit's tag, and that image still
+    # carries the commit it was built from. Empty when no deploy started this
+    # process; then the build is the release.
+    app_release: str = ""
     # 内测: show the running commit sha in a corner of the UI, so a tester can
     # confirm at a glance which build they're on. Off by default (prod); the
     # dev/test box's .env sets it true. The frontend reads it from /api/version.
     show_version_badge: bool = False
+
+    @property
+    def released_commit(self) -> str:
+        """The commit this process runs as: the release a deploy named, else
+        the commit its image was built from."""
+        return self.app_release or self.app_version
 
     @model_validator(mode="after")
     def _require_real_jwt_secret_on_deployment(self) -> "Settings":

@@ -24,13 +24,13 @@ fi
 if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
   if [ "${1:-}" = compose ] && [[ "$*" == *" up -d backend frontend"* ]]; then
-    printf 'compose-up-env BACKEND_IMAGE=%s FRONTEND_IMAGE=%s IMAGE_TAG=%s\n' \
-      "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
+    printf 'compose-up-env BACKEND_IMAGE=%s FRONTEND_IMAGE=%s IMAGE_TAG=%s APP_RELEASE=%s\n' \
+      "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" "${APP_RELEASE:-}" \
       >> "$APP_TIER_DOCKER_LOG"
   fi
   if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps --force-recreate "* ]]; then
-    printf 'slot-up-env %s BACKEND_IMAGE=%s FRONTEND_IMAGE=%s IMAGE_TAG=%s\n' \
-      "${!#}" "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" \
+    printf 'slot-up-env %s BACKEND_IMAGE=%s FRONTEND_IMAGE=%s IMAGE_TAG=%s APP_RELEASE=%s\n' \
+      "${!#}" "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" "${APP_RELEASE:-}" \
       >> "$APP_TIER_DOCKER_LOG"
   fi
   if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps device-connection"* ]]; then
@@ -279,6 +279,12 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
       esac
       ;;
     *com.cheese.image_tag*) printf 'oldsha\n' ;;
+    # The running backend's environment; APP_TIER_PREVIOUS_RELEASE is the
+    # release it was started as, unset for one started before releases were passed.
+    *Config.Env*)
+      printf 'PATH=/usr/local/bin\n'
+      [ -z "${APP_TIER_PREVIOUS_RELEASE:-}" ] || printf 'APP_RELEASE=%s\n' "$APP_TIER_PREVIOUS_RELEASE"
+      ;;
     *State.Running*) printf 'true\n' ;;
   esac
   exit 0
