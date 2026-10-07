@@ -638,6 +638,13 @@ cheese_launch_phase credentials_selected
 # USER, and Claude Code has been reported unable to find a Keychain login on
 # macOS without it (anthropics/claude-code#77213).
 #
+# On macOS that login is a Keychain item, and `security`, which Claude Code
+# runs to read and renew it, finds the login keychain through HOME: under the
+# room's HOME it finds no keychain and the session is not logged in. The
+# `security` the session finds runs with the machine's HOME, so the session's
+# own HOME stays the room's. An agent's own `security` reaches the owner's
+# keychain the same way, which its owner's machine already lets it do.
+#
 # When the owner set another model service there (`cheesehost claude login
 # --base-url`), the session calls that instead: its address and key, and its
 # model for the main loop, the three tiers Claude Code addresses by alias, and
@@ -660,6 +667,15 @@ unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_B
 OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}"
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
+if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
+  mkdir -p "$HOME/.cheese/keychain"
+  cat > "$HOME/.cheese/keychain/security" <<KEYCHAIN
+#!/bin/sh
+HOME='$REAL_HOME' exec '$_security' "\\$@"
+KEYCHAIN
+  chmod +x "$HOME/.cheese/keychain/security"
+  export PATH="$HOME/.cheese/keychain:$PATH"
+fi
 if [ -f "$OWN_LOGIN/{MODEL_SERVICE_FILE}" ]; then
   eval "$(python3 -c '{_MODEL_SERVICE_EXPORTS}' < "$OWN_LOGIN/{MODEL_SERVICE_FILE}")"
 fi
