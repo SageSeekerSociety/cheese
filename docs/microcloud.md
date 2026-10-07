@@ -70,8 +70,9 @@ the hour, from the same packs as model calls (`docs/manual/dev/billing.md`, äº‘ç
 A host is released once it has run no sandbox for `CLOUD_HOST_IDLE_HOLD_S` and holds no
 home. One whose sleeping homes are still on its disk is set *draining* at that point: it takes
 no new session, its homes are archived, and then it is released. A session that switches away
-after pushing gives its home back; one that leaves without pushing (`abandon_unpushed`) keeps
-its home, on its host or in its archive, until its room's cleanup removes it. A host the
+gives its home back after one best-effort checkpoint (`cheese sync --all`), whether or not the
+checkpoint went through; only a home already in the bucket keeps its archive, for its room's
+cleanup. A host the
 provider fails before it is enrolled holds nothing of anyone's: the pool gives it up, deletes
 it, and places its sessions again; after three such failures within an hour it stops creating
 hosts for the rest of the hour.

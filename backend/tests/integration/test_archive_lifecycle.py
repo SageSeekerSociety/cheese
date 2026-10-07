@@ -15,7 +15,9 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.errors import ConflictError
+from app.domain.agent.models import AgentTurn
 from app.domain.machine.models import AiStatus, CloudHost, CloudHostHome, MachineStatus
+from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.services import ProjectService
 from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
@@ -87,7 +89,9 @@ async def test_cancel_before_claim_reuses_environment_without_device_commands(
         assert (await session.get(RoomCleanup, cleanup_id)).state == "cancelled"
         await session.commit()
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 0,
         "pending": 0,
@@ -101,30 +105,39 @@ async def test_a_failed_check_after_the_stop_keeps_resources_and_retries_after_r
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
     inventory = AsyncMock(return_value=[entry])
-    unpublished = [RuntimeError("the room has unpublished work")]
-
-    async def step(device_id, project_id, resource_id, name, *rest):
-        if name == "publication" and unpublished:
-            raise unpublished.pop()
-
-    action = AsyncMock(side_effect=step)
+    action = AsyncMock(return_value={"ready": True})
     monkeypatch.setattr(retire, "_inventory", inventory)
     monkeypatch.setattr(retire, "_device_action", action)
+    # A turn still persisting its result after the room was stopped.
+    turn = AgentTurn(
+        id=uuid.uuid4(),
+        continuation_id=uuid.uuid4(),
+        conversation_id=room_id,
+        author="owner",
+        started_at=datetime.now(UTC),
+    )
+    async with client.test_factory() as session:
+        session.add(turn)
+        await session.commit()
     result = client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
     assert result == {"completed": 0, "pending": 1}
-    assert [call.args[3] for call in action.await_args_list] == [
-        "prepare",
-        "publication",
-    ]
+    assert [call.args[3] for call in action.await_args_list] == ["prepare"]
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
         assert operation.state == "pending"
-        assert operation.last_error == "the room has unpublished work"
+        assert "still finishing" in operation.last_error
+        (await session.get(AgentTurn, turn.id)).stopped_at = datetime.now(UTC)
+        operation.due_at = datetime.now(UTC)
+        await session.commit()
     # A fresh worker/session resumes the same recorded resource, not a fresh inventory.
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 1,
         "pending": 0,
@@ -152,42 +165,14 @@ async def test_uncertain_stop_blocks_reuse_until_device_confirms(client, monkeyp
         retire, "_device_action", AsyncMock(side_effect=TimeoutError("no stop receipt"))
     )
     client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, cleanup_id)).state == "preparing"
         with pytest.raises(ConflictError, match="正在停止"):
             await TopicService(session).unarchive(room_id, by="owner")
-
-
-async def test_unpublished_backend_source_can_be_reopened_before_parking(
-    client, monkeypatch, tmp_path
-):
-    room_id, cleanup_id = await archived_room(client, monkeypatch)
-    work = tmp_path / "work"
-    subprocess.run(["git", "init", "-q", str(work)], check=True)
-    (work / "unfinished.py").write_text("unpublished source")
-    target = tmp_path / "retired"
-    monkeypatch.setattr(
-        retire,
-        "_inventory",
-        AsyncMock(
-            return_value=[
-                {"kind": "worktree", "path": str(work), "retired": str(target)}
-            ]
-        ),
-    )
-    client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
-    )
-    async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        assert operation.state == "pending"
-        assert "unpublished" in operation.last_error
-        await TopicService(session).unarchive(room_id, by="owner")
-        await session.commit()
-    assert not target.exists()
-    assert (work / "unfinished.py").read_text() == "unpublished source"
 
 
 @pytest.mark.parametrize("pointer", ["absolute", "relative", "moved-relative"])
@@ -246,7 +231,9 @@ async def test_parked_worktree_frees_the_branch_before_old_device_is_removed(
 
     monkeypatch.setattr(retire, "_device_action", old_device)
     client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, cleanup_id)).state == "claimed"
@@ -287,7 +274,9 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
     action = AsyncMock(side_effect=RuntimeError("device offline"))
     monkeypatch.setattr(retire, "_device_action", action)
     client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
@@ -297,7 +286,9 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
         await session.commit()
     action.side_effect = None
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 1,
         "pending": 0,
@@ -318,7 +309,7 @@ async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
     release = asyncio.Event()
     passes = 0
 
-    async def slow_pass(sessions):
+    async def slow_pass(sessions, checkpoint):
         nonlocal passes
         passes += 1
         if passes == 1:
@@ -334,11 +325,17 @@ async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
         await asyncio.sleep(0.05)
     assert not retire._sweeping
     monkeypatch.setattr(retire, "_sweep_once", slow_pass)
-    first = asyncio.create_task(retire.sweep_retired_storage(business_db_factory))
+    first = asyncio.create_task(
+        retire.sweep_retired_storage(business_db_factory, checkpoint=checkpoint_room)
+    )
     await asyncio.wait_for(started.wait(), timeout=5)
     # Two more asks while the first is still running: neither starts a sweep.
     waiting = [
-        asyncio.create_task(retire.sweep_retired_storage(business_db_factory))
+        asyncio.create_task(
+            retire.sweep_retired_storage(
+                business_db_factory, checkpoint=checkpoint_room
+            )
+        )
         for _ in range(2)
     ]
     await asyncio.sleep(0.05)
@@ -370,7 +367,9 @@ async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
         await session.commit()
     # Another process is on it: this sweep does not touch it.
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 0,
         "pending": 0,
@@ -383,7 +382,9 @@ async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
         operation.lease_until = datetime.now(UTC) - timedelta(seconds=1)
         await session.commit()
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 1,
         "pending": 0,
@@ -576,7 +577,9 @@ async def session_host_room(client, monkeypatch, tmp_path):
 
 def _sweep(client) -> dict:
     return client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
 
 
@@ -1016,10 +1019,10 @@ async def test_a_cleanup_held_for_the_same_reason_backs_off(client, monkeypatch)
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
     monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
-    reasons = ["the room has unpublished work"]
+    reasons = ["a process still holds the room"]
 
     async def step(device_id, project_id, resource_id, name, *rest):
-        if name == "publication":
+        if name == "prepare":
             raise RuntimeError(reasons[-1])
 
     monkeypatch.setattr(retire, "_device_action", AsyncMock(side_effect=step))

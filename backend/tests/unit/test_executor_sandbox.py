@@ -365,10 +365,10 @@ def _run_git(*args, cwd):
 def test_git_in_a_sandboxed_rooms_checkout_runs_in_a_sandbox_too(
     tmp_path, monkeypatch, sandbox
 ):
-    """Git runs what a checkout's config names — `core.fsmonitor` on every
-    `git status` — and a sandboxed room writes its checkout's config. So the
-    teardown's own git, in that room's checkouts, sees none of the owner's
-    files."""
+    """Git runs what a repository's config names — `core.fsmonitor` on every
+    `git status` — and a sandboxed room writes its repositories' config. So the
+    teardown's own git in that room (`cleanup.git`, which prunes the room's
+    repositories) sees none of the owner's files."""
     monkeypatch.setenv("HOME", str(tmp_path))
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = tmp_path / ".cheese/home" / project / resource
@@ -387,9 +387,7 @@ def test_git_in_a_sandboxed_rooms_checkout_runs_in_a_sandbox_too(
         marker.parent.mkdir(parents=True)
         marker.write_text(str(tmp_path / "release"))
 
-    with pytest.raises(RuntimeError):
-        # The commit is on no remote; what matters is what ran on the way.
-        cleanup.check_resource_publication(home, home.parent / "absent")
+    cleanup.git(["status", "--porcelain"], checkout, home)
 
     assert escaped.exists() is not sandbox
 

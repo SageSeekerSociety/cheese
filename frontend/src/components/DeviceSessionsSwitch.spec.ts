@@ -1,5 +1,5 @@
 // 「现在的分布」里一台自有设备上的 agent：选一些，换到另一台工作电脑。换的是它所在
-// 的整个房间（一个话题一个容器），走名册那条更换；正在干活的跳过并说明原因，连不上的只由人逐个决定不推送直接更换。
+// 的整个房间（一个话题一个容器），走名册那条更换（先尽力推送一次，推没推上去都换）；正在干活的跳过并说明原因。
 import type { ComputeChoice } from '../types/compute'
 import type { DeviceSession } from '../types/deviceSessions'
 
@@ -23,12 +23,6 @@ const api = vi.hoisted(() => ({
   },
 }))
 vi.mock('../api', () => api)
-// 确认框回什么由这一格决定；`confirmAnswer` 是「人点了确定还是取消」。
-const dialogMock = vi.hoisted(() => ({ confirm: vi.fn() }))
-vi.mock('@/plugins/dialog', async () => ({
-  ...(await vi.importActual<typeof import('@/plugins/dialog')>('@/plugins/dialog')),
-  useDialog: () => ({ confirm: dialogMock.confirm }),
-}))
 import { ApiError } from '../api'
 import i18n, { setLocale } from '../i18n'
 
@@ -77,8 +71,6 @@ function dialog() {
 
 beforeEach(() => {
   vi.resetAllMocks()
-  // 默认「点了确定」：取消那一格在下面的用例里单独摆。
-  dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
   vi.stubGlobal('devicePixelRatio', 1)
   vi.stubGlobal('visualViewport', {
     width: 1024,
@@ -127,8 +119,6 @@ it('switches the selected agents one by one and says what happened to each', asy
 
   api.setTopicComputeChoice.mockImplementation(async (topic: string) => {
     if (topic === 'room-b') throw new ApiError(409, '正在运行任务，稍后再换', 'SessionWorking')
-    if (topic === 'room-c')
-      throw new ApiError(409, '原来那台工作电脑连不上，无法推送改动，没有更换', 'WorkComputerUnreachable')
     return { choice: {}, proposal: null }
   })
   // Vuetify's checkbox reads the input event, as a person's click produces it.
@@ -137,55 +127,17 @@ it('switches the selected agents one by one and says what happened to each', asy
 
   await waitFor(() => expect(api.setTopicComputeChoice).toHaveBeenCalledTimes(3))
   expect(api.setTopicComputeChoice.mock.calls.map((call) => [call[0], call[1].profile, call[2]])).toEqual([
-    ['room-a', 'cloud', { ifIdle: true, abandonUnpushed: false }],
-    ['room-b', 'cloud', { ifIdle: true, abandonUnpushed: false }],
-    ['room-c', 'cloud', { ifIdle: true, abandonUnpushed: false }],
+    ['room-a', 'cloud', { ifIdle: true }],
+    ['room-b', 'cloud', { ifIdle: true }],
+    ['room-c', 'cloud', { ifIdle: true }],
   ])
-  expect(await dialog().findByText('已更换')).toBeTruthy()
+  expect(await dialog().findAllByText('已更换')).toHaveLength(2)
   expect(dialog().getByText('正在运行任务，稍后再换').getAttribute('role')).toBe('alert')
-  expect(dialog().getByText('原来那台工作电脑连不上，无法推送改动，没有更换')).toBeTruthy()
-  // Only the unreachable one offers the override, and only for itself.
-  const [abandon] = dialog().getAllByRole('button', { name: '不推送，直接更换' })
-  expect(dialog().getAllByRole('button', { name: '不推送，直接更换' })).toHaveLength(1)
-
-  api.setTopicComputeChoice.mockResolvedValue({ choice: {}, proposal: null })
-  await fireEvent.click(abandon)
-  // 没推送的改动会留在旧机器上：行里的入口是灰的，这一下确认才是红的。
-  expect(dialogMock.confirm).toHaveBeenCalledWith(
-    '不推送直接更换的话，原来那台上没推送的改动会留在那台电脑上，不会跟到新电脑。',
-    { title: '不推送直接更换？', confirmLabel: '不推送，直接更换', danger: true }
-  )
-  await waitFor(() =>
-    expect(api.setTopicComputeChoice).toHaveBeenLastCalledWith('room-c', expect.anything(), {
-      ifIdle: true,
-      abandonUnpushed: true,
-    })
-  )
-  await waitFor(() => expect(dialog().getAllByText('已更换')).toHaveLength(2))
+  // A switch is never refused over unpushed work, so nothing offers to override one.
+  expect(dialog().queryByRole('button', { name: /不推送/ })).toBeNull()
   expect(emitted().changed).toBeUndefined()
   await fireEvent.click(dialog().getByRole('button', { name: '取消' }))
   await waitFor(() => expect(emitted().changed).toHaveLength(1))
-})
-
-it('asks once more before switching without pushing, and a no changes nothing', async () => {
-  api.listDeviceSessions.mockResolvedValue({ sessions: [row('c', '周报')], hidden: 0 })
-  api.setTopicComputeChoice.mockRejectedValue(new ApiError(409, '连不上', 'WorkComputerUnreachable'))
-  await open()
-  await dialog().findByText('周报')
-
-  await fireEvent.input(dialog().getByLabelText('全选'), { target: { checked: true } })
-  await fireEvent.click(dialog().getByRole('button', { name: '推送并更换' }))
-  await waitFor(() => expect(api.setTopicComputeChoice).toHaveBeenCalledTimes(1))
-
-  dialogMock.confirm.mockImplementation(() => ({ wait: async () => false }))
-  await fireEvent.click(dialog().getAllByRole('button', { name: '不推送，直接更换' })[0])
-  expect(dialogMock.confirm).toHaveBeenCalledTimes(1)
-  // 取消：什么都没换，那条不推送的活儿没有发生。
-  expect(api.setTopicComputeChoice).toHaveBeenCalledTimes(1)
-  expect(api.setTopicComputeChoice).toHaveBeenCalledWith('room-c', expect.anything(), {
-    ifIdle: true,
-    abandonUnpushed: false,
-  })
 })
 
 it('offers every other work computer but the one being left', async () => {

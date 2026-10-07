@@ -4005,7 +4005,7 @@ def _sync_all_tasks() -> None:
             _sync_task(worktree.name)
         except (Exception, SystemExit) as exc:
             failed.append(worktree.name)
-            # The platform reads these lines (`session_work._failed_tasks`).
+            # The platform logs these lines (`session_work.checkpoint`).
             closed = isinstance(exc, _ClosedTaskNotBackedUp)
             which = "已结束的任务" if closed else "任务"
             print(f"[cheese] {which} {worktree.name} 同步失败：{exc}", file=sys.stderr)
