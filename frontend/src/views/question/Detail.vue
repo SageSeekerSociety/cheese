@@ -90,91 +90,69 @@
               @cancel-vote="attitudeQuestion(NewAttitudeType.None)"
             />
 
-            <v-dialog
+            <BaseButton
               v-if="!questionData.accepted_answer && questionData.bounty && questionData.bounty > 0"
-              width="auto"
-              scrollable
+              kind="secondary"
+              prepend-icon="mdi-account-multiple-plus"
+              @click="inviteDialog = true"
             >
-              <template #activator="{ props: activatorProps }">
-                <BaseButton kind="secondary" prepend-icon="mdi-account-multiple-plus" v-bind="activatorProps">
-                  {{ t('questions.detail.buttons.invite') }}
-                </BaseButton>
-              </template>
+              {{ t('questions.detail.buttons.invite') }}
+            </BaseButton>
+            <BaseButton
+              v-else-if="!questionData.accepted_answer"
+              kind="secondary"
+              prepend-icon="mdi-currency-usd"
+              @click="bountyDialog = true"
+            >
+              {{ t('questions.detail.buttons.bounty') }}
+            </BaseButton>
 
-              <template #default="{ isActive }">
-                <v-card>
-                  <v-card-item>
-                    <v-card-title class="text-h6">{{ t('questions.detail.inviteTitle') }}</v-card-title>
-                  </v-card-item>
-                  <v-card-text style="padding: 8px">
-                    <div class="px-3 mb-2">
-                      <v-text-field
-                        autocomplete="off"
-                        clearable
-                        :label="t('questions.detail.searchUsers')"
-                        variant="outlined"
-                        density="compact"
-                        single-line
-                        hide-details
-                      ></v-text-field>
-                    </div>
-                    <invitation-list :question-id="questionId" />
-                  </v-card-text>
+            <AdaptiveDialog
+              v-if="!questionData.accepted_answer && questionData.bounty && questionData.bounty > 0"
+              v-model="inviteDialog"
+              :title="t('questions.detail.inviteTitle')"
+              size="sm"
+              :cancel-label="t('questions.detail.close')"
+            >
+              <div class="mb-2">
+                <v-text-field
+                  autocomplete="off"
+                  clearable
+                  :label="t('questions.detail.searchUsers')"
+                  variant="outlined"
+                  density="compact"
+                  single-line
+                  hide-details
+                ></v-text-field>
+              </div>
+              <invitation-list :question-id="questionId" />
+            </AdaptiveDialog>
 
-                  <v-card-actions>
-                    <v-spacer></v-spacer>
-
-                    <BaseButton kind="ghost" @click="isActive.value = false">{{
-                      t('questions.detail.close')
-                    }}</BaseButton>
-                  </v-card-actions>
-                </v-card>
-              </template>
-            </v-dialog>
-            <v-dialog v-else-if="!questionData.accepted_answer" v-model="bountyDialog" :max-width="DIALOG_WIDTH.md">
-              <template #activator="{ props: activatorProps }">
-                <BaseButton kind="secondary" prepend-icon="mdi-currency-usd" v-bind="activatorProps">
-                  {{ t('questions.detail.buttons.bounty') }}
-                </BaseButton>
-              </template>
-
-              <template #default="{ isActive }">
-                <v-card>
-                  <v-card-item>
-                    <v-card-title class="text-h6">{{ t('questions.detail.addBountyTitle') }}</v-card-title>
-                  </v-card-item>
-                  <v-card-text class="pa-1">
-                    <div class="px-3 mb-2">
-                      <v-slider
-                        v-model="addBountyInput"
-                        thumb-label="always"
-                        min="1"
-                        max="20"
-                        step="1"
-                        show-ticks
-                        hide-details
-                      >
-                        <template #append>
-                          <span style="vertical-align: baseline; min-width: 5rem; text-align: end">
-                            <span>{{ t('questions.detail.bounty', { bounty: addBountyInput }) }} </span
-                            ><v-icon>mdi-cheese</v-icon>
-                          </span>
-                        </template>
-                      </v-slider>
-                    </div>
-                  </v-card-text>
-
-                  <v-card-actions>
-                    <v-spacer></v-spacer>
-
-                    <BaseButton kind="ghost" @click="isActive.value = false">{{ t('global.cancel') }}</BaseButton>
-                    <BaseButton kind="primary" :loading="bountyLoading" @click="addBounty">{{
-                      t('questions.detail.buttons.addBounty')
-                    }}</BaseButton>
-                  </v-card-actions>
-                </v-card>
-              </template>
-            </v-dialog>
+            <AdaptiveDialog
+              v-else-if="!questionData.accepted_answer"
+              v-model="bountyDialog"
+              :title="t('questions.detail.addBountyTitle')"
+              :primary-label="t('questions.detail.buttons.addBounty')"
+              :primary-loading="bountyLoading"
+              @primary="addBounty"
+            >
+              <v-slider
+                v-model="addBountyInput"
+                thumb-label="always"
+                min="1"
+                max="20"
+                step="1"
+                show-ticks
+                hide-details
+              >
+                <template #append>
+                  <span style="vertical-align: baseline; min-width: 5rem; text-align: end">
+                    <span>{{ t('questions.detail.bounty', { bounty: addBountyInput }) }} </span
+                    ><v-icon>mdi-cheese</v-icon>
+                  </span>
+                </template>
+              </v-slider>
+            </AdaptiveDialog>
 
             <BaseButton kind="ghost" prepend-icon="mdi-comment-outline">
               {{ t('questions.detail.buttons.comment') }}
@@ -275,7 +253,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import { DIALOG_WIDTH } from '@/components/base/dialogSize'
+import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import ContentVoter from '@/components/common/ContentVoter.vue'
 import RichEditor from '@/components/common/Editor/Editor.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -297,6 +275,7 @@ const router = useRouter()
 const { setDynamicTitle } = usePageTitle()
 
 const addBountyInput = ref<number>(1)
+const inviteDialog = ref(false)
 const bountyDialog = ref(false)
 const bountyLoading = ref(false)
 
