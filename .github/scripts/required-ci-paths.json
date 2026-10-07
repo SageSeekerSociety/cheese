@@ -94,14 +94,6 @@
     ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/mcp-contract.yml"
   ],
-  "docs": [
-    "docs/**",
-    "backend/**",
-    "frontend/**",
-    "deploy/**",
-    "cli/**",
-    ".github/**"
-  ],
   "cifast": [
     ".github/scripts/ci-fast.py",
     ".github/scripts/test_ci_fast.py",

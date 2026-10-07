@@ -10,7 +10,7 @@ forked it four times on 2026-08-09/10 alone; every fork kills `alembic upgrade
 head`, which reddens CI and aborts the dev deploy.
 
 - After creating or merging any migration, run `uv run alembic heads` — it must
-  print exactly one. CI enforces this (`migration-heads` job, ungated), but
+  print exactly one. CI enforces this (the backend `static` job's "Exactly one alembic head" step), but
   catch it locally first.
 - New migration: set `down_revision` to the CURRENT head, **and move the
   sentinel**: `echo <your-revision-id> > backend/alembic/HEAD`. That one-line

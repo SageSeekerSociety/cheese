@@ -187,3 +187,7 @@ timeout = 300
 # hangs before the timeout report reaches CI. Dump the stack and exit the
 # worker instead; xdist reports the crashed test and runs the remaining work.
 timeout_method = "thread"
+# Keep a test's tmp_path only when it failed. Every passing test's directory
+# used to stay until pytest's three-run rotation, which is how 13 GB of them
+# filled the dev box's 32 GB /tmp tmpfs (docs/infrastructure.md).
+tmp_path_retention_policy = "failed"

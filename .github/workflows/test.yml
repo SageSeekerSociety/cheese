@@ -30,9 +30,16 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  lint:
+  # Everything in the backend suite that needs no services: lint and types,
+  # module boundaries, the independent collection, the pi extension's tests and
+  # the alembic head count. One job rather than three: each of the three used
+  # to queue for its own runner and check out the tree for well under two
+  # minutes of work, and a run's wall clock is mostly that queue.
+  static:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Measured median 1.6m for lint and 1.8m for migration-heads as separate
+    # jobs; the margin covers a cold uv cache without leaving a stuck run.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -56,14 +63,19 @@ jobs:
         run: uv python install 3.13
 
       - name: Install dependencies
+        id: install
         run: uv sync --frozen --all-extras
 
+      # From here each check runs whether or not the one before it passed:
+      # they were separate jobs, and one red step must not hide another's
+      # verdict.
       # The same hooks a developer's commit runs, read from
       # .pre-commit-config.yaml. Before this, CI and the local gate were two
       # hand-maintained lists that agreed only as long as someone remembered to
       # update both. Each hook cds into backend/ on its own, so these run from
       # the workspace root rather than under this job's `defaults`.
       - name: Lint and type-check (pre-commit hooks)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: |
           uvx pre-commit run --all-files --show-diff-on-failure ruff
@@ -77,16 +89,20 @@ jobs:
       # with anything. So it is asked to prove itself — this builds a throwaway
       # package tree, plants a violation in it, and requires a non-zero exit.
       - name: Module boundary check proves it still fires
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: uv run python scripts/check_boundaries.py --self-test
 
       # The same hook a developer's commit runs, from the same file, and over
       # all files rather than this diff: the import graph is a property of the
       # tree, not of the commit that touched it.
       - name: Module boundaries (import-linter + frozen baseline)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files boundary-check
 
       - name: Independently collect every required backend case
+        id: collect
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: >-
           uv run python -m pytest tests/ --collect-only -q
           --ignore=tests/forgejo -k 'not kotlin'
@@ -94,66 +110,34 @@ jobs:
           --ci-selection-output="$RUNNER_TEMP/backend-expected"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
         with:
           name: backend-expected-${{ github.run_attempt }}
           path: ${{ runner.temp }}/backend-expected/
           if-no-files-found: error
           retention-days: 14
 
-  # The one piece of backend code that is not Python: the extension a pi room
-  # gives its agent. It runs inside pi on a session machine, so the only thing
-  # it may ever need is what that machine has — and this lane is held to the
-  # same bar. Node strips the types itself; there is no package.json here, no
-  # install step, and nothing to keep in a lockfile. A toolchain here would be
-  # the first place "a session machine needs no toolchain" stopped being true.
-  #
-  # Node 24 rather than the 22 the frontend pins: type stripping is on by
-  # default from 23.6, and the alternative is carrying an experimental flag
-  # that exists only to say so.
-  extension:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
+      # The one piece of backend code that is not Python: the extension a pi room
+      # gives its agent. It runs inside pi on a session machine, so the only thing
+      # it may ever need is what that machine has — and this lane is held to the
+      # same bar. Node strips the types itself; there is no package.json here, no
+      # install step, and nothing to keep in a lockfile. A toolchain here would be
+      # the first place "a session machine needs no toolchain" stopped being true.
+      #
+      # Node 24 rather than the 22 the frontend pins: type stripping is on by
+      # default from 23.6, and the alternative is carrying an experimental flag
+      # that exists only to say so.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ !cancelled() }}
         with:
           node-version: 24
 
       - name: Run the pi extension's tests
+        if: ${{ !cancelled() }}
         run: node --test tests/extension/*.test.ts
 
-  migration-heads:
-    runs-on: ubuntu-latest
-    # Measured median 1.8m (uv sync + a graph read, no DB); generous margin for
-    # a cold uv cache without leaving a stuck run to sit for hours.
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Use a fresh virtual environment
-        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.1"
-          python-version: "3.13"
-          enable-cache: true
-          cache-python: true
-          cache-dependency-glob: backend/uv.lock
-          # Keep downloaded wheels; uv cache prune --ci would remove them before upload.
-          prune-cache: false
-          # Restore only: warm-caches.yml saves this key on main.
-          save-cache: false
-
-      - name: Set up Python
-        run: uv python install 3.13
-
-      - name: Install dependencies
-        run: uv sync --frozen --all-extras
-
       - name: Exactly one alembic head
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           uv run alembic heads
           heads="$(uv run alembic heads | grep -c '(head)')"
@@ -354,27 +338,6 @@ jobs:
           test "$((block_size * blocks))" = 4294967296
           echo "CHEESE_CI_POSTGRES_PID=$pid" >> "$GITHUB_ENV"
 
-      # The pure layer has lost an xdist worker without a word four times since
-      # 2026-10-02 (`[gwN] node down: Not properly terminated`, then a hang to
-      # the timeout), well under 1% of runs. Ruled out: memory (above 11 GB in
-      # #2964), a signal to a worker in any passing run, and slowness alone (30
-      # runs at 386-539 s under CPU load, #2984, all passed). Recorded until the
-      # next one: every fatal signal to a Python process, the kernel's own
-      # (SEGV, BUS, ILL, FPE, SYS) too, and each Python process's exit code, so
-      # an `os._exit` shows as well as a kill.
-      - name: Trace kill signals and exits of Python processes
-        if: matrix.layer == 'pure'
-        run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh bpftrace
-          mkdir -p "$RUNNER_TEMP/backend-results"
-          sudo nohup bpftrace -e '
-          tracepoint:signal:signal_generate /(args->sig == 9 || args->sig == 15 || args->sig == 6 || args->sig == 1 || args->sig == 2 || args->sig == 11 || args->sig == 7 || args->sig == 4 || args->sig == 8 || args->sig == 31) && (args->comm == "python3" || args->comm == "python")/ { printf("%lld sig=%d from=%d(%s) to=%d(%s)\n", nsecs / 1000000, args->sig, pid, comm, args->pid, args->comm); }
-          kprobe:do_exit /pid == tid && arg0 != 0 && (comm == "python3" || comm == "python")/ { printf("%lld exit pid=%d(%s) code=%d\n", nsecs / 1000000, pid, comm, arg0); }
-          ' > "$RUNNER_TEMP/backend-results/signals.log" 2>&1 &
-          # A signal's sender is named only by pid and comm (`python3`): every
-          # process's command line every five seconds tells which program it was.
-          nohup bash -c 'while true; do echo "== $(cut -d" " -f1 /proc/uptime)"; ps -eo pid,ppid,etimes,args | cut -c1-300; sleep 5; done' > "$RUNNER_TEMP/backend-results/processes.log" 2>&1 &
-
       - name: Run the selected layer partition
         timeout-minutes: ${{ matrix.timeout }}
         env:
@@ -390,14 +353,21 @@ jobs:
             export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
             export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
           fi
-          observe=()
-          if [ "$TEST_LAYER" = integration ]; then
-            observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" --)
+          observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources")
+          if [ "$TEST_LAYER" = pure ]; then
+            observe+=(--no-postgres)
           fi
-          "${observe[@]}" uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+          # One retry for a failed or crashed case: a timeout ends its xdist
+          # worker with os._exit (pyproject.toml, timeout_method), which turned
+          # about 6.5% of pure runs red on 2026-10-07. ci_evidence records each
+          # retry and the stacks of a case that ran out its timeout; the
+          # verification step below names the cases that needed one.
+          "${observe[@]}" -- uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
             --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
+            -p scripts.ci_evidence --ci-evidence-dir="$RUNNER_TEMP/backend-results" \
+            --reruns 1 --reruns-delay 1 \
             --dist worksteal --tb=short --durations=30 \
             --junitxml="$RUNNER_TEMP/backend-results/results.xml" 2>&1 \
             | tee "$RUNNER_TEMP/backend-results/pytest.log"
@@ -416,19 +386,29 @@ jobs:
           "$RUNNER_TEMP/backend-results/results.xml"
           --log "$RUNNER_TEMP/backend-results/pytest.log"
 
-      - name: Name what ended a lost worker
-        if: ${{ !cancelled() && matrix.layer == 'pure' }}
+      # A worker that ran out a case's timeout was ended with os._exit, and
+      # the run's own log says only `node down`. Its hang log ends on the
+      # case's `start` line followed by every thread's stack.
+      - name: Name what a lost worker was running
+        if: ${{ !cancelled() }}
         run: |
-          sudo pkill bpftrace || true
-          pkill -f "ps -eo pid,ppid,etimes,args" || true
-          if grep -q "node down" "$RUNNER_TEMP/backend-results/pytest.log"; then
-            grep -E "node down|crashed while running" "$RUNNER_TEMP/backend-results/pytest.log"
-            # Times are milliseconds since boot; the worker's death is among the
-            # last. An exit code is the kernel's: low 7 bits a signal, then
-            # status << 8.
-            grep -E " exit pid=" "$RUNNER_TEMP/backend-results/signals.log" | tail -20
-            tail -40 "$RUNNER_TEMP/backend-results/signals.log"
-          fi
+          shopt -s nullglob
+          for log in "$RUNNER_TEMP"/backend-results/hang-*.log; do
+            last="$(grep -E '^[0-9:]+ (start|end) ' "$log" | tail -1)"
+            if grep -q 'Timeout (' "$log" || [[ "$last" == *" start "* ]]; then
+              echo "::group::$(basename "$log"): $last"
+              tail -c 20000 "$log"
+              echo "::endgroup::"
+            fi
+          done
+
+      # The runner's disks, when a run fails: whether anything filled up, and
+      # with what. The resources/disks.log samples show the trend.
+      - name: Show disk use
+        if: ${{ failure() }}
+        run: |
+          df -h / "$RUNNER_TEMP" /tmp || true
+          sudo -n du -sh "$RUNNER_TEMP"/* /tmp/pytest-of-* 2>/dev/null | sort -h | tail -15 || true
 
       - name: Verify the partition ran without skips
         if: ${{ !cancelled() }}
@@ -439,6 +419,7 @@ jobs:
           "$RUNNER_TEMP/backend-results/results.xml"
           --at-least "$LAYER_FLOOR"
           --selection-dir "$RUNNER_TEMP/backend-results"
+          --reruns "$RUNNER_TEMP/backend-results/reruns.jsonl"
 
       - name: Preserve test results and selection
         if: ${{ !cancelled() }}
@@ -451,7 +432,7 @@ jobs:
 
   test-complete:
     name: Backend coverage complete
-    needs: [lint, test]
+    needs: [static, test]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

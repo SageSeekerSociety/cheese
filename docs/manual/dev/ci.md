@@ -28,12 +28,11 @@ covers:
 | frontend | `frontend.yml` | 类型检查、eslint、vitest |
 | e2e | `e2e.yml` | Playwright 端到端测试 |
 | cli | `cli.yml` | Go 连接器的测试 |
-| guards | `repo-guards.yml` | 仓库规矩的机器检查，每次都跑 |
+| guards | `repo-guards.yml` | 仓库规矩的机器检查和文档站构建（链接与锚点、每页的类型/摘要/涉及代码、参考页生成器），每次都跑 |
 | deploy | `deploy-scripts-test.yml` | 部署脚本的测试 |
 | harness | `harness-contract.yml` | 骨架请求契约 |
 | mcp | `mcp-contract.yml` | Claude Code 构建契约 |
 | remote | `remote-execution.yml` | 远端执行验收 |
-| docs | `docs.yml` | 文档站构建：链接与锚点、每页的类型/摘要/涉及代码、参考页生成器 |
 | cifast | `ci-fast.yml` | `ci:fast` 本地快检的黑盒测试，驱动真实 pre-commit |
 
 最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）。改到这套检查本身时，所有套件都会跑。
@@ -44,7 +43,7 @@ covers:
 title: 勾几行路径，看这套检查选了什么
 note: 左边勾上这次改到的路径，右边就是 Required CI 会要求成功的套件。选中的必须成功，没选中的必须是跳过。
 source: ci-scope
-expect: backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, docs, cifast
+expect: backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, cifast
 paths:
   - path: docs/manual/dev/ci.md
     label: 改文档

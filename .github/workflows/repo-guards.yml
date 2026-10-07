@@ -32,7 +32,8 @@ concurrency:
 jobs:
   guards:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 10 for the guards; the docs site build below adds about a minute.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -131,3 +132,31 @@ jobs:
       # venv, no network — it reads the changed files and counts lines.
       - name: No file grew past its size cap
         run: uvx pre-commit run --all-files file-size
+
+      # The docs site is built into the frontend image by build.yml, after
+      # merge. A broken internal link, a developer page missing its
+      # kind/summary/covers or naming code that has since moved, or a
+      # CLI/settings/workflow change the reference generators cannot read
+      # would fail the build there, on main; this runs the same build before
+      # merge. It was a suite of its own (docs.yml) that every merge diff
+      # selected anyway, so it queued for a runner of its own for 0.4 minutes
+      # of work; here it rides on the job that always runs.
+      #
+      # The changelog is built from release tags and the commits between: the
+      # history is already whole from the fetch above, the tags are not.
+      - name: Fetch release tags for the changelog
+        run: git fetch --tags --force origin
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Build the docs site
+        working-directory: docs/site
+        env:
+          OUT: ${{ runner.temp }}/docs
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          # The docs host's copy, at the root (docs/site/src/where.mjs).
+          DOCS_BASE= OUT="$OUT-host" npm run build
