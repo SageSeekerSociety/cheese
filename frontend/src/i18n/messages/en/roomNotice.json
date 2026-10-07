@@ -188,6 +188,7 @@
   "mailDraftSummary": "To: {to}\nSubject: {subject}",
   "mailDraftSummaryWithFiles": "To: {to}\nSubject: {subject}\nAttachments: {files}",
   "mailDrafted": "Cheese wrote a draft in {account}; it is sent only once {owner} confirms",
+  "mailDraftedBy": "{who} wrote a draft in {account}; it is sent only once {owner} confirms",
   "mailFailed": "The email “{subject}” was not sent",
   "mailSent": "{actor} sent the email “{subject}”",
   "mcpNotConnected": "{server} needs to be connected in the project settings",
