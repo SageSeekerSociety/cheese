@@ -1,9 +1,5 @@
 <template>
-  <AdaptiveDialog
-    :model-value="open"
-    :title="t('tasks.teamSelect.title')"
-    @update:model-value="$emit('close')"
-  >
+  <AdaptiveDialog :model-value="open" :title="t('tasks.teamSelect.title')" @update:model-value="$emit('close')">
     <div class="px-4 pt-4 pb-2">
       <div class="text-body-1">{{ t('tasks.teamSelect.choose') }}</div>
     </div>
@@ -79,9 +75,7 @@
 
             <div class="flex-grow-1 min-width-0">
               <div class="d-flex align-center flex-wrap gap-2 mb-1">
-                <span class="text-subtitle-1 font-weight-medium text-truncate">{{
-                  teamEligibility.team.name
-                }}</span>
+                <span class="text-subtitle-1 font-weight-medium text-truncate">{{ teamEligibility.team.name }}</span>
                 <v-chip
                   size="small"
                   :color="getTeamVerificationStatus(teamEligibility.team).color"

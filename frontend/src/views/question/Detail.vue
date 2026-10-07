@@ -136,15 +136,7 @@
               :primary-loading="bountyLoading"
               @primary="addBounty"
             >
-              <v-slider
-                v-model="addBountyInput"
-                thumb-label="always"
-                min="1"
-                max="20"
-                step="1"
-                show-ticks
-                hide-details
-              >
+              <v-slider v-model="addBountyInput" thumb-label="always" min="1" max="20" step="1" show-ticks hide-details>
                 <template #append>
                   <span style="vertical-align: baseline; min-width: 5rem; text-align: end">
                     <span>{{ t('questions.detail.bounty', { bounty: addBountyInput }) }} </span
