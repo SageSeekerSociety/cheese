@@ -5,6 +5,7 @@
     cd backend && uv run python scripts/check_deferred_imports.py --self-test
     cd backend && uv run python scripts/check_deferred_imports.py --update
     cd backend && uv run python scripts/check_deferred_imports.py --update --freeze-new
+    cd backend && uv run python scripts/check_deferred_imports.py --json
 
     0 = no file has more unexplained deferred imports than its baseline allows
     1 = a file grew one (or `--update` was asked to freeze growth)
@@ -46,6 +47,13 @@ files that reached zero. If any file has grown it writes nothing, prints the
 growth and exits 1; `--freeze-new` writes it anyway and prints every line it
 froze, so the commit's diff says what was accepted.
 
+`--json` PRINTS ONE RECORD. Instead of the report, stdout carries one JSON
+line in the shape fixed in docs/topics/棘轮页方案 section 3.1 (the ratchet
+snapshot's `be-deferred-imports`): `actual` is the unannotated imports the tree
+has, `frozen` what the baseline allows, `stale` every entry above the tree,
+`details` one row per file that holds any. The exit code is the same as
+without it; a run that could not judge says `cannot_judge` and why.
+
 This file must stay standard-library only: arch-metrics loads it with a bare
 `python3`, outside the backend's virtualenv.
 """
@@ -54,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import json
 import re
 import subprocess
@@ -61,12 +70,17 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, NoReturn
 
 HERE = Path(__file__).resolve()
 BACKEND_ROOT = HERE.parents[1]
 BASELINE_NAME = "deferred-import-baseline.json"
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
+
+#: The check id in the ratchet snapshot, and the longest a `reason` may be.
+CHECK_ID = "be-deferred-imports"
+REASON_LIMIT = 2000
 
 #: `# deferred-import: <reason>`; an empty reason is not a reason.
 MARKER_RE = re.compile(r"#\s*deferred-import:\s*(?P<reason>\S.*?)\s*$")
@@ -227,6 +241,73 @@ def render_baseline(files: dict[str, int]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# The --json record. Written here rather than imported from
+# .claude/scripts/ratchet_report.py for the reason check_boundaries.py gives:
+# this script runs from backend/, and a cross-directory import for fifteen
+# lines would tie two CI working directories together.
+# ---------------------------------------------------------------------------
+
+
+def _as_json() -> bool:
+    return "--json" in sys.argv
+
+
+def _emit(record: dict[str, Any]) -> None:
+    """One JSON line on stdout, and only in --json mode."""
+    if not _as_json():
+        raise RuntimeError("check_deferred_imports: _emit() is only for --json runs")
+    print(json.dumps(record, ensure_ascii=False))
+
+
+def _cannot_judge(reason: str) -> NoReturn:
+    """Say why on stderr, and as the record when one was asked for; exit 2."""
+    print(f"cannot judge: {reason}", file=sys.stderr)
+    if _as_json():
+        _emit(
+            {
+                "id": CHECK_ID,
+                "better": "down",
+                "status": "cannot_judge",
+                "reason": reason.strip()[:REASON_LIMIT],
+            }
+        )
+    sys.exit(CANNOT_JUDGE)
+
+
+def _record(
+    ok: bool,
+    actual: dict[str, int],
+    frozen: dict[str, int],
+    stale: dict[str, tuple[int, int]],
+) -> dict[str, Any]:
+    """The record for a run that judged its tree.
+
+    Counts are import statements, not files: one frozen import paid off is one
+    step on the page. `details` puts the files over their allowance first, then
+    the biggest holders.
+    """
+    rows = sorted(
+        actual.items(),
+        key=lambda item: (-(item[1] - frozen.get(item[0], 0)), -item[1], item[0]),
+    )
+    return {
+        "id": CHECK_ID,
+        "better": "down",
+        "status": "pass" if ok else "fail",
+        "actual": sum(actual.values()),
+        "frozen": sum(frozen.values()),
+        "stale": [
+            {"file": path, "frozen": was, "actual": now}
+            for path, (was, now) in sorted(stale.items())
+        ],
+        "details": [
+            {"file": path, "actual": count, "frozen": frozen.get(path, 0)}
+            for path, count in rows
+        ][:200],
+    }
+
+
+# ---------------------------------------------------------------------------
 # The verdict.
 # ---------------------------------------------------------------------------
 
@@ -235,21 +316,17 @@ def _judge(root: Path, baseline_path: Path) -> tuple[Scan, dict[str, int]]:
     """(scan, frozen), or exit 2 with the reason."""
     app_dir = root / "app"
     if not (app_dir / "__init__.py").is_file():
-        print(f"cannot judge: no app/ package under {root}", file=sys.stderr)
-        sys.exit(CANNOT_JUDGE)
+        _cannot_judge(f"no app/ package under {root}")
     result = scan(app_dir)
     if result.unparseable:
-        print(
-            "cannot judge: these files do not parse, so their imports cannot be "
-            "counted:\n" + "\n".join(f"  {p}" for p in result.unparseable),
-            file=sys.stderr,
+        _cannot_judge(
+            "these files do not parse, so their imports cannot be counted:\n"
+            + "\n".join(f"  {p}" for p in result.unparseable)
         )
-        sys.exit(CANNOT_JUDGE)
     try:
         frozen = read_baseline(baseline_path)
     except BaselineError as exc:
-        print(f"cannot judge: {exc}", file=sys.stderr)
-        sys.exit(CANNOT_JUDGE)
+        _cannot_judge(str(exc))
     return result, frozen
 
 
@@ -263,7 +340,24 @@ def _print_annotated(result: Scan) -> None:
 
 
 def check(root: Path, baseline_path: Path) -> int:
+    """The gate. Under --json the report goes to stderr and stdout carries
+    only the record, so a collector parsing stdout reads one line.
+
+    `_judge` runs outside the redirect: when it cannot judge, its record has
+    to reach the real stdout.
+    """
     result, frozen = _judge(root, baseline_path)
+    if not _as_json():
+        return _report(result, frozen, baseline_path)[0]
+    with contextlib.redirect_stdout(sys.stderr):
+        code, record = _report(result, frozen, baseline_path)
+    _emit(record)
+    return code
+
+
+def _report(
+    result: Scan, frozen: dict[str, int], baseline_path: Path
+) -> tuple[int, dict[str, Any]]:
     actual = result.unannotated()
 
     grown = {
@@ -297,14 +391,14 @@ def check(root: Path, baseline_path: Path) -> int:
                 if item.reason is None:
                     print(f"    line {item.line}: {item.statement}")
         print(f"\n{UPDATE_HINT}")
-        return BROKEN
+        return BROKEN, _record(False, actual, frozen, stale)
 
     print(
         f"\nPASS: deferred imports held ({sum(actual.values())} unannotated in "
         f"{len(actual)} files, baseline {sum(frozen.values())}; "
         f"{len(result.annotated())} annotated; {result.total()} in all)"
     )
-    return OK
+    return OK, _record(True, actual, frozen, stale)
 
 
 def update(root: Path, baseline_path: Path, freeze_new: bool) -> int:
@@ -446,6 +540,39 @@ def _invoke(root: Path, *extra: str) -> tuple[int, str]:
     return run.returncode, run.stdout + run.stderr
 
 
+#: Exit code -> the status its record must carry.
+_STATUS_OF_EXIT = {OK: "pass", BROKEN: "fail", CANNOT_JUDGE: "cannot_judge"}
+
+
+def _record_of(
+    root: Path, expected: int, *extra: str
+) -> tuple[str | None, dict[str, Any]]:
+    """(what is wrong with the --json run, the record it printed).
+
+    A real process, so the exit code and the one-line stdout are both what the
+    snapshot collector will see: it parses that line blind.
+    """
+    run = subprocess.run(
+        [sys.executable, str(HERE), "--root", str(root), "--json", *extra],
+        capture_output=True,
+        text=True,
+    )
+    if run.returncode != expected:
+        return f"exit {run.returncode}, want {expected}\n{run.stderr[-800:]}", {}
+    lines = [line for line in run.stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        return f"want one line on stdout, got {len(lines)}: {lines[:3]!r}", {}
+    try:
+        record = json.loads(lines[0])
+    except ValueError as exc:
+        return f"stdout is not JSON: {exc}", {}
+    if record.get("id") != CHECK_ID:
+        return f"record names {record.get('id')!r}", record
+    if record.get("status") != _STATUS_OF_EXIT[expected]:
+        return f"status {record.get('status')!r} for exit {expected}", record
+    return None, record
+
+
 def self_test() -> int:
     failures: list[str] = []
 
@@ -575,6 +702,91 @@ def self_test() -> int:
         )
         expect("…after which the tree passes", _invoke(root), OK, "PASS")
 
+        # --json: one record on stdout that agrees with the exit code, with the
+        # counts the page plots. The report itself moves to stderr.
+        def expect_record(
+            label: str, root: Path, code: int, want: dict[str, Any], *extra: str
+        ) -> None:
+            problem, record = _record_of(root, code, *extra)
+            if problem is None:
+                wrong = {
+                    k: record.get(k) for k, v in want.items() if record.get(k) != v
+                }
+                if wrong:
+                    problem = f"got {wrong!r}, want {want!r}"
+            print(f"  [{'ok' if problem is None else 'FAIL'}] --json {label}")
+            if problem is not None:
+                failures.append(f"--json {label}: {problem}")
+
+        expect_record(
+            "a held tree passes, counting statements",
+            _plant(tmp, {"app/s.py": _NESTED, "app/a.py": _ANNOTATED}, {"app/s.py": 1}),
+            OK,
+            {
+                "actual": 1,
+                "frozen": 1,
+                "stale": [],
+                "details": [{"file": "app/s.py", "actual": 1, "frozen": 1}],
+            },
+        )
+        expect_record(
+            "growth fails and puts the grown file first",
+            _plant(
+                tmp,
+                {"app/g.py": _TWO, "app/s.py": _NESTED, "app/t.py": _TWO},
+                {"app/s.py": 1, "app/t.py": 2},
+            ),
+            BROKEN,
+            {
+                "actual": 5,
+                "frozen": 3,
+                "details": [
+                    {"file": "app/g.py", "actual": 2, "frozen": 0},
+                    {"file": "app/t.py", "actual": 2, "frozen": 2},
+                    {"file": "app/s.py", "actual": 1, "frozen": 1},
+                ],
+            },
+        )
+        expect_record(
+            "a baseline above the tree passes and lists what is stale",
+            _plant(tmp, {"app/s.py": _NESTED}, {"app/s.py": 3, "app/gone.py": 1}),
+            OK,
+            {
+                "actual": 1,
+                "frozen": 4,
+                "stale": [
+                    {"file": "app/gone.py", "frozen": 1, "actual": 0},
+                    {"file": "app/s.py", "frozen": 3, "actual": 1},
+                ],
+            },
+        )
+        expect_record(
+            "no baseline cannot be judged", _plant(tmp, {}, None), CANNOT_JUDGE, {}
+        )
+        expect_record(
+            "a file that does not parse cannot be judged",
+            _plant(tmp, {"app/bad.py": "def f(:\n"}, {}),
+            CANNOT_JUDGE,
+            {},
+        )
+        expect_record(
+            "together with --update is refused, not half-done",
+            _plant(tmp, {}, {}),
+            CANNOT_JUDGE,
+            {},
+            "--update",
+        )
+        root = _plant(tmp, {"app/g.py": _TWO}, {})
+        plain = subprocess.run(
+            [sys.executable, str(HERE), "--root", str(root)],
+            capture_output=True,
+            text=True,
+        )
+        ok = plain.returncode == BROKEN and '"id"' not in plain.stdout
+        print(f"  [{'ok' if ok else 'FAIL'}] without --json there is no record")
+        if not ok:
+            failures.append("a default run printed a record or changed its exit code")
+
     if failures:
         print(f"\nFAIL: check_deferred_imports self-test ({len(failures)} case(s))")
         for failure in failures:
@@ -583,7 +795,8 @@ def self_test() -> int:
     print(
         "PASS: check_deferred_imports self-test (a new or grown deferred import "
         "fires, nested functions count once, TYPE_CHECKING and annotated imports "
-        "do not count, a stale baseline only warns, --update only shrinks)"
+        "do not count, a stale baseline only warns, --update only shrinks, "
+        "--json prints one record that agrees with the exit code)"
     )
     return OK
 
@@ -606,6 +819,11 @@ def main() -> int:
         action="store_true",
         help="with --update: also freeze growth, printing it",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print one JSON record on stdout instead of the report; same exit code",
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -616,6 +834,8 @@ def main() -> int:
     if args.freeze_new and not args.update:
         print("cannot judge: --freeze-new only means something with --update")
         return CANNOT_JUDGE
+    if args.json and args.update:
+        _cannot_judge("--json reports a check; --update writes the baseline")
     if args.update:
         return update(root, baseline, args.freeze_new)
     return check(root, baseline)

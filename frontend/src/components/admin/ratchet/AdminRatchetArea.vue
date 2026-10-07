@@ -24,6 +24,7 @@ const CHECK_KEYS: Record<string, string> = {
   'scene-ratchet': 'ratchet.check.sceneRatchet',
   'fe-boundary': 'ratchet.check.feBoundary',
   'be-contracts': 'ratchet.check.beContracts',
+  'be-deferred-imports': 'ratchet.check.beDeferredImports',
   'domain-import-guard': 'ratchet.check.domainImportGuard',
   'harness-boundary': 'ratchet.check.harnessBoundary',
   'is-private-read-points': 'ratchet.check.isPrivateReadPoints',

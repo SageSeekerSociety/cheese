@@ -136,6 +136,15 @@ CHECKS: tuple[Check, ...] = (
         strip="ignore_imports",
     ),
     Check(
+        id="be-deferred-imports",
+        area=BOUNDARY,
+        argv=("python", "scripts/check_deferred_imports.py", "--json"),
+        cwd="backend",
+        # The counting, the annotation syntax and the verdict all live in the
+        # script; the per-file allowances are its baseline, not its rule.
+        rules=("backend/scripts/check_deferred_imports.py",),
+    ),
+    Check(
         id="domain-import-guard",
         area=BOUNDARY,
         argv=("python", "-m", "pytest", "tests/unit/test_domain_import_guard.py", "-q"),
@@ -518,6 +527,15 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
         "backend/scripts/__init__.py": (
             "not read: the checker asks whether a package marker exists, and the "
             "bare `__init__.py` beside it is not the one it builds the path to"
+        ),
+    },
+    "be-deferred-imports": {
+        "backend/deferred-import-baseline.json": (
+            "baseline: the frozen per-file count of unannotated function-body imports"
+        ),
+        "backend/scripts/__init__.py": (
+            "not read: the checker asks whether app/__init__.py exists under the "
+            "root it is given, and the bare one beside the script is not that file"
         ),
     },
     "stylelint-tokens": {
