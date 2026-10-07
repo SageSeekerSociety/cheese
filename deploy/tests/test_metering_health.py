@@ -16,10 +16,8 @@ spec.loader.exec_module(health)
 
 class MeteringHealthTest(unittest.TestCase):
     def probe(self, response):
-        with socket.socket() as reverse, socket.socket() as connect:
-            reverse.bind(("127.0.0.1", 0))
+        with socket.socket() as connect:
             connect.bind(("127.0.0.1", 0))
-            reverse.listen()
             connect.listen()
             requests = []
 
@@ -31,7 +29,7 @@ class MeteringHealthTest(unittest.TestCase):
             worker = threading.Thread(target=serve)
             worker.start()
             try:
-                health.check(reverse.getsockname()[1], connect.getsockname()[1])
+                health.check(connect.getsockname()[1])
             finally:
                 worker.join(timeout=3)
             return requests
@@ -50,12 +48,12 @@ class MeteringHealthTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.probe(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
 
-    def test_missing_reverse_listener_is_unhealthy(self):
+    def test_missing_connect_listener_is_unhealthy(self):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         with self.assertRaises(OSError):
-            health.check(port, port)
+            health.check(port)
 
 
 if __name__ == "__main__":

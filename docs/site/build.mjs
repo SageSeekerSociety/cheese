@@ -458,7 +458,6 @@ const ARCH_SAMPLES = {
   'paths.admission': '/llm/admission',
   'paths.tunnel': '/llm/tunnel',
   'paths.catch_all': '/llm/v1',
-  'ports.reverse': '443',
   'ports.connect': '8444',
   'budget.status': '429',
   'budget.type': 'billing_error',

@@ -113,15 +113,9 @@ def main() -> None:
         raise Missing(f"{CODEX_CHANNEL} says {codex!r}, {PI_LAUNCH} says {pi!r}")
     fact("paths.catch_all", codex, [CODEX_CHANNEL, PI_LAUNCH], [codex_src, pi_src])
 
-    # ---------- the meter's two listeners ----------
-    # The port a session reaches is the PUBLISHED one; mitmproxy's own listen
-    # port inside the container is a different number, and the mapping is the one
-    # place that ties the two together.
-    inside, inside_src = grab(COMPOSE, r'--mode reverse:https://api\.anthropic\.com@(\d+)')
-    reverse, reverse_src = grab(COMPOSE, r'"172\.17\.0\.1:(\d+):' + inside)
-    fact("ports.reverse", reverse, COMPOSE, [inside_src, reverse_src])
-    # The regular listener is published on the bridge, the same number inside
-    # and out.
+    # ---------- the meter's session listener ----------
+    # The regular (CONNECT) listener is published on the bridge, the same number
+    # inside and out; the model tunnel connects to the published one.
     connect, connect_src = grab(COMPOSE, r'--mode regular@(\d+)')
     connect_port, connect_port_src = grab(COMPOSE, r'"172\.17\.0\.1:(\d+):' + connect + '"')
     if connect != connect_port:

@@ -1,11 +1,10 @@
-"""Check both listeners and reject unauthenticated CONNECT without an upstream call."""
+"""Check the CONNECT listener rejects an unauthenticated CONNECT, with no
+upstream call."""
 
 import socket
 
 
-def check(reverse_port: int = 8443, connect_port: int = 8444) -> None:
-    with socket.create_connection(("127.0.0.1", reverse_port), timeout=2):
-        pass
+def check(connect_port: int = 8444) -> None:
     with socket.create_connection(("127.0.0.1", connect_port), timeout=2) as connection:
         connection.sendall(
             b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n"

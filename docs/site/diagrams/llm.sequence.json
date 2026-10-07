@@ -47,7 +47,7 @@
    "id": "meter",
    "type": "security",
    "label": "计量代理",
-   "sublabel": ":443 · :8444"
+   "sublabel": ":8444"
   },
   {
    "id": "api",
