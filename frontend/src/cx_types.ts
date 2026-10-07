@@ -1,5 +1,6 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { components } from './api/openapi'
 import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
 import type { DeviceScreen } from './types/deviceSessions'
@@ -11,6 +12,8 @@ export type { WaitingItem } from './types/waiting'
 
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
 import type { Shell } from '@/lib/shell'
+
+type Schemas = components['schemas']
 
 export interface Project {
   id: string
@@ -1082,181 +1085,37 @@ export interface ProjectAgent {
 //   * 原型那个 `source: 'user' | 'agent'` 不存在 —— 它是 `author_is_agent`。
 //     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
 //     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
-export type FeedbackKind = 'bug' | 'suggestion' | 'other'
+//
+// 下面这些是后端 OpenAPI 生成类型（`src/api/openapi.d.ts`）的别名：字段、可空和
+// 必有与否都以 `backend/app/domain/feedback/schemas.py` 为准，改字段改那边，再跑
+// 两次导出（见 `frontend/scripts/gen-api-types.mjs`）。读字段时要记住的两件事：
+//   * `author_avatar_id` 为 null 的意思是「画彩色首字母」，不要退回
+//     `/avatars/default`，那会让没挑过头像的人共用一张脸。
+//   * 评论的 `reply_count` 是服务端数的整栋楼回复数，不是这一页带回来几条；
+//     「展开更多」靠它和手上条数比较。
+export type FeedbackKind = Schemas['FeedbackKind']
 /** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
-export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed' | 'declined'
-export type FeedbackVisibility = 'public' | 'private'
-export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
-
-/** 列表里的一行。计数由后端一并算好（见 `schemas.FeedbackCard`）。 */
-export interface FeedbackCard {
-  id: string
-  /** 「FB-1042」。人念的和粘贴的是这个，`id` 是 uuid，只用来发请求。 */
-  display_id: string
-  kind: FeedbackKind
-  title: string
-  summary: string
-  status: FeedbackStatus
-  priority: FeedbackPriority
-  visibility: FeedbackVisibility
-  /** 安全问题：管理员标的标记，比 private 更窄（见 services.may_see）。 */
-  security: boolean
-  author_handle: string
-  author_is_agent: boolean
-  /** 作者**自己挑过**的头像素材 id，前端用 `getAvatarUrl` 拼成 `/avatars/{id}`。
-   *  没挑过是 null —— 后端已经判掉了全局默认头像那一种（`chosen_avatar_ids`），
-   *  所以 null 的含义就是「画彩色首字母」，**不要**退回 `/avatars/default`：
-   *  那会让所有没挑过头像的人共用同一张脸。 */
-  author_avatar_id: number | null
-  /** 提案被发出去时，按发送的人。人直接提的那条是 null。 */
-  submitted_by_handle: string | null
-  assignee_handle: string | null
-  tags: string[]
-  supports: number
-  comments: number
-  supported: boolean
-  last_activity_at: string | null
-  created_at: string
-}
-
-export interface FeedbackTimelineEntry {
-  status: FeedbackStatus
-  by_handle: string | null // 谁推的；部署管线推的那一步没有人，是 null
-  at: string
-  note?: string | null // 部署管线那一步写「由 PR #N 修复并上线」和链接；人推的没有
-}
-
-/** 一条评论。`parent_id` 只指向**顶层**评论 —— 回复的回复由服务端折上来，所以
- *  层级恒为两层，前端不需要自己判断「这算第几层」。 */
-export interface FeedbackComment {
-  id: string
-  parent_id: string | null
-  author_handle: string
-  author_is_agent: boolean
-  /** 同 `FeedbackCard.author_avatar_id`。 */
-  author_avatar_id: number | null
-  body: string
-  /** 这条在回答谁。**只在被回复的那条本身也是回复时才有值**，因为折到顶层这个动作
-   *  把指向弄丢了 —— 楼中楼里唯一猜不出来的信息。值为 null 有两种情形（顶层评论、
-   *  回楼主的回复），两者渲染方式相同，所以客户端不需要区分它们。
-   *  恒为 handle 而不是 id：要回答的问题只有一个「在回谁」，答案是个名字。 */
-  reply_to_handle: string | null
-  /** 点赞总数。 */
-  likes: number
-  /** **按读者**算：当前登录的人点过没有。 */
-  liked: boolean
-  /** **按读者**算：服务端说这条删得掉吗。按钮画不画由它决定，不由前端猜 ——
-   *  猜的结果是「按钮画得出来、点下去 403」。 */
-  can_delete: boolean
-  /** **服务端数得出来的**这一条（顶层评论才有意义）下面一共几条回复 —— 不是这一页
-   *  带回来几条。评论是分页取的，所以这两件事不一样，而「展开更多」该摊开手上已经
-   *  有的、还是去取下一页，全靠这个数和手上条数的比较。回复恒为 0。
-   *  少了它，客户端只能把「已经取回来的」当成全部：一栋 60 条回复的楼，界面上永远
-   *  只有前 50 条，而「展开更多」会当场消失。 */
-  reply_count: number
-  /** 这一栋楼**楼内**的下一页游标，null = 楼里的回复已经取完了。回复自己恒为 null。
-   *  不透明的字符串，和 `thread_next_cursor` 同一套：原样送回
-   *  `GET /feedback/{id}/comments?parent_id=…&after=…`，不解析、不自己拼。 */
-  replies_next_cursor: string | null
-  created_at: string
-}
-
-/** 管理员之间的内部备注。**只增不改**，所以是行不是列。 */
-export interface FeedbackNote {
-  id: string
-  author_handle: string
-  /** 同 `FeedbackCard.author_avatar_id`。 */
-  author_avatar_id: number | null
-  body: string
-  created_at: string
-}
-
-export interface FeedbackDetail extends FeedbackCard {
-  problem: string
-  why: string | null
-  expectation: string | null
-  what_happened: string | null
-  repro: string | null
-  evidence: string | null
-  logs: string | null
-  session_id: string | null
-  environment: string | null
-  /** 这条反馈是从哪个话题来的。没有话题（harness 在沙箱里撞的墙）时为 null。 */
-  topic_id: string | null
-  project_id: string | null
-  timeline: FeedbackTimelineEntry[]
-  /** 顶层评论的**第一页**，每栋楼跟着它的前若干条回复走（见 `FeedbackComment`）。 */
-  thread: FeedbackComment[]
-  /** 顶层评论的下一页游标，null = 底层这一层已经取完了。和列表接口的 `page_start`
-   *  不同：这是**值承载**的不透明游标，锚点那一行在这中间被删掉也照样能接着往下走。 */
-  thread_next_cursor: string | null
-  /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
-  notes: FeedbackNote[]
-  /** 调用者能不能删掉**整条反馈**。**服务端算**（作者 —— 写它的那个 handle 或按下
-   *  发送的那个 —— 或平台管理员），和 `DELETE /feedback/{id}` 共用一处判据；客户端
-   *  照它画按钮，不自己拼一遍，否则就是「按钮画得出来、点下去 403」。 */
-  can_delete: boolean
-}
-
-export interface FeedbackCounts {
-  all: number
-  hot: number
-  active: number
-  resolved: number
-  /** 「我的反馈」里未读的条数。 */
-  unread: number
-  /** 管理端才有：还没指派给任何人的条数。 */
-  unassigned?: number
-  /** 管理端才有：已经上线的累计条数。它和 `resolved` 是两条不同的数 —— 解决了不等于
-   *  上线了，看板把这两件事分开显示。 */
-  deployed?: number
-}
-
+export type FeedbackStatus = Schemas['FeedbackStatus']
+export type FeedbackVisibility = Schemas['FeedbackVisibility']
+export type FeedbackPriority = Schemas['FeedbackPriority']
+/** 列表里的一行。 */
+export type FeedbackCard = Schemas['FeedbackCard']
+export type FeedbackTimelineEntry = Schemas['TimelineOut']
+/** 一条评论。`parent_id` 只指向顶层评论，层级恒为两层。 */
+export type FeedbackComment = Schemas['CommentOut']
+/** 管理员之间的内部备注，只增不改。 */
+export type FeedbackNote = Schemas['NoteOut']
+export type FeedbackDetail = Schemas['FeedbackDetail']
+/** 标签页上的数。`unassigned` 只在管理端列表里有（`FeedbackAdminCounts`）。 */
+export type FeedbackCounts = Schemas['FeedbackCounts'] & Partial<Pick<Schemas['FeedbackAdminCounts'], 'unassigned'>>
 export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
   counts: FeedbackCounts
 }
-
-/** `GET /feedback/meta` —— 词表。
- *
- *  **颜色不在这里**（那是前端的视觉决定，见 lib/feedbackMeta.ts），这里回答的是
- *  「有哪些取值、按什么顺序流动」。加一个状态是后端改一处的事，前端靠这一份跟上，
- *  不需要发版。`is_admin` 同理：它由服务端算，前端不猜。 */
-export interface FeedbackMeta {
-  kinds: FeedbackKind[]
-  statuses: FeedbackStatus[]
-  priorities: FeedbackPriority[]
-  visibilities: FeedbackVisibility[]
-  /** 状态梯子：时间线把还没到的步骤也画出来，靠的就是它。 */
-  status_ladder: FeedbackStatus[]
-  tabs: string[]
-  admin_tabs: string[]
-  /** 「热门」的规则是**三个数**，不是一个：「热门」按**热度分**排，而热度是衰减的
-   *  （一条三个月前攒够票的反馈不该一直占着这一栏）。三个数各管一件事 —— 门槛多少
-   *  分、一个支持几天打对折、不够线时至少补几条。
-   *  前端**不拿它们算排序**：筛选和排序都在服务端，客户端拿到的已经是排好的行，
-   *  再算一遍屏幕上就有两套热度。它们留在这里是为了把这一栏的规则**说给人听**
-   *  ——「两周前的一票算今天半票 · 至少 5 条」，一个数字说不出这句话。 */
-  hot_score: number
-  hot_half_life_days: number
-  hot_min_items: number
-  is_admin: boolean // 反馈管理员（队列、私密反馈）
-  is_platform_admin: boolean // 平台管理员（管理台其余各块）；两份名单互不包含
-}
-
-export interface FeedbackSupportResult {
-  /** **写完之后**的计数，不是增量。 */
-  count: number
-  supported: boolean
-}
-
-/** 评论点赞的返回，`FeedbackSupportResult` 往下一层。字段叫 `liked` 不叫
- *  `supported`：两件事在界面上是两种表态，共用一个词的话下一个读代码的人会以为
- *  它们是同一条记录。 */
-export interface FeedbackCommentLikeResult {
-  /** **写完之后**的计数，不是增量。 */
-  count: number
-  liked: boolean
-}
+/** `GET /feedback/meta` —— 词表。颜色不在这里（那是前端的视觉决定，见 lib/feedbackMeta.ts）。 */
+export type FeedbackMeta = Schemas['FeedbackMeta']
+/** 写完之后的计数，不是增量。 */
+export type FeedbackSupportResult = Schemas['SupportOut']
+export type FeedbackCommentLikeResult = Schemas['CommentLikeOut']
 
 /** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */
 export interface FeedbackCreateBody {
