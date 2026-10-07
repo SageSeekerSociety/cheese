@@ -24,7 +24,14 @@ from app.core.db import get_db
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import running_tasks
 from app.domain.block.repositories import BlockRepository
-from app.domain.delivery.addressing import Event, address, hand_of
+from app.domain.delivery.addressing import (
+    REASON_ASKED,
+    REASON_REVIEWER,
+    Event,
+    address,
+    hand_of,
+)
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -35,6 +42,22 @@ from app.domain.thread.services import onto_rooms, threads_of_rooms
 from app.domain.topic.repositories import TopicRepository
 
 router = APIRouter(prefix="/awaiting-me", tags=["awaiting"])
+
+#: 决策请求那一行的理由。它不是一条事件点名的结果（`addressing` 的那几种），是一条
+#: 通知本身就写着收件人，所以码只在这一份清单里有。
+REASON_DECIDE = "decide"
+#: 它也不是看板上的哪一格，所以短语码同样只在这里。
+PHRASE_DECIDE = "decision"
+
+#: 卡停住时，卡上那句原因就是这一行要说的「等的是什么」。
+_CARD_SAYS_WHY = frozenset({"checks_failed", "bounced"})
+
+
+def _one_line(text: str, limit: int = 140) -> str:
+    """第二行只放一行：折掉换行，过长就截断。"""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -92,7 +115,12 @@ async def waiting_items(
     names = {p.id: p.name for p in projects}
     project_ids = list(names)
 
-    topics = await TopicRepository(db).list_for_projects(project_ids, viewer=handle)
+    # 归档的频道是只读的，里面没有人还能推进的事：它的任务和提问都不进清单。
+    topics = [
+        t
+        for t in await TopicRepository(db).list_for_projects(project_ids, viewer=handle)
+        if str(t.status) != "archived"
+    ]
     rooms = {t.id: t for t in topics}
     # A task is seen where its channel is: none from a private channel I left.
     tasks = [
@@ -120,6 +148,7 @@ async def waiting_items(
         thread_rooms,
     )
     asked = {place: question[0] for place, question in questions.items()}
+    said = await blocks.contents([question[1] for question in questions.values()])
     # 「运行中」也在这一页出现（一列里的每一格都是同一个函数算的），所以这一屏每行
     # 要的当下事实也一次问完 —— 这批任务有没有一轮在跑（`agent.liveness`）。
     running = await running_tasks(chat, db, tasks)
@@ -143,6 +172,11 @@ async def waiting_items(
                 reviewers=() if card is None else (card.reviewer_handle,),
                 reporter=task.reporter_handle,
                 asked=asked.get(task.id),
+                owner=(
+                    task.owner_handle
+                    if presentation.owner_acts_on(shown, running=task.id in running)
+                    else None
+                ),
             ),
             hand_of(shown.column),
         )
@@ -150,6 +184,14 @@ async def waiting_items(
         if reason is None:
             continue
         room = rooms.get(task.room_id)
+        if reason == REASON_ASKED:
+            detail = said.get(questions[task.id][1], "")
+        elif reason == REASON_REVIEWER and card is not None:
+            detail = card.change_subject or ""
+        elif card is not None and shown.phrase in _CARD_SAYS_WHY:
+            detail = card.note or ""
+        else:
+            detail = ""
         items.append(
             awaiting.WaitingItem(
                 project_id=task.project_id,
@@ -163,6 +205,7 @@ async def waiting_items(
                 reason=reason,
                 at=beats.get(task.id) or task.updated_at,
                 block_id=questions[task.id][1] if reason == "asked" else None,
+                detail=_one_line(detail),
             )
         )
 
@@ -204,6 +247,39 @@ async def waiting_items(
                 at=topic.updated_at,
                 block_id=questions[topic.id][1] if reason == "asked" else None,
                 thread_id=asked_in_thread.get(topic.id) if reason == "asked" else None,
+                detail=(
+                    _one_line(said.get(questions[topic.id][1], ""))
+                    if reason == REASON_ASKED
+                    else ""
+                ),
+            )
+        )
+
+    # 芝士请他拍板、还没拍的。决策请求记在频道上（`alerts.create_notification` 把任务、
+    # 支线都折成它们所在的频道）；看不见的、归档了的频道里的不算。
+    for alert in await ProjectNotificationService(db).open_decisions(
+        project_ids, recipient_handle=handle
+    ):
+        room = rooms.get(alert.topic_id) if alert.topic_id else None
+        if room is None:
+            continue
+        options = (alert.metadata_payload or {}).get("options") or []
+        items.append(
+            awaiting.WaitingItem(
+                project_id=room.project_id,
+                project_name=names.get(room.project_id, ""),
+                topic_id=room.id,
+                topic_title=room.title,
+                task_id=None,
+                task_title=None,
+                task_title_source=None,
+                phrase=PHRASE_DECIDE,
+                reason=REASON_DECIDE,
+                at=alert.created_at,
+                detail=_one_line(alert.body or ""),
+                alert_id=alert.id,
+                options=tuple(o for o in options if isinstance(o, str)),
+                question=alert.title or "",
             )
         )
 

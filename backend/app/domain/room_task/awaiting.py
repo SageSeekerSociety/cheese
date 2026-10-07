@@ -54,6 +54,13 @@ class WaitingItem:
     block_id: uuid.UUID | None = None
     #: The 支线 the question was asked in, when it was: the item opens there.
     thread_id: uuid.UUID | None = None
+    #: 第二行：等的是什么 —— 提问的原话、递上来的改动主题、卡停住的原因、决策请求
+    #: 的说明。从已有的事实里取，没有就空着，不替它编一句。
+    detail: str = ""
+    #: 决策请求才有：哪一条通知、要他拍板的问题、可选的答案。
+    alert_id: int | None = None
+    question: str = ""
+    options: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return {
@@ -68,5 +75,9 @@ class WaitingItem:
             "reason": self.reason,
             "blockId": str(self.block_id) if self.block_id else None,
             "threadId": str(self.thread_id) if self.thread_id else None,
+            "detail": self.detail,
+            "alertId": self.alert_id,
+            "options": list(self.options),
+            "question": self.question,
             "at": self.at.isoformat(),
         }

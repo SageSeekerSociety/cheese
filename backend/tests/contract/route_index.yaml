@@ -788,6 +788,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/weeklies", auth: "project.reader", owner: "block"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/tasks", auth: "project.reader", owner: "project.rail"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/progress", auth: "project.reader", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/memory", auth: "memory.closed.write", owner: "memory"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-chat", auth: "project.private.chat", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge", auth: "actor.project", owner: "project"}

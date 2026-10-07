@@ -239,6 +239,14 @@ class ProjectNotificationService:
         self._projects = ProjectRepository(session)
         self._prefs = PreferencesRepository(session)
 
+    async def open_decisions(
+        self, project_ids: list[uuid.UUID], *, recipient_handle: str
+    ) -> list[Notification]:
+        """这几个项目里向他要、还没拍板的决策请求（「待办」那一份清单读它）。"""
+        return await self._repo.open_decisions(
+            project_ids, recipient_handle=recipient_handle
+        )
+
     async def create(
         self,
         *,
