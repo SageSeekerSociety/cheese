@@ -169,12 +169,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {layer: pure, shard: '0/1', floor: 4000, timeout: 10}
-          - {layer: contract, shard: '0/1', floor: 200, timeout: 5}
-          - {layer: integration, shard: '0/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '1/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '2/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '3/4', floor: 2400, timeout: 15}
+          - {layer: pure, shard: '0/1', floor: 4000, timeout: 45}
     # Floors apply to the complete layer before sharding, not each runner.
     env:
       REDIS_URL: redis://localhost:6389/0
@@ -213,7 +208,7 @@ jobs:
           --health-timeout 5s --health-retries 5
     # Each runner has its own services and xdist workers. This ceiling detects
     # hangs; the artifact timings measure whether the feedback budget is met.
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -381,6 +376,33 @@ jobs:
             export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
             export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
           fi
+          # DIAGNOSTIC BRANCH ONLY (never merged): loop the session tests with
+          # the open-question set seeded, as earlier tests leave it on CI.
+          cat > "$RUNNER_TEMP/seed.py" <<'SEED'
+          import json, os, uuid
+          import redis
+          r = redis.Redis.from_url(os.environ["REDIS_URL"])
+          for _ in range(300):
+              work = str(uuid.uuid4())
+              r.set(f"consumption:{work}", json.dumps({"work_id": work, "kind": "diag-unserved", "key": "k", "harness": "pi", "home": "x", "host": None}), ex=7200)
+              r.sadd("consumptions", work)
+          print("open set", r.scard("consumptions"))
+          SEED
+          uv run python "$RUNNER_TEMP/seed.py"
+          fails=0
+          for i in $(seq 1 30); do
+            echo "=== round $i"
+            uv run python -m pytest tests/unit/test_consumptions.py tests/unit/test_personal_sessions.py \
+              -n "$CHEESE_CI_TEST_WORKERS" --dist worksteal --tb=long -q -p no:cacheprovider \
+              --show-capture=all > "$RUNNER_TEMP/round.log" 2>&1 || {
+              fails=$((fails+1))
+              grep -E "^FAILED|AssertionError|no words in" "$RUNNER_TEMP/round.log" | head -20
+              sed -n "/= FAILURES =/,/short test summary/p" "$RUNNER_TEMP/round.log" | grep -vE "InsecureKey|jws.encode|decode_complete" | head -150
+            }
+            tail -1 "$RUNNER_TEMP/round.log"
+          done
+          echo "rounds failed: $fails/30"
+          exit $(( fails > 0 ))
           observe=()
           if [ "$TEST_LAYER" = integration ]; then
             observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources" --)
