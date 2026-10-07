@@ -183,10 +183,11 @@ def write_routes(app: FastAPI) -> Iterator[WriteRoute]:
     prefixed path and a dependency tree with the router's dependencies merged in.
     """
     for entry in app.routes:
-        if hasattr(entry, "effective_route_contexts"):
+        contexts = getattr(entry, "effective_route_contexts", None)
+        if contexts is not None:
             routes = [
                 (ctx, ctx.original_route)
-                for ctx in entry.effective_route_contexts()
+                for ctx in contexts()
                 if isinstance(ctx.original_route, APIRoute)
             ]
         elif isinstance(entry, APIRoute):
@@ -194,7 +195,8 @@ def write_routes(app: FastAPI) -> Iterator[WriteRoute]:
         else:
             continue
         for route, original in routes:
-            declared = tuple(sorted(d.name for d in _declarations(route.dependant)))
+            dependant = getattr(route, "dependant", None)
+            declared = tuple(sorted(d.name for d in _declarations(dependant)))
             endpoint = route.endpoint
             name = f"{endpoint.__module__}.{endpoint.__qualname__}"
             for method in sorted((route.methods or set()) & WRITE_METHODS):
