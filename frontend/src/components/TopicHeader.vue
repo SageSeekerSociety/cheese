@@ -155,8 +155,9 @@ function roomCommands() {
 }
 const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
 
-// 频道详情：点页头的频道名打开。
+// 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
+const managerName = ref<string | null>(null)
 const managesProject = computed(() => store.openedProject?.can_manage_members === true)
 function archiveFromDetails() {
   detailsOpen.value = false
@@ -222,6 +223,7 @@ useCommands(roomCommands)
         :project-members="members"
         :me="me"
         @machine-access="machineNotice = $event"
+        @manager="managerName = $event"
       />
 
       <ChannelDetailsDialog
@@ -230,6 +232,7 @@ useCommands(roomCommands)
         :topic="topic"
         :can-manage="topic.can_manage === true"
         :manages-project="managesProject"
+        :manager-name="managerName"
         :level="store.levelOf(topic.id)"
         :muted-until="store.mutedUntil(topic.id)"
         @rename="(next) => emit('rename', next)"

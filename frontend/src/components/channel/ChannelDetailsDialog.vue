@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 频道详情：点频道页头的频道名打开。「关于」是名称、说明和创建时间，「设置」是我的
+// 频道详情：点频道页头的频道名打开。「关于」是名称、说明、管理者和创建时间，「设置」是我的
 // 通知、私密、归档。频道里的人都能看，只有管理者能改（后端按同一条规则再判一次）；
 // 成员在页头那一串头像里。动作都交给外面做。
 import type { Topic } from '@/cx_types'
@@ -22,6 +22,8 @@ const props = defineProps<{
   canManage: boolean
   /** 我管这个项目：私密频道只有这样的人能设回公开。 */
   managesProject: boolean
+  /** 管这个频道的人叫什么；「综合」由项目管理员管，没有。 */
+  managerName: string | null
   level: TopicNotifyLevel
   mutedUntil: string | null
 }>()
@@ -148,6 +150,12 @@ const canMakePublic = computed(
         <BaseButton v-else-if="canManage" kind="ghost" size="sm" @click="edit('description')">{{
           t('work.channel.overview.edit')
         }}</BaseButton>
+      </div>
+      <div v-if="managerName" class="details__row">
+        <div class="details__what">
+          <span class="details__label">{{ t('work.projectSettings.channels.columns.manager') }}</span>
+          <span>{{ managerName }}</span>
+        </div>
       </div>
       <div class="details__row">
         <div class="details__what">

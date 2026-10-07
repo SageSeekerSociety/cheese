@@ -46,6 +46,8 @@ const emit = defineEmits<{
   // 有 AI 队友能访问整台机器。这是权限，不是设置，名册合着的时候页头也要写着——
   // 挂它的地方据此常驻一个标记。null = 没有，或者还不知道。
   (e: 'machine-access', notice: string | null): void
+  // 管这个频道的人叫什么：频道详情的「关于」里写它。名册是唯一记着它的地方。
+  (e: 'manager', name: string | null): void
 }>()
 
 // 切回来过的房间先画上次那份名册，背后再重取（lib/topicPanelCache.ts）。
@@ -71,6 +73,15 @@ async function load() {
 }
 
 void load()
+
+watch(
+  members,
+  (rows) => {
+    const owner = rows.find((m) => m.role === 'owner' && !m.agent)
+    emit('manager', owner ? memberName(owner) || owner.member_handle : null)
+  },
+  { immediate: true }
+)
 
 // 工作电脑：一次读回房间这一项和每个会话在哪台机器上。
 const machines = ref<TopicComputeProfile | null>(null)
