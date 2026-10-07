@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import Task, TaskTitleSource
+from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
 
 
 class TaskRepository:
@@ -61,6 +61,18 @@ class TaskRepository:
             select(Task).where(Task.id.in_(task_ids)).order_by(Task.created_at, Task.id)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """How many open tasks each of these rooms has, in one read. A room
+        with none is absent."""
+        if not room_ids:
+            return {}
+        stmt = (
+            select(Task.room_id, func.count(Task.id))
+            .where(Task.room_id.in_(room_ids), Task.status == TaskStatus.open)
+            .group_by(Task.room_id)
+        )
+        return {room: n for room, n in (await self._session.execute(stmt)).all()}
 
     async def list_for_room(self, room_id: uuid.UUID) -> list[Task]:
         """This room's threads, oldest first.

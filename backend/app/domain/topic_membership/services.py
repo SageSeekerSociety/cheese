@@ -182,6 +182,18 @@ class TopicMemberService:
             [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
         )
 
+    async def seat_counts(self, topics: list[Topic]) -> dict[uuid.UUID, int]:
+        """How many people and AI teammates are in each of these channels:
+        their seats, and for 综合 everyone in the project."""
+        counts = await self._repo.counts_for_topics([t.id for t in topics])
+        roots = [t for t in topics if t.kind == TopicKind.root]
+        if roots:
+            from app.domain.membership.roster import roster
+
+            everyone = len(await roster(self._session, roots[0].project_id))
+            counts.update({t.id: everyone for t in roots})
+        return counts
+
     async def people_in(self, topic: Topic) -> list[str]:
         """The people in this channel, in the order they came in. 综合's are
         everyone in the project; any other channel's are the people seated on
@@ -560,9 +572,8 @@ class TopicMemberService:
         )
 
     async def _brought_in_by(self, topic_id: uuid.UUID, actor: str) -> Topic:
-        """The channel ``actor`` may add someone to: one they manage, or a
-        private one they are in — its people bring the others in. Someone
-        outside a private channel is told it does not exist."""
+        """The channel ``actor`` may add someone to: one they are in, or one they
+        manage. Someone outside a private channel is told it does not exist."""
         topic = await self._topics.get(topic_id)
         if topic is None:
             raise NotFoundError("Topic not found")
@@ -570,12 +581,84 @@ class TopicMemberService:
             if topic.members_only:
                 raise NotFoundError("Topic not found")
             return await self.require_manager(topic_id, actor)
-        if not topic.members_only or await IdentityService(self._session).is_agent(
-            actor
-        ):
+        if await IdentityService(self._session).is_agent(actor):
             # An AI teammate's seat lets it act in the channel, not invite.
             return await self.require_manager(topic_id, actor)
         return topic
+
+    async def administers(self, topic: Topic, actor: str) -> bool:
+        """May ``actor`` archive this channel or name who manages it without
+        being in it: its owner, or whoever manages the project. Seeing what is
+        said in a private channel still takes a seat (:meth:`manages`)."""
+        from app.domain.membership.services import MemberService
+
+        member = await self._repo.get(topic_id=topic.id, member_handle=actor)
+        if member is not None and member.role == TopicRole.owner:
+            return True
+        return await MemberService(self._session).manages(topic.project_id, actor)
+
+    async def require_administrator(self, topic_id: uuid.UUID, actor: str) -> Topic:
+        topic = await self._topics.get(topic_id)
+        if topic is None:
+            raise NotFoundError("Topic not found")
+        if not _public(topic):
+            # A private room of two is its own people's business.
+            return await self.require_manager(topic_id, actor)
+        if await self.administers(topic, actor):
+            return topic
+        if (
+            topic.members_only
+            and await self._repo.get(topic_id=topic_id, member_handle=actor) is None
+        ):
+            # Someone outside a private channel is not told it exists.
+            raise NotFoundError("Topic not found")
+        raise ForbiddenError(say("channelManagerOnly"))
+
+    async def hand_over(self, topic_id: uuid.UUID, handle: str, *, actor: str) -> Topic:
+        """Name ``handle`` the channel's manager in place of whoever was. They
+        are seated if they were not; the one they replace stays a member.
+        综合 is managed by whoever manages the project and names nobody."""
+        topic = await self.require_administrator(topic_id, actor)
+        if topic.kind == TopicKind.root:
+            raise ValidationError(say("channelGeneralNoManager"))
+        if self._is_agent_handle(handle) or await IdentityService(
+            self._session
+        ).is_agent(handle):
+            raise ValidationError(say("channelManagerPersonOnly"))
+        if not await self._on_project(topic.project_id, handle):
+            raise ValidationError(say("topicAddProjectMembersOnly"))
+        for member in await self._repo.list_for_topic(topic_id):
+            if member.role == TopicRole.owner and member.member_handle != handle:
+                member.role = TopicRole.member
+        seat = await self._repo.get(topic_id=topic_id, member_handle=handle)
+        if seat is None:
+            await self._repo.add(
+                topic_id=topic_id, member_handle=handle, role=TopicRole.owner
+            )
+        else:
+            seat.role = TopicRole.owner
+        await self._session.flush()
+        return topic
+
+    async def step_in(self, topic_id: uuid.UUID, actor: str) -> bool:
+        """Whoever manages the project joins a private channel they are not in.
+        Nobody else joins one: its people bring the others in. Returns whether
+        they were seated now, so the caller says so in the channel."""
+        from app.domain.membership.services import MemberService
+
+        topic = await self._channel(topic_id)
+        if not topic.members_only:
+            raise NotFoundError("Topic not found")
+        if topic.status == TopicStatus.archived:
+            raise ValidationError(say("channelArchivedNoJoin"))
+        if not await MemberService(self._session).manages(topic.project_id, actor):
+            raise NotFoundError("Topic not found")
+        if await self._repo.get(topic_id=topic_id, member_handle=actor) is not None:
+            return False
+        await self._repo.add(
+            topic_id=topic_id, member_handle=actor, role=TopicRole.member
+        )
+        return True
 
     async def set_members_only(
         self, topic_id: uuid.UUID, members_only: bool, *, actor: str
@@ -605,6 +688,17 @@ class TopicMemberService:
         topic.members_only = members_only
         await self._session.flush()
         return topic
+
+    async def may_open_channels(self, project_id: uuid.UUID, handle: str) -> bool:
+        """Whether ``handle`` may open a new channel here: anyone in the
+        project but an external member, who was invited in to take part, not
+        to arrange it."""
+        from app.domain.membership.roster import roster
+
+        return not any(
+            m.handle == handle and m.source == "external"
+            for m in await roster(self._session, project_id)
+        )
 
     async def _on_project(self, project_id: uuid.UUID, handle: str) -> bool:
         from app.domain.membership.roster import roster
