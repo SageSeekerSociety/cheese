@@ -12,7 +12,13 @@ describe('reconcile', () => {
   it('keeps unchanged rows and swaps only the changed one', () => {
     const a = { id: 'a', status: 'pending' }
     const b = { id: 'b', status: 'pending' }
-    const out = reconcile([a, b], [{ id: 'a', status: 'pending' }, { id: 'b', status: 'accepted' }])
+    const out = reconcile(
+      [a, b],
+      [
+        { id: 'a', status: 'pending' },
+        { id: 'b', status: 'accepted' },
+      ]
+    )
     expect(out[0]).toBe(a)
     expect(out[1]).not.toBe(b)
     expect(out[1]).toEqual({ id: 'b', status: 'accepted' })
@@ -21,7 +27,13 @@ describe('reconcile', () => {
   it('pairs rows by id when the order changes', () => {
     const a = { id: 'a', n: 1 }
     const b = { id: 'b', n: 2 }
-    const out = reconcile([a, b], [{ id: 'b', n: 2 }, { id: 'a', n: 1 }])
+    const out = reconcile(
+      [a, b],
+      [
+        { id: 'b', n: 2 },
+        { id: 'a', n: 1 },
+      ]
+    )
     expect(out[0]).toBe(b)
     expect(out[1]).toBe(a)
   })

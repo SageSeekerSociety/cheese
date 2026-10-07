@@ -23,10 +23,12 @@ function idOf(value: unknown): unknown {
 }
 
 function reconcileArray(prev: unknown[], next: unknown[]): unknown[] {
-  const keyed = next.length > 0 && next.every((item) => {
-    const id = idOf(item)
-    return typeof id === 'string' || typeof id === 'number'
-  })
+  const keyed =
+    next.length > 0 &&
+    next.every((item) => {
+      const id = idOf(item)
+      return typeof id === 'string' || typeof id === 'number'
+    })
   const byId = keyed ? new Map(prev.map((item) => [idOf(item), item])) : null
   let same = prev.length === next.length
   const out = next.map((item, at) => {

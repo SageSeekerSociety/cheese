@@ -18,15 +18,12 @@ import type { BlockWindow } from '../../../lib/blockPaging'
 
 import { ref } from 'vue'
 
-import { capWindow, joinNewest, placeBlock, prependOlder } from '../../../lib/blockPaging'
+import { ATTACHED, capWindow, joinNewest, placeBlock, prependOlder } from '../../../lib/blockPaging'
 
 /**
  * 新来的一块落在哪：显示出来了、收在背后的最新一段里、本来就有，还是比这一段更早、
  * 留给往上翻的那一页带回来（见 placeBlock）。
  */
-/** 频道翻页时另外挂在一块上的东西，更新那一块时没带就照旧留着。 */
-const ATTACHED = ['thread', 'routine_run'] as const
-
 export type Landing = 'shown' | 'held' | 'known' | 'above'
 
 /**

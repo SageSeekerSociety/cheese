@@ -2,10 +2,10 @@
  * 只有换了话题才清空。 */
 import type { AcceptCard } from '@/cx_types'
 
-import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, reactive } from 'vue'
 import { render } from '@testing-library/vue'
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAcceptCards = vi.fn()
 const reassignCard = vi.fn()

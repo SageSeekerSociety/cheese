@@ -346,6 +346,15 @@ export type WsServerFrame =
   // 一位成员开始 / 停下打字或干活；连上时有人在忙，先来一帧此刻的全部。
   | ({ type: 'activity'; active: boolean } & MemberActivity)
   | { type: 'activity_snapshot'; members: MemberActivity[] }
+  // 回答客户端的 `sync`：此刻在跑的全部轮次和在忙的全部成员，空的也发。重连后屏幕上
+  // 留着断线前的现场，拿它核对：断线期间结束的撤掉，其余原样留着。
+  | {
+      type: 'room_state'
+      turn_ids: string[]
+      since?: Record<string, number>
+      agents?: Record<string, string>
+      members: MemberActivity[]
+    }
   // An existing block's data changed in place (an option question got answered): replace it in the timeline.
   | { type: 'block_updated'; block: Block }
   | { type: 'pong' } // answer to the client's liveness ping; carries nothing
@@ -364,7 +373,7 @@ export interface ChatAttachment {
 
 // The client sends only the liveness probe and `typing` (I am composing here;
 // `active: false` = stopped; who is the socket's credential) — a message is a POST.
-export type WsClientMessage = { type: 'ping' } | { type: 'typing'; active?: boolean }
+export type WsClientMessage = { type: 'ping' } | { type: 'typing'; active?: boolean } | { type: 'sync' }
 
 // POST /topics/{id}/messages. 请求体上没有「叫不叫芝士」这一位：这条消息点了谁的名，
 // 由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要叫它，
