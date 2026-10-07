@@ -8,7 +8,7 @@
 资料只有一份字节，哪个房间引用它都读的是那一份。
 """
 
-from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.harness.channel import mint_session_token
 from tests.integration.conftest import post_project, session_auth_headers
 
 
@@ -32,6 +32,16 @@ def _upload(client, topic_id: str, name: str, content: bytes) -> dict:
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]
+
+
+def _agent_in(client, project_id: str, topic_id: str) -> dict[str, str]:
+    """The credential the room's AI teammate works with there, and nothing of the
+    person who set the room up."""
+    members = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
+    seat = next(row["member_handle"] for row in members if row["agent"])
+    client.headers.pop("Authorization", None)
+    client.cookies.clear()
+    return {"X-Cheese-Token": mint_session_token(project_id, topic_id, seat)}
 
 
 def _library(client, project_id: str) -> list[dict]:
@@ -213,27 +223,14 @@ def test_the_agent_takes_a_copy_of_a_file_nobody_attached(client):
     topic_id = _topic(client, project_id, "房间一")
     _upload(client, topic_id, "预算表.xlsx", b"budget")
 
-    client.headers.pop("Authorization", None)
-    client.cookies.clear()
-    agent = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id, topic_id=topic_id, ttl_s=3600
-        )
-    }
-    # 凭据是为一轮、一个地方铸的，所以它得说自己在哪儿干活；不说就够不到项目。
-    assert (
-        client.get(f"/projects/{project_id}/library", headers=agent).status_code == 403
-    )
-
-    listed = client.get(
-        f"/projects/{project_id}/library", params={"topic": topic_id}, headers=agent
-    )
+    agent = _agent_in(client, project_id, topic_id)
+    listed = client.get(f"/projects/{project_id}/library", headers=agent)
     assert listed.status_code == 200, listed.text
     assert [f["path"] for f in listed.json()["data"]["data"]] == ["预算表.xlsx"]
 
     raw = client.get(
         f"/projects/{project_id}/library/raw",
-        params={"path": "预算表.xlsx", "topic": topic_id},
+        params={"path": "预算表.xlsx"},
         headers=agent,
     )
     assert raw.status_code == 200, raw.text
@@ -242,7 +239,7 @@ def test_the_agent_takes_a_copy_of_a_file_nobody_attached(client):
 
     escape = client.get(
         f"/projects/{project_id}/library/raw",
-        params={"path": "../secret.txt", "topic": topic_id},
+        params={"path": "../secret.txt"},
         headers=agent,
     )
     assert escape.status_code == 422
@@ -321,23 +318,15 @@ def test_the_agent_cannot_throw_away_what_it_was_given(client):
     topic_id = _topic(client, project_id, "房间一")
     _upload(client, topic_id, "预算表.xlsx", b"budget")
 
-    client.headers.pop("Authorization", None)
-    client.cookies.clear()
-    agent = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id, topic_id=topic_id, ttl_s=3600
-        )
-    }
+    agent = _agent_in(client, project_id, topic_id)
     refused = client.delete(
         f"/projects/{project_id}/library",
-        params={"path": "预算表.xlsx", "topic": topic_id},
+        params={"path": "预算表.xlsx"},
         headers=agent,
     )
     assert refused.status_code == 403
 
-    listed = client.get(
-        f"/projects/{project_id}/library", params={"topic": topic_id}, headers=agent
-    )
+    listed = client.get(f"/projects/{project_id}/library", headers=agent)
     assert [f["path"] for f in listed.json()["data"]["data"]] == ["预算表.xlsx"]
 
 
@@ -488,13 +477,7 @@ def test_the_agent_cannot_put_in_or_replace_a_file(client):
     topic_id = _topic(client, project_id, "房间一")
     _upload(client, topic_id, "预算表.xlsx", b"budget")
 
-    client.headers.pop("Authorization", None)
-    client.cookies.clear()
-    agent = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id, topic_id=topic_id, ttl_s=3600
-        )
-    }
+    agent = _agent_in(client, project_id, topic_id)
     upload = client.post(
         f"/projects/{project_id}/library",
         files={"file": ("新.txt", b"x", "text/plain")},

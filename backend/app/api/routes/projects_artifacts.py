@@ -24,7 +24,7 @@ two that were always one, take it off). The list is read-only by design: it
 grows out of delivery, so there is no POST.
 
 What stays behind, and why. Nothing this block imports belongs to it alone.
-`ProjectService`, `project_reader`/`readable_rooms`, `ok`/`page`,
+`ProjectService`, `readable_rooms`, `ok`/`page`,
 `ActorResolverDep` and the error types are all read by handlers that stay, so
 each is imported here from the module that owns it (`app.domain.project.services`,
 `app.api.place`, `app.api.response`, `app.api.auth`, `app.core.errors`) rather
@@ -66,7 +66,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
-from app.api.place import channels_unseen, project_reader, readable_rooms
+from app.api.place import channels_unseen, readable_rooms
 from app.api.response import ok, page
 from app.api.routes.projects import DbSession
 from app.core.errors import NotFoundError, ValidationError
@@ -83,7 +83,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 @router.get("/{project_id}/artifacts")
 async def list_artifacts(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """产物清单：这个项目交出去的东西，一项一行 (#1085 结论二、三)。
 
@@ -91,7 +91,8 @@ async def list_artifacts(
     那个仓库那一项上（平台自己认）；交出去一份文件或一个地址的，递卡时点名的名字不
     在清单上就当场多一项。所以这里没有 POST，不是还没做。"""
     await ProjectService(db).get_or_404(project_id)
-    actor = await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     rows = await artifacts.list_for_project(
         db, project_id, hidden=await channels_unseen(db, resolver, actor, project_id)
     )
@@ -114,14 +115,14 @@ async def read_artifact(
     artifact_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    topic: str = "",
 ) -> dict:
     """清单上这一项自己的那一页 (#1085 结论二)：现在是第几版，以及交付过的每一版。
 
     一版就是一张采纳了的卡，所以这里没有「版本表」——历史是数出来的，撤回一次采
     纳，它后面几版的号自己往前挪。"""
     await ProjectService(db).get_or_404(project_id)
-    actor = await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     hidden = await channels_unseen(db, resolver, actor, project_id)
     row = await _artifact_seen(db, project_id, artifact_id, hidden)
     listed = await artifacts.summary(db, row.id, hidden=hidden)
@@ -154,10 +155,10 @@ async def compare_artifact_versions(
     after: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    topic: str = "",
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
-    actor = await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     hidden = await channels_unseen(db, resolver, actor, project_id)
     await _artifact_seen(db, project_id, artifact_id, hidden)
     history = {
@@ -211,7 +212,6 @@ async def download_artifact_version(
     card_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    topic: str = "",
     preview_pdf: bool = False,
 ) -> Response:
     """这一版交出去的那一份字节 (#1085 结论五)。
@@ -220,7 +220,8 @@ async def download_artifact_version(
     体没了，重建出来的可能和当时交出去的不是同一份东西，而用户要的是他交出去的那
     一份。"""
     await ProjectService(db).get_or_404(project_id)
-    actor = await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     hidden = await channels_unseen(db, resolver, actor, project_id)
     await _artifact_seen(db, project_id, artifact_id, hidden)
     version = next(
@@ -257,9 +258,9 @@ async def _artifact_keeper(
 ) -> set[uuid.UUID]:
     """改清单的只有人。
 
-    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 改不了、合不了、删不
-    了清单上的东西 —— 它只能在交付时声明，而「这两项是不是同一个东西」「这个名字
-    对不对」正是要人判断的那部分。"""
+    一轮里铸出来的凭据在 `authorize_project` 那里只读得进来，所以 芝士 改不了、
+    合不了、删不了清单上的东西 —— 它只能在交付时声明，而「这两项是不是同一个东西」
+    「这个名字对不对」正是要人判断的那部分。"""
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)

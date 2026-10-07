@@ -42,6 +42,7 @@
   "topicMemberOnly": "You're not a member of this channel, so you can't do this here",
   "projectNotFound": "Project not found",
   "projectMemberOnly": "You're not a member of this project, so you can't view it",
+  "projectReadsWithOutsiders": "Someone in this conversation is outside the project, so the project's contents can't be read from here",
   "challengeViewForbidden": "You're not involved in this challenge, so you can't view it",
   "teamMemberOnly": "You're not a member of this team, so you can't view it",
   "termsUpdatedRefresh": "The terms have been updated. Refresh the page and read them again",

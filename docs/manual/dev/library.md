@@ -49,11 +49,11 @@ covers:
 
 「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，字节拷进 `.library-history/<project>/<记录 id>/`，新字节覆盖原名，再记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和历史字节一起扔掉。
 
-记录表之前就在的文件没有行，列表时的来源取第一条带上它（`content == library/<名字>`）的附件消息。列表上的房间名只给读得了那个房间的人（`readable_topic_ids`），「被几条消息引用」也只数这些房间里的。放进、替换、删除都只有人能做：一轮里铸出来的凭据过不了 `authorize_project`。
+记录表之前就在的文件没有行，列表时的来源取第一条带上它（`content == library/<名字>`）的附件消息。列表上的房间名只给读得了那个房间的人（`readable_topic_ids`），「被几条消息引用」也只数这些房间里的。放进、替换、删除都只有人能做：一轮里铸出来的凭据在 `authorize_project` 那里只读得进来。
 
 ## 写回资料库：一个动作 {#save-to-library}
 
-房间里的文件不是项目产物。用户传一份进来让芝士改，改完在房间里拿走，事情就结束了。想留下就得有人按一下：`room_files.save_to_library`（`domain/project/room_files.py`），入口是 `POST /topics/{id}/shown/save`，而且要**人**——一轮里铸出来的凭据过不了 `authorize_project`，所以芝士摆得出东西，却留不下它。
+房间里的文件不是项目产物。用户传一份进来让芝士改，改完在房间里拿走，事情就结束了。想留下就得有人按一下：`room_files.save_to_library`（`domain/project/room_files.py`），入口是 `POST /topics/{id}/shown/save`，而且要**人**——一轮里铸出来的凭据在 `authorize_project` 那里只读得进来，所以芝士摆得出东西，却留不下它。
 
 留下这件事**不上产物清单**（结论三：清单上的一项要「会交给项目外的人」，一份留着以后用的文件不满足它，为了让它上榜就得凭一次按钮伪造一条交付记录），**也不进 git**（结论五：成品不进库）。真正「文件本身就是源」的那条路走正常交付：芝士在任务分支上改、递卡、人采纳合并，二进制从那个口进 git。
 
