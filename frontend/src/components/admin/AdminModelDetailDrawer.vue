@@ -5,7 +5,8 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
-import { getGatewayModel } from '@/api'
+import { useGatewayModelDetail } from '@/composables/useGatewayModelDetail'
+
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -15,52 +16,12 @@ import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 // 一个模型的详情抽屉（契约 §3.2）。**它自己去拉数据**（收一个 `name`），不接一个塞满
 // 字段的 props 对象 —— 详情比列表项多出 `series` 和 `platform_usage` 两块，让页面把这些
 // 一起查好再传进来，页面就得同时管两份加载态，而这一层本来就需要自己的「正在加载」。
+// 那趟请求和它的加载 / 出错态在 `useGatewayModelDetail`，这一层只画。
 //
 // 四态分开画（契约 §4）：loading（骨架）/ error（服务端原话 + 重试）/ empty（这一族没有
 // 数据）在这里都有落点；ok 才是内容。日报主线画 **token**，副线画**花费**（dashed，与主线
 // 同色族的虚线空心圆 —— 图表系列不靠颜色区分，靠线型）；可访问形式是图下那张
 // <details> 数据表，副系列自动多一列。
-
-/** §3.2 的 `series` 一项。 */
-interface SeriesPoint {
-  date: string
-  spend_usd: number
-  requests: number
-  tokens: number
-}
-
-/** §3.2 的 `platform_usage`。 */
-interface PlatformUsage {
-  calls: number
-  tokens: number
-  cost_usd: number
-  unpriced_tokens: number
-  note?: string | null
-}
-
-/** §3.2 的 `model` 一项（这一层用得到的字段）。 */
-interface Detail {
-  name: string
-  label: string
-  origin: string
-  blocked: boolean
-  selectable: boolean
-  priced: boolean
-  offered: boolean
-  blocked_reasons?: string[]
-  unpriced_reason?: string | null
-  upstream: { model: string; host?: string | null; provider?: string }
-  prices: Record<string, number | null | undefined>
-  capabilities: Record<string, boolean | undefined>
-  config_yaml?: string | null
-  usage?: { spend_usd: number; requests: number; failed_requests: number; total_tokens: number }
-}
-
-interface DetailPayload {
-  model: Detail
-  series: SeriesPoint[]
-  platform_usage: PlatformUsage
-}
 
 const props = defineProps<{
   modelValue: boolean
@@ -81,25 +42,8 @@ const { t } = useI18n()
 const { width: viewportWidth } = useDisplay()
 const drawerWidth = computed(() => Math.min(480, viewportWidth.value))
 
-const detail = ref<DetailPayload | null>(null)
-const loading = ref(false)
-const error = ref<string | null>(null)
+const { detail, loading, error, load } = useGatewayModelDetail()
 const copied = ref(false)
-
-async function load() {
-  if (!props.name) return
-  loading.value = true
-  error.value = null
-  try {
-    detail.value = (await getGatewayModel(props.name, props.days)) as unknown as DetailPayload
-  } catch (e) {
-    // 服务端把原因写在 `message` 里（`ApiError` 带上来的），照它显示，不另造一句。
-    error.value = e instanceof Error && e.message ? e.message : t('models.detail.loadFailed')
-    detail.value = null
-  } finally {
-    loading.value = false
-  }
-}
 
 // 打开时拉一次，窗口变了（用户在页面上切了天数）也重拉 —— 抽屉开着时窗口不该是旧的。
 watch(
@@ -109,7 +53,7 @@ watch(
       copied.value = false
       return
     }
-    void load()
+    void load(props.name, props.days)
   },
   { immediate: true }
 )

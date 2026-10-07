@@ -1,28 +1,18 @@
 <script setup lang="ts">
-import type { ResourceLimits } from '@/api'
-
 import { onMounted, ref } from 'vue'
 
-import { getResourceLimits } from '@/api'
+import { useResourceLimits } from '@/composables/useResourceLimits'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-const limits = ref<ResourceLimits | null>(null)
-const failed = ref(false)
+const { limits, failed, load } = useResourceLimits()
 // The one line that changes what the person can expect (tasks queue once the
 // limit is reached) stays out; the rest is behind the disclosure so the project
 // name field keeps its own space.
 const expanded = ref(false)
 
-async function load() {
-  failed.value = false
-  try {
-    limits.value = await getResourceLimits()
-  } catch {
-    failed.value = true
-  }
-}
-
+// 这一行只在「新建项目」那张卡片出现时才挂上来，所以取数跟着挂载走，不提前。
 onMounted(load)
 </script>
 
