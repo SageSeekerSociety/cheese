@@ -74,7 +74,7 @@ AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`�
 
 **实况文档**写这件事要做什么、做到哪、定了什么（`GET /topics/{task}/document` 第一次要时建）。看得见任务的人都能读，只有负责人和这条任务自己的会话能写。
 
-**开始**（`POST /topics/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的凭证对工作机器只读：能讨论、写文档，不能改项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。
+**开始**（`POST /topics/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的改动留不下：能讨论、写文档、在机器上读代码和跑命令，不能把改动同步或推送进项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。
 
 **转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务若用着或占着新负责人不能用的电脑（原负责人自己的），先照换电脑的流程挪到新负责人能用的那台（`compute_configs.choice_for_owner`：任务自己的选择、房间的选择、项目默认，依次跳过别人的个人电脑）；推送不成功就不转交，说明原因。
 

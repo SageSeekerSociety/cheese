@@ -112,7 +112,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 新建任务 | `POST /api/topics/{room}/tasks` | ✅ 只有人能建，建的人是负责人；房间 ⋯ 菜单里的「新建任务」 |
 | 讨论升级为任务（A1） | `POST /api/blocks/{id}/upgrade` | ✅ 幂等；升级的人是负责人，任务的会话收到一段开场提示（那条消息和它前面的讨论）；私聊里的块升级成一个房间 |
 | AI 提议任务 | `POST /api/topics/{room}/task-proposals`（`cheese_task`） | ✅ 房间里一张提议卡，「创建任务」（`.../{block}/accept`，点的人是负责人）或「不用」（`.../dismiss`）；AI 不能自己建 |
-| 开始 | `POST /api/topics/{task}/start` | ✅ 只有负责人；记下开始时间、开始的人、那一刻实况文档的版本；之前任务会话只读 |
+| 开始 | `POST /api/topics/{task}/start` | ✅ 只有负责人；记下开始时间、开始的人、那一刻实况文档的版本；之前任务会话的改动留不下 |
 | 转交 | `PATCH /api/topics/{task}/task` | ✅ 负责人交给房间里另一个人，或换一位 AI 队友 |
 | 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_close_task`）；带结论是已完成，不带是已关闭；房间里落一条平台消息 |
 | 在任务里说话 | `POST /api/topics/{task}/messages` | ✅ 只收负责人和任务自己的会话；其他人能读，在房间里说 |

@@ -38,7 +38,7 @@ cheese recalc <文件>           重算一份 .xlsx 里的公式
 
 三个命令带下一级动作：`library get`、`mail attachment`、`template list|new`。每个子命令的 `--help` 是权威的那一份（它和代码同源，不会过期）。
 
-身份靠启动器注入的环境变量：`CHEESE_API`（平台地址）、`CHEESE_TOKEN`（这个会话的短期令牌）、`CHEESE_PROJECT`、`CHEESE_TOPIC`、`CHEESE_AUTHOR`，以及 `CHEESE_TURN`（让命令产生的记录归到这一轮）。任务自己的会话还带 `CHEESE_TASK`（这条任务的 id，令牌也只能对它动手）和 `CHEESE_TASK_READS_ONLY`（任务还没开始时为 `1`，令牌对工作机器只读）。
+身份靠启动器注入的环境变量：`CHEESE_API`（平台地址）、`CHEESE_TOKEN`（这个会话的短期令牌）、`CHEESE_PROJECT`、`CHEESE_TOPIC`、`CHEESE_AUTHOR`，以及 `CHEESE_TURN`（让命令产生的记录归到这一轮）。任务自己的会话还带 `CHEESE_TASK`（这条任务的 id，令牌也只能对它动手）和 `CHEESE_KEEPS_NOTHING`（任务还没开始时为 `1`，这时的改动留不下）。
 
 判断一个动作放哪一边：只需要平台 API 的放会话侧工具；要读写这台机器上的文件或进程的放命令行。
 
