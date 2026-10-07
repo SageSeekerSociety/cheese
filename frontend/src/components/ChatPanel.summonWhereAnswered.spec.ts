@@ -106,7 +106,7 @@ async function summonFrom(props: Record<string, unknown>) {
 }
 
 function saidWorking(view: Awaited<ReturnType<typeof summonFrom>>): boolean {
-  return (view.emitted('working') ?? []).some(([now]) => now === true)
+  return (view.emitted('working') ?? []).some((args) => (args as unknown[])[0] === true)
 }
 
 describe('叫芝士之后，哪里说它在干活', () => {
