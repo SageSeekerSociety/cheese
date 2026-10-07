@@ -587,10 +587,7 @@ class HostPool:
     async def _locked_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
         return await self._session.scalar(
             select(CloudHostHome)
-            .where(
-                CloudHostHome.session_id == session_id,
-                CloudHostHome.left_at.is_(None),
-            )
+            .where(CloudHostHome.session_id == session_id)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
@@ -844,7 +841,7 @@ class HostPool:
             host.failed_at = host.failed_at or now
         lines = []
         for home in await self._repo.homes_on(host.id):
-            row = (worked or {}).get(home.session_id) if home.left_at is None else None
+            row = (worked or {}).get(home.session_id)
             if row is not None:
                 row.execution_request = {
                     **(row.execution_request or {}),

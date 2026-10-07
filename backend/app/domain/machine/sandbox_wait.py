@@ -34,9 +34,7 @@ async def _home_removed(db, session_id) -> bool:
     """The sandbox being destroyed is gone, so the next attempt places the
     session in a new one."""
     stopped = await db.scalar(
-        select(CloudHostHome.stopped_at).where(
-            CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
-        )
+        select(CloudHostHome.stopped_at).where(CloudHostHome.session_id == session_id)
     )
     return stopped is None
 

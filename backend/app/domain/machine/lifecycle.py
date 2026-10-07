@@ -8,8 +8,9 @@ the session — a Bash call sent to the background, a long build or test whose
 result the next turn reads (``running_commands``) — keeps an idle sandbox up
 too, but only until ``cloud_sandbox_background_cap_s`` after that activity. A
 process the agent detached itself (``nohup … &``, a dev server) is not work in
-progress and keeps nothing up. A home its session left is idle by definition
-and is measured by its own activity alone. A sandbox whose project has run out
+progress and keeps nothing up. A home of no session (a room's directory from
+before session leases) is measured by its own activity alone. A sandbox whose
+project has run out
 of credits is destroyed as soon as its room runs no turn (``metering``), idle
 or not.
 
@@ -117,9 +118,7 @@ class SandboxLifecycle:
         for home in await metering.unpaid_sandboxes(self._session):
             if self._hub.is_online(home.device_id) and await self._destroy(
                 home.id,
-                home.topic_id
-                if home.session_id is not None and home.left_at is None
-                else None,
+                home.topic_id if home.session_id is not None else None,
                 home.device_id,
                 None,
             ):
@@ -134,8 +133,7 @@ class SandboxLifecycle:
         from app.domain.agent.models import AgentTurn
 
         # A turn running in the conversation the home's session works in, or
-        # one that ended within the idle time, keeps that sandbox up; a home
-        # its session left is measured by its own activity alone. Not the
+        # one that ended within the idle time, keeps that sandbox up. Not the
         # room's turns: every task of a channel hangs under it, and one task at
         # work kept the sandboxes of all the others up for days. Decided here,
         # not after a limit: busy homes would otherwise take every place in the
@@ -160,7 +158,6 @@ class SandboxLifecycle:
                 CloudHostHome.id,
                 CloudHostHome.session_id,
                 CloudHostHome.topic_id,
-                CloudHostHome.left_at,
                 CloudHostHome.active_at,
                 CloudHostHome.stopped_at,
                 CloudHost.device_id,
@@ -176,11 +173,7 @@ class SandboxLifecycle:
                     CloudHostHome.stopped_at < now - STOP_HOLD,
                     (CloudHostHome.stopped_at.is_(None))
                     & (CloudHostHome.active_at < now - idle_for)
-                    & or_(
-                        CloudHostHome.left_at.is_not(None),
-                        CloudHostHome.session_id.is_(None),
-                        ~session_active,
-                    ),
+                    & or_(CloudHostHome.session_id.is_(None), ~session_active),
                 ),
             )
             .order_by(CloudHostHome.active_at)
@@ -193,7 +186,7 @@ class SandboxLifecycle:
                 break
             if not self._hub.is_online(home.device_id):
                 continue
-            current = home.session_id is not None and home.left_at is None
+            current = home.session_id is not None
             if home.stopped_at is not None:
                 # An unfinished removal: done again, whatever it is now.
                 idle = now - home.active_at
@@ -216,7 +209,7 @@ class SandboxLifecycle:
         None while it is not."""
         from app.domain.agent.models import AgentTurn
 
-        if home.left_at is not None or home.session_id is None:
+        if home.session_id is None:
             return home.active_at
         turns = (
             await self._session.execute(
@@ -324,7 +317,7 @@ class SandboxLifecycle:
             return False
         line = None
         topic_id = home.topic_id
-        if home.session_id is not None and home.left_at is None:
+        if home.session_id is not None:
             # Its next tool call lands in a new sandbox, and is told so.
             row = await self._session.scalar(
                 select(AgentSession)
