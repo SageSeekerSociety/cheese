@@ -335,7 +335,12 @@ const chosen = computed(() => groups.value.find((g) => idOf(g) === props.selecte
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
-@media (min-width: 1200px) {
+/* 点开一行之后右边多出 360 的详情栏，判的是**这一列**还剩多少地方，不是窗口有多宽：
+   这一页在后台容器里（`.app-page__column--admin`，名字 `admin`），侧栏收起省出的宽度
+   视口查询看不见（§3.5、§10.9）。1200 那条视口线挪到容器上取 900——后台容器已有的值
+   （`AdminModelsAudit`）。再窄下去两张并排也不会挤坏表格：`.rr-table` 本来就是
+   `overflow-x: auto`，表格自己横向滚。 */
+@container admin (min-width: 900px) {
   .rr-body--open {
     grid-template-columns: minmax(0, 1fr) 360px;
   }

@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
+import { SPLIT_MIN_WIDTH } from '@/composables/useWorkspaceLayout'
+
 import SubmitFeedbackForm from './SubmitFeedbackForm.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -17,11 +19,16 @@ import { useFeedbackStore } from '@/stores/feedback'
 //
 // **窄屏整屏**：表单在手机上本来就占满一屏，套一层四周留边的浮层只是把可读宽度再
 // 减掉一圈，还多出「后面那层对话在动」的干扰。
+//
+// 「窄屏」的判据是 `$bp-phone`（< 768，`SPLIT_MIN_WIDTH`），不是 Vuetify 的 `xs`：
+// 600 不是共享档位里的任何一个数，而且 600–767 这一段本来就是手机摆法（列表和房间
+// 各占一整页），整屏才是对的。宽度量不出来时按手机算，和 `useWorkspaceLayout` 一样。
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'update:open', value: boolean): void; (e: 'submitted', id: string): void }>()
 
 const store = useFeedbackStore()
-const { xs } = useDisplay()
+const { width } = useDisplay()
+const fullscreen = computed(() => (width?.value ?? 0) < SPLIT_MIN_WIDTH)
 const { t } = useI18n()
 
 const fromProposal = computed(() => !!store.draft.proposal)
@@ -41,7 +48,7 @@ function onSubmitted(id: string) {
 <template>
   <v-dialog
     :model-value="props.open"
-    :fullscreen="xs"
+    :fullscreen="fullscreen"
     max-width="720"
     scrollable
     @update:model-value="(value: boolean) => !value && close()"

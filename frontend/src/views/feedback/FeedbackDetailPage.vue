@@ -595,7 +595,8 @@ async function share() {
     order: 3;
   }
 }
-@media (min-width: 1280px) {
+/* 断点收进共享 token：1279.98 = $bp-wide（styles/breakpoints.scss）；下面这条是 min-width。 */
+@media (min-width: 1279.98px) {
   .fb-layout {
     grid-template-columns: minmax(0, var(--page-w-read)) 280px;
     /* 页头和正文同住左列、右栏跨两行 —— 和改动前屏幕上看到的一样。 */
@@ -800,7 +801,8 @@ async function share() {
   background: var(--surface);
   border-top: 1px solid var(--line);
 }
-@media (min-width: 1280px) {
+/* 断点收进共享 token：1279.98 = $bp-wide（styles/breakpoints.scss）；下面这条是 min-width。 */
+@media (min-width: 1279.98px) {
   .fb-actionbar {
     margin-left: 0;
   }

@@ -510,7 +510,7 @@ onMounted(() => {
   padding: 24px 32px 40px;
 }
 
-@media (max-width: 600px) {
+@include bp.below(bp.$bp-phone) {
   .td {
     padding: 16px 16px 32px;
   }
@@ -607,7 +607,7 @@ onMounted(() => {
   border-top-right-radius: var(--radius-lg);
 }
 
-@media (max-width: 600px) {
+@include bp.below(bp.$bp-phone) {
   .td__head {
     flex-direction: column;
     gap: 12px;

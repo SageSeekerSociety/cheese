@@ -617,7 +617,8 @@ function clearFilters() {
 /* 窄屏：搜索框占满一整行（它在这一排里是最常用的那一格），其余每组各占一行。
    药丸组自己在窄屏上折行 —— 英文的栏名和取值（"In progress" 那一档）比中文长一倍，
    不折的话 390 上会横向溢出去。 */
-@media (max-width: 599.98px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .fb-search {
     flex: 1 1 100%;
   }

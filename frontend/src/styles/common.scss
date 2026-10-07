@@ -1,3 +1,5 @@
+@use './breakpoints.scss' as bp;
+
 html,
 body,
 #app {
@@ -31,7 +33,7 @@ body,
   background: var(--surface);
 }
 
-@media (min-width: 960px) {
+@include bp.at-least(bp.$bp-mobile) {
   .app-pane {
     border-left: 1px solid var(--line);
   }
@@ -114,7 +116,7 @@ body,
     min-height: 44px;
   }
 
-  @media (min-width: 960px) {
+  @include bp.at-least(bp.$bp-mobile) {
     .v-list-item {
       min-height: 36px;
     }

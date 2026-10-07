@@ -1,14 +1,20 @@
 {
-  "_comment": "Frozen design-token violations (hardcoded colours, off-ladder radii). The ratchet blocks any NEW one; these are pre-existing and may only go down. Regenerate with `pnpm run lint:style:update`. See docs/design-system.md.",
+  "_comment": "Frozen design-token violations (hardcoded colours, off-ladder radii, off-tier viewport breakpoints). The ratchet blocks any NEW one; these are pre-existing and may only go down. Regenerate with `pnpm run lint:style:update`. See docs/design-system.md and docs/breakpoint-inventory.md.",
   "files": {
+    "src/components/admin/AdminKpiCard.vue": 1,
+    "src/components/admin/AdminQueueDetail.vue": 1,
     "src/components/common/AvatarUploader.vue": 2,
-    "src/components/common/Navigation/LeftAppRail.vue": 1,
     "src/components/common/Navigation/RailItem.vue": 2,
     "src/components/common/OfflineBanner.vue": 1,
     "src/components/common/UserAvatar.vue": 1,
     "src/components/DeviceLiveViewer.vue": 3,
+    "src/components/room/ComposerActions.vue": 1,
     "src/components/room/room-row.css": 1,
     "src/components/TopicMembers.vue": 2,
-    "src/components/TopicSidebar.vue": 1
+    "src/views/home/Download.vue": 1,
+    "src/views/home/landing.css": 5,
+    "src/views/home/LandingFilm.vue": 1,
+    "src/views/home/LandingUseCases.vue": 1,
+    "src/views/home/LandingUseCaseScene.vue": 1
   }
 }

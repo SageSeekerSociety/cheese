@@ -339,7 +339,9 @@ async function restoreSelected() {
 .doc-history__more:hover:not(:disabled) {
   background: var(--fill);
 }
-@media (max-width: 640px) {
+/* 容器查询，不是视口：宿主 `PanelDocView` 的 `.doc` 声明了 `container-type`（那一处
+   617 行已经有一条 `@container`），这一格多宽由面板决定，和窗口对不上。 */
+@container (max-width: 640px) {
   .doc-history__body {
     flex-direction: column;
   }

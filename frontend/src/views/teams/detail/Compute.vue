@@ -330,7 +330,8 @@ watch(teamId, load)
   background: rgb(var(--v-theme-success));
   opacity: 1;
 }
-@media (max-width: 600px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .section-heading {
     align-items: flex-start;
     flex-direction: column;

@@ -111,9 +111,10 @@ if (update) {
     `${JSON.stringify(
       {
         _comment:
-          'Frozen design-token violations (hardcoded colours, off-ladder radii). The ' +
-          'ratchet blocks any NEW one; these are pre-existing and may only go down. ' +
-          'Regenerate with `pnpm run lint:style:update`. See docs/design-system.md.',
+          'Frozen design-token violations (hardcoded colours, off-ladder radii, off-tier ' +
+          'viewport breakpoints). The ratchet blocks any NEW one; these are pre-existing and ' +
+          'may only go down. Regenerate with `pnpm run lint:style:update`. See ' +
+          'docs/design-system.md and docs/breakpoint-inventory.md.',
         files: next,
       },
       null,

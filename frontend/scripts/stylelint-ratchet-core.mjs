@@ -8,7 +8,7 @@
 // makes the rule enforceable immediately and lets the backlog be paid down file
 // by file. Exactly the reasoning behind tsc-baseline.json.
 //
-// WHY ONLY FOUR RULES: stylelint reports 3379 warnings on this tree, but 2842 of
+// WHY ONLY A HANDFUL OF RULES: stylelint reports 3379 warnings on this tree, but 2842 of
 // them are things like property ORDER and class-name casing — rules that have
 // been configured for a long time and never actually run (stylelint appears in
 // no workflow and in no Taskfile target). Ratcheting those too would mean an
@@ -37,6 +37,8 @@ export const DESIGN_RULES = new Set([
   'declaration-property-value-disallowed-list',
   // Off-ladder border-radius.
   'declaration-property-value-allowed-list',
+  // Off-tier viewport breakpoint (`@media` widths). See docs/breakpoint-inventory.md.
+  'media-feature-name-value-allowed-list',
 ])
 
 /**

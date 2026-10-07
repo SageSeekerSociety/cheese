@@ -1,6 +1,8 @@
 # 断点欠账清单
 
-`frontend/src` 里还有 **47 处** CSS 宽高查询 + **3 处** JS 视口判断没用共享档位，基线 `08578667`。收口的目标只有两种落法：归到 `frontend/src/styles/breakpoints.scss` 的四个视口档，或者改成挂在内容列上的容器查询。
+基线 `08578667` 上，`frontend/src` 里有 **47 处** CSS 宽高查询 + **4 处** JS 视口判断没用共享档位。收口的目标只有两种落法：归到 `frontend/src/styles/breakpoints.scss` 的四个视口档，或者改成挂在内容列上的容器查询。
+
+归拢那批之后还剩 **11 处**，两类：营销页 10 处（第六组，走法待定）、`AdminKpiCard.vue:146` 1 处（等真浏览器量字号）。第七组那 2 处是认定过的例外，不算欠账。
 
 口径是 `frontend/src` 一个目录，不是全仓。`docs/site/`（357 行宽度查询）是独立的文档站，`backend/sandbox/skills/showcase/templates/`（8 个文件）是出图模板，两者都不进产品骨架，不在这笔账里——第四批收口那道闸也只闸 `frontend/src`。
 
@@ -15,7 +17,9 @@
 
 `#2634` 已经按「就近归四档」收过一批（1000→960、1100→1180、900→960、700→768、599.98→767.98），并定下两条政策：管理后台的断点判**内容列**不判视口；`AdminQueueDetail` 的 1280 是 JS 常量匹配视口，刻意保留。这份清单按同一套政策往下走。
 
-用法是 `@use '…/styles/breakpoints.scss' as bp;` 加 `@include bp.below(bp.$bp-phone)`。目前只有 3 个文件这么写（`artifact/ArtifactCompare.vue`、`tasks/Detail.vue`、`tasks/detail/InsightsView.vue`），其余都是把数字重抄一遍——这也是这批欠账能积累起来的原因。
+用法是 `@use '…/styles/breakpoints.scss' as bp;` 加 `@include bp.below(bp.$bp-phone)`。归拢之前只有 3 个文件这么写（`artifact/ArtifactCompare.vue`、`tasks/Detail.vue`、`tasks/detail/InsightsView.vue`），其余都是把数字重抄一遍——这也是这批欠账能积累起来的原因。
+
+`frontend/src` 里 36 处已经归到档位上（下面五节的行数之和），落在下面的表里。三种落法按文件当时的样子定，不混用：`.scss` 和已经带 `@use` 的 `.vue` 用 `@include bp.*`，纯 CSS（`<style scoped>` 或 `.css`）用等值字面量加一行注释写明它等于哪个 token，`@container` 用值本身。
 
 ## 一、归 `$bp-phone`（767.98）——21 处
 
@@ -88,15 +92,19 @@
 
 能不能就地改成 `@container`，取决于最近的那个祖先有没有 `container-type`。`frontend/src` 里声明过的只有 10 处：`AppPage.vue:284`（`admin`）、`BaseTable.vue:321`（`agrid`）、`SettingsRow.vue:69`、`PanelPreviewView.vue:714`、`PanelDocView.vue:593`、`ChatTimeline.vue:583`、`PreviewSlides.vue:311`、`ProjectSettingsView.vue:410`、`NotificationsView.vue:259`、`RunningWorkView.vue:565`。表里逐个对过，只有 `PanelChangesView` 那一处要**新加**容器声明。
 
-| 文件:行 | 现值 | 改成 |
+| 文件:行 | 现值 | 落成 |
 |---|---|---|
-| `views/admin/AdminRunRecordsPageView.vue:338` | min-width 1200 | 后台容器（`admin`） |
-| `components/admin/AdminKpiCard.vue:146` | 600 | 待裁：删掉还是归 767.98（见下） |
-| `components/admin/credits/AdminPlanDialog.vue:447` | 700 | 弹窗自己的容器 |
-| `components/panels/PanelChangesView.vue:674` | 720 | `@container`，**要新加** `container-type` |
-| `components/panels/PanelPreviewView.vue:921` | 720 | `@container`（本文件 714 行已声明） |
-| `components/panels/preview/RevisionList.vue:171` | 720 | 跟 `PanelPreviewView` 同一条容器线 |
-| `components/panels/doc/DocHistory.vue:342` | 640 | `@container`（宿主 `PanelDocView` 已声明） |
+| `views/admin/AdminRunRecordsPageView.vue:338` | min-width 1200 | `@container admin (min-width: 900px)` |
+| `components/admin/AdminKpiCard.vue:146` | 600 | **未动**：删掉还是归 767.98，等量（见下） |
+| `components/admin/credits/AdminPlanDialog.vue:447` | 700 | 归 767.98（不是容器，见下） |
+| `components/panels/PanelChangesView.vue:674` | 720 | `@container (max-width: 720px)`，本文件新加 `container-type` |
+| `components/panels/PanelPreviewView.vue:921` | 720 | `@container (max-width: 720px)`（本文件 714 行已声明） |
+| `components/panels/preview/RevisionList.vue:171` | 720 | `@container (max-width: 720px)`，两个宿主都声明过 |
+| `components/panels/doc/DocHistory.vue:342` | 640 | `@container (max-width: 640px)`（宿主 `PanelDocView` 已声明） |
+
+`AdminRunRecordsPageView` 取的 900 是后台容器已有的值（`AdminModelsAudit.vue:209`）：1200 那条线原本判窗口，换成判这一列之后取同量级的已有值。再窄下去两张并排也不会挤坏表格——`.rr-table` 本来就是 `overflow-x: auto`。
+
+`AdminPlanDialog` 没走容器，走的是 767.98：`.apd__row` 只在弹窗是整页的时候才可能窄，而「手机是一整页」那条线是 960（`AdaptiveDialog` 的 `mdAndUp`），桌面那个定宽盒子视口多大都一样。所以这里的参照物本来就是视口，要收的是那个不在四档里的 700。归 767.98 的代价是 700–767 这一段从并排改成上下——那一段本来就是手机外壳。
 
 阈值在归的时候定，不在这份清单里定。后台容器 `#2634` 落的是 `max-width: 719.98px` 和 `max-width: 1319.98px`（`AdminMembersPage.vue:745`、`AdminModelsPage.vue:261,268`），但同一套里已经混进了裸值 `700` 和视口味的 `900`（`AdminSpacesPage.vue:438`、`AdminLiveSpine.vue:185`、`AdminModelsAudit.vue:209`）——这批按 `719.98 / 1319.98` 对齐，面板沿用 720。
 
@@ -132,25 +140,32 @@
 
 严格说它判的是「这一次有多宽」而不是「窗口有多宽」，容器查询本来更贴题。排除它是因为代价不对等：这一行现在没有任何 `container-type` 祖先，要挂容器得先给动作行加声明，为两个字多一层行内尺寸包含不划算。这条取舍要写进代码注释，不然下一个人会觉得它是漏网的。
 
-## 八、JS 里的视口断点——3 处
+## 八、JS 里的视口断点——4 处
 
-`@media` 之外还有一处会积欠账的地方：JS 自己判窗口宽度。`frontend/src` 里所有 `matchMedia` 逐条看过，判宽度的只有三条（其余是 `prefers-reduced-motion`、`hover`、`pointer`、`display-mode`，与宽度无关）：
+`@media` 之外还有一处会积欠账的地方：JS 自己判窗口宽度。`frontend/src` 里所有 `matchMedia` 逐条看过，判宽度的四条（其余是 `prefers-reduced-motion`、`hover`、`pointer`、`display-mode`，与宽度无关）：
 
-| 文件:行 | 现值 | 归到 |
+| 文件:行 | 现值 | 落成 |
 |---|---|---|
-| `lib/viewTransition.ts:31` | `const WIDE = '(min-width: 960px)'` | 960 那一档，裸数字改成引用共享常量 |
-| `views/home/LandingShell.vue:53` | `matchMedia('(width <= 900px)')` | 营销页那一组（第六组） |
-| `components/feedback/SubmitFeedbackDialog.vue:24` | `const { xs } = useDisplay()` → `:fullscreen="xs"` | 归 767.98，**这批唯一一处藏在 JS 里的散值** |
+| `lib/viewTransition.ts:31` | `const WIDE = '(min-width: 960px)'` | 引 `useWorkspaceLayout` 的 `MOBILE_MIN_WIDTH` |
+| `composables/useAdminQueue.ts:69` | `const WIDE_QUERY = '(min-width: 1280px)'` | 引 `useWorkspaceLayout` 的 `WIDE_MIN_WIDTH` |
+| `components/feedback/SubmitFeedbackDialog.vue:24` | `const { xs } = useDisplay()` → `:fullscreen="xs"` | 归 767.98（`useDisplay().width` 与 `SPLIT_MIN_WIDTH` 比） |
+| `views/home/LandingShell.vue:53` | `matchMedia('(width <= 900px)')` | **未动**：营销页那一组（第六组） |
 
-`viewTransition` 和 `SubmitFeedbackDialog` 这两处要动 `breakpoints.scss` 的 JS 侧镜像常量，光加一道 `@media` 的闸管不到它们。
+`useAdminQueue` 这条原先只在第七组出现过（它是 `AdminQueueDetail` 那条 `@media` 的 JS 另一半），漏在第八组的表外。它的值必须和样式那条一样，所以两边各自引常量：JS 引 `WIDE_MIN_WIDTH`，CSS 保持 `1280` 不动（第七组那个例外）。
 
-不算欠账、不必列的两类：Vuetify 的 `mdAndUp`（=960，正好是 `$bp-mobile`）在 15 个组件里用着，`PinnedAnnouncements.vue:16` 的 `smAndDown` 也是 960；`AdminModelDetailDrawer.vue:42` 与 `SkillDetailDrawer.vue:37` 拿 `useDisplay().width` 做的是「抽屉不宽过视口」的钳制，不是分档。
+这三处都要动 `breakpoints.scss` 的 JS 侧镜像常量，光加一道 `@media` 的闸管不到它们。
+
+判宽度但不进这笔账的还有两处：`components/panels/preview/designToolbar.ts:20` 按 `ResizeObserver` 量到的**面板宽**分三档，`AdminModelDetailDrawer.vue:42`、`SkillDetailDrawer.vue:37` 拿 `useDisplay().width` 做的是「抽屉不宽过视口」的钳制——都不是视口分档。
+
+还有一类不算欠账：Vuetify 的 `mdAndUp`（=960，正好是 `$bp-mobile`）在 15 个组件里用着，`PinnedAnnouncements.vue:16` 的 `smAndDown` 也是 960——它们本来就读的是同一份 Vuetify 档位表。
 
 ## 收口
 
-归完之后加一道闸，走在 `frontend/stylelint.config.cjs` 里，跟颜色和圆角同一个机制：`@media` 里的宽度只许取四个档的值（或 `bp.$bp-*`），存量冻进 `frontend/stylelint-baseline.json`，之后只许减不许增。写完用 `bash .claude/scripts/check-repo-rules.sh --self-test` 一类的自证确认闸门真的会红，不是摆设。
+闸已落在 `frontend/stylelint.config.cjs`，跟颜色和圆角同一个机制：`media-feature-name-value-allowed-list` 让 `@media` 的宽度只取四个档的值，三种写法都管（`max-width`、`min-width`、`width <` 这类区间），存量冻进 `frontend/stylelint-baseline.json`，之后只许减不许增。两道 override：`styles/breakpoints.scss` 是这四个值的定义处（它自己写 `@media (max-width: $width)`），`docs/site/` 是另一套阶梯的独立站。闸门做过红绿自证：探测文件里写 601 / 900 让它红，写 767.98 / 959.98 放过。基线 24 条里，12 条是这张清单上还没清的（第六组 9 条、`AdminKpiCard.vue:146`、第七组 2 条），另 12 条是颜色和圆角那两条规则的存量。
 
-这道闸只覆盖 `@media` 和 `frontend/src`，两处留白要一起写进 `docs/design-system.md`，否则下一个人会以为「闸绿了就是没有散值」：
+这道闸只覆盖 `@media` 和 `frontend/src`，两处留白连同这条闸已经写进 `docs/design-system.md`（§3.5 讲四个档和两处留白，§7 的表里有一行），否则下一个人会以为「闸绿了就是没有散值」：
 
-- **JS 侧**（第八组那三条）闸不到，只能靠 `breakpoints.scss` 的 JS 镜像常量做唯一来源。
-- **容器查询的阈值**同样没有单一来源。整个 `frontend/src` 里有 60 多条 `@container`，散着 310 / 440 / 480 / 559 / 560 / 640 / 660 / 672 / 700 / 720 / 760 / 900 / 1000 / 1040 / 1319.98 / 1320 / 1440 等值，而且同一件事两种写法并存：后台容器一处写 `max-width: 719.98px`、另一处写 `700px`。这一批只把 7 处视口查询改成容器查询，不动既有阈值——但要在 `docs/design-system.md` 里点名它还是一笔没归的账，别让人以为收口等于清零。
+- **JS 侧**（第八组那四条）闸不到，只能靠 `useWorkspaceLayout` 的 JS 镜像常量做唯一来源（`SPLIT_MIN_WIDTH` 768、`MOBILE_MIN_WIDTH` 960、`COMPACT_DESKTOP_MAX_WIDTH` 1180、`WIDE_MIN_WIDTH` 1280）。
+- **容器查询的阈值**同样没有单一来源。整个 `frontend/src` 里有 60 多条 `@container`，散着 310 / 440 / 480 / 559 / 560 / 640 / 660 / 672 / 700 / 720 / 760 / 900 / 1000 / 1040 / 1319.98 / 1320 / 1440 等值，而且同一件事两种写法并存：后台容器一处写 `max-width: 719.98px`、另一处写 `700px`。这一批只把 7 处视口查询改成容器查询，不动既有阈值——别把「闸绿了」读成「容器阈值也清零了」。
+
+第七组那两处例外**冻在基线里，不是加进白名单**：`AdminQueueDetail.vue` 的 1280 和 `ComposerActions.vue` 的 480 各占基线一个数。往这两个文件里新添一条散值，闸门照红。

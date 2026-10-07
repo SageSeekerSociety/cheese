@@ -363,6 +363,10 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 
 连续正文要比表单窄：栏太宽时一行六十多个汉字，回行时眼睛找不到下一行的开头。手机外壳里（窄于 960px）一页只有一栏，`--page-w` 和 `--page-w-wide` 都取 720px，见 §10.8。后台页的断点用容器查询（挂在内容列上），不用视口媒体查询——侧栏折叠省出的宽度，视口查询看不见。
 
+视口那一侧的四个档写在 `styles/breakpoints.scss`：`$bp-phone` 767.98、`$bp-mobile` 959.98、`$bp-compact` 1179.98、`$bp-wide` 1279.98。`@media` 里用不了 CSS 变量，所以它们只能是预处理器常量，JS 侧由 `composables/useWorkspaceLayout.ts` 的同名常量镜像（`SPLIT_MIN_WIDTH`、`MOBILE_MIN_WIDTH`、`COMPACT_DESKTOP_MAX_WIDTH`、`WIDE_MIN_WIDTH`）。样式里不要再抄第五个数字。
+
+`frontend/src` 里 `@media` 的宽度有闸门（§7）。两处它管不到：JS 自己判宽度的几处，只能靠上面那组镜像常量统一；`@container` 的阈值没有单一来源——`frontend/src` 里 60 多条容器查询散着十几个值，同一件事还两种写法并存。存量、例外和这两处留白记在 [`breakpoint-inventory.md`](./breakpoint-inventory.md)。
+
 一页套 `AppPage`：项目里的页面（看板、成员、项目文档、资料库）和个人页（收件箱、已归档的项目、市场）都是它。它画顶上那条 48px 页头（和侧栏项目名那一条、房间的话题头是同一条线；页头写这一页是什么，项目名不再写一遍）、正文那唯一一栏，以及页头里的命令按钮（页面用 `useCommands` 登记标了 `header` 的命令）。操作靠右，是小号的文字按钮，图标在字前面；这一页的主操作是唯一一颗琥珀色实心按钮。手机上这一条怎么变，见 §10。
 
 **什么时候不套 `AppPage`。** 三种东西有它自己的外观，再套一层就是第二个页头加第二栏，反而叠了：
@@ -632,6 +636,7 @@ const { saving, saved, dirty, error, run } = useSaveState({
 |---|---|---|
 | stylelint 颜色规则 | 新增的写死颜色（hex / rgb / hsl / 颜色名），包括文档站的 `docs/site/src/style.css` | `frontend/stylelint.config.cjs` |
 | stylelint 圆角规则 | 不在档位里的 `border-radius` | 同上 |
+| stylelint 断点规则 | `@media` 里不在四个视口档上的宽度（只扫 `frontend/src`；`docs/site` 和 `breakpoints.scss` 是各自那套的定义处，单独放行） | 同上 |
 | 固定调色板闸门 | 模板和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*` | `.claude/scripts/check-repo-rules.sh` |
 | 存量棘轮 | 以上只拦**新增**；存量冻结在基线里，只能减少 | `frontend/stylelint-baseline.json`、`frontend/palette-baseline.json` |
 

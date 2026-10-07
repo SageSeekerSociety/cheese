@@ -922,7 +922,8 @@ div[data-footnote]::before {
 
 /* ---- A reader's table on a phone ---------------------------------------- */
 
-@media (max-width: 600px) {
+/* 断点收进共享 token：767.98 = $bp-phone（styles/breakpoints.scss）。 */
+@media (max-width: 767.98px) {
   .doc-reading .tableWrapper[data-shape='cards'] {
     overflow: visible;
     border: 0;

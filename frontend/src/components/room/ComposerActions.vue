@@ -325,6 +325,11 @@ const summonText = computed(() => ({
 .summon-btn-short {
   display: none;
 }
+/* 480 不在 `styles/breakpoints.scss` 的四档里，是**认定过的例外**，不是漏网：
+   判的是「『交给某某』那个名字放不放得下」——两个字加图标够，四个字不够——不是
+   布局折叠，所以归 768 是错的（480–767 这一段输入框仍是整宽，长名字放得下，会被
+   误收）。本来改容器查询更贴题，但这一行上游没有任何 `container-type`，为两个字
+   新挂一层行内尺寸包含不划算。整笔账见 `docs/breakpoint-inventory.md` 第七组。 */
 @media (max-width: 480px) {
   .summon-btn-label {
     display: none;

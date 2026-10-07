@@ -22,6 +22,17 @@ export const SPLIT_MIN_WIDTH = 768
 export const SPLIT_LIST_WIDTH = 320
 
 /**
+ * 从这一档起不再是手机外壳——Vuetify 的 `mdAndUp`，和
+ * `styles/breakpoints.scss` 的 `$bp-mobile`（959.98）同一条线。
+ *
+ * 样式那边这条线有名字（`$bp-mobile`），JS 这边原本只有裸的 `960`：
+ * `lib/viewTransition.ts` 的 `matchMedia` 字符串就写着它。同一个数在两个文件里各写
+ * 一遍，改一处忘一处不会有任何东西变红，所以收成一个常量，谁要在 JS 里问「还是不是
+ * 手机外壳」都引它。
+ */
+export const MOBILE_MIN_WIDTH = 960
+
+/**
  * 桌面窄档的上界：960（mdAndUp）到这个宽度（含）就是「平板横放」那一档。
  *
  * 这一档里常驻二级侧栏（280px）挤掉正文太多，所以它改成可收起的浮层（默认收起），
@@ -32,6 +43,18 @@ export const SPLIT_LIST_WIDTH = 320
  * 存在，由 JS（`matchMedia` / `useDisplay`，见 `useCompactDesktop`）来读。
  */
 export const COMPACT_DESKTOP_MAX_WIDTH = 1180
+
+/**
+ * 最宽那一档的门槛——Vuetify 的 `lg`，和 `styles/breakpoints.scss` 的 `$bp-wide`
+ * （1279.98）同一条线。
+ *
+ * JS 这边用它的是 `composables/useAdminQueue`：队列页在这一档以上让详情整页接管，
+ * 以下才是那个 520px 的抽屉。样式那边的同一条线在 `AdminQueueDetail` 的
+ * `@media (min-width: 1280px)`——那一处**故意**是视口查询（判据是「窗口够不够宽」，
+ * 不是「这一格够不够宽」），换不了容器查询，所以两边只能靠这两个常量对齐：改这里就
+ * 要改那里。
+ */
+export const WIDE_MIN_WIDTH = 1280
 
 /** 两栏时左边留着话题列表的那几层：列表本身，和从列表打开的房间、任务。 */
 const SPLIT_ROUTES: ReadonlySet<RouteRecordNameGeneric> = new Set([

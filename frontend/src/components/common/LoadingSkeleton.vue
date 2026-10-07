@@ -610,7 +610,8 @@ function width(i: number): string {
 }
 /* 窄屏（Vuetify mdAndUp 的门槛是 960px）真页面是单栏，右栏掉到正文下面。
    断点必须跟着改，否则骨架是两栏、内容是一栏。 */
-@media (max-width: 959px) {
+/* 断点收进共享 token：959.98 = $bp-mobile（styles/breakpoints.scss）。 */
+@media (max-width: 959.98px) {
   .skel__dt {
     grid-template-columns: minmax(0, 1fr);
   }

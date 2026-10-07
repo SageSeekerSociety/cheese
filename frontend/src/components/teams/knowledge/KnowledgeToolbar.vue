@@ -123,6 +123,8 @@ function pickTag(value: unknown) {
 </template>
 
 <style scoped lang="scss">
+@use '../../../styles/breakpoints.scss' as bp;
+
 .knowledge-search {
   min-width: 280px;
   max-width: 500px;
@@ -134,7 +136,7 @@ function pickTag(value: unknown) {
 }
 
 // 响应式调整
-@media (max-width: 600px) {
+@include bp.below(bp.$bp-phone) {
   .knowledge-search {
     width: 100%;
   }
