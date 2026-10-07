@@ -129,7 +129,11 @@ def main() -> None:
         key, value = "ready", ci_ready(sys.argv[2])
     else:
         # CI may have been rerun while this job waited for the deploy runner.
-        key, value = "skip", not ci_ready(sys.argv[1]) or should_skip(sys.argv[1])
+        # That release did not happen, so the job fails: a skip would leave it
+        # green, and a green deploy job reads as "this commit is on dev".
+        if not ci_ready(sys.argv[1]):
+            raise SystemExit(f"Not deploying {sys.argv[1]}: its validation is no longer successful.")
+        key, value = "skip", should_skip(sys.argv[1])
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"{key}={str(value).lower()}\n")
 

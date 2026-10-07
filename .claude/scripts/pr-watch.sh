@@ -50,8 +50,8 @@ deploy_of() { # "<status> <conclusion> <run id>" of the newest dev deploy contai
   local merge=$1 id st co sha
   while read -r id st co sha; do
     gh api "repos/$REPO/compare/$merge...$sha" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$' || continue
-    # A run whose eligibility check found nothing to release concludes success
-    # with its deploy job skipped; that run shipped nothing, so it is not the deploy.
+    # A run whose eligibility check refused the release fails with its deploy
+    # job skipped; that run shipped nothing, so it is not the deploy.
     [ "$(gh run view "$id" -R "$REPO" --json jobs -q '.jobs[]|select(.name=="deploy")|.conclusion' 2>/dev/null)" = skipped ] && continue
     echo "$st ${co:-none} $id"; return
   done < <(gh run list -R "$REPO" --workflow deploy-dev.yml --limit 8 \

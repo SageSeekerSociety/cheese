@@ -286,15 +286,66 @@ class CandidateCI(unittest.TestCase):
         self.assertNotIn("push", triggers)
         self.assertIn("merge_group", triggers)
 
-    def test_ci_rerun_while_waiting_for_deploy_runner_prevents_release(self):
+    def test_ci_rerun_while_waiting_for_deploy_runner_fails_the_release(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
             with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}), patch.object(
                 GUARD.sys, "argv", ["check-auto-deploy.py", self.candidate]
             ), patch.object(GUARD, "ci_ready", return_value=False), patch.object(GUARD, "should_skip") as deploy:
-                GUARD.main()
-            self.assertEqual(output.read_text(), "skip=true\n")
+                with self.assertRaises(SystemExit) as refused:
+                    GUARD.main()
+            self.assertIn(self.candidate, str(refused.exception.code))
+            self.assertFalse(output.exists())
             deploy.assert_not_called()
+
+    @staticmethod
+    def fake_bin(directory, **programs):
+        for name, body in programs.items():
+            path = Path(directory) / name
+            path.write_text(f"#!/usr/bin/env bash\n{body}\n")
+            path.chmod(0o755)
+        return f"{directory}:{os.environ['PATH']}"
+
+    @staticmethod
+    def step(job, name):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        return next(step for step in workflow["jobs"][job]["steps"] if step.get("name") == name)
+
+    def test_a_refused_release_fails_the_run_and_says_what_dev_runs(self):
+        step = self.step("eligibility", "Fail when this commit will not be deployed")
+        self.assertEqual(step["if"], "steps.check.outputs.ready != 'true'")
+        live = "b" * 40
+        for curl, expected in ((f"echo '{{\"data\": {{\"sha\": \"{live}\"}}}}'", live), ("exit 7", "unknown")):
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
+                summary = Path(directory) / "summary"
+                result = subprocess.run(
+                    ["bash", "-e", "-c", step["run"]], capture_output=True, text=True,
+                    env={**os.environ, "PATH": self.fake_bin(directory, curl=curl),
+                         "CANDIDATE_SHA": self.candidate, "GITHUB_STEP_SUMMARY": str(summary)})
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(f"::error::Not deployed {self.candidate}", result.stdout)
+                self.assertIn(f"Not deployed `{self.candidate}`", summary.read_text())
+                self.assertIn(f"dev runs `{expected}`", summary.read_text())
+
+    def test_every_deploy_run_names_the_commit_dev_runs(self):
+        step = self.step("deploy", "Say which commit dev runs")
+        self.assertEqual(step["if"], "always()")
+        docker = ('case "$1" in ps) echo "backend-b cheese-backend-b-1";; '
+                  'inspect) echo "ghcr.io/example/backend:abc1234";; esac')
+        for outcome, skip, expected in (
+            ("success", "false", f"Deployed `{self.candidate}`. dev runs `abc1234`."),
+            ("success", "true", f"Not deployed `{self.candidate}`: dev already runs the same release or a newer one. dev runs `abc1234`."),
+            ("failure", "", f"Not deployed `{self.candidate}`: this job ended in failure. dev runs `abc1234`."),
+        ):
+            with self.subTest(outcome=outcome, skip=skip), tempfile.TemporaryDirectory() as directory:
+                summary = Path(directory) / "summary"
+                result = subprocess.run(
+                    ["bash", "-e", "-c", step["run"]], cwd=ROOT, capture_output=True, text=True,
+                    env={**os.environ, "PATH": self.fake_bin(directory, docker=docker),
+                         "HOME": directory, "CANDIDATE_SHA": self.candidate, "SKIP": skip,
+                         "OUTCOME": outcome, "GITHUB_STEP_SUMMARY": str(summary)})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(summary.read_text().strip(), expected)
 
     def test_release_entry_rejects_unready_ci(self):
         for filename, job in (("deploy.yml", "wait-for-ci"), ("deploy-prod.yml", "gate")):
