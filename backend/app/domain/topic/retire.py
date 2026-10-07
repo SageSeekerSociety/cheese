@@ -13,6 +13,7 @@ from pathlib import Path
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent import resource_cleanup
@@ -20,6 +21,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_storage import (
     KEEP_ROOM_TIMEOUT_S,
     expire_room_files,
+    keep_room_files_due,
     list_device_storage,
     record_room_files,
     room_files_upload_url,
@@ -361,6 +363,8 @@ async def _sweep_once(
         await expire_room_files(sessions)
     except Exception:  # noqa: BLE001 — the next sweep tries again
         logger.warning("kept room files not expired", exc_info=True)
+    # Sending them can take minutes; the cleanups below do not wait for it.
+    spawn(keep_room_files_due(sessions), name="kept room files")
     async with sessions() as session:
         ids = list(
             await session.scalars(

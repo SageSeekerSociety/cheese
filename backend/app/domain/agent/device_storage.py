@@ -13,9 +13,12 @@ the conversation it belonged to is told until when, and the copy is deleted
 after ``RETENTION``. During that time the platform's operators fetch it on
 request with ``scripts/retained_files.py``.
 
-Two moments send them. Every home on a self-hosted machine is looked at once
-when that machine connects (``keep_device_room_files``), so the rooms are told
-before anything archives them; each home is recorded in ``KeptRoomFiles``
+Two moments send them. Every home on a self-hosted machine is looked at once,
+when that machine connects (``keep_device_room_files``) and in a pass over
+the connected ones that the room-cleanup sweep starts at most hourly
+(``keep_room_files_due``; a machine that stays connected to the connection
+owner across a deploy does not connect again), so the rooms are told before
+anything archives them; each home is recorded in ``KeptRoomFiles``
 whether or not it held anything. And a room's cleanup hands the machine an
 upload URL with every removal (``room_files_upload_url``): the removal sends
 what has not been sent yet before it deletes, in the same command, so nothing
@@ -338,6 +341,53 @@ async def keep_device_room_files(
                     exc_info=True,
                 )
     return looked
+
+
+async def keep_room_files_everywhere(sessions, *, hub=None, storage=None) -> int:
+    """``keep_device_room_files`` for every connected self-hosted machine; one
+    that is not connected is looked at when it connects. Answers how many homes
+    were looked at."""
+    from app.domain.device.models import DeviceRow
+    from app.domain.device.supply import Supply
+
+    async with sessions() as session:
+        device_ids = list(
+            await session.scalars(
+                select(DeviceRow.device_id).where(
+                    DeviceRow.supply == Supply.self_hosted
+                )
+            )
+        )
+    hub = hub or device_hub
+    looked = 0
+    for device_id in device_ids:
+        if hub.is_online(device_id):
+            looked += await keep_device_room_files(
+                sessions, device_id, hub=hub, storage=storage
+            )
+    return looked
+
+
+#: How often the pass over every connected machine runs at most.
+EVERYWHERE_EVERY = timedelta(hours=1)
+# When this process last started that pass; None: not yet.
+_everywhere_at: datetime | None = None
+
+
+async def keep_room_files_due(sessions, *, hub=None) -> int:
+    """``keep_room_files_everywhere``, when this process has not run it within
+    ``EVERYWHERE_EVERY`` and knows of a connected machine. Not before: right
+    after a start the backend has not yet heard which machines are connected,
+    and a pass then would look at none and wait out the hour."""
+    global _everywhere_at
+    hub = hub or device_hub
+    now = datetime.now(UTC)
+    if _everywhere_at is not None and now - _everywhere_at < EVERYWHERE_EVERY:
+        return 0
+    if not hub.online_device_ids():
+        return 0
+    _everywhere_at = now
+    return await keep_room_files_everywhere(sessions, hub=hub)
 
 
 async def expire_room_files(sessions, *, storage=None) -> int:
