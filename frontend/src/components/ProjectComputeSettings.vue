@@ -1,13 +1,13 @@
 <script setup lang="ts">
 // 项目只给默认：新 agent 开工时用哪台工作电脑。已经在干活的 agent 各有各的机器，
 // 改默认不搬它们；它们现在在哪，写在「现在的分布」里。
-import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
+import type { ComputeChoice } from '@/types/compute'
 
 import { onMounted, ref, watch } from 'vue'
 
+import { useProjectCompute } from '@/composables/useProjectCompute'
 import { holdRevealGate } from '@/composables/useRevealGate'
 
-import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
 import { t } from '../i18n'
 import { choiceDetail, choiceName, deviceName } from '../lib/computeConfig'
 
@@ -18,34 +18,13 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
 
 const props = defineProps<{ projectId: string }>()
-const state = ref<ProjectComputeConfigs | null>(null)
-const error = ref('')
-const busy = ref(false)
+const { state, error, busy, load, save } = useProjectCompute(() => props.projectId)
 const editing = ref(false)
 // English says 1 agent / 2 agents; the count's own key carries the plural.
 const agents = (count: number) => t('work.projectMachine.agents', { count })
-async function load() {
-  error.value = ''
-  try {
-    state.value = await getProjectComputeConfigs(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectMachine.loadFailed')
-  }
-}
-async function save(choice: ComputeChoice) {
-  if (!state.value?.can_manage) return
-  busy.value = true
-  error.value = ''
-  try {
-    const result = await saveProjectComputeConfigs(props.projectId, { default: choice })
-    state.value = { ...state.value, ...result }
-    window.dispatchEvent(new Event('project-compute-updated'))
-    editing.value = false
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectMachine.saveFailed')
-  } finally {
-    busy.value = false
-  }
+// 存进去了才把表单收起来：失败时那一行错误要留在原地，选项也还在。
+async function select(choice: ComputeChoice) {
+  if (await save(choice)) editing.value = false
 }
 // 首次取数期间占住设置页的显示闸，见 useRevealGate。
 const releaseGate = holdRevealGate()
@@ -81,7 +60,7 @@ watch(() => props.projectId, load)
         :cloud-available="state.cloud_available"
         :cloud-vm-available="state.cloud_vm_available"
         :busy="busy"
-        @select="save"
+        @select="select"
       />
 
       <div class="distribution" data-testid="project-distribution">
