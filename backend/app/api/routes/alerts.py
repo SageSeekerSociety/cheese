@@ -86,22 +86,24 @@ async def create_notification(
     actor = await resolver.require_verified_caller(
         project_id=project_id, topic_id=body.topic_id
     )
-    # `topic_id` 是 `topics` 的外键，而一条线程不是那张表里的行 —— 所以每个 agent
-    # 手上那个地点 id（`$CHEESE_TOPIC`，对分身来说是线程的 id）违反约束，
-    # `cheese_notify` 对它们全部 500。一条通知是发给人的，不是发给地点的，所以指
-    # 向房间是诚实的做法。这是一次收窄：答复一个决策请求会把【决策】发回这个房
-    # 间，于是线程里的问题答在它外面那个房间里。要带上线程得给它一列自己的
-    # `task_id`，像块和用量已经有的那样。
-    topic_id = body.topic_id
-    if topic_id is not None:
-        place = await TopicService(db).place_or_404(topic_id)
+    # 这条通知关于哪条对话 —— 一个频道自己那条线、它的一条任务、或一条支线。调用
+    # 点手上那个地点 id（`$CHEESE_TOPIC`，芝士在自己房间里就是那条任务或那条支线）
+    # 本来就是它，校验完照原样存下来。折成它所在的频道会让在任务或支线里问的决策
+    # 答到频道主线上：拍板的回执（`notification.ProjectNotificationService.resolve`）
+    # 照着这一列写，提问的那条会话于是读不到自己等的那句话。
+    conversation_id = None
+    room_id = None
+    if body.topic_id is not None:
+        place = await TopicService(db).place_or_404(body.topic_id)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
-        topic_id = place.room_id
+        conversation_id = place.conversation_id
+        room_id = place.room_id
     if actor.authenticated:
-        if topic_id is not None:
+        # 授权、名册和面板都是频道的，所以下面这几句问的是 `room_id`。
+        if room_id is not None:
             await resolver.authorize_topic(
-                actor, project_id=project_id, topic_id=topic_id, enforce=True
+                actor, project_id=project_id, topic_id=room_id, enforce=True
             )
         elif actor.via == "token":
             # A session token names a person and no project, so the project is
@@ -111,9 +113,9 @@ async def create_notification(
         target = body.target_handle
         if target is not None and not (
             await resolver.topic_admits_handle(
-                actor, project_id=project_id, topic_id=topic_id, handle=target
+                actor, project_id=project_id, topic_id=room_id, handle=target
             )
-            if topic_id is not None
+            if room_id is not None
             else await may_read_project(db, project_id=project_id, handle=target)
         ):
             raise ValidationError(say("alertRecipientOutside"))
@@ -124,12 +126,12 @@ async def create_notification(
         title=body.title,
         body=body.body,
         target_handle=body.target_handle,
-        topic_id=topic_id,
+        conversation_id=conversation_id,
         payload=body.payload,
     )
     await db.commit()
-    if topic_id is not None:
-        await announce_stale(topic_id, "notify")
+    if room_id is not None:
+        await announce_stale(room_id, "notify")
     return ok(page([_dump(row) for row in rows], len(rows)))
 
 
