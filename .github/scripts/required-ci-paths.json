@@ -31,6 +31,7 @@
     ".github/workflows/cli.yml"
   ],
   "guards": [
+    "docs/**",
     "backend/**",
     "frontend/**",
     "deploy/**",
