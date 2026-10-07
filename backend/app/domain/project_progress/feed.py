@@ -19,7 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.project import artifacts
-from app.domain.review.queries import latest_cards_by_task, returned_since
+from app.domain.review.queries import (
+    accepted_by_task,
+    latest_cards_by_task,
+    returned_since,
+)
 from app.domain.room_task import presentation
 from app.domain.room_task.services import TaskService
 
@@ -28,6 +32,8 @@ WINDOW = timedelta(days=14)
 
 #: 一次最多给多少条。
 LIMIT = 40
+#: 关闭离最后一次采纳不到这么久，就是那次采纳关的。
+CLOSED_BY_LANDING = timedelta(minutes=5)
 
 CREATED = "created"
 STARTED = "started"
@@ -107,12 +113,21 @@ async def recent(
                 )
             )
 
+    # 一件任务可以交付好几次，每一次采纳都是一条进展。
+    accepted = await accepted_by_task(session, [t.id for t in tasks])
     for task in tasks:
         about(task, CREATED, task.created_at, task.created_by or task.owner_handle)
         about(task, STARTED, task.started_at, task.started_by)
-        if task.accepted_at is not None:
+        for landed in accepted.get(task.id, []):
+            about(task, ACCEPTED, landed.at, landed.by)
+        if task.id not in accepted and task.accepted_at is not None:
+            # 没走交付、在代码仓库直接合并的那一次。
             about(task, ACCEPTED, task.accepted_at, task.accepted_by)
-        elif task.closed_at is not None:
+        # 最后一次采纳就把任务关了的，关闭不另算一条；采纳过几步之后才关的算。
+        if task.closed_at is not None and (
+            task.accepted_at is None
+            or task.closed_at - task.accepted_at > CLOSED_BY_LANDING
+        ):
             kind = COMPLETED if task.conclusion else CLOSED
             about(task, kind, task.closed_at, task.owner_handle)
 

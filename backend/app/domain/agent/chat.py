@@ -21,14 +21,13 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, own_calls, own_limit
-from app.domain.agent.announce import announce, answer_questions
+from app.domain.agent.announce import answer_questions
 from app.domain.agent.ask import publish_answered
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.compute import ComputePool
@@ -119,10 +118,8 @@ from app.domain.agent.mentions import (
     project_refs_text,
 )
 from app.domain.agent.platform_notices import (
-    EVENT_MCP_NOT_CONNECTED,
     EVENT_TURN_FAILED,
     SEVERITY_INFO,
-    SEVERITY_WARN,
     WHO_HUMAN,
     delivery_checking_notice,
     delivery_fallback_notice,
@@ -261,7 +258,6 @@ logger = logging.getLogger(__name__)
 # those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
 # to them is the same fact told twice, worse.
 _ACTION_LABEL = {
-    "topics": "actionTopics",
     "notify": "actionNotify",
 }
 
@@ -1167,51 +1163,6 @@ class ChatService(SessionRecovery, RoomTurns):
         turn id is the difference between a handover and an assumption.
         """
         return turn_id in self._active_turn_ids.get(topic_id, ())
-
-    async def _unconnected_mcp(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, agent_handle: str | None
-    ) -> tuple[str, ...]:
-        """The remote MCP servers this session cannot use yet, its type's too,
-        each said once in the room: 「<name> 需要在项目设置里连接」."""
-
-        from app.domain.remote_mcp import service as remote_mcp
-
-        try:
-            async with self._sessions() as session:
-                unusable = (
-                    await remote_mcp.session_servers(session, project_id, agent_handle)
-                ).unusable
-                said = set(
-                    await session.scalars(
-                        select(Block.meta["server"].as_string()).where(
-                            Block.conversation_id == topic_id,
-                            Block.kind == BlockKind.event,
-                            Block.meta["event_type"].as_string()
-                            == EVENT_MCP_NOT_CONNECTED,
-                        )
-                    )
-                )
-                for name in unusable:
-                    if name in said:
-                        continue
-                    await announce(
-                        session,
-                        place_id=topic_id,
-                        content=say("mcpNotConnected", server=name),
-                        meta={
-                            **notice(
-                                EVENT_MCP_NOT_CONNECTED,
-                                severity=SEVERITY_WARN,
-                                who=WHO_HUMAN,
-                            ),
-                            "server": name,
-                        },
-                    )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — a notice must never fail a turn
-            logger.exception("remote MCP check failed for topic %s", topic_id)
-            return ()
-        return unusable
 
     async def post_system_event(
         self,

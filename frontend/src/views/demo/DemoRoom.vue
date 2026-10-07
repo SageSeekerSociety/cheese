@@ -6,7 +6,8 @@
 // 而演示要讲的恰恰是它们背后的机制，所以把机制写成看得见的几张卡。
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
 import type { Block, Topic } from '@/cx_types'
-import type { Frame, PanelKey, Scene } from './demoScene'
+import type { TaskLine } from '@/lib/channelTasks'
+import type { Frame, PanelKey, Scene, SplitLine } from './demoScene'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
@@ -15,17 +16,18 @@ import DemoBackstage from './DemoBackstage.vue'
 import { DEMO_PROJECT, DEMO_TOPIC, demoTaskId, installPanelAnswers } from './demoPanels'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
-import DispatchedMarker from '@/components/DispatchedMarker.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
+import TaskCard from '@/components/room/TaskCard.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import PanelChangesHost from '@/components/work/PanelChangesHost.vue'
 import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
 import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
+import { t } from '@/i18n'
 import { collapseNotices, type PlatformNotice } from '@/lib/platformNotice'
 
 const props = defineProps<{ scene: Scene; frame: Frame }>()
@@ -221,6 +223,20 @@ watch(
   },
   { immediate: true }
 )
+
+// 演示里的任务只有在做和做完两档，画成频道里同一种任务卡。
+function splitTask(split: SplitLine): TaskLine {
+  return {
+    id: split.taskId,
+    title: split.title,
+    owner: null,
+    creator: null,
+    status: split.done ? t('work.board.phrase.accepted') : t('work.board.phrase.running'),
+    tone: split.done ? 'done' : 'running',
+    accepted: null,
+    at: '',
+  }
+}
 </script>
 
 <template>
@@ -269,7 +285,12 @@ watch(
         <TransitionGroup name="demo-line" tag="div" class="demo-lines">
           <template v-for="(row, i) in rows" :key="row.key">
             <TimelineMark v-if="row.line.kind === 'mark'" quiet>{{ row.line.text }}</TimelineMark>
-            <DispatchedMarker v-else-if="row.line.kind === 'split' && row.line.split" :marker="row.line.split" />
+            <TaskCard
+              v-else-if="row.line.kind === 'split' && row.line.split"
+              class="demo-task"
+              :task="splitTask(row.line.split)"
+              :owner-name="null"
+            />
             <RoomNotice
               v-else-if="row.block && row.notice"
               :block="row.block"

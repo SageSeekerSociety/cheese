@@ -63,7 +63,7 @@ describe('主线上「正在回复」', () => {
         last_reply_at: null,
         last_reply: null,
         participants: [ME],
-        task: null,
+        tasks: [],
         replying,
       },
     }
@@ -104,7 +104,7 @@ describe('主线上写队友在支线里等什么', () => {
       last_reply_at: null,
       last_reply: null,
       participants: [ME],
-      task: null,
+      tasks: [],
     },
   })
   function record(eventType: string, meta: Record<string, unknown> = {}): Block {
@@ -167,7 +167,7 @@ describe('一轮出错、还没有回复的支线', () => {
         last_reply_at: null,
         last_reply: null,
         participants: [ME],
-        task: null,
+        tasks: [],
       },
     }
     const messages = ref<Block[]>([asked])

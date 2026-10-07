@@ -264,24 +264,6 @@ class BlockRepository:
         await self._session.delete(block)
         await self._session.flush()
 
-    async def set_upgraded_to_place(
-        self,
-        block: Block,
-        *,
-        topic_id: uuid.UUID | None = None,
-        task_id: uuid.UUID | None = None,
-    ) -> None:
-        """Point this block's position at the place it became.
-
-        Exactly one of the two: upgrading inside a room dispatches work
-        (`task_id`), upgrading out of a private chat opens a room
-        (`topic_id`). Both are real foreign keys, which is why this is a pair
-        of nullable columns rather than one column holding either.
-        """
-        block.upgraded_to_topic_id = topic_id
-        block.upgraded_to_task_id = task_id
-        await self._session.flush()
-
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
     ) -> None:

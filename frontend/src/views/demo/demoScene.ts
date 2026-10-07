@@ -207,7 +207,7 @@ export interface SplitLine {
   taskId: string
   title: string
   /** 演示里的任务只有在做和做完两档。 */
-  level: 'running' | 'done'
+  done: boolean
   createdAt: string
 }
 
@@ -439,7 +439,7 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
           const split: SplitLine = {
             taskId: e.id,
             title: e.title,
-            level: e.status === 'closed' ? 'done' : 'running',
+            done: e.status === 'closed',
             createdAt: existing?.split?.createdAt ?? created_at,
           }
           if (existing) existing.split = split

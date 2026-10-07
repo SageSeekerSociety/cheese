@@ -1,7 +1,8 @@
-/** 打开一条支线就算读过它；挂着的那条消息已经转成任务的，给的是打开那个任务，不再给「转为任务」。 */
+/** 打开一条支线就算读过它；一条支线可以转出几件任务，转出来的都列在挂着的那条消息下面。 */
 import type { Component } from 'vue'
-import type { Block, Topic } from '@/cx_types'
+import type { Block, RoomTask, Topic } from '@/cx_types'
 
+import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -12,12 +13,8 @@ const markRead = vi.fn()
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ markRead }) }))
 const getThread = vi.fn()
 vi.mock('@/api/threads', () => ({ getThread: (id: string) => getThread(id) }))
-const listTaskProposals = vi.fn()
-vi.mock('@/api/tasks', () => ({
-  listTaskProposals: (id: string) => listTaskProposals(id),
-  acceptTaskProposal: vi.fn(),
-  dismissTaskProposal: vi.fn(),
-}))
+const roomTasks = ref<RoomTask[]>([])
+vi.mock('@/composables/useRoomTasks', () => ({ useRoomTasks: () => ({ tasks: roomTasks, reload: vi.fn() }) }))
 
 import ThreadPane from './ThreadPane.vue'
 
@@ -40,6 +37,20 @@ function root(over: Partial<Block> = {}): Block {
   }
 }
 
+function task(id: string, origin: string, title = '一件任务'): RoomTask {
+  return {
+    id,
+    room_id: 'r1',
+    title,
+    status: 'open',
+    owner_handle: 'alice',
+    upgraded_from_block_id: origin,
+    created_at: `2026-10-06T00:00:0${id.length}Z`,
+    updated_at: '2026-10-06T00:00:00Z',
+    presentation: { column: 'building', phrase: 'running' },
+  } as RoomTask
+}
+
 function mount() {
   return render(ThreadPane as Component, {
     props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
@@ -50,8 +61,7 @@ function mount() {
 beforeEach(() => {
   markRead.mockClear()
   getThread.mockReset()
-  listTaskProposals.mockReset()
-  listTaskProposals.mockResolvedValue([])
+  roomTasks.value = []
 })
 
 describe('支线', () => {
@@ -61,34 +71,32 @@ describe('支线', () => {
     await waitFor(() => expect(markRead).toHaveBeenCalledWith('th1'))
   })
 
-  it('还没转成任务：「转为任务」转的是它挂着的那条消息', async () => {
+  it('「转为任务」转的是它挂着的那条消息，已经转过的也还能再转', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
+    roomTasks.value = [task('task9', 'b1')]
     const { findByTestId, emitted } = mount()
     await fireEvent.click(await findByTestId('thread-to-task'))
     expect(emitted()['to-task']).toEqual([['b1']])
   })
 
-  it('已经转成任务：给的是打开那个任务', async () => {
-    getThread.mockResolvedValue({
-      id: 'th1',
-      room_id: 'r1',
-      root_block_id: 'b1',
-      reply_count: 2,
-      root: root({ upgraded_to_task_id: 'task9' }),
-    })
-    const { findByTestId, queryByTestId, emitted } = mount()
-    await fireEvent.click(await findByTestId('thread-open-task'))
-    expect(queryByTestId('thread-to-task')).toBeNull()
-    expect(emitted()['open-task']).toEqual([['task9']])
+  it('从这里转出的任务都列着，点开去那件任务', async () => {
+    getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
+    roomTasks.value = [
+      task('task9', 'b1', '表单字段精简'),
+      task('task10', 'b1', '学号格式校验'),
+      task('x', 'b2', '别处'),
+    ]
+    const { findAllByTestId, emitted, queryByText } = mount()
+    const cards = await findAllByTestId('task-card')
+    expect(cards.map((c) => c.getAttribute('data-task-id'))).toEqual(['task9', 'task10'])
+    expect(queryByText('别处')).toBeNull()
+    await fireEvent.click(cards[1])
+    expect(emitted()['open-task']).toEqual([['task10']])
   })
 
-  it('芝士在支线里提的卡，接在支线的对话后面', async () => {
-    // 卡落在提出它的那段对话上：支线里提的就在支线里，按房间去取就一张也看不到。
+  it('反馈卡接在支线的对话后面', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
-    listTaskProposals.mockResolvedValue([
-      { id: 'tp1', title: '把首页的标语往上挪', summary: '', proposed_by: 'cheese', state: 'open' },
-    ])
-    const { findByText, container } = render(ThreadPane as Component, {
+    const { container } = render(ThreadPane as Component, {
       props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
       global: {
         plugins: [vuetify],
@@ -99,8 +107,6 @@ describe('支线', () => {
         },
       },
     })
-    expect(await findByText('把首页的标语往上挪')).toBeTruthy()
-    expect(listTaskProposals).toHaveBeenCalledWith('th1')
-    expect(container.querySelector('.feedback-probe')?.textContent).toBe('th1')
+    await waitFor(() => expect(container.querySelector('.feedback-probe')?.textContent).toBe('th1'))
   })
 })

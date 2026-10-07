@@ -47,6 +47,7 @@ _tasks = table(
     column("title", String),
     column("status", String),
     column("upgraded_from_block_id", Uuid),
+    column("created_at", DateTime(timezone=True)),
 )
 
 
@@ -310,20 +311,21 @@ async def _describe(
             select(Block).where(Block.id == _among([t.root_block_id for t in threads]))
         )
     }
-    tasks = {
-        task.upgraded_from_block_id: task
-        for task in await session.execute(
-            select(
-                _tasks.c.id,
-                _tasks.c.title,
-                _tasks.c.status,
-                _tasks.c.upgraded_from_block_id,
-            ).where(
-                _tasks.c.upgraded_from_block_id
-                == _among([t.root_block_id for t in threads])
-            )
+    tasks: dict[uuid.UUID, list] = {}
+    for task in await session.execute(
+        select(
+            _tasks.c.id,
+            _tasks.c.title,
+            _tasks.c.status,
+            _tasks.c.upgraded_from_block_id,
         )
-    }
+        .where(
+            _tasks.c.upgraded_from_block_id
+            == _among([t.root_block_id for t in threads])
+        )
+        .order_by(_tasks.c.created_at)
+    ):
+        tasks.setdefault(task.upgraded_from_block_id, []).append(task)
     said = await _participants(session, threads)
     unread = await _unread(session, threads, viewer) if viewer else set()
     failed = await _failed(session, threads)
@@ -331,20 +333,17 @@ async def _describe(
     for thread in threads:
         root = roots.get(thread.root_block_id)
         people = said.get(thread.id, [])
-        task = tasks.get(thread.root_block_id)
         out.append(
             {
                 **_summary(thread, last.get(thread.id)),
                 "root": _reply(root),
                 "participants": people,
                 "failed": thread.id in failed,
-                "task": {
-                    "id": str(task.id),
-                    "title": task.title,
-                    "status": task.status,
-                }
-                if task is not None
-                else None,
+                # The tasks made from the message or its 支线, oldest first.
+                "tasks": [
+                    {"id": str(task.id), "title": task.title, "status": task.status}
+                    for task in tasks.get(thread.root_block_id, [])
+                ],
                 # Only the people who took part are told of a new reply, and
                 # only of what people said in it.
                 "unread": thread.id in unread

@@ -36,7 +36,7 @@ covers:
 
 `workspace_name` 是同一个 id 的另一种写法（`task_<8 位 hex>`），给人看的名字。三个名字都从卡的 id 推出来，没有第二个来源。
 
-一条活**只属于一个房间**（`Task.room_id` 指向 `topics`），活不嵌套——「这条活的活」是同一个房间里的另一条活。卡上另外两组人：`owner_handle` 是谁的任务（唯一的负责人，一个人），`reviewer_handle` 是谁说它可以落地；验收人在**开始那一刻**解析并写死（开始时指定的，否则任务上已有的，否则项目设置 `branch_protection.default_reviewer`，都没有就拒绝开始），不在递卡时回头读设置——设置是会变的政策，而「这条任务交给了谁」是那一刻的事实。`agent_handle` 是哪位 AI 队友在做（它在名册上的座位），空着就是所在频道的队友。任务从 AI 的提议来，由提议的那位做；从一条消息转来，由那条消息交给的那位做。
+一条活**只属于一个房间**（`Task.room_id` 指向 `topics`），活不嵌套——「这条活的活」是同一个房间里的另一条活。卡上另外两组人：`owner_handle` 是谁的任务（唯一的负责人，一个人），`reviewer_handle` 是谁说它可以落地；验收人在**开始那一刻**解析并写死（开始时指定的，否则任务上已有的，否则项目设置 `branch_protection.default_reviewer`，都没有就拒绝开始），不在递卡时回头读设置——设置是会变的政策，而「这条任务交给了谁」是那一刻的事实。`agent_handle` 是哪位 AI 队友在做（它在名册上的座位），空着就是所在频道的队友。任务由 AI 队友创建，由创建它的那位做；从一条消息转来，由那条消息交给的那位做。
 
 ## 状态只有两个 {#status}
 
@@ -46,11 +46,11 @@ covers:
 
 | 列 | 什么时候写 | 写完之后 |
 |---|---|---|
-| `accepted_at` | 采纳（那次合并成功） | 交付标记，和 `status` 无关；批准被撤销也不抹掉 |
-| `delivered_head` | 同上，记下合进去的那一版 | 与 `accepted_at` 一起构成「已交付」 |
-| `closed_at` | 负责人或任务的会话关闭（`cheese_close_task`），或采纳后的自动关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
+| `accepted_at` | 每次采纳（那次合并成功），记最近一次 | 交付标记，和 `status` 无关；批准被撤销也不抹掉 |
+| `delivered_head` | 同上，记下最近合进去的那一版 | 下一步的工作目录从这里把没合进去的提交带走 |
+| `closed_at` | 负责人或任务的会话关闭（`cheese_close_task`），或最后一步采纳后的关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
 
-所以有两条容易读错的组合：一条活可以**已交付却还开着**（有人继续往同一条分支推），也可以**关掉却什么都没交付**（显式放弃）。状态把「已交付」排在最前面，正是为了前一种（`presentation.task_presentation` 的第一条规矩）。
+所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的才按有没有采纳写「已采纳」「已完成」「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。
 
 ## 一条任务是一段对话 {#conversation}
 
@@ -62,11 +62,13 @@ covers:
 |---|---|---|
 | 房间 ⋯ 菜单里的「新建任务」 | `POST /topics/{room}/tasks` | 空任务，负责人第一句话时会话才起 |
 | 从一条消息「转为任务」 | `POST /blocks/{id}/upgrade` | 任务的会话收到一段开场提示，带着那条消息和它前面的几条讨论 |
-| 接受 AI 的提议 | `POST /topics/{room}/task-proposals/{block}/accept` | 同上，再加上提议里的说明；`.../dismiss` 是「不用」 |
+| AI 队友的 `cheese_task` | `POST /topics/{支线}/teammate-tasks` | 同上，再加上它写的 `summary`；`start` 为真时同时开始 |
 
-AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`，`{title, summary}`）：房间里落一张卡，带「创建任务」和「不用」两个按钮，点「创建任务」的人成为负责人。
+一条消息可以转出好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面；单独新建的任务才在主线上落一行 `task_created`。
 
-私聊里没有任务：新建、转为任务、提议这三条在同一处拒绝（`privateChatHasNoTasks`）。
+`cheese_task` 的 `owner` 是要这件事的人，省略时是支线挂着的那条消息的作者。有人让芝士去做时它填 `start: true`，任务建好就以负责人的名义开始（项目没有默认审阅人时开不了，回复里说明原因）；芝士自己想到的填 `false`，任务停在讨论中，由芝士在支线里问一次。
+
+私聊里没有任务：新建、转为任务、`cheese_task` 这三条在同一处拒绝（`privateChatHasNoTasks`）。
 
 后两种入口给任务会话的开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本和它起的那一轮现读，不另存。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务的原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
 
@@ -126,7 +128,18 @@ AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`�
 
 `cheese push-fix [--task <id>] [--drop-dependency]` 先跑一次 sync，再调 `POST /topics/{task}/push-fix`，把新提交刷到这条活**已有的**那个 PR 上并刷新验收状态；没有可推的东西就打印原因，不报错。`--drop-dependency` 用在「已经整理并验证是独立改动」之后：把现有 PR 改到项目默认分支，清掉任务依赖和旧批准。
 
-一个任务只有一个 PR（`Task.pr_number`），改验收卡不会新开 PR，`push-fix` 推的还是同一个。
+一次交付只有一个 PR（`Task.pr_number`），改验收卡不会新开 PR，`push-fix` 推的还是同一个。任务分步交付时，见[分步交付](#steps)。
+
+## 分步交付 {#steps}
+
+一件任务可以交付好几次。每次递卡时芝士说明这是不是最后一步（`cheese_accept_request` 的 `completes_task`，存在 `AcceptCard.completes_task`；这一列之前递的卡都算最后一步）。合并之后怎么走只在一处决定（`review/task_landing.py` 的 `delivery_landed`），采纳、合并队列、轮询器、在托管平台上直接合并的那几条路都经过它：
+
+- 最后一步：任务关闭，`after_close` 收拾机器上的工作目录。
+- 不是最后一步：任务开着，`TaskService.next_step` 把它换到一条从默认分支切出的新分支上（`task/<id>` 之后是 `task/<id>-2`、`-3`……），清掉 `pr_number`，下一步开自己的 PR；平台在任务的会话里留一条指令叫芝士接着做。叠在它旧分支上的任务由 `retarget_completed_dependencies` 改到默认分支。
+
+机器上的工作目录在下一次 `cheese worktree` 时跟过去（`_follow_task_branch`）：`delivered_head` 之后的提交变基到最新的默认分支上，没提交的文件原样带过去；和最新代码冲突就留在原分支上不动，报出冲突让芝士先解决。只有这件任务自己早先的分支会被跟过去，芝士自己切出的分支不动。
+
+每次采纳（以及带结论关闭）的结果由任务的 AI 队友回复到它出自的那条支线里（`tell_origin`），没有支线就开一条。负责人可以重新打开关了的任务（`POST /topics/{task}/reopen`）；交付过的同样换到新分支上。
 
 ## 任务列表与待处理清单是同一份规则 {#awaiting}
 
@@ -140,7 +153,7 @@ AI 队友的 `cheese_task` 只**提议**（`POST /topics/{room}/task-proposals`�
 | `building` 进行中 | 开始了，还没递出交付 | 运行中、已开始、空闲（房间）、草稿（房间） |
 | `delivering` 检查中 | 下一步在平台 / 芝士手上 | 检查运行中、等待检查、修复检查、解决冲突、平台更新分支 |
 | `needs_you` 待处理 | 下一步在人手上 | 检查未通过、待审阅、已退回、待回答 |
-| `done` 已完成 | 已采纳，或已关闭 | 已采纳、已完成（留了结论）、已关闭 |
+| `done` 已完成 | 已关闭：最后一步已采纳，或没交付就关了 | 已采纳、已完成（留了结论）、已关闭 |
 | `archived` 已归档 | 房间才有；任务不归档 | 已归档 |
 
 同一个客观事实会因为「谁负责下一步」落在不同列：CI 红了但平台已经派芝士去修是 `delivering`（显示「修复检查」）；芝士推不上去、那个红没人能清掉就是 `needs_you`（显示「检查未通过」）。列**从短语推出来**（`_show`：每个短语是它那一列专属枚举的成员，列由成员的类型查表得到），所以「显示了一句不属于本列的话」在结构上写不出来。

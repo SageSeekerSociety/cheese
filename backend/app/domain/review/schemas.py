@@ -45,6 +45,8 @@ class AcceptCardCreate(BaseModel):
     # 给就是交出去这次合并本身，代码仓库这类项目交的就是它。
     deliver: str | None = Field(default=None, max_length=512)
     deliver_url: str | None = Field(default=None, max_length=1024)
+    # 这次交付是不是任务的最后一步。不是的话，采纳后任务还开着，接着做下一步。
+    completes_task: bool = True
 
 
 class AcceptCardDescribe(BaseModel):
@@ -147,6 +149,8 @@ class AcceptCardOut(BaseModel):
     pr_repo: str | None = None
     pr_head_sha: str | None = None
     pr_merged_at: datetime | None = None
+    #: 采纳之后任务是完成了，还是接着做下一步。
+    completes_task: bool = True
     # 主分支保护 (spec §4.4): votes so far / votes needed. Enriched by the
     # service (approvals live in their own table; the requirement is a project
     # setting), so plain model_validate(card) keeps the defaults.

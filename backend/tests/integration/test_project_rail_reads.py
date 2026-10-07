@@ -127,7 +127,6 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
         "mime_type": None,
         "refs": [room],
         "upgraded_to_topic_id": None,
-        "upgraded_to_task_id": None,
         "turn_id": None,
         "meta": {
             "since": NEWER.isoformat(),

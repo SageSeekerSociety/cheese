@@ -104,3 +104,18 @@ async def returned_since(
         for card in await AcceptCardRepository(db).returned_since(task_ids, since)
         if card.task_id is not None and card.decided_at is not None
     ]
+
+
+async def accepted_by_task(
+    db: AsyncSession, task_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[Returned]]:
+    """这些任务每一次被采纳的交付：谁采纳的、什么时候，按先后。没被采纳过的任务
+    不在里面。"""
+    found: dict[uuid.UUID, list[Returned]] = {}
+    for card in await AcceptCardRepository(db).accepted_for_tasks(task_ids):
+        at = card.pr_merged_at or card.decided_at
+        if card.task_id is not None and at is not None:
+            found.setdefault(card.task_id, []).append(
+                Returned(task_id=card.task_id, by=card.decided_by, at=at)
+            )
+    return found

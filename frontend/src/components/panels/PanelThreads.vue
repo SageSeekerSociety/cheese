@@ -70,22 +70,22 @@ function people(row: ThreadRow): string {
               <span class="thread-row__root">{{ said(row.root, 80) }}</span>
               <span v-if="row.last_reply_at" class="thread-row__time t-meta">{{ fmtTime(row.last_reply_at) }}</span>
             </span>
-            <span v-if="row.task" class="thread-row__task">
+            <span v-for="task in row.tasks" :key="task.id" class="thread-row__task">
               <span
                 class="thread-row__task-link"
                 role="link"
                 tabindex="0"
-                @click.stop="emit('open-task', row.task.id)"
-                @keydown.enter.stop="emit('open-task', row.task.id)"
-                >{{ t('work.room.thread.becameTask', { title: row.task.title }) }}</span
+                @click.stop="emit('open-task', task.id)"
+                @keydown.enter.stop="emit('open-task', task.id)"
+                >{{ t('work.room.thread.taskLink', { title: task.title }) }}</span
               >
               <span class="thread-row__chip">{{
-                row.task.status === 'open'
-                  ? t('work.room.thread.taskStatus.open')
-                  : t('work.room.thread.taskStatus.closed')
+                task.status === 'open' ? t('work.room.thread.taskStatus.open') : t('work.room.thread.taskStatus.closed')
               }}</span>
             </span>
-            <span v-else-if="row.last_reply" class="thread-row__last">{{ said(row.last_reply, 200) }}</span>
+            <span v-if="!row.tasks.length && row.last_reply" class="thread-row__last">{{
+              said(row.last_reply, 200)
+            }}</span>
             <span class="thread-row__people t-meta">{{ people(row) }}</span>
           </button>
         </li>
