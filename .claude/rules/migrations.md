@@ -47,7 +47,10 @@ every migration a PR **adds** (CI: `migration-heads` job; locally: the
 1. **One transaction per migration.** `env.py` sets
    `transaction_per_migration=True`: a migration's locks and backfill row locks
    end with it, not with the last migration of the deploy. `lock_timeout` (10s)
-   is session-level and covers every migration.
+   is session-level and covers every migration. A deploy whose Nth migration
+   fails leaves the database at N−1 (no longer all-or-nothing) with the old
+   backend serving on it; rerunning the upgrade resumes from there. Another
+   reason each migration must be safe under the previous release.
 2. **Locks.** DDL on a table the live backend uses (`blocks`, `topics`,
    `tasks`, `agent_sessions`, `deliveries`, …) starts with
    `with_lock_retries("t1, t2")` from `migration_helpers` (on `sys.path` via
