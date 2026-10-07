@@ -4162,7 +4162,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "在 ~/.cheese/checkout 准备项目默认分支的代码（已有且没改过就更新到最新），"
             "输出路径；不会改变当前 shell 的目录。支线和还没开始的任务里看代码、"
-            "跑命令用它：这里的改动留不下，要改项目请提议任务。"
+            "跑命令用它：这里的改动留不下，要改项目就创建任务（cheese_task）。"
         ),
     )
     psync = sub.add_parser(

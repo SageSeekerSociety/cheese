@@ -38,7 +38,7 @@ async def thread_context(
             "执行完交回的结果会写进那条消息。",
             "这一轮就是这次执行：可以保存它要的结果文件。要看代码，用 "
             "`cheese checkout` 取一份主干代码；要改代码的事用 `cheese_task` "
-            "提议成任务。"
+            "创建成任务。"
             if routine_run
             else "这次执行已经跑过了，现在是有人在这里追问。这里的人 @ 你，你才回答。"
             "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"

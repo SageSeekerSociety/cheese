@@ -209,7 +209,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ```
 项目   POST /api/projects · GET /api/projects[/{id}] · GET /{id}/{overview,decisions,private-chat,contributions,summary,usage}
 话题   POST /api/topics · GET /api/topics?project_id= · GET /{id}[/blocks|transcript|children|doc|docs|usage]
-       PUT /{id}/doc · POST /{id}/tasks · POST /{id}/task-proposals[/{block}/{accept,dismiss}] · POST /api/blocks/{id}/upgrade
+       PUT /{id}/doc · POST /{id}/tasks · POST /{id}/teammate-tasks · POST /{id}/reopen · POST /api/blocks/{id}/upgrade
 任务   {id} 是任务的：GET|PATCH /{id}/task · POST /{id}/{start,close,title,messages} · GET /{id}/document，其余同话题
 对话   POST /api/topics/{id}/messages（人和队友同一条；作者取自凭据，请求体里的 author 不作数）
        WS  /api/topics/{id}/chat?token=<会话 token>（必带；只推送，不收消息）
