@@ -18,13 +18,10 @@ async def thread_context(
     session: "AsyncSession", room: Topic, root, *, routine_run: bool = False
 ) -> str:
     """What a 支线's session is told about where it is: the channel, the
-    message the 支线 hangs under and what the main line said just before it,
-    and the channel's tasks still open — so a piece of work that already has a
-    task is pointed to rather than proposed again. A routine's run is told
-    that this turn may keep what it produces, and that the 支线 keeps nothing
-    afterwards."""
-    from app.domain.room_task.services import TaskService
-
+    message the 支线 hangs under and what the main line said just before it.
+    A routine's run is told that this turn may keep what it produces, and that
+    the 支线 keeps nothing afterwards. The channel's tasks are a section of
+    their own (`thread_tasks`)."""
     run = (await routine_runs_of(session, [root.id])).get(root.id)
 
     def line(block) -> str:
@@ -61,20 +58,43 @@ async def thread_context(
         ]
     if earlier:
         parts += ["", "这条消息之前，主线上说的是：", *map(line, earlier)]
+    return "\n".join(parts)
+
+
+async def thread_tasks(session: "AsyncSession", room: Topic, root) -> str:
+    """The channel's tasks still open, as a 支线's session reads them, so work
+    that already has a task is pointed to rather than made into a second one.
+    The ones made from the message the 支线 hangs under are marked: they are
+    this conversation's own.
+
+    A section of the session opening that is told again when it changes
+    (`TRACKED_SECTIONS`). A task made while the 支线's session was already
+    open — a person turning the message into a task after the teammate first
+    answered — otherwise never reached it, and the teammate, asked to do the
+    work, made a second task under the same message."""
+    from app.domain.room_task.services import TaskService
+
     open_tasks = [
         task
         for task in await TaskService(session).list_in_room(room.id)
         if task.status == TaskStatus.open
     ]
-    if open_tasks:
-        parts += [
-            "",
-            "这个频道里还在进行的任务（要做的事已经有任务了，就告诉人去那个任务，"
-            "不再新建）：",
+    head = "## 这个频道里还在进行的任务\n"
+    if not open_tasks:
+        return head + "现在没有。"
+    return head + "\n".join(
+        [
+            "要做的事已经有任务了，就告诉人去那个任务，不再新建。标着「从这条支线的"
+            "消息建的」的任务，就是为这条支线说的事建的。",
             *(
                 f"- {task.title}"
                 + (f"（负责人 @{task.owner_handle}）" if task.owner_handle else "")
+                + ("（从这条支线的消息建的）" if _made_from(task, root) else "")
                 for task in open_tasks
             ),
         ]
-    return "\n".join(parts)
+    )
+
+
+def _made_from(task, root) -> bool:
+    return task.upgraded_from_block_id == root.id
