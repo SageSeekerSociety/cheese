@@ -110,7 +110,8 @@ test.describe("房间里的任务", () => {
     // 按住了才不靠时序去赌。那一秒里写出来的 0 会被读成「我的活没了」。
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
-    await page.route(`**/projects/${projectId}/tasks*`, async (route) => {
+    // 只按住接口那一次：页面自己的地址也是 /projects/{id}/tasks，按住它页面就打不开。
+    await page.route(`**/api/projects/${projectId}/tasks`, async (route) => {
       await gate;
       await route.continue();
     });
