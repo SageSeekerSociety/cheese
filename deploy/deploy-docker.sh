@@ -69,14 +69,12 @@ PULL_BACKOFF_SECONDS="${DEPLOY_PULL_BACKOFF_SECONDS:-5 15}"
 CI_POSTGRES_IMAGE="${CI_POSTGRES_IMAGE:-mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4}"
 CI_REDIS_IMAGE="${CI_REDIS_IMAGE:-mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9}"
 export IMAGE_TAG="$SHA"
-export SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:$SHA}"
-export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$SANDBOX_IMAGE}"
 
 # Optional overlay compose files layered on top of the base (space-separated).
 # Bare names resolve against the committed compose dir; absolute paths pass
 # through. Set in the box-local ops/deploy.env — e.g. dev adds the subscription
-# overlay (docker.sock + workspace path parity, so a turn can spawn the agent
-# sandbox); prod leaves it empty and is untouched. Committed overlays survive the
+# overlay (workspace path parity and the metering proxy's log and CA); prod
+# leaves it empty and is untouched. Committed overlays survive the
 # runner's per-run re-checkout, so the deploy carries them itself — no box-side
 # heal hack needed to re-apply them after each CI redeploy.
 COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:-}"
@@ -87,17 +85,6 @@ esac
 _overlay_args=()  # populated after fail() exists so a missing overlay aborts loudly
 FORGE_CUTOVER_PENDING="${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}/forge-migration/cutover-pending"
 FORGE_EXECUTOR_RESTART="$(dirname "$FORGE_CUTOVER_PENDING")/restart-host-executor"
-
-# Only environments wired for sibling agent containers need the large runtime
-# images. Dev's subscription overlay is that signal; production app-only boxes
-# stay compatible with historical release SHAs that predate these image tags.
-AGENT_RUNTIME_IMAGES_REQUIRED="${AGENT_RUNTIME_IMAGES_REQUIRED:-auto}"
-if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = auto ]; then
-  case "$COMPOSE_OVERLAYS" in
-    *docker-compose.subscription.yml*) AGENT_RUNTIME_IMAGES_REQUIRED=true ;;
-    *) AGENT_RUNTIME_IMAGES_REQUIRED=false ;;
-  esac
-fi
 
 dc() {
   docker compose -f "$COMPOSE" ${_overlay_args[@]+"${_overlay_args[@]}"} \
@@ -180,9 +167,9 @@ ensure_preview_connection_owner() {
   fail "preview connection owner is not healthy; no route or backend was changed"
 }
 
-# A healthy owner is not enough: WORKSPACE_ROOT is a HOST path (a sandbox sibling
-# resolves its own `-v <src>` against the host daemon), so a subscription box
-# mounts the workspace tree at that same absolute path inside the backend too —
+# A healthy owner is not enough: WORKSPACE_ROOT is a HOST path in the box env, so
+# a subscription box mounts the workspace tree at that same absolute path inside
+# the backend too —
 # see deploy/compose/docker-compose.subscription.yml. Miss that mount on
 # preview-connection and the owner still reports /healthz while every static
 # preview and room-file read fails with a path that does not exist. Check the
@@ -560,7 +547,7 @@ done
 # The `-b` services are written here, from compose's own merged model after
 # every overlay, so they cannot drift from the services they copy: `extends`
 # reads one file only and would miss what an overlay adds (the subscription
-# overlay's docker socket, for one). Only the published port differs, plus the
+# overlay's workspace mirror, for one). Only the published port differs, plus the
 # network name the other services dial (`backend` for device-connection and the
 # office editor, `frontend` for the backend's docs index), which both slots of a
 # service answer to. `frontend` itself is moved to a loopback port with
@@ -617,33 +604,6 @@ print(text.replace("\"@FRONTEND_PORTS@\"", "!override " + first))
   rm -f "$no_env"
 }
 _slot_args=()
-
-# An unpinned SANDBOX_TOKEN makes every restart deafen every sandbox.
-#
-# `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per PROCESS when the
-# env does not pin it. That secret signs the scoped hook tokens, and a box bakes
-# its token in at CREATION — so a restart re-signs with a new secret and every
-# existing container's hook is 401'd at once. The turn then runs to its ceiling
-# producing NOTHING: no output, no tools, indistinguishable from a model that
-# never spoke, which is exactly why this cost a full day to find (#316).
-#
-# Restarting a screen to re-sign it costs that topic its conversation — so this
-# is still worth catching one layer earlier, where someone is actually watching.
-# Warn, never fail: a deploy that refuses to proceed over a config preference is
-# a worse outage than the one it prevents.
-#
-# Only greps for the key's presence — the value is a secret and never printed.
-# Not applicable to app-only boxes (prod), which run no sibling containers.
-if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
-  _envf="${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}"
-  if [ -r "$_envf" ] && ! grep -Eq '^[[:space:]]*SANDBOX_TOKEN=.+' "$_envf"; then
-    log "WARNING: SANDBOX_TOKEN is not pinned in $_envf — the scoped-token"
-    log "         signing secret is regenerated on every restart, so every"
-    log "         live screen's hook token stops verifying and the screen must"
-    log "         be restarted (losing that topic's conversation). Pin it"
-    log "         (and keep the metering proxy's CHEESE_SCOPED_SECRET equal)."
-  fi
-fi
 
 # The office editor and the backend share one signing secret: it is what makes
 # a save callback the editor's. Provisioned once and kept beside deploy.env, so a
@@ -713,8 +673,8 @@ log_disk() {
 # stopped; it has no visibility into container labels, so there is no prune
 # --filter that reaches this from the image side. A stopped, labeled
 # reference container is the mechanism, and it is not new: it is the exact
-# trick build.yml's cheese-buildkit-image-retainer and this script's own
-# prepare_image_retainer() below already use for the same reason. Opportunistic
+# trick build.yml's cheese-buildkit-image-retainer and this script's
+# private-executor retainer below already use for the same reason. Opportunistic
 # and best-effort — this script never pulls these images itself (they land on
 # the box as a side effect of a CI job's `services:` block running here), so a
 # deploy before CI has ever run on this box is simply a no-op, not a forced
@@ -954,10 +914,10 @@ case "$APP_IMAGE_SOURCE" in
     dc pull office-editor >/dev/null 2>&1 \
       || log "WARNING: office-editor image unavailable; room files stay read-only"
     # Same shape again: without the executor a private chat fails with an
-    # explicit setup error, and nothing else is affected. The backend starts it
-    # with `docker run` under a local name, which the image carries as a label;
-    # a stopped container keeps it through the image prune, handed over at the
-    # end like the sandbox retainer so a rollback still finds the old one.
+    # explicit setup error, and nothing else is affected. The session host
+    # starts it with `docker run` under a local name, which the image carries as
+    # a label; a stopped container keeps it through the image prune, handed over
+    # at the end so a rollback still finds the old one.
     # The retainer is created from the local name, not the registry one: the
     # containerd image store keeps each name as an image of its own, and
     # `image prune -a` spares only the names a container was created from.
@@ -999,28 +959,6 @@ case "$APP_IMAGE_SOURCE" in
     fail "DEPLOY_APP_IMAGE_SOURCE must be registry or local (got: $APP_IMAGE_SOURCE)"
     ;;
 esac
-
-# Runtime images are launched on demand through docker.sock, so compose cannot
-# pull or retain them for us.
-if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
-  log "pulling agent runtime images…"
-  retry_pull "sandbox image pull ($SANDBOX_IMAGE)" docker pull "$SANDBOX_IMAGE"
-
-  # `docker image prune -a` considers an on-demand image unused when no turn is
-  # active. Stopped zero-cost containers make the desired runtime images explicit
-  # roots, while still allowing superseded versions to be reclaimed each deploy.
-  prepare_image_retainer() {
-    local kind="$1"
-    local image="$2"
-    local next="${PROJECT}-${kind}-image-retainer-next"
-    docker rm -f "$next" >/dev/null 2>&1 || true
-    docker create --name "$next" \
-      --label "com.cheese.image-retainer=$kind" \
-      --entrypoint /bin/true "$image" >/dev/null \
-      || fail "could not retain $kind runtime image: $image"
-  }
-  prepare_image_retainer sandbox "$SANDBOX_IMAGE"
-fi
 
 log_disk "after pull"
 
@@ -1561,20 +1499,9 @@ if [ -d /run/systemd/system ] && [ -n "${RUNNER_TEMP:-}" ] && [ -f "$runner_root
     || log "warning: runner watchdog installation failed; the release is unaffected"
 fi
 
-promote_image_retainer() {
-  local kind="$1"
-  local current="${PROJECT}-${kind}-image-retainer"
-  local next="${current}-next"
-  # `next` already protects the new image, so removing the old retainer never
-  # leaves either deployment's image unreferenced during the handoff.
-  docker rm -f "$current" >/dev/null 2>&1 || true
-  docker rename "$next" "$current" \
-    || fail "could not promote $kind runtime image retainer"
-}
-if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
-  promote_image_retainer sandbox
-fi
 # Best-effort like its pull: only a retainer that pull prepared is handed over.
+# The new one already protects the new image, so removing the old retainer
+# never leaves either deployment's image unreferenced during the handoff.
 if docker container inspect "${PROJECT}-private-executor-image-retainer-next" >/dev/null 2>&1; then
   docker rm -f "${PROJECT}-private-executor-image-retainer" >/dev/null 2>&1 || true
   docker rename "${PROJECT}-private-executor-image-retainer-next" \
@@ -1587,8 +1514,8 @@ fi
 # 100% (2026-07-18) and CD wedged for a day. Best-effort, never fails a deploy.
 # NOT time-filtered: under a busy merge day every image is "too new" to prune
 # and the disk fills anyway (happened twice on 2026-07-18/19 — 8 image sets in
-# an afternoon). Keep what running containers and the explicit runtime-image
-# retainer uses; rollback re-pulls superseded images from ghcr.
+# an afternoon). Keep what running containers and the explicit image retainers
+# use; rollback re-pulls superseded images from ghcr.
 #
 # Done inline rather than left to the EXIT trap so the reclaim and its disk
 # watermark still print before "DEPLOY OK"; clearing RECLAIM_PENDING is what
@@ -1614,8 +1541,4 @@ bash "$HERE/reclaim-room-caches.sh" --apply 2>&1 | sed 's/^/  /' || true
 # user's only copy of it, and is kept and reported instead.
 python3 "$HERE/reclaim-legacy-room-checkouts.py" --apply 2>&1 | sed 's/^/  /' || true
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
-if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
-  log "DEPLOY OK: sha=$SHA healthy; agent runtime images verified and retained"
-else
-  log "DEPLOY OK: sha=$SHA healthy"
-fi
+log "DEPLOY OK: sha=$SHA healthy"

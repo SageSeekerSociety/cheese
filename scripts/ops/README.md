@@ -31,7 +31,6 @@
 | PG 17 | docker `cheesex-pg`，127.0.0.1:5433，数据卷 `/opt/cheesex-data/pg` |
 | PG 密码 | `/opt/cheesex-data/pg.pass`（.env 里的 DATABASE_URL 引用同一密码） |
 | 后端配置 | `/opt/cheesex/backend/.env`（chmod 600） |
-| 沙箱镜像 | `cheesex-agent-sandbox:latest`（backend/sandbox/Dockerfile，服务器本机构建） |
 | 宿主依赖 | uv (`/root/.local/bin`)、jj (`/usr/local/bin/jj`)、git identity |
 | 备份 | cron 每日 03:30 → `/opt/cheesex/ops/pg-backup.sh` |
 

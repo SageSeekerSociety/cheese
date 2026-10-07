@@ -3,18 +3,12 @@
 # via COMPOSE_OVERLAYS (set in the box-local ops/deploy.env); a box that does not
 # set it — e.g. prod (RUC) — is completely unaffected.
 #
-# Why this cannot be an env file. A subscription turn runs Claude Code inside an
-# agent sandbox that the backend spawns as a SIBLING container through the host
-# docker.sock. Two structural things that env vars cannot express are required
-# for that to work, and both are here:
-#
-#   1. group_add — the image's app user must be IN the host's docker group to
-#      talk to /var/run/docker.sock. DOCKER_GID is the host `docker` group's gid
-#      (getent group docker); 989 is the dev box's.
-#   2. workspace path parity — a sibling's `-v <src>` is resolved by the HOST
-#      daemon, not by the backend's mount view, so the backend must see the
-#      workspace tree at the SAME absolute path it hands the sandbox. The base
-#      compose only mounts it at /app/.workspaces; this adds the host-path mirror.
+# Why this cannot be an env file: the box's backend/.env names WORKSPACE_ROOT as
+# a HOST path, while the base compose mounts the workspace tree only at
+# /app/.workspaces. The backend and the preview owner read the tree at
+# WORKSPACE_ROOT, so this mounts it at that same absolute path too, and it
+# mounts the metering proxy's usage log and CA. Mounts are structure an env
+# file cannot express.
 #
 # The runtime VALUES (SUBSCRIPTION_*, SANDBOX_*, WORKSPACE_ROOT) live in the box's
 # backend/.env and are loaded by the base compose — they are box-specific, so
@@ -24,19 +18,16 @@
 services:
   # The preview owner serves static previews and room files straight off the
   # workspace tree, at the SAME absolute path the shared env file names in
-  # WORKSPACE_ROOT. That value is a HOST path (a sandbox sibling resolves its
-  # own `-v <src>` against the host daemon, so the backend mirrors it — see the
-  # header above). The base file mounts the tree only at /app/.workspaces, so
-  # without this mirror the owner's settings.workspace_root points at an
-  # unmounted path: every static preview and room-file read fails, and only on
-  # a subscription box, which is exactly where nobody looks.
+  # WORKSPACE_ROOT, which is a HOST path (see the header above). The base file
+  # mounts the tree only at /app/.workspaces, so without this mirror the owner's
+  # settings.workspace_root points at an unmounted path: every static preview
+  # and room-file read fails, and only on a subscription box, which is exactly
+  # where nobody looks.
   preview-connection:
     volumes:
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}
 
   backend:
-    group_add:
-      - "${DOCKER_GID:-989}"
     environment:
       # Where the metering proxy's usage log appears INSIDE this container —
       # matches the mount below. Subscription turns are metered at the proxy;
@@ -53,7 +44,6 @@ services:
       # /sys/class/net and the board says `perf.netContainer` — see
       # `app/core/net_io.py`.
       - /sys/class/net:/host-sys-class/net:ro
-      - /var/run/docker.sock:/var/run/docker.sock
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}
       # The proxy's log dir, read-only: the one place subscription spend exists.
       - ${SUBSCRIPTION_PROXY_LOG_HOST:-/home/nictheboy/cheese-proxy/logs}:/var/log/cheese-proxy:ro

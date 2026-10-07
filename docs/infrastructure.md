@@ -119,9 +119,8 @@ a backend.
 
 Health is not enough on a subscription box. The owner reads static previews and
 room files off `settings.workspace_root`, which the shared env file names as a
-HOST path (a sandbox sibling resolves its own `-v <src>` against the host daemon,
-so the backend mirrors the tree at that same absolute path —
-`docker-compose.subscription.yml`). Miss that mirror on `preview-connection` and
+HOST path, so the backend mirrors the tree at that same absolute path
+(`docker-compose.subscription.yml`). Miss that mirror on `preview-connection` and
 the owner still answers `/healthz` while every preview fails on a path that was
 never mounted. So after the health probe, and still before any route or backend
 change, the deploy runs a one-shot check inside the owner against the same
@@ -601,11 +600,9 @@ first-hand account was exactly what nobody could read afterwards.
 
 The one rule: **containers are only ever (re)created by `deploy/deploy-docker.sh`.**
 A hand-run `docker compose up` looks equivalent but is not — the script exports
-`IMAGE_TAG` / `SANDBOX_IMAGE` / `TMUX_SANDBOX_IMAGE` / `QUALITY_GATE_IMAGE`
-pinned to the deploy SHA and sources `~/ops/deploy.env` (`COMPOSE_OVERLAYS`
-etc.). Recreating without those pins silently flips the sandbox images to
-nonexistent `:main` tags; on 2026-08-10 that broke every @芝士 turn on dev
-("Agent 运行组件暂时缺失") until a proper redeploy.
+`IMAGE_TAG` pinned to the deploy SHA and sources `~/ops/deploy.env`
+(`COMPOSE_OVERLAYS` etc.). Recreating without them silently flips the images to
+`:main` tags and drops the overlays.
 
 Changing backend env (e.g. enabling an OAuth provider):
 
@@ -637,17 +634,6 @@ Changing backend env (e.g. enabling an OAuth provider):
    ```bash
    docker login ghcr.io -u <github user>   # password = PAT with read:packages
    ```
-
-   `DEPLOY_APP_IMAGE_SOURCE=local` does **not** substitute for that login on a
-   box that runs agents. It covers the two app images only; the agent runtime
-   images are launched through docker.sock, so compose cannot hold them and the
-   script pulls `SANDBOX_IMAGE` unconditionally whenever
-   `AGENT_RUNTIME_IMAGES_REQUIRED` is true — which the subscription overlay
-   makes it. Local mode gets you past `pull backend frontend` and straight into
-   the identical denial one step later. Do not reach for
-   `AGENT_RUNTIME_IMAGES_REQUIRED=false` to skip it either: that same block
-   creates the image-retainer containers that keep the next `docker image prune
-   -a` from reclaiming the sandbox image out from under every turn.
 
 4. Verify: container env via `docker inspect` (parse the JSON — don't split on
    commas, values like `OAUTH_ENABLED_PROVIDERS=ruc,github_app` get chopped),

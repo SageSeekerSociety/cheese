@@ -454,39 +454,6 @@ test_rollout_installs_connection_route_without_recreating_api_front() {
   echo "PASS: rollout installs the owner route with a graceful api-front reload"
 }
 
-test_deploy_keeps_agent_runtime_images() {
-  mkdir -p "$ROOT/.tmp"
-  run_dir="$(mktemp -d "$ROOT/.tmp/runtime-images.XXXXXX")"
-  docker_log="$run_dir/docker.log"
-  PATH="$FAKE_BIN:$PATH" \
-    APP_TIER_SCENARIO=healthy \
-    APP_TIER_MAIN_SHA=testsha \
-    APP_TIER_DOCKER_LOG="$docker_log" \
-    COMPOSE_OVERLAYS=docker-compose.subscription.yml \
-    DEPLOY_HEALTH_ATTEMPTS=1 \
-    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
-    HOME="$run_dir" \
-    "$ROOT/deploy/deploy-docker.sh" testsha \
-      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
-
-  grep -Fqx \
-    'pull ghcr.io/sageseekersociety/cheese/sandbox:testsha' "$docker_log" || \
-    fail "deploy did not pull the sandbox image"
-  grep -F 'create --name cheese-sandbox-image-retainer-next' "$docker_log" \
-    >/dev/null || fail "deploy did not retain the sandbox image before pruning"
-
-  promote_line="$(grep -nF \
-    'rename cheese-sandbox-image-retainer-next cheese-sandbox-image-retainer' \
-    "$docker_log" | cut -d: -f1)"
-  prune_line="$(grep -nF 'image prune -af' "$docker_log" | cut -d: -f1)"
-  [ -n "$promote_line" ] && [ -n "$prune_line" ] && \
-    [ "$promote_line" -lt "$prune_line" ] || \
-    fail "runtime image retainer was not promoted before image pruning"
-
-  rm -rf "$run_dir"
-  echo "PASS: deploy pulls, verifies, and retains agent runtime images"
-}
-
 test_deploy_retains_ci_service_images() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/ci-service-images.XXXXXX")"
@@ -570,28 +537,6 @@ test_private_executor_failure_does_not_fail_deploy() {
     || { rm -rf "$run_dir"; fail "an unavailable private executor left no warning"; }
   rm -rf "$run_dir"
   echo "PASS: an unavailable private executor only warns"
-}
-
-test_app_only_deploy_does_not_require_agent_images() {
-  mkdir -p "$ROOT/.tmp"
-  run_dir="$(mktemp -d "$ROOT/.tmp/app-only-images.XXXXXX")"
-  docker_log="$run_dir/docker.log"
-  PATH="$FAKE_BIN:$PATH" \
-    APP_TIER_SCENARIO=healthy \
-    APP_TIER_MAIN_SHA=testsha \
-    APP_TIER_DOCKER_LOG="$docker_log" \
-    DEPLOY_HEALTH_ATTEMPTS=1 \
-    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
-    HOME="$run_dir" \
-    "$ROOT/deploy/deploy-docker.sh" testsha \
-      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
-
-  if grep -F 'pull ghcr.io/sageseekersociety/cheese/sandbox' "$docker_log" \
-    >/dev/null; then
-    fail "app-only deploy unexpectedly required an agent runtime image"
-  fi
-  rm -rf "$run_dir"
-  echo "PASS: app-only deployment stays compatible with historical releases"
 }
 
 test_local_app_images_skip_registry_pull() {
@@ -1322,8 +1267,7 @@ test_kill_switch_routes_previews_back() {
 
 # A healthy /healthz only says the process is up. The owner reads static previews
 # and room files straight off settings.workspace_root, which is a HOST path on a
-# subscription box (siblings resolve their own mounts against the host daemon) —
-# so preview-connection must carry the same host-path mirror backend does. If it
+# subscription box — so preview-connection must carry the same host-path mirror backend does. If it
 # does not, the owner answers every health probe and fails every preview with a
 # path that is not mounted. Pin the deploy's own check of that, and that it runs
 # before anything is re-routed or replaced.
@@ -1750,11 +1694,9 @@ case "$CASE" in
   journal-retention) test_deploy_applies_journal_retention ;;
   connection-route) test_rollout_installs_connection_route_without_recreating_api_front ;;
   cloud-control-release) test_cloud_control_has_an_independent_drained_release ;;
-  runtime-images) test_deploy_keeps_agent_runtime_images ;;
   ci-service-images) test_deploy_retains_ci_service_images ;;
   private-executor) test_deploy_delivers_private_executor ;;
   private-executor-missing) test_private_executor_failure_does_not_fail_deploy ;;
-  app-only) test_app_only_deploy_does_not_require_agent_images ;;
   local-images) test_local_app_images_skip_registry_pull ;;
   local-images-missing) test_local_app_images_must_exist ;;
   rollback-images) test_rollback_restores_exact_previous_images ;;
@@ -1804,11 +1746,9 @@ case "$CASE" in
     test_cloud_control_has_an_independent_drained_release
     test_rollout_installs_connection_route_without_recreating_api_front
     test_deploy_warns_when_the_session_base_will_not_survive
-    test_deploy_keeps_agent_runtime_images
     test_deploy_retains_ci_service_images
     test_deploy_delivers_private_executor
     test_private_executor_failure_does_not_fail_deploy
-    test_app_only_deploy_does_not_require_agent_images
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist
     test_rollback_restores_exact_previous_images

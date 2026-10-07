@@ -6,8 +6,8 @@ FROM debian:12-slim
 
 # LibreOffice converts Word, PowerPoint and Excel to PDF faithfully, which is the
 # whole reason this is a container of its own: it wants a writable profile
-# directory and installs ~800MB, so it cannot go in the sandbox image (that one
-# is other people's base) and has no business in the backend image.
+# directory and installs ~800MB, so a room cannot install it (it has no root)
+# and it has no business in the backend image.
 #
 # `libreoffice-math` is in this list for a reason that costs a reader nothing to
 # keep and a user everything to lose. Without it LibreOffice still converts, still

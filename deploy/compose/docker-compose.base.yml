@@ -190,11 +190,6 @@ services:
       # PERSISTENT home. Backed by a host path so its global config and the
       # repo-trust records survive redeploys.
       - HOME=/data/apphome
-      # Agent containers are siblings spawned through docker.sock, not compose
-      # services. Pin them to this deployment's sha so a floating/local alias
-      # cannot disappear or drift independently of the backend.
-      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}}
-      - QUALITY_GATE_IMAGE=${QUALITY_GATE_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}}
       # The docs' own host ("https://docs.okcheese.com"), or empty to serve them
       # under /docs/ on the platform. One value, read by this service (the docs
       # sign-in, the links it hands out) and the frontend below (which server

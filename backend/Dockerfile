@@ -140,14 +140,6 @@ WORKDIR /app
 # that matches its churn — a 150MB connector-dist rebuilt on every commit is
 # 150MB re-exported and re-pushed on every commit.
 
-# Agent workspace toolchain: sandboxed turns spawn SIBLING containers through
-# the host's docker.sock, so the image needs the docker CLI (client only, no
-# daemon).
-ARG DOCKER_CLI_VERSION=27.5.1
-RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_CLI_VERSION}.tgz" \
-      | tar xz --strip-components=1 -C /usr/local/bin docker/docker \
-    && docker --version
-
 # Copy dependencies from deps stage — both the venv AND the managed interpreter
 # it symlinks to (see UV_PYTHON_INSTALL_DIR in the deps stage), or the venv's
 # python is a dangling symlink and uvicorn can't start.

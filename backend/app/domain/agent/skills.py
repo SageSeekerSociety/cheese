@@ -49,11 +49,11 @@ NATIVE_CHAT_GUIDANCE = load_skills(["chat"])
 
 #: Skills that are already written as native Claude skills, shipped verbatim.
 #:
-#: The container gets these by having the whole `sandbox/skills` tree copied into
-#: its session directory (`workspace.service.session_dir`); an enrolled device
-#: never sees that tree, so the same file has to travel here too. Reading it from
-#: one place is what stops the two paths from drifting — a skill fixed in the
-#: container and stale on a device is exactly the kind of split nobody notices,
+#: A session directory gets these by having the whole `sandbox/skills` tree
+#: copied into it (`repository.service.session_dir`); an enrolled device never
+#: sees that tree, so the same file has to travel here too. Reading it from one
+#: place is what stops the two paths from drifting — a skill fixed in one and
+#: stale on a device is exactly the kind of split nobody notices,
 #: because both machines run and only one of them is right.
 _NATIVE_SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
 _SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram")

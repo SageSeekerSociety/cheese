@@ -9,7 +9,6 @@
 #
 # Usage:
 #   scripts/redeploy.sh            # deps + migrate + restart backend (+ frontend if down)
-#   scripts/redeploy.sh --images   # also rebuild the sandbox images
 #
 # Idempotent: safe to run twice in a row. Logs to tmp_redeploy.log (and stdout).
 set -euo pipefail
@@ -22,9 +21,6 @@ FRONTEND_PORT=5173
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 die() { log "FAIL: $*"; exit 1; }
 
-BUILD_IMAGES=0
-[[ "${1:-}" == "--images" ]] && BUILD_IMAGES=1
-
 log "=== redeploy start (HEAD $(git -C "$ROOT" rev-parse --short HEAD)) ==="
 
 # 1. Backend deps — no-op when the lockfile hasn't changed.
@@ -36,15 +32,7 @@ log "alembic upgrade head"
 (cd "$ROOT/backend" && uv run alembic upgrade head >>"$LOG" 2>&1) \
   || die "alembic upgrade failed (see $LOG)"
 
-# 3. Sandbox images (only with --images: slow, and most updates don't touch them).
-if [[ $BUILD_IMAGES -eq 1 ]]; then
-  log "docker build cheesex-agent-sandbox:latest"
-  docker build -q -t cheesex-agent-sandbox:latest \
-    -f "$ROOT/backend/sandbox/Dockerfile" "$ROOT/backend/sandbox" >>"$LOG" 2>&1 \
-    || die "base image build failed (see $LOG)"
-fi
-
-# 4. Drain: wait for in-flight agent turns so the restart never kills 芝士
+# 3. Drain: wait for in-flight agent turns so the restart never kills 芝士
 #    mid-work (turn state lives in the backend process). Bounded wait — after
 #    120s we restart anyway and say so.
 if curl -s -m 2 "http://localhost:$PORT/health" >/dev/null; then
@@ -59,8 +47,7 @@ if curl -s -m 2 "http://localhost:$PORT/health" >/dev/null; then
   done
 fi
 
-# 5. Restart the backend. Topic sandbox containers survive the restart and are
-#    reused; the claude-sbx shim recreates one only when its image changed.
+# 4. Restart the backend.
 log "restart backend on :$PORT"
 pkill -f "uvicorn app.main:app.*--port $PORT" 2>/dev/null || true
 sleep 1
@@ -80,7 +67,7 @@ subprocess.Popen(
 )
 PYEOF
 
-# 6. Health check — a redeploy that leaves the platform dead must fail loudly.
+# 5. Health check — a redeploy that leaves the platform dead must fail loudly.
 for i in $(seq 1 20); do
   sleep 1
   if curl -s -m 2 -o /dev/null "http://localhost:$PORT/api/projects"; then
@@ -90,7 +77,7 @@ for i in $(seq 1 20); do
   [[ $i -eq 20 ]] && die "backend not healthy after 20s (tail $ROOT/tmp_backend.log)"
 done
 
-# 7. Frontend: vite dev hot-reloads on its own; just make sure it's running.
+# 6. Frontend: vite dev hot-reloads on its own; just make sure it's running.
 if ! curl -s -m 2 -o /dev/null "http://localhost:$FRONTEND_PORT"; then
   log "frontend down — starting vite dev server"
   python3 - "$ROOT" <<'PYEOF'

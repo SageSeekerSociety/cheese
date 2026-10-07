@@ -4,7 +4,7 @@ ARG CLAUDE_CODE_VERSION=2.1.282
 # private_chat_executor_image), not by its registry path. The deploy reads this
 # label to tag the pulled image with that name.
 LABEL com.cheese.local-image="cheese-private-executor:${CLAUDE_CODE_VERSION}"
-# Reuse the sandbox image's reachable HTTPS mirror and verified CA bootstrap.
+# apt over a reachable HTTPS mirror, verified against node's bundled CA roots.
 RUN mkdir -p /etc/ssl/certs \
     && node -p 'require("tls").rootCertificates.join("\n")' > /etc/ssl/certs/ca-certificates.crt \
     && sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \

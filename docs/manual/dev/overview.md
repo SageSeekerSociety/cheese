@@ -31,7 +31,6 @@ covers:
 
 - **前端 nginx**（`frontend` 镜像）：托管单页应用，把 `/api` 反代到主 API；设备与执行的长连接（`/connector/agent`、`/connector/session/<id>/screen`、`/api/topics/<id>/execution/<id>`）去机器连接服务，其余 `/connector/*` 仍由主 API 提供。
 - **主机的入口 nginx**：常驻的 `deploy/llm-tunnel/` 那一组，占着主机的 :8081，见下一节。
-- **会话沙盒容器**：不是 compose 服务，而是主 API 通过 `docker.sock` 起的兄弟容器（`SANDBOX_IMAGE`），里面跑 Claude Code、Codex 或 Pi。
 - **计量代理**（mitmproxy，`deploy/metering-proxy/`）：所有模型流量的出口，见[模型调用流程](/dev/llm)。
 - **模型网关**（LiteLLM，`deploy/compose/docker-compose.gateway.yml`）：项目虚拟 key 与预算刹车。独立一套 compose，发版不碰它。
 - **网页渲染**（`browser-render`，一个共享的无头 Chromium）、**Office 渲染**（`office-render`，LibreOffice）和**在线编辑器**（`office-editor`，OnlyOffice，可缺省）：给芝士读网页、给房间里显示和编辑 Word 和 PPT，见[房间文件与 Office](/dev/documents)。

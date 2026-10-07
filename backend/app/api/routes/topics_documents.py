@@ -92,8 +92,8 @@ async def recalc_spreadsheet(
     """Recompute a workbook's formulas — used by `cheese recalc`.
 
     The room cannot do this itself: recomputing means loading the workbook in
-    something that evaluates formulas, and the sandbox image carries no
-    LibreOffice and has no root to install one. The platform already runs one
+    something that evaluates formulas, and a room's machine carries no
+    LibreOffice and gives the room no root to install one. The platform already runs one
     for previews, so this is the path to it.
 
     The workbook travels in the body rather than being read from the worktree,
