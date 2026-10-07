@@ -22,7 +22,6 @@
   "actionDecision": "{actor} recorded a decision",
   "actionMilestone": "{actor} added a milestone",
   "actionNotify": "{actor} sent a notification",
-  "actionTopics": "{actor} updated this channel's tasks",
   "actorCheese": "Cheese",
   "apiRetry": "A request to the AI service failed; retrying",
   "apiRetryAttempt": "A request to the AI service failed; retrying (attempt {attempt})",

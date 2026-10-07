@@ -44,7 +44,7 @@ async def thread_context(
             "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
             "跑命令和测试、临时改，也能查资料、PR 和 issue；但不推送、不交付、"
             "不摆预览；"
-            "要改的事用 `cheese_task` 提议成任务。",
+            "要改的事用 `cheese_task` 创建成任务。",
         ]
         parts = [*opening]
     else:
@@ -53,7 +53,7 @@ async def thread_context(
             "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
             "跑命令和测试、临时改，也能查资料、PR 和 issue；但不推送、不交付、"
             "不摆预览；"
-            "要改的事用 `cheese_task` 提议成任务。别处定过的事不记得时，用 "
+            "要改的事用 `cheese_task` 创建成任务。别处定过的事不记得时，用 "
             "`cheese_chat_search` 加 `channel` 搜整个频道。",
             "",
             "支线挂在主线的这条消息下面：",
@@ -70,7 +70,7 @@ async def thread_context(
         parts += [
             "",
             "这个频道里还在进行的任务（要做的事已经有任务了，就告诉人去那个任务，"
-            "不再提议）：",
+            "不再新建）：",
             *(
                 f"- {task.title}"
                 + (f"（负责人 @{task.owner_handle}）" if task.owner_handle else "")

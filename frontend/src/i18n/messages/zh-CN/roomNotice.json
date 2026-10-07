@@ -22,7 +22,6 @@
   "actionDecision": "{actor} 记录了决策",
   "actionMilestone": "{actor} 添加了里程碑",
   "actionNotify": "{actor} 发送了通知",
-  "actionTopics": "{actor} 更新了这个频道的任务",
   "actorCheese": "芝士",
   "apiRetry": "AI 服务请求失败，正在重试",
   "apiRetryAttempt": "AI 服务请求失败，正在重试（第 {attempt} 次）",

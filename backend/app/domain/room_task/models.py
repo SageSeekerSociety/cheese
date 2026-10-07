@@ -75,7 +75,7 @@ class TaskTitle(UuidPk, Base):
     source: Mapped[TaskTitleSource] = mapped_column(
         Enum(TaskTitleSource, native_enum=False, length=16)
     )
-    # name | calibrate | follow | proposal | rename
+    # name | calibrate | follow | teammate | rename
     reason: Mapped[str] = mapped_column(String(16))
     by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -138,6 +138,8 @@ class Task(UuidPk, Timestamps, Base):
     __table_args__ = (
         Index("ix_tasks_room_id_created_at", "room_id", "created_at"),
         UniqueConstraint("project_id", "number", name="uq_tasks_project_number"),
+        # The tasks under each message of a channel's main line.
+        Index("ix_tasks_upgraded_from_block_id", "upgraded_from_block_id"),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -275,8 +277,8 @@ class Task(UuidPk, Timestamps, Base):
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # If this work was dispatched from a message in the room, the block it came
-    # from — so that position in the timeline stays a live link to the thread.
+    # The main-line message this task was made from, or whose 支线 it was made
+    # in: the task shows under it. A message can have any number of tasks.
     # use_alter: tasks↔blocks is a circular FK; add this one via ALTER.
     upgraded_from_block_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(

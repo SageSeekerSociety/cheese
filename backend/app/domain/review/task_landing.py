@@ -45,6 +45,7 @@ async def delivery_landed(
         task.closed_at = now
         after_close(session, task.room_id)
     await session.flush()
+    _after_commit(session, task.room_id, {"type": "state", "resource": "topics"})
     await tell_origin(
         session,
         task,
@@ -58,29 +59,61 @@ async def delivery_landed(
     )
 
 
-async def tell_origin(session: AsyncSession, task: Task, content) -> None:
+async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
     """Say ``content`` in the 支线 under the message ``task`` was made from,
-    opening it if nobody has replied there yet. A task made on its own has
-    nowhere to say it."""
-    from app.domain.agent.announce import announce
-    from app.domain.block.models import Block
+    opening it if nobody has replied there yet. It is said by the task's AI
+    teammate, as a reply: whoever took part in the discussion hears it, and the
+    line under the message shows it. A task made on its own has nowhere to say
+    it."""
+    from app.domain.agent_instance.services import AgentInstanceService
+    from app.domain.block.models import AuthorType, Block, BlockKind
+    from app.domain.block.repositories import BlockRepository
+    from app.domain.identity.handles import agent_instance_handle
+    from app.domain.project.models import Project
     from app.domain.thread.services import open_thread
+    from app.domain.topic.models import Topic
 
     if task.upgraded_from_block_id is None:
         return
     origin = await session.get(Block, task.upgraded_from_block_id)
-    if origin is None or origin.conversation_id != task.room_id:
+    room = await session.get(Topic, task.room_id)
+    project = await session.get(Project, task.project_id)
+    if origin is None or origin.conversation_id != task.room_id or room is None:
         return
+    if project is None:
+        return
+    agent = await AgentInstanceService(session).for_task(
+        project, room, task.agent_handle
+    )
     thread = await open_thread(
         session, origin.id, by=task.owner_handle or origin.author
     )
-    await announce(
-        session,
-        place_id=task.room_id,
-        task_id=thread.id,
-        content=content,
-        meta={"platform": True, "action": "task_result", "task_id": str(task.id)},
+    said = await BlockRepository(session).add(
+        project_id=task.project_id,
+        conversation_id=thread.id,
+        author=agent_instance_handle(agent.instance_id),
+        author_type=AuthorType.participant,
+        kind=BlockKind.message,
+        content=str(content),
+        meta={"task_result": str(task.id)},
     )
+    _after_commit(
+        session, said.conversation_id, {"type": "user_block", "block": _out(said)}
+    )
+    _after_commit(session, task.room_id, {"type": "state", "resource": "threads"})
+
+
+def _out(block) -> dict:
+    from app.domain.block.schemas import BlockOut
+
+    return BlockOut.model_validate(block).model_dump(mode="json")
+
+
+def _after_commit(session: AsyncSession, channel, frame: dict) -> None:
+    """Send ``frame`` to the pages open on ``channel`` once this commits."""
+    from app.domain.agent.announce import SHOW_ONCE_COMMITTED
+
+    session.info.setdefault(SHOW_ONCE_COMMITTED, []).append((str(channel), frame))
 
 
 async def _tell_next_step(session: AsyncSession, task: Task) -> None:

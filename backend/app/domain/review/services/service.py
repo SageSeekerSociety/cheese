@@ -128,8 +128,12 @@ class AcceptService:
             self, topic=topic, card=card, task=task, artifact=artifact
         )
 
-    async def _announce_new_artifact(self, topic: Topic, name: str) -> None:
-        return await notices._announce_new_artifact(self, topic=topic, name=name)
+    async def _announce_new_artifact(
+        self, topic: Topic, name: str, *, task_id: uuid.UUID
+    ) -> None:
+        return await notices._announce_new_artifact(
+            self, topic=topic, name=name, task_id=task_id
+        )
 
     async def _warn_about_a_second_pending_migration(
         self, topic: Topic, task_id: uuid.UUID

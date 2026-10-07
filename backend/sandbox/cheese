@@ -462,16 +462,23 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_task",
-            "提议一个任务：在当前对话里放一张提议卡，由人决定是否创建。创建的人就是负责人，"
-            "任务有自己的对话和工作目录，由那里的 AI 队友去做。你不能自己创建任务。",
+            "在当前支线里创建一个任务，挂在支线所在的那条消息下面。任务有自己的对话和"
+            "工作目录，由那里的 AI 队友去做。有人让你去做：start 填 true、owner 填"
+            "说这话的人，建好就开始。你自己想到的：start 填 false，任务停在讨论中，"
+            "你在支线里问一次负责人要不要开始。",
             {
                 "title": _text("任务标题"),
                 "summary": _text(
                     "要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
-                    "任务那边的 AI 队友只能从这里和提议前的几条消息知道讨论"
+                    "任务那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
                 ),
+                "owner": _text("负责人 handle，就是要这件事的人；省略是支线所在那条消息的作者"),
+                "start": {
+                    "type": "boolean",
+                    "description": "有人让你去做填 true；你自己想到的填 false",
+                },
             },
-            ["title", "summary"],
+            ["title", "summary", "start"],
         ),
         _tool(
             "cheese_close_task",
@@ -1239,8 +1246,13 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_task":
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/task-proposals",
-            "body": {"title": args["title"], "summary": args.get("summary") or ""},
+            "path": f"/topics/{topic}/teammate-tasks",
+            "body": {
+                "title": args["title"],
+                "summary": args.get("summary") or "",
+                "start": args.get("start") is True,
+                **_given(args, "owner:owner_handle"),
+            },
         }
     if tool == "cheese_close_task":
         return {
@@ -2365,10 +2377,19 @@ _STEPS = {
 
 
 def _say_task(args, data, env) -> str:
-    return (
-        f"已提议任务「{args['title']}」，等人决定是否创建。"
-        "创建后它在自己的对话里由那里的 AI 队友去做。"
-    )
+    data = data or {}
+    owner = data.get("owner_handle") or "负责人"
+    made = f"已创建任务「{data.get('title') or args['title']}」，负责人 {owner}。"
+    if data.get("started"):
+        return made + "任务已经开始，由它自己对话里的 AI 队友去做。"
+    if args.get("start") is True:
+        return (
+            made
+            + f"没能直接开始：{data.get('not_started_because') or '原因不明'}。"
+            + f"在这里告诉 {owner}，请他在任务里点「开始」。"
+        )
+    return made + f"任务停在讨论中：在这里问一次 {owner} 要不要开始，问过就不再追。"
+
 
 
 def _say_lock(args, data, env) -> str:
@@ -4131,7 +4152,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="准备任务工作目录并输出路径",
         description=(
             "准备已有任务的工作目录，输出路径；不会改变当前 shell 的目录。"
-            "任务由人创建，cheese_task 只能提议。"
+            "任务的一步交付合并以后，再执行一次会把目录换到下一步的新分支上。"
         ),
     )
     pwork.add_argument("task_id", help="任务 UUID")

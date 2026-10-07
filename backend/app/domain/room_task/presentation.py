@@ -545,6 +545,25 @@ def owner_acts_on(shown: Presentation, *, running: bool) -> bool:
     return shown.phrase in _OWNER_ACTS_ON
 
 
+def waiting_on(
+    shown: Presentation,
+    *,
+    running: bool,
+    owner: str | None,
+    reviewer: str | None,
+    asked: str | None,
+) -> str | None:
+    """这一格在等哪一个人：卡面上写「待 某某 审阅」「待 某某 回答」「待 某某 开始」
+    的那个某某。不是在等一个具体的人就是 None。"""
+    if shown.phrase == NeedsYou.awaiting_review.value:
+        return reviewer
+    if shown.phrase == NeedsYou.awaiting_answer.value:
+        return asked
+    if shown.phrase == NotStarted.discussing.value and not running:
+        return owner
+    return None
+
+
 # —— 停滞 ——————————————————————————————————————————————————————
 #
 # 「这一轮卡住了」有好几处在管（侧栏的红、输入框上方的计时），这里管的是另一件：
