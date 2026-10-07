@@ -8,23 +8,14 @@
 // 每一行除了名字和类型，还写着它跑在哪个模型上、思考强度是哪一档：两样合起来才
 // 说得出这个队友多快、多贵。记忆不在这里：它由平台统一管理，不是队友的一项设置。
 //
-// 页面读三处，只有第一处是必须的：队友名册。类型目录、模型目录各自失败都不该让整
-// 页塌掉，它们只会让对应的那几个字退回成默认的说法，而不是让人看不到队友。
-import type { AgentType, ProjectAgent } from '@/cx_types'
-import type { AgentFieldChoice } from '@/lib/modelChoices'
+// 取数在 `useProjectAgents`（名册、类型目录、模型目录，和「设为默认 / 停用」两条
+// 动作），这一节只画和接线。
+import type { ProjectAgent } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
-import { useCachedResource } from '@/composables/useCachedResource'
+import { useProjectAgents } from '@/composables/useProjectAgents'
 
-import {
-  deactivateProjectAgent,
-  getProjectDefaultModel,
-  isEndpointMissing,
-  listAgentTypes,
-  listProjectAgents,
-  setProjectDefaultAgent,
-} from '@/api'
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -38,66 +29,21 @@ defineOptions({ name: 'AgentTeamSettings' })
 
 const props = defineProps<{ projectId: string }>()
 
-interface AgentsPayload {
-  agents: ProjectAgent[]
-  types: AgentType[]
-  models: AgentFieldChoice[]
-  // 后端那一半是单独上线的。没上线时这一页不能是白屏，也不能是一句看起来像
-  // bug 的报错 —— 它得说清楚「功能还没到这个环境」。
-  backendMissing: boolean
-  // 「名册没拉回来」是这一页的一个状态，不是一次异常：页面照样有标题、有刷新
-  // 按钮，只是列表位置换成一条错误。所以它跟数据一起走，而不是抛出去。
-  loadError: string | null
-}
-
-// 进过一次的队友名册，再进来第一帧就在（useCachedResource）。
-const { data, loading, refreshing, refresh } = useCachedResource(
-  () => `project-agents:${props.projectId}`,
-  async (): Promise<AgentsPayload> => {
-    const payload: AgentsPayload = {
-      agents: [],
-      types: [],
-      models: [],
-      backendMissing: false,
-      loadError: null,
-    }
-    try {
-      payload.agents = (await listProjectAgents(props.projectId)).data
-    } catch (e) {
-      if (isEndpointMissing(e)) payload.backendMissing = true
-      else payload.loadError = e instanceof Error ? e.message : t('work.projectSettings.agents.loadFailed')
-      return payload
-    }
-    // 两个补充数据，谁失败谁空着。
-    const [typeList, modelList] = await Promise.all([
-      listAgentTypes().then(
-        (r) => r.data,
-        () => [] as AgentType[]
-      ),
-      getProjectDefaultModel(props.projectId).then(
-        (r) => r.choices,
-        () => [] as AgentFieldChoice[]
-      ),
-    ])
-    payload.types = typeList
-    payload.models = modelList
-    return payload
-  }
-)
-
-const agents = computed<ProjectAgent[]>(() => data.value?.agents ?? [])
-const types = computed<AgentType[]>(() => data.value?.types ?? [])
-const models = computed<AgentFieldChoice[]>(() => data.value?.models ?? [])
-const backendMissing = computed<boolean>(() => data.value?.backendMissing ?? false)
-// 名册取不回来，和「设为默认 / 停用」那一下失败，都显示在同一条 alert 上。
-const actionError = ref<string | null>(null)
-const error = computed<string | null>(() => actionError.value ?? data.value?.loadError ?? null)
-
-// 关掉这条 alert 要连缓存里的那份一起关，不然离开这一页再回来它又弹出来。
-function dismissError() {
-  actionError.value = null
-  if (data.value) data.value.loadError = null
-}
+const {
+  agents,
+  types,
+  models,
+  backendMissing,
+  loading,
+  refreshing,
+  refresh,
+  error,
+  dismissError,
+  settingDefault,
+  setDefault,
+  deactivating,
+  deactivate,
+} = useProjectAgents(() => props.projectId)
 
 // 「跟随项目」时也把项目那个模型的名字写出来：否则这一行说不清它到底跑在哪。
 function modelOf(agent: ProjectAgent): string {
@@ -133,7 +79,6 @@ const deactivateTitle = computed(() =>
       })
     : ''
 )
-const deactivating = ref(false)
 function openCreate() {
   editing.value = null
   editorOpen.value = true
@@ -144,44 +89,15 @@ function openEdit(agent: ProjectAgent) {
   editorOpen.value = true
 }
 
-const settingDefault = ref<string | null>(null)
-
-async function makeDefault(agent: ProjectAgent) {
-  if (agent.is_default) return
-  settingDefault.value = agent.id
-  actionError.value = null
-  try {
-    await setProjectDefaultAgent(props.projectId, { instance_id: agent.id })
-    await refresh()
-  } catch (e) {
-    actionError.value = isEndpointMissing(e)
-      ? t('work.projectSettings.agents.defaultUnsupported')
-      : e instanceof Error
-        ? e.message
-        : t('work.projectSettings.agents.setDefaultFailed')
-  } finally {
-    settingDefault.value = null
-  }
-}
-
+// 确认框在这次请求期间不关：按钮上的 loading 就在它里面。成败都收掉它 —— 停下了
+// 的那一个不再是一行队友，失败的由上面那条 alert 说理由。
 async function confirmDeactivate() {
   const agent = deactivateTarget.value
   if (!agent) return
-  deactivating.value = true
-  actionError.value = null
   try {
-    await deactivateProjectAgent(props.projectId, agent.id)
-    deactivateTarget.value = null
-    await refresh()
-  } catch (e) {
-    actionError.value = isEndpointMissing(e)
-      ? t('work.projectSettings.agents.deactivateUnsupported')
-      : e instanceof Error
-        ? e.message
-        : t('work.projectSettings.agents.deactivateFailed')
-    deactivateTarget.value = null
+    await deactivate(agent)
   } finally {
-    deactivating.value = false
+    deactivateTarget.value = null
   }
 }
 </script>
@@ -268,7 +184,7 @@ async function confirmDeactivate() {
               v-if="!a.is_default && a.is_active !== false"
               size="sm"
               :loading="settingDefault === a.id"
-              @click="makeDefault(a)"
+              @click="setDefault(a)"
             >
               {{ t('work.projectSettings.agents.setDefault') }}
             </BaseButton>
