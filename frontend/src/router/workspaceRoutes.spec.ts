@@ -12,6 +12,8 @@
 // The records under test are IMPORTED, not restated. `resolve()` is used rather
 // than `push()` throughout: it exercises the real matcher without pulling every
 // view in the workspace into the test.
+import type { RouteLocationNormalized } from 'vue-router'
+
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
@@ -116,7 +118,9 @@ describe('the project frame', () => {
   it('hands each child its params as props, so a reload rebuilds the same view', () => {
     const topic = router().resolve(`/projects/${PROJECT}/channels/${TOPIC}`)
     const props = topic.matched[topic.matched.length - 1].props.default
-    expect(typeof props === 'function' ? props(topic) : props).toMatchObject({ projectId: PROJECT, topicId: TOPIC })
+    // `resolve()` hands back a resolved location; the props function reads only its params.
+    const given = typeof props === 'function' ? props(topic as unknown as RouteLocationNormalized) : props
+    expect(given).toMatchObject({ projectId: PROJECT, topicId: TOPIC })
   })
 })
 
