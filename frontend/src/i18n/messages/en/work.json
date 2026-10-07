@@ -1040,7 +1040,7 @@
     },
     "roster": {
       "loadFailed": "Couldn't load members",
-      "count": "{count} members | 1 member | {count} members",
+      "count": "1 member | {count} members",
       "empty": "No members",
       "agentBadge": "AI teammate",
       "failed": "Something went wrong",

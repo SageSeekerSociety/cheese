@@ -98,7 +98,12 @@ it('a project with nothing in it is told where to start', async () => {
 it('the way in actually goes to the home room', async () => {
   mount()
 
-  await fireEvent.click(await screen.findByText('进入对话'))
+  // 挂载那一帧 `loading` 还是 false：这块空态会先画一次，随即被「加载中」的骨架换下来。
+  // 换下来的那个节点已经不在文档里，它的点击最后走到一次 emit，而 emit 在组件卸载后
+  // 直接返回，点它不会动。等这一轮加载落定，再点留在屏幕上的那一个。
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  await fireEvent.click(screen.getByText('进入对话'))
 
   expect(push).toHaveBeenCalledWith({
     name: 'workspace-topic',
