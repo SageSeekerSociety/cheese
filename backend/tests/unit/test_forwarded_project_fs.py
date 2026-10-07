@@ -142,3 +142,25 @@ def test_the_view_looks_up_directories_on_the_executor():
         view.getattr("/.git/HEAD")
     assert asked == []
     assert set(view.readdir("/")) == {".", "..", ".git", "made"}
+
+
+def test_a_session_with_no_machine_yet_sees_an_empty_project():
+    """A session started before its machine is rented works in a placeholder
+    project. Asked about any path in it, the view answers that nothing is
+    there: Claude Code that meets an I/O error under its working directory
+    starts without the skills in its config directory (verified against the
+    pinned build, 2.1.282), and on dev every such session lost the platform's
+    skills, `cheese-docs` among them."""
+    from app.domain.agent.executor_transport import (
+        DEFERRED_WORKSPACE,
+        RemoteClient,
+    )
+
+    client = RemoteClient({"kind": "deferred", "workspace": DEFERRED_WORKSPACE})
+    view = ForwardedProject(client.call)
+
+    for path in ("/.claude", "/.claude/skills", "/src"):
+        with pytest.raises(OSError) as looked_up:
+            view.getattr(path)
+        assert looked_up.value.errno == errno.ENOENT, path
+    assert view.readdir("/") == [".", "..", ".git"]

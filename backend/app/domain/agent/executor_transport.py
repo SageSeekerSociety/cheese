@@ -917,8 +917,16 @@ class RemoteClient:
                         )
                     )
         if self.config.get("kind") == "deferred":
-            if method == "context_fs" and (params or {}).get("operation") == "tree":
+            operation = (params or {}).get("operation")
+            if method == "context_fs" and operation == "tree":
                 return {"generation": "no-work-lease", "entries": {}}
+            # The placeholder holds no project yet, so nothing is at any path
+            # in it. Said as an error instead, Claude Code starting there drops
+            # every skill in its config directory.
+            if method == "context_fs" and operation == "directory":
+                return {"missing": True}
+            if method == "context_fs" and operation == "list":
+                return {"directories": []}
             if method == "ping":
                 return {"workspace": self.config["workspace"], "mcp_servers": []}
             raise MachineOutOfReach
