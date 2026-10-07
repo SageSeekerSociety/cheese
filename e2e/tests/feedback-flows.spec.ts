@@ -16,11 +16,6 @@ import { api, appOriginOf, isEnvironmentNoise, apiLogin, recordUnknownElements, 
 // 同名两条会让「刚提的这条在不在」这种断言分不清是在说哪一条。
 const uniqueTitle = (what: string) => `【e2e】${what} ${Date.now()}`;
 
-// 60s 不够：vite 开发服务器按路由编译，这两条用例各自会踩到几条第一次进的路由
-// （反馈中心、反馈详情、反馈管理），冷编译一条就能吃掉几十秒。配置里那个 60s 是给
-// 「路由已经热了」的用例定的，这里翻成三倍，免得红在编译上而不是红在要验的东西上。
-test.describe.configure({ timeout: 180_000 });
-
 // 浏览器控制台里的话也算断言的一部分。
 //
 // 起因是一个真漏出来的 bug：给管理端抽屉加头像时只写了模板没写 import，Vue 只在

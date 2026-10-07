@@ -27,14 +27,15 @@ const COLLAB_SECRET = 'e2e-collab-secret';
 export default defineConfig({
   testDir: './tests',
   globalSetup: './global-setup.ts',
-  // 60s (not 30s): the vite dev server compiles routes on-demand, and the first
-  // navigation into a heavy route (the project workspace pulls in tiptap /
-  // prosemirror / DocEditor) can take >30s to transform on a cold start.
-  timeout: 60_000,
-  // Serial on CI: parallel workers each trigger a fresh cold compile at once,
-  // and the resulting storm blows the per-test timeout. The suite is small, so
-  // serializing costs little and makes cold runs deterministic. Local stays
-  // parallel (dev servers are usually already warm via reuseExistingServer).
+  // About twice the slowest test measured against the production build on CI
+  // (22.9 s, a layout check looping over several viewports). A file whose
+  // tests sweep many screens sets its own, longer limit.
+  timeout: 45_000,
+  // Serial on CI: every spec shares one backend and signs in as alice, and
+  // what one test leaves behind (an unread badge, a notification) shows up in
+  // another's page. Running them concurrently against that one backend has
+  // not been tried; the five CI shards are where the parallelism comes from.
+  // Local runs stay parallel.
   workers: process.env.CI ? 1 : undefined,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [

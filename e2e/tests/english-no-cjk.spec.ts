@@ -35,7 +35,8 @@ test.use({ locale: "en-US" });
 // Parallel so CI shards split this file by test rather than handing one shard
 // all of it: each test seeds what it needs, and one CI worker still runs them
 // one at a time.
-test.describe.configure({ mode: "parallel", timeout: 240_000 });
+// 90 s: the workspace sweep, the longest test here, took 39.7 s on CI.
+test.describe.configure({ mode: "parallel", timeout: 90_000 });
 
 type Screen = {
   /** What a reader would call the screen; the failure names it. */

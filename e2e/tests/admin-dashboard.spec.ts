@@ -16,8 +16,6 @@ import { appOriginOf, isEnvironmentNoise, apiLogin, recordUnknownElements, unkno
 // 管理端要求后端把 alice 放进管理员名单（`PLATFORM_ADMIN_HANDLES`，见
 // playwright.config.ts 里后端 webServer 的 env）。没有它这一页回 403。
 
-test.describe.configure({ timeout: 180_000 });
-
 /** 浏览器控制台里的话也算断言的一部分（同 `feedback-flows.spec.ts` 的理由）。 */
 const consoleNoise: string[] = [];
 
