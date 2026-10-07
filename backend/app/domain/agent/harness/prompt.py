@@ -418,7 +418,15 @@ def build_system_prompt(
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
 #: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
-TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory", "machine")
+TRACKED_SECTIONS = (
+    "tasks",
+    "topics",
+    "artifacts",
+    "roster",
+    "overview",
+    "memory",
+    "machine",
+)
 
 #: 任务会话对工作机器能做什么。它随任务开始而变（开始后会话带着留得下改动的凭证重开，
 #: 但接着的是同一条对话，开场不会再发），所以是一段会再告诉一次的现状，而不是写死在开场
@@ -484,6 +492,7 @@ def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str
 def build_session_opening(
     *,
     thread: str | None = None,
+    tasks: str | None = None,
     doc: str | None = None,
     memory: MemoryIndex | None = None,
     roster: list[dict] | None = None,
@@ -498,10 +507,14 @@ def build_session_opening(
 ) -> SessionOpening:
     """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。
 
-    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。"""
+    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。
+    ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
+    变，所以和支线那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
     if thread:
         sections["thread"] = "## 这条支线\n" + thread
+    if tasks:
+        sections["tasks"] = tasks
     if machine:
         sections["machine"] = machine
     if teaching is not None and (section := teaching_section(teaching)):

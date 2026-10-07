@@ -276,9 +276,14 @@ THREAD = (
     "支线挂在主线的这条消息下面：\n"
     "[wangchangxin] @芝士 登录页的错误提示改成红色，手机上也看一下\n\n"
     "这条消息之前，主线上说的是：\n"
-    "[lisi] 下午三点评审登录页\n\n"
-    "这个频道里还在进行的任务（要做的事已经有任务了，就告诉人去那个任务，不再新建）：\n"
-    "- 接口联调（负责人 @lisi）"
+    "[lisi] 下午三点评审登录页"
+)
+TASKS = (
+    "## 这个频道里还在进行的任务\n"
+    "要做的事已经有任务了，就告诉人去那个任务，不再新建。标着「从这条支线的"
+    "消息建的」的任务，就是为这条支线说的事建的。\n"
+    "- 接口联调（负责人 @lisi）\n"
+    "- 登录页错误提示（负责人 @wangchangxin）（从这条支线的消息建的）"
 )
 
 #: Long enough to blow both 6000-character budgets, so the compressed form and
@@ -339,6 +344,12 @@ TOGGLES = [
         "kwargs": {"thread": THREAD},
         "label": "`thread` 非空：会话在频道的一条支线里",
         "params": ["thread=…"],
+    },
+    {
+        "id": "tasks",
+        "kwargs": {"tasks": TASKS},
+        "label": "`tasks` 非空：会话在一条支线里，这一段是它所在频道还在进行的任务",
+        "params": ["tasks=…"],
     },
     {
         "id": "has_doc",
