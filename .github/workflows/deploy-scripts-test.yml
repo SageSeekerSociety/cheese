@@ -65,6 +65,9 @@ jobs:
       - name: Automatic release ordering
         run: python3 deploy/tests/test_auto_deploy.py
 
+      - name: PR watcher follows the deploy that releases a merge
+        run: python3 deploy/tests/test_pr_watch_deploy.py
+
       - name: Hong Kong edge asset copy
         run: python3 deploy/tests/test_edge_asset_sync.py
 

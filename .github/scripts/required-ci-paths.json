@@ -40,6 +40,7 @@
   "deploy": [
     "deploy/**",
     ".github/scripts/ensure-apt.sh",
+    ".claude/scripts/pr-watch.sh",
     "backend/scripts/gateway_supply_probe.py",
     "backend/scripts/test_gateway_supply_probe.py",
     ".github/workflows/deploy-drift.yml",
