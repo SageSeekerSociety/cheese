@@ -482,7 +482,6 @@ export interface InboxItem {
   payload: { options?: unknown; [key: string]: unknown }
   read: boolean
   resolved_at: string | null
-  feedback: 'up' | 'down' | null
   created_at: string
 }
 
@@ -812,7 +811,6 @@ export interface Notification {
   body: string
   payload: Record<string, unknown>
   read_at: string | null
-  feedback: 'up' | 'down' | null
   created_at: string
 }
 

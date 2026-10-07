@@ -453,7 +453,6 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/alerts/unread-count", auth: "notification.recipient", owner: "notification"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/alerts/read-all", auth: "notification.recipient", owner: "notification"}
   - {protocol: "http", method: "POST", path: "/alerts/{notification_id}/read", auth: "notification.recipient", owner: "notification"}
-  - {protocol: "http", method: "POST", path: "/alerts/{notification_id}/feedback", auth: "notification.recipient", owner: "notification"}
   - {protocol: "http", method: "POST", path: "/alerts/{notification_id}/resolve", auth: "notification.recipient", owner: "notification"}
   # app.api.routes.answers
   - {protocol: "http", method: "GET", path: "/questions/{question_id}/answers", auth: "legacy.answers.list_answers", owner: "answers"}

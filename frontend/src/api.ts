@@ -2224,16 +2224,6 @@ export interface StatsProduct {
     }
     note_key: string
   }
-  usefulness: {
-    /** 反馈只存在于**通知**上；房间里的主动消息大多不在这里。 */
-    up: number
-    down: number
-    unrated_read: number
-    unread: number
-    useful_rate: number | null
-    proposal_dismissals: number
-    note_key: string
-  }
   unavailable: { name: string; reason_key: string; needs: string }[]
 }
 

@@ -34,8 +34,6 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
 
-_VALID_FEEDBACK = {"up", "down"}
-
 
 @dataclass(slots=True)
 class _EntityPointer:
@@ -420,10 +418,3 @@ class ProjectNotificationService:
                 {"type": "event_block", "block": block_payload},
             )
         return saved
-
-    async def set_feedback(self, notification_id: int, feedback: str) -> Notification:
-        if feedback not in _VALID_FEEDBACK:
-            raise ValidationError("feedback must be 'up' or 'down'")
-        row = await self.get_or_404(notification_id)
-        row.feedback = feedback
-        return await self._repo.save(row)
