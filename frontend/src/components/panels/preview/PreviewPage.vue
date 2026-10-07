@@ -22,7 +22,7 @@ const props = defineProps<{ html: string | null }>()
   <iframe
     v-if="props.html"
     class="page-frame"
-    :srcdoc="props.html"
+    :srcdoc="props.html ?? ''"
     sandbox="allow-scripts"
     :title="t('work.room.preview.webView')"
   />
