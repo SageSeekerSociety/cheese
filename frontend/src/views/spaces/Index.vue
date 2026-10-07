@@ -182,30 +182,28 @@
 
   <!-- Hand the invite code over the moment the board is created: the backend issues it at
        creation, so the creator has nowhere else to see it. -->
-  <v-dialog v-model="codeDialog" :max-width="DIALOG_WIDTH.sm">
-    <v-card :title="t('spaces.inviteCodes.createdTitle')">
-      <v-card-text>
-        <p class="text-body-2 mb-3">{{ t('spaces.inviteCodes.createdBody') }}</p>
-        <div class="d-flex align-center ga-2">
-          <span class="invite-code-text">{{ createdInviteCode }}</span>
-          <BaseButton
-            kind="ghost"
-            icon="mdi-content-copy"
-            size="sm"
-            :title="t('spaces.inviteCodes.copy')"
-            @click="copyCreatedCode"
-          />
-        </div>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <!-- Don't stop back on the list after creating: dismissing this card enters the space. -->
-        <BaseButton kind="primary" @click="enterCreatedSpace">
-          {{ t('spaces.inviteCodes.openSpace') }}
-        </BaseButton>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+  <!-- 关掉它的每一条路（取消、Esc、点遮罩）都进刚建好的板：这张卡一走，邀请码就没别
+       处能看了。 -->
+  <AdaptiveDialog
+    v-model="codeDialog"
+    :title="t('spaces.inviteCodes.createdTitle')"
+    size="sm"
+    :primary-label="t('spaces.inviteCodes.openSpace')"
+    @primary="enterCreatedSpace"
+    @update:model-value="(value: boolean) => !value && enterCreatedSpace()"
+  >
+    <p class="text-body-2 mb-3">{{ t('spaces.inviteCodes.createdBody') }}</p>
+    <div class="d-flex align-center ga-2">
+      <span class="invite-code-text">{{ createdInviteCode }}</span>
+      <BaseButton
+        kind="ghost"
+        icon="mdi-content-copy"
+        size="sm"
+        :title="t('spaces.inviteCodes.copy')"
+        @click="copyCreatedCode"
+      />
+    </div>
+  </AdaptiveDialog>
 </template>
 
 <script lang="ts" setup>
@@ -227,7 +225,6 @@ import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
