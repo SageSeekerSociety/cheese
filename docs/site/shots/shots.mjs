@@ -60,7 +60,8 @@ const SHOTS = {
     await page.waitForTimeout(500)
     return { clip: { x: 0, y: 0, width: 720, height: 520 } }
   }],
-  overview: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/overview`); await settle(page); return { clip: { x: 340, y: 30, width: 1100, height: 260 } } }],
+  overview: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/overview`); await settle(page, 2000); return { clip: { x: 340, y: 30, width: 1100, height: 640 } } }],
+  tasks: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/tasks`); await settle(page); return { clip: { x: 340, y: 30, width: 1100, height: 300 } } }],
   'task-page': [desktop, async (page, { pid, rooms, tasks }) => {
     await page.goto(`${APP}/projects/${pid}/topics/${rooms['报名表单改版']}/tasks/${tasks['表单字段精简']}`)
     await page.locator('.accept-dock').first().waitFor()
