@@ -174,12 +174,11 @@ addopts = ["--strict-markers"]
 # times, and each one cost twenty minutes of the box's single runner to learn
 # nothing at all.
 #
-# Each layer sets a much tighter ceiling of its own at collection
-# (`_LAYER_TIMEOUT_S` in tests/conftest.py). 300s applies only to the tests in
-# tests/slow_tests.txt, which took over 60% of their layer's ceiling in some
-# run when it was introduced.
+# 300s only ends a test that never finishes. How long a finished test may take
+# is a separate, much tighter check per layer (`_LAYER_CEILING_S` in
+# tests/conftest.py), reported as that test's failure.
 #
-# It applies locally too, deliberately: the same silence is just as unreadable
+# The 300 s timeout applies locally too, deliberately: the same silence is just as unreadable
 # on a laptop, and pytest-timeout stands down on its own under a debugger.
 timeout = 300
 # A signal can interrupt anyio's run_until_complete without cancelling the
