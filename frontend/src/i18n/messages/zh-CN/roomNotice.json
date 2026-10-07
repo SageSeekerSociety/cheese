@@ -187,6 +187,7 @@
   "mailDraftSummary": "收件人：{to}\n主题：{subject}",
   "mailDraftSummaryWithFiles": "收件人：{to}\n主题：{subject}\n附件：{files}",
   "mailDrafted": "芝士在 {account} 里写好了一封草稿，等 {owner} 确认后才会发送",
+  "mailDraftedBy": "{who} 在 {account} 里写好了一封草稿，等 {owner} 确认后才会发送",
   "mailFailed": "邮件《{subject}》没有发出去",
   "mailSent": "{actor} 已发送邮件《{subject}》",
   "mcpNotConnected": "{server} 需要在项目设置里连接",
