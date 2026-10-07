@@ -1199,7 +1199,10 @@ button:not(.v-btn) {
   margin-top: 16px;
 }
 
-@container (min-width: 720px) {
+/* 名字写死：这条规则在全局样式表里，匿名查询匹配的是使用处的最近容器，谁在上游挂一个
+   容器就把这一档带歪。后台内容列是 `.app-page__column--admin`（`container: admin`），
+   量的就是那一列有多宽。 */
+@container admin (min-width: 720px) {
   .admin-kpi-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
