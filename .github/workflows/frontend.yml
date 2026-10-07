@@ -140,6 +140,26 @@ jobs:
       - name: Scenes (standalone-ratchet)
         run: pnpm run lint:scenes
 
+      # The catalog ratchet: every component under src/ (src/views/demo/
+      # excluded) that renders from props alone — grade A, the same grade the
+      # Scenes step uses — is in the /demo/catalog preview site, where
+      # catalog.spec.ts mounts it and notices the day it stops rendering alone.
+      # The ones that are not yet are listed as pending in
+      # frontend/catalog-baseline.json, and that list may only shrink: a
+      # component that is new, or that just became A, has to get a catalog
+      # entry (frontend/AGENTS.md, "The component preview site").
+      #
+      # "In the catalog" is read from the code — a catalog*.ts that imports the
+      # .vue and uses it as an entry's `component:` — not from a `file:` label.
+      # python3 stdlib only, like the Scenes step.
+      #
+      # Read-only like every other step here; the writer is
+      # `pnpm run lint:catalog:update`, which only ever REMOVES from the
+      # pending list. Its own tests are `python3 .claude/scripts/catalog-ratchet.py
+      # --self-test`, which repo-guards.yml runs in its Guards self-test step.
+      - name: Catalog (preview-ratchet)
+        run: pnpm run lint:catalog
+
       # Design system: no hardcoded colours, radii on the 6/8/12/999 ladder.
       # Enforced through a ratchet (stylelint-baseline.json) because the tree
       # starts at 537 violations across 88 files — a rule that goes red

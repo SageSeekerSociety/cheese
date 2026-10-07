@@ -6,11 +6,11 @@ paths:
 
 # Module boundaries, and which of them a machine actually checks
 
-Four checks run on every commit and in CI. Everything below says *why* each
+Five checks run on every commit and in CI. Everything below says *why* each
 rule exists and what enforces it, so that a rule nobody checks is not mistaken
 for one that is. Rules marked **建议** are conventions: no tool will stop you.
 
-One command runs all four: `task boundaries`. Individually:
+One command runs all five: `task boundaries`. Individually:
 
 | Check | Command |
 |---|---|
@@ -18,8 +18,9 @@ One command runs all four: `task boundaries`. Individually:
 | Component imports | `pnpm --dir frontend run lint:boundary` |
 | File sizes | `python3 .claude/scripts/check-file-sizes.py` |
 | Scenes run standalone | `pnpm --dir frontend run lint:scenes` |
+| Grade-A components are in the catalog | `pnpm --dir frontend run lint:catalog` |
 
-All four print their baseline and their refresh command when they fail, and all
+All five print their baseline and their refresh command when they fail, and all
 three carry `--self-test` (also run in CI — a check nobody has watched fail is
 not a check).
 
@@ -161,10 +162,15 @@ Two things about it are worth knowing from this file:
   half was implemented at first, which graded ten such scenes A and froze them;
   both halves landed 2026-09-30.
 
-Missing `/demo/catalog` entries are reported as a warning count, never a failure:
-what belongs in the preview site is a product decision, and
-`pnpm exec vitest run src/views/demo/catalog.spec.ts` is the mechanical claim
-that a catalogued component really does render alone.
+Missing `/demo/catalog` entries are no longer a warning here. They are their own
+ratchet, `pnpm run lint:catalog` (`.claude/scripts/catalog-ratchet.py`): every
+grade-A `.vue` under `frontend/src` (the preview site's own `views/demo/`
+excluded) is either catalogued — a non-spec `views/demo/*.ts` imports it and
+uses it as an entry's `component:` — or listed as `pending` in
+`frontend/catalog-baseline.json`, a list that may only shrink. A new or newly-A
+component that is in neither fails; `--update` only crosses entries off.
+`pnpm exec vitest run src/views/demo/catalog.spec.ts` remains the mechanical
+claim that a catalogued component really does render alone.
 
 ## Files have a size cap, and cap it where it stands
 

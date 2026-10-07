@@ -76,6 +76,33 @@ To add a component:
 
 Rendering the site writes nothing to the source tree.
 
+The entries live in `views/demo/catalog.ts` and the `catalog*.ts` files split
+out beside it; any of them will do.
+
+**Every grade-A component has to be in the catalog.** `pnpm run lint:catalog`
+(`.claude/scripts/catalog-ratchet.py`) grades every `.vue` under `src/` except
+the preview site's own `src/views/demo/`, with the same grader as the scene
+ratchet below. A grade-A one must be catalogued — some non-spec `.ts` under
+`views/demo/` imports the `.vue` and uses it as an entry's `component:` (a
+`file:` label alone does not count) — or be listed in `pending` in
+`catalog-baseline.json`, which is the backlog from the day the check was added
+and may only shrink:
+
+```bash
+pnpm run lint:catalog           # what CI runs
+pnpm run lint:catalog:update    # after cataloguing a pending component
+python3 ../.claude/scripts/catalog-ratchet.py --list   # every component, grade, catalogued or not
+```
+
+- A **new** grade-A component, or an old one that just became grade A, that is
+  not catalogued **fails** — the three steps above are the fix. Adding it to
+  `pending` is not: `--update` only removes, and refuses to write while such a
+  component exists.
+- A pending entry that is now catalogued, gone, or no longer grade A does not
+  fail; the check prints it and `pnpm run lint:catalog:update` crosses it off.
+- A catalogued component that is not grade A is not this check's concern —
+  `catalog.spec.ts` decides whether it mounts.
+
 ## A new scene runs standalone from day one
 
 A **scene** is a router page under `src/views` or an SFC under
@@ -104,9 +131,9 @@ there: lift the fetching into a composable or the shell and pass the result down
 → `PanelDocView.vue` (props only). Full reasoning, the current counts and the
 per-page table: [`../docs/manual/dev/scenes.md`](../docs/manual/dev/scenes.md).
 
-A standalone-ready scene that is not in `views/demo/catalog.ts` is reported as a
-warning, not a failure — read the warning count as a to-do list, and the three
-steps above as the fix.
+Whether a standalone-ready scene is in the preview site is not this check's
+question: every grade-A component, scene or not, must be catalogued or pending —
+see `pnpm run lint:catalog` under "The component preview site" above.
 
 ## Caps and conventions
 
@@ -117,7 +144,7 @@ steps above as the fix.
 - `pnpm run lint` is the read-only ESLint (the writer is `lint:fix`); never gate
   on the writing form. Design tokens and the two themes have their own ratchet —
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).
-- `task fe:check` runs lint, boundaries, scenes, style, typecheck, unit tests and build.
+- `task fe:check` runs lint, boundaries, scenes, catalog, style, typecheck, unit tests and build.
 - A dev server may already be running on 3001/3002 in this worktree; do not
   restart one you did not start.
 - A new page under `src/views/admin/features/`: the chart components take props
