@@ -1604,9 +1604,15 @@ def _migration_fingerprint() -> str:
     import hashlib
     from pathlib import Path
 
-    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    alembic = Path(__file__).resolve().parent.parent / "alembic"
     digest = hashlib.sha256()
-    for path in sorted(versions.glob("*.py")):
+    # env.py and migration_helpers.py decide what the migrations do as much as
+    # the version files: a change to either must not reuse an old template.
+    for path in [
+        alembic / "env.py",
+        alembic / "migration_helpers.py",
+        *sorted((alembic / "versions").glob("*.py")),
+    ]:
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()[:12]

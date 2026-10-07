@@ -995,7 +995,9 @@ ensure_forgejo
 ensure_forge_events
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
-dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
+# Each migration commits on its own (alembic/env.py), so a failure leaves the
+# database at the last one that succeeded; the next deploy resumes from there.
+dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap; the database stays at the last migration that committed (alembic current)"
 
 # Persistent files must be readable by the backend's uid (1000), including
 # legacy repository files that the migration archives. Ownership repair uses

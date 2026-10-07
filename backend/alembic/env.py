@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -19,9 +20,13 @@ if config.config_file_name is not None:
 # Make the application package importable and pull in settings + Base.
 # Import every model so its tables register on Base.metadata. Without this,
 # autogenerate would see an empty metadata and drop all tables.
+from migration_helpers import CI_POSTGRES_MAJOR  # noqa: E402
+
 import app.models  # noqa: E402, F401
 from app.core.config import settings  # noqa: E402
 from app.core.db import Base, apply_migration_timeouts  # noqa: E402
+
+log = logging.getLogger("alembic.env")
 
 # Inject the runtime database URL instead of hardcoding it in alembic.ini.
 config.set_main_option("sqlalchemy.url", settings.database_url)
@@ -53,6 +58,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        transaction_per_migration=True,
     )
 
     with context.begin_transaction():
@@ -66,11 +72,45 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def report_server_version(connection: Connection) -> None:
+    """Say which Postgres this upgrade runs against, and warn when it is not
+    the major version CI tested every migration on (``CI_POSTGRES_MAJOR``).
+
+    A warning, not a failure: the deployed databases' versions live in each
+    box's own ``.env``, not in this repository, so a hard stop could abort a
+    deploy that has always worked. The line in the deploy log is how a
+    mismatch gets noticed.
+    """
+    shown = connection.exec_driver_sql("SHOW server_version_num").scalar_one()
+    major = int(shown) // 10000
+    log.info("Postgres server %s (CI tests against %s)", shown, CI_POSTGRES_MAJOR)
+    if major != CI_POSTGRES_MAJOR:
+        log.warning(
+            "Postgres major version %s differs from the %s CI runs every migration on; "
+            "a migration that passed CI may behave differently here.",
+            major,
+            CI_POSTGRES_MAJOR,
+        )
+
+
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    apply_migration_timeouts(connection)
+    report_server_version(connection)
+    # The timeouts are session-level, so they outlive this commit. Committing
+    # leaves no transaction open: alembic would otherwise adopt the one
+    # SQLAlchemy autobegan above as an "external" transaction and run the whole
+    # upgrade inside it, which is what transaction_per_migration turns off.
+    connection.commit()
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        # Each migration commits on its own (.claude/rules/migrations.md): its
+        # locks and the row locks of its backfill end with it, instead of being
+        # held until the last migration of the deploy finishes.
+        transaction_per_migration=True,
+    )
 
     with context.begin_transaction():
-        apply_migration_timeouts(connection)
         context.run_migrations()
 
 
