@@ -10,12 +10,17 @@ import asyncio
 import time
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
-from app.domain.memory.models import MemoryScope, user_scope_id
-from app.domain.memory.store import DbMemoryStore, memory_store
+from app.domain.memory.models import (
+    MemoryEntry,
+    MemoryScope,
+    agent_project_scope_id,
+)
+from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import (
@@ -187,13 +192,29 @@ def _remember(client, project_id: str, fact: str, *, seat: str | None = None) ->
 
 
 def _pool(client, project_id: str, handle: str) -> list[str]:
-    """这位 agent 的池里现在有什么，按 handle 点名读。
+    """这位 agent 的池里现在有什么，按 handle 点名读那张表。
 
-    关键词检索那条读路径（`/projects/{id}/memory/search`）连同条目池的读侧一
-    起撤了，所以这里读记忆列表本身。归属这件事它答得一样清楚：池是按 agent 分
-    的，写进哪一位的池子，哪一位点名读得到。
+    条目池已经没有读点了：`GET /memory` 现在读的是那棵记忆树（「项目文档 → 记忆」
+    那一档），关键词检索那条读路径（`/projects/{id}/memory/search`）也连同条目池的
+    读侧一起撤了。所以「写进哪一位的池子」只能问表本身——池是按 agent 分的，这几
+    条用例守的正是这件事。
     """
-    return [e["content"] for e in _list_memory(client, project_id, agent_handle=handle)]
+
+    async def _read() -> list[str]:
+        async with client.test_factory() as s:
+            rows = await s.scalars(
+                select(MemoryEntry.content)
+                .where(
+                    MemoryEntry.scope == MemoryScope.agent_project,
+                    MemoryEntry.scope_id
+                    == agent_project_scope_id(uuid.UUID(project_id), handle),
+                    MemoryEntry.retired_at.is_(None),
+                )
+                .order_by(MemoryEntry.created_at.desc())
+            )
+            return list(rows.all())
+
+    return asyncio.run(_read())
 
 
 def _seat_a_new_agent(client, project_id: str, topic_id: str, handle: str) -> str:
@@ -294,117 +315,3 @@ def test_human_members_are_not_mistaken_for_agents(client):
     )
     thread = _turn(client, topic_id)
     assert _ai_authors(client, thread) == {_own_agent(client, topic_id)}
-
-
-# --- 记忆可见: the agent's own pool has to be listable, not just searchable ---
-
-
-def _remember_about(client, project_id: str, person: str, fact: str) -> None:
-    """项目默认芝士对某个人的一条记忆。
-
-    直接按键写库：写的那一侧（私聊里的 `cheese_remember`）已经撤掉，这一组问的
-    是列出来的时候都带回了什么。"""
-
-    async def _seed() -> None:
-        async with client.test_factory() as s:
-            project = await ProjectService(s).get_or_404(uuid.UUID(project_id))
-            agent = await AgentInstanceService(s).for_project(project)
-            await DbMemoryStore(s).remember(
-                MemoryScope.user,
-                user_scope_id(project.id, agent.handle, person),
-                fact,
-            )
-            await s.commit()
-
-    asyncio.run(_seed())
-
-
-def _list_memory(
-    client, project_id: str, *, headers: dict | None = None, **params
-) -> list[dict]:
-    query = "&".join(f"{k}={v}" for k, v in params.items())
-    url = f"/memory?project_id={project_id}" + (f"&{query}" if query else "")
-    return client.get(url, headers=headers).json()["data"]["data"]
-
-
-def test_listing_a_project_shows_what_its_agents_remembered(client):
-    """每一条 agent 记忆都落在某个 agent 的池子里（写那一侧撤掉前如此，撤掉后池
-    子里的行仍是这个形状）。列表要是漏了它们，界面上的记忆面板就会在池子还在长
-    的时候显示一个空项目——凭空审计不到。"""
-    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
-        "id"
-    ]
-
-    _remember(client, project_id, "部署脚本在 deploy/deploy.sh")
-
-    entries = _list_memory(client, project_id)
-    assert [e["content"] for e in entries] == ["部署脚本在 deploy/deploy.sh"]
-    assert entries[0]["scope"] == "agent_project"
-    # Keyed by the AGENT working in the room — the project's default 芝士 here —
-    # not by the room, so what it learns is one pool across every room it works
-    # in rather than one pool per room.
-    assert entries[0]["scope_id"] == f"{project_id}:cheese"
-
-
-def test_listing_covers_every_agent_pool_in_the_project(client):
-    """Two 芝士 keep separate pools; the project view must still see both, and
-    `agent_handle` narrows to one."""
-    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
-        "id"
-    ]
-
-    def _topic(title: str) -> str:
-        return client.post(
-            "/topics",
-            json={"project_id": project_id, "title": title},
-            headers=session_auth_headers("alice"),
-        ).json()["data"]["id"]
-
-    ops_room = _topic("B")
-    ops = _seat_a_new_agent(client, project_id, ops_room, "ops")
-    _remember(client, project_id, "部署脚本在 deploy/deploy.sh")
-    _remember(client, project_id, "告警阈值是 p99 500ms", seat=ops)
-
-    everything = _list_memory(client, project_id)
-    assert {e["content"] for e in everything} == {
-        "部署脚本在 deploy/deploy.sh",
-        "告警阈值是 p99 500ms",
-    }
-    assert {e["scope_id"] for e in everything} == {
-        f"{project_id}:cheese",
-        f"{project_id}:ops",
-    }
-
-    only_ops = _list_memory(client, project_id, agent_handle="ops")
-    assert [e["content"] for e in only_ops] == ["告警阈值是 p99 500ms"]
-    assert [e["scope_id"] for e in only_ops] == [f"{project_id}:ops"]
-
-
-def test_one_projects_agent_pool_never_leaks_into_another(client):
-    """The prefix scan is keyed on this project — a sibling project's identical
-    agent handle must not come along."""
-    ids = [
-        post_project(client, json={"name": n}, owner="alice").json()["data"]["id"]
-        for n in ("P1", "P2")
-    ]
-    for pid, fact in zip(ids, ("P1 的事", "P2 的事"), strict=True):
-        _remember(client, pid, fact)
-
-    assert [e["content"] for e in _list_memory(client, ids[0])] == ["P1 的事"]
-    assert [e["content"] for e in _list_memory(client, ids[1])] == ["P2 的事"]
-
-
-def test_listing_answers_what_was_remembered_about_me(client):
-    """问「关于我记了什么」的人在请求里写了 `user_handle`，那是另一个问题。
-
-    它和「这个项目的芝士都记了什么」一起答：两条各自成立，谁也不挡谁。"""
-    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
-        "id"
-    ]
-    _remember(client, project_id, "芝士自己记的")
-    _remember_about(client, project_id, "alice", "他要结论在最前面")
-
-    about = _list_memory(
-        client, project_id, headers=session_auth_headers("alice"), user_handle="alice"
-    )
-    assert {"芝士自己记的", "他要结论在最前面"} <= {e["content"] for e in about}

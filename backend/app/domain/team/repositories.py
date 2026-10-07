@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ConflictError
 from app.core.sentences import say
+from app.domain.avatars.models import Avatar
 from app.domain.team.models import (
     PERSONAL_TEAM_ROW,
     ApplicationStatus,
@@ -193,6 +194,31 @@ class TeamRepository:
         result = await self._session.execute(stmt)
         teams = list(result.scalars().all())
         return {t.id: t for t in teams}
+
+    async def chosen_avatar_ids(self, team_ids: Sequence[int]) -> dict[int, int]:
+        """team id -> 这个团队**自己挑过**的头像 id，没挑过的不在里面。
+
+        和 ``UserProfileRepository.chosen_avatar_ids`` 同一条判据：判断「这是不是全站
+        默认头像」看 ``Avatar.avatar_type``，不看 id 是不是 1 —— 默认头像是哪一行是
+        种子数据，每个环境不一样。新建团队默认 ``avatar_id=1``（``api/routes/teams.py``
+        的 ``CreateTeamRequest``），所以「有 avatar_id」不等于「挑过」；回原始值会让
+        所有没挑过的团队共用同一张脸，而区分团队（和人）正是头像唯一的活。没挑过的
+        团队不在映射里，调用方据此不回 URL，让客户端画彩色首字母。
+        """
+        if not team_ids:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(Team.id, Team.avatar_id, Avatar.avatar_type)
+                .join(Avatar, Avatar.id == Team.avatar_id, isouter=True)
+                .where(and_(Team.id.in_(list(team_ids)), Team.deleted_at.is_(None)))
+            )
+        ).all()
+        return {
+            team_id: avatar_id
+            for team_id, avatar_id, avatar_type in rows
+            if avatar_type not in (None, "default")
+        }
 
     async def application_statuses(self, ids: Sequence[int]) -> dict[int, str]:
         """Where each team invitation or join request stands now, by id."""

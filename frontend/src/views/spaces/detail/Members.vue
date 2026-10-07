@@ -216,7 +216,10 @@ async function transferOwner(row: Row) {
         <tr v-for="row in filtered" :key="row.userId">
           <td>
             <div class="mem__who">
-              <UserAvatar :avatar="row.avatarId ? getAvatarUrl(row.avatarId) : undefined" :name="row.name" size="28" />
+              <!-- getAvatarUrl 对 null / undefined / 0 一律回空串（不再回 /avatars/default），
+                   所以这里直接交给它就行，不用再套一层真值判断；没头像时 UserAvatar 自己
+                   走彩色首字母。seed 传 handle，颜色跟着人走、不跟昵称走。 -->
+              <UserAvatar :avatar="getAvatarUrl(row.avatarId)" :name="row.name" :seed="row.handle" size="28" />
               <div>
                 <div class="mem__name">
                   {{ row.name }}

@@ -14,9 +14,9 @@
 // (`UserProfileRepository.chosen_avatar_ids`)：注册时人人都被写上默认头像，
 // 所以「有 avatar_id」不等于「挑过」，而哪一行是默认图是各环境的种子数据。
 //
-// 所以 `avatarId` 为 null 时**必须**走首字母：`getAvatarUrl` 对空值返回的是
-// `/avatars/default`，也就是「所有没挑过头像的人共用同一张脸」，那比按 handle 派生
-// 的彩色首字母更难把人区分开 —— 而区分人正是头像唯一的活。传参前先判空。
+// 所以 `avatarId` 为 null 时走首字母：`getAvatarUrl` 对空值返回**空串**（这张契约
+// 改过，以前回的是 `/avatars/default` —— 所有人共用一张脸，比按 handle 派生的彩色
+// 首字母更难把人区分开，而区分人正是头像唯一的活）。空串交给 `UserAvatar` 去画那张首字母。
 //
 // agent 走 `CheeseAvatar`，和聊天面板、现场面板同一个标记；
 // 它不看 `avatarId`：agent 没有「自己挑的图」这回事。
@@ -54,7 +54,7 @@ const avatarUrl = computed(() => (avatarId == null ? '' : getAvatarUrl(avatarId)
 
 <template>
   <CheeseAvatar v-if="isAgent" class="fb-avatar" :size="size" :name="name || handle" :handle="handle" />
-  <UserAvatar v-else class="fb-avatar" :size="size" :name="name || handle" :avatar="avatarUrl" />
+  <UserAvatar v-else class="fb-avatar" :size="size" :name="name || handle" :seed="handle" :avatar="avatarUrl" />
 </template>
 
 <style scoped>

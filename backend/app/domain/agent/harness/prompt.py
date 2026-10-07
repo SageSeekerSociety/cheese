@@ -268,7 +268,7 @@ DOC_FORM = load_skills(["doc-form"])
 #: 显示在那里，所以每个 agent 都要读到它，读到的是同一段：主会话在
 #: `PLATFORM_RULES` 里读到；Claude Code 不把系统提示词带给它起的 agent，由
 #: SubagentStart hook 补在每个 agent 开头（`claude_code.session_launch`）；Codex 的
-#: 子线程继承主线程的 developer instructions。pi 的分身没有带说明字段的工具。
+#: 子线程继承主线程的 developer instructions；pi 的分身由 `SUBAGENT_RULES` 补上。
 STEP_TITLES = (
     "每调一次工具，界面上的「施工现场」就多一行，显示你填的说明字段（Bash 和 "
     "Agent 的 description）。这些字段用和你说话的人用的语言写这一步在做什么，不复述"
@@ -279,7 +279,8 @@ STEP_TITLES = (
 #: 改仓库、跑检查的每个 agent 动手前都要知道的几条：同一个仓库、同一台机器上同时
 #: 有别的任务在干活。主会话在 `PLATFORM_RULES` 里读到；Claude Code 起的 agent 由
 #: SubagentStart hook 补在开头（大活是分身在做，提交、拉取、起服务的多半是它们）；
-#: Codex 的子线程继承主线程的 developer instructions。pi 的分身没有核实过。
+#: Codex 的子线程继承主线程的 developer instructions；pi 的分身追加在系统提示词末尾
+#: （`pi/subagents.py`）。
 SHARED_CHECKOUT = (
     "- 同一台机器上可能有这个仓库的别的任务在干活，stash 栈是整个仓库共用的：不用 "
     "`git stash`，要把改动放一边就提交；发起 `git pull`、`git merge`、`git rebase` "
@@ -292,7 +293,8 @@ SHARED_CHECKOUT = (
     "库不用。"
 )
 
-#: Claude Code 起的每个 agent 开头补的那一段（SubagentStart hook）。
+#: 读不到主会话系统提示词的每个分身都补这一段，同一份：Claude Code 起的 agent 由
+#: SubagentStart hook 补在开头，pi 的分身追加在系统提示词末尾。
 SUBAGENT_RULES = f"- {STEP_TITLES}\n{SHARED_CHECKOUT}\n{SUBAGENT_TODO_WRITE}"
 
 #: 每个托管仓库、每一轮都成立的平台规矩。按需的流程（交付、产物、邮件、定时）在
@@ -417,7 +419,19 @@ def build_system_prompt(
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
 #: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
-TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory")
+TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory", "machine")
+
+#: 任务会话对工作机器能做什么。它随任务开始而变（开始后会话带着能写的凭证重开，但接着
+#: 的是同一条对话，开场不会再发），所以是一段会再告诉一次的现状，而不是写死在开场里。
+#: 只读时说清楚，否则 agent 照常跑命令，被拒以后才知道。
+TASK_MACHINE_READS_ONLY = (
+    "## 工作机器\n"
+    "这条任务还没开始，你对工作机器只读：能看代码和提交记录，不能执行命令、不能改"
+    "文件，任务文档照常能写。负责人开始任务以后平台会告诉你，那之后再动手。"
+)
+TASK_MACHINE_STARTED = (
+    "## 工作机器\n这条任务已经开始，你可以在工作机器上执行命令、改文件。"
+)
 
 
 @dataclass(frozen=True)
@@ -480,11 +494,16 @@ def build_session_opening(
     environment: list[str] | None = None,
     teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
+    machine: str | None = None,
 ) -> SessionOpening:
-    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。"""
+    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。
+
+    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。"""
     sections: dict[str, str] = {}
     if thread:
         sections["thread"] = "## 这条支线\n" + thread
+    if machine:
+        sections["machine"] = machine
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
     if topics:

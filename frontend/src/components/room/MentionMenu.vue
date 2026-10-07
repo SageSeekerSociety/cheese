@@ -12,9 +12,9 @@ import type { MentionItem } from '@/composables/useRoomMentionPicker'
 
 import { nextTick, ref } from 'vue'
 
-import { avatarColor, avatarInitial } from '../../utils/avatar'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
+import UserAvatar from '../common/UserAvatar.vue'
 
 import { t } from '@/i18n'
 
@@ -103,12 +103,13 @@ defineExpose({ scrollActiveIntoView })
                 :name="mm.label"
                 :handle="mm.handle"
               />
-              <span
+              <UserAvatar
                 v-else-if="mm.kind === 'member'"
-                class="mention-avatar"
-                :style="{ backgroundColor: avatarColor(mm.handle) }"
-                >{{ avatarInitial(mm.label) }}</span
-              >
+                :size="22"
+                :name="mm.label"
+                :seed="mm.handle"
+                :avatar="mm.avatar ?? ''"
+              />
               <span v-else-if="mm.kind === 'category'" class="mention-avatar mention-avatar--file">
                 <v-icon size="13">mdi-folder-outline</v-icon>
               </span>
@@ -200,13 +201,15 @@ defineExpose({ scrollActiveIntoView })
   justify-content: center;
   width: 22px;
   height: 22px;
-  /* 人是圆的；「所有人」、话题、文件这些不是人的是圆角方块（下面各自改回）。AI 队友画 CheeseAvatar。 */
+  /* 「所有人」、话题、文件这些不是人的是圆角方块（下面各自改回）。人和 AI 队友不走
+     这一个 span：人画 UserAvatar（真图，没有就按 handle 取色的彩色首字母），队友画
+     CheeseAvatar。 */
   border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 600;
-  /* 底色是 avatarColor() 按 handle 算出来的定值，和时间线上这个人的头像一个颜色，
-     两套主题下都不变，所以上面的字也得是定值。design-system §唯一的例外：这种地方
-     必须写明理由，否则下一个人会顺手换成 token（深色下就变成浅灰压浅底）。 */
+  /* 群播那颗图标坐在 --ink 上，两套主题下都不变，所以上面的字也得是定值。
+     design-system §唯一的例外：这种地方必须写明理由，否则下一个人会顺手换成 token
+     （深色下就变成浅灰压浅底）。 */
   /* stylelint-disable-next-line color-no-hex -- 压在头像底色上的墨色，底色不随主题变。 */
   color: #fff;
   flex: none;

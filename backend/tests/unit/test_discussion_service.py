@@ -939,6 +939,8 @@ class TestBuildDiscussionDto:
             5: _make_profile(5),
             10: _make_profile(10),
         }
+        # avatarId 现在取自「挑过的头像」映射，不再回档案上的 avatar_id
+        profile_repo.chosen_avatar_ids.return_value = {5: 500}
 
         result = await svc.get_discussion(42, current_user_id=5)
 

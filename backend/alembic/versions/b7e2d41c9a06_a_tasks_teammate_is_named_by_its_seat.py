@@ -1,7 +1,7 @@
 """A task's teammate is named by its seat
 
 Revision ID: b7e2d41c9a06
-Revises: f4378cf0084d
+Revises: 8201771931c9
 Create Date: 2026-10-07
 
 `tasks.agent_handle` says which AI teammate works a task. It was written in
@@ -24,7 +24,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "b7e2d41c9a06"
-down_revision: str | Sequence[str] | None = "f4378cf0084d"
+down_revision: str | Sequence[str] | None = "8201771931c9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -33,7 +33,7 @@ used to read is dropped a release later still.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import Boolean, Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
@@ -105,6 +105,18 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
     return conversation_id
 
 
+_rooms = table("topics", column("id", Uuid), column("members_only", Boolean))
+
+
+async def members_only(session: AsyncSession, room_id: uuid.UUID) -> bool:
+    """Whether a room is a private channel, seen only by the people in it."""
+    return bool(
+        await session.scalar(
+            select(_rooms.c.members_only).where(_rooms.c.id == room_id)
+        )
+    )
+
+
 async def topic_member(session: AsyncSession, topic_id: uuid.UUID, handle: str) -> bool:
     return (
         await session.scalar(
@@ -135,7 +147,7 @@ async def legacy_execution(session: AsyncSession, conversation_id: uuid.UUID):
                 AgentSession.id, AgentSession.runtime_location, AgentSession.work_lease
             )
             .where(AgentSession.conversation_id == conversation_id)
-            .with_for_update()
+            .with_for_update(read=True)
         )
     ).all()
     legacy = [
@@ -160,6 +172,11 @@ async def session_execution(session: AsyncSession, session_id: uuid.UUID):
                 AgentSession.conversation_id,
             )
             .where(AgentSession.id == session_id)
-            .with_for_update()
+            # FOR SHARE, not FOR UPDATE: a lease change still waits for every
+            # call that checked the old lease to commit its dispatch, but the
+            # calls of one session no longer queue on its row. A walk sends a
+            # burst of them, and each queued call held a connection while it
+            # waited, which filled the connection owner's pool.
+            .with_for_update(read=True)
         )
     ).one_or_none()

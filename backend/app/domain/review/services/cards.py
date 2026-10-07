@@ -189,10 +189,14 @@ async def create_card(
             project_id=topic.project_id,
             name=new_artifact or "",
             about=about,
+            hidden=await artifacts.hidden_from_room(self._session, topic.id),
         )
     else:
         declared = await artifacts.reuse(
-            self._session, project_id=topic.project_id, artifact_id=artifact or ""
+            self._session,
+            project_id=topic.project_id,
+            artifact_id=artifact or "",
+            hidden=await artifacts.hidden_from_room(self._session, topic.id),
         )
         await artifacts.describe(self._session, declared, about=about)
     card = await self._repo.add(
@@ -430,8 +434,13 @@ async def describe(self: pkg.AcceptService, card: AcceptCard) -> dict:
     data["note_level"] = level.value if level else None
     # 这次交付更新的是哪一项产物。卡面上要有它：验收的人正在决定这一版要不要
     # 成为《报告》的当前版本，而卡上别的字段一个都没说出这件事。
+    # 版本数也按这个房间看得见的数：别的私密频道交付的那几版不算进来。
     declared = (
-        await artifacts.summary(self._session, card.artifact_id)
+        await artifacts.summary(
+            self._session,
+            card.artifact_id,
+            hidden=await artifacts.hidden_from_room(self._session, card.topic_id),
+        )
         if card.artifact_id is not None
         else None
     )

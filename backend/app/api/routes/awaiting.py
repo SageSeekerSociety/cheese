@@ -92,9 +92,14 @@ async def waiting_items(
     names = {p.id: p.name for p in projects}
     project_ids = list(names)
 
-    tasks = await TaskRepository(db).list_for_projects(project_ids)
-    topics = await TopicRepository(db).list_for_projects(project_ids)
+    topics = await TopicRepository(db).list_for_projects(project_ids, viewer=handle)
     rooms = {t.id: t for t in topics}
+    # A task is seen where its channel is: none from a private channel I left.
+    tasks = [
+        t
+        for t in await TaskRepository(db).list_for_projects(project_ids)
+        if t.room_id in rooms
+    ]
     task_ids = [t.id for t in tasks]
     topic_ids = [t.id for t in topics]
 

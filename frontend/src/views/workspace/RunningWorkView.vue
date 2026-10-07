@@ -18,14 +18,13 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { avatarColor, avatarInitial } from '@/utils/avatar'
-
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import VirtualList from '@/components/common/VirtualList.vue'
 import NeedsYou from '@/components/NeedsYou.vue'
 import { t } from '@/i18n'
@@ -143,8 +142,8 @@ const roomTitle = computed(() => {
   return (roomId: string) => byId.get(roomId) ?? t('work.board.unknownRoom')
 })
 
-// 卡上「谁在做」那一小块的名册信息（昵称、头像、破图退回）分在 useBoardMembers 里。
-const { ownerName, avatarSrc, onAvatarError } = useBoardMembers()
+// 卡上「谁在做」那一小块的名册信息（昵称、头像）分在 useBoardMembers 里。
+const { ownerName, avatarSrc } = useBoardMembers()
 
 /** 这会儿真的在跑的那些。
  *
@@ -434,21 +433,17 @@ function taskRowKey(row: unknown): string {
                         :handle="row.owner_handle"
                         aria-hidden="true"
                       />
-                      <img
-                        v-else-if="avatarSrc(row.owner_handle)"
-                        decoding="async"
-                        class="board-card__avatar"
-                        :src="avatarSrc(row.owner_handle)!"
-                        alt=""
-                        @error="onAvatarError(row.owner_handle)"
-                      />
-                      <span
+                      <!-- 真人头像交给 UserAvatar：挑过头像就上图，没挑过或图取不到就
+                           退成按 handle 哈希的彩色首字母 —— 退化只此一处，加载失败也
+                           由它记（utils/avatarFailures）。种子用 handle，颜色跟着人走。 -->
+                      <UserAvatar
                         v-else
-                        class="board-card__avatar board-card__avatar--initial"
-                        :style="{ backgroundColor: avatarColor(row.owner_handle) }"
-                        aria-hidden="true"
-                        >{{ avatarInitial(ownerName(row.owner_handle)) }}</span
-                      >
+                        class="board-card__avatar"
+                        :avatar="avatarSrc(row.owner_handle) ?? ''"
+                        :name="ownerName(row.owner_handle)"
+                        :seed="row.owner_handle"
+                        :size="18"
+                      />
                       <span class="board-card__name">{{ ownerName(row.owner_handle) }}</span>
                     </span>
                     <span v-else class="c-faint">{{ t('work.board.noAssignee') }}</span>
@@ -840,24 +835,10 @@ function taskRowKey(row: unknown): string {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 头像本身的尺寸、形状和彩色首字母的墨色都由 UserAvatar 定（它按 :size=18 画圆），
+   这里只交代它在卡片这一行里不参与伸缩。`--initial` 那一份随自画的 span 一起删了。 */
 .board-card__avatar {
   flex: none;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-pill);
-  object-fit: cover;
-}
-.board-card__avatar--initial {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* stylelint-disable-next-line color-no-hex -- 压在头像底色上的墨色：底色是
-     avatarColor() 按固定 OKLCH 亮度算出来的，两套主题下同一个值，所以字也不该跟
-     着主题变。换成 token 会在深色下变成浅灰压浅底。见 design-system §唯一的例外。 */
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
 }
 .board-card__full {
   flex: none;

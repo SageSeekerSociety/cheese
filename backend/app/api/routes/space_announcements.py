@@ -21,6 +21,7 @@ from app.domain.space.announcement_service import (
     AnnouncementView,
     SpaceAnnouncementService,
 )
+from app.domain.user.services import user_service
 
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
@@ -59,7 +60,19 @@ def _ms(value: datetime | None) -> int | None:
     return None if value is None else int(value.timestamp() * 1000)
 
 
-def _to_api(view: AnnouncementView) -> dict:
+async def _chosen_avatar_ids(db, views: list[AnnouncementView]) -> dict[int, int]:
+    """这一批公告的作者里，谁**自己挑过**头像、挑的是哪一张。
+
+    ``Author.avatar_id`` 是原始的 profile 值，注册时人人都被写上全局默认那一行，直接
+    回它会让所有没挑过的人共用一张脸。判据只有一处（``UserService.chosen_avatar_ids``
+    → ``UserProfileRepository.chosen_avatar_ids``），这里不重复；没挑过的人不在映射里，
+    序列化时回 null，交给前端的 ``UserAvatar`` 画彩色首字母。
+    """
+    ids = [v.author.id for v in views if v.author is not None]
+    return await user_service(db).chosen_avatar_ids(ids)
+
+
+def _to_api(view: AnnouncementView, *, chosen_avatar_ids: dict[int, int]) -> dict:
     row, author = view.row, view.author
     return {
         "id": row.id,
@@ -75,7 +88,8 @@ def _to_api(view: AnnouncementView) -> dict:
                 "id": author.id,
                 "username": author.username,
                 "nickname": author.nickname,
-                "avatarId": author.avatar_id,
+                # 只给这个人自己挑过的那个 id；没挑过是 None（见 _chosen_avatar_ids）。
+                "avatarId": chosen_avatar_ids.get(author.id),
             }
             if author is not None
             else None
@@ -109,12 +123,13 @@ async def list_announcements(
         if manager
         else None
     )
+    chosen = await _chosen_avatar_ids(db, [*listed.current, *listed.expired])
     return {
         "code": 200,
         "message": "OK",
         "data": {
-            "current": [_to_api(v) for v in listed.current],
-            "expired": [_to_api(v) for v in listed.expired],
+            "current": [_to_api(v, chosen_avatar_ids=chosen) for v in listed.current],
+            "expired": [_to_api(v, chosen_avatar_ids=chosen) for v in listed.expired],
             "notifyCount": notify_count,
         },
     }
@@ -140,7 +155,12 @@ async def publish_announcement(
         pinned=payload.pinned,
         expires_at=_from_ms(payload.expires_at),
     )
-    return {"code": 201, "message": "Created", "data": {"announcement": _to_api(view)}}
+    chosen = await _chosen_avatar_ids(db, [view])
+    return {
+        "code": 201,
+        "message": "Created",
+        "data": {"announcement": _to_api(view, chosen_avatar_ids=chosen)},
+    }
 
 
 @router.patch(
@@ -163,7 +183,12 @@ async def patch_announcement(
         expires_at=_from_ms(payload.expires_at),
         set_expires_at="expires_at" in payload.model_fields_set,
     )
-    return {"code": 200, "message": "OK", "data": {"announcement": _to_api(view)}}
+    chosen = await _chosen_avatar_ids(db, [view])
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": {"announcement": _to_api(view, chosen_avatar_ids=chosen)},
+    }
 
 
 @router.delete(

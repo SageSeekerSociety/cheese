@@ -3,6 +3,7 @@ import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { TopicComputeProfile } from '@/types/compute'
 
+import { nextTick } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -56,7 +57,14 @@ const MACHINE = {
 
 const PEOPLE = ['alice', 'bob', 'carol'].map((member_handle) => ({ member_handle, agent: false }))
 
-function mount(over: Partial<RoomTask> = {}) {
+/** 名册这一行带着每个人**自己挑过的**头像：alice 挑了一张，bob 从来没挑过（null）。 */
+const PICKED = [
+  { member_handle: 'alice', agent: false, avatar_id: 7 },
+  { member_handle: 'bob', agent: false, avatar_id: null },
+  { member_handle: 'carol', agent: false, avatar_id: 9 },
+]
+
+function mount(over: Partial<RoomTask> = {}, people = PEOPLE) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
@@ -67,7 +75,7 @@ function mount(over: Partial<RoomTask> = {}) {
       task: task(over),
       memberNames: {},
       agentName: '芝士',
-      people: PEOPLE,
+      people,
       machine: MACHINE,
       machineError: false,
       starting: false,
@@ -188,5 +196,30 @@ describe('任务页头', () => {
     await fireEvent.update(input, '记住我')
     await fireEvent.keyDown(input, { key: 'Enter' })
     expect(rename).toHaveBeenCalledWith('记住我')
+  })
+
+  it('负责人挑过头像，页头画的就是他挑的那张图', async () => {
+    const { container } = mount({}, PICKED)
+    await nextTick()
+    const img = container.querySelector('.task-header__owner img')
+    expect(img, '挑过头像就该画那张图').not.toBeNull()
+    expect(img?.getAttribute('src')).toContain('/avatars/7')
+  })
+
+  it('没挑过头像的人画按 handle 派生的首字母，不去取全站默认那张脸', async () => {
+    // `avatar_id` 为 null 就是「从来没挑过」。拿它去取 `/avatars/default` 会让所有没
+    // 挑过头像的人共用同一张脸 —— 那比没有头像更认不出是谁。
+    const { container } = mount({ owner_handle: 'bob' }, PICKED)
+    await nextTick()
+    const owner = container.querySelector('.task-header__owner')!
+    expect(owner.querySelector('img'), '不该去取任何一张图').toBeNull()
+    expect(owner.querySelector('.user-avatar-char')?.textContent?.trim()).toBe('B')
+  })
+
+  it('协作者的头像各按自己挑过的画', async () => {
+    const { container } = mount({ owner_handle: 'bob', contributor_handles: ['carol'] }, PICKED)
+    await nextTick()
+    const helper = container.querySelector('.task-header__helper')!
+    expect(helper.querySelector('img')?.getAttribute('src')).toContain('/avatars/9')
   })
 })

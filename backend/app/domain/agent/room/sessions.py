@@ -95,14 +95,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# (topic) — lay this room's memory tree down in its session, and take back what
-# the agent wrote into it. Asked at two moments, and both ask the same question:
-# just before an input goes in (so the session reads the platform's version)
-# and just after a turn ends (so what it wrote comes back in the turn it was
-# written in). It takes only the topic because everything else it needs — the
-# project, who is speaking, the reach to the session — lives on the side that
-# owns the room (`chat.ChatService`).
-MemoryConsumer = Callable[[uuid.UUID], Awaitable[None]]
+# (session) — lay this room's memory tree down in that seat's session, and take
+# back what the agent wrote into it. Asked at two moments, and both ask the same
+# question: just before an input goes in (so the session reads the platform's
+# version) and just after a turn ends (so what it wrote comes back in the turn it
+# was written in). It names the seat's session, not just the room: a room with
+# several teammates live has a session per seat, and the one whose turn this is
+# is the one to ask. Everything else it needs — who is speaking, the project's
+# memory — lives on the side that owns the room (`chat.ChatService`).
+MemoryConsumer = Callable[[SessionRef], Awaitable[None]]
 
 # (topic) → the loop-clock reading at which the OLDEST message we injected and
 # have not seen consumed was written, or None when nothing is waiting.
@@ -357,7 +358,7 @@ class RoomSessions:
             required=True,
         )
 
-    async def reconcile_memory(self, topic: uuid.UUID) -> None:
+    async def reconcile_memory(self, session: SessionRef) -> None:
         """Ask the room to reconcile its memory tree, and never fail the turn on it.
 
         A memory tree that could not be reconciled is a memory that is a turn
@@ -368,17 +369,20 @@ class RoomSessions:
         if self._memory is None:
             return
         try:
-            await self._memory(topic)
+            await self._memory(session)
         except Exception:
-            logger.exception("memory reconciliation failed topic=%s", topic)
+            logger.exception(
+                "memory reconciliation failed conversation=%s agent=%s",
+                session.conversation_id,
+                session.agent_handle,
+            )
 
-    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
-        """One memory reconciliation, with the session the room's only live seat
-        holds. ``None`` is 「这里没有记忆文件」 — no live session, or a harness
-        whose sessions keep none — which the caller reads as 「这一轮不用对账」,
-        not as a failure."""
-        seat = self._room_seat(topic_id)
-        live = self.live.get(seat) if seat is not None else None
+    async def memory(self, session: SessionRef, request: dict) -> dict | None:
+        """One memory reconciliation, with the live session of ``session``'s
+        seat. ``None`` is 「这里没有记忆文件」 — no live session there, or a
+        harness whose sessions keep none — which the caller reads as 「这一轮不用
+        对账」, not as a failure."""
+        live = self.live.get(self._seat_of(session))
         if live is None:
             return None
         return await self.host.memory(live.ref, request)
@@ -386,9 +390,9 @@ class RoomSessions:
     def _room_seat(self, topic_id: uuid.UUID) -> Seat | None:
         """The room's only live seat, or None when there is none — or several.
 
-        Room-scoped questions (the controls relay, the memory relay) predate
-        seats; with two teammates live in one room they have no single answer,
-        and None makes the caller say so rather than pick a teammate at random.
+        The controls relay predates seats; with two teammates live in one room
+        it has no single answer, and None makes the caller say so rather than
+        pick a teammate at random.
         """
         seats = [seat for seat in self.live if seat[0] == topic_id]
         return seats[0] if len(seats) == 1 else None
@@ -636,7 +640,7 @@ class RoomSessions:
             if not event.active:
                 # 一轮结束时问一次记忆：agent 该写的记忆按规矩写在回复之前，所
                 # 以一轮读完就是它写完的时刻。
-                await self.reconcile_memory(topic)
+                await self.reconcile_memory(live.session)
                 self._went_quiet(live.session)
         elif isinstance(event, Moved):
             self.pulse(seat, event.marks)
@@ -970,7 +974,7 @@ class RoomSessions:
                 self.work[seat] = work_id
             # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
             # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
-            await self.reconcile_memory(session.topic_id)
+            await self.reconcile_memory(session)
             mark("memory")
             identity = InputIdentity(
                 session.project_id,

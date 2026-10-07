@@ -40,8 +40,9 @@ async def _require_board_reader(
     resolver: ActorResolver,
     space_id: int,
     space_service: SpaceService,
-) -> None:
-    """Who may read a 机构看板 (spec §7.3).
+) -> str | None:
+    """Who may read a 机构看板 (spec §7.3): the reader's handle, or ``None`` on
+    the sandbox override, which names nobody.
 
     Every row on the board is one project's content: its id, its name, its
     ``owner_handle`` and its topic counts (``DashboardService._project_card``) —
@@ -60,12 +61,12 @@ async def _require_board_reader(
     """
     actor = await resolver.require_verified_caller()
     if not actor.authenticated:
-        return  # the sandbox override; there is no identity to ask membership of
+        return None  # the sandbox override; no identity to ask membership of
     if await space_service.get_space(space_id) is None:
         raise NotFoundError("Space not found")
     for project_id in await ProjectRepository(db).list_ids_for_space_tasks(space_id):
         if await may_read_project(db, project_id=project_id, handle=actor.handle):
-            return
+            return actor.handle
     _log.info("space_board_denied", handle=actor.handle, space=space_id)
     raise ForbiddenError(say("dashboardNoProject"))
 
@@ -77,8 +78,8 @@ async def space_dashboard(
     resolver: ActorResolverDep,
     space_service: SpaceService = Depends(get_space_service),
 ) -> dict:
-    await _require_board_reader(db, resolver, space_id, space_service)
-    return ok(await DashboardService(db).space_board(space_id))
+    viewer = await _require_board_reader(db, resolver, space_id, space_service)
+    return ok(await DashboardService(db).space_board(space_id, viewer))
 
 
 @router.get("/projects/{project_id}/members/{user_handle}/summary")
@@ -189,7 +190,8 @@ async def contributions(
     judgment (项目成员) now guards it here."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    return ok(await DashboardService(db).contributions(project_id))
+    viewer = None if resolver.on_the_dev_credential(actor) else actor.handle
+    return ok(await DashboardService(db).contributions(project_id, viewer))
 
 
 async def _signed_in(resolver: ActorResolver, what: str) -> str:

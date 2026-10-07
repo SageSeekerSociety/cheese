@@ -111,6 +111,7 @@ async def create_topic(
         description=body.description,
         parent_id=body.parent_id,
         created_by=actor.handle if actor.authenticated else None,
+        members_only=body.members_only,
     )
     service = TopicService(db)
     relevance = await service.relevance_for_topics([topic], _viewer(actor))
@@ -311,7 +312,11 @@ async def list_topics(
     actor = await project_reader(db, resolver, project_id, topic)
     service = TopicService(db)
     topics, last_activity, total = await service.list_for_project(
-        project_id, sort=sort, order=order, active_since=active_since
+        project_id,
+        viewer=_viewer(actor),
+        sort=sort,
+        order=order,
+        active_since=active_since,
     )
     running_ids = runner.running_topic_ids()
     relevance = await service.relevance_for_topics(topics, _viewer(actor))
@@ -381,7 +386,9 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
     projects = await ProjectRepository(db).list_visible_to(
         handle=who.handle, user_id=who.user_id
     )
-    topics = await TopicRepository(db).names_in_projects([p.id for p in projects])
+    topics = await TopicRepository(db).names_in_projects(
+        [p.id for p in projects], viewer=who.handle
+    )
     return ok(
         {
             "topics": [
@@ -391,6 +398,7 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
                     "title": t.title,
                     "kind": t.kind,
                     "status": t.status,
+                    "members_only": t.members_only,
                 }
                 for t in topics
             ]
@@ -809,7 +817,17 @@ async def list_topic_children(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     children = await TopicService(db).list_children(topic_id)
-    items = [TopicOut.model_validate(t).model_dump(mode="json") for t in children]
+    # 综合 is every channel's parent: a private one is listed to its people only.
+    seen = await resolver.readable_topic_ids(
+        actor,
+        project_id=topic.project_id,
+        topics=[t for t in children if t.members_only],
+    )
+    items = [
+        TopicOut.model_validate(t).model_dump(mode="json")
+        for t in children
+        if not t.members_only or t.id in seen
+    ]
     return ok(page(items, len(items)))
 
 

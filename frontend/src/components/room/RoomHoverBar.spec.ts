@@ -204,3 +204,25 @@ describe('置顶到频道', () => {
     expect(pinned).not.toContain('置顶到频道')
   })
 })
+
+describe('支线里 AI 队友的回复：查看它那一轮的过程', () => {
+  const reply = { ...block('r1'), author: 'cheese', turn_id: 'turn-7' }
+  const processButton = (container: Element) =>
+    container.querySelector<HTMLButtonElement>('[data-testid="message-process"]')
+
+  it('点一下，交出的是那一轮', async () => {
+    const view = renderBar(reply, undefined, { isAgent: true, processable: true })
+    await fireEvent.click(processButton(view.container)!)
+    expect(view.emitted('process')).toEqual([['turn-7']])
+  })
+
+  it('人说的话没有过程可看', () => {
+    const view = renderBar({ ...block('m1'), turn_id: 'turn-7' }, undefined, { processable: true })
+    expect(processButton(view.container)).toBeNull()
+  })
+
+  it('支线以外不给（主线和任务里，现场就在旁边那一格）', () => {
+    const view = renderBar(reply, undefined, { isAgent: true })
+    expect(processButton(view.container)).toBeNull()
+  })
+})

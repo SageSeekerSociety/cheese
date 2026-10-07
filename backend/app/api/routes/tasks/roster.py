@@ -133,16 +133,24 @@ async def get_task_participants(
     team_map = await TeamRepository(session=db).get_by_ids(team_ids)
     user_map: dict = {}
     profile_map: dict = {}
+    avatar_map: dict = {}
     if user_ids:
         user_repo = UserRepository(session=db)
         profile_repo = UserProfileRepository(session=db)
         user_map = await user_repo.get_by_ids(user_ids)
         profile_map = await profile_repo.get_profiles_by_user_ids(user_ids)
+        # 「挑过的头像」单独问：档案上的 avatar_id 每个注册路径都写死了全局默认，
+        # 直接回它会让所有没挑过头像的人共用同一张脸。
+        avatar_map = await profile_repo.chosen_avatar_ids(user_ids)
 
     participants = []
     for m in memberships:
         participant_info = _build_participant_user_info(
-            m, user_map=user_map, profile_map=profile_map, team_map=team_map
+            m,
+            user_map=user_map,
+            profile_map=profile_map,
+            team_map=team_map,
+            avatar_map=avatar_map,
         )
         participants.append(
             _membership_to_api_model(
@@ -195,6 +203,7 @@ async def get_task_participant(
         raise NotFoundError("Participant not found")
     user_map: dict = {}
     profile_map: dict = {}
+    avatar_map: dict = {}
     team_map = {}
     if membership.is_team:
         team_map = await TeamRepository(session=db).get_by_ids([membership.member_id])
@@ -205,8 +214,13 @@ async def get_task_participant(
         profile_map = await profile_repo.get_profiles_by_user_ids(
             [membership.member_id]
         )
+        avatar_map = await profile_repo.chosen_avatar_ids([membership.member_id])
     participant_info = _build_participant_user_info(
-        membership, user_map=user_map, profile_map=profile_map, team_map=team_map
+        membership,
+        user_map=user_map,
+        profile_map=profile_map,
+        team_map=team_map,
+        avatar_map=avatar_map,
     )
     return {
         "code": 200,

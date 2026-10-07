@@ -35,6 +35,8 @@ import { announceComments } from '../lib/docCommentSignals'
 import { DOC_SCHEMA_MISMATCH } from '../lib/docSchema/version'
 import { myAccount } from '../me'
 
+import { ensureDefaultAvatarId, isChosenAvatar } from './useChosenAvatar'
+
 /** Somebody with the document open, as the service vouches for them. */
 export interface DocPeer {
   clientId: number
@@ -104,6 +106,10 @@ function heard(document: string, payload: string, on: Heard) {
 }
 
 export function useDocCollab(document: () => string | null) {
+  // 「这个人挑过头像吗」要先知道全局默认头像的 id（见 useChosenAvatar）：注册时
+  // profile 一律被填上默认头像，直接 getAvatarUrl 会给没挑过的人配同一张脸。幂等，
+  // 问一次全进程共用；到这里打开文档时通常已经有答案。
+  ensureDefaultAvatarId()
   const session = shallowRef<DocSession | null>(null)
   const connection = ref<DocConnection>('connecting')
   /** True once the document has arrived from the service at least once. */
@@ -156,7 +162,7 @@ export function useDocCollab(document: () => string | null) {
     const user = {
       name: account?.nickname || account?.username || '',
       color: avatarColor(account?.username ?? ''),
-      avatar: account ? getAvatarUrl(account.avatarId) : '',
+      avatar: account && isChosenAvatar(account.avatarId) ? getAvatarUrl(account.avatarId) : '',
     }
     provider.setAwarenessField('user', user)
     provider.on('status', ({ status }: { status: string }) => {

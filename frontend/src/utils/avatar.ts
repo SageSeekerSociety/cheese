@@ -2,8 +2,10 @@
  * Default user-avatar helpers.
  *
  * When a user has no uploaded avatar (or the avatar image fails to load) we
- * render a colored initial instead of a gray placeholder icon — matching the
- * Space avatars' visual language (see spaces/Index.vue .space-avatar-char).
+ * render a colored initial instead of a gray placeholder icon. This is the
+ * single fallback for every avatar in the app — people, teams, spaces and
+ * projects alike — and it is drawn in exactly one place,
+ * `components/common/UserAvatar.vue`. Nothing else should re-implement it.
  *
  * The background color is derived deterministically from the user's
  * handle/name (hash → hue) so a given user always gets the same color.

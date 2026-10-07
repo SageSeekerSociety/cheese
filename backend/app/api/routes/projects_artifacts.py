@@ -66,7 +66,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
-from app.api.place import project_reader, readable_rooms
+from app.api.place import channels_unseen, project_reader, readable_rooms
 from app.api.response import ok, page
 from app.api.routes.projects import DbSession
 from app.core.errors import NotFoundError, ValidationError
@@ -91,8 +91,10 @@ async def list_artifacts(
     那个仓库那一项上（平台自己认）；交出去一份文件或一个地址的，递卡时点名的名字不
     在清单上就当场多一项。所以这里没有 POST，不是还没做。"""
     await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
-    rows = await artifacts.list_for_project(db, project_id)
+    actor = await project_reader(db, resolver, project_id, topic)
+    rows = await artifacts.list_for_project(
+        db, project_id, hidden=await channels_unseen(db, resolver, actor, project_id)
+    )
     items = [
         {
             "id": str(a.id),
@@ -120,9 +122,10 @@ async def read_artifact(
     纳，它后面几版的号自己往前挪。"""
     await ProjectService(db).get_or_404(project_id)
     actor = await project_reader(db, resolver, project_id, topic)
-    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
-    listed = await artifacts.summary(db, row.id)
-    history = await artifacts.versions(db, row.id)
+    hidden = await channels_unseen(db, resolver, actor, project_id)
+    row = await _artifact_seen(db, project_id, artifact_id, hidden)
+    listed = await artifacts.summary(db, row.id, hidden=hidden)
+    history = await artifacts.versions(db, row.id, hidden=hidden)
     # 每一版出自哪个房间，能点回去；读不了的房间不写名字。
     rooms = await readable_rooms(db, resolver, actor, project_id)
     return ok(
@@ -154,9 +157,12 @@ async def compare_artifact_versions(
     topic: str = "",
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
-    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
-    history = {v.card_id: v for v in await artifacts.versions(db, artifact_id)}
+    actor = await project_reader(db, resolver, project_id, topic)
+    hidden = await channels_unseen(db, resolver, actor, project_id)
+    await _artifact_seen(db, project_id, artifact_id, hidden)
+    history = {
+        v.card_id: v for v in await artifacts.versions(db, artifact_id, hidden=hidden)
+    }
     if before not in history or after not in history:
         raise NotFoundError(say("deliveryVersionsMissing"))
     left, right = history[before], history[after]
@@ -214,10 +220,15 @@ async def download_artifact_version(
     体没了，重建出来的可能和当时交出去的不是同一份东西，而用户要的是他交出去的那
     一份。"""
     await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
-    await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    actor = await project_reader(db, resolver, project_id, topic)
+    hidden = await channels_unseen(db, resolver, actor, project_id)
+    await _artifact_seen(db, project_id, artifact_id, hidden)
     version = next(
-        (v for v in await artifacts.versions(db, artifact_id) if v.card_id == card_id),
+        (
+            v
+            for v in await artifacts.versions(db, artifact_id, hidden=hidden)
+            if v.card_id == card_id
+        ),
         None,
     )
     if version is None:
@@ -243,7 +254,7 @@ async def download_artifact_version(
 
 async def _artifact_keeper(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> None:
+) -> set[uuid.UUID]:
     """改清单的只有人。
 
     一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 改不了、合不了、删不
@@ -252,6 +263,21 @@ async def _artifact_keeper(
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
+    return await channels_unseen(db, resolver, actor, project_id)
+
+
+async def _artifact_seen(
+    db: DbSession,
+    project_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    hidden: set[uuid.UUID],
+):
+    """清单上这一项，对读的人而言：只在他不在的私密频道里交付过的一项，和一个不
+    存在的 id 答得一模一样。"""
+    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    if await artifacts.kept_from(db, row.id, hidden):
+        raise NotFoundError(say("artifactNotFound"))
+    return row
 
 
 @router.patch("/{project_id}/artifacts/{artifact_id}")
@@ -266,8 +292,8 @@ async def rename_artifact(
 
     卡指着的是这一行的 id，所以改名之后，之前的每一次交付照样算这一项的版本 ——
     名字起错了的正解是改名，不是删掉重来。"""
-    await _artifact_keeper(project_id, db, resolver)
-    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    hidden = await _artifact_keeper(project_id, db, resolver)
+    row = await _artifact_seen(db, project_id, artifact_id, hidden)
     renamed = await artifacts.rename(db, row, name=str(body.get("name") or ""))
     await db.commit()
     return ok({"id": str(renamed.id), "name": renamed.name})
@@ -284,12 +310,10 @@ async def merge_artifact(
     """这两项其实是同一个东西：把这一项的交付都算到 `into` 那一项上。
 
     留哪个名字是人的判断，所以方向由调用方给，平台不挑。"""
-    await _artifact_keeper(project_id, db, resolver)
-    source = await artifacts.get_or_404(
-        db, project_id=project_id, artifact_id=artifact_id
-    )
-    target = await artifacts.get_or_404(
-        db, project_id=project_id, artifact_id=_artifact_ref(body.get("into"))
+    hidden = await _artifact_keeper(project_id, db, resolver)
+    source = await _artifact_seen(db, project_id, artifact_id, hidden)
+    target = await _artifact_seen(
+        db, project_id, _artifact_ref(body.get("into")), hidden
     )
     kept = await artifacts.merge(db, source=source, target=target)
     await db.commit()
@@ -306,8 +330,8 @@ async def delete_artifact(
     """把这一项从清单上去掉 —— 用户说它本来就不该是一项。
 
     声明过它的那些卡留在原处，只是不再指向任何一项：那些交付确实发生过。"""
-    await _artifact_keeper(project_id, db, resolver)
-    row = await artifacts.get_or_404(db, project_id=project_id, artifact_id=artifact_id)
+    hidden = await _artifact_keeper(project_id, db, resolver)
+    row = await _artifact_seen(db, project_id, artifact_id, hidden)
     await artifacts.delete(db, row)
     await db.commit()
     return ok({"deleted": True})

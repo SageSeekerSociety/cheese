@@ -31,6 +31,13 @@ export function runRecordOf(frame: unknown): Block | null {
   return f?.type === 'run_record' && f.record ? (f.record as Block) : null
 }
 
+/** 支线里的一条运行记录，频道主线收到的那一份（`thread_status` 帧）；别的帧是 null。 */
+export function threadStatusOf(frame: unknown): { threadId: string; record: Block } | null {
+  const f = frame as { type?: unknown; thread_id?: unknown; record?: unknown } | null
+  if (f?.type !== 'thread_status' || typeof f.thread_id !== 'string' || !f.record) return null
+  return { threadId: f.thread_id, record: f.record as Block }
+}
+
 export function useRunRecords() {
   const records = ref<Block[]>([])
   // 已经开始或结束了的轮次：它们的排队记录不再说「排队中」。

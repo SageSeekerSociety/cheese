@@ -4,20 +4,26 @@
 //
 // 对话就是频道那一栏，换了一段对话来读（`conversationId` 是支线的 id）：消息、连接、
 // 已读都走支线，名册和附件还是频道的。桌面上它占频道页右边那一半，手机上是一整页。
+//
+// AI 队友的一条回复上点「查看过程」，这一栏换成那一轮的现场，「返回支线」回来。支线的
+// 对话只是藏起来，连接和滚动位置都还在。
 import type { Block, ProjectMemberRow, Topic } from '@/cx_types'
 import type { Thread } from '@/types/threads'
 
 import { computed, ref, toRef, watch } from 'vue'
 
-import { avatarColor, avatarInitial } from '@/utils/avatar'
+import { getAvatarUrl } from '@/utils/materials'
 
 import { ApiError } from '@/api'
 import { getThread } from '@/api/threads'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
+import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import TaskProposalCard from '@/components/room/TaskProposalCard.vue'
+import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { t } from '@/i18n'
 import { isAgentBlock } from '@/lib/authorship'
 import { replySnippet } from '@/lib/blockDisplay'
@@ -56,6 +62,8 @@ const proposals = useTaskProposals(
 function proposerName(handle: string): string {
   return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
 }
+// 正在看哪一轮的过程；null 是在看支线本身。
+const processTurn = ref<string | null>(null)
 const thread = ref<Thread | null>(null)
 const error = ref<string | null>(null)
 const busy = ref(false)
@@ -78,6 +86,7 @@ watch(
   () => props.threadId,
   (id) => {
     thread.value = null
+    processTurn.value = null
     void load()
     store.markRead(id)
   },
@@ -88,6 +97,11 @@ const root = computed<Block | null>(() => thread.value?.root ?? null)
 const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} as Record<string, string> }))
 function nameOf(handle: string): string {
   return props.memberNames[handle] || handle
+}
+// 这个人的头像图：从成员名册查他挑过的素材 id。名册上没有他、或者他从没挑过
+// （avatar_id 是 null）都给空串，让 UserAvatar 画彩色首字母——别再退回全站默认脸。
+function avatarOf(handle: string): string {
+  return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
 }
 const subtitle = computed(() => {
   const head = `#${topicTitle(props.room)}`
@@ -152,10 +166,24 @@ function onState(resource: string) {
 
     <p v-if="error" class="thread-pane__error t-meta" role="alert">{{ error }}</p>
     <template v-else>
-      <article v-if="root" class="thread-root">
-        <span class="thread-root__avatar" :style="{ backgroundColor: avatarColor(root.author) }">{{
-          avatarInitial(nameOf(root.author))
-        }}</span>
+      <article v-if="root" v-show="!processTurn" class="thread-root">
+        <!-- 队友一律 CheeseAvatar（和消息行同一套标记）；人走 UserAvatar：挑过头像的显示
+             头像，没挑过就按 handle 取色画首字母（颜色跟 handle，不跟昵称）。 -->
+        <CheeseAvatar
+          v-if="isAgentBlock(root)"
+          class="thread-root__avatar"
+          :size="28"
+          :name="nameOf(root.author)"
+          :handle="root.author"
+        />
+        <UserAvatar
+          v-else
+          class="thread-root__avatar"
+          :size="28"
+          :name="nameOf(root.author)"
+          :avatar="avatarOf(root.author)"
+          :seed="root.author"
+        />
         <div class="thread-root__body">
           <div class="thread-root__head">
             <span class="thread-root__name">{{ nameOf(root.author) }}</span>
@@ -171,11 +199,12 @@ function onState(resource: string) {
           <div v-else class="thread-root__text thread-root__text--plain" v-html="renderPlain(root.content, refs)" />
         </div>
       </article>
-      <div v-if="thread" class="thread-pane__divider t-meta">
+      <div v-if="thread" v-show="!processTurn" class="thread-pane__divider t-meta">
         <span>{{ t('work.room.thread.replies', { count: thread.reply_count }) }}</span>
         <span class="thread-pane__rule" />
       </div>
       <ChatPanel
+        v-show="!processTurn"
         class="thread-pane__chat"
         :topic="room"
         :conversation-id="threadId"
@@ -191,6 +220,7 @@ function onState(resource: string) {
         @open-card="emit('open-task', $event)"
         @mention-click="emit('mention-click', $event)"
         @upgrade-message="emit('to-task', $event)"
+        @open-process="processTurn = $event"
       >
         <template #timeline-end>
           <AgentFeedbackCard :topic-id="threadId" />
@@ -204,6 +234,31 @@ function onState(resource: string) {
           />
         </template>
       </ChatPanel>
+      <template v-if="processTurn">
+        <div class="thread-pane__process-head">
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            icon="mdi-arrow-left"
+            data-testid="thread-process-back"
+            @click="processTurn = null"
+            >{{ t('work.room.thread.backToThread') }}</BaseButton
+          >
+          <span class="t-meta">{{ t('work.room.thread.process') }}</span>
+        </div>
+        <PanelSiteHost
+          class="thread-pane__chat"
+          :topic-id="threadId"
+          :project-id="room.project_id"
+          active
+          :member-names="memberNames"
+          :agent-name="store.agentName"
+          :only-turn="processTurn"
+          @open-file="emit('open-file', $event)"
+          @open-topic="emit('open-topic', $event)"
+          @mention-click="emit('mention-click', $event)"
+        />
+      </template>
     </template>
   </section>
 </template>
@@ -248,16 +303,6 @@ function onState(resource: string) {
 }
 .thread-root__avatar {
   flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-pill);
-  /* stylelint-disable-next-line color-no-hex -- 压在 avatarColor() 算出来的底色上，底色不随主题变。 */
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
 }
 .thread-root__body {
   min-width: 0;
@@ -301,5 +346,13 @@ function onState(resource: string) {
 .thread-pane__chat {
   flex: 1;
   min-height: 0;
+}
+.thread-pane__process-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
 }
 </style>

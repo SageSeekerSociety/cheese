@@ -8,9 +8,9 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { isAgentHandle } from '../../../lib/authorship'
 import { plainRefs } from '../../../lib/refChip'
 import { relTime } from '../../../lib/relTime'
-import { avatarColor, avatarInitial } from '../../../utils/avatar'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 import MarkdownView from '../../common/MarkdownView.vue'
+import UserAvatar from '../../common/UserAvatar.vue'
 
 import { t } from '@/i18n'
 
@@ -30,6 +30,8 @@ const props = defineProps<{
   mentionNames: Record<string, string>
   /** handle 读成名字。 */
   nameOf: (handle: string) => string
+  /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
+  avatarOf?: (handle: string) => string
   /** 能写（话题没归档）。 */
   writable: boolean
   /** 回复框里写到一半的字存在哪（localStorage）：收起、换话题、刷新都还在。 */
@@ -165,9 +167,13 @@ function onCard(e: MouseEvent) {
           :name="nameOf(message.author ?? '')"
           :handle="message.author"
         />
-        <span v-else class="doc-thread-card__avatar" :style="{ backgroundColor: avatarColor(message.author) }">
-          {{ avatarInitial(nameOf(message.author ?? '')) }}
-        </span>
+        <UserAvatar
+          v-else
+          :size="22"
+          :avatar="avatarOf?.(message.author ?? '') ?? ''"
+          :name="nameOf(message.author ?? '')"
+          :seed="message.author ?? ''"
+        />
         <div class="doc-thread-card__body">
           <div class="doc-thread-card__meta">
             <span class="doc-thread-card__name">{{ nameOf(message.author ?? '') }}</span>
@@ -300,19 +306,6 @@ function onCard(e: MouseEvent) {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-}
-.doc-thread-card__avatar {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-pill);
-  /* stylelint-disable-next-line color-no-hex -- 压在 avatarColor() 算出来的底色上，底色不随主题变。 */
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
 }
 .doc-thread-card__body {
   flex: 1 1 auto;

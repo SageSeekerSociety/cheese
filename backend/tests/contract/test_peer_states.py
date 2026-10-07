@@ -18,7 +18,8 @@ So the five are written down once, with what each must come back as:
     the owner process, which is the one thing a silent device is not.
   * `socket 不存在` — the connector could not reach the runner's socket. #1248:
     logged at ERROR, so one machine reconnecting produced one alert per
-    reconnect.
+    reconnect. The owner only relays it, so it logs at INFO and leaves the
+    judgement to the caller, which gets the same exception back.
   * `拒绝凭据` — the owner refused the caller's secret. This one is NOT a state
     of the machine: it says this deployment is misconfigured, and must never be
     read as a machine having gone away.
@@ -134,7 +135,7 @@ PEER_STATES: tuple[PeerState, ...] = (
         wire_status=502,
         restores_as=DeviceCallError,
         words=SOCKET_GONE,
-        logged=(("WARNING", "device_call_failed"),),
+        logged=(("INFO", "device_call_failed"),),
     ),
     PeerState(
         name="拒绝凭据",
@@ -154,7 +155,7 @@ PEER_STATES: tuple[PeerState, ...] = (
         wire_status=502,
         restores_as=DeviceCallError,
         words=RUNNER_SAID_NO,
-        logged=(("WARNING", "device_call_failed"),),
+        logged=(("INFO", "device_call_failed"),),
     ),
 )
 
@@ -457,3 +458,32 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
     assert await chat.recover_sessions(DEVICE) == 2
     await chat.replays_settled()
     assert replayed == [sessions[1]]
+
+
+async def test_a_public_route_that_reaches_a_failing_machine_still_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Only the owner's relay leaves the judgement to the caller. A request a
+    person or an agent made, ending in the machine's own failure, is where
+    nobody downstream will log it, so it stays a WARNING."""
+    from fastapi import FastAPI
+
+    from app.core.errors import register_exception_handlers
+
+    public = FastAPI()
+    register_exception_handlers(public)
+
+    @public.post("/topics/{topic}/execution/{session}")
+    async def execute(topic: str, session: str) -> None:
+        raise DeviceCallError(SOCKET_GONE)
+
+    with caplog.at_level(logging.DEBUG, logger="app.errors"):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=public), base_url="http://test"
+        ) as client:
+            response = await client.post("/topics/t/execution/s")
+    assert response.status_code == 502
+    records = [r for r in caplog.records if r.name == "app.errors"]
+    assert [(r.levelname, _event(r)) for r in records] == [
+        ("WARNING", "device_call_failed")
+    ]

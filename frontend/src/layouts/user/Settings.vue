@@ -32,6 +32,8 @@ import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
+
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { closeOverlay } from '@/lib/backOut'
@@ -45,7 +47,14 @@ const router = useRouter()
 const { mdAndUp } = useDisplay()
 
 const user = AccountService._user
-const avatar = computed(() => (user.value?.avatarId ? getAvatarUrl(user.value.avatarId) : undefined))
+// 只画**自己挑过**的那张（契约 §3.14）：avatarId 存在不等于挑过 —— 每条注册路径
+// 都往档案里写死全局默认头像，照原样画会让所有没挑过的人共用同一张脸。判据只在
+// useChosenAvatar，默认头像 id 是种子数据、因环境而异，所以要向它要一次。
+ensureDefaultAvatarId()
+const avatar = computed(() => {
+  const id = user.value?.avatarId
+  return isChosenAvatar(id) ? getAvatarUrl(id) : undefined
+})
 
 const groups = computed(() => settingsGroups())
 

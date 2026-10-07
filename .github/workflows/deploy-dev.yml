@@ -269,6 +269,43 @@ jobs:
           save(path, updates, remove=["FEEDBACK_ADMIN_HANDLES"] if handles else [])
           PY
 
+      # What cloud compute costs on this box, and whether a session may have a
+      # whole cloud VM (#2320). Like the feedback roster above, the value here is
+      # the whole truth: a price is a reviewed change, and a hand edit to the
+      # box does not survive a deploy. A whole VM is MicroCloud's `standard-vm`
+      # offering at its default size (`cloud_vm_cores` / `cloud_vm_memory_mb`).
+      - name: Configure cloud compute prices
+        if: steps.release.outputs.skip != 'true'
+        env:
+          CLOUD_SANDBOX_CREDITS_PER_HOUR: "5"
+          MICROCLOUD_VM_OFFERING_ID: "55"
+          CLOUD_VM_CREDITS_PER_HOUR: '{"4c8g": 20}'
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import runpy
+
+          path = Path(
+              os.environ.get(
+                  "BACKEND_ENV_FILE", "/home/nictheboy/cheese-backend-py/backend/.env"
+              )
+          )
+          prices = json.loads(os.environ["CLOUD_VM_CREDITS_PER_HOUR"])
+          if not isinstance(prices, dict) or not all(
+              isinstance(price, (int, float)) and price > 0 for price in prices.values()
+          ):
+              raise ValueError("CLOUD_VM_CREDITS_PER_HOUR must map sizes to prices")
+          updates = {
+              "CLOUD_SANDBOX_CREDITS_PER_HOUR": str(float(os.environ["CLOUD_SANDBOX_CREDITS_PER_HOUR"])),
+              "MICROCLOUD_VM_OFFERING_ID": str(int(os.environ["MICROCLOUD_VM_OFFERING_ID"])),
+              "CLOUD_VM_CREDITS_PER_HOUR": json.dumps(prices),
+          }
+          save = runpy.run_path("deploy/bootstrap-forgejo.py")["save_environment"]
+          save(path, updates)
+          PY
+
       # Which release this one replaces, read before it is replaced: the last
       # step below moves the feedback fixed by the commits in between.
       - name: Remember the release being replaced

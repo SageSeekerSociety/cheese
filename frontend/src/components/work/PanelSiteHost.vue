@@ -43,6 +43,8 @@ const props = withDefaults(
     agentName?: string
     /** 此刻谁在这个房间里忙（`MemberActivity` 那一份）。 */
     activity?: MemberActivityLine[]
+    /** 只看这一轮（支线里「查看过程」）。 */
+    onlyTurn?: string | null
   }>(),
   {
     projectId: null,
@@ -54,6 +56,7 @@ const props = withDefaults(
     refreshTick: 0,
     agentName: () => t('work.room.defaultAgentName'),
     activity: () => [],
+    onlyTurn: null,
   }
 )
 
@@ -90,6 +93,7 @@ defineExpose({ receive: site.receive })
     :refresh-tick="props.refreshTick"
     :agent-name="props.agentName"
     :activity="props.activity"
+    :only-turn="props.onlyTurn"
     :site="site"
     @open-file="(path: string) => emit('open-file', path)"
     @open-topic="(id: string) => emit('open-topic', id)"

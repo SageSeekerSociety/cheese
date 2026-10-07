@@ -19,11 +19,12 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
+from app.domain.block.models import Block, BlockKind
 from app.domain.device.models import DeviceProjectRow, DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import owner_reads
+from app.domain.machine import owner_reads, services
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
@@ -123,6 +124,22 @@ class Case:
         self.online.add(device_id)
         return device_id
 
+    def works_on(self, session_id: uuid.UUID, device_id: str) -> None:
+        """The session's tool calls run in its sandbox on that host."""
+
+        async def go():
+            async with self.client.test_request_factory() as db:
+                row = await db.get(AgentSession, session_id)
+                row.work_lease = {
+                    "kind": "device",
+                    "session_id": str(session_id),
+                    "device_id": device_id,
+                    "status": "ready",
+                }
+                await db.commit()
+
+        self.run(go)
+
     def host(self, host_id: uuid.UUID) -> CloudHost:
         async def go():
             async with self.client.test_request_factory() as db:
@@ -156,6 +173,25 @@ class Case:
 
         return self.run(go)
 
+    def said(self, owner: str) -> list[str]:
+        """What the platform said in the room's conversation about its
+        sandboxes: what a person there has to know."""
+
+        async def go():
+            async with self.client.test_request_factory() as db:
+                rows = await db.scalars(
+                    select(Block.content)
+                    .where(
+                        Block.conversation_id == self.projects[owner]["room"],
+                        Block.kind == BlockKind.event,
+                        Block.meta["event_type"].as_string() == "cloud_startup",
+                    )
+                    .order_by(Block.created_at)
+                )
+                return list(rows)
+
+        return self.run(go)
+
 
 @pytest.fixture
 def pool(client, monkeypatch):
@@ -172,6 +208,40 @@ def pool(client, monkeypatch):
     online: set[str] = set()
     monkeypatch.setattr(device_hub, "is_online", lambda device: device in online)
     return Case(client, FakeMicroCloud(), online)
+
+
+def _later(monkeypatch, by: timedelta) -> None:
+    """The pool's clock reads ``by`` later than now from here on."""
+
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + by
+
+    monkeypatch.setattr(services, "datetime", Later)
+
+
+def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]:
+    """Alice's session works on one host, which her second session fills, and
+    Bob's on another. Returns Alice's working session, her host, Bob's host
+    and the two hosts' devices."""
+    alice = pool.room("alice", 2)
+    [bob] = pool.room("bob", 1)
+    hers = pool.place("alice", alice[0])
+    her_device = pool.up(hers)
+    assert pool.place("alice", alice[1]) == hers
+    his = pool.place("bob", bob)
+    assert his != hers
+    his_device = pool.up(his)
+    pool.works_on(alice[0], her_device)
+    pool.works_on(bob, his_device)
+    return alice[0], hers, his, her_device, his_device
+
+
+LOST_LINE = (
+    "环境所在的机器不再响应，环境已换成新的："
+    "新环境从仓库里已推送的内容开始，没推送的改动不在了"
+)
 
 
 def _warm_machine_ready(case: Case) -> str:
@@ -233,6 +303,48 @@ def test_sessions_of_two_projects_share_a_host_with_room(pool):
     # Placing again answers the same host and asks the provider for nothing.
     assert pool.place("alice", alice) == first
     assert len(pool.cloud.created) == 1
+
+
+def _enrolled_long_ago_and_offline(pool, host_id, device, *, offline_for=None):
+    async def go():
+        async with pool.client.test_request_factory() as db:
+            host = await db.get(CloudHost, host_id)
+            host.enrolled_at = datetime.now(UTC) - timedelta(hours=1)
+            if offline_for is not None:
+                host.offline_since = datetime.now(UTC) - offline_for
+            await db.commit()
+
+    pool.run(go)
+    pool.online.discard(device)
+
+
+def test_an_idle_host_not_yet_dialled_back_after_a_restart_is_kept(pool):
+    """Right after the backend restarts, no host's connector has dialled back
+    yet. An idle host the sweep finds offline then is not one that never
+    connected, and is kept."""
+    [alice] = pool.room("alice", 1)
+    first = pool.place("alice", alice)
+    device = pool.up(first)
+    _enrolled_long_ago_and_offline(pool, first, device)
+
+    pool.pool("maintain")
+
+    assert pool.host(first).released_at is None
+
+
+def test_an_idle_host_whose_connector_stays_away_is_replaced(pool):
+    """A host whose connector has stayed away past the time one takes to dial
+    in, with nobody working on it, holds nothing anyone needs: it goes."""
+    [alice] = pool.room("alice", 1)
+    first = pool.place("alice", alice)
+    device = pool.up(first)
+    _enrolled_long_ago_and_offline(
+        pool, first, device, offline_for=timedelta(minutes=6)
+    )
+
+    pool.pool("maintain")
+
+    assert pool.host(first).released_at is not None
 
 
 def test_a_host_whose_connector_went_away_takes_no_new_session(pool):
@@ -666,11 +778,12 @@ def test_a_warm_machine_that_cannot_be_claimed_is_given_up(pool):
     assert len(pool.cloud.created) == 1
 
 
-def test_an_enrolled_host_in_error_keeps_its_sessions(pool):
-    """Their unpushed work may be on it, so it is reported, not replaced."""
+def test_an_enrolled_host_in_error_is_given_up_and_its_session_placed_again(pool):
+    """A sandbox is disposable: a host the provider reports broken is not
+    waited on, even with the session's work on it."""
     [alice] = pool.room("alice", 1)
     host_id = pool.place("alice", alice)
-    pool.up(host_id)
+    pool.works_on(alice, pool.up(host_id))
     pool.cloud.machines[pool.host(host_id).machine_id]["status"] = "error"
 
     async def stale():
@@ -683,6 +796,57 @@ def test_an_enrolled_host_in_error_keeps_its_sessions(pool):
     pool.pool("refresh_due")
     pool.pool("maintain")
 
-    assert pool.place("alice", alice) == host_id
-    assert pool.host(host_id).released_at is None
+    host = pool.host(host_id)
+    assert host.released_at is not None
+    # The provider failed it, so it counts against the provider's record.
+    assert host.failed_at is not None
+    assert pool.cloud.deleted == [host.machine_id]
+    assert pool.place("alice", alice) != host_id
+    assert pool.said("alice") == [LOST_LINE]
+
+
+def test_a_session_whose_host_stopped_answering_gets_a_new_sandbox(pool, monkeypatch):
+    """On 2026-10-05 sessions waited hours on a host whose connector hung. A
+    host gone ten minutes, while another host answers, is given up."""
+    alice, lost, other, device, _ = _two_hosts_at_work(pool)
+    pool.online.discard(device)
+
+    pool.pool("maintain")
+    # Away for a moment is not lost: links drop and come back.
+    assert pool.host(lost).released_at is None
+
+    _later(monkeypatch, timedelta(minutes=11))
+    pool.pool("maintain")
+
+    host = pool.host(lost)
+    assert host.released_at is not None
+    # Not counted as the provider failing: nothing says it did.
+    assert host.failed_at is None
+    assert pool.cloud.deleted == [host.machine_id]
+    assert pool.host(other).released_at is None
+    assert pool.place("alice", alice) not in {lost, None}
+    assert pool.said("alice") == [LOST_LINE]
+    assert pool.said("bob") == []
+
+
+def test_with_every_host_away_nothing_is_given_up_until_one_answers(pool, monkeypatch):
+    """Every connector gone at once is the platform's outage — a restart, a
+    cut link — not every host lost: the sandboxes are kept for when it ends."""
+    alice, lost, other, device, his_device = _two_hosts_at_work(pool)
+    pool.online.discard(device)
+    pool.online.discard(his_device)
+    pool.pool("maintain")
+    _later(monkeypatch, timedelta(hours=1))
+
+    pool.pool("maintain")
+
+    assert pool.host(lost).released_at is None
+    assert pool.host(other).released_at is None
     assert pool.cloud.deleted == []
+
+    # Bob's host is back and Alice's is not: hers is lost.
+    pool.online.add(his_device)
+    pool.pool("maintain")
+
+    assert pool.host(lost).released_at is not None
+    assert pool.host(other).released_at is None

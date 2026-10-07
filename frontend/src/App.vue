@@ -89,8 +89,15 @@
       </div>
     </v-main>
 
-    <!-- 协议实质变更后的重新同意（#1486）；只在应用外壳里，协议页不在外壳里 -->
-    <ConsentGate />
+    <!-- 协议实质变更后的重新同意（#1486）；只在应用外壳里，协议页不在外壳里。
+         取数和两个去处见 usePendingConsent，这里只接线。 -->
+    <ConsentGate
+      :pending="pendingConsents"
+      :accepting="acceptingConsents"
+      :error="consentError"
+      @accept="acceptConsents"
+      @decline="declineConsents"
+    />
 
     <!-- 敏感操作前确认身份；withSudo 打开它 -->
     <SudoDialog v-if="sudoWanted" />
@@ -266,13 +273,13 @@ import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
 
-import { avatarColor } from '@/utils/avatar'
 import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
 import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
@@ -590,13 +597,21 @@ const { count: unreadActivity } = useUnreadNotifications()
 // The same number on the desktop app's icon, whenever this page has read it.
 watch(awaitingCount, desktopBadge)
 
+// 协议实质变更后的重新同意（#1486）：取数在 composable 里，这里只把它接到弹窗上。
+const {
+  pending: pendingConsents,
+  accepting: acceptingConsents,
+  error: consentError,
+  accept: acceptConsents,
+  decline: declineConsents,
+} = usePendingConsent()
+
 // 右键 rail 上一个项目：那一份菜单和退出确认框的状态见 useProjectMenu。
 const { projectMenu, leaveOpen, leavingProjectId } = useProjectMenu(router)
 
 const navSources = computed<NavSources>(() => ({
   projects: railProjects.value,
   workspaceProjectId: workspaceProjectId.value,
-  projectAvatar,
   createProject: createNewProject,
   projectMenu,
   awaitingCount: awaitingCount.value,
@@ -791,24 +806,6 @@ async function confirmNewProject() {
   } finally {
     creatingProject.value = false
   }
-}
-
-// 项目格子：首字压在 avatarColor() 的底色上，和人的默认头像同一套取色——
-// 色相由名字散列而来，明度固定，所以每一种色相上的白字都过 4.5:1。白字写死是
-// 对的：底色本身不随主题变，字也不能变。
-function projectAvatar(name: string): string {
-  const trimmed = (name || '').trim()
-  const ch = trimmed ? [...trimmed][0] : '·'
-  const esc = ch.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">` +
-    `<rect width="48" height="48" fill="${avatarColor(trimmed)}"/>` +
-    `<text x="24" y="24" font-size="24" fill="#ffffff" text-anchor="middle" ` +
-    `dominant-baseline="central" font-family="sans-serif" font-weight="700">${esc}</text></svg>`
-  // Unicode-safe base64 (the initial may be CJK) — more robust in v-img than a
-  // percent-encoded data URI.
-  const b64 = btoa(encodeURIComponent(svg).replace(/%([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))))
-  return `data:image/svg+xml;base64,${b64}`
 }
 </script>
 

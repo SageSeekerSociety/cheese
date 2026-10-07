@@ -15,6 +15,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import TipTapViewer from '@/components/common/Editor/TipTapViewer.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import {
   canEditKnowledge,
@@ -196,9 +197,12 @@ const emit = defineEmits<{
           <div class="d-flex resource-info-row">
             <div class="resource-info-label">{{ t('teams.knowledge.creator') }}</div>
             <div class="d-flex align-center">
-              <v-avatar size="24" rounded="circle" color="surface-variant" class="mr-2">
-                <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
-              </v-avatar>
+              <UserAvatar
+                :avatar="getAvatarUrl(resource.creator.avatarId)"
+                :name="resource.creator.nickname"
+                size="24"
+                class="mr-2"
+              />
               <span>{{ resource.creator.nickname }}</span>
             </div>
           </div>
@@ -229,9 +233,12 @@ const emit = defineEmits<{
           <div class="text-subtitle-1 font-weight-medium mb-2">{{ t('teams.knowledge.originalDiscussion') }}</div>
           <div v-if="resource.originalMessage" class="original-message-context">
             <div class="d-flex">
-              <v-avatar size="36" rounded="circle" color="surface-variant" class="mt-1">
-                <v-img :src="getAvatarUrl(resource.originalMessage.sender.avatarId)"></v-img>
-              </v-avatar>
+              <UserAvatar
+                :avatar="getAvatarUrl(resource.originalMessage.sender.avatarId)"
+                :name="resource.originalMessage.sender.nickname"
+                size="36"
+                class="mt-1"
+              />
               <div class="ml-3">
                 <div class="d-flex align-center">
                   <span class="font-weight-medium">{{ resource.originalMessage.sender.nickname }}</span>

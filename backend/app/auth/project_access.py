@@ -52,6 +52,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.task.repositories import TaskRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.user.repositories import UserRepository
 
 
@@ -143,9 +144,14 @@ async def may_read_topic(
     A room has no roster of its own to consult: ``TopicMembership`` narrows who
     is *in* a room, but the project is what decides who may look at it at all -
     see ``authorize_topic_access``, which reads the project's roster for exactly
-    this reason. A topic that does not exist is readable by nobody.
+    this reason — except a private channel, which only its people read. A
+    topic that does not exist is readable by nobody.
     """
     topic = await TopicRepository(session).get(topic_id)
     if topic is None or topic.project_id is None:
         return False
+    if topic.members_only:
+        return handle is not None and topic.id in await TopicMembershipRepository(
+            session
+        ).roles_for_member([topic.id], handle)
     return await may_read_project(session, project_id=topic.project_id, handle=handle)

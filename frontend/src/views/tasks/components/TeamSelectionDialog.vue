@@ -74,14 +74,13 @@
                 </div>
               </div>
               <div class="d-flex pa-3">
-                <v-avatar size="52" class="mr-3 flex-shrink-0">
-                  <v-img
-                    v-if="teamEligibility.team.avatarId"
-                    :src="getAvatarUrl(teamEligibility.team.avatarId)"
-                    :alt="teamEligibility.team.name"
-                  ></v-img>
-                  <v-icon v-else size="28" color="primary">mdi-account-group</v-icon>
-                </v-avatar>
+                <UserAvatar
+                  kind="org"
+                  :avatar="getAvatarUrl(teamEligibility.team.avatarId)"
+                  :name="teamEligibility.team.name"
+                  size="52"
+                  class="mr-3 flex-shrink-0"
+                />
 
                 <div class="flex-grow-1 min-width-0">
                   <div class="d-flex align-center flex-wrap gap-2 mb-1">
@@ -161,6 +160,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { eligibilityReasonKey } from '@/views/tasks/eligibilityReason'
 
 const props = defineProps<{

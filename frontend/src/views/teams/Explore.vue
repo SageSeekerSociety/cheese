@@ -77,11 +77,19 @@
                     :key="team.id"
                     :title="team.name"
                     :subtitle="team.intro"
-                    :prepend-avatar="getAvatarUrl(team.avatarId)"
                     :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
                     rounded="md"
                     class="team-list-item mb-3"
                   >
+                    <template #prepend>
+                      <UserAvatar
+                        kind="org"
+                        :avatar="getAvatarUrl(team.avatarId)"
+                        :name="team.name"
+                        size="40"
+                        class="mr-3"
+                      />
+                    </template>
                   </v-list-item>
                 </v-list>
               </div>
@@ -132,6 +140,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { TeamsApi } from '@/network/api/teams'

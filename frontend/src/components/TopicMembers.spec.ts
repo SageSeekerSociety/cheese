@@ -142,6 +142,12 @@ describe('成员名册', () => {
     expect(document.querySelector('.roster__select')).toBeNull()
   })
 
+  it('私密频道里的人不管频道也能拉人，但移不了人', async () => {
+    await openRoster({ canManage: false, canInvite: true })
+    expect(document.querySelector('.roster__select')).not.toBeNull()
+    expect(document.querySelector('.roster__remove')).toBeNull()
+  })
+
   it('「综合」里的人移不出去，只有 AI 队友能请进请出', async () => {
     await openRoster({ general: true })
     const rows = Array.from(document.querySelectorAll('.roster__item'))
@@ -227,9 +233,10 @@ describe('名册上的头像', () => {
 
   it('挑过头像的人画他本人那张，不画首字母', async () => {
     await openRoster()
+    // 图现在由 UserAvatar 画：根是那个席位方框，<img> 在它里面。
     const face = faceOf('carol')
-    expect(face.tagName).toBe('IMG')
-    expect(face.getAttribute('src')).toContain('/avatars/77')
+    expect(face.querySelector('img')?.getAttribute('src')).toContain('/avatars/77')
+    expect(face.querySelector('.user-avatar-char')).toBeNull()
   })
 })
 

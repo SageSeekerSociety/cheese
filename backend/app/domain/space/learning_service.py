@@ -252,8 +252,9 @@ class SpaceLearningService:
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
-                # 私聊不属于管理员看板。
+                # 私聊和私密频道都不属于管理员看板：说话的人只给在场的人看。
                 Topic.is_private.is_(False),
+                Topic.members_only.is_(False),
             )
             .order_by(Block.created_at.desc())
             .limit(QUESTION_LIMIT)

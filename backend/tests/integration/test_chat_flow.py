@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 
+from app.core.config import settings
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
@@ -342,16 +343,24 @@ def _drain_until_done(ws) -> list[dict]:
     return frames
 
 
-def test_debug_turns_records_lifecycle(client):
+def test_debug_turns_records_lifecycle(client, monkeypatch):
     """可 debug: /debug/turns exposes each turn's lifecycle summary (status,
-    timings, tool counts) without grepping logs."""
+    timings, tool counts) without grepping logs.
+
+    Read as a platform admin: a summary names the room, the person who started
+    the turn and why it failed, so it is not an open endpoint any more.
+    """
+    admin = "chat-flow-admin"
+    monkeypatch.setattr(settings, "platform_admin_handles", [admin])
     _, topic_id = _create_project_and_thread(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 
-    turns = client.get("/debug/turns").json()["data"]
+    turns = client.get("/debug/turns", headers=session_auth_headers(admin)).json()[
+        "data"
+    ]
     assert turns, "at least the turn we just ran"
     t = turns[0]
     assert t["topic_id"] == topic_id

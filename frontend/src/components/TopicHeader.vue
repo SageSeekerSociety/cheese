@@ -16,8 +16,9 @@ import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+
+import { useNavigation } from '@/composables/useNavigation'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
 import { menuActionOf, useCommands } from '@/commands'
@@ -127,7 +128,7 @@ function toggleFocus() {
 
 // 手机上话题列表没有行尾那颗 ⋯，改名、归档原本只有长按那一行才找得到。⋯ 面板里
 // 放的是同一份（topicActions），只是这里重命名另起一页。
-const router = useRouter()
+const nav = useNavigation()
 const renaming = ref(false)
 const draftTitle = ref('')
 
@@ -144,8 +145,12 @@ function saveRename() {
 }
 
 // 同一份话题操作：⋯ 面板里是一行一行的菜单，命令面板里是「操作」。
+// `topicActions` 要的是整台 router（复制链接靠它解析、新建任务/归档靠它跳），从
+// `nav.router` 上取；宿主没装路由时没有去处，这份菜单就空着——和别处「没有路由就
+// 少画一点」同一个道理。
 function roomCommands() {
-  return topicActions(props.topic, router, { rename: startRename })
+  if (!nav) return []
+  return topicActions(props.topic, nav.router, { rename: startRename })
 }
 const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
 useCommands(roomCommands)
@@ -162,7 +167,16 @@ useCommands(roomCommands)
     <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
       <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
       <div class="topic-header__text">
-        <span class="topic-header__title t-title" :title="title">{{ title }}</span>
+        <span class="topic-header__title t-title" :title="title"
+          ><v-icon
+            v-if="topic.members_only"
+            size="14"
+            class="topic-header__lock"
+            icon="mdi-lock-outline"
+            :title="t('work.channel.privateTip')"
+            :aria-label="t('work.channel.privateTip')"
+          />{{ title }}</span
+        >
         <span v-if="mdAndUp && topic.description" class="topic-header__description" :title="topic.description">{{
           topic.description
         }}</span>
@@ -183,6 +197,7 @@ useCommands(roomCommands)
       <TopicMembers
         :topic-id="topic.id"
         :can-manage="topic.can_manage === true"
+        :can-invite="topic.members_only === true && topic.joined === true"
         :general="!isWorkTopic"
         :project-id="topic.project_id"
         :project-members="members"
@@ -360,6 +375,12 @@ useCommands(roomCommands)
 }
 .topic-header--bar .topic-header__title {
   max-width: 100%;
+}
+/* 私密频道：标题前一把锁，和侧栏那一行同一个记号。 */
+.topic-header__lock {
+  margin-right: 4px;
+  color: var(--muted);
+  vertical-align: -1px;
 }
 .topic-header__disconnected {
   color: var(--warn-ink);

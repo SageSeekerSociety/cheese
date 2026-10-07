@@ -25,6 +25,11 @@ import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 export interface MentionPoolEntry {
   handle: string
   label: string
+  /**
+   * 这个人**自己挑过的**头像地址；没挑过、或名册上没他时是 null（画彩色首字母）。
+   * AI 队友没有这一步，一律画 CheeseAvatar，这里是 null。
+   */
+  avatar: string | null
   agent: boolean
   external?: boolean
   /** 项目里的人，但没加入这个频道：@ 得到，排在频道里的人后面。 */
@@ -49,6 +54,8 @@ export interface MentionItem {
   group?: string
   /** 人的 handle：头像的底色按它算，和时间线上这个人的头像同一个颜色。 */
   handle?: string
+  /** 人自己挑过的头像地址；没挑过是 null（画彩色首字母）。见 `MentionPoolEntry.avatar`。 */
+  avatar?: string | null
 }
 
 // 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
@@ -176,10 +183,12 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
         external: !!m.external,
         outsideTopic: !!m.outsideTopic,
         handle: m.handle,
+        avatar: m.avatar,
       })),
       ...deps
         .topicList()
-        .filter((tp) => tp.kind !== 'root')
+        // 私密频道的名字不在别处变成链接（后端也不认），所以不给它候选。
+        .filter((tp) => tp.kind !== 'root' && !tp.members_only)
         .map((tp) => ({
           label: tp.title,
           kind: 'topic' as const,

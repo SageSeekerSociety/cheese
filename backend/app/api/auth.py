@@ -93,8 +93,9 @@ def _token_verifier(token: str) -> TokenIdentity | None:
 
 
 def _private(topic: Topic | None) -> bool:
-    """Whether a room is a private chat — the one place this file reads it."""
-    return bool(topic and topic.is_private)
+    """Whether only the room's own seats may read it: a private chat (the one
+    place this file reads that flag), or a private channel."""
+    return bool(topic and (topic.is_private or topic.members_only))
 
 
 class ActorResolver:
@@ -649,6 +650,11 @@ class ActorResolver:
             actor, project_id=project_id, topic_id=topic_id
         ):
             _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
+            room = await TopicRepository(self._session).get(topic_id)
+            if room is not None and room.members_only:
+                # Someone outside a private channel is not told it exists: the
+                # answer is the one a channel that was never made gets.
+                raise NotFoundError("Topic not found")
             raise ForbiddenError(say("topicMemberOnly"))
 
     async def can_access_topic(
@@ -712,7 +718,7 @@ class ActorResolver:
                 topic_id=room_id,
                 topic_role=topic_role,
                 is_project_member=is_project_member,
-                is_private=private,
+                seats_only=private,
             )
         }
 

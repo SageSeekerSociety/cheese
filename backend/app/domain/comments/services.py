@@ -208,10 +208,15 @@ class CommentService:
         author_ids = list({it["created_by_id"] for it in items})
         users_map: dict[int, User] = {}
         profiles_map: dict[int, UserProfile] = {}
+        # 只有真挑过头像的作者才带 avatarId，判据在 ``chosen_avatar_ids`` 一处
+        # （挂到非 ``default`` 那张脸才算数）。别再自己比 ``profile.avatar_id``——
+        # 那会把「没挑过 = 存了默认脸」当成挑过，前端就退回全站默认头像了。
+        chosen_avatars: dict[int, int] = {}
         if self._user_repo is not None and author_ids:
             users_map = await self._user_repo.get_by_ids(author_ids)
         if self._profile_repo is not None and author_ids:
             profiles_map = await self._profile_repo.get_profiles_by_user_ids(author_ids)
+            chosen_avatars = await self._profile_repo.chosen_avatar_ids(author_ids)
 
         # 3. sub-comments (one-level deep, IDs only). Frontend's CommentBox
         #    iterates over `comment.sub_comments` for nested rendering.
@@ -244,7 +249,12 @@ class CommentService:
             author_id = item["created_by_id"]
             user_obj = users_map.get(author_id)
             profile = profiles_map.get(author_id)
-            item["user"] = _build_user_dto(user_obj, profile, fallback_id=author_id)
+            item["user"] = _build_user_dto(
+                user_obj,
+                profile,
+                fallback_id=author_id,
+                avatar_id=chosen_avatars.get(author_id),
+            )
 
             if with_sub_comments:
                 item["sub_comments"] = sub_map.get(cid, [])
@@ -252,15 +262,20 @@ class CommentService:
         return items
 
 
-def _build_user_dto(user_obj, profile, *, fallback_id: int) -> dict:
-    """Produce a User-shaped dict with the fields the frontend type expects."""
+def _build_user_dto(
+    user_obj, profile, *, fallback_id: int, avatar_id: int | None
+) -> dict:
+    """Produce a User-shaped dict with the fields the frontend type expects.
+
+    ``avatar_id`` 由调用方用 ``chosen_avatar_ids`` 判过（只有真挑过才是 id），
+    这里不再读 ``profile.avatar_id``——存了默认脸不等于挑过头像。
+    """
     if user_obj is not None:
         nickname = (
             profile.nickname
             if profile and getattr(profile, "nickname", None)
             else user_obj.username
         )
-        avatar_id = profile.avatar_id if profile else None
         intro = profile.intro if profile else ""
         return {
             "id": user_obj.id,

@@ -59,3 +59,11 @@ export function setChannelDescription(topicId: string, description: string): Pro
     body: JSON.stringify({ description }),
   })
 }
+
+/** 把频道设为私密，或重新公开。设为私密的人留在频道里。 */
+export function setChannelMembersOnly(topicId: string, membersOnly: boolean): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/members-only`, {
+    method: 'PUT',
+    body: JSON.stringify({ members_only: membersOnly }),
+  })
+}

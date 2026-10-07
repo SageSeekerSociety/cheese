@@ -129,14 +129,21 @@ class QuestionsService:
             if self._profile_repo and author_ids
             else {}
         )
+        # 这批作者各自挑没挑过头像，一次问清（契约 §3.14）。
+        chosen_by_id = (
+            await self._profile_repo.chosen_avatar_ids(author_ids)
+            if self._profile_repo and author_ids
+            else {}
+        )
         items: list[dict] = []
         for row in rows:
             dto = _question_to_dto(row, include_content=False)
             dto["topicIds"] = topic_id_map.get(row.id, [])
             dto["topics"] = topic_obj_map.get(row.id, [])
-            dto["author"] = _profile_to_user(profiles_by_id.get(row.created_by_id)) or {
-                "id": row.created_by_id
-            }
+            dto["author"] = _profile_to_user(
+                profiles_by_id.get(row.created_by_id),
+                chosen_by_id.get(row.created_by_id),
+            ) or {"id": row.created_by_id}
             items.append(dto)
         return items
 
@@ -154,9 +161,14 @@ class QuestionsService:
             if self._profile_repo
             else None
         )
-        dto["author"] = _profile_to_user(author_profile) or {
-            "id": question.created_by_id
-        }
+        author_chosen = (
+            await self._profile_repo.chosen_avatar_ids([question.created_by_id])
+            if self._profile_repo
+            else {}
+        )
+        dto["author"] = _profile_to_user(
+            author_profile, author_chosen.get(question.created_by_id)
+        ) or {"id": question.created_by_id}
 
         follow_count = await self._repo.count_followers(question_id)
         dto["follow_count"] = follow_count
@@ -209,11 +221,18 @@ class QuestionsService:
                     if self._profile_repo
                     else None
                 )
+                accepted_chosen = (
+                    await self._profile_repo.chosen_avatar_ids([accepted.created_by_id])
+                    if self._profile_repo
+                    else {}
+                )
                 dto["accepted_answer"] = {
                     "id": accepted.id,
                     "question_id": accepted.question_id,
                     "content": accepted.content,
-                    "author": _profile_to_user(accepted_author)
+                    "author": _profile_to_user(
+                        accepted_author, accepted_chosen.get(accepted.created_by_id)
+                    )
                     or {"id": accepted.created_by_id},
                     "created_at": int(accepted.created_at.timestamp() * 1000)
                     if accepted.created_at
@@ -479,11 +498,17 @@ class QuestionInvitationService:
         )
         user_ids = {row.user_id for row in rows}
         profiles = await self._profile_repo.get_profiles_by_user_ids(list(user_ids))
+        # 一次问清这批被邀请人各自挑没挑过头像（契约 §3.14）。
+        chosen_by_id = await self._profile_repo.chosen_avatar_ids(list(user_ids))
         answered_map = await self._get_answered_map(question_id, user_ids)
         items = []
         for row in rows:
             profile = profiles.get(row.user_id)
-            user_dto = _profile_to_user(profile) if profile else None
+            user_dto = (
+                _profile_to_user(profile, chosen_by_id.get(row.user_id))
+                if profile
+                else None
+            )
             dto = _invitation_to_dto(row, user=user_dto)
             dto["is_answered"] = answered_map.get(row.user_id, False)
             items.append(dto)
@@ -517,7 +542,8 @@ class QuestionInvitationService:
             question_id=question_id,
             user_id=invitee_id,
         )
-        user_dto = _profile_to_user(profile)
+        chosen = await self._profile_repo.chosen_avatar_ids([invitee_id])
+        user_dto = _profile_to_user(profile, chosen.get(invitee_id))
         return {
             "invitation_id": invitation.id,
             "invitation": _invitation_to_dto(invitation, user=user_dto),
@@ -526,7 +552,12 @@ class QuestionInvitationService:
     async def get_invitation(self, *, question_id: int, invitation_id: int) -> dict:
         invitation = await self._invitation_in_question(question_id, invitation_id)
         profile = await self._profile_repo.get_profile_by_user_id(invitation.user_id)
-        user_dto = _profile_to_user(profile) if profile else None
+        chosen = await self._profile_repo.chosen_avatar_ids([invitation.user_id])
+        user_dto = (
+            _profile_to_user(profile, chosen.get(invitation.user_id))
+            if profile
+            else None
+        )
         dto = _invitation_to_dto(invitation, user=user_dto)
         if self._answer_repo:
             dto["is_answered"] = await self._answer_repo.has_user_answered_question(
@@ -580,9 +611,13 @@ class QuestionInvitationService:
     async def get_recommendations(self, *, question_id: int, limit: int) -> list[dict]:
         await self._ensure_question_exists(question_id)
         all_profiles = await self._profile_repo.list_profiles(limit=limit, offset=0)
+        # 这批被推荐的人各自挑没挑过头像，一次问清（契约 §3.14）。
+        chosen_by_id = await self._profile_repo.chosen_avatar_ids(
+            [p.user_id for p in all_profiles]
+        )
         result = []
         for profile in all_profiles:
-            result.append(_profile_to_user(profile))
+            result.append(_profile_to_user(profile, chosen_by_id.get(profile.user_id)))
         return result
 
     async def _ensure_question_exists(self, question_id: int) -> None:
@@ -599,12 +634,17 @@ class QuestionInvitationService:
         return {uid: uid in answered for uid in user_ids}
 
 
-def _profile_to_user(profile) -> dict | None:
+def _profile_to_user(profile, chosen_avatar_id: int | None = None) -> dict | None:
+    """把档案拼成作者 dto。``chosen_avatar_id`` 由调用方从
+    ``UserProfileRepository.chosen_avatar_ids`` 取：档案上的 ``avatar_id`` 含注册时
+    写死的全局默认头像，直接回它会让所有没挑过的人共用同一张脸（契约 §3.14）。
+    没挑过就是 ``None``，前端画彩色首字母。
+    """
     if profile is None:
         return None
     return {
         "id": profile.user_id,
         "nickname": profile.nickname,
-        "avatarId": profile.avatar_id,
+        "avatarId": chosen_avatar_id,
         "intro": profile.intro,
     }

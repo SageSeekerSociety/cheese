@@ -26,6 +26,9 @@ from tests.integration.conftest import post_project, session_auth_headers
 
 pytestmark = pytest.mark.anyio
 
+# The longest command line Windows starts a process with.
+WINDOWS_COMMAND_LINE = 32767
+
 
 def git(cwd, *args):
     result = subprocess.run(
@@ -80,6 +83,15 @@ def _hub(monkeypatch, machines: dict[str, Machine], online: set[str]):
 
     async def exec_(device, argv, *, stdin, timeout):
         machine = machines[device]
+        if len(" ".join(argv)) > WINDOWS_COMMAND_LINE:
+            # What CreateProcess answers on a Windows machine.
+            ran.append(device)
+            return {
+                "exit": 1,
+                "stdout": "",
+                "stderr": "fork/exec python3.exe: "
+                "The filename or extension is too long.",
+            }
         result = subprocess.run(
             [sys.executable, *argv[1:]],
             input=stdin,
@@ -234,3 +246,26 @@ async def test_open_tasks_are_never_named(client, tmp_path, monkeypatch):
     async with client.test_factory() as db:
         row = await db.get(Task, task)
         assert row is not None and row.status is TaskStatus.open
+
+
+async def test_a_room_with_more_closed_tasks_than_a_command_line_holds_is_swept(
+    client, tmp_path, monkeypatch
+):
+    """A room on dev has 1,250 closed tasks; their ids do not fit one Windows
+    command line, and the sweep must still reach the last one."""
+    room = await _room(client, tmp_path)
+    tasks = await _tasks(client, room, 1300)
+    async with client.test_factory() as db:
+        for task in tasks:
+            row = await db.get(Task, task)
+            assert row is not None
+            row.status = TaskStatus.closed
+        await db.commit()
+    last = room.machines["a"].checkout(tasks[-1], push=True)
+    hub = _hub(monkeypatch, room.machines, online={"a"})
+
+    counts = await remove_closed_checkouts(client.test_factory, device_id="a")
+
+    assert counts == {"removed": 1, "kept": 0}
+    assert not last.exists()
+    assert len(hub.ran) > 1

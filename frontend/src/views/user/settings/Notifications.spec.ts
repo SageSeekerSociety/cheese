@@ -62,6 +62,17 @@ async function pushSwitch(view: ReturnType<typeof show>) {
   return (await view.findByLabelText('浏览器推送')) as HTMLInputElement
 }
 
+/** 让保存停在半路：给「保存中」那一刻留出观察它的时间，`release` 之后才落地。 */
+function heldSave() {
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  saveMock.mockImplementation(async (prefs: NotificationPreferences) => {
+    await held
+    return prefs
+  })
+  return release
+}
+
 beforeEach(() => {
   setLocale('zh-CN')
   getMock.mockReset()
@@ -105,6 +116,46 @@ describe('notification settings', () => {
     await waitFor(() => expect(saveMock).toHaveBeenCalledTimes(1))
     expect(saveMock.mock.calls[0][0].events.reaction.inApp).toBe(false)
     await waitFor(() => expect(cell.getAttribute('aria-pressed')).toBe('false'))
+  })
+
+  it('saves one cell without greying out the rest of the page', async () => {
+    const release = heldSave()
+    const view = show()
+    const cell = (await view.findByRole('button', {
+      name: '切换「有人回应了我的消息」的站内',
+    })) as HTMLButtonElement
+    const neighbour = (await view.findByRole('button', {
+      name: '切换「有人回应了我的消息」的推送',
+    })) as HTMLButtonElement
+    const push = await pushSwitch(view)
+
+    await fireEvent.click(cell)
+    // 正在存的那一格自己变忙，别的格子和上面那颗开关原地不动。
+    await waitFor(() => expect(cell.disabled).toBe(true))
+    expect(neighbour.disabled).toBe(false)
+    expect(push.disabled).toBe(false)
+
+    release()
+    await waitFor(() => expect(view.getByText('已保存')).toBeTruthy())
+    expect(cell.disabled).toBe(false)
+  })
+
+  it('keeps the change made while the previous one is still landing', async () => {
+    const release = heldSave()
+    const view = show()
+    const inApp = await view.findByRole('button', { name: '切换「有人回应了我的消息」的站内' })
+    const push = await view.findByRole('button', { name: '切换「有人回应了我的消息」的推送' })
+
+    await fireEvent.click(inApp)
+    await waitFor(() => expect(saveMock).toHaveBeenCalledTimes(1))
+    // 上一次还在落地时点的这一下：排到它后面，不是被丢掉。
+    await fireEvent.click(push)
+    release()
+    await waitFor(() => expect(saveMock).toHaveBeenCalledTimes(2))
+
+    const second = saveMock.mock.calls[1][0]
+    expect(second.events.reaction.inApp).toBe(false)
+    expect(second.events.reaction.push).toBe(true)
   })
 
   it('unsubscribes this browser when push is turned off', async () => {

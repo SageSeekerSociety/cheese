@@ -1,8 +1,8 @@
 <template>
-  <!-- 项目格子只画首字方块（projectAvatar），没有任何可见文字，所以链接的可访问
-       名称只能来自 aria-label —— 少了它，读屏读不出来，12 个项目里 4 个「机」字
-       方块也没法区分。悬停浮层（下面的 v-tooltip）负责鼠标用户；不加原生 title=，
-       否则悬停会同时冒出浏览器气泡和这个浮层。 -->
+  <!-- 项目格子只画头像方块（没挑过头像就是首字母方块），没有任何可见文字，所以链接
+       的可访问名称只能来自 aria-label —— 少了它，读屏读不出来，12 个项目里 4 个
+       「机」字方块也没法区分。悬停浮层（下面的 v-tooltip）负责鼠标用户；不加原生
+       title=，否则悬停会同时冒出浏览器气泡和这个浮层。 -->
   <v-card
     v-if="item.type === 'item'"
     ref="tileRef"
@@ -15,7 +15,7 @@
     :aria-current="current"
     :class="{
       'app-rail-item-cheese': item.icon === 'cheese',
-      'app-rail-item--tile': item.img,
+      'app-rail-item--tile': !!item.projectId,
       'app-rail-item--add': item.add,
       'app-rail-item--icon': item.icon && item.icon !== 'cheese' && !item.add && !item.img,
       'app-rail-item--dragging': dragging,
@@ -50,9 +50,12 @@
       </div>
     </v-tooltip>
 
-    <template v-if="item.img">
-      <!-- project tile: just the colored rounded-square app icon (Discord-style) -->
-      <v-img :src="item.img" width="48" height="48" class="rounded-lg" cover />
+    <template v-if="item.projectId">
+      <!-- project tile: the project's own avatar (rounded square, Discord-style).
+           交给 UserAvatar 画：挑过头像就上图，没挑过（img 是空串）就退成项目名
+           首字母的底色方块。别再这里自己烘一张 SVG data URI —— 那是第二处
+           「自己画头像」的地方，颜色还会跟着名字而不是项目走。 -->
+      <UserAvatar :avatar="item.img ?? ''" :name="item.title" :seed="item.projectId" kind="org" :size="48" />
     </template>
     <template v-else-if="item.icon === 'cheese'">
       <CheeseLogo width="26" height="26" class="cheese-icon" />
@@ -78,7 +81,6 @@
 import type { DropEdge } from '@/lib/projectOrder'
 
 import { type ComponentPublicInstance, computed, ref, toRefs } from 'vue'
-import { useRouter } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
 import { useNavigation } from '@/composables/useNavigation'
@@ -88,6 +90,7 @@ import { NavGenericItem } from './types'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { inDesktopApp } from '@/lib/desktopApp'
 import { cancelPrefetch, prefetchOnHover } from '@/lib/routePrefetch'
@@ -190,11 +193,12 @@ function onDrop(e: DragEvent) {
 }
 
 // 一级导航的每一格都是整整一个页面。指针停在格子上的那几百毫秒，正好够把那个页面
-// 的代码下下来——按下去的时候就只剩下拉数据那一段了。
-const router = useRouter()
+// 的代码下下来——按下去的时候就只剩下拉数据那一段了。预取要的是整台 router（拿它
+// 解析出要下的 chunk），就从 `nav.router` 上取；宿主没装路由时它整份是 null，没有
+// 要预热的目的地，也就什么都不做。
 function warmDestination() {
   const to = item.value.type === 'item' ? item.value.to : undefined
-  if (to) prefetchOnHover({ router, to })
+  if (to) prefetchOnHover({ router: nav?.router, to })
 }
 </script>
 
@@ -320,10 +324,10 @@ function warmDestination() {
   // a 3px gap in the rail's own colour, then the 2px ring. The gap is --canvas
   // (the rail sits on `background`), not --surface — on dark those differ and
   // a surface-coloured gap would draw a second, lighter ring.
-  .v-img {
+  .v-avatar {
     transition: box-shadow var(--dur-quick) var(--ease-standard);
   }
-  &[aria-current] .v-img {
+  &[aria-current] .v-avatar {
     // `primary`, not the #f57f17 literal: identical in light (primary IS
     // #F57F17) and correctly lightened to #FFA733 on dark, where the original
     // amber only reaches 3.1:1.

@@ -137,17 +137,25 @@ describe('消息头上的作者名', () => {
 })
 
 describe('消息头上的头像', () => {
-  it('名册带 avatar_id → 渲染真头像 <img>', async () => {
+  // 消息行里的头像由 `common/UserAvatar.vue` 一家画：挑过头像就是它的 `v-img`，
+  // 没挑过、取不到、加载失败都退成那个组件自己的彩色首字母。这里从 DOM 上认这两样。
+  // `render()` 给的 `container` 是 `Element`，不是 `HTMLElement` —— 参数跟着它。
+  const face = (where: Element) => where.querySelector('.v-avatar img:not(.v-img__img--preload)')
+  const initial = (where: Element) => where.querySelector('.v-avatar .user-avatar-char')
+
+  it('名册带 avatar_id → 渲染真头像 <img>，且头像本身对读屏隐身', async () => {
     const id = freshRoom()
     const { container } = mountPanel(id, 'wangchangxin', [
       { user_handle: 'wangchangxin', role: 'member', name: 'fulu', avatar_id: 4242 },
     ])
     await flush()
 
-    const img = container.querySelector('img.im-avatar') as HTMLImageElement
+    const img = face(container) as HTMLImageElement | null
     expect(img).not.toBeNull()
-    expect(img.getAttribute('src')).toContain('/avatars/4242')
-    expect(img.getAttribute('alt')).toBe('fulu')
+    expect(img!.getAttribute('src')).toContain('/avatars/4242')
+    // 旁边那颗 `.im-name` 才是身份，头像再念一遍是噪音。
+    expect(container.querySelector('.im-name')!.textContent?.trim()).toBe('fulu')
+    expect(container.querySelector('.v-avatar')!.getAttribute('aria-hidden')).toBe('true')
   })
 
   it('没有 avatar_id → 彩色色块，块里的字来自昵称首字而不是 handle 首字母', async () => {
@@ -157,11 +165,10 @@ describe('消息头上的头像', () => {
     ])
     await flush()
 
-    expect(container.querySelector('img.im-avatar')).toBeNull()
-    const block = container.querySelector('div.im-avatar')!
-    expect(block.textContent?.trim()).toBe('福')
+    expect(face(container)).toBeNull()
+    expect(initial(container)!.textContent?.trim()).toBe('福')
     // 底色的种子仍是 handle —— 换成昵称会让所有人的颜色都变一遍。
-    expect(block.getAttribute('style')).toContain('background-color')
+    expect(container.querySelector('.v-avatar')!.getAttribute('style')).toContain('background-color')
   })
 
   it('名册里没这个人时不去取 /avatars/default，保留可辨识的色块', async () => {
@@ -169,8 +176,8 @@ describe('消息头上的头像', () => {
     const { container } = mountPanel(id, 'ghost', [])
     await flush()
 
-    expect(container.querySelector('img.im-avatar')).toBeNull()
-    expect(container.querySelector('div.im-avatar')!.textContent?.trim()).toBe('G')
+    expect(face(container)).toBeNull()
+    expect(initial(container)!.textContent?.trim()).toBe('G')
   })
 
   it('真头像加载失败 → 优雅退回彩色首字母，不留破图', async () => {
@@ -180,11 +187,9 @@ describe('消息头上的头像', () => {
     ])
     await flush()
 
-    const img = container.querySelector('img.im-avatar')!
-    img.dispatchEvent(new Event('error'))
+    face(container)!.dispatchEvent(new Event('error'))
     await flush()
 
-    expect(container.querySelector('img.im-avatar')).toBeNull()
-    expect(container.querySelector('div.im-avatar')!.textContent?.trim()).toBe('福')
+    expect(initial(container)!.textContent?.trim()).toBe('福')
   })
 })

@@ -259,6 +259,11 @@ class KnowledgeService:
             return {uid: _user_stub(uid) for uid in cleaned}
         users = await self._user_repo.get_by_ids(cleaned)
         profiles = await self._profile_repo.get_profiles_by_user_ids(cleaned)
+        # 头像只给本人**自己挑过**的那张：``profile.avatar_id`` 是原始值，注册时人人被
+        # 写上全局默认那一行，直接回它会让没挑过的人共用一张默认脸。判据只有一处
+        # （``UserProfileRepository.chosen_avatar_ids``）：没挑过的人不在映射里，
+        # 回 None，交给前端的 UserAvatar 画彩色首字母。
+        chosen = await self._profile_repo.chosen_avatar_ids(cleaned)
         out: dict[int, dict] = {}
         for uid in cleaned:
             user = users.get(uid)
@@ -275,7 +280,7 @@ class KnowledgeService:
                 "id": user.id,
                 "username": user.username,
                 "nickname": nickname,
-                "avatarId": profile.avatar_id if profile else None,
+                "avatarId": chosen.get(uid),
                 "intro": profile.intro if profile else "",
                 "question_count": 0,
                 "answer_count": 0,

@@ -15,7 +15,7 @@ import { paletteAsk } from '@/commands/palette/state'
 import { topicActions } from '@/commands/topicActions'
 import { t } from '@/i18n'
 import { phraseLabel } from '@/lib/board'
-import { topicTitle } from '@/lib/topicState'
+import { channelGlyph, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -62,7 +62,7 @@ function itemOf(topic: Topic, projectId: string, router: Router): PaletteItem {
   return {
     id: `topic:${topic.id}`,
     title: topicTitle(topic),
-    icon: archived ? 'mdi-archive-outline' : 'mdi-pound',
+    icon: archived ? 'mdi-archive-outline' : channelGlyph(topic),
     badge: badgeOf(topic),
     awaiting: awaitsYou(topic),
     to: { name: 'workspace-topic', params: { projectId, topicId: topic.id } },
@@ -98,7 +98,7 @@ function nameItemOf(row: TopicName, router: Router, projectName: string | undefi
     id: `topic:${row.id}`,
     title: topicTitle(row),
     subtitle: projectName,
-    icon: archived ? 'mdi-archive-outline' : 'mdi-pound',
+    icon: archived ? 'mdi-archive-outline' : channelGlyph(row),
     badge: archived ? { text: t('navigation.palette.archived') } : undefined,
     to,
     actions: () => [

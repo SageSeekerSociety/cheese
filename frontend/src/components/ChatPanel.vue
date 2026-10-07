@@ -113,6 +113,11 @@ const panelEmit = ((event: string, ...args: unknown[]) => {
     void threadLines.onActivity(threadId, member, active)
     return
   }
+  if (event === 'thread-status') {
+    const [threadId, record] = args as [string, Block]
+    threadLines.onStatus(threadId, record)
+    return
+  }
   forward(event, ...args)
 }) as ChatPanelEmit
 
@@ -260,7 +265,6 @@ const {
   onReact,
   setReply,
   downloadAttachment,
-  onAvatarError,
   isAgentBlock,
   AUTHOR,
 } = panel
@@ -342,7 +346,9 @@ defineExpose({ send, connected, submitQuestion })
           :topic="topic"
           :no-upgrade="noUpgrade"
           :threadable="threadable"
+          :processable="inThread"
           :replying-for="threadLines.replyingFor"
+          :thread-status-for="threadLines.statusFor"
           :pinnable="pinnable"
           :pinned-ids="pins.pinnedIds.value"
           :task-level="taskLevel"
@@ -382,7 +388,7 @@ defineExpose({ send, connected, submitQuestion })
           :is-agent-block="isAgentBlock"
           :is-mine="isMine"
           :is-external="isExternal"
-          :avatar-src="avatarSrc"
+          :avatar-of="avatarSrc"
           :display-name="displayName"
           :notice-agent="noticeAgent"
           :agent-faces="agentFaces"
@@ -401,6 +407,7 @@ defineExpose({ send, connected, submitQuestion })
           @react="onReact"
           @reply="setReply"
           @open-thread="emit('open-thread', $event)"
+          @open-process="emit('open-process', $event)"
           @upgrade-message="emit('upgrade-message', $event)"
           @edit="startEdit"
           @edit-send="editSend"
@@ -415,7 +422,6 @@ defineExpose({ send, connected, submitQuestion })
           @checklist="changeChecklist"
           @download="downloadAttachment"
           @jump="openAt"
-          @avatar-error="onAvatarError"
           @save-edit="saveEdit"
           @cancel-edit="editingId = null"
           @retry="retryNow"
@@ -439,9 +445,11 @@ defineExpose({ send, connected, submitQuestion })
         :editable="!!sheetBlock && canEdit(sheetBlock)"
         :no-upgrade="noUpgrade"
         :threadable="threadable"
+        :processable="inThread"
         @react="onReact"
         @reply="setReply"
         @thread="emit('open-thread', $event)"
+        @process="emit('open-process', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="startEdit"
       />

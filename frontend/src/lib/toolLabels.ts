@@ -109,6 +109,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_feedback_get: 'toolLabels.cheeseFeedbackGet',
   cheese_feedback_claim: 'toolLabels.cheeseFeedbackClaim',
   cheese_feedback_release: 'toolLabels.cheeseFeedbackRelease',
+  cheese_run_records: 'toolLabels.cheeseRunRecords',
   cheese_machine: 'toolLabels.cheeseMachine',
   cheese_wait_machine: 'toolLabels.cheeseWaitMachine',
   cheese_note: 'toolLabels.cheeseNote',

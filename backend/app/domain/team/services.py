@@ -219,6 +219,15 @@ class TeamService:
     async def get_teams_by_ids(self, ids: Sequence[int]) -> dict[int, Team]:
         return await self._repo.get_by_ids(ids)
 
+    async def chosen_avatar_ids(self, team_ids: Sequence[int]) -> dict[int, int]:
+        """team id -> 团队自己挑过的头像 id，没挑过的不在里面。
+
+        给通知那一类「后端直出头像 URL」的地方用：那边的 UserEntityResolver 走
+        ``UserService.chosen_avatar_ids``，团队这边必须同一条判据，否则没挑过的团队
+        会回全站默认那张脸。规则在 ``TeamRepository.chosen_avatar_ids``，这里只转发。
+        """
+        return await self._repo.chosen_avatar_ids(team_ids)
+
     async def application_statuses(self, ids: Sequence[int]) -> dict[int, str]:
         return await self._repo.application_statuses(ids)
 

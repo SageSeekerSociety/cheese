@@ -73,14 +73,18 @@ const GROUP_LABEL: Record<RunRecordGroupFilter, string> = {
   recovered: 'admin.runRecords.group.recovered',
 }
 
+/** 对话里没跑完的那几轮。 */
+const TURN_FAILURES = new Set(['turn_failed', 'platform_error', 'turn_timeout'])
+
 function kindLabel(kind: string): string {
   if (kind === 'backend_error') return t('admin.runRecords.kind.backend')
   if (kind === 'frontend_error') return t('admin.runRecords.kind.frontend')
+  if (TURN_FAILURES.has(kind)) return t('admin.runRecords.kind.turn')
   return t('admin.runRecords.kind.recovered')
 }
 
 function isError(g: RunRecordGroup): boolean {
-  return g.kind === 'backend_error' || g.kind === 'frontend_error'
+  return g.kind === 'backend_error' || g.kind === 'frontend_error' || TURN_FAILURES.has(g.kind)
 }
 
 const groups = computed(() => props.overview?.groups ?? [])

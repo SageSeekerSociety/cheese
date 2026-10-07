@@ -118,6 +118,10 @@ class Topic(UuidPk, Timestamps, Base):
     # participants' cross-project personal memory (spec §8.4).
     # 谁在这间私聊里，答案只在名册上（`TopicMemberService.private_seats`，结论 19）。
     is_private: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # 私密频道: a channel only the people in it see — its name, its tasks, its
+    # messages. Nobody joins it; its people bring others in. 综合 is never one.
+    # Unlike a private chat it is an ordinary channel in every other way.
+    members_only: Mapped[bool] = mapped_column(default=False, server_default="false")
     # If this topic was upgraded from a block (讨论升级 / 拆解), link it back.
     # use_alter: topics↔blocks is a circular FK; add this one via ALTER.
     upgraded_from_block_id: Mapped[uuid.UUID | None] = mapped_column(

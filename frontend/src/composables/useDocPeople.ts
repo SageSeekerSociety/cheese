@@ -7,6 +7,7 @@ import { computed } from 'vue'
 
 import { memberName } from '../lib/agentNames'
 import { isExternalMember } from '../lib/externalMembers'
+import { getAvatarUrl } from '../utils/materials'
 
 /** 这一包递给画的那一层（props）：名册是调用方给的，面板不再自己去取。 */
 export type DocPeopleBundle = ReturnType<typeof useDocPeople>
@@ -25,12 +26,18 @@ export function useDocPeople(source: {
         label: memberName(m) || m.user_handle,
         agent: false,
         external: isExternalMember(m),
+        // 名册这一行就带着他挑过的头像；没挑过是 null，交给首字母。
+        avatar: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : null,
       }))
     const handle = source.agentHandle()
-    return handle ? [...humans, { handle, label: source.agentName(), agent: true }] : humans
+    return handle ? [...humans, { handle, label: source.agentName(), agent: true, avatar: null }] : humans
   })
 
   const names = computed<Record<string, string>>(() => Object.fromEntries(people.value.map((p) => [p.handle, p.label])))
+  // handle → 头像地址。文档评论串里画作者头像用（正文标签和姓名之外，头像也认人）。
+  const avatars = computed<Record<string, string>>(() =>
+    Object.fromEntries(people.value.flatMap((p) => (p.avatar ? [[p.handle, p.avatar] as const] : [])))
+  )
 
-  return { people, names }
+  return { people, names, avatars }
 }

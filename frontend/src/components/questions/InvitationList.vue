@@ -2,7 +2,8 @@
   <v-list>
     <v-list-item v-for="(user, index) in data" :key="user.id" :title="user.nickname" :subtitle="user.intro">
       <template #prepend>
-        <user-avatar :avatar="getAvatarUrl(user.avatarId)" />
+        <!-- 种子用 handle(username)：颜色跟着人走，不跟昵称走，改昵称不换色（契约 §3.14）。 -->
+        <user-avatar :avatar="getAvatarUrl(user.avatarId)" :name="user.nickname" :seed="user.username" />
       </template>
       <template #append>
         <BaseButton

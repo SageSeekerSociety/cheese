@@ -3,16 +3,11 @@
     <div class="srow srow--field">
       <span class="srow__k">{{ t('spaces.settings.basic.avatar') }}</span>
       <div class="avatar-field">
-        <img
-          v-if="avatarPreview && !avatarBroken"
-          class="avatar-field__img"
-          :src="avatarPreview"
-          alt=""
-          @error="avatarBroken = true"
-        />
-        <span v-else class="avatar-field__img avatar-field__img--empty" aria-hidden="true">
-          <v-icon size="24">mdi-image-outline</v-icon>
-        </span>
+        <!-- 空间头像走 UserAvatar（kind="org"）：挑过画那张、没挑过 / 取不到都退成按名字
+             派生的彩色方块，失败记忆归 utils/avatarFailures 一处管。这里不再自己盯 <img>
+             的 @error、不再自画「破图占位」，那份兜底只该有一个出处（契约 §3.14）。和
+             侧栏 (SpaceSidebar) 同一个组件、同一个色，才不会是两种样子。 -->
+        <UserAvatar kind="org" size="56" :avatar="avatarPreview" :name="space?.name" />
         <BaseButton kind="secondary" @click="avatarInput?.click()">
           {{ t('spaces.settings.basic.changeAvatar') }}
         </BaseButton>
@@ -118,6 +113,7 @@ import { vuetifyConfig } from '@/utils/form'
 import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 
 export interface BasicInfoChange {
   name: string
@@ -156,8 +152,6 @@ const [intro, introProps] = defineField('intro', vuetifyConfig)
 const selectedAvatar = ref<File>()
 const avatarInput = ref<HTMLInputElement | null>(null)
 const pickedPreview = ref<string>()
-/** 头像地址读不出图时画占位，不画一个破图标。 */
-const avatarBroken = ref(false)
 
 /** 选了新头像先预览，保存时随表单一起交上去。 */
 const avatarPreview = computed(
@@ -172,7 +166,6 @@ function onAvatarPicked(event: Event) {
   if (pickedPreview.value) URL.revokeObjectURL(pickedPreview.value)
   selectedAvatar.value = file
   pickedPreview.value = URL.createObjectURL(file)
-  avatarBroken.value = false
 }
 const visibleLimitMode = ref<'limited' | 'unlimited'>('unlimited')
 const visibleTaskLimitInput = ref<string | number>('0')
@@ -258,21 +251,6 @@ const submit = handleSubmit((data) => {
   display: flex;
   gap: 16px;
   align-items: center;
-}
-
-.avatar-field__img {
-  width: 56px;
-  height: 56px;
-  flex-shrink: 0;
-  object-fit: cover;
-  border-radius: var(--radius-md);
-}
-
-.avatar-field__img--empty {
-  display: grid;
-  place-items: center;
-  color: var(--faint);
-  background: var(--fill-2);
 }
 
 .avatar-field__input {

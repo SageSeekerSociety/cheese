@@ -35,7 +35,8 @@
                 <div v-if="found" class="d-flex align-center mb-4" data-testid="found-user">
                   <UserAvatar
                     :name="found.name || found.handle"
-                    :avatar="found.avatar_id == null ? '' : getAvatarUrl(found.avatar_id)"
+                    :avatar="getAvatarUrl(found.avatar_id)"
+                    :seed="found.handle"
                     :size="32"
                     class="mr-3"
                   />
@@ -126,9 +127,13 @@
                 <template #activator />
               </AdaptiveMenu>
               <template #prepend>
-                <v-avatar size="40" rounded="circle" color="surface-variant" class="mr-3">
-                  <v-img :src="getAvatarUrl(member.user.avatarId)" />
-                </v-avatar>
+                <UserAvatar
+                  :avatar="getAvatarUrl(member.user.avatarId)"
+                  :name="member.user.nickname"
+                  :seed="member.user.username"
+                  size="40"
+                  class="mr-3"
+                />
               </template>
               <v-list-item-title class="font-weight-medium">
                 {{ member.user.nickname }}
@@ -229,9 +234,13 @@
               :class="{ 'pending-request': request.status === 'PENDING' }"
             >
               <template #prepend>
-                <v-avatar size="40" rounded="circle" color="surface-variant" class="mr-3">
-                  <v-img :src="getAvatarUrl(request.user.avatarId)" />
-                </v-avatar>
+                <UserAvatar
+                  :avatar="getAvatarUrl(request.user.avatarId)"
+                  :name="request.user.nickname"
+                  :seed="request.user.username"
+                  size="40"
+                  class="mr-3"
+                />
               </template>
               <v-list-item-title class="font-weight-medium">
                 {{ request.user.nickname }}
@@ -324,9 +333,13 @@
               :class="{ 'pending-invitation': invitation.status === 'PENDING' }"
             >
               <template #prepend>
-                <v-avatar size="40" rounded="circle" color="surface-variant" class="mr-3">
-                  <v-img :src="getAvatarUrl(invitation.user.avatarId)" />
-                </v-avatar>
+                <UserAvatar
+                  :avatar="getAvatarUrl(invitation.user.avatarId)"
+                  :name="invitation.user.nickname"
+                  :seed="invitation.user.username"
+                  size="40"
+                  class="mr-3"
+                />
               </template>
               <v-list-item-title class="font-weight-medium">
                 {{ invitation.user.nickname }}

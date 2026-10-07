@@ -51,6 +51,10 @@ class EvalBackend:
         self.sandbox_token = secrets.token_hex(24)
         # Signs the session tokens scenarios speak with (EvalApi.session_token).
         self.jwt_secret = secrets.token_hex(32)
+        # The only handle this backend's PLATFORM_ADMIN_HANDLES names. Scenarios
+        # read /debug/turns (a platform-admin surface) through it; it is an admin
+        # of this throwaway backend and of nothing else.
+        self.platform_admin_handle = "eval-platform-admin"
         self.db_path = run_dir / "eval.db"
         self.workspace_root = run_dir / "workspaces"
         self.log_path = run_dir / "backend.log"
@@ -67,6 +71,9 @@ class EvalBackend:
                 "WORKSPACE_ROOT": str(self.workspace_root),
                 "SANDBOX_TOKEN": self.sandbox_token,
                 "JWT_SECRET": self.jwt_secret,
+                # /debug/turns is a platform-admin surface; this is the throwaway
+                # backend's own admin, named here and nowhere else.
+                "PLATFORM_ADMIN_HANDLES": f'["{self.platform_admin_handle}"]',
                 # Scenarios speak as several different people ("xinyu", "alice",
                 # …) who are on no project's roster. Safe here and nowhere else:
                 # this backend is a throwaway sqlite instance bound to 127.0.0.1

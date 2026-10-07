@@ -1,15 +1,17 @@
 <template>
-  <!-- 发来通知的人画成圆（人是圆的）；没有人时画的是通知类型的图标，按不是人的圆角方块。 -->
-  <v-avatar
+  <!-- 发来通知的那个人画成他自己的头像；他没有挑过头像就画彩色首字母 —— 一格空白
+       或一张所有人的共用脸，都不如「这个人的首字母和他的颜色」。没有可画的人时，
+       画的才是通知类型的图标。 -->
+  <UserAvatar
+    v-if="face"
     :size="size"
-    :color="avatarColor"
-    :variant="variant"
-    :rounded="primaryEntityWithAvatar ? 'circle' : undefined"
-  >
-    <!-- 如果有主要实体并且有头像，显示实体头像 -->
-    <v-img v-if="primaryEntityWithAvatar" :src="primaryEntityWithAvatar.avatarUrl" />
-    <!-- 否则显示图标 -->
-    <v-icon v-else :icon="icon" :size="iconSize" :color="iconColor"></v-icon>
+    :avatar="face.avatarUrl ?? ''"
+    :name="face.name"
+    :seed="face.handle || face.name"
+    :kind="face.type === 'user' ? 'person' : 'org'"
+  />
+  <v-avatar v-else :size="size" :color="color" variant="tonal">
+    <v-icon :icon="icon" :size="iconSize" :color="color"></v-icon>
   </v-avatar>
 </template>
 
@@ -19,6 +21,7 @@ import type { EntityInfo } from '@/network/api/notifications/types'
 
 import { computed } from 'vue'
 
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { getNotificationMark } from '@/services/notification/registry'
 
 const props = defineProps<{
@@ -41,8 +44,14 @@ const mark = computed(() => getNotificationMark(props.notification))
 const icon = computed(() => mark.value.icon)
 const color = computed(() => props.color || mark.value.color)
 
-// 获取主要实体（优先级：发送者 > 其他人类实体）
-const primaryEntityWithAvatar = computed<EntityInfo | null>(() => {
+// 这一条通知该画谁的脸。
+//
+// 先按角色找**人**（发送者优先），找到一个就用他：他有没有头像都要用 —— 没有头像时
+// 画的是他的彩色首字母，那也比退回类型图标更认得出是谁。这里必须判 `type === 'user'`：
+// 一条通知的实体里既有团队也有人，团队的头像画成圆形、和「谁发来的」也不是一回事。
+// 角色表里一个能画的人都没有，才退到「其它带头像的实体」（例如一张团队邀请卡上的
+// 团队），那时按团队画圆角方块，和平台别处的团队头像一个样子。
+const face = computed<EntityInfo | null>(() => {
   const { entities } = props.notification
   const possibleRoles = [
     'sender',
@@ -58,36 +67,19 @@ const primaryEntityWithAvatar = computed<EntityInfo | null>(() => {
     'canceler',
   ]
 
-  // 遍历可能的角色，找到第一个有头像的实体
   for (const role of possibleRoles) {
     const entity = entities[role]
+    if (entity && entity.type === 'user') {
+      return entity
+    }
+  }
+
+  for (const entity of Object.values(entities)) {
     if (entity && entity.avatarUrl) {
       return entity
     }
   }
 
-  // 如果没有发送者或发送者没有头像，查找其他实体
-  for (const [role, entity] of Object.entries(entities)) {
-    if (entity && entity.avatarUrl && entity.type === 'user') {
-      return entity
-    }
-  }
-
   return null
-})
-
-// 头像颜色
-const avatarColor = computed(() => {
-  return primaryEntityWithAvatar.value ? undefined : color.value
-})
-
-// 头像变体
-const variant = computed(() => {
-  return primaryEntityWithAvatar.value ? undefined : 'tonal'
-})
-
-// 图标颜色
-const iconColor = computed(() => {
-  return color.value
 })
 </script>

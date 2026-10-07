@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import text
 
+from app.api.routes.admin_common import PlatformAdminDep
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 
@@ -40,7 +41,24 @@ async def health_check() -> dict[str, Any]:
 
 
 @router.get("/health/detailed", summary="Detailed health check")
-async def detailed_health_check() -> dict[str, Any]:
+async def detailed_health_check(_admin: PlatformAdminDep) -> dict[str, Any]:
+    """Per-check detail, for a platform admin.
+
+    Gated because it names the platform's dependencies and how each one is
+    failing. The probes monitoring reads stay public (`/healthz`, `/readyz`,
+    `/health`), and `/readyz` still carries this payload in its 503 body while
+    something required is down — an outage stays diagnosable with no session.
+    """
+    return await health_report()
+
+
+async def health_report() -> dict[str, Any]:
+    """Every check's status, in this process, with no caller behind it.
+
+    `/readyz` reads it to decide readiness, and the admin dashboard's platform
+    panel calls it in-process. Neither has a credential to present, so the gate
+    sits on the route above rather than here.
+    """
     checks: dict[str, Any] = {}
 
     checks["database"] = await _check_database()
@@ -98,7 +116,14 @@ async def _check_redis() -> dict[str, Any]:
 
 
 @router.get("/metrics", summary="Application metrics")
-async def get_metrics() -> dict[str, Any]:
+async def get_metrics(_admin: PlatformAdminDep) -> dict[str, Any]:
+    """The in-process metric registry, for a platform admin.
+
+    Every route's call count, latency and error count lives in here, which is
+    a map of the platform's insides — not something the open internet reads.
+    No scraper is configured to read it today, so nothing external breaks when
+    it goes behind the gate.
+    """
     from app.core.metrics import registry
 
     return registry.export()
@@ -113,7 +138,7 @@ async def readiness_check() -> dict[str, Any]:
     but taking the process out of rotation over it would trade one degraded
     feature for a total outage.
     """
-    result = await detailed_health_check()
+    result = await health_report()
     unready = [
         name
         for name in _REQUIRED_CHECKS

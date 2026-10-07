@@ -451,7 +451,7 @@ export function listTopics(
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */
-export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'kind' | 'status'>
+export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'kind' | 'status' | 'members_only'>
 
 /** 我能看到的所有项目里的话题名，最近有动静的在前。私聊不在里面。 */
 export async function listTopicNames(): Promise<TopicName[]> {
@@ -477,8 +477,8 @@ export function listRoomTasks(
   return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
-export function createTopic(projectId: string, title: string, description?: string): Promise<Topic> {
-  const body: Record<string, string> = { project_id: projectId, title }
+export function createTopic(pid: string, title: string, description?: string, membersOnly = false): Promise<Topic> {
+  const body: Record<string, string | boolean> = { project_id: pid, title, members_only: membersOnly }
   if (description) body.description = description
   return request<Topic>('/topics', {
     method: 'POST',
@@ -1330,13 +1330,13 @@ export function summonAgent(topicId: string): Promise<{ started: boolean; reason
   })
 }
 
-// ---- 记忆 (spec §8.4: 记忆可见) ----
+// ---- 记忆 (spec §8.4: 记忆可见): 一条记忆一个 markdown 文件 ----
 export interface MemoryEntryOut {
   id: string
   scope: string
-  scope_id: string
   content: string
   created_at: string
+  updated_at: string
 }
 export function listMemory(projectId: string, userHandle?: string): Promise<ListPayload<MemoryEntryOut>> {
   const u = userHandle ? `&user_handle=${encodeURIComponent(userHandle)}` : ''
@@ -2363,7 +2363,7 @@ export type { FeedbackNote }
  *  这个人没有 profile 行（或平台上根本没有这个账号），回退成 handle 之后界面就分不清
  *  「没设昵称」和「他叫这个 handle」；`avatar_id` 为 null = 他从没自己挑过头像
  *  （判据在服务端 `UserProfileRepository.chosen_avatar_ids`，不是硬比 id），界面这时
- *  画彩色首字母 —— `getAvatarUrl` 对空值回的那张默认图是所有人共用的一张脸。 */
+ *  交给 `UserAvatar` 画彩色首字母 —— `getAvatarUrl` 对空值回的空串，不是共用的默认脸。 */
 export interface PlatformAdminRow {
   handle: string
   nickname: string | null

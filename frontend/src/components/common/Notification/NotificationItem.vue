@@ -151,11 +151,11 @@ import type { RenderedNotificationContent } from './renders/NotificationRenderUt
 
 import { computed, markRaw, onMounted, onUpdated, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { useFormattedTime } from '@/utils/dateTime'
 
+import { useNavigation } from '@/composables/useNavigation'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import NotificationAvatar from './NotificationAvatar.vue'
@@ -275,12 +275,13 @@ const doDelete = () => {
   props.onDelete(props.notification.id)
 }
 
-const router = useRouter()
+// 宿主没装路由时整份 nav 是 null，那就没有去处：照旧标已读，什么都不跳。
+const nav = useNavigation()
 
 const navigateToTarget = () => {
   if (hasRouterLink.value) {
     props.onMarkAsRead(props.notification.id)
-    router.push(routerLinkTarget.value).catch((error) => {
+    nav?.navigate(routerLinkTarget.value)?.catch((error) => {
       if (error.name !== 'NavigationDuplicated') {
         console.error('导航错误:', error)
         toast.error(t('notifications.common.unreachable'))

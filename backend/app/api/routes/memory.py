@@ -1,21 +1,25 @@
 """Memory routes — 记忆可见 (spec §8.4).
 
-芝士 writes memories via the `remember` tool; humans must be able to SEE (and
-prune) what it remembers, or the memory is a black box. Entries live in
-``memory_entries``; ids are row UUIDs.
+芝士 writes memories as files (`~/.cheese/memory/`, one markdown file per memory),
+and humans must be able to SEE (and prune) what it remembers, or the memory is a
+black box. 这一条路由就是那一面：读 `memory_files` 那棵树（`files_store.py`），
+不是上一版的条目池。
 
-What an agent remembered in a project is that project's content, and what it
-noted about a person is that person's business: the people who may read the
-project read the one, the person reads the other, and nobody else reads either.
+看的是两棵：**项目共享的那一份**（`team`，项目里谁写的就是谁的），加上**问的人
+自己那一份**（`private/<handle>`，跟人跟项目走）。别人的 private 不在这里——它属于
+那个人，本项目管理员在记忆文件那条路上看得见是为了出事时能查，而「芝士认为我是谁」
+这一页不是那种场合。
 
-Deleting is safe curation, not data loss (memory is a projection).
+条目池（`memory_entries`）已经没有写入方了，而且它那一份既不注入提示词、也没有读点：
+再照着它列一遍，读到的是一屏「暂无记忆」，而树里明明写着几十条。修剪同理——删的是
+那棵树里的文件，连同索引里指向它的那一行（`MemoryFileStore.forget`），不然下一轮
+注入的索引会指着一个不存在的文件。
 """
 
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
@@ -23,35 +27,42 @@ from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.memory.models import (
-    MemoryEntry,
-    MemoryScope,
-    agent_project_scope_id,
-    project_of_scope,
-    project_scope_prefix,
-    user_scope_about,
-    user_scope_id,
+from app.domain.memory.files import (
+    INDEX_NAME,
+    MemoryFileError,
+    MemoryFileScope,
+    parse_memory_file,
 )
-from app.domain.memory.store import live_entries
+from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.models import MemoryFileRecord
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-def _entry_out(e: MemoryEntry) -> dict:
+def _entry_out(row: MemoryFileRecord) -> dict:
+    """一条记忆，照人读的形状给。
+
+    给的是**正文**：文件头上那三行 frontmatter（`name` / `description` / `type`）
+    是给召回器和同步用的，摆在这一页上就是一段谁都不想读的元数据。读不成记忆文件的
+    正文（格式有问题的那种，写入时只警告不拒绝）就原样给——这一页的用处正是让人
+    看见「它记了什么」，而看不出来的一版也该看得见。
+    """
+    try:
+        content = parse_memory_file(row.content).body
+    except MemoryFileError:
+        content = row.content.strip()
     return {
-        "id": str(e.id),
-        "scope": e.scope.value,
-        "scope_id": e.scope_id,
-        "content": e.content,
-        "layer": e.layer.value,
-        "created_at": e.created_at.isoformat(),
-        # 记忆整理 computes its snapshot from the newest of these, so that the
-        # concurrency check compares two timestamps from the SAME clock — the
-        # sandbox's own "now" is a different one, and a container running fast
-        # would quietly stop protecting concurrent writes.
-        "updated_at": e.updated_at.isoformat(),
+        "id": str(row.id),
+        "scope": row.scope.value,
+        "owner_handle": row.owner_handle or None,
+        "path": row.path,
+        "content": content,
+        "version": row.version,
+        "updated_by": row.updated_by,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
     }
 
 
@@ -61,81 +72,50 @@ async def list_memory(
     resolver: ActorResolverDep,
     project_id: uuid.UUID,
     user_handle: str | None = None,
-    agent_handle: str | None = None,
 ) -> dict:
-    """Memory entries for a project and/or a person, newest first.
+    """这个项目这棵树上的记忆，改过的靠前。
 
-    Every memory here belongs to one agent instance (结论 8): the old write path
-    landed in an ``agent_project`` pool keyed ``{project_id}:{handle}``, and
-    ``project_id`` lists every such pool in the project; ``scope``/``scope_id``
-    on each entry say which one it came from, and ``agent_handle`` narrows to
-    one agent's. 项目自己没有池（结论 7）—— 全项目共看的那一份状态是总览房间的
-    实况文档，由文档接口提供，不在这个列表里。
+    ``user_handle`` 问的是另一个问题——**我自己那几条**。private 那棵树是「人 ×
+    项目」：某一个人在这个项目里的那一份，属于那个人，别人（连项目管理员也一样）
+    读不到，所以这个参数只认本人。不传就只列项目共享的那一份：一个刚进项目的队友
+    打开这一页，看到的是项目记得的事，不是别人私下的偏好。
 
-    ``user_handle`` asks the other question a person has about memory — what
-    has been remembered *about me* — and it is answered INSIDE this project:
-    a pool about a person belongs to one agent instance in one project (结论
-    8), so listing it without a project would hand the reader another project's
-    notes about the same person. It is asked by that person and nobody else:
-    the agent itself reads its notes on someone only in that person's private
-    chat with it, and a teammate has no better claim than the agent does.
+    索引（`MEMORY.md`）不在这里：它是「有哪些条」的目录，不是一条记忆。
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     if user_handle and user_handle != actor.handle:
         raise ForbiddenError(say("memoryOwnOnly"))
-    agent_cond = MemoryEntry.scope == MemoryScope.agent_project
-    if agent_handle:
-        cond = agent_cond & (
-            MemoryEntry.scope_id == agent_project_scope_id(project_id, agent_handle)
-        )
-    else:
-        # Every agent that ever wrote here, including ones no longer on a
-        # roster — a prefix scan is the only listing that can't go silently
-        # blind. `project_id` is a parsed UUID, so it carries no LIKE
-        # wildcards; autoescape guards the general case anyway.
-        cond = agent_cond & MemoryEntry.scope_id.startswith(
-            project_scope_prefix(project_id), autoescape=True
-        )
+    store = MemoryFileStore(db)
+    wanted: list[tuple[MemoryFileScope, str | None]] = [(MemoryFileScope.team, None)]
     if user_handle:
-        if agent_handle:
-            about = MemoryEntry.scope_id == user_scope_id(
-                project_id, agent_handle, user_handle
-            )
-        else:
-            # 这个项目里每一位 agent 对他的记录。前缀锁住项目，后缀锁住
-            # 人，中间那一段是谁记的——两头夹住才既不漏掉一位队友，也不
-            # 把别的项目对同一个人的记录带进来。
-            about = MemoryEntry.scope_id.startswith(
-                project_scope_prefix(project_id), autoescape=True
-            ) & MemoryEntry.scope_id.endswith(
-                user_scope_about(user_handle), autoescape=True
-            )
-        cond = cond | ((MemoryEntry.scope == MemoryScope.user) & about)
-    # Same filter the recall path uses: a fact 记忆整理 retired is no longer part
-    # of the memory, and showing it here would tell a human the opposite of what
-    # 芝士 will actually read next turn.
-    rows = (
-        await db.scalars(
-            select(MemoryEntry)
-            .where(cond, live_entries())
-            .order_by(MemoryEntry.created_at.desc())
-        )
-    ).all()
-    return ok(page([_entry_out(e) for e in rows], len(rows)))
+        wanted.append((MemoryFileScope.private, actor.handle))
+    rows = [
+        row
+        for scope, owner in wanted
+        for row in await store.list(project_id, scope, owner)
+        if row.path != INDEX_NAME
+    ]
+    # 改过的那条排前面：这一页是给人扫的，而「最近它记了什么」是扫它的人的问题。
+    # 时间戳是同一台钟（`updated_at` 由数据库写），所以比字符串就等于比时刻。
+    entries = sorted(
+        (_entry_out(row) for row in rows), key=lambda e: e["updated_at"], reverse=True
+    )
+    return ok(page(entries, len(entries)))
 
 
 @router.delete("/{entry_id}")
 async def delete_memory(
     entry_id: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """人工修剪一条记忆 (curation, not data loss — memory is a projection).
+    """人工修剪一条记忆 (curation, not data loss — the tree is a projection).
 
-    An entry is pruned by someone the listing above would show it to: a pool
-    of the project's agents by whoever may read the project, a note about a
-    person by that person. Anyone else is told the entry does not exist,
-    exactly as for an id that never did — a refusal that answered differently
-    would confirm the id to someone with no business knowing it.
+    一条记忆由「列得出它的人」删：项目共享的那一份，读得到项目的人就删得动；
+    关于某个人自己那一份，只有本人。别人一律答「这条不存在」，和从没存在过的 id
+    答同一句话——一个答得不一样的拒绝，等于把这个 id 告诉了不该知道它的人。
+
+    删的是文件**加索引里指着它的那一行**：只删文件的话，下一轮注入的索引里还挂着
+    一条指向不存在文件的指针，读起来像「这条记忆在」。
     """
     actor = await resolver.require_verified_caller()
     try:
@@ -143,20 +123,20 @@ async def delete_memory(
     except ValueError as exc:
         raise ValidationError(say("memoryEntryIdInvalid")) from exc
     missing = NotFoundError(say("memoryEntryNotFound"))
-    entry = await db.get(MemoryEntry, row_id)
-    if entry is None:
-        raise missing
-    project_id = project_of_scope(entry.scope, entry.scope_id)
-    if project_id is None:
+    entry = await db.get(MemoryFileRecord, row_id)
+    if entry is None or entry.path == INDEX_NAME:
         raise missing
     try:
-        await resolver.authorize_project(actor, project_id=project_id)
+        await resolver.authorize_project(actor, project_id=entry.project_id)
     except (ForbiddenError, NotFoundError) as exc:
         raise missing from exc
-    if entry.scope is MemoryScope.user and not entry.scope_id.endswith(
-        user_scope_about(actor.handle)
-    ):
+    if entry.scope is MemoryFileScope.private and entry.owner_handle != actor.handle:
         raise missing
-    await db.delete(entry)
-    await db.flush()
+    await MemoryFileStore(db).forget(
+        project_id=entry.project_id,
+        scope=entry.scope,
+        owner_handle=entry.owner_handle,
+        paths=[entry.path],
+        updated_by=actor.handle,
+    )
     return ok({"deleted": entry_id})

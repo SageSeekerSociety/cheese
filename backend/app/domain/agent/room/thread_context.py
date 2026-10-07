@@ -27,7 +27,7 @@ async def thread_context(session: "AsyncSession", room: Topic, root) -> str:
     earlier = await said_before(session, root, limit=THREAD_CONTEXT_MESSAGES)
     parts = [
         f"你在频道「#{room.title}」的一条支线里。这里的人 @ 你，你才回答。"
-        "你只读：可以看代码、跑只读的命令、查资料，不改项目，不交付，不摆预览；"
+        "你只读：可以看代码和提交记录、查资料，不执行命令，不改项目，不交付，不摆预览；"
         "要改的事用 `cheese_task` 提议成任务。别处定过的事不记得时，用 "
         "`cheese_chat_search` 加 `channel` 搜整个频道。",
         "",

@@ -12,14 +12,14 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, and_, func, not_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
-from app.domain.conversation.services import room_column
+from app.domain.conversation.services import of_rooms, room_column
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.notification.models import NotificationType
 from app.domain.notification.repositories import NotificationRepository
@@ -27,7 +27,7 @@ from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_win
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
 from app.domain.topic.models import Topic, TopicStatus, room_ref
-from app.domain.topic.repositories import TopicRepository
+from app.domain.topic.repositories import TopicRepository, seen_by
 
 if TYPE_CHECKING:
     from app.domain.project.models import Project
@@ -40,10 +40,16 @@ _ACTIVITY_DAYS = 365
 _SPARKLINE_WEEKS = 12
 
 
-def _listed_topic() -> ColumnElement[bool]:
-    """A topic a personal page may name: not a private 1:1 chat, which is not
-    part of any topic listing — on the person's own page either."""
-    return Topic.is_private.is_(False)
+def _listed_topic(viewer: str) -> ColumnElement[bool]:
+    """A topic a personal page may name to ``viewer``: not a private 1:1 chat,
+    which is not part of any topic listing — on the person's own page either —
+    and not a private channel ``viewer`` is not in."""
+    return and_(Topic.is_private.is_(False), seen_by(viewer))
+
+
+def _outside(unseen: list[uuid.UUID]) -> ColumnElement[bool]:
+    """A block not written in any of ``unseen``'s rooms or their tasks."""
+    return not_(of_rooms(Block.conversation_id, unseen)) if unseen else true()
 
 
 class DashboardService:
@@ -54,17 +60,44 @@ class DashboardService:
         self._notifs = NotificationRepository(session)
         self._spaces = SpaceRepository(session)
 
-    async def _project_card(self, project_id: uuid.UUID) -> dict | None:
+    async def _unseen(
+        self, project_ids: list[uuid.UUID], viewer: str | None
+    ) -> list[uuid.UUID]:
+        """The private channels in these projects ``viewer`` is not in: what is
+        written there is not counted for them, so no number on a board says
+        more than the lists it summarises. ``None`` is the trusted development
+        credential, which names nobody and sees every channel
+        (``app.api.place.rooms_seen``)."""
+        if viewer is None or not project_ids:
+            return []
+        return list(
+            await self._s.scalars(
+                select(Topic.id).where(
+                    Topic.project_id.in_(project_ids), not_(seen_by(viewer))
+                )
+            )
+        )
+
+    async def _project_card(
+        self, project_id: uuid.UUID, viewer: str | None
+    ) -> dict | None:
         project = await self._projects.get(project_id)
         if project is None:
             return None
-        topics = await self._topics.list_for_project(project_id)
+        unseen = await self._unseen([project_id], viewer)
+        topics = [
+            t
+            for t in await self._topics.list_for_project(project_id)
+            if t.id not in unseen
+        ]
         by_status = {s.value: 0 for s in TopicStatus}
         for t in topics:
             by_status[t.status.value] += 1
         # 活跃度 (spec §7.2): last activity + the human/AI contribution mix.
         last_activity = await self._s.scalar(
-            select(func.max(Block.created_at)).where(Block.project_id == project_id)
+            select(func.max(Block.created_at)).where(
+                Block.project_id == project_id, _outside(unseen)
+            )
         )
         # 和 `contributions()` 同一个读法：「人写了多少、AI 写了多少」读署名。事件
         # 行的档位只分得出参与者和平台，而这张活跃度问的正是参与者里的哪一种 ——
@@ -74,7 +107,11 @@ class DashboardService:
         mix_rows = (
             await self._s.execute(
                 select(Block.author, func.count())
-                .where(Block.project_id == project_id, participant_blocks())
+                .where(
+                    Block.project_id == project_id,
+                    participant_blocks(),
+                    _outside(unseen),
+                )
                 .group_by(Block.author)
             )
         ).all()
@@ -109,7 +146,13 @@ class DashboardService:
             (m for m in await roster(self._s, project_id) if m.handle == user_handle),
             None,
         )
-        topics = await self._topics.list_for_project(project_id)
+        topics = list(
+            await self._s.scalars(
+                select(Topic)
+                .where(Topic.project_id == project_id, _listed_topic(viewer))
+                .order_by(Topic.created_at)
+            )
+        )
         started = [
             {**room_ref(t), "status": t.status.value}
             for t in topics
@@ -147,6 +190,7 @@ class DashboardService:
                     Block.author == user_handle,
                     participant_blocks(),
                     Block.created_at >= week_ago,
+                    _outside(await self._unseen([project_id], viewer)),
                 )
             )
         ) or 0
@@ -217,6 +261,17 @@ class DashboardService:
             if user
             else None
         )
+        # 头像只回这个人**自己挑过**的那张：``profile.avatar_id`` 是原始 profile 值，
+        # 注册时人人被写上全局默认那一行，直接回它会让没挑过的人显示一张共用的默认脸。
+        # 前端的 ProfileView 靠 isChosenAvatar 兜住了这一层，后端不能只靠它。
+        # 判据只有一处（``UserProfileRepository.chosen_avatar_ids``）；没挑过回 null。
+        chosen_avatar_id = (
+            (await UserProfileRepository(self._s).chosen_avatar_ids([user.id])).get(
+                user.id
+            )
+            if user is not None
+            else None
+        )
         is_self = viewer == handle
         ids = [project.id for project in visible]
 
@@ -242,7 +297,7 @@ class DashboardService:
                     .where(
                         Topic.project_id.in_(ids),
                         Topic.created_by == handle,
-                        _listed_topic(),
+                        _listed_topic(viewer),
                     )
                     .group_by(Topic.project_id)
                 )
@@ -252,7 +307,13 @@ class DashboardService:
         )
         # Contributions = the member's own blocks — not the platform's
         # lifecycle/event blocks that happen to carry their handle.
-        mine = (Block.author == handle, participant_blocks(), Block.project_id.in_(ids))
+        # Not what they wrote in a private channel the viewer is not in.
+        mine = (
+            Block.author == handle,
+            participant_blocks(),
+            Block.project_id.in_(ids),
+            _outside(await self._unseen(ids, viewer)),
+        )
         totals = {
             project_id: (int(count), last)
             for project_id, count, last in (
@@ -315,7 +376,7 @@ class DashboardService:
             # UserProfile.intro.
             "name": profile.nickname if profile else handle,
             "bio": profile.intro if profile else "",
-            "avatar_id": profile.avatar_id if profile else None,
+            "avatar_id": chosen_avatar_id,
             "joined_at": user.created_at.isoformat() if user else None,
             "teams": [team_summary(team, fallback_id=team.id) for team in teams],
             "activity": {
@@ -428,7 +489,7 @@ class DashboardService:
                 Block.author == handle,
                 participant_blocks(),
                 Topic.project_id.in_(list(names)),
-                _listed_topic(),
+                _listed_topic(viewer),
             )
             .group_by(room)
             .order_by(last.desc(), room)
@@ -457,15 +518,18 @@ class DashboardService:
             for topic_id, count, last_at in rows
         ]
 
-    async def contributions(self, project_id: uuid.UUID) -> dict:
+    async def contributions(self, project_id: uuid.UUID, viewer: str | None) -> dict:
         """贡献统计 (spec §10.1): human vs AI, and per author. Source for the
-        contribution graph + the trust signal that 人 directed the AI."""
+        contribution graph + the trust signal that 人 directed the AI.
+
+        Counted over what ``viewer`` sees (``_unseen``)."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
+        unseen = await self._unseen([project_id], viewer)
         rows = (
             await self._s.execute(
                 select(Block.author_type, Block.author, func.count())
-                .where(Block.project_id == project_id)
+                .where(Block.project_id == project_id, _outside(unseen))
                 .group_by(Block.author_type, Block.author)
             )
         ).all()
@@ -482,8 +546,9 @@ class DashboardService:
             by_author[author] = by_author.get(author, 0) + count
         return {"by_author_type": by_type, "by_author": by_author}
 
-    async def space_board(self, space_id: int) -> dict:
-        """机构看板 (eval F3): every team that linked a Task under this Space."""
+    async def space_board(self, space_id: int, viewer: str | None) -> dict:
+        """机构看板 (eval F3): every team that linked a Task under this Space,
+        each counted over what ``viewer`` sees (``_unseen``)."""
         space = await self._spaces.get_by_id(space_id)
         if space is None:
             raise NotFoundError("Space not found")
@@ -492,7 +557,7 @@ class DashboardService:
         # hierarchy parallel to the one the 赛题 already form.
         cards = []
         for pid in await self._projects.list_ids_for_space_tasks(space_id):
-            card = await self._project_card(pid)
+            card = await self._project_card(pid, viewer)
             if card is not None:
                 cards.append(card)
         return {

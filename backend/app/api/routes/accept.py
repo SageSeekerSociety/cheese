@@ -43,6 +43,7 @@ from app.domain.review.schemas import (
 from app.domain.review.services import AcceptService, ReviewerAdmission
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.place import Place
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -86,6 +87,18 @@ async def _task_actor(
     if not actor.authenticated:
         raise AuthenticationRequiredError()
     return actor, place.room_id, task.id
+
+
+async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> None:
+    """Whoever may read this task, or this room's cards: the task's people, or
+    whoever the room lets in."""
+    if place.task is not None:
+        await _task_actor(place.conversation_id, db, resolver)
+        return
+    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id
+    )
 
 
 def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdmission:
@@ -250,8 +263,7 @@ async def list_accept_cards(
 ) -> dict:
     """A task's review cards, or for a room every card of its tasks."""
     place = await TopicService(db).place_or_404(topic_id)
-    if place.task is not None:
-        await _task_actor(topic_id, db, resolver)
+    await _reader(place, db, resolver)
     svc = AcceptService(db)
     cards, total = await svc.list_for_topic(place.room_id)
     if place.task is not None:
@@ -282,8 +294,7 @@ async def topic_pr_checks(
     how a GitHub TLS blip turned into a wall of stack traces on 2026-08-17.
     The failure is still logged, and its reason is handed to the caller."""
     place = await TopicService(db).place_or_404(topic_id)
-    if place.task is not None:
-        await _task_actor(topic_id, db, resolver)
+    await _reader(place, db, resolver)
     try:
         return ok(await _pr_checks_payload(place.room_id, db, task_id=place.task_id))
     except NotFoundError:

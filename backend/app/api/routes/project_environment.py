@@ -80,8 +80,15 @@ async def access(
 
 
 async def room(
-    db: AsyncSession, project_id: uuid.UUID, topic_id: uuid.UUID, *, lock: bool = False
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    lock: bool = False,
+    viewer: AuthUserInfo | None = None,
 ) -> Topic:
+    """A channel of the project. Asked for a person (``viewer``), a private
+    channel they are not in is not found, as it is everywhere else."""
     statement = select(Topic).where(
         Topic.id == topic_id,
         Topic.project_id == project_id,
@@ -94,9 +101,17 @@ async def room(
             populate_existing=True
         )
     topic = await db.scalar(statement)
-    if topic is None:
+    if topic is None or (
+        viewer is not None
+        and not await TopicMemberService(db).seen([topic], await _handle(db, viewer))
+    ):
         raise NotFoundError("Room not found")
     return topic
+
+
+async def _handle(db: AsyncSession, auth_user: AuthUserInfo) -> str:
+    user = await UserRepository(db).get_by_id(auth_user.user_id)
+    return user.username if user else ""
 
 
 async def require_idle(db: AsyncSession, topic: Topic) -> None:
@@ -129,6 +144,8 @@ async def get_environment(project_id: uuid.UUID, db: Db, user: User) -> dict:
             .order_by(Topic.created_at)
         )
     ).all()
+    # A private channel is listed to its people only.
+    topics = await TopicMemberService(db).seen(list(topics), await _handle(db, user))
     return ok(
         {
             "config": project_environment(project.settings),
@@ -166,7 +183,7 @@ async def get_room_environment(
     project_id: uuid.UUID, topic_id: uuid.UUID, db: Db, user: User
 ) -> dict:
     await access(db, project_id, user)
-    topic = await room(db, project_id, topic_id)
+    topic = await room(db, project_id, topic_id, viewer=user)
     binding = await sql_device_service(db).topic_binding(topic_id)
     if binding is None:
         hosts = [
@@ -256,7 +273,7 @@ async def apply_environment(
 ) -> dict:
     project, _ = await access(db, project_id, user, write=True)
     async with chat.edit_environment(topic_id):
-        topic = await room(db, project_id, topic_id)
+        topic = await room(db, project_id, topic_id, viewer=user)
         if topic.kind == TopicKind.root:
             raise ValidationError(say("overviewUsesBaseEnvironment"))
         await reset_idle_room(db, topic_id, project_id)

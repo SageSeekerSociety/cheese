@@ -302,6 +302,14 @@
       "steps": "No steps | 1 step | {count} steps",
       "collapse": "Collapse",
       "expandAll": "Show all ({count} lines)",
+      "phase": {
+        "queue": "Queued",
+        "environment": "Waiting for environment",
+        "retry": "Retrying",
+        "work": "Working",
+        "span": "{phase} {span}",
+        "sep": " · "
+      },
       "record": {
         "queue": "Queue",
         "delivery": "Delivery",
@@ -403,6 +411,15 @@
       "failed": "Retry failed"
     },
     "notice": {
+      "repeats": {
+        "line": "{actor} {parts}",
+        "sep": ", ",
+        "archived": "archived 1 channel | archived {n} channels",
+        "unarchived": "unarchived 1 channel | unarchived {n} channels",
+        "docEdited": "edited documents once | edited documents {n} times",
+        "others": "and 1 other action | and {n} other actions",
+        "only": "{line} and {n} actions in all"
+      },
       "platform": "Platform",
       "changedFiles": "Changed files",
       "moreFiles": "{n} more files",
@@ -454,6 +471,7 @@
       "saveFailed": "Could not save the edit",
       "reply": "Quote reply",
       "replyInThread": "Reply in thread",
+      "process": "View steps",
       "react": "Add reaction",
       "upgrade": "Turn into a task",
       "downloadFile": "Download {name}",
@@ -1178,8 +1196,11 @@
       "title": "Thread",
       "replies": "no replies | 1 reply | {count} replies",
       "replying": "{name} is replying",
+      "replyingStatus": "{name}: {status}",
       "lastReply": "{name}: {text}",
       "toTask": "Convert to task",
+      "backToThread": "Back to thread",
+      "process": "Steps of this turn",
       "becameTask": "Became the task “{title}”",
       "openTask": "Open task",
       "close": "Close",
@@ -1812,7 +1833,7 @@
       "accountConnected": "GitHub account connected"
     },
     "channels": {
-      "intro": "Every channel in the project is here, and every project member can read and join it. Your sidebar lists only the channels you've joined. For a piece of work, create a task rather than a channel.",
+      "intro": "Every public channel in the project is here, and every project member can read and join it; a private channel is seen only by the people in it. Your sidebar lists only the channels you've joined. For a piece of work, create a task rather than a channel.",
       "nameLabel": "Channel name",
       "create": "New channel",
       "activeLabel": "Channels in use",
@@ -1822,7 +1843,15 @@
       "archive": "Archive",
       "unarchive": "Unarchive",
       "descriptionLabel": "Description (optional)",
-      "describe": "Edit description"
+      "describe": "Edit description",
+      "privateLabel": "Make it a private channel",
+      "privateHint": "Only the people in it see the channel and its tasks; others join when someone in it invites them",
+      "makePrivate": "Make private",
+      "makePublic": "Make public",
+      "makePrivateTitle": "Make “{name}” private?",
+      "makePrivateBody": "Once it's private, only the people in it see the channel and its tasks, and others join when someone in it invites them.",
+      "makePublicTitle": "Make “{name}” public?",
+      "makePublicBody": "Once it's public, everyone in the project can see its whole message history and its tasks."
     }
   },
   "computeChoice": {
@@ -2118,6 +2147,8 @@
     "notJoined": "You haven't joined this channel. Join to post in the main line, or reply in a message's thread.",
     "archivedNotice": "This channel is archived and read-only",
     "describeFailed": "Couldn't save the channel description",
-    "browse": "Browse channels"
+    "browse": "Browse channels",
+    "visibilityFailed": "Couldn't change who can see the channel",
+    "privateTip": "Private channel"
   }
 }

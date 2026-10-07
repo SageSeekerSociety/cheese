@@ -9,6 +9,7 @@ vi.mock('@/api/threads', () => ({ listThreads: vi.fn(), getThread: vi.fn() }))
 import { summonPrefill, useThreadLines } from './useThreadLines'
 
 import { listThreads } from '@/api/threads'
+import { setLocale } from '@/i18n'
 
 const ME = 'alice'
 
@@ -88,6 +89,68 @@ describe('主线上「正在回复」', () => {
 
   it('不是频道主线的地方不写', () => {
     expect(lines(false).replyingFor(underThread(['cheese']))).toBeNull()
+  })
+})
+
+describe('主线上写队友在支线里等什么', () => {
+  setLocale('zh-CN')
+  const asked = (): Block => ({
+    ...message(ME, true),
+    thread: {
+      id: 't1',
+      room_id: 'room1',
+      root_block_id: 'x',
+      reply_count: 0,
+      last_reply_at: null,
+      last_reply: null,
+      participants: [ME],
+      task: null,
+    },
+  })
+  function record(eventType: string, meta: Record<string, unknown> = {}): Block {
+    return {
+      id: `r-${eventType}`,
+      conversation_id: 't1',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content: '',
+      turn_id: 'turn1',
+      created_at: new Date().toISOString(),
+      meta: { event_type: eventType, seat: 'cheese', ...meta },
+    }
+  }
+  const lines = () =>
+    useThreadLines({
+      mainLine: () => true,
+      roomId: () => 'room1',
+      timeline: { messages: ref([]), find: () => undefined, replace: () => {} },
+      agentNameOf: () => '芝士',
+    })
+
+  it('还没开始、在排队：那一行写它在排队、前面还有几个', () => {
+    const l = lines()
+    l.onStatus('t1', record('turn_queued', { i18n: { content: { params: { ahead: 2 } } } }))
+    expect(l.replyingFor(asked())).toBe('芝士')
+    expect(l.statusFor(asked())).toContain('2')
+  })
+
+  it('开始回答了就不再说排队；中途重试写第几次；停下来什么都不写', async () => {
+    const l = lines()
+    l.onStatus('t1', record('turn_queued'))
+    await l.onActivity('t1', 'cheese', true)
+    expect(l.statusFor(asked())).toBeNull()
+    l.onStatus('t1', record('api_retry', { attempt: 3 }))
+    expect(l.statusFor(asked())).toContain('3')
+    await l.onActivity('t1', 'cheese', false)
+    expect(l.statusFor(asked())).toBeNull()
+    expect(l.replyingFor(asked())).toBeNull()
+  })
+
+  it('说不出在等什么的记录（记忆改了）不改那一行', () => {
+    const l = lines()
+    l.onStatus('t1', record('memory_changed'))
+    expect(l.statusFor(asked())).toBeNull()
   })
 })
 

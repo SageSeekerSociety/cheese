@@ -62,7 +62,7 @@ async def _get_recruitment_service(db=Depends(get_db)) -> RecruitmentService:
     )
 
 
-def _creator_summary(user, profile, *, fallback_id: int) -> dict:
+def _creator_summary(user, profile, *, fallback_id: int, chosen_map: dict) -> dict:
     if user is None:
         return {"id": fallback_id, "nickname": "", "avatarId": None, "intro": ""}
     nickname = (
@@ -73,7 +73,9 @@ def _creator_summary(user, profile, *, fallback_id: int) -> dict:
     return {
         "id": user.id,
         "nickname": nickname,
-        "avatarId": profile.avatar_id if profile else None,
+        # 只有真挑过头像才有值，判据在 ``chosen_avatar_ids``（非 ``default`` 那张脸
+        # 才算挑过）。读 ``profile.avatar_id`` 会把默认脸当成人挑过的头像发出去。
+        "avatarId": chosen_map.get(user.id),
         "intro": profile.intro if profile else "",
     }
 
@@ -90,6 +92,7 @@ def _post_to_api(
     teams_map: dict,
     users_map: dict,
     profiles_map: dict,
+    chosen_map: dict,
 ) -> dict:
     return {
         "id": post.id,
@@ -103,6 +106,7 @@ def _post_to_api(
             users_map.get(post.created_by),
             profiles_map.get(post.created_by),
             fallback_id=post.created_by,
+            chosen_map=chosen_map,
         ),
         "createdAt": _ts_ms(post.created_at),
         "updatedAt": _ts_ms(post.updated_at),
@@ -112,9 +116,9 @@ def _post_to_api(
 
 async def _load_maps_for_posts(
     db, posts: list[TeamRecruitmentPost]
-) -> tuple[dict, dict, dict]:
+) -> tuple[dict, dict, dict, dict]:
     if not posts:
-        return {}, {}, {}
+        return {}, {}, {}, {}
     team_ids = list({p.team_id for p in posts})
     user_ids = list({p.created_by for p in posts})
     team_repo = TeamRepository(session=db)
@@ -123,7 +127,10 @@ async def _load_maps_for_posts(
     teams_map = await team_repo.get_by_ids(team_ids)
     users_map = await user_repo.get_by_ids(user_ids)
     profiles_map = await profile_repo.get_profiles_by_user_ids(user_ids)
-    return teams_map, users_map, profiles_map
+    # 作者头像单查一张「真挑过」的映射：没挑过的不在这里出现，creator 的 avatarId
+    # 就回 None（前端退首字母），而不是把默认脸当成人挑过的头像。
+    chosen_map = await profile_repo.chosen_avatar_ids(user_ids)
+    return teams_map, users_map, profiles_map, chosen_map
 
 
 def _post_to_api_seen_by(
@@ -132,6 +139,7 @@ def _post_to_api_seen_by(
     teams_map: dict,
     users_map: dict,
     profiles_map: dict,
+    chosen_map: dict,
     viewer_team_ids: set[int],
     contact_visible: bool,
 ) -> dict:
@@ -144,7 +152,11 @@ def _post_to_api_seen_by(
     （「帖子可以带联系方式」正是它要过可见性门的原因）。
     """
     item = _post_to_api(
-        post, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map
+        post,
+        teams_map=teams_map,
+        users_map=users_map,
+        profiles_map=profiles_map,
+        chosen_map=chosen_map,
     )
     item["team"] = team_summary_seen_by(
         teams_map.get(post.team_id),
@@ -183,7 +195,9 @@ async def list_recruitment_posts(
     posts, has_more, next_start = await service.list_open(
         page_size=page_size, page_start=page_start, keyword=keyword
     )
-    teams_map, users_map, profiles_map = await _load_maps_for_posts(db, posts)
+    teams_map, users_map, profiles_map, chosen_map = await _load_maps_for_posts(
+        db, posts
+    )
     viewer_team_ids = await _viewer_team_ids(db, viewer_id)
     items = [
         _post_to_api_seen_by(
@@ -191,6 +205,7 @@ async def list_recruitment_posts(
             teams_map=teams_map,
             users_map=users_map,
             profiles_map=profiles_map,
+            chosen_map=chosen_map,
             viewer_team_ids=viewer_team_ids,
             contact_visible=viewer_id is not None,
         )
@@ -252,7 +267,9 @@ async def edit_recruitment_post(
         status=payload.status,
         expires_at=expires_at,
     )
-    teams_map, users_map, profiles_map = await _load_maps_for_posts(db, [post])
+    teams_map, users_map, profiles_map, chosen_map = await _load_maps_for_posts(
+        db, [post]
+    )
     return {
         "code": 200,
         "message": "OK",
@@ -262,6 +279,7 @@ async def edit_recruitment_post(
                 teams_map=teams_map,
                 users_map=users_map,
                 profiles_map=profiles_map,
+                chosen_map=chosen_map,
             )
         },
     }
@@ -313,7 +331,9 @@ async def create_recruitment_post(
         max_members=payload.max_members,
         expires_at=expires_at,
     )
-    teams_map, users_map, profiles_map = await _load_maps_for_posts(db, [post])
+    teams_map, users_map, profiles_map, chosen_map = await _load_maps_for_posts(
+        db, [post]
+    )
     return {
         "code": 201,
         "message": "Created",
@@ -323,6 +343,7 @@ async def create_recruitment_post(
                 teams_map=teams_map,
                 users_map=users_map,
                 profiles_map=profiles_map,
+                chosen_map=chosen_map,
             )
         },
     }
@@ -345,10 +366,16 @@ async def list_team_recruitment_posts(
     # 复用 ``TeamService.visible_team``，不在这里另写一套可见性判据。
     await team_service.visible_team(team_id, auth_user.user_id)
     posts = await service.list_by_team(team_id)
-    teams_map, users_map, profiles_map = await _load_maps_for_posts(db, posts)
+    teams_map, users_map, profiles_map, chosen_map = await _load_maps_for_posts(
+        db, posts
+    )
     items = [
         _post_to_api(
-            p, teams_map=teams_map, users_map=users_map, profiles_map=profiles_map
+            p,
+            teams_map=teams_map,
+            users_map=users_map,
+            profiles_map=profiles_map,
+            chosen_map=chosen_map,
         )
         for p in posts
     ]

@@ -8,7 +8,10 @@ test drives the runner over the same shapes a machine would produce.
 A fixture with a ``stream`` instead replays a recorded session event by event:
 its entries become readable in the order pi wrote them, among the live events pi
 printed around them (a request failing, being retried, giving up, the context
-being compacted). Each prompt plays it up to the next time pi settled.
+being compacted). Each prompt plays it up to the next time pi settled. A step
+``{"before_next_page": [events]}`` prints those events when the runner next
+asks for entries, before answering it: pi going on writing while a page the
+runner asked for is still on its way.
 
 Deliberately not a mock inside the test process: the runner owns a subprocess,
 its pipes and its framing, and none of that is exercised by a fake object.
@@ -56,6 +59,7 @@ def main() -> None:
     )
     produced: list[dict] = []
     prompts: list[str] = []
+    before_next_page: list[dict] = []
     # What pi had written before any prompt (model and thinking level).
     while (
         stream and "entry" in stream[0] and stream[0]["entry"].get("type") != "message"
@@ -70,6 +74,8 @@ def main() -> None:
         kind, request = command.get("type"), command.get("id")
 
         if kind == "get_entries":
+            while before_next_page:
+                emit(before_next_page.pop(0))
             if "since" in command and command["since"] is None:
                 # What the real pi does with a null cursor, so a runner that
                 # sends one fails here too rather than only on a machine.
@@ -97,6 +103,9 @@ def main() -> None:
                         break
                     if "entry" in step:
                         produced.append(step["entry"])
+                        continue
+                    if "before_next_page" in step:
+                        before_next_page.extend(step["before_next_page"])
                         continue
                     emit(step["event"])
                     if step["event"].get("type") == "agent_settled":

@@ -211,7 +211,7 @@ class ContractHarness:
     def hard_ceiling_s(self) -> float:
         return 600.0
 
-    async def memory(self, topic_id: uuid.UUID, request: dict) -> dict | None:
+    async def memory(self, session: SessionRef, request: dict) -> dict | None:
         return None
 
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:

@@ -288,6 +288,11 @@ async def test_an_unreachable_old_machine_only_a_person_can_switch_past(
     )
     assert agent.status_code == 409, agent.text
     assert agent.json()["error"]["name"] == "WorkComputerUnreachable"
+    # The agent is told who can switch past it and where, so it asks them
+    # rather than stopping there (FB-51); the person already has the button.
+    told = agent.json()["error"]["message"]
+    assert "连不上" in told and "「不推送，直接更换」" in told
+    assert "不推送，直接更换" not in person.json()["error"]["message"]
     session = await _session(client, room)
     assert session.execution_request["choice"]["device_id"] == room.old_device
 

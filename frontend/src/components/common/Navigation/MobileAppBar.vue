@@ -72,23 +72,17 @@
         <template #activator="{ props }">
           <!-- eslint-disable-next-line vue/no-restricted-syntax -- nav bar button whose look this component styles exactly (design-system §3.6 exception) -->
           <v-btn icon v-bind="props" variant="text">
-            <!-- 没挑过头像的人画彩色首字母，不画 mdi-account：那个图标对每个人
-                 都一样，等于告诉你「这是某个人」而不是「这是你」。和左栏
-                 (LeftAppRail) 同一套兜底。 -->
-            <v-avatar
-              size="28"
-              rounded="circle"
-              :style="userMenu.avatar.value ? undefined : { backgroundColor: userMenu.avatarColor.value }"
-            >
-              <v-img v-if="userMenu.avatar.value" :src="userMenu.avatar.value">
-                <template #error>
-                  <span class="bar-avatar-char" :style="{ backgroundColor: userMenu.avatarColor.value }">{{
-                    userMenu.avatarInitial.value
-                  }}</span>
-                </template>
-              </v-img>
-              <span v-else class="bar-avatar-char">{{ userMenu.avatarInitial.value }}</span>
-            </v-avatar>
+            <!-- 头像走 UserAvatar（契约 §3.14）：挑过就画那张，没挑过 / 取不到就画按
+                 handle 派生的彩色首字母，失败记忆归 utils/avatarFailures 一处管。以前
+                 这里自己拼了一份 v-avatar + bar-avatar-char，和左栏 (LeftAppRail)、菜单卡
+                 各画一份，同一个人在三处会画出三种样子；而且 useUserMenu 早已不再导出
+                 avatarColor / avatarInitial，这里其实一直在读 undefined。 -->
+            <UserAvatar
+              :avatar="userMenu.avatar.value ?? ''"
+              :name="userMenu.nickname.value"
+              :seed="userMenu.currentUser.value?.username"
+              :size="28"
+            />
           </v-btn>
         </template>
 
@@ -119,6 +113,7 @@ import UserMenuCard from './UserMenuCard.vue'
 
 import { headerCommands, menuActionOf } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageTitleStore } from '@/stores/title'
@@ -195,25 +190,5 @@ watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true }
   font-weight: 600;
   line-height: var(--lh-15);
   color: var(--ink);
-}
-
-/* 没挑过头像时的彩色首字母，同 LeftAppRail 的 .rail-avatar-char。
-   #fff 是刻意写死的：底色是 avatarColor() 算出来的那个 #rrggbb，它按固定的
-   感知亮度取（OKLCH L = 0.54），深浅两套主题下是同一个值，所以压在它上面的字
-   也必须是同一个值 —— 跟着 --v-theme-on-surface 走反而会在两套主题里各错一次。 */
-.bar-avatar-char {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  line-height: 1;
-  /* stylelint-disable-next-line color-no-hex -- 这是「压在头像底色上」的墨色，
-     底色是 avatarColor() 算出来的 #rrggbb（固定感知亮度，深浅两套主题同一个
-     值），所以它也必须是同一个值。改成 token 反而会在两套主题里各错一次。
-     和 LeftAppRail 的 .rail-avatar-char 是同一处判断。 */
-  color: #fff;
-  font-weight: 600;
-  font-size: 13px;
 }
 </style>

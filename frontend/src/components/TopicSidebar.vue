@@ -23,11 +23,11 @@ import { topicTitle } from '../lib/topicState'
 import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
 import { myHandle } from '../me'
-import { avatarColor, avatarInitial } from '../utils/avatar'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
+import UserAvatar from './common/UserAvatar.vue'
 import VirtualList from './common/VirtualList.vue'
 import TopicRailAllTasksRow from './topic-sidebar/TopicRailAllTasksRow.vue'
 import TopicRailBrowseRow from './topic-sidebar/TopicRailBrowseRow.vue'
@@ -401,11 +401,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :aria-current="p.id === selectedProjectId ? 'true' : undefined"
             @click="switchProjectFromSheet(p.id)"
           >
-            <span
-              class="dm-avatar project-avatar project-switch__avatar"
-              :style="{ backgroundColor: avatarColor(p.name) }"
-              >{{ avatarInitial(p.name) }}</span
-            >
+            <!-- 项目头像走 UserAvatar（kind="org" 出方角）：和左栏人像同一个组件、同一套
+                 「没图就退成底色首字母」的规矩，不再这里自己截首字、自己上色。种子用
+                 项目 id —— 颜色跟着项目走，改名不换色（契约 §3.14）。 -->
+            <UserAvatar kind="org" :name="p.name" :seed="p.id" :size="20" class="project-switch__avatar" />
             <span class="project-switch__name">{{ p.name }}</span>
             <v-icon v-if="p.id === selectedProjectId" size="18" class="project-switch__check" icon="mdi-check" />
           </button>
@@ -653,9 +652,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 }
 .project-switch__avatar {
   flex: none;
-  width: 20px;
-  height: 20px;
-  font-size: 12px;
 }
 .project-switch__name {
   flex: 1 1 auto;
@@ -672,31 +668,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
   height: 1px;
   margin: 4px 0;
   background: var(--line);
-}
-/* 首字母头像：人的（.dm-avatar，圆）和项目的（.project-avatar，方）同一套底子，
-   18px，图标列和文字列才对得齐。 */
-.dm-avatar,
-.project-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  /* The --fill here is only the pre-paint placeholder: the real ground is
-     avatarColor() bound inline in the template, a fixed hsl that is the same in
-     both themes — so the initial on it stays a literal #fff. */
-  background: var(--fill);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-}
-/* 项目头像：和人的头像同一个底子（.dm-avatar），只换形状——方头像，和桌面那条
-   竖 rail 上一个项目一格的画法是同一种语言。人是靠方/圆区分「这是个项目」还是
-   「这是个人」的，都画成圆的就混了。 */
-.project-avatar {
-  border-radius: var(--radius-sm);
 }
 /* 整页形态：手指点的地方至少 44px 高。行和组头那两个组件自己也各写了一条（它们
    要能单独渲染），这里这条管的是这一层画不出来的部分。 */

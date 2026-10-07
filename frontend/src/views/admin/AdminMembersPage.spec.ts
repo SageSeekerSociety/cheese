@@ -19,10 +19,10 @@
  *    handle 时只剩一个串）；头像对读屏不可见（名字就在旁边）。
  * 5. 确认框关掉之后**焦点回到触发它的那颗按钮**：没有 activator 的 `VDialog` 自己
  *    不归还焦点，掉到 `body` 上键盘用户就得从头 Tab 回来。
- * 6. 头像那格画的是**这个人自己的图**（`/avatars/<id>`），没挑过的人画彩色首字母、而
- *    不是所有人共用的 `/avatars/default`。`avatar_id` 为 null 是「从没挑过」的判据，
- *    漏判时把 null 交给 `getAvatarUrl` 会回一张**所有没挑过头像的人共用**的脸 —— 一列
- *    头像变成同一张，比按 handle 派生的颜色更难把人分辨开，而分辨人正是头像唯一的活。
+ * 6. 头像那格画的是**这个人自己的图**（`/avatars/<id>`），没挑过的人（`avatar_id` 为
+ *    null）画彩色首字母，而不是所有人共用的那张默认脸。`avatar_id` 为 null 是「从没
+ *    挑过」的判据，漏判——把那张共用的默认头像当成他自己的——一列头像就成了同一张，
+ *    等于这一列分不出谁是谁，比按 handle 派生的颜色更难把人分辨开。
  * 7. 取不到的头像 URL 在**本次会话**里只问一次（`utils/avatarFailures`）。dev 的种子
  *    迁移只往 avatars 表写了行、一张图也没落盘，不记的话每次切回这一页，每个坏 id 都
  *    会再造一个 `<img>` 去撞一次必然 404 的请求。
@@ -248,8 +248,8 @@ describe('成员管理', () => {
     expect(pengImg, '挑过头像的人这一行该画 <img>，不是彩色首字母').not.toBeNull()
     expect(pengImg?.getAttribute('src')).toMatch(/\/avatars\/3$/)
 
-    // 没挑过的人（`avatar_id` 为 null）：**必须**走彩色首字母。把 null 交给
-    // `getAvatarUrl` 会回 `/avatars/default`，那是所有没挑过头像的人共用的一张脸。
+    // 没挑过的人（`avatar_id` 为 null）：**必须**走彩色首字母 —— 一张所有人共用的
+    // 默认脸，等于这一列分不出谁是谁。
     const noAvatar = rowOf('wangchangxin')
     expect(noAvatar?.querySelector('img')).toBeNull()
     expect(noAvatar?.querySelector('.user-avatar-char')?.textContent).toBe('W')

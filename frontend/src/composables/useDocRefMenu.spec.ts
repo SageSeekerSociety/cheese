@@ -17,8 +17,8 @@ import { useDocRefMenu } from './useDocRefMenu'
 import { setLocale } from '@/i18n'
 
 const PEOPLE: MentionPoolEntry[] = [
-  { handle: 'lixue', label: '李雪', agent: false },
-  { handle: 'wangyu', label: '王宇', agent: false },
+  { handle: 'lixue', label: '李雪', avatar: null, agent: false },
+  { handle: 'wangyu', label: '王宇', avatar: null, agent: false },
 ]
 const TOPICS = [{ id: '7f3a9c2e-51b4', title: '接口改版', kind: 'work', status: 'active' }] as unknown as Topic[]
 

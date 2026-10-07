@@ -562,6 +562,23 @@ const { saving, saved, dirty, error, run } = useSaveState({
 - 分页条 `TablePager` 放进 `#foot` 槽，只有一页时不画。
 - 加载、空、读失败三态由表壳保证互斥：`loading`（只在一条都没有时）、`busy`（有旧内容时重取）、`empty` / `#empty`、`state="error"` / `#error`。
 
+### 3.14 头像：一个组件，一种降级
+
+全平台画头像只有一个组件：`components/common/UserAvatar.vue`。形状照 GitHub 的规则 —— 人是圆（`kind="person"`，默认），团队、空间、项目这些是圆角方块（`kind="org"`）。AI 队友不走这里，用 `CheeseAvatar`（§2.7）。
+
+| 这一格该画什么 | 画成 |
+|---|---|
+| 这个人**自己挑过**头像 | 他挑的那张图 |
+| 没挑过（`avatar_id` 为 null） | 按 handle 派生的彩色首字母 |
+| 有图但取不到（404） | 同一格换成彩色首字母；这个 URL 记进 `utils/avatarFailures.ts`，本次会话不再请求 |
+
+四条不能破的：
+
+- **没有头像就传空串，不传默认图。** `utils/materials.getAvatarUrl()` 对空 id 返回空串。它以前返回 `/avatars/default`，于是所有没挑过头像的人共用一张脸 —— 而区分人正是头像唯一的活。
+- **颜色跟着人走，不跟昵称走。** 有 handle 就传 `seed`。改个昵称不该换一身颜色，同一个人在 @ 菜单、消息行、名册里得是同一个色。
+- **不要自己再写一套降级。** 记「这个 URL 取不到」的地方只有 `utils/avatarFailures.ts`，画首字母的地方只有 `UserAvatar`。抄一份出来的结果，是同一个人的头像在一处是圆的、一处是方的、一处又成了默认脸。
+- **判「这是不是真人」用 `isAgentHandle` 或实体自己的 `type`，别按 handle 长相猜**，也别拿 `avatar_id` 是否为空当判据：注册时人人都被写上了默认头像那一行，所以「有 avatar_id」不等于「挑过」。
+
 ---
 
 ## 4. 深色模式
@@ -603,6 +620,7 @@ const { saving, saved, dirty, error, run } = useSaveState({
 | `line-height: 1.6` | 不在档位里 | 配对的 `--lh-*` |
 | 用琥珀做普通图标、头像 | 稀释了主操作 | `--muted` 或 `--faint` |
 | 引用一个没定义的变量 | 静默失效；在 `background` 这类简写里会让整条声明作废 | 先确认变量在 `style.css` 里存在 |
+| `getAvatarUrl(id)` 的结果直接喂给裸 `v-img` | id 为空时这一格什么也不画；从前画的还是所有人的那张默认脸 | 走 `UserAvatar`，见 §3.14 |
 
 ---
 

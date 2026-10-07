@@ -239,9 +239,13 @@ class TestUserProfileService:
 class TestUserAuthService:
     @pytest.fixture
     def repos(self) -> dict:
+        profile_repo = AsyncMock()
+        # build_user_dto 现在按 chosen 判据取头像（契约 §3.14）：默认没人挑过，
+        # dto 的 avatarId 就是 None。要断言某张图的测试自己覆盖这个返回值。
+        profile_repo.chosen_avatar_ids.return_value = {}
         return {
             "user_repo": AsyncMock(),
-            "profile_repo": AsyncMock(),
+            "profile_repo": profile_repo,
             "stats_repo": AsyncMock(),
         }
 
@@ -451,7 +455,8 @@ class TestUserAuthService:
     def test_base_user_dto(self) -> None:
         user = _user(id=7, username="frank")
         profile = _profile(nickname="Frankie", avatar_id=3, intro="hi")
-        result = UserAuthService._base_user_dto(user, profile)
+        # avatarId 由调用方按 chosen 判据查过再传进来（契约 §3.14）。
+        result = UserAuthService._base_user_dto(user, profile, 3)
         assert result == {
             "id": 7,
             "username": "frank",
@@ -459,6 +464,12 @@ class TestUserAuthService:
             "avatarId": 3,
             "intro": "hi",
         }
+
+    def test_base_user_dto_unchosen_avatar_is_null(self) -> None:
+        # 档案里的 avatar_id 含注册时写死的全局默认，没挑过（chosen=None）就该回 None。
+        user = _user(id=7, username="frank")
+        profile = _profile(nickname="Frankie", avatar_id=3, intro="hi")
+        assert UserAuthService._base_user_dto(user, profile, None)["avatarId"] is None
 
     # --- build_user_dto ---
 

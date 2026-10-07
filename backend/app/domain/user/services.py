@@ -257,6 +257,17 @@ class UserService:
     async def get_handles_by_ids(self, ids: Sequence[int]) -> dict[int, str]:
         return await self._repo.usernames_by_user_ids(ids)
 
+    async def chosen_avatar_ids(self, ids: Sequence[int]) -> dict[int, int]:
+        """user_id -> 这个人**自己挑过**的头像，没挑过的整条不在里面。
+
+        A domain that draws a face (notifications, feedback) has to come through
+        here instead of reading the profile's ``avatar_id``: every registration
+        path writes the global default into that column, so using it directly
+        hands everyone who never picked a face the same one. The criterion itself
+        lives in ``UserProfileRepository.chosen_avatar_ids`` and is not repeated.
+        """
+        return await self._repo.chosen_avatar_ids(ids)
+
 
 class AccountService:
     """账号表（`User`）上的读 —— 平台看板问「有多少账号、这七天来了几个」。
@@ -501,12 +512,21 @@ class UserAuthService:
         return user, profile
 
     @staticmethod
-    def _base_user_dto(user: User, profile: UserProfile) -> dict:
+    def _base_user_dto(
+        user: User, profile: UserProfile, chosen_avatar_id: int | None
+    ) -> dict:
+        """``avatarId`` 给的是这个人**自己挑过**的那张，没挑过是 ``None``。
+
+        不能回 ``profile.avatar_id``：每条注册路径都往那一列写死全局默认头像
+        （``default_avatar_id: int = 1``），照原样回它会让所有没挑过头像的人共用
+        同一张脸 —— 而区分人正是头像唯一的活。判据只有一处，调用方从
+        ``UserProfileRepository.chosen_avatar_ids`` 拿到，这里只负责放进 dto。
+        """
         return {
             "id": user.id,
             "username": user.username,
             "nickname": profile.nickname,
-            "avatarId": profile.avatar_id,
+            "avatarId": chosen_avatar_id,
             "intro": profile.intro,
         }
 
@@ -517,7 +537,11 @@ class UserAuthService:
         viewer_id: int | None = None,
     ) -> dict:
         """Map User + UserProfile into a UserDto-compatible dict with counts."""
-        base = self._base_user_dto(user, profile)
+        # 「自己」这条链（/users/me、登录、注册、passkey……）上的默认脸总源头就是
+        # 这里：档案上的 avatar_id 含注册时写死的全局默认。问一次挑没挑过，
+        # 没挑过的人拿到 None，前端据此画彩色首字母。
+        chosen = await self._profile_repo.chosen_avatar_ids([user.id])
+        base = self._base_user_dto(user, profile, chosen.get(user.id))
         stats = await self._stats_repo.aggregate(user.id)
         if viewer_id == user.id:
             # Only the owner is told: an account without an address of its own

@@ -88,6 +88,10 @@ const doc = props.docPanel
 const docThreads = props.docThreads
 const people = props.docPeople
 
+// 评论里真人作者的头像：名册那一包给的 handle → 头像地址，只列了挑过头像的人。没挑过、
+// 或不在名册上的人给空串，由 UserAvatar 画他自己的首字母 —— 不再退回全站那张默认脸。
+const avatarOf = (handle: string) => people.avatars.value[handle] ?? ''
+
 // 回复里 @ 的 AI 队友，和发评论一样写成点名。
 const threads = {
   state: docThreads.state,
@@ -198,6 +202,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :apply-doc-edits="doc.applyEdits"
     :last-edit="doc.lastEdit.value"
     :name-of="doc.nameOf"
+    :avatar-of="avatarOf"
     :load-versions="doc.loadVersions"
     :restore-version="doc.restoreVersion"
     @open-topic="emit('open-topic', $event)"

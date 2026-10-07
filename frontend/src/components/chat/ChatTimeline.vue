@@ -45,6 +45,10 @@ const props = defineProps<{
   threadable?: boolean
   /** 这条消息的支线里谁正在回复（还没有回复时）；没有人时为 null。 */
   replyingFor?: (m: Block) => string | null
+  /** 那位队友此刻在等什么（排队、重试……）；没有就是 null。 */
+  threadStatusFor?: (m: Block) => string | null
+  /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
+  processable?: boolean
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
@@ -88,7 +92,11 @@ const props = defineProps<{
   isAgentBlock: (b: Block) => boolean
   isMine: (m: Block) => boolean
   isExternal: (handle: string) => boolean
-  avatarSrc: (handle: string) => string | null
+  /** handle → 头像 URL（没挑过、名册里没这个人就是 null）。这一层不画头像，只把
+      它转发给下面的 RoomMessage / ThreadLine，由它们的 UserAvatar 决定画脸还是画
+      彩色首字母。原名叫 `avatarSrc`，改成 `avatarOf`：和这批修复里其它地方（ThreadLine、
+      文档链）已经统一的名字一致，一个概念只有一个叫法。 */
+  avatarOf: (handle: string) => string | null
   displayName: (m: Block) => string
   noticeAgent: (m: Block, notice: PlatformNotice) => NoticeAgent | null
   parentOf: (m: Block) => Block | undefined
@@ -113,6 +121,7 @@ const emit = defineEmits<{
   (e: 'react', block: Block, emoji: string): void
   (e: 'reply', block: Block): void
   (e: 'open-thread', block: Block): void
+  (e: 'open-process', turnId: string): void
   (e: 'upgrade-message', messageId: string): void
   (e: 'edit', block: Block): void
   (e: 'edit-send', item: Outgoing): void
@@ -125,7 +134,6 @@ const emit = defineEmits<{
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
-  (e: 'avatar-error', handle: string): void
   (e: 'save-edit', block: Block, text: string): void
   (e: 'cancel-edit'): void
   (e: 'retry'): void
@@ -154,6 +162,13 @@ const liveChecklists = computed(() => {
   return ids
 })
 
+// 合成一行的那一串署谁的名，看它最后那一条。
+function agentOf(block: Block, notice: PlatformNotice): NoticeAgent | null {
+  if (notice.mode !== 'repeats') return props.noticeAgent(block, notice)
+  const last = notice.rows[notice.rows.length - 1]
+  return last.notice ? props.noticeAgent(last.block, last.notice) : null
+}
+
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
 // 名字和时间。断开的条件和消息一样（chatGrouping.ts）：中间插了别的行、换了一天、
 // 隔了一小时以上。和消息之间照旧断开。
@@ -161,8 +176,8 @@ const noticeCont = computed(() =>
   props.rows.map((row, i) => {
     const prev = props.rows[i - 1]
     if (!row.notice || !prev?.notice) return false
-    const agent = props.noticeAgent(row.block, row.notice)
-    const before = props.noticeAgent(prev.block, prev.notice)
+    const agent = agentOf(row.block, row.notice)
+    const before = agentOf(prev.block, prev.notice)
     if (!agent || !before || agent.name !== before.name || agent.handle !== before.handle) return false
     if (props.splitMarkers.before.has(row.block.id) || row.block.id === props.unreadAnchorId) return false
     if (dayKey(prev.block.created_at) !== dayKey(row.block.created_at)) return false
@@ -182,7 +197,7 @@ const faceRows = computed(() => {
     const handle = notice
       ? noticeCont.value[i]
         ? null
-        : props.noticeAgent(block, notice)?.handle ?? null
+        : agentOf(block, notice)?.handle ?? null
       : props.runEdges[i] !== 'cont' && props.isAgentBlock(block)
         ? block.author
         : null
@@ -304,12 +319,14 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :editable="barEditable"
         :no-upgrade="noUpgrade"
         :threadable="threadable"
+        :processable="processable"
         :pinnable="pinnable"
         :pinned-ids="pinnedIds"
         @react="emitReact"
         @toggle-picker="emit('toggle-picker', $event)"
         @reply="emit('reply', $event)"
         @thread="emit('open-thread', $event)"
+        @process="emit('open-process', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="emit('edit', $event)"
         @pin="emit('pin', $event)"
@@ -377,7 +394,8 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :block="m"
             :notice="notice"
             :run="run"
-            :agent="noticeAgent(m, notice)"
+            :agent="agentOf(m, notice)"
+            :time-of="fmtTime"
             :cont="noticeCont[i]"
             :face="faceRows.get(m.id)?.state ?? null"
             :face-label="faceLabel(faceRows.get(m.id))"
@@ -414,7 +432,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :topic-id="topic?.id ?? null"
             :author-name="displayName(m)"
             :external="isExternal(m.author)"
-            :avatar="avatarSrc(m.author)"
+            :avatar="avatarOf(m.author)"
             :is-agent="isAgentBlock(m)"
             :time="fmtTime(m.created_at)"
             :refs="refs"
@@ -439,7 +457,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             @checklist="emitChecklist"
             @download="emit('download', $event)"
             @jump="emit('jump', $event)"
-            @avatar-error="emit('avatar-error', $event)"
             @save-edit="emitSaveEdit"
             @cancel-edit="emit('cancel-edit')"
             @keep="emit('keep', $event)"
@@ -453,9 +470,10 @@ function emitOutboxLeave(el: Element, done: () => void) {
             class="tl-thread"
             :summary="m.thread ?? null"
             :replying="replyingFor?.(m) ?? null"
+            :status="threadStatusFor?.(m) ?? null"
             :refs="refs"
             :name-of="nameOf ?? String"
-            :avatar-of="avatarSrc"
+            :avatar-of="avatarOf"
             :task-level="taskLevel"
             :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
             @open="emit('open-thread', m)"
@@ -490,7 +508,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
           :topic-id="topic?.id ?? null"
           :author-name="myName"
           :external="isExternal(viewer)"
-          :avatar="avatarSrc(viewer)"
+          :avatar="avatarOf(viewer)"
           :is-agent="false"
           :time="outgoingState(item)"
           :refs="refs"
@@ -500,7 +518,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
           @animationend="emit('settle-sent', $event, item.clientId)"
           @retry="emit('retry-send', item.clientId)"
           @edit="emit('edit-send', item)"
-          @avatar-error="emit('avatar-error', $event)"
         />
       </TransitionGroup>
 
@@ -518,14 +535,13 @@ function emitOutboxLeave(el: Element, done: () => void) {
         :topic-id="topic?.id ?? null"
         :author-name="displayName(m)"
         :external="isExternal(m.author)"
-        :avatar="avatarSrc(m.author)"
+        :avatar="avatarOf(m.author)"
         :is-agent="isAgentBlock(m)"
         :time="t('work.room.chat.typing')"
         :refs="refs"
         :viewer="viewer"
         :ask-busy="false"
         :outgoing="{ failed: false }"
-        @avatar-error="emit('avatar-error', $event)"
       />
 
       <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->

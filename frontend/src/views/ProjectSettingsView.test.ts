@@ -1,3 +1,5 @@
+import type { Project } from '../cx_types'
+
 import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
 import { createPinia, getActivePinia, setActivePinia } from 'pinia'
@@ -40,6 +42,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   me.id = null
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
+  vi.mocked(api.getProject).mockResolvedValue({ id: 'p1', name: 'P', can_manage_members: false } as Project)
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.getGithubConnection).mockResolvedValue({ connected: false })

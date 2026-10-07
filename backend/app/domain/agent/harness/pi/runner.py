@@ -131,7 +131,10 @@ class Runner(runner.Runner[Journal]):
         # index (``write``), and how many messages ended and how many of them
         # have had their entry pulled since: what is shown goes then (``refresh``).
         self.writing: dict[int, dict] = {}
-        self.messages_ended, self.cleared = 0, 0
+        #: The assistant's messages (and turns) pi has said ended, and how many
+        #: had when the one shown now began: a pull whose snapshot counts more
+        #: landed that message, and only then is what was shown of it taken off.
+        self.messages_ended, self.showing = 0, 0
 
     capabilities = (runner.LONG_POLL, runner.LIVE)
 
@@ -150,9 +153,16 @@ class Runner(runner.Runner[Journal]):
         elif kind == "message_start":
             if (event.get("message") or {}).get("role") == "assistant":
                 self.writing = {}
+                self.showing = self.messages_ended
                 owner = json.loads(self.journal.recall("owner") or "{}")
                 self.show([], owner.get("work_id"))
-        elif kind in ("message_end", "agent_end"):
+        elif kind == "agent_end" or (
+            kind == "message_end"
+            and (event.get("message") or {}).get("role") == "assistant"
+        ):
+            # A person's message ending says nothing of the answer being
+            # written: counted, the pull it rings would take that answer's
+            # first words off the screen until pi wrote more.
             self.messages_ended += 1
         if kind == "agent_start":
             self.working = True
@@ -401,8 +411,8 @@ class Runner(runner.Runner[Journal]):
                 self.journal.import_entries([stamped(v) for v in loose])
             # Not placed yet: the entry each names is still to be pulled.
             self.verdicts = verdicts + self.verdicts
-            if ended > self.cleared:
-                self.cleared = ended
+            if ended > self.showing:
+                self.showing = ended
                 self.writing = {}
                 self.show([], None)
 

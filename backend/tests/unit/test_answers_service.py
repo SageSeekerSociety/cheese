@@ -75,6 +75,9 @@ def _make_service(
     repo.is_favorited.return_value = False
     repo.get_user_vote.return_value = None
     profile_repo.get_profiles_by_user_ids.return_value = {}
+    # _profile_to_dto 现在按 chosen 判据取头像（契约 §3.14）：没人挑过时回空映射，
+    # 测试里默认没人挑过，dto 的 avatarId 就是 None。
+    profile_repo.chosen_avatar_ids.return_value = {}
     svc = AnswersService(
         repo=repo, question_repo=question_repo, profile_repo=profile_repo
     )
@@ -113,8 +116,14 @@ class TestAnswerToDto:
 class TestProfileToDto:
     def test_non_none_profile(self):
         p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
-        dto = _profile_to_dto(p)
+        # avatarId 走 chosen 判据，由调用方查过再传进来（契约 §3.14）。
+        dto = _profile_to_dto(p, chosen_avatar_id=7)
         assert dto == {"id": 3, "nickname": "bob", "avatarId": 7, "intro": "hey"}
+
+    def test_unchosen_avatar_is_null(self):
+        p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
+        # 没传 chosen（= 没挑过）时回 None，不把档案里那张全局默认照原样吐出来。
+        assert _profile_to_dto(p)["avatarId"] is None
 
     def test_none_profile(self):
         assert _profile_to_dto(None) is None

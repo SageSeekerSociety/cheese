@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
-from app.core.sentences import say
+from app.core.sentences import exception_text, say
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
@@ -53,6 +53,8 @@ from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
     EXECUTOR_SETUP_FAILED,
+    LOST_KEY,
+    SANDBOX_LOST,
     SANDBOX_PREPARING,
     SANDBOX_RESTORE_FAILED,
     SANDBOX_WAKING,
@@ -786,8 +788,17 @@ async def _move_session(
                 old, start, keeps_files=not leaving_cloud
             )
             pushed = True
-        except WorkComputerUnreachable:
-            if not (abandon_unpushed and actor.via == "token"):
+        except WorkComputerUnreachable as refused:
+            if actor.via != "token":
+                # Only a person can switch past it, so an agent is told who
+                # can and where, and asks them instead of stopping (FB-51).
+                raise WorkComputerUnreachable(
+                    say(
+                        "switchOldComputerUnreachableAskPerson",
+                        refusal=exception_text(refused),
+                    )
+                ) from refused
+            if not abandon_unpushed:
                 raise
         await TopicService(db).lock_for_execution(topic_id)
         row = await AgentSessionService(db).by_id(session_id, lock=True)
@@ -875,11 +886,16 @@ async def ensure(
     wait_s,
     gone,
     hub=None,
+    tells_agent=False,
 ):
     """Hands for this session, waiting up to ``wait_s`` while they are prepared.
 
     ``gone`` reports that the caller has left (its command was stopped or
     timed out), which ends the wait without taking anything further.
+    ``tells_agent``: the caller hands a ``notice`` in the answer to the agent
+    beside its tool's result. Only such a caller is given one, and it is given
+    once: a session whose sandbox was lost hears so on the first of its tool
+    calls that has a new one, not on a hook's call that nobody reads.
     """
     hub = hub or device_hub
     clock = asyncio.get_running_loop().time
@@ -893,6 +909,7 @@ async def ensure(
             token=token,
             env=env,
             hub=hub,
+            tells_agent=tells_agent,
         )
         if not isinstance(outcome, _Preparing):
             return outcome
@@ -915,7 +932,9 @@ async def ensure(
             waited = True
 
 
-async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
+async def _attempt(
+    db, *, topic_id, session_id, claims, token, env, hub, tells_agent=False
+):
     """The row reservation survives worker death; remote work holds no DB lock."""
     topic = await TopicService(db).lock_for_execution(topic_id)
     sessions = AgentSessionService(db)
@@ -1208,6 +1227,7 @@ async def _attempt(db, *, topic_id, session_id, claims, token, env, hub):
             cloud_host_id=cloud_host.id if choice.profile == "cloud" else None,
             restoring=restoring,
             owner_device=selected is not None,
+            tells_agent=tells_agent,
         )
     )
     _INSTALLS.add(work)
@@ -1269,6 +1289,7 @@ async def _install(
     cloud_host_id,
     restoring,
     owner_device,
+    tells_agent=False,
 ):
     """Bring the session's executor up under ``claim`` and record the outcome."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
@@ -1363,6 +1384,17 @@ async def _install(
         ):
             raise ConflictError("Execution allocation changed while preparing")
         row.work_lease = target
+        lost = (
+            tells_agent
+            and target["status"] == "ready"
+            and (row.execution_request or {}).get(LOST_KEY)
+        )
+        if lost:
+            row.execution_request = {
+                key: value
+                for key, value in (row.execution_request or {}).items()
+                if key != LOST_KEY
+            }
         device = (
             await sql_device_service(db).get_device(device_id) if owner_device else None
         )
@@ -1383,7 +1415,11 @@ async def _install(
             return _Preparing(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
-        return {"target": target, "token": execution_token}
+        return {
+            "target": target,
+            "token": execution_token,
+            **({"notice": SANDBOX_LOST} if lost else {}),
+        }
 
 
 async def _another_attempt() -> bool:

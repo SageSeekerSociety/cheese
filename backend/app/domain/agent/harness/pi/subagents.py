@@ -167,7 +167,7 @@ class Subagent:
         args[args.index("--model") + 1] = f"{provider}/{self.model}"
         # The session's system prompt is not passed on: a subagent is not the
         # room's agent. What it does get is the few rules every agent working
-        # for the session needs (`prompt.SUBAGENT_TODO_WRITE`), as a file for
+        # for the session needs (`prompt.SUBAGENT_RULES`), as a file for
         # the same reasons the session's prompt is one (`runner.start`).
         rules = []
         if runner.subagent_rules:

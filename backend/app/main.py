@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
 from app.api.auth import ActorResolver
+from app.api.routes.admin_common import PlatformAdminDep
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
 from app.core.db import get_db
@@ -876,10 +877,14 @@ loaded_routers = _discover_routers(app)
 
 
 @app.get("/debug/turns")
-async def debug_turns() -> dict:
+async def debug_turns(_admin: PlatformAdminDep) -> dict:
     """可 debug: the last ~100 turns' lifecycle summaries (status, timings,
     tool counts, failure reasons) — read the state of the world without
-    grepping logs."""
+    grepping logs.
+
+    Platform admins only: a summary names the room, the person who started the
+    turn and why it failed. The evals harness reads it too, signed in as an
+    admin of its own throwaway backend."""
     from app.api.deps import get_work_runner
 
     return {"code": 200, "message": "ok", "data": get_work_runner().recent_work()}

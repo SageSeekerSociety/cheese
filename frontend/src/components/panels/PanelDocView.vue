@@ -117,6 +117,8 @@ const props = withDefaults(
     lastEdit?: { name: string; at: string } | null
     /** handle 读成名字。 */
     nameOf?: (handle: string) => string
+    /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
+    avatarOf?: (handle: string) => string
     loadVersions?: (before?: number) => Promise<DocVersionPage>
     restoreVersion?: (version: number, expected: number) => Promise<unknown>
   }>(),
@@ -144,6 +146,7 @@ const props = withDefaults(
     applyDocEdits: undefined,
     lastEdit: null,
     nameOf: (handle: string) => handle,
+    avatarOf: () => '',
     loadVersions: undefined,
     restoreVersion: undefined,
   }
@@ -467,6 +470,7 @@ defineExpose({
           :agent-name="agentName"
           :mention-names="mentionNames"
           :name-of="nameOf"
+          :avatar-of="avatarOf"
           :writable="!readOnly"
           @locate="revealThread"
         >

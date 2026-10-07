@@ -12,8 +12,8 @@ import { computed } from 'vue'
 import { isAgentHandle } from '../../lib/authorship'
 import { replySnippet } from '../../lib/blockDisplay'
 import { progressLabel } from '../../lib/taskProgress'
-import { avatarColor, avatarInitial } from '../../utils/avatar'
 import CheeseAvatar from '../CheeseAvatar.vue'
+import UserAvatar from '../common/UserAvatar.vue'
 
 import { t } from '@/i18n'
 
@@ -24,6 +24,8 @@ const props = defineProps<{
   summary: ThreadSummary | null
   /** 正在回复的队友叫什么；没有人在回复时为 null。 */
   replying: string | null
+  /** 正在回复的那位此刻在等什么（排队、重试……）；没有就是 null。 */
+  status?: string | null
   refs: RefNames
   nameOf: (handle: string) => string
   /** 最后一条回复的时间，已经按房间的写法格式化好。 */
@@ -80,20 +82,17 @@ const last = computed(() => {
             :name="nameOf(handle)"
             :handle="handle"
           />
-          <img
-            v-else-if="avatarOf?.(handle)"
-            class="thread-line__face thread-line__face--person"
-            :src="avatarOf(handle)!"
-            alt=""
-            width="18"
-            height="18"
-          />
-          <span
+          <!-- 人走 UserAvatar：挑过就画那张，没挑过/取不到就画按 handle 派生的彩色
+               首字母，失败记忆也归它一处管。以前这里自画一份（还漏了 @error，图裂了
+               就是一张破图），和别处对不上。 -->
+          <UserAvatar
             v-else
-            class="thread-line__face thread-line__face--person"
-            :style="{ backgroundColor: avatarColor(handle) }"
-            >{{ avatarInitial(nameOf(handle)) }}</span
-          >
+            class="thread-line__face"
+            :avatar="avatarOf?.(handle) ?? ''"
+            :name="nameOf(handle)"
+            :seed="handle"
+            :size="18"
+          />
         </template>
       </span>
       <v-icon v-else size="14" class="thread-line__icon">mdi-forum-outline</v-icon>
@@ -101,7 +100,11 @@ const last = computed(() => {
       <span v-if="replies > 0 && time" class="thread-line__time t-meta">{{ time }}</span>
       <span v-if="failed" class="thread-line__failed">{{ t('work.room.thread.failed') }}</span>
       <template v-if="replying">
-        <span class="thread-line__replying">{{ t('work.room.thread.replying', { name: replying }) }}</span>
+        <span class="thread-line__replying">{{
+          status
+            ? t('work.room.thread.replyingStatus', { name: replying, status })
+            : t('work.room.thread.replying', { name: replying })
+        }}</span>
         <span class="thread-line__dots" aria-hidden="true"><span /><span /><span /></span>
       </template>
     </span>
@@ -177,19 +180,8 @@ const last = computed(() => {
 .thread-line__face + .thread-line__face {
   margin-left: -5px;
 }
-.thread-line__face--person {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: var(--radius-pill);
-  object-fit: cover;
-  color: var(--inverse-ink);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-}
+/* 人这一支已经交给 UserAvatar（它自带圆形首字母样式），--person 这一份尺寸/字重
+   的复刻没人用了，删掉，免得留着一份会漂移的样式。 */
 .thread-line__task {
   display: inline-flex;
   align-items: center;
