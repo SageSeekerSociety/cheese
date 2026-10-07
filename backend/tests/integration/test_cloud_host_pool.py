@@ -55,9 +55,12 @@ class Case:
     def run(self, coroutine_fn):
         return self.client.portal.call(coroutine_fn)
 
-    def room(self, owner: str, sessions: int) -> list[uuid.UUID]:
+    def room(
+        self, owner: str, sessions: int, *, in_task: bool = False
+    ) -> list[uuid.UUID]:
         """A project of ``owner``'s with one room, and that many agent sessions
-        in it; returns the sessions."""
+        in it; returns the sessions. ``in_task``: the sessions work a task of
+        the room, in the task's own conversation."""
         project = post_project(
             self.client, json={"name": f"{owner} project"}, owner=owner
         ).json()["data"]
@@ -66,13 +69,20 @@ class Case:
             json={"project_id": project["id"], "title": "Room"},
             headers=session_auth_headers(owner),
         ).json()["data"]["id"]
+        conversation = room
+        if in_task:
+            conversation = self.client.post(
+                f"/topics/{room}/tasks",
+                json={"title": "Task"},
+                headers=session_auth_headers(owner),
+            ).json()["data"]["id"]
 
         async def seed():
             async with self.client.test_request_factory() as db:
                 user = await UserRepository(db).get_by_handle(owner)
                 rows = [
                     AgentSession(
-                        conversation_id=uuid.UUID(room),
+                        conversation_id=uuid.UUID(conversation),
                         agent_handle=f"agent-{n}",
                         harness="claude-code",
                     )
@@ -83,6 +93,7 @@ class Case:
                 self.projects[owner] = {
                     "id": uuid.UUID(project["id"]),
                     "room": uuid.UUID(room),
+                    "conversation": uuid.UUID(conversation),
                     "actor": Actor(owner, user.id, "token"),
                 }
                 return [row.id for row in rows]
@@ -158,13 +169,13 @@ class Case:
 
         return self.run(go)
 
-    def room_lines(self, owner: str) -> list[str]:
+    def room_lines(self, owner: str, where: str = "room") -> list[str]:
         async def go():
             async with self.client.test_request_factory() as db:
                 rows = await db.scalars(
                     select(RunRecord.content)
                     .where(
-                        RunRecord.conversation_id == self.projects[owner]["room"],
+                        RunRecord.conversation_id == self.projects[owner][where],
                         RunRecord.kind.in_(["cloud_startup", "cloud_provisioning"]),
                     )
                     .order_by(RunRecord.created_at)
@@ -665,6 +676,20 @@ def test_the_room_hears_about_the_sandbox_not_the_host(pool):
     assert lines == ["正在准备环境", "环境已就绪"]
     hostname = pool.host(host_id).hostname
     assert not any(hostname in line for line in lines)
+
+
+def test_a_tasks_sandbox_is_reported_in_the_task_not_its_channel(pool):
+    # The task page's 现场 shows the task's own conversation: a sandbox made
+    # for the session working the task is that conversation's running.
+    [alice] = pool.room("alice", 1, in_task=True)
+    host_id = pool.place("alice", alice)
+    pool.pool("tell_waiting", alice)
+    pool.up(host_id)
+
+    pool.pool("maintain")
+
+    assert pool.room_lines("alice", "conversation") == ["正在准备环境", "环境已就绪"]
+    assert pool.room_lines("alice") == []
 
 
 def test_the_device_owner_admits_tool_calls_only_on_live_hosts(pool):

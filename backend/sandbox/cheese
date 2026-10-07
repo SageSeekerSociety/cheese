@@ -2881,8 +2881,6 @@ def _git_attribution(message_file: str) -> None:
         return
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
-    if data["room_id"] != TOPIC:
-        raise RuntimeError("Task belongs to another room")
     trailers = []
     for person in data["coauthors"]:
         if "\n" in person or "\r" in person:
@@ -2951,8 +2949,6 @@ def _task_worktree(task_id: str) -> Path:
     task_id = str(uuid.UUID(task_id))
     project = _need("CHEESE_PROJECT", PROJECT)
     data = _call("POST", f"/projects/{project}/git/tasks/{task_id}")["data"]
-    if data["room_id"] != TOPIC:
-        raise SystemExit("[cheese] 这条任务不属于当前频道")
     if data["closed"]:
         raise SystemExit("[cheese] 这条任务已结束，请创建新任务")
     cache = Path.home() / ".cheese" / "repositories"
@@ -3263,8 +3259,6 @@ def _sync_task(task_id: str) -> list[str]:
         try:
             project = _need("CHEESE_PROJECT", PROJECT)
             data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
-            if data["room_id"] != TOPIC:
-                raise RuntimeError("Task belongs to another room")
             closed = data["closed"]
             if not closed:
                 # Only a delivery talks to the forge. A closed task is only
@@ -3571,8 +3565,6 @@ def _recover_task(task_id):
     if prerequisites:
         project = _need("CHEESE_PROJECT", PROJECT)
         task = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
-        if task["room_id"] != TOPIC:
-            raise SystemExit("[cheese] 这条任务不属于当前频道")
         cache = Path.home() / ".cheese" / "repositories"
         cache.mkdir(parents=True, exist_ok=True)
         repo = cache / f"{project}.git"

@@ -387,6 +387,30 @@ def test_a_per_turn_scoped_token_is_still_bound_to_its_own_topic(client):
     assert _write(client, other, per_turn).status_code == 403
 
 
+def test_a_tasks_own_session_takes_and_gives_back_the_heavy_lock(client):
+    """A task is a conversation of its own, and the session working it holds a
+    token naming the task: the gate finds the task's project through its
+    channel, as for any conversation inside one."""
+    pid = _project(client, "alice")
+    room = _topic(client, pid, title="T", by="alice")
+    task = client.post(
+        f"/topics/{room}/tasks",
+        json={"title": "Task"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    session = mint_scoped_token(project_id=pid, topic_id=task)
+
+    taken = client.post(
+        f"/topics/{task}/lock", json={"kind": "heavy"}, headers=_cred(session)
+    )
+    assert taken.status_code == 200, taken.text
+    assert taken.json()["data"]["acquired"] is True
+    given = client.post(
+        f"/topics/{task}/unlock", json={"kind": "heavy"}, headers=_cred(session)
+    )
+    assert given.status_code == 200, given.text
+
+
 def test_a_project_wide_per_turn_token_still_does_not_author_in_a_topic(client):
     """The git-http / LLM proxies mint topic-less scoped tokens. Those are
     capability tokens, not identity — widening the NEW credential must not have

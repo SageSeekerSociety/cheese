@@ -192,6 +192,26 @@ def test_committing_in_one_task_pushes_only_its_branch(device):
     assert (b / "same.txt").read_text() == "base\n"
 
 
+def test_a_task_worked_in_its_own_conversation_opens_and_delivers(device, monkeypatch):
+    # A task is a conversation of its own: the session working it is told the
+    # task's id, not its channel's, and is the one session meant to open it.
+    _, tasks, remote, _ = device
+    task = next(iter(tasks))
+    monkeypatch.setenv("CHEESE_TOPIC", task)
+    loader = SourceFileLoader("task_session_cli", str(CLI))
+    cli = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader(loader.name, loader)
+    )
+    loader.exec_module(cli)
+
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("worked\n")
+    git(work, "add", "same.txt")
+    git(work, "commit", "-m", "fix: the task's own work")
+
+    assert git(remote, "show", tasks[task]["branch"] + ":same.txt") == "worked"
+
+
 def test_another_worktree_beside_a_task_commits_and_leaves_the_task_alone(
     device, tmp_path
 ):
