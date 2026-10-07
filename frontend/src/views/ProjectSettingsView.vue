@@ -28,6 +28,7 @@ import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubAccountSettings from '@/components/settings/GithubAccountSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import OwnAgentsSettings from '@/components/settings/OwnAgentsSettings.vue'
+import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
@@ -147,7 +148,12 @@ const router = useRouter()
 
 /** 九栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
-  ...(managesProject.value ? [{ group: 'collab', key: 'channels', icon: 'mdi-pound' }] : []),
+  ...(managesProject.value
+    ? [
+        { group: 'collab', key: 'channels', icon: 'mdi-pound' },
+        { group: 'collab', key: 'address', icon: 'mdi-link-variant' },
+      ]
+    : []),
   { group: 'ai', key: 'agents', icon: 'mdi-robot-outline' },
   { group: 'ai', key: 'task-naming', icon: 'mdi-format-title' },
   { group: 'run', key: 'environment', icon: 'mdi-console' },
@@ -373,6 +379,13 @@ function close() {
             @clear-notice="githubAccountNotice = null"
           />
         </template>
+
+        <ProjectAddressSection
+          v-else-if="section === 'address'"
+          :project-id="projectId"
+          :slug="project?.slug ?? ''"
+          @renamed="(slug) => project && (project.slug = slug)"
+        />
 
         <ProjectMcpSettings v-else-if="section === 'mcp'" :project-id="projectId" />
 

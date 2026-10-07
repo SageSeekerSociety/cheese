@@ -1537,6 +1537,7 @@
     },
     "sections": {
       "channels": "Channels",
+      "address": "Project address",
       "agents": "AI teammates",
       "task-naming": "Task names",
       "environment": "Environment",
@@ -1895,6 +1896,14 @@
         "active": "Last active",
         "actions": "Actions"
       }
+    },
+    "address": {
+      "title": "Project address",
+      "label": "Short name",
+      "save": "Save",
+      "saved": "Saved",
+      "failed": "Could not save",
+      "hint": "Links to this project use this short name: lowercase letters, digits and hyphens. After a rename, old links still open this project, and no other project can take the old name"
     }
   },
   "computeChoice": {
