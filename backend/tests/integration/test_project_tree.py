@@ -75,15 +75,15 @@ def test_upgrade_block_to_topic(client, stub_hooks):
     # to draft the task's document from.
     assert "我们要不要单独做一个数据清洗的模块" in stub_hooks.told
 
-    # Re-upgrading the same block is idempotent: it returns the task already
-    # created (so a double-click just navigates), not an error — and it leaves
-    # nothing new in the room behind.
+    # The same message can become another task, and neither adds a line to
+    # the channel's main line: each shows under the message.
     before = len(client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"])
     r2 = client.post(
         f"/blocks/{block_id}/upgrade", headers=session_auth_headers("owner")
     )
     assert r2.status_code == 200
-    assert r2.json()["data"]["id"] == new_topic["id"]
+    assert r2.json()["data"]["id"] != new_topic["id"]
+    assert r2.json()["data"]["upgraded_from_block_id"] == block_id
     _wait_work_idle()
     after = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]
     assert len(after) == before

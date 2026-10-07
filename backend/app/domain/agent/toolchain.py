@@ -1,6 +1,8 @@
 """The programs the platform puts on a machine for its rooms' work: the
 document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
-find, browser automation, and on Windows the runtime the connector itself needs.
+find, browser automation, and the runtime the connector itself needs where
+the system lacks it (Python and a POSIX shell on Windows, a recent enough Python
+elsewhere).
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -41,10 +43,15 @@ GH_VERSION = "2.62.0"
 RIPGREP_VERSION = "15.2.0"
 AGENT_BROWSER_VERSION = "0.38.1"
 #: The runtime a Windows machine's connector provisions for itself, so that the
-#: `python3` and `sh` the platform runs everywhere exist there too. Windows only:
-#: every other machine brings its own.
+#: `python3` and `sh` the platform runs everywhere exist there too.
 PYTHON_VERSION = "3.13.13"
 GIT_VERSION = "2.55.0.windows.5"
+#: The Python a Linux or macOS connector places when the system's `python3` is
+#: older than the session's runner takes (3.11), as on every Mac, whose
+#: /usr/bin/python3 is 3.9 (`cli/internal/devenv`). python-build-standalone's
+#: relocatable builds, the ones uv installs.
+PBS_RELEASE = "20261003"
+PBS_PYTHON_VERSION = "3.13.16"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -61,6 +68,10 @@ _RG_BASE = (
 _AB_BASE = f"https://github.com/vercel-labs/agent-browser/releases/download/v{AGENT_BROWSER_VERSION}"
 _PYTHON_BASE = f"https://www.python.org/ftp/python/{PYTHON_VERSION}"
 _GIT_BASE = f"https://github.com/git-for-windows/git/releases/download/v{GIT_VERSION}"
+_PBS_BASE = (
+    "https://github.com/astral-sh/python-build-standalone/releases/download/"
+    f"{PBS_RELEASE}/cpython-{PBS_PYTHON_VERSION}%2B{PBS_RELEASE}"
+)
 _FJ_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
     f"forgejo-cli-v{FJ_VERSION}"
@@ -311,6 +322,33 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         "8766a8775746235e23cf5aee5027ab1060bb981d93110577adcf3508aa0cbd55",
         10950201,
         ".zip",
+    ),
+    # The connector's Python on a Linux or macOS machine whose own is too old
+    # (see PBS_RELEASE). Digests and sizes checked against the downloaded
+    # files on 2026-10-07.
+    ("python", "darwin-arm64"): Artifact(
+        f"{_PBS_BASE}-aarch64-apple-darwin-install_only_stripped.tar.gz",
+        "9e01f63bbb08576cd9c8bc2d0564d098cb30c8453a0cd4bcf6aef458f6d2a147",
+        25246115,
+        ".tar.gz",
+    ),
+    ("python", "darwin-x64"): Artifact(
+        f"{_PBS_BASE}-x86_64-apple-darwin-install_only_stripped.tar.gz",
+        "b4dad38ba6a344555ccb71a1b08caad0a6c0dda88c5803658bc95bd7f04e9f5c",
+        24964084,
+        ".tar.gz",
+    ),
+    ("python", "linux-x64"): Artifact(
+        f"{_PBS_BASE}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "4595c5589fff7bf0cb158d9a88a797e0d791fa33830770fcb7bf3f4b104feeae",
+        35076205,
+        ".tar.gz",
+    ),
+    ("python", "linux-arm64"): Artifact(
+        f"{_PBS_BASE}-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "6e9641400f8debd9b7924b27b5ff0662c372852382e291a76c450c7b67414cf6",
+        29316850,
+        ".tar.gz",
     ),
     ("git", "windows-x64"): Artifact(
         f"{_GIT_BASE}/PortableGit-2.55.0.5-64-bit.7z.exe",

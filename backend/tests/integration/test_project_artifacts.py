@@ -107,12 +107,14 @@ def _lines(client, room_id: str) -> list[str]:
 
 
 def _notice_detail(client, room_id: str, needle: str) -> str:
-    r = client.get(f"/topics/{room_id}/blocks")
+    """The line the delivery said, in the task that declared it — not in the
+    channel's main line."""
+    r = client.get(f"/topics/{delivery_task_id(client, room_id)}/blocks")
     assert r.status_code == 200
     for block in r.json()["data"]["data"]:
         if needle in (block.get("content") or ""):
             return (block.get("meta") or {}).get("detail") or ""
-    raise AssertionError(f"房间里没有说 {needle} 的那一行")
+    raise AssertionError(f"任务里没有说 {needle} 的那一行")
 
 
 # --- 生：只有交付能创建一项 -------------------------------------------------
@@ -141,8 +143,11 @@ def test_a_new_artifact_is_said_out_loud_next_to_what_the_project_already_has(cl
 
     _file_card(client, second, new_artifact="报告")
 
-    # 新建是会长出垃圾的那一下，所以房间里当场有一行说它是新的……
-    assert any("新建了产物《报告》" in line for line in _lines(client, second))
+    # 新建是会长出垃圾的那一下，所以递卡的那件任务里当场有一行说它是新的……
+    assert any(
+        "新建了产物《报告》" in line
+        for line in _lines(client, delivery_task_id(client, second))
+    )
     # ……而判断「这是不是刚才那一项换了个说法」要两个名字摆在一起。
     detail = _notice_detail(client, second, "新建了产物《报告》")
     assert "《结题报告》" in detail and "《报告》" in detail

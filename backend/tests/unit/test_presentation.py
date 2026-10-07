@@ -230,7 +230,12 @@ TASK_CASES = [
         Column.needs_you,
         NeedsYou.awaiting_answer,
     ),
-    ("已交付", task(accepted_at=JUST_NOW), Column.done, Done.accepted),
+    (
+        "最后一步采纳后关闭",
+        task(status=TaskStatus.closed, accepted_at=JUST_NOW),
+        Column.done,
+        Done.accepted,
+    ),
     # 关闭时写了结论：做成了，产出不是一次合并（调研、讨论出的结论）。
     (
         "带着结论关闭",
@@ -319,8 +324,8 @@ def test_every_column_is_reachable():
 # —— 两条优先级规矩 ——————————————————————————————————————————————
 
 
-def test_delivery_beats_everything():
-    """已交付压过一切：交付和 open/closed 不是同一个问题，一条活可以已交付还开着。"""
+def test_a_task_closed_on_its_last_accepted_step_reads_accepted():
+    """关了的任务，最后一次交付被采纳，就写「已采纳」，不管它此刻还有什么在跑。"""
     shown = task_presentation(
         task(
             accepted_at=JUST_NOW,
@@ -331,6 +336,18 @@ def test_delivery_beats_everything():
         now=NOW,
     )
     assert (shown.column, shown.phrase) == (Column.done, Done.accepted)
+
+
+def test_a_task_that_goes_on_after_an_accepted_step_is_still_in_progress():
+    """分步交付：前一步被采纳、任务还开着，它就还在做，不是「已采纳」。"""
+    running = task_presentation(
+        task(accepted_at=JUST_NOW, started=True, running=True), now=NOW
+    )
+    assert (running.column, running.phrase) == (Column.building, Building.running)
+    asked = task_presentation(
+        task(accepted_at=JUST_NOW, started=True, awaiting_answer=True), now=NOW
+    )
+    assert asked.phrase == NeedsYou.awaiting_answer
 
 
 def test_the_live_fact_beats_the_paperwork():
@@ -358,9 +375,12 @@ def test_an_unanswered_question_beats_the_live_fact():
     )
 
 
-def test_delivery_still_beats_an_unanswered_question():
-    """已交付压过它 —— 已经采纳，那个旧问题不再挡住任何事。"""
-    shown = task_presentation(task(awaiting_answer=True, accepted_at=JUST_NOW), now=NOW)
+def test_a_closed_accepted_task_is_not_held_up_by_an_old_question():
+    """已经采纳并关闭，那个旧问题不再挡住任何事。"""
+    shown = task_presentation(
+        task(awaiting_answer=True, accepted_at=JUST_NOW, status=TaskStatus.closed),
+        now=NOW,
+    )
     assert (shown.column, shown.phrase) == (Column.done, Done.accepted)
 
 

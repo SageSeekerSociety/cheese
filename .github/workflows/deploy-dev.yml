@@ -1,4 +1,8 @@
 name: Deploy (dev/test box)
+# The commit a run releases. For a build-completed event the run's own head SHA
+# is main's tip when the event fired, which can be a later commit than the one
+# whose images it deploys; .claude/scripts/pr-watch.sh reads this name instead.
+run-name: Deploy ${{ github.event.workflow_run.head_sha || github.sha }}
 
 # Continuous deployment to the cheese dev/test box (cheese-dev-env1-app,
 # 192.168.16.5). The box is on ghg's private network with no public inbound, so

@@ -98,7 +98,7 @@ export function useThreadLines(opts: {
           last_reply_at: thread.last_reply_at,
           last_reply: null,
           participants: [],
-          task: null,
+          tasks: [],
         },
       })
     } catch {
@@ -126,7 +126,7 @@ export function useThreadLines(opts: {
             last_reply_at: row.last_reply_at,
             last_reply: row.last_reply,
             participants: row.participants,
-            task: row.task,
+            tasks: row.tasks,
             failed: row.failed,
             replying: shown.thread?.replying,
           }

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import type { Block } from '@/cx_types'
-import type { SplitMarker } from '@/lib/splitMarkers'
+import type { TaskLine } from '@/lib/channelTasks'
 
 import { computed } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import DispatchedMarker from '@/components/DispatchedMarker.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
+import TaskCard from '@/components/room/TaskCard.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import { t } from '@/i18n'
 
@@ -77,8 +77,18 @@ function block(line: Extract<Line, { kind: 'message' }>): Block {
   }
 }
 
-function marker(line: Extract<Line, { kind: 'marker' }>): SplitMarker {
-  return { taskId: line.id, title: line.title, level: props.step >= line.doneAt ? 'done' : 'running', createdAt: '' }
+function marker(line: Extract<Line, { kind: 'marker' }>): TaskLine {
+  const done = props.step >= line.doneAt
+  return {
+    id: line.id,
+    title: line.title,
+    owner: null,
+    creator: null,
+    status: done ? t('work.board.phrase.accepted') : t('work.board.phrase.running'),
+    tone: done ? 'done' : 'running',
+    accepted: null,
+    at: '',
+  }
 }
 
 function runStart(index: number) {
@@ -100,7 +110,7 @@ function runStart(index: number) {
         <TransitionGroup name="room-line" tag="div" class="room-lines">
           <template v-for="(line, i) in shown" :key="line.id">
             <TimelineMark v-if="line.kind === 'day'" quiet>{{ line.label }}</TimelineMark>
-            <DispatchedMarker v-else-if="line.kind === 'marker'" :marker="marker(line)" />
+            <TaskCard v-else-if="line.kind === 'marker'" class="room-task" :task="marker(line)" :owner-name="null" />
             <RoomMessage
               v-else
               :block="block(line)"

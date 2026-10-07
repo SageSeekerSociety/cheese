@@ -47,7 +47,7 @@
   "cheeseDocNew": "Create a doc",
   "cheeseDocList": "List library docs",
   "cheeseDocCommentReply": "Reply to a doc comment",
-  "cheeseTask": "Propose a task",
+  "cheeseTask": "Create a task",
   "cheeseWorktree": "Prepare the working directory",
   "cheeseCheckout": "Fetch the main branch",
   "cheeseSync": "Sync task code",

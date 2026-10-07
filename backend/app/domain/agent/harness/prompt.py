@@ -315,9 +315,8 @@ PLATFORM_RULES = (
     "只传 `find`。不要自己提取凭据拼 curl 或裸 HTTP 请求，不翻 home、会话文件、"
     "`.git` 内部和系统目录。参数拿不准就看工具的定义或 `--help`，不要瞎试。\n"
     f"{SHARED_CHECKOUT}\n"
-    "- 改项目仓库里的文件、交出东西，在任务里做。任务由人创建：你在支线里时，"
-    "用 `cheese_task` 提议一个，等人创建。怎么提议、怎么交，在 `cheese` 技能里，"
-    "先加载它。\n"
+    "- 改项目仓库里的文件、交出东西，在任务里做。你在支线里时，用 `cheese_task` "
+    "创建一个。怎么创建、怎么交，在 `cheese` 技能里，先加载它。\n"
     "- 用户问这个平台怎么用，先用 `cheese_docs_search` 查官方说明书再答，不凭印象。\n"
     "- 会话可能是新开的：不记得之前聊过什么时，用 `cheese_chat_list`、"
     "`cheese_chat_search` 读记录，不要猜，也不要问人「之前说到哪了」。\n"
@@ -607,11 +606,17 @@ def build_session_opening(
 
 
 def task_opening_prompt(
-    *, title: str, owner: str | None, source: str, materials: str = ""
+    *,
+    title: str,
+    owner: str | None,
+    source: str,
+    materials: str = "",
+    started: bool = False,
 ) -> str:
     """What a new task's agent is told first: where the task came from, what
     was put on the table there, and to draft the task's document from it
-    before anything else."""
+    before anything else. A task started as it was created goes on to the work
+    once the document is drafted."""
     who = f"负责人是 @{owner}。" if owner else ""
     put = (
         f"{materials}\n整理时读一读它们，文档里写明依据的是哪一份。\n\n"
@@ -624,8 +629,13 @@ def task_opening_prompt(
         f"{put}"
         "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入：目标、现状、"
         "需要谁做什么、已确定、待决；讨论里否掉的做法写进已确定，标明不采用及原因。"
-        "然后用 chat_send 在任务里和负责人"
-        "确认还没定的细节。负责人点「开始」之前，你只讨论、写文档，不改动项目。"
+        + (
+            "任务创建时已经开始：写完文档就按文档动手，在任务自己的工作目录里做"
+            "（cheese worktree），做完提交审阅。要人决定的事，在任务里问负责人。"
+            if started
+            else "然后用 chat_send 在任务里和负责人确认还没定的细节。"
+            "负责人点「开始」之前，你只讨论、写文档，不改动项目。"
+        )
     )
 
 
@@ -635,6 +645,18 @@ def task_started_prompt(*, title: str, actor: str) -> str:
         f"@{actor} 开始了任务「{title}」。从现在起你可以改动项目：按实况文档动手，"
         "在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
         "做的过程中要求变了，就改实况文档；要人决定的事，在任务里问负责人。"
+    )
+
+
+def task_next_step_prompt(*, title: str, task_id) -> str:
+    """What a task's agent is told when one of its deliveries lands and the
+    task goes on."""
+    return (
+        f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
+        f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
+        "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
+        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
+        "这一步是最后一步时 completes_task 填 true。"
     )
 
 

@@ -1,10 +1,11 @@
 """A room's tasks, and what is done to a task.
 
-`GET|POST /topics/{room}/tasks` list a room's tasks and create one, and the
-`task-proposals` routes are what an AI teammate proposes there: those are the
-room's. Everything about one task is addressed by the task's own conversation
-id — `GET|PATCH /topics/{task}/task` (the task, handing it over), `POST
-/topics/{task}/start` and `/close`. Talking in a task, naming it and reading its
+`GET|POST /topics/{room}/tasks` list a room's tasks and create one, and
+`POST /topics/{conversation}/teammate-tasks` is an AI teammate creating one
+from where it is talking: those are the room's. Everything about one task is
+addressed by the task's own conversation id — `GET|PATCH /topics/{task}/task`
+(the task, handing it over), `POST /topics/{task}/start`, `/close` and
+`/reopen`. Talking in a task, naming it and reading its
 document go through the same routes as a room's (`/messages`, `/title`,
 `/document`), with the task's id.
 
@@ -30,12 +31,12 @@ from app.api.routes.topics import (
     ProjectRepository,
     UsageRepository,
 )
-from app.api.task_instructions import dispatch, proposal_source_text, tell_task
+from app.api.task_instructions import dispatch, teammate_source_text, tell_task
 from app.api.task_origin import discussion, materials, materials_text
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
-    NotFoundError,
     ValidationError,
 )
 from app.core.sentences import say
@@ -51,8 +52,8 @@ from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.living_doc.services import Documents
 from app.domain.mentions import canonicalize_refs
+from app.domain.review.task_landing import tell_origin
 from app.domain.room_task import binding, presentation
-from app.domain.room_task.proposals import ProposalState, TaskProposals
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.schemas import ConclusionIn
@@ -105,6 +106,11 @@ async def list_room_tasks(
     thread_ids = [t.id for t, _ in threads]
     cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
     asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
+    # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
+    landed: dict[uuid.UUID, list] = {}
+    for accepted_card in await AcceptCardRepository(db).accepted_for_tasks(thread_ids):
+        if accepted_card.task_id is not None:
+            landed.setdefault(accepted_card.task_id, []).append(accepted_card)
     # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
     # `tasks` 上没有一列存它。
     spent = await UsageRepository(db).last_model_by_task(thread_ids)
@@ -119,6 +125,23 @@ async def list_room_tasks(
     items = []
     for task, blocks in threads:
         card = cards.get(task.id)
+        shown = presentation.task_presentation(
+            presentation.facts_for_task(
+                task,
+                card,
+                running=task.id in running,
+                awaiting_answer=task.id in asked,
+            ),
+            now=now,
+        )
+        waiting = presentation.waiting_on(
+            shown,
+            running=task.id in running,
+            owner=task.owner_handle,
+            reviewer=card.reviewer_handle if card is not None else None,
+            asked=asked.get(task.id),
+        )
+        accepted = landed.get(task.id, [])
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
@@ -127,15 +150,12 @@ async def list_room_tasks(
                     task, spent=spent.get(task.id), choices=choices
                 ),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
-                "presentation": presentation.task_presentation(
-                    presentation.facts_for_task(
-                        task,
-                        card,
-                        running=task.id in running,
-                        awaiting_answer=task.id in asked,
-                    ),
-                    now=now,
-                ).as_dict(),
+                "presentation": shown.as_dict(),
+                # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
+                "waiting_on": waiting,
+                "awaits_me": waiting is not None and waiting == actor.handle,
+                "accepted_count": len(accepted),
+                "last_accepted_pr": accepted[-1].pr_number if accepted else None,
                 "blocks": [
                     BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
                 ],
@@ -304,21 +324,50 @@ async def conclude_task(
             ),
         )
     task = await tasks.close_thread(task, conclusion=conclusion)
-    # The task's own conversation hears how it ended; the channel's one line for
-    # this task updates in place (`DispatchedMarker`).
+    # The task's own conversation hears how it ended, and so does the
+    # discussion it came from; the channel's card for it updates in place.
+    ended = (
+        say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
+        if task.conclusion
+        else say("taskClosed", title=said_title(task))
+    )
     await announce(
         db,
         place_id=place.room_id,
         task_id=task.id,
-        content=(
-            say("taskCompleted", title=said_title(task), conclusion=task.conclusion)
-            if task.conclusion
-            else say("taskClosed", title=said_title(task))
-        ),
+        content=ended,
         meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
+    )
+    await tell_origin(db, task, ended)
+    out = await _task_out(db, chat, task)
+    await db.commit()
+    await announce_stale(place.room_id, "topics")
+    return ok(out)
+
+
+@router.post("/{topic_id}/reopen", dependencies=[ROUTE_DECIDES])
+async def reopen_task(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """重新打开：the owner takes a closed task up again. Its AI teammate goes on
+    from the project's latest code when it has landed something."""
+    place, actor, task = await task_conversation(db, resolver, topic_id)
+    if not actor.authenticated or actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
+    task = await TaskService(db).reopen(task)
+    await announce(
+        db,
+        place_id=place.room_id,
+        task_id=task.id,
+        content=say("taskReopened", actor=f"<@{actor.handle}>", title=said_title(task)),
+        meta={"platform": True, "action": "task_reopened", "task_id": str(task.id)},
     )
     out = await _task_out(db, chat, task)
     await db.commit()
+    await announce_stale(place.room_id, "topics")
     return ok(out)
 
 
@@ -339,14 +388,6 @@ class TaskUpdateIn(BaseModel):
     agent_handle: str | None = Field(default=None, max_length=64)
     #: Everyone who works the task beside its owner, as the whole new list.
     contributor_handles: list[str] | None = Field(default=None, max_length=50)
-
-
-class TaskProposalIn(BaseModel):
-    title: str = Field(min_length=1, max_length=300)
-    #: What the task is for, in the agent's words: the start of its document.
-    #: Required: a task created from a proposal has nothing else of the
-    #: discussion but this and the messages just before it.
-    summary: str = Field(min_length=1, max_length=20000)
 
 
 @router.post("/{topic_id}/tasks")
@@ -502,21 +543,30 @@ async def _move_off_former_owners_computer(db, actor, place, task, owner) -> Non
     )
 
 
-def _proposal_out(proposal) -> dict:
-    return {
-        "id": str(proposal.id),
-        "room_id": str(proposal.room_id),
-        "conversation_id": str(proposal.conversation_id),
-        "title": proposal.title,
-        "summary": proposal.summary,
-        "proposed_by": proposal.proposed_by,
-        "state": proposal.state.value,
-        "task_id": str(proposal.task_id) if proposal.task_id else None,
-        "created_at": proposal.created_at.isoformat(),
-    }
+class TeammateTaskIn(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    #: What the task is for, in the teammate's words: the start of its document.
+    summary: str = Field(min_length=1, max_length=20000)
+    #: The person the task is for: who asked for it. Defaults to whoever wrote
+    #: the message the 支线 hangs under.
+    owner_handle: str | None = Field(default=None, max_length=64)
+    #: Someone asked for it to be done: start it as well. A teammate's own idea
+    #: stays in discussion until its owner starts it.
+    start: bool = False
 
 
-async def _room_actor(db, resolver, topic_id: uuid.UUID):
+@router.post("/{topic_id}/teammate-tasks", dependencies=[ROUTE_DECIDES])
+async def create_teammate_task(
+    topic_id: uuid.UUID,
+    body: TeammateTaskIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """An AI teammate creates a task (`cheese_task`) from the conversation it
+    is in. Made in a 支线, the task hangs under the message the 支线 is under.
+    Started at once when ``start`` says someone asked for it; otherwise it
+    waits for its owner, whom the teammate asks."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
@@ -524,123 +574,69 @@ async def _room_actor(db, resolver, topic_id: uuid.UUID):
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    return place, actor
-
-
-@router.post("/{topic_id}/task-proposals")
-async def propose_task(
-    topic_id: uuid.UUID,
-    body: TaskProposalIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """An AI teammate proposes a task (`cheese_task`): a card in the room that a
-    person creates or puts aside. A teammate never creates one itself."""
-    place, actor = await _room_actor(db, resolver, topic_id)
+    if actor.via != "cheese":
+        raise ForbiddenError(say("teammateTaskByTeammate"))
     TopicService.refuse_tasks_in_private(place.room)
-    # A turn sent again proposes the same task again: one card, not two.
+    # A turn sent again creates the same task again: one task, not two.
     continuation = get_work_runner().continuation_for(topic_id)
     key = (
-        action_key(continuation, "task-proposal", body.title, body.summary)
+        action_key(continuation, "teammate-task", body.title, body.summary)
         if continuation
         else None
     )
     if key is not None and not await idem.claim(
-        db, key, action="task-proposal", scope_id=str(topic_id)
+        db, key, action="teammate-task", scope_id=str(topic_id)
     ):
         prior = await idem.stored_result(db, key)
         return ok(prior or {"skipped": True})
-    proposal = await TaskProposals(db).propose(
-        project_id=place.project_id,
-        room_id=place.room_id,
-        conversation_id=place.conversation_id,
-        title=body.title,
-        summary=body.summary,
-        proposed_by=actor.handle,
+    origin = (
+        await BlockRepository(db).get(place.thread.root_block_id)
+        if place.thread is not None
+        else None
     )
-    out = _proposal_out(proposal)
-    if key is not None:
-        await idem.record_result(db, key, out)
-    await db.commit()
-    await announce_stale(place.conversation_id, "task-proposals")
-    return ok(out)
-
-
-@router.get("/{topic_id}/task-proposals")
-async def list_task_proposals(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """The proposals in this room still waiting for someone."""
-    place, _actor = await _room_actor(db, resolver, topic_id)
-    rows = await TaskProposals(db).open_in(place.conversation_id)
-    return ok([_proposal_out(p) for p in rows])
-
-
-async def _open_proposal(db, room_id: uuid.UUID, proposal_id: uuid.UUID):
-    proposal = await TaskProposals(db).lock(room_id, proposal_id)
-    if proposal is None:
-        raise NotFoundError(say("taskProposalNotFound"))
-    if proposal.state != ProposalState.open:
-        raise ValidationError(say("taskProposalDecided"))
-    return proposal
-
-
-@router.post("/{topic_id}/task-proposals/{proposal_id}/accept")
-async def accept_task_proposal(
-    topic_id: uuid.UUID,
-    proposal_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> dict:
-    """创建任务 from a teammate's proposal: the person who creates it owns it."""
-    place, actor = await _room_actor(db, resolver, topic_id)
-    if not actor.authenticated or actor.via == "cheese":
-        raise ForbiddenError(say("taskCreatedByPerson"))
-    proposal = await _open_proposal(db, place.room_id, proposal_id)
+    named = (body.owner_handle or "").strip().lstrip("@")
+    if named and named not in await TopicMemberService(db).project_people(
+        place.project_id
+    ):
+        raise ValidationError(say("taskOwnerNotInProject"))
+    owner = named or (origin.author if origin is not None else None)
     task = await TopicService(db).create_task(
         room_id=place.room_id,
         created_by=actor.handle,
-        title=proposal.title,
-        proposed_by=proposal.proposed_by,
-        teammate=proposal.proposed_by,
+        title=body.title,
+        owner_handle=owner,
+        teammate=actor.handle,
+        named_by_teammate=True,
+        origin_block_id=origin.id if origin is not None else None,
     )
-    TaskProposals.decide(
-        proposal, ProposalState.accepted, by=actor.handle, task_id=task.id
-    )
+    blocks = (await discussion(db, task))[1]
+    started, why_not = False, None
+    if body.start and task.owner_handle:
+        try:
+            await TaskService(db).start(task, by=task.owner_handle)
+            started = True
+        except ValidationError as exc:
+            why_not = str(exc)
     await tell_task(
         db,
         task,
         task_opening_prompt(
             title=task.title,
             owner=task.owner_handle,
-            source=await proposal_source_text(db, proposal),
-            materials=materials_text(materials((await discussion(db, task))[1])),
+            source=teammate_source_text(actor.handle, body.summary, blocks),
+            materials=materials_text(materials(blocks)),
+            started=started,
         ),
         opening=True,
     )
-    out = TaskOut.model_validate(task).model_dump(mode="json")
+    out = {
+        **TaskOut.model_validate(task).model_dump(mode="json"),
+        "started": started,
+        "not_started_because": why_not,
+    }
+    if key is not None:
+        await idem.record_result(db, key, out)
     await db.commit()
-    await announce_stale(proposal.conversation_id, "task-proposals")
     await announce_stale(place.room_id, "topics")
     await dispatch(chat)
-    return ok(out)
-
-
-@router.post("/{topic_id}/task-proposals/{proposal_id}/dismiss")
-async def dismiss_task_proposal(
-    topic_id: uuid.UUID,
-    proposal_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Put a teammate's proposal aside."""
-    place, actor = await _room_actor(db, resolver, topic_id)
-    if not actor.authenticated or actor.via == "cheese":
-        raise ForbiddenError(say("taskCreatedByPerson"))
-    proposal = await _open_proposal(db, place.room_id, proposal_id)
-    TaskProposals.decide(proposal, ProposalState.dismissed, by=actor.handle)
-    out = _proposal_out(proposal)
-    await db.commit()
-    await announce_stale(proposal.conversation_id, "task-proposals")
     return ok(out)

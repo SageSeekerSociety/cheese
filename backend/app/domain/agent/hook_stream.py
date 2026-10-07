@@ -273,9 +273,8 @@ def _is_out_of_credit(detail: str | None) -> bool:
 # (`_ACTION_LABEL`, `_announce_action`). Only the card: telling the room a panel
 # went stale is the job of the API handler that changed it (`announce_stale`),
 # which knows the change happened whoever called it. Keyed by the tool's short name
-# (`mcp__native__cheese_task` → `cheese_task`).
+# (`mcp__native__cheese_notify` → `cheese_notify`).
 _TOOL_ACTION = {
-    "cheese_task": "topics",
     "cheese_notify": "notify",
 }
 

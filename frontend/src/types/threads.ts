@@ -8,7 +8,7 @@ export interface ThreadReply {
   created_at: string
 }
 
-/** 支线变成的那件任务。 */
+/** 从支线（和它挂着的那条消息）出来的一件任务。 */
 export interface ThreadTask {
   id: string
   title: string
@@ -16,7 +16,7 @@ export interface ThreadTask {
 }
 
 /** 主线上一条消息下面的支线：它自己的 id（一段独立的对话），回复数、最后一句、谁说过
- * 话（挂着的那条消息的作者在前）、变成了哪件任务，以及此刻哪几位 AI 队友正在里面回答。 */
+ * 话（挂着的那条消息的作者在前）、出了哪几件任务，以及此刻哪几位 AI 队友正在里面回答。 */
 export interface ThreadSummary {
   id: string
   room_id: string
@@ -25,7 +25,7 @@ export interface ThreadSummary {
   last_reply_at: string | null
   last_reply: ThreadReply | null
   participants: string[]
-  task: ThreadTask | null
+  tasks: ThreadTask[]
   /** 最后一条回复之后，AI 队友在这条支线里的一轮出错了。 */
   failed?: boolean
   /** 此刻在这条支线里有一轮在跑的 AI 队友（handle）。只在主线那一行上有。 */

@@ -10,13 +10,13 @@
 import type { Ref } from 'vue'
 import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
+import type { TaskLine } from '../../lib/channelTasks'
 import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { SplitMarker } from '../../lib/splitMarkers'
-import type { ProgressLevel } from '../../lib/taskProgress'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -26,10 +26,11 @@ import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
-import DispatchedMarker from '../DispatchedMarker.vue'
 import RoomHoverBar from '../room/RoomHoverBar.vue'
 import RoomMessage from '../room/RoomMessage.vue'
 import RoomNotice from '../room/RoomNotice.vue'
+import TaskCard from '../room/TaskCard.vue'
+import TaskCreatedPost from '../room/TaskCreatedPost.vue'
 import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
 
@@ -114,8 +115,10 @@ const props = defineProps<{
   pinnable?: boolean
   /** 已经置顶的那几条（block id）。 */
   pinnedIds?: ReadonlySet<string>
-  /** 这个频道里一件任务此刻到哪一档；不认得就是 null。 */
-  taskLevel?: (taskId: string) => ProgressLevel | null
+  /** 频道里一件任务的那张卡；不认得就是 null。 */
+  taskOf?: (taskId: string) => TaskLine | null
+  /** 从这条消息（或它的支线）出来的任务，按创建的先后。 */
+  tasksUnder?: (blockId: string) => TaskLine[]
 }>()
 
 const emit = defineEmits<{
@@ -168,6 +171,33 @@ function agentOf(block: Block, notice: PlatformNotice): NoticeAgent | null {
   if (notice.mode !== 'repeats') return props.noticeAgent(block, notice)
   const last = notice.rows[notice.rows.length - 1]
   return last.notice ? props.noticeAgent(last.block, last.notice) : null
+}
+
+// 「新建了任务」那一行：认得出那件任务时，画成新建它的人发出的一张任务卡。
+function createdTask(row: NoticeRow): TaskLine | null {
+  const notice = row.notice
+  if (!notice || notice.mode !== 'action' || !['split', 'task_created'].includes(notice.resource)) return null
+  const id = (row.block.meta as Record<string, unknown> | null | undefined)?.task_id
+  return typeof id === 'string' ? props.taskOf?.(id) ?? null : null
+}
+const createdTasks = computed(() => props.rows.map(createdTask))
+// 同一个人接连新建的几件，归在同一个名字下面：断开的条件和消息一样。
+const createdCont = computed(() =>
+  createdTasks.value.map((task, i) => {
+    const before = createdTasks.value[i - 1]
+    const row = props.rows[i]
+    const prev = props.rows[i - 1]
+    if (!task || !before || !task.creator || task.creator !== before.creator) return false
+    if (row.block.id === props.unreadAnchorId || dayKey(prev.block.created_at) !== dayKey(row.block.created_at))
+      return false
+    return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
+  })
+)
+function ownerName(task: TaskLine): string | null {
+  return task.owner ? (props.nameOf ?? String)(task.owner) : null
+}
+function under(blockId: string): TaskLine[] {
+  return props.tasksUnder?.(blockId) ?? []
 }
 
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
@@ -383,14 +413,33 @@ function emitOutboxLeave(el: Element, done: () => void) {
           <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
                这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻
                上。它不是消息，但会像 event 一样把消息分组打断。 -->
-          <DispatchedMarker
-            v-for="marker in splitMarkers.before.get(m.id) ?? []"
-            :key="marker.taskId"
-            :marker="marker"
+          <template v-for="marker in splitMarkers.before.get(m.id) ?? []" :key="marker.taskId">
+            <TaskCreatedPost
+              v-if="taskOf?.(marker.taskId)"
+              :task="taskOf!(marker.taskId)!"
+              :creator="taskOf!(marker.taskId)!.creator"
+              :creator-name="(nameOf ?? String)(taskOf!(marker.taskId)!.creator ?? '')"
+              :owner-name="ownerName(taskOf!(marker.taskId)!)"
+              :avatar="avatarOf(taskOf!(marker.taskId)!.creator ?? '')"
+              :time="fmtTime(marker.createdAt)"
+              @open="emit('open-card', $event)"
+            />
+          </template>
+          <TaskCreatedPost
+            v-if="createdTasks[i]"
+            :class="{ 'tl-arrive': arrived.has(m.id) }"
+            :task="createdTasks[i]!"
+            :creator="createdTasks[i]!.creator"
+            :creator-name="(nameOf ?? String)(createdTasks[i]!.creator ?? '')"
+            :owner-name="ownerName(createdTasks[i]!)"
+            :avatar="avatarOf(createdTasks[i]!.creator ?? '')"
+            :time="fmtTime(m.created_at)"
+            :cont="createdCont[i]"
+            :data-row-id="m.id"
             @open="emit('open-card', $event)"
           />
           <RoomNotice
-            v-if="notice"
+            v-else-if="notice"
             :class="{ 'tl-arrive': arrived.has(m.id) }"
             :block="m"
             :notice="notice"
@@ -407,7 +456,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :can-retry="i === retryIndex"
             :retrying="retryBusy"
             :project-id="topic?.project_id ?? null"
-            :task-level="taskLevel"
             :data-row-id="m.id"
             @animationend="settleRow"
             @open-resource="emitOpenResource"
@@ -474,30 +522,51 @@ function emitOutboxLeave(el: Element, done: () => void) {
           />
           <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
                带插槽的行每次重画都会跟着重画。 -->
-          <ThreadLine
-            v-if="!notice && threadable && m.thread"
-            class="tl-thread"
-            :summary="m.thread ?? null"
-            :replying="replyingFor?.(m) ?? null"
-            :status="threadStatusFor?.(m) ?? null"
-            :refs="refs"
-            :name-of="nameOf ?? String"
-            :avatar-of="avatarOf"
-            :task-level="taskLevel"
-            :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
-            @open="emit('open-thread', m)"
-          />
+          <!-- 这条消息下面：上面是支线里的讨论，下面是从它出来的任务。两样都有时合成一块。 -->
+          <div
+            v-if="!notice && threadable && (m.thread || under(m.id).length)"
+            class="tl-thread msg-work"
+            :class="{ 'msg-work--joined': !!m.thread && under(m.id).length > 0 }"
+          >
+            <ThreadLine
+              v-if="m.thread"
+              :summary="m.thread ?? null"
+              :replying="replyingFor?.(m) ?? null"
+              :status="threadStatusFor?.(m) ?? null"
+              :refs="refs"
+              :name-of="nameOf ?? String"
+              :avatar-of="avatarOf"
+              :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
+              @open="emit('open-thread', m)"
+            />
+            <div v-if="under(m.id).length" class="msg-work__tasks">
+              <TaskCard
+                v-for="task in under(m.id)"
+                :key="task.id"
+                :task="task"
+                :owner-name="ownerName(task)"
+                :in-list="!!m.thread"
+                @open="emit('open-card', $event)"
+              />
+            </div>
+          </div>
         </template>
       </template>
 
       <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还
              没人说过话的那些支线。 -->
-      <DispatchedMarker
-        v-for="marker in splitMarkers.tail"
-        :key="marker.taskId"
-        :marker="marker"
-        @open="emit('open-card', $event)"
-      />
+      <template v-for="marker in splitMarkers.tail" :key="marker.taskId">
+        <TaskCreatedPost
+          v-if="taskOf?.(marker.taskId)"
+          :task="taskOf!(marker.taskId)!"
+          :creator="taskOf!(marker.taskId)!.creator"
+          :creator-name="(nameOf ?? String)(taskOf!(marker.taskId)!.creator ?? '')"
+          :owner-name="ownerName(taskOf!(marker.taskId)!)"
+          :avatar="avatarOf(taskOf!(marker.taskId)!.creator ?? '')"
+          :time="fmtTime(marker.createdAt)"
+          @open="emit('open-card', $event)"
+        />
+      </template>
 
       <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,
              只是时间那一格写的是送达状态——「立即显示」是第一位的，送达状态是
@@ -576,6 +645,42 @@ function emitOutboxLeave(el: Element, done: () => void) {
 .tl-thread {
   margin-left: 54px;
   width: calc(100% - 70px);
+}
+/* 消息下面那一块：只有任务时，一件一张卡；支线和任务都有时，支线那一行在上，任务列在
+   下面一块白底里，合成一块。 */
+.msg-work {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.msg-work :deep(.thread-line) {
+  margin-top: 0;
+}
+.msg-work__tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.msg-work--joined {
+  max-width: 620px;
+  gap: 0;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+  overflow: hidden;
+}
+.msg-work--joined :deep(.thread-line) {
+  max-width: none;
+  margin-top: 0;
+  background: transparent;
+}
+.msg-work--joined .msg-work__tasks {
+  gap: 0;
+  margin: 0 6px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
 }
 .tl-content {
   position: relative;

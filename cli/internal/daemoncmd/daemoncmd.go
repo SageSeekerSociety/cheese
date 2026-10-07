@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -206,10 +207,15 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				ui.OK("Logged in.")
 			}
 			// What the server's commands need and this system lacks (on Windows:
-			// python3 and a POSIX shell) is placed now, so the first command sent
-			// to a machine announced as ready finds it.
+			// python3 and a POSIX shell; elsewhere a python3 new enough for the
+			// session's runner) is placed now, so the first command sent to a
+			// machine announced as ready finds it. Windows cannot run anything
+			// without it; elsewhere the service tries again when it starts.
 			if err := devenv.Ensure(context.Background(), cfg.Base, os.Stdout); err != nil {
-				return fmt.Errorf("prepare this machine: %w", err)
+				if runtime.GOOS == "windows" {
+					return fmt.Errorf("prepare this machine: %w", err)
+				}
+				ui.Warn("Could not prepare Python for sessions yet: %v", err)
 			}
 			// The install's own refusals (a binary it could never self-update,
 			// #501; a machine-wide connector already installed) are the whole

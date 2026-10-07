@@ -26,7 +26,7 @@ from app.main import app
 
 # The frozen list may only shrink. Lower this when you declare routes; raising
 # it lets a new route skip the declaration, which is what the list exists to stop.
-_CEILING = 409
+_CEILING = 406
 
 # The routes only a 芝士 credential may call. Widening one to ROUTE_DECIDES lets
 # a person's browser session through, so it is a decision, not a refactor:
