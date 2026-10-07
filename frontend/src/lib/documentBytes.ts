@@ -217,6 +217,13 @@ export function useDocumentPage(source: DocumentSource) {
     rendererMissing.value = false
   }
 
+  // 换了文件就先清空，和上面字节那一路同形：不清的话，切换期间屏幕上留着的是**另一
+  // 份文件**的页面，而下面那句「显示的是上一次的内容」在这里是错的——它不是这一份的
+  // 旧版本。同一份文件换版本不走这一条（`version` 不在其中），那时留旧的才对。
+  watch([source.topicId, source.path, source.task ?? (() => null), source.source ?? (() => 'live')], forget, {
+    flush: 'sync',
+  })
+
   watch(
     [
       source.topicId,

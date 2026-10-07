@@ -57,12 +57,14 @@ export interface PreviewViewProps {
   docLoading: boolean
   docError: string
   docRendererMissing: boolean
-  /** 读者挑的读法：网页那一档。默认还是转成 PDF 那一档。 */
-  docPage: boolean
+  /** 屏幕上这一份读的是不是网页那一档：读者挑了网页，而且这一份给得出网页。两个条件
+   *  都要，因为挑法是粘的（换文件不翻回去），而视图那几支问的是屏幕上有没有东西。默认
+   *  那一档仍然是转成 PDF。 */
+  docPage?: boolean
   /** 这一份有没有网页可换。只有 OfficeCLI 认得的那三种有，没有就不摆这个开关。 */
-  canPage: boolean
+  canPage?: boolean
   /** 网页那一页本身；还没取到就是 null。 */
-  docPageHtml: string | null
+  docPageHtml?: string | null
   /** 这一份 .docx 的修订：清单、只读、处理动作都在里面（`useDocumentRevisions.ts`）。 */
   revs: DocumentRevisionsBundle
   /** 在线编辑那一份会话：编辑器实例、盯版本、另存都在里面（`useRoomFileEditor.ts`）。 */

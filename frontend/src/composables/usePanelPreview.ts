@@ -714,7 +714,10 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docLoading,
     docError,
     docRendererMissing,
-    docPage,
+    // 递下去的是「这一份现在读成网页」，不是读者手上那个开关：开关是粘的（换文件不
+    // 翻回去），而屏幕上画得出来的只有这一份能画的那一种。两者只在能换的格式上相等
+    // ——那正是开关露面的地方——所以按钮的文案和图标不受影响。
+    docPage: wantPage,
     canPage,
     docPageHtml,
     // 在线编辑 + 历史（各自的取数那一包，原样递下去）

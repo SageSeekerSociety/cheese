@@ -621,7 +621,7 @@ async function onAnnotate(payload: AnnotateDraft) {
       <!-- 网页视图。同一份文档的另一种读法：排版按屏幕来，元素带着能寻址的编号
            （表格的 /数据/B2、演示稿的 /slide[1]/shape[@id=2]），那些编号正是芝士
            改这份文件时要用的。PDF 那条路没被换掉，默认也仍然是它。 -->
-      <div v-else-if="docPage" class="doc__body doc__body--page">
+      <div v-else-if="docPage" class="doc__body">
         <PreviewPage :html="docPageHtml" />
       </div>
       <div v-else class="doc__body">
