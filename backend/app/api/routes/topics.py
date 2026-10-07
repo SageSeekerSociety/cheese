@@ -17,7 +17,6 @@ from app.api.deps import (
     get_chat_service,
     get_work_runner,
 )
-from app.api.place import project_reader
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -295,7 +294,6 @@ async def list_topics(
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
     active_since: datetime | None = None,
-    topic: str = "",
     if_none_match: Annotated[str | None, Header()] = None,
 ) -> dict | Response:
     """The project's topics.
@@ -314,7 +312,8 @@ async def list_topics(
     `updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。
     没命中那条路仍然走 `ok()` 的信封，前端 `request()` 靠 `{code,message,data}` 解包。
     """
-    actor = await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     service = TopicService(db)
     topics, last_activity, total = await service.list_for_project(
         project_id,

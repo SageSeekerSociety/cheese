@@ -16,7 +16,6 @@ from app.api.deps import (
 from app.api.place import (
     channels_unseen,
     live_rooms_seen,
-    project_reader,
     rooms_seen,
 )
 from app.api.response import ok, page
@@ -330,7 +329,6 @@ async def list_weeklies(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
-    topic: str = "",
 ) -> dict:
     """周报集 (spec §7.1): project-wide weekly blocks, newest first.
 
@@ -339,11 +337,9 @@ async def list_weeklies(
     looks like right now, so that window is what tells two of them apart.
 
     These are the project's own words, and each is traceable to the room it was
-    written in via `topic_id`. ``topic`` is the caller naming its place, so the
-    caller that writes a weekly (``POST /topics/{id}/weekly``) can read the set
-    back: a per-turn credential is minted for one turn in one room, and a bare
-    ``authorize_project`` refuses it."""
-    actor = await project_reader(db, resolver, project_id, topic)
+    written in via `topic_id`."""
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     blocks = await weeklies_for_project(db, project_id)
     # Only from the channels the caller reads: a private one's stay in it.
@@ -360,7 +356,6 @@ async def list_project_tasks(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    topic: str = "",
 ) -> dict:
     """Every thread in the project, each with the card it currently rides on.
 
@@ -379,7 +374,8 @@ async def list_project_tasks(
     so every client gives the same answer (`room_task/presentation.py`). Two
     round trips still: it is computed from the two batches already fetched.
     """
-    actor = await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     # 四次批查询，各问一个领域。这条路由是拼装的人，所以它把三次窄读和一次服务
     # 调用按固定顺序摆在一起；每一次都走对方领域自己的公开读出口，不去碰别人的
@@ -473,7 +469,8 @@ async def project_progress(
     每一条都从已有的事实算出来（`project_progress.feed`）；读者看不见的私密频道、
     已经归档的频道里的事不在里面。
     """
-    actor = await project_reader(db, resolver, project_id, "")
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     happened = await progress_feed.recent(
         db,

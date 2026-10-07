@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.place import project_reader, readable_rooms
+from app.api.place import readable_rooms
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ValidationError
@@ -38,12 +38,11 @@ async def library_file_raw(
     path: str,
     db: DbSession,
     resolver: ActorResolverDep,
-    topic: str = "",
     preview_pdf: bool = False,
     version: uuid.UUID | None = None,
 ) -> Response:
     """一份资料的字节。给下载，也给 `cheese library get`——芝士 要读一份没有被这条
-    消息带上的资料时，只能自己来取（那时带着它干活的那个话题，见 `authorized_place`）。
+    消息带上的资料时，只能自己来取。
 
     `preview_pdf`：Office 文档转成 PDF，给资料库页预览。
 
@@ -52,7 +51,8 @@ async def library_file_raw(
     不让浏览器凭缓存直接用：一份资料可以被「替换为新版本」，同一个地址下的字节会
     变。"""
     await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     name = _library_path(path)
     data = (
         await library_records.version_bytes(db, project_id, name, version)
@@ -88,11 +88,11 @@ async def list_library_versions(
     path: str,
     db: DbSession,
     resolver: ActorResolverDep,
-    topic: str = "",
 ) -> dict:
     """一份资料的每一版（新的在前）：版本号、什么时候、谁放进来的、多大。"""
     await ProjectService(db).get_or_404(project_id)
-    await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     versions = await library_records.versions(db, project_id, _library_path(path))
     return ok({"versions": versions})
 
@@ -117,14 +117,15 @@ async def restore_library_version(
 
 @router.get("/{project_id}/library")
 async def list_library(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep, topic: str = ""
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
 
     Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
     room that has never seen that file."""
     await ProjectService(db).get_or_404(project_id)
-    actor = await project_reader(db, resolver, project_id, topic)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     files = library.list_library_files(project_id)
     rooms = await readable_rooms(db, resolver, actor, project_id)
     listed = await library_records.describe(db, project_id, files, rooms)
@@ -198,8 +199,8 @@ async def delete_library_file(
 ) -> dict:
     """扔掉一份资料。
 
-    这条路不收 `topic`：读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据
-    过不了 `authorize_project`，所以 芝士 连同它自己正在读的那一份都删不掉。"""
+    读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据在 `authorize_project`
+    那里只读得进来，所以 芝士 连同它自己正在读的那一份都删不掉。"""
     await _library_keeper(project_id, db, resolver)
     await library_records.remove(db, project_id=project_id, name=_library_path(path))
     await db.commit()

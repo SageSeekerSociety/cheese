@@ -246,8 +246,8 @@ async def save_shown_to_library(
 ) -> dict:
     """把房间里的这一份留进资料库 —— 只有人能按 (#1085 结论四)。
 
-    一轮里铸出来的凭据过不了 `authorize_project`，所以 芝士 摆得出东西，却留不下
-    它：这份东西以后还用不用得上，是人的判断。"""
+    一轮里铸出来的凭据在 `authorize_project` 那里只读得进来，所以 芝士 摆得出东西，
+    却留不下它：这份东西以后还用不用得上，是人的判断。"""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.require_verified_caller(project_id=place.project_id)
     await resolver.authorize_project(actor, project_id=place.project_id)

@@ -15,7 +15,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.project_access import may_read_project
+from app.auth.project_access import may_read_project, outsiders_reading
 from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.core.db import get_db
@@ -750,6 +750,10 @@ class ActorResolver:
     async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
         """Require a verified participant with project membership.
 
+        An agent's per-turn credential reads the project from the conversation
+        it was minted in instead (``authorize_reading_from``); what it writes
+        still needs the membership it does not have.
+
         A project that is not there is 404, not 403: the id is a UUID and
         answering "you are not a member of it" about a project that does not
         exist is a claim the guard cannot support. Not-found used to be what
@@ -765,12 +769,58 @@ class ActorResolver:
             if is_global_sandbox_token(self._cheese_token):
                 return  # Trusted development credential; anonymous access stays denied.
             raise AuthenticationRequiredError(say("signInForProject"))
+        conversation = self.turn_conversation(actor)
+        if conversation is not None and not self._writes:
+            await self.authorize_reading_from(
+                actor, project_id=project_id, conversation_id=conversation
+            )
+            return
         if await self._is_project_member(project_id, actor.handle):
             return
         if await ProjectRepository(self._session).get(project_id) is None:
             raise NotFoundError(say("projectNotFound"))
         _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
         raise ForbiddenError(say("projectMemberOnly"))
+
+    def turn_conversation(self, actor: Actor) -> uuid.UUID | None:
+        """The conversation an agent's per-turn credential was minted in, when
+        this request carries one (claims ``a`` and ``t``).
+
+        An agent holds no place on the project's roster: its standing is the
+        seat it works from, and the credential names that place, so a request
+        does not have to name it again.
+        """
+        if actor.via != "cheese" or self._screen_token:
+            return None
+        claims = scoped_token_claims(self._cheese_token)
+        if not claims or not claims.get("a") or not claims.get("t"):
+            return None
+        try:
+            return uuid.UUID(claims["t"])
+        except ValueError:
+            return None
+
+    async def authorize_reading_from(
+        self, actor: Actor, *, project_id: uuid.UUID, conversation_id: uuid.UUID
+    ) -> None:
+        """Let an agent read the project from the conversation it works in.
+
+        Two conditions. The agent sits in that conversation's room, the same
+        question ``authorize_topic`` asks of every room route. And everyone the
+        room shows its answer to may read the project themselves: what the
+        agent reads ends up in the room, so a room with somebody from outside
+        the project would hand that person what the project keeps from them.
+        """
+        if await conversations.project_of(self._session, conversation_id) != project_id:
+            raise ForbiddenError(say("projectMemberOnly"))
+        room_id = await conversations.room_of(self._session, conversation_id)
+        await self.authorize_topic(
+            actor, project_id=project_id, topic_id=room_id, enforce=True
+        )
+        if await outsiders_reading(
+            self._session, project_id=project_id, room_id=room_id
+        ):
+            raise ForbiddenError(say("projectReadsWithOutsiders"))
 
     async def authorize_task(self, actor: Actor, *, task_id: int) -> None:
         """Require a verified caller who may see this 赛题.
