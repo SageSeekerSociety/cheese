@@ -34,7 +34,7 @@ import { screenAgentName } from '@/lib/agentNames'
 import { relTime } from '@/lib/relTime'
 import accountService from '@/services/account'
 import { lastSeenOf, systemOf } from '@/types/devices'
-import { claudeLoginOf } from '@/types/ownAgents'
+import { claudeLoginOf, modelServiceOf } from '@/types/ownAgents'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
 // it: AccountService.loggedIn (set from localStorage `accessToken` + `user` at
@@ -422,7 +422,10 @@ function claudePlan(plan: string | null | undefined): string {
           <!-- 机主自己的 Claude Code 有没有在这台电脑上为平台登录（#2991）。登录后它跟着机主进项目。
                只有机主自己接入的电脑会带这一项，云端的机器不带。 -->
           <div v-if="'claude_code' in d" class="device__meta" data-testid="device-claude-code">
-            <template v-if="claudeLoginOf(d)?.logged_in">
+            <template v-if="modelServiceOf(claudeLoginOf(d)) !== null">
+              {{ t('account.devices.claudeCodeModelService', { model: modelServiceOf(claudeLoginOf(d)) }) }}
+            </template>
+            <template v-else-if="claudeLoginOf(d)?.logged_in">
               {{ t('account.devices.claudeCodeLoggedIn', { plan: claudePlan(claudeLoginOf(d)?.subscription_type) }) }}
             </template>
             <i18n-t v-else keypath="account.devices.claudeCodeLoggedOut" tag="span">

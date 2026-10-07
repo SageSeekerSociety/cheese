@@ -104,6 +104,16 @@ CHECKS: tuple[Check, ...] = (
         ),
     ),
     Check(
+        id="catalog-ratchet",
+        area=SCENES,
+        argv=("python", ".claude/scripts/catalog-ratchet.py", "--json"),
+        rules=(
+            ".claude/scripts/catalog-ratchet.py",
+            ".claude/scripts/frontend_grade.py",
+            ".claude/scripts/ratchet_report.py",
+        ),
+    ),
+    Check(
         id="fe-boundary",
         area=BOUNDARY,
         argv=("node", "scripts/import-boundary-ratchet.mjs", "--json"),
@@ -510,6 +520,9 @@ def fingerprint(
 NOT_A_RULE: dict[str, dict[str, str]] = {
     "scene-ratchet": {
         "frontend/scene-baseline.json": "baseline: the frozen scene debt",
+    },
+    "catalog-ratchet": {
+        "frontend/catalog-baseline.json": "baseline: the grade-A components not in the catalog yet",
     },
     "fe-boundary": {
         "frontend/import-boundary-baseline.json": "baseline: the frozen boundary violations",

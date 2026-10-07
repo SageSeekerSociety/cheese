@@ -105,6 +105,7 @@ async def latest_task_snapshot(
             "snapshot_sha": row.snapshot_sha,
             "head_sha": row.head_sha,
             "digest": row.digest,
+            "created_at": row.created_at.isoformat(),
         }
     )
 
@@ -199,6 +200,9 @@ async def task_workspace(
             "room_id": str(task.room_id),
             "branch": task.branch_name,
             "base": task.base_branch,
+            # The last head of this task that landed: what a checkout still on
+            # an earlier branch carries over from (`cheese worktree`).
+            "landed": task.delivered_head,
             "closed": task.status == "closed",
             "merge_queued_pr": queued,
             "remote": binding.url,

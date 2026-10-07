@@ -34,7 +34,7 @@ async def _current_board(db) -> dict:
     return build_board(
         rows,
         repo=repo,
-        deployed_commit=settings.app_version,
+        deployed_commit=settings.released_commit,
         total_stored=await store.count(repo),
     )
 

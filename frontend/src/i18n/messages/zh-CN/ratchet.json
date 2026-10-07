@@ -77,6 +77,7 @@
   },
   "check": {
     "sceneRatchet": "能独立运行的前端场景",
+    "catalogRatchet": "进了组件预览站的独立组件",
     "feBoundary": "前端边界",
     "beContracts": "后端契约",
     "domainImportGuard": "领域导入守卫",

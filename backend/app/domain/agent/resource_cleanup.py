@@ -76,7 +76,7 @@ SEATS_DIR = "seats"
 # "this room never had an executor" for a room that has one running, and the
 # answer is acted on: the detached daemon is left alive under a home that is
 # then removed from under it, the private seat it holds is never released, and
-# publication is checked on a branch meant for rooms without an executor.
+# its room directory is taken for one from before rooms had an executor.
 PLATFORM_DIRS = (FOOTPRINT_ROOT, ".claude")
 
 # How long an archived room's processes get to leave on their own before the
@@ -96,8 +96,8 @@ class StillRunning(RuntimeError):
     """The room is not quiescent yet — the one refusal that time may overrule.
 
     Every other RuntimeError the checks raise is a safety refusal (another
-    user's socket, a session that does not identify this resource, unpublished
-    work), and no amount of waiting makes those go away, so nothing escalates
+    user's socket, a session that does not identify this resource), and no
+    amount of waiting makes those go away, so nothing escalates
     on them.
     """
 
@@ -300,58 +300,6 @@ def git(args: list[str], cwd: Path, home: Path | None) -> subprocess.CompletedPr
     return run_command(argv, cwd=cwd)
 
 
-def check_published(
-    work: Path,
-    *,
-    home: Path | None = None,
-    canonical: bool = False,
-    own_branch: bool = False,
-) -> None:
-    """Refuse if `work` holds anything its remote does not.
-
-    `own_branch` limits the commit check to what this checkout has checked
-    out. A task checkout shares its repository with every other task of the
-    room, so the repository's branches are theirs too, and one of them not
-    yet pushed would otherwise keep every finished task on the disk.
-    """
-    if not work.exists():
-        return
-    if not (work / ".git").exists():
-        if any(work.iterdir()):
-            raise RuntimeError("nonempty checkout has no Git publication record")
-        return
-    dirty = git(["status", "--porcelain", "--untracked-files=all"], work, home)
-    if dirty.returncode or dirty.stdout.strip():
-        raise RuntimeError("checkout has unpublished working-tree changes")
-    if not canonical:
-        check_published_commits(
-            work, home=home, include_head=True, branches=not own_branch
-        )
-
-
-def check_published_commits(
-    repo: Path,
-    *,
-    home: Path | None = None,
-    include_head: bool = False,
-    branches: bool = True,
-) -> None:
-    unpublished = git(
-        [
-            "rev-list",
-            *(["--branches"] if branches else []),
-            *(["HEAD"] if include_head else []),
-            "--not",
-            "--remotes=origin",
-            "--glob=refs/cheese/published/*",
-        ],
-        repo,
-        home,
-    )
-    if unpublished.returncode or unpublished.stdout.strip():
-        raise RuntimeError("checkout has unpublished commits")
-
-
 def check_no_writers(paths: list[Path]) -> None:
     """Refuse if anything holds a file or a working directory under these.
 
@@ -439,32 +387,14 @@ def end_holders(paths: list[Path]) -> None:
             return
 
 
-def check_resource_publication(home: Path, work: Path) -> None:
-    """Check both legacy checkouts and task worktrees before deleting a home."""
-    check_published(work, home=home)
-    check_published(home / CHECKOUT_DIR, home=home)
-    tasks = home / ".cheese/tasks"
-    if tasks.is_symlink():
-        raise RuntimeError("task storage is a symlink")
-    if tasks.exists():
-        for task in tasks.iterdir():
-            if task.is_symlink() or not task.is_dir():
-                raise RuntimeError("unrecognized entry in task storage")
-            check_published(task, home=home)
-    # A removed checkout can leave the only copy of a branch in the bare cache.
-    repositories = home / ".cheese/repositories"
-    for repo in repositories.glob("*.git"):
-        check_published_commits(repo, home=home)
-
-
 def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
-    """Remove the checkouts of these closed tasks whose work is on the forge.
+    """Remove the checkouts of these closed tasks.
 
-    The platform names the tasks; this decides, per checkout, whether removing
-    it loses anything: what `check_published` refuses — files not committed,
-    commits not pushed — stays, and so does a checkout something still has
-    open. Each kept one comes back with the reason. A checkout that is not
-    there is already done, so the same list can be sent again and again.
+    The platform names the tasks. A closed task's work went to its branch and
+    snapshot at each turn's checkpoint, so nothing here waits on publication;
+    only a checkout something still has open stays, and comes back with the
+    reason. A checkout that is not there is already done, so the same list can
+    be sent again and again.
     """
     root = home / FOOTPRINT_ROOT / "tasks"
     if root.is_symlink():
@@ -476,14 +406,8 @@ def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
         if path.is_symlink() or (path.exists() and not path.is_dir()):
             kept[task] = "unrecognized entry in task storage"
             continue
-        if not path.exists():
-            continue
-        try:
-            check_published(path, home=home, own_branch=True)
-        except RuntimeError as exc:
-            kept[task] = str(exc)
-            continue
-        candidates.append(path)
+        if path.exists():
+            candidates.append(path)
     try:
         check_no_writers(candidates)
         free = candidates
@@ -504,6 +428,65 @@ def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
         for repo in (home / FOOTPRINT_ROOT / "repositories").glob("*.git"):
             git(["worktree", "prune"], repo, home)
     return {"removed": [path.name for path in free], "kept": kept}
+
+
+# What the platform sets `CHEESE_KEEP_URL` to for a home whose room files are
+# in the bucket already.
+KEPT_ALREADY = "-"
+
+
+def kept_room_files(home: Path, executor: dict | None) -> Path | None:
+    """The room directory of a home from before rooms had an executor, when it
+    holds files: such a room worked in `room/` directly, with no repository
+    behind it, so those files are on no forge. None for any other home."""
+    room = home / CHECKOUT_DIR
+    if executor is not None or room.is_symlink() or not room.is_dir():
+        return None
+    if (room / ".git").exists() or not any(room.iterdir()):
+        return None
+    return room
+
+
+def keep_room_files(home: Path, executor: dict | None, url: str, resource: str):
+    """Send what `kept_room_files` finds to the bucket, as one gzipped tar, by a PUT to
+    `url` (presigned by the platform). Links are stored as links. Returns the
+    archive's size and MD5, which the platform holds against what the bucket
+    reports, or None when the home has no such files."""
+    import hashlib
+    import urllib.request
+
+    room = kept_room_files(home, executor)
+    if room is None:
+        return None
+    if not url:
+        raise RuntimeError("the room holds files and there is no bucket to keep them")
+    scratch = Path.home() / FOOTPRINT_ROOT / "cleanup"
+    scratch.mkdir(parents=True, exist_ok=True)
+    archive = scratch / (str(uuid.UUID(resource)) + ".room.tar.gz")
+    try:
+        with tarfile.open(archive, "w:gz") as bundle:
+            bundle.add(room, arcname=CHECKOUT_DIR, recursive=True)
+        digest = hashlib.md5()  # noqa: S324 — the bucket's ETag of one PUT
+        with archive.open("rb") as source:
+            for block in iter(lambda: source.read(1 << 20), b""):
+                digest.update(block)
+        size = archive.stat().st_size
+        with archive.open("rb") as source:
+            request = urllib.request.Request(
+                url,
+                data=source,
+                method="PUT",
+                headers={
+                    "Content-Length": str(size),
+                    "Content-Type": "application/gzip",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=600) as response:
+                if response.status // 100 != 2:
+                    raise RuntimeError(f"bucket answered {response.status}")
+        return {"size": size, "md5": digest.hexdigest()}
+    finally:
+        archive.unlink(missing_ok=True)
 
 
 def remove_tree(path: Path) -> None:
@@ -969,18 +952,25 @@ def main() -> None:
                 os.replace(temporary, receipt)
                 sync_directory(directory)
         print(json.dumps({"ready": True}))
-    elif action == "publication":
-        # Central workspaces hold generated context. Project publication is
-        # checked on the separately inventoried execution device.
-        if executor is None:
-            check_resource_publication(home, work)
-        print(json.dumps({"published": True}))
+    elif action == "keep-room":
+        # `cleanup` and `room` are unused; the URL to send to is in the
+        # environment, which no other user on the machine can read.
+        kept = keep_room_files(
+            home, executor, os.environ.get("CHEESE_KEEP_URL", ""), resource
+        )
+        print(json.dumps({"kept": kept}))
     elif action == "remove":
         # The caller recorded this generation before granting deletion permission.
         # A reopened room uses another UUID, even on the same physical device.
         check_no_writers([home, work])
-        if executor is None:
-            check_resource_publication(home, work)
+        # A room from before rooms had an executor sends its files to the
+        # bucket first, unless they were sent already (`KEPT_ALREADY`).
+        url = os.environ.get("CHEESE_KEEP_URL", "")
+        kept = (
+            None
+            if url == KEPT_ALREADY
+            else keep_room_files(home, executor, url, resource)
+        )
         if found is not None and found[0]["kind"] == "private":
             helper = runpy.run_path(str(private_helper(home, found[1])))
             helper["release"](found[0])
@@ -994,7 +984,7 @@ def main() -> None:
         # Last: until the room's directories are gone, they are a sandboxed
         # room's to have written.
         sandbox_marker(home).unlink(missing_ok=True)
-        print(json.dumps({"removed": True}))
+        print(json.dumps({"removed": True, "kept": kept}))
     elif action == "tasks":
         # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.
         print(json.dumps(remove_task_checkouts(home, tasks)))

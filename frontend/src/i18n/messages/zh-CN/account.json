@@ -544,7 +544,8 @@
     "copyId": "复制设备 ID",
     "copiedId": "已复制设备 ID",
     "thisDevice": "这台设备",
-    "lastSeen": "离线 · 上次在线 {when}"
+    "lastSeen": "离线 · 上次在线 {when}",
+    "claudeCodeModelService": "Claude Code · 自定义模型服务（{model}）"
   },
   "connections": {
     "lede": "接入自己的邮箱或飞书，并选择允许哪些项目的 AI 队友使用。AI 队友以你的账号读邮件、写草稿、读写飞书文档，邮件须经你确认后才会发出",
@@ -657,7 +658,7 @@
     "save": "保存",
     "teamsFailed": "保存失败",
     "loadFailed": "加载失败",
-    "claudeHint": "用你自己的 Claude 账号运行，只有你能在项目里叫它",
+    "claudeHint": "用你自己的 Claude 账号或模型服务运行，只有你能在项目里叫它",
     "claudeLogin": "登录 Claude Code",
     "claudeApiKey": "使用 API key",
     "claudePreparing": "正在准备 Claude Code",
@@ -670,7 +671,15 @@
     "disconnectTitle": "断开这台设备",
     "disconnectBody": "断开后，AI 队友不再在这台设备上运行任务，正在运行的任务会停止",
     "disconnect": "断开",
-    "disconnectConfirm": "断开这台设备？"
+    "disconnectConfirm": "断开这台设备？",
+    "claudeModelService": "使用自定义模型服务（{model}）",
+    "modelServiceOpen": "使用自定义模型服务",
+    "modelServiceUrl": "服务地址",
+    "modelServiceToken": "密钥",
+    "modelServiceModel": "模型名称",
+    "modelServiceSave": "保存",
+    "modelServiceHint": "支持兼容 Anthropic 接口的服务，如 GLM、Kimi、DeepSeek。密钥只保存在这台电脑上",
+    "modelServiceFailed": "自定义模型服务保存失败，检查地址、密钥和模型名称后重试"
   },
   "connectFlow": {
     "askTitle": "接入这台设备",

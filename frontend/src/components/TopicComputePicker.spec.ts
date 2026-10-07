@@ -148,7 +148,7 @@ describe('room work computer choice', () => {
     setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
     const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    expect(screen.getByText(/频道里所有 AI 队友共用这一台/)).toBeTruthy()
+    expect(screen.getByText(/频道里所有 AI 队友共用这一个环境.*推没推上去都会更换/)).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
     await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab, {}))
     expect(emitted().changed).toHaveLength(1)
@@ -194,21 +194,15 @@ describe('room work computer choice', () => {
     expect((await screen.findByRole('status')).textContent).toContain('这一步等 @andyl 点头。')
     expect(emitted().changed).toBeUndefined()
   })
-  it('offers to switch without pushing only when the old machine is unreachable', async () => {
-    setTopicComputeChoice.mockRejectedValueOnce(
-      new ApiError(409, '原来那台工作电脑连不上，无法推送改动，没有更换', 'WorkComputerUnreachable')
-    )
+  it('shows a refused switch and offers no way around it', async () => {
+    setTopicComputeChoice.mockRejectedValueOnce(new ApiError(409, '正在准备环境，稍后再换', 'ConflictError'))
     const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
-    expect((await screen.findByRole('alert')).textContent).toContain('连不上')
-
-    setTopicComputeChoice.mockResolvedValueOnce({ choice: lab, proposal: null })
-    await fireEvent.click(screen.getByTestId('room-machine-abandon'))
-    await waitFor(() =>
-      expect(setTopicComputeChoice).toHaveBeenLastCalledWith('topic-1', lab, { abandonUnpushed: true })
-    )
-    expect(emitted().changed).toHaveLength(1)
+    expect((await screen.findByRole('alert')).textContent).toContain('正在准备环境')
+    expect(setTopicComputeChoice).toHaveBeenLastCalledWith('topic-1', lab, {})
+    expect(screen.queryByRole('button', { name: /不推送/ })).toBeNull()
+    expect(emitted().changed).toBeUndefined()
   })
 })
 

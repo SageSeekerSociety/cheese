@@ -207,6 +207,8 @@ async def notify_question(
                 "topicTitle": place.title,
                 "question": question,
                 "asker": asker,
+                # 邮件里称呼提问的那位用它自己的名字（`letter.py`）。
+                "agentName": await _agent_name(session, place.project_id, asker),
                 # 那条提问消息：通知据它定位到房间里的那一行。
                 "blockId": str(block.id),
             },
@@ -340,6 +342,12 @@ async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
         if not pending:
             done.append(uuid.UUID(notice))
     return done
+
+
+async def _agent_name(session: AsyncSession, project_id, seat: str) -> str:
+    """The name ``seat``'s teammate goes by in this project, or "" if unknown."""
+    instance = await instance_of_seat(session, project_id, seat)
+    return instance.display_name if instance is not None else ""
 
 
 async def instance_of_seat(session: AsyncSession, project_id, seat: str):

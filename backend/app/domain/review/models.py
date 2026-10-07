@@ -12,6 +12,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -19,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -138,6 +140,11 @@ class AcceptCard(UuidPk, Timestamps, Base):
     deliverable_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # `link`：交出去的是一个地址（网站、看板），只记指针。
     deliverable_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # 这次交付是不是这件任务的最后一步，递卡的人声明。是：采纳后任务完成、关闭。
+    # 不是：采纳后任务还开着，下一步从项目最新的代码接着做。
+    completes_task: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
     status: Mapped[AcceptStatus] = mapped_column(
         Enum(AcceptStatus, native_enum=False, length=16),
         default=AcceptStatus.pending,

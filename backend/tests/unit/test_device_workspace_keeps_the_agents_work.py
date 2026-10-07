@@ -321,6 +321,77 @@ def test_reopening_a_task_preserves_unpushed_commits_and_dirty_files(device):
     assert (work / "draft.txt").read_text() == "unfinished"
 
 
+def _land(remote, tmp, info, step):
+    """The forge squash-merges the task's branch into main, and the platform
+    moves the task onto its next step's branch."""
+    landed = git(remote, "rev-parse", info["branch"])
+    land = tmp / "land"
+    if not land.exists():
+        git(tmp, "clone", "-q", str(remote), str(land))
+        git(land, "config", "user.name", "forge")
+        git(land, "config", "user.email", "forge@example.com")
+    git(land, "fetch", "-q", "origin")
+    git(land, "checkout", "-q", "-B", "main", "origin/main")
+    git(land, "merge", "-q", "--squash", "origin/" + info["branch"])
+    git(land, "commit", "-q", "-m", f"step {step} (#4{step})")
+    git(land, "push", "-q", "origin", "main")
+    info["branch"] = info["branch"].split("-")[0] + f"-{step + 1}"
+    info["landed"] = landed
+
+
+def test_a_step_that_landed_moves_the_task_onto_the_latest_code(device, tmp_path):
+    # A task delivering in steps goes on from the project's latest code: what
+    # had not landed comes along, and the landed step is not delivered twice.
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    info = tasks[task]
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("step one\n")
+    git(work, "add", "same.txt")
+    git(work, "commit", "-m", "feat: step one")
+    _land(remote, tmp_path, info, 1)
+    (work / "later.txt").write_text("step two\n")
+    git(work, "add", "later.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "feat: step two")
+    (work / "draft.txt").write_text("unfinished")
+
+    assert cli._task_worktree(task) == work
+
+    assert git(work, "symbolic-ref", "--short", "HEAD") == info["branch"]
+    assert git(work, "log", "--format=%s", "origin/main..HEAD") == "feat: step two"
+    assert (work / "same.txt").read_text() == "step one\n"
+    assert (work / "draft.txt").read_text() == "unfinished"
+    (work / "draft.txt").write_text("done")
+    git(work, "add", "draft.txt")
+    git(work, "commit", "-m", "feat: finish step two")
+    delivered = git(remote, "log", "--format=%s", f"main..{info['branch']}")
+    assert delivered.splitlines() == ["feat: finish step two", "feat: step two"]
+
+
+def test_a_checkout_whose_unlanded_work_conflicts_stays_where_it_was(device, tmp_path):
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    info = tasks[task]
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("step one\n")
+    git(work, "add", "same.txt")
+    git(work, "commit", "-m", "feat: step one")
+    earlier = info["branch"]
+    _land(remote, tmp_path, info, 1)
+    # Someone else changes the same line on main meanwhile.
+    land = tmp_path / "land"
+    (land / "same.txt").write_text("theirs\n")
+    git(land, "commit", "-qam", "other work")
+    git(land, "push", "-q", "origin", "main")
+    (work / "same.txt").write_text("mine\n")
+
+    with pytest.raises(SystemExit):
+        cli._task_worktree(task)
+
+    assert git(work, "symbolic-ref", "--short", "HEAD") == earlier
+    assert (work / "same.txt").read_text() == "mine\n"
+
+
 def test_failed_push_leaves_work_and_a_durable_failure_log(device):
     cli, tasks, remote, _ = device
     task = next(iter(tasks))

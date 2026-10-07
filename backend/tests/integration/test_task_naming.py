@@ -225,21 +225,16 @@ def _backed_off(task_id: str) -> bool:
     return bool(r.exists(f"task-naming:backoff:{task_id}"))
 
 
-def _proposed(client, alice, title: str) -> str:
-    """A task an AI teammate proposed under ``title`` and a person created."""
+def _by_teammate(client, alice, title: str) -> str:
+    """A task an AI teammate created under ``title``."""
     room = _project(client, alice)["root_topic_id"]
-    proposal = client.post(
-        f"/topics/{room}/task-proposals",
+    made = client.post(
+        f"/topics/{room}/teammate-tasks",
         json={"title": title, "summary": "把旧表搬到新表"},
         headers=room_agent_headers(client, room),
     )
-    assert proposal.status_code == 200, proposal.text
-    accepted = client.post(
-        f"/topics/{room}/task-proposals/{proposal.json()['data']['id']}/accept",
-        headers=alice,
-    )
-    assert accepted.status_code == 200, accepted.text
-    return accepted.json()["data"]["id"]
+    assert made.status_code == 200, made.text
+    return made.json()["data"]["id"]
 
 
 # ---------- naming ----------
@@ -595,12 +590,12 @@ def test_a_rename_computed_while_a_person_renamed_is_dropped(client, alice, gate
 # ---------- proposed tasks ----------
 
 
-def test_a_proposed_task_keeps_its_title_until_its_direction_changes(
+def test_a_task_a_teammate_created_keeps_its_title_until_its_direction_changes(
     client, alice, gateway
 ):
-    """An AI teammate's proposal names the task, and the platform does not
+    """The AI teammate that creates a task names it, and the platform does not
     second-guess it after the first turn; only a change of direction does."""
-    tid = _proposed(client, alice, "迁移旧数据")
+    tid = _by_teammate(client, alice, "迁移旧数据")
     assert _shown(client, tid) == ("迁移旧数据", "auto")
     _say(client, tid, "先从用户表开始")
     for reason in ("message", "turn"):

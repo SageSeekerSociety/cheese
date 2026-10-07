@@ -378,16 +378,50 @@ def test_a_document_is_written_with_the_machine_out_of_reach():
 # --- tasks and acceptance --------------------------------------------------
 
 
-def test_task_only_proposes_and_touches_nothing_else():
-    """An AI teammate does not create a task: it proposes one in the room, and a
-    person decides. Proposing reads no file and pushes no branch."""
-    host = Host({("POST", f"/topics/{_ROOM}/task-proposals"): {"id": "block-1"}})
-    out = run("cheese_task", {"title": "查一下分页", "summary": "干这个"}, host)
+def test_a_task_someone_asked_for_is_created_started_and_touches_nothing_else():
+    """Asked to do something, an AI teammate creates the task and starts it for
+    the person who asked. Creating one reads no file and pushes no branch."""
+    host = Host(
+        {
+            ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
+                "id": "task-1",
+                "title": "查一下分页",
+                "owner_handle": "lisi",
+                "started": True,
+            }
+        }
+    )
+    out = run(
+        "cheese_task",
+        {"title": "查一下分页", "summary": "干这个", "owner": "lisi", "start": True},
+        host,
+    )
     [plan] = host.requests
-    assert plan["path"] == f"/topics/{_ROOM}/task-proposals"
-    assert plan["body"] == {"title": "查一下分页", "summary": "干这个"}
+    assert plan["path"] == f"/topics/{_ROOM}/teammate-tasks"
+    assert plan["body"]["start"] is True
+    assert plan["body"]["owner_handle"] == "lisi"
     assert host.synced == []
     assert "查一下分页" in out
+
+
+def test_a_task_that_could_not_start_tells_the_teammate_to_ask():
+    host = Host(
+        {
+            ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
+                "id": "task-1",
+                "title": "查一下分页",
+                "owner_handle": "lisi",
+                "started": False,
+                "not_started_because": "没有审阅人",
+            }
+        }
+    )
+    out = run(
+        "cheese_task",
+        {"title": "查一下分页", "summary": "干这个", "start": True},
+        host,
+    )
+    assert "没有审阅人" in out
 
 
 def test_a_lock_someone_else_holds_is_a_refusal():

@@ -58,22 +58,22 @@ def test_a_message_in_a_private_chat_does_not_become_a_task(client):
     assert _tasks(client, chat) == []
 
 
-def test_no_task_is_proposed_in_a_private_chat(client):
+def test_an_ai_teammate_creates_no_task_in_a_private_chat(client):
     project, chat = _private_chat(client)
     token = mint_scoped_token(
         project_id=project, topic_id=chat, agent_handle=room_agent_seat(client, chat)
     )
 
     r = client.post(
-        f"/topics/{chat}/task-proposals",
-        json={"title": "整理周报", "summary": "每周五汇总"},
+        f"/topics/{chat}/teammate-tasks",
+        json={"title": "整理周报", "summary": "每周五汇总", "start": True},
         headers={"X-Cheese-Token": token},
     )
 
     assert 400 <= r.status_code < 500
     assert (
         client.get(
-            f"/topics/{chat}/task-proposals", headers=session_auth_headers("alice")
-        ).json()["data"]
+            f"/topics/{chat}/tasks", headers=session_auth_headers("alice")
+        ).json()["data"]["data"]
         == []
     )

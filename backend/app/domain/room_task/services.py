@@ -381,7 +381,11 @@ class TaskService:
             parent = await self.require_in_room(room_id, base_task_id)
             if parent.branch_name is None:
                 raise ValidationError(say("pastTaskNoBranch"))
-            if parent.accepted_at is None and parent.delivered_head is None:
+            # An open task's branch holds its step still to land; a closed
+            # task's landed, unless it never delivered.
+            if parent.status == TaskStatus.open or (
+                parent.accepted_at is None and parent.delivered_head is None
+            ):
                 base = parent.branch_name
         task = await self._repo.add(
             project_id=project_id,
@@ -399,6 +403,34 @@ class TaskService:
         )
         self._name_branch(task)
         task.base_branch, task.base_task_id = base, base_task_id
+        await self._session.flush()
+        return task
+
+    async def next_step(self, task: Task) -> None:
+        """A delivery of ``task`` landed and the task goes on: its next one is
+        made on a branch of its own, cut from the project's latest code, and
+        opens a PR of its own. The machine moves the task's checkout onto it
+        (`cheese worktree`), carrying what had not landed."""
+        from app.domain.project.forge import default_branch
+
+        task.base_branch = await default_branch(task.project_id, self._session)
+        task.base_task_id = None
+        task.branch_name = _next_branch(task)
+        task.pr_number = task.pr_url = None
+        task.last_check_at = task.last_check_ok = None
+        task.last_check_detail = ""
+        await self._session.flush()
+
+    async def reopen(self, task: Task) -> Task:
+        """重新打开：the task is going again. One that has landed something goes
+        on from the project's latest code, like a task whose step landed."""
+        if task.status is not TaskStatus.closed:
+            raise ValidationError(say("taskStillOpen"))
+        task.status = TaskStatus.open
+        task.closed_at = None
+        task.conclusion = None
+        if task.branch_name is not None and task.delivered_head is not None:
+            await self.next_step(task)
         await self._session.flush()
         return task
 
@@ -549,6 +581,15 @@ class RoomLockService:
             return "这个房间自己正在改它"
         task = await TaskRepository(self._session).get(lock.holder_task_id)
         return f"「{task.title}」正在改它" if task else "另一条活正在改它"
+
+
+def _next_branch(task: Task) -> str:
+    """``task/<id>`` for a task's first delivery, ``task/<id>-2`` for its
+    second, and so on."""
+    first = f"task/{task.id.hex[:8]}"
+    current = task.branch_name or first
+    step = current.removeprefix(first + "-")
+    return f"{first}-{int(step) + 1 if step.isdigit() else 2}"
 
 
 def said_title(task: Task) -> str:

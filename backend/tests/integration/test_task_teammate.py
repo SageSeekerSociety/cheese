@@ -70,10 +70,10 @@ def _instructed(client, task: str) -> list[str]:
     return client.portal.call(read)
 
 
-def test_a_task_a_teammate_proposed_is_worked_by_that_teammate(client):
+def test_a_task_a_teammate_created_is_worked_by_that_teammate(client):
     project, channel, seat = _channel_with_teammate(client)
-    proposed = client.post(
-        f"/topics/{channel}/task-proposals",
+    created = client.post(
+        f"/topics/{channel}/teammate-tasks",
         json={"title": "堵住公开的调试接口", "summary": "调试接口要求登录"},
         headers={
             "X-Cheese-Token": mint_scoped_token(
@@ -81,15 +81,9 @@ def test_a_task_a_teammate_proposed_is_worked_by_that_teammate(client):
             )
         },
     )
-    assert proposed.status_code == 200, proposed.text
 
-    accepted = client.post(
-        f"/topics/{channel}/task-proposals/{proposed.json()['data']['id']}/accept",
-        headers=session_auth_headers("alice"),
-    )
-
-    assert accepted.status_code == 200, accepted.text
-    task = accepted.json()["data"]["id"]
+    assert created.status_code == 200, created.text
+    task = created.json()["data"]["id"]
     assert _worked_by(client, task) == seat
     assert _instructed(client, task) == [seat]
 

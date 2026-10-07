@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
@@ -17,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
-from app.core.sentences import exception_text, say
+from app.core.sentences import say
 from app.domain.agent import execution
 from app.domain.agent.compute_configs import (
     ComputeChoice,
@@ -50,25 +49,22 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine import lease_claim
 from app.domain.machine.lease_claim import still_preparing
-from app.domain.machine.lifecycle import SandboxBusy, SandboxHomeError, SandboxLifecycle
+from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
     EXECUTOR_SETUP_FAILED,
     LOST_KEY,
     SANDBOX_LOST,
-    SANDBOX_RESTORE_FAILED,
-    SANDBOX_WAKING,
+    SANDBOX_PREPARING,
+    VM_PREPARING,
     _cloud_progress,
-    _home_moved,
-    _home_settled,
-    waiting_on_host,
+    _home_removed,
 )
 from app.domain.machine.services import (
     CloudKeepsFailing,
     CloudPoolFull,
     HostPool,
-    SandboxMustMove,
 )
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
@@ -338,17 +334,10 @@ class SessionWorking(ConflictError):
     machine away from a turn (``if_idle``, the project's bulk switch)."""
 
 
-class WorkComputerUnreachable(ConflictError):
-    """The machine a session is leaving could not run the push before a switch.
-
-    The one refusal a person may override (``abandon_unpushed``): the work on
-    that machine stays there, and a switch made anyway leaves it behind."""
-
-
-# How long a switch waits for the machine it leaves to push. The executor gives
-# a command 120s and then reports it as still running (``runtime.bash``).
+# How long a switch, a room's cleanup or a VM's release waits for the
+# checkpoint on the machine it leaves. The executor gives a command 120s and then
+# reports it as still running (``runtime.bash``).
 PUSH_WAIT_S = 150.0
-PUSH_UNREACHABLE = say("switchOldComputerUnreachable")
 WORKING = say("switchWhileWorking")
 
 
@@ -366,36 +355,24 @@ async def _room_is_working(db, topic_id) -> bool:
     return running is not None
 
 
-async def push_before_switch(
-    lease: dict, start: Callable[[], Awaitable[dict]], *, keeps_files: bool
-) -> list[str]:
-    """Push the session's work to its branches on the machine it is leaving.
+async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
+    """One best-effort checkpoint on the machine a session is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
     --all``): every task checkout's unpushed commits go to its branch, and
-    what is not committed is backed up as a snapshot ``cheese recover``
-    restores; a checkout with neither is not touched, so the push costs what
-    is unpushed rather than how many tasks the room has opened. Raises
-    ``WorkComputerUnreachable`` when the command could not run at all, and a
-    ``ConflictError`` with the machine's own words when it ran and failed.
+    what is not committed is backed up as a snapshot. Whatever happens — the
+    machine is away, the command fails or outlasts ``PUSH_WAIT_S`` — the caller
+    goes on: what a lost checkpoint loses is what changed since the last
+    turn's, which the platform snapshot of that turn already holds. Answers
+    whether it ran to the end, for the log.
 
-    Except for closed tasks on a machine that ``keeps_files`` (a self-hosted
-    one, left as it is): a closed task is never pushed, only backed up, and
-    its checkout stays on that machine after the switch, so a backup it could
-    not make loses nothing. Those come back as warnings, one line per task,
-    and the switch goes on. A cloud sandbox's directory is not kept for the
-    session once it left, so there they refuse it like any other failure.
-
-    The session's executor runs only while the session is in use, so on a
-    machine that is online an idle session usually has none. ``start`` brings
-    it up the way a tool call would before the push, and only a machine that
-    is away, or that cannot start it, is unreachable. One that is running an
-    older release is started again too: its ``cheese`` is the one it was
-    installed with, and a sync fixed since would still fail there the old way.
+    The session's executor runs only while the session is in use, so ``start``
+    brings it up the way a tool call would; one running an older release is
+    started again too, since its ``cheese`` is the one it was installed with.
     """
-    # A lease that never finished installing has no executor to run the push.
+    # A lease that never finished installing has no executor to run it.
     if not lease.get("state") or not _reachable(device_hub, lease["device_id"]):
-        raise WorkComputerUnreachable(PUSH_UNREACHABLE)
+        return False
     try:
         try:
             running = await execution.call(lease, "ping", {}, hub=device_hub)
@@ -406,61 +383,58 @@ async def push_before_switch(
         result = await execution.call(
             lease,
             "control",
-            {"subtype": "checkpoint", "request_id": f"switch-{uuid.uuid4()}"},
+            {"subtype": "checkpoint", "request_id": f"leave-{uuid.uuid4()}"},
             hub=device_hub,
             timeout=PUSH_WAIT_S,
         )
-    # DeviceOffline and DeviceCallError are RuntimeErrors, as is a failed start.
-    except (RuntimeError, TimeoutError) as exc:
-        raise WorkComputerUnreachable(
-            say("switchOldComputerUnreachableBecause", error=str(exc))
-        ) from exc
-    if "error" in result:
-        raise ConflictError(say("switchPushFailed", error=result["error"]))
-    output = result["value"]
-    if output.get("backgroundTaskId"):
-        raise ConflictError(say("switchPushTimedOut"))
+    # Any failure at all, the machine's or ours: the caller does not wait on it.
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "checkpoint before leaving device %s failed: %s", lease["device_id"], exc
+        )
+        return False
+    output = result.get("value") or {}
     said = output.get("stdout") or ""
-    if not said.startswith("Exit code "):
-        return []
-    printed = said.partition("\n")[2]
-    failed = _failed_tasks(printed)
-    if failed and keeps_files and all(closed for closed, _ in failed):
-        return [say("workLeftClosedTask", line=line) for _, line in failed]
-    detail = "\n".join(line for _, line in failed) or printed.strip()[-600:] or said
-    raise ConflictError(say("switchPushFailed", error=detail))
+    if (
+        "error" in result
+        or output.get("backgroundTaskId")
+        or said.startswith("Exit code ")
+    ):
+        logger.warning(
+            "checkpoint before leaving device %s did not finish: %s",
+            lease.get("device_id"),
+            result.get("error") or said[-600:],
+        )
+        return False
+    return True
 
 
-# The line ``cheese sync --all`` ends each task it could not sync with.
-_TASK_FAILED = re.compile(r"^\[cheese\] (已结束的)?任务 (\S+) 同步失败：(.*)$")
-
-
-def _failed_tasks(printed: str) -> list[tuple[bool, str]]:
-    """Each task the push could not sync — whether it is a closed one, and
-    the first line said about why.
-
-    ``cheese sync --all`` prints nothing for a task it synced, and for one it
-    could not, what went wrong and then a line naming the task; that line's own
-    reason is only an exit status when the failure was an API call's. So the
-    first line printed since the previous task's is where this task's reason
-    starts. Every task gets its line: a failure that hits them all (a refused
-    credential) otherwise showed only the last one or two."""
-    failed, first = [], None
-    for line in printed.splitlines():
-        ended = _TASK_FAILED.match(line)
-        if ended is None:
-            if first is None and line.strip():
-                first = line.strip().removeprefix("[cheese] ")
-            continue
-        closed, task, reason = ended.groups()
-        failed.append(
-            (
-                closed is not None,
-                say("workTaskSyncFailed", task=task, reason=first or reason),
+async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
+    """One best-effort checkpoint (``checkpoint``) of each of the room's
+    sessions on its machine, all at once, before the room's cleanup stops them
+    (``topic.retire``, which is handed this by whoever starts its sweep). The
+    cleanup goes on whatever they answer: what a lost checkpoint loses is held
+    by the snapshot of the session's last turn."""
+    rows = list(
+        await session.scalars(
+            select(AgentSession).where(
+                of_room(AgentSession.conversation_id, topic_id),
+                AgentSession.work_lease.is_not(None),
             )
         )
-        first = None
-    return failed
+    )
+    starts = []
+    for row in rows:
+        lease = row.work_lease or {}
+        if lease.get("status", "ready") != "ready" or not lease.get("state"):
+            continue
+        try:
+            starts.append((lease, await restart_executor(session, row, lease)))
+        except Exception:  # noqa: BLE001 — best effort; the cleanup goes on
+            logger.warning("no checkpoint for session %s", row.id, exc_info=True)
+    # No transaction is held while the machines run it.
+    await session.commit()
+    await asyncio.gather(*(checkpoint(lease, start) for lease, start in starts))
 
 
 def _executor_env(env, *, api, token, project_id, topic_id, author, work_resource):
@@ -643,7 +617,6 @@ async def request_choice(
     actor,
     choice,
     task=None,
-    abandon_unpushed=False,
     if_idle=False,
 ):
     """Point a room — or one of its tasks — and its sessions at another work
@@ -655,16 +628,14 @@ async def request_choice(
     task's sessions. A person opening the picker, or a turn with its own
     credential (``PUT /topics/{id}/compute-profile``), changes the same thing.
 
-    Each session first pushes its work on the machine it leaves
-    (``_move_session``, where the push and the return of a cloud sandbox are).
-    The choice is written only once every session has moved: one that cannot
-    push leaves the whole choice where it was, and the sessions already moved
-    walk back on their next turn — ``_attempt`` resolves from the choice, not
-    from the copy on the session row.
-
-    A person may switch without the push (``abandon_unpushed``), only when the
-    machine a session leaves cannot be reached; with ``if_idle`` a room in the
-    middle of a turn is not switched at all (``SessionWorking``).
+    Each session first gets one best-effort checkpoint on the machine it
+    leaves (``_move_session``), and moves whether or not it went through. The
+    choice is written once every session has moved; a session that could not
+    move (its machine is still being prepared) leaves the choice where it was,
+    and the sessions already moved walk back on their next turn — ``_attempt``
+    resolves from the choice, not from the copy on the session row. With
+    ``if_idle`` a room in the middle of a turn is not switched at all
+    (``SessionWorking``).
     """
     # Whether the choice holds, may happen by itself and who pays were answered
     # by the route (pool connected, device ownership, the tier gate, the right to
@@ -675,15 +646,13 @@ async def request_choice(
     sessions = await AgentSessionService(db).ids_on_choice(
         topic_id, task.id if task is not None else None
     )
-    warnings: list[str] = []
     for session_id in sessions:
-        warnings += await _move_session(
+        await _move_session(
             db,
             topic_id=topic_id,
             session_id=session_id,
             actor=actor,
             choice=choice,
-            abandon_unpushed=abandon_unpushed,
             if_idle=if_idle,
         )
     topic = await TopicService(db).lock_for_execution(topic_id)
@@ -692,39 +661,8 @@ async def request_choice(
         task.compute_config = choice.model_dump()
     else:
         topic.compute_config = choice.model_dump()
-    if warnings:
-        await _tell_room_what_stayed_behind(db, topic_id, warnings)
     await db.commit()
-    return {
-        "choice": choice.model_dump(),
-        "sessions": len(sessions),
-        "warnings": warnings,
-    }
-
-
-async def _tell_room_what_stayed_behind(db, topic_id, warnings: list[str]) -> None:
-    """The room moved, and closed tasks whose leftover work could not be
-    backed up still have it only on the machine it left, which keeps it."""
-    from app.domain.agent.announce import announce
-    from app.domain.agent.platform_notices import (
-        EVENT_WORK_LEFT_ON_MACHINE,
-        SEVERITY_WARN,
-        WHO_HUMAN,
-        notice,
-    )
-
-    await announce(
-        db,
-        place_id=topic_id,
-        content=say("workLeftOnMachine"),
-        meta=notice(
-            EVENT_WORK_LEFT_ON_MACHINE,
-            severity=SEVERITY_WARN,
-            who=WHO_HUMAN,
-            detail=say("lines", items=warnings),
-            detail_label=say("labelTasksNotBackedUp"),
-        ),
-    )
+    return {"choice": choice.model_dump(), "sessions": len(sessions)}
 
 
 async def _move_session(
@@ -734,19 +672,16 @@ async def _move_session(
     session_id,
     actor,
     choice,
-    abandon_unpushed=False,
     if_idle=False,
 ):
-    """Point one session at a new work computer, after its work is pushed.
+    """Point one session at a new work computer, after one best-effort
+    checkpoint on the machine it leaves.
 
-    The push runs on the machine the session leaves, with no transaction open.
-    Only a person may switch without it, and only when that machine could not
-    be reached (``abandon_unpushed``). A session leaving its cloud sandbox
-    after a push gives its home on the host back to the pool; one that leaves
-    without pushing keeps the home until the room's cleanup removes it. A home
-    already archived is not pushed from anywhere: it is kept the same way. With
+    The checkpoint runs there with no transaction open, and the session moves
+    whether or not it went through (``checkpoint``). A session leaving its
+    cloud sandbox gives its home on the host back to the pool. With
     ``if_idle`` a session whose room is mid-turn is left alone
-    (``SessionWorking``). Returns the push's warnings (``push_before_switch``).
+    (``SessionWorking``).
     """
     # 房间那一把锁：这一条会话的租约和房间的算力选择在同一行上改，拿着它读、拿着
     # 它写，别的请求看到的是「搬之前」或者「搬之后」，没有中间态。
@@ -763,46 +698,20 @@ async def _move_session(
         if choice.profile == "cloud" and not request.get("authorized_by"):
             row.execution_request = {**request, "authorized_by": asdict(actor)}
             await db.commit()
-        return []
+        return
     if still_preparing(old):
         raise ConflictError(say("machineAllocationInProgress"))
     if if_idle and await _room_is_working(db, topic_id):
         raise SessionWorking(WORKING)
     if old and await sql_device_service(db).get_device(old["device_id"]) is None:
-        # The machine was unbound: nothing can reach it to push, and nothing
-        # left on it can be recovered or cleaned up, so leaving it takes no
-        # one's consent and keeps nothing for the room's cleanup.
+        # The machine was unbound: nothing can reach it, and nothing left on it
+        # can be cleaned up.
         old = None
-    pushed = False
-    warnings: list[str] = []
-    # An archived home's work is in the bucket, on no machine that could push
-    # it — including one it was placed on and not yet restored to: it is kept
-    # as it is, archive and all, for the room's cleanup.
-    archived = await HostPool(db).archived(session_id)
-    if old and not archived:
+    if old:
         generation = request.get("generation")
         start = await restart_executor(db, row, old)
         await db.commit()
-        try:
-            # A cloud sandbox's home goes once left; any other machine keeps its
-            # files.
-            leaving_cloud = (request.get("choice") or {}).get("profile") == "cloud"
-            warnings = await push_before_switch(
-                old, start, keeps_files=not leaving_cloud
-            )
-            pushed = True
-        except WorkComputerUnreachable as refused:
-            if actor.via != "token":
-                # Only a person can switch past it, so an agent is told who
-                # can and where, and asks them instead of stopping (FB-51).
-                raise WorkComputerUnreachable(
-                    say(
-                        "switchOldComputerUnreachableAskPerson",
-                        refusal=exception_text(refused),
-                    )
-                ) from refused
-            if not abandon_unpushed:
-                raise
+        await checkpoint(old, start)
         await TopicService(db).lock_for_execution(topic_id)
         row = await AgentSessionService(db).by_id(session_id, lock=True)
         if row is None:
@@ -815,13 +724,10 @@ async def _move_session(
             raise ConflictError(say("machineAllocationInProgress"))
     on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
     if on_cloud:
-        # Whatever was in the sandbox is on its branches now, or it never held a
-        # lease: its home goes. Work it could not push keeps the home for the
-        # room's cleanup.
-        await HostPool(db).leave(
-            session_id, kept_work=archived or (bool(old) and not pushed)
-        )
-    kept = [] if old is None or (on_cloud and pushed) else [old]
+        await HostPool(db).leave(session_id)
+    # A machine that is not the platform's keeps the room's directories; the
+    # room's cleanup finds them there by this lease.
+    kept = [] if old is None or on_cloud else [old]
     row.execution_request = {
         "generation": str(uuid.uuid4()),
         "choice": choice.model_dump(),
@@ -830,7 +736,6 @@ async def _move_session(
     }
     row.work_lease = None
     await db.commit()
-    return warnings
 
 
 # The room names a machine whose owner has since unbound it. It cannot come back
@@ -1102,7 +1007,6 @@ async def _attempt(
     if isinstance(verdict, gate.Proposal):
         raise ForbiddenError(say("machineTierNotAllowed"))
     work_resource = (lease or {}).get("resource_id") or generation
-    restoring = None
     if choice.profile == "cloud":
         allocation_actor = (
             Actor(**authorized)
@@ -1110,18 +1014,6 @@ async def _attempt(
             else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
         )
         pool = HostPool(db, hub=hub)
-        before = await pool.current_home(session_id)
-        # What the room is told while the sandbox gets ready: a sandbox asleep
-        # is woken, an archived one restored; a new one is prepared (below).
-        waking = (
-            None
-            if before is None
-            else "sandboxRestoring"
-            if before.host_id is None
-            else "sandboxWaking"
-            if before.stopped_at is not None
-            else None
-        )
         try:
             cloud_host = await pool.place(
                 session_id,
@@ -1132,32 +1024,19 @@ async def _attempt(
         except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
             await db.commit()
             return {"unavailable": str(refused)}
-        except SandboxBusy:
+        except SandboxRemoving:
+            # Its idle sandbox is being destroyed: the next attempt, once it is
+            # gone, places the session in a new one.
             await db.commit()
-            return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
-        except SandboxMustMove:
-            # Asleep on a host with no slot for it: the sandbox sweep archives
-            # it from there, which it does first for a home someone waits on,
-            # and the next attempt restores it on a host with room.
-            line = await pool.tell_waiting(session_id, "sandboxWaking")
-            await db.commit()
-            await publish_line(topic_id, line)
-            return _Preparing(SANDBOX_WAKING, partial(_home_moved, db, session_id))
-        if waking is not None:
-            line = await pool.tell_waiting(session_id, waking)
-            await db.commit()
-            await publish_line(topic_id, line)
-        placed = await pool.current_home(session_id)
-        restoring = placed.id if placed and placed.archive_key else None
+            return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
         if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
-            message = waiting_on_host(cloud_host)
-            line = await pool.tell_waiting(
-                session_id,
-                "sandboxWaking" if message == SANDBOX_WAKING else "sandboxPreparing",
-            )
+            line = await pool.tell_waiting(session_id)
             await db.commit()
             await publish_line(topic_id, line)
-            return _Preparing(message, partial(_cloud_progress, db, hub, cloud_host.id))
+            return _Preparing(
+                VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
+                partial(_cloud_progress, db, hub, cloud_host.id),
+            )
         device_id = cloud_host.device_id
         # Provisioning releases its transaction around external calls.
         topic = await TopicService(db).lock_for_execution(topic_id)
@@ -1255,7 +1134,6 @@ async def _attempt(
             claim=claim,
             now=now,
             cloud_host_id=cloud_host.id if choice.profile == "cloud" else None,
-            restoring=restoring,
             owner_device=selected is not None,
             tells_agent=tells_agent,
         )
@@ -1265,12 +1143,9 @@ async def _attempt(
     outcome = await asyncio.shield(work)
     if outcome is _CLOUD_PREPARING:
         return _Preparing(
-            waiting_on_host(cloud_host),
+            VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
             partial(_cloud_progress, db, hub, cloud_host.id),
         )
-    if outcome is _SANDBOX_BUSY:
-        # Another call of the session is restoring it: wait for that one.
-        return _Preparing(SANDBOX_WAKING, partial(_home_settled, db, session_id))
     return outcome
 
 
@@ -1280,8 +1155,6 @@ _INSTALLS: set[asyncio.Future] = set()
 #: What `_install` answers when a Cloud machine dropped during setup; the
 #: request turns it into a wait on its own session.
 _CLOUD_PREPARING = object()
-#: What it answers when another call of the session is restoring its sandbox.
-_SANDBOX_BUSY = object()
 
 
 def _installed(work: asyncio.Future) -> None:
@@ -1317,7 +1190,6 @@ async def _install(
     claim,
     now,
     cloud_host_id,
-    restoring,
     owner_device,
     tells_agent=False,
 ):
@@ -1338,13 +1210,6 @@ async def _install(
         )
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
-                if restoring is not None:
-                    # An archived sandbox comes back to its new host before the
-                    # executor starts in it.
-                    restored = await SandboxLifecycle(db, hub=hub).restore(
-                        restoring, device_id
-                    )
-                    await publish_line(topic_id, restored)
                 info = await _start_executor(
                     hub,
                     lease,
@@ -1394,11 +1259,6 @@ async def _install(
             if isinstance(exc, launch.SandboxRefused):
                 # The machine cannot make the room's sandbox, and said why.
                 return {"unavailable": str(exc)}
-            if isinstance(exc, SandboxHomeError):
-                # The archive is still there; the next tool call tries again.
-                return {"unavailable": SANDBOX_RESTORE_FAILED}
-            if isinstance(exc, SandboxBusy):
-                return _SANDBOX_BUSY
             if isinstance(exc, ExecutorSetupFailed):
                 logger.warning("executor installation failed: %s", exc)
                 return {

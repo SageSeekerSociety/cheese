@@ -6,7 +6,7 @@
 import type { ThemePreference } from '@/theme'
 
 /** What an app can do beyond the window itself; an older app lists fewer. */
-export type DesktopAbility = 'notices' | 'badge' | 'autostart' | 'links' | 'updates' | 'device'
+export type DesktopAbility = 'notices' | 'badge' | 'autostart' | 'links' | 'updates' | 'device' | 'modelService'
 
 interface CheeseApp {
   /** 'overlay': the title bar is drawn over the page (macOS), so the page leaves room for its buttons. */

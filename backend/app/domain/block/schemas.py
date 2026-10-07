@@ -38,9 +38,6 @@ class BlockOut(BaseModel):
     mime_type: str | None = None
     refs: list[str] = []
     upgraded_to_topic_id: uuid.UUID | None = None
-    # …and the thread it was dispatched into, which is what upgrading a message
-    # inside a room does. Exactly one of the two is ever set.
-    upgraded_to_task_id: uuid.UUID | None = None
     # The agent turn that produced this block (R4): groups a turn's blocks.
     turn_id: uuid.UUID | None = None
     # Structured event payload (kind=event): {"tool", "arg", "platform"} — the

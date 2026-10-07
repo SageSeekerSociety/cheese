@@ -51,8 +51,9 @@ def declaration() -> Declaration:
             # 1.0.0 会自己做的是会话的持久化与压缩，不是把工作同步回仓库：工具联
             # 合里没有同步工具，内建扩展里也没有，examples/extensions/ 里的
             # auto-commit-on-exit.ts 是示例、不被加载。同步由平台自己的机制做
-            # （机器上的 `cheese sync` 这条平台命令，harness/pi/catalog.py 把它
-            # 当平台工具交出去），和骨架无关——也就是这个骨架没有自动同步的证据。
+            # （每轮结束时 harness/driven/runner.py 的 turn_ended 让机器跑一次
+            # checkpoint，即 `cheese sync --all`，和 Claude Code 的 Stop 钩子同一个
+            # 动作），和骨架无关——也就是这个骨架没有自动同步的证据。
             BuiltIn.AUTO_SYNC: Difference.NOT_BUILT_IN,
         },
         verified_against=VERIFIED_AGAINST,

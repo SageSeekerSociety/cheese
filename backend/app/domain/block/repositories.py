@@ -264,24 +264,6 @@ class BlockRepository:
         await self._session.delete(block)
         await self._session.flush()
 
-    async def set_upgraded_to_place(
-        self,
-        block: Block,
-        *,
-        topic_id: uuid.UUID | None = None,
-        task_id: uuid.UUID | None = None,
-    ) -> None:
-        """Point this block's position at the place it became.
-
-        Exactly one of the two: upgrading inside a room dispatches work
-        (`task_id`), upgrading out of a private chat opens a room
-        (`topic_id`). Both are real foreign keys, which is why this is a pair
-        of nullable columns rather than one column holding either.
-        """
-        block.upgraded_to_topic_id = topic_id
-        block.upgraded_to_task_id = task_id
-        await self._session.flush()
-
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
     ) -> None:
@@ -828,12 +810,18 @@ class BlockRepository:
         reply_to: uuid.UUID | None = None,
         author: str | None = None,
         whole_room: uuid.UUID | None = None,
+        also: Collection[uuid.UUID] = (),
     ) -> BlockPage:
         """The newest `limit` blocks, or a page before/after a cursor.
 
         ``whole_room`` reads every conversation of that room instead of one —
         its main line, its 支线 and its tasks — for a search that has to find
         what was settled somewhere else in the channel.
+
+        ``also`` adds blocks stored under another conversation, so a 支线's
+        reading starts with the message it hangs under and the files sent with
+        it: they stay in the main line and they are the 支线's own first input.
+        A ``whole_room`` read already covers those blocks, and ignores it.
 
         An after cursor reads the oldest newer records first, so catching up
         through multiple pages cannot skip intervening messages. Explicit kinds
@@ -848,11 +836,16 @@ class BlockRepository:
         a timestamp and single-column ordering wouldn't be a total order (the
         cursor could then skip or repeat the tied rows).
         """
-        stmt = select(Block).where(
-            of_room(Block.conversation_id, whole_room)
-            if whole_room is not None
-            else Block.conversation_id == conversation_id
-        )
+        if whole_room is not None:
+            scope = of_room(Block.conversation_id, whole_room)
+        elif also:
+            scope = or_(
+                Block.conversation_id == conversation_id,
+                Block.id.in_(list(also)),
+            )
+        else:
+            scope = Block.conversation_id == conversation_id
+        stmt = select(Block).where(scope)
         # 现场 wants events and nothing else; narrowing HERE rather than in the
         # caller is the difference between paging and pretending to — filtering
         # a page after the fact returns fewer rows than asked for and reports

@@ -348,7 +348,6 @@ const chatColumn = ref<{
   reloadAccept: () => void
   reloadFeedback: () => void
   reloadSkills: () => void
-  reloadProposals: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
@@ -479,8 +478,6 @@ function handleStateChanged(resource: string) {
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   // 技能的提议落下、被保存或被拒：那张卡跟着变。
   else if (resource === 'skills') chatColumn.value?.reloadSkills()
-  // AI 队友提议了任务，或者有人创建、不用了一条：提议卡跟着变。
-  else if (resource === 'task-proposals') chatColumn.value?.reloadProposals()
   else if (resource === 'tasks' && props.taskId) void taskPage.load(true)
   // 频道里有支线长了一条：概览里「支线」那一格跟着变（主线上那一行对话栏自己换）。
   else if (resource === 'threads') void channelThreads.load()
@@ -638,6 +635,7 @@ void openPlace()
         :connected="roomConnected"
         :start="taskPage.start"
         :close="taskPage.close"
+        :reopen="taskPage.reopen"
         :hand-over="taskPage.handOver"
         :rename="taskPage.rename"
         :set-collaborators="taskPage.setCollaborators"

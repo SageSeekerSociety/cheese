@@ -22,6 +22,7 @@ const { t } = useI18n()
 
 const CHECK_KEYS: Record<string, string> = {
   'scene-ratchet': 'ratchet.check.sceneRatchet',
+  'catalog-ratchet': 'ratchet.check.catalogRatchet',
   'fe-boundary': 'ratchet.check.feBoundary',
   'be-contracts': 'ratchet.check.beContracts',
   'domain-import-guard': 'ratchet.check.domainImportGuard',

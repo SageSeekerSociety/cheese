@@ -1,11 +1,17 @@
 package daemoncmd
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/claudecode"
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
@@ -18,6 +24,7 @@ import (
 // read or touched.
 func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *cobra.Command {
 	var console bool
+	var serviceURL, serviceModel string
 	login := withConfig(&cobra.Command{
 		Use:   "login",
 		Short: "Log in the Claude Code the platform runs on this machine",
@@ -25,9 +32,15 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			"have it yet, and logs it in with your own Claude account or API key. The\n" +
 			"login is kept apart from your own Claude Code (~/.claude), which keeps its\n" +
 			"own login and settings. The login opens in the browser; with no terminal\n" +
-			"attached it finishes there, so the desktop app can run it too.",
+			"attached it finishes there, so the desktop app can run it too.\n\n" +
+			"With --base-url and --model it uses another model service that speaks\n" +
+			"Anthropic's API instead (GLM, Kimi, DeepSeek, a relay of your own). Its key\n" +
+			"is read from " + modelTokenEnv + ", or asked for. It stays on this machine.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if serviceURL != "" || serviceModel != "" {
+				return useModelService(*cfgPath, serviceURL, serviceModel)
+			}
 			base, err := serverBase(*cfgPath)
 			if err != nil {
 				return err
@@ -42,6 +55,11 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 				return err
 			}
 			if err := os.MkdirAll(loginDir, 0o700); err != nil {
+				return err
+			}
+			// The latest choice wins: logging in with an account stops using a
+			// model service set before.
+			if err := claudecode.ForgetModelService(loginDir); err != nil {
 				return err
 			}
 			kind := "--claudeai"
@@ -59,6 +77,9 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 
 	login.Flags().BoolVar(&console, "console", false,
 		"log in with an Anthropic Console account (API usage billing) instead of a Claude subscription")
+	login.Flags().StringVar(&serviceURL, "base-url", "",
+		"use the model service at this address instead of a Claude account")
+	login.Flags().StringVar(&serviceModel, "model", "", "the model to call on the model service")
 
 	status := withConfig(&cobra.Command{
 		Use:   "status",
@@ -90,9 +111,17 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 	logout := withConfig(&cobra.Command{
 		Use:   "logout",
 		Short: "Log out the platform's Claude Code on this machine",
-		Long:  "Logs out the Claude Code the platform runs. Your own Claude Code (~/.claude) stays logged in.",
-		Args:  cobra.NoArgs,
+		Long: "Logs out the Claude Code the platform runs and forgets its model service.\n" +
+			"Your own Claude Code (~/.claude) stays logged in.",
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			loginDir, err := claudecode.LoginDir()
+			if err != nil {
+				return err
+			}
+			if err := claudecode.ForgetModelService(loginDir); err != nil {
+				return err
+			}
 			base, err := serverBase(*cfgPath)
 			if err != nil {
 				return err
@@ -105,10 +134,6 @@ func claudeCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) 
 			if !installed {
 				fmt.Println("Already logged out.")
 				return nil
-			}
-			loginDir, err := claudecode.LoginDir()
-			if err != nil {
-				return err
 			}
 			cmd := claudecode.Command(ctx, binary, loginDir, "auth", "logout")
 			cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
@@ -138,7 +163,78 @@ func serverBase(cfgPath string) (string, error) {
 	return cfg.Base, nil
 }
 
+// modelTokenEnv carries a model service's key to `claude login` from a program
+// that runs it, such as the desktop app, so the key is in no command line.
+const modelTokenEnv = "CHEESE_MODEL_TOKEN"
+
+// useModelService points this machine's sessions at another model service,
+// installing the pinned build first so they can start.
+func useModelService(cfgPath, baseURL, model string) error {
+	if baseURL == "" || model == "" {
+		return errors.New("a model service needs both --base-url and --model")
+	}
+	token, err := modelToken(os.Stdin)
+	if err != nil {
+		return err
+	}
+	service := claudecode.ModelService{BaseURL: baseURL, Token: token, Model: model}
+	if err := service.Check(); err != nil {
+		return err
+	}
+	base, err := serverBase(cfgPath)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	binary, err := claudecode.Ensure(ctx, base, os.Stdout)
+	if err != nil {
+		return err
+	}
+	loginDir, err := claudecode.LoginDir()
+	if err != nil {
+		return err
+	}
+	if err := claudecode.SaveModelService(loginDir, service); err != nil {
+		return err
+	}
+	return printClaudeStatus(ctx, binary, loginDir)
+}
+
+// modelToken is the model service's key: from the environment when a program
+// passes it, else asked for without echo at a terminal, else one line of input.
+func modelToken(in *os.File) (string, error) {
+	if token := strings.TrimSpace(os.Getenv(modelTokenEnv)); token != "" {
+		return token, nil
+	}
+	if term.IsTerminal(int(in.Fd())) {
+		fmt.Fprint(os.Stderr, "Model service key: ")
+		secret, err := term.ReadPassword(int(in.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(string(secret)), nil
+	}
+	line, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
 func printClaudeStatus(ctx context.Context, binary, loginDir string) error {
+	service, err := claudecode.LoadModelService(loginDir)
+	if err != nil {
+		return err
+	}
+	if service != nil {
+		host := service.BaseURL
+		if u, err := url.Parse(service.BaseURL); err == nil && u.Host != "" {
+			host = u.Host
+		}
+		ui.OK("Claude Code uses the model service at %s (%s).", host, service.Model)
+		return nil
+	}
 	status, err := claudecode.ReadStatus(ctx, binary, loginDir)
 	if err != nil {
 		return err

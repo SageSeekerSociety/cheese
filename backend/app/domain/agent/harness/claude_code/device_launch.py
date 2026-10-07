@@ -31,6 +31,7 @@ from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
 from app.domain.agent.place import (
     CLAUDE_LOGIN_DIR,
+    MODEL_SERVICE_FILE,
     SEATS_DIR,
     footprint_root,
     seat_name,
@@ -329,6 +330,8 @@ if blob is None and api:
         api + "/connector/skill-bundles/" + want,
         headers={{"X-Cheese-Token": os.environ.get("CHEESE_TOKEN", "")}},
     )
+    # The pause between attempts grows from this step; a test sets it to 0.
+    step = float(os.environ.get("CHEESE_SKILL_FETCH_BACKOFF_S", "2"))
     for attempt in range(3):
         try:
             with urllib.request.urlopen(request, timeout=120) as answer:
@@ -337,7 +340,7 @@ if blob is None and api:
             reason = type(exc).__name__ + ": " + str(exc)[:200]
             warn("skill bundle fetch failed (" + reason + ")")
             if attempt < 2:
-                time.sleep(2 * (attempt + 1))
+                time.sleep(step * (attempt + 1))
             continue
         if intact(fetched):
             blob = fetched
@@ -634,11 +637,48 @@ cheese_launch_phase credentials_selected
 # would win over it, so none is let through. A service started by launchd has no
 # USER, and Claude Code has been reported unable to find a Keychain login on
 # macOS without it (anthropics/claude-code#77213).
+#
+# On macOS that login is a Keychain item, and `security`, which Claude Code
+# runs to read and renew it, finds the login keychain through HOME: under the
+# room's HOME it finds no keychain and the session is not logged in. The
+# `security` the session finds runs with the machine's HOME, so the session's
+# own HOME stays the room's. An agent's own `security` reaches the owner's
+# keychain the same way, which its owner's machine already lets it do.
+#
+# When the owner set another model service there (`cheesehost claude login
+# --base-url`), the session calls that instead: its address and key, and its
+# model for the main loop, the three tiers Claude Code addresses by alias, and
+# subagents, since a service like that serves none of Anthropic's names. The
+# file is read through the shell's redirect, so on Windows Python is handed no
+# Git Bash path; a file that cannot be read leaves the session on the login.
+_MODEL_SERVICE_EXPORTS = """\
+import json, shlex, sys
+s = json.load(sys.stdin)
+env = {"ANTHROPIC_BASE_URL": s["base_url"], "ANTHROPIC_AUTH_TOKEN": s["token"]}
+for name in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
+             "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+             "CLAUDE_CODE_SUBAGENT_MODEL"):
+    env[name] = s["model"]
+for name, value in env.items():
+    print("export %s=%s" % (name, shlex.quote(str(value))))
+"""
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
 OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}"
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
+if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
+  mkdir -p "$HOME/.cheese/keychain"
+  cat > "$HOME/.cheese/keychain/security" <<KEYCHAIN
+#!/bin/sh
+HOME='$REAL_HOME' exec '$_security' "\\$@"
+KEYCHAIN
+  chmod +x "$HOME/.cheese/keychain/security"
+  export PATH="$HOME/.cheese/keychain:$PATH"
+fi
+if [ -f "$OWN_LOGIN/{MODEL_SERVICE_FILE}" ]; then
+  eval "$(python3 -c '{_MODEL_SERVICE_EXPORTS}' < "$OWN_LOGIN/{MODEL_SERVICE_FILE}")"
+fi
 export CHEESE_OWN_LOGIN=1
 cheese_launch_phase credentials_selected
 """
