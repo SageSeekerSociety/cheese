@@ -19,13 +19,12 @@
 <script setup lang="ts">
 import { inject, onMounted } from 'vue'
 
-import { usePaging } from '@/utils/paging'
+import { useAnswerPaging } from '@/composables/useAnswerPaging'
 
 import AnswerCard from '../answer/AnswerCard.vue'
 import BlankPage from '../common/BlankPage.vue'
 
 import { questionDataInjectionKey } from '@/keys'
-import { AnswersApi } from '@/network/api/answers'
 
 const props = defineProps<{
   questionId: number
@@ -33,12 +32,8 @@ const props = defineProps<{
 
 const questionData = inject(questionDataInjectionKey)
 
-const { data, refresh, loadMore, refreshing, loadingMore } = usePaging(async (pageStart) => {
-  const {
-    data: { answers: data, page },
-  } = await AnswersApi.getAnswers(props.questionId, pageStart)
-  return { data, page }
-})
+// 取数在 `useAnswerPaging`（组件不吃 API 层），这里只用它交回来的那几个状态。
+const { data, refresh, loadMore, refreshing, loadingMore } = useAnswerPaging(() => props.questionId)
 
 onMounted(async () => {
   await refresh()

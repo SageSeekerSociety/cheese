@@ -16,8 +16,8 @@
       <collapsible-content :max-height="200">
         <div class="rich-content" v-html="contentHtml"></div>
       </collapsible-content>
-      <div v-if="question && question.author.id === currentUserId" class="mt-4">
-        <BaseButton v-if="!question.accepted_answer" kind="primary" prepend-icon="mdi-check" @click="acceptAnswer">
+      <div v-if="canAccept" class="mt-4">
+        <BaseButton v-if="!question?.accepted_answer" kind="primary" prepend-icon="mdi-check" @click="accept">
           {{ t('questions.detail.buttons.accept') }}
         </BaseButton>
       </div>
@@ -47,13 +47,13 @@
 <script setup lang="ts">
 import type { Answer, Question } from '@/types'
 
-import { computed, inject, toRefs } from 'vue'
+import { computed, toRefs } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 import { parse } from '@/utils/parser'
 
+import { useAnswerActions } from '@/composables/useAnswerActions'
 import { isChosenAvatar } from '@/composables/useChosenAvatar'
 
 import CollapsibleContent from '../common/CollapsibleContent.vue'
@@ -62,10 +62,6 @@ import UserAvatar from '../common/UserAvatar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { NewAttitudeType } from '@/constants'
-import { refreshInjectionKey } from '@/keys'
-import { AnswersApi } from '@/network/api/answers'
-import { QuestionApi } from '@/network/api/questions'
-import { currentUserId } from '@/services/account'
 const { t } = useI18n()
 
 const props = withDefaults(
@@ -92,36 +88,7 @@ const currentVote = computed(() => {
   }
 })
 
-const refresh = inject(refreshInjectionKey, () => {})
-
-const acceptAnswer = async () => {
-  if (!question.value) return
-  await QuestionApi.acceptAnswer(question.value.id, answer.value.id)
-  toast.success(t('questions.answer.acceptSuccess'))
-  refresh()
-}
-
-const upvote = async () => {
-  const { data } = await AnswersApi.postAttitude(answer.value.question_id, answer.value.id, NewAttitudeType.Positive)
-  answer.value.attitudes = data.attitudes
-}
-
-const downvote = async () => {
-  const { data } = await AnswersApi.postAttitude(answer.value.question_id, answer.value.id, NewAttitudeType.Negative)
-  answer.value.attitudes = data.attitudes
-}
-const cancelVote = async () => {
-  const { data } = await AnswersApi.postAttitude(answer.value.question_id, answer.value.id, NewAttitudeType.None)
-  answer.value.attitudes = data.attitudes
-}
-
-const favorite = async () => {
-  if (answer.value.is_favorite) {
-    await AnswersApi.unfavorite(answer.value.question_id, answer.value.id)
-    answer.value.is_favorite = false
-  } else {
-    await AnswersApi.favorite(answer.value.question_id, answer.value.id)
-    answer.value.is_favorite = true
-  }
-}
+// 采纳、投票、收藏这三件事都要发请求，落在 `useAnswerActions` 里；卡片只画它给的
+// 状态、点它给的函数（连同「这个人能不能采纳」那个判断，判据要读登着的身份）。
+const { canAccept, accept, upvote, downvote, cancelVote, favorite } = useAnswerActions(answer, question)
 </script>
