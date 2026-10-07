@@ -53,9 +53,15 @@ async def test_an_own_session_is_given_nothing_of_the_metering_proxy(
     assert NO_LOGIN_PLACEHOLDER not in launcher
 
 
-def _launch_on_machine(tmp_path, *, service: dict | None = None) -> dict:
+def _launch_on_machine(
+    tmp_path, *, service: dict | None = None, mac: bool = False
+) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
-    Claude's ``opus``, and return the environment the started process has."""
+    Claude's ``opus``, and return the environment the started process has.
+
+    The started process looks its login up with `security`, as Claude Code does
+    on macOS. ``mac`` makes the machine one: ``uname`` says Darwin, and its
+    `security` records the HOME it ran with under ``keychain_home``."""
     home = tmp_path / "home"
     login = home / ".cheese" / "claude-login"
     login.mkdir(parents=True)
@@ -68,6 +74,7 @@ def _launch_on_machine(tmp_path, *, service: dict | None = None) -> dict:
     agent = tmp_path / "agent.sh"
     agent.write_text(
         "#!/bin/sh\n"
+        "security find-generic-password -s 'Claude Code-credentials' 2>/dev/null\n"
         'python3 -c "import json, os; print(json.dumps(dict(os.environ)))"'
         f' > "{seen}"\n'
     )
@@ -91,13 +98,28 @@ def _launch_on_machine(tmp_path, *, service: dict | None = None) -> dict:
         "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
         "ANTHROPIC_MODEL": "opus",
     }
+    keychain_home = tmp_path / "keychain-home"
+    if mac:
+        machine = tmp_path / "machine-bin"
+        machine.mkdir()
+        (machine / "uname").write_text("#!/bin/sh\necho Darwin\n")
+        (machine / "security").write_text(
+            f'#!/bin/sh\nprintf %s "$HOME" > "{keychain_home}"\n'
+        )
+        for tool in machine.iterdir():
+            tool.chmod(0o755)
+        env["PATH"] = f"{machine}:{env['PATH']}"
 
     result = subprocess.run(
         ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=30
     )
 
     assert result.returncode == 0, result.stderr
-    return {**json.loads(seen.read_text()), "_home": str(home)}
+    return {
+        **json.loads(seen.read_text()),
+        "_home": str(home),
+        "_keychain_home": keychain_home.read_text() if keychain_home.exists() else None,
+    }
 
 
 def test_an_own_session_reads_the_login_its_owner_gave_the_platform(tmp_path):
@@ -110,6 +132,15 @@ def test_an_own_session_reads_the_login_its_owner_gave_the_platform(tmp_path):
     )
     assert "ANTHROPIC_BASE_URL" not in seen
     assert "ANTHROPIC_AUTH_TOKEN" not in seen
+
+
+def test_an_own_session_on_a_mac_finds_its_owners_login_keychain(tmp_path):
+    """On macOS the login is a Keychain item, which `security` finds through
+    HOME. The session's keychain lookups run with the machine owner's home,
+    while the session itself keeps the room's."""
+    seen = _launch_on_machine(tmp_path, mac=True)
+    assert seen["_keychain_home"] == seen["_home"]
+    assert seen["HOME"] != seen["_home"]
 
 
 def test_an_own_session_calls_the_model_service_its_owner_set(tmp_path):
