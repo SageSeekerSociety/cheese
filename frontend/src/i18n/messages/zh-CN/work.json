@@ -234,7 +234,8 @@
     "site": {
       "agents": {
         "all": "全部",
-        "label": "按队友查看"
+        "label": "按队友查看",
+        "numbered": "{name} {n}"
       },
       "output": {
         "show": "输出（{size}）",

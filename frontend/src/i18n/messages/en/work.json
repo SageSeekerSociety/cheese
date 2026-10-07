@@ -234,7 +234,8 @@
     "site": {
       "agents": {
         "all": "All",
-        "label": "View by teammate"
+        "label": "View by teammate",
+        "numbered": "{name} {n}"
       },
       "output": {
         "show": "Output ({size})",
