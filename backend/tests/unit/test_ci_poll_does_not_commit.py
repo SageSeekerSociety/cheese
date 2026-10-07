@@ -62,7 +62,7 @@ async def test_reading_the_branch_head_leaves_uncommitted_work_uncommitted(
     # Somebody is working: a file changed, but nobody said "this is a fix".
     (worktree / "scratch.md").write_text("half a thought\n")
 
-    async def data(project_id, session, path):
+    async def data(project_id, session, path, **_):
         assert project_id == project
         assert path.startswith("/branches/task%2F")
         return {"commit": {"sha": before}}
@@ -114,7 +114,7 @@ async def test_reading_the_branch_head_is_none_when_the_branch_does_not_exist(
         base="main",
     )
 
-    async def absent(*args):
+    async def absent(*args, **_):
         return None
 
     monkeypatch.setattr(forge, "repository_data", absent)
