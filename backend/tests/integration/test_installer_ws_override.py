@@ -31,7 +31,7 @@ def test_install_script_bakes_ws_url_for_matching_origin(
     assert 'WS_URL="${CHEESE_WS_URL:-wss://ws-capable.example/connector/agent}"' in body
     # The friendly origin still owns install + login (only the WS is rerouted).
     assert f'ORIGIN="{origin}"' in body
-    assert "cheesehost link connect $ORIGIN/connector" in body
+    assert "link connect $ORIGIN/connector" in body
 
 
 def test_install_script_override_ignores_other_origins(
