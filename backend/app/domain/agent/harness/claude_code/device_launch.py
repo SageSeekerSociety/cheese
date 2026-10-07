@@ -636,8 +636,8 @@ cheese_launch_phase credentials_selected
 # macOS without it (anthropics/claude-code#77213).
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
-export CLAUDE_SECURESTORAGE_CONFIG_DIR=\\
-  "$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}"
+OWN_LOGIN="$REAL_HOME/{footprint_root()}/{CLAUDE_LOGIN_DIR}"
+export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
 export CHEESE_OWN_LOGIN=1
 cheese_launch_phase credentials_selected
