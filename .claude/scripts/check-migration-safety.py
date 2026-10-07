@@ -33,6 +33,9 @@ checks the ones that can be read off the source:
   app-import
       Migrations never import ``app.*``: they run long after they are written,
       against whatever ``app`` has become by then.
+  unresolved-drop
+      A drop or rename whose table or column is not a literal cannot be
+      checked; spell the names out (or justify an exception).
   lock-retry-copy
       Lock retries come from ``migration_helpers.with_lock_retries``, not a
       pasted ``DO`` block.
@@ -84,6 +87,7 @@ ERROR_RULES = frozenset(
         "json-not-jsonb",
         "app-import",
         "lock-retry-copy",
+        "unresolved-drop",
     }
 )
 WARNING_RULES = frozenset({"alter-column-existing", "fk-on-add-column", "unresolved"})
@@ -206,9 +210,9 @@ def read_models(sources: dict[str, str]) -> dict[str, set[str]]:
 _SQL_CREATE_TABLE = re.compile(
     r"\bCREATE\s+(?:(?:GLOBAL|LOCAL)\s+)?(?:TEMP\s+|TEMPORARY\s+|UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?(\w+)", re.I
 )
-_SQL_DROP_TABLE = re.compile(r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([\w\",\s]+?)(?:\s+CASCADE|\s*$)", re.I)
+_SQL_DROP_TABLE = re.compile(r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([\w\",.\s]+?)(?:\s+CASCADE|\s*$)", re.I)
 _SQL_ALTER_TABLE = re.compile(
-    r"\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?\"?(\w+)\"?(.*)$", re.I | re.S
+    r"\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:\"?\w+\"?\.)?\"?(\w+)\"?(.*)$", re.I | re.S
 )
 _SQL_DROP_COLUMN = re.compile(r"\bDROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?\"?(\w+)", re.I)
 _SQL_RENAME_COLUMN = re.compile(r"\bRENAME\s+(?:COLUMN\s+)?\"?(\w+)\"?\s+TO\b", re.I)
@@ -413,7 +417,9 @@ class _Migration(ast.NodeVisitor):
 
     def _gone_from_base(self, node: ast.AST, rule: str, table: str | None, column: str | None) -> None:
         if table is None or (column is None and rule != "drop-table"):
-            self.report(node, "unresolved", f"{rule}: could not read the table/column names; check it by hand")
+            # A drop the check cannot read is the #2914 accident it exists for:
+            # an error, which a reasoned exception can waive.
+            self.report(node, "unresolved-drop", f"{rule}: could not read the table/column names; spell them as literals")
             return
         mapped = self.base_tables.get(table)
         if mapped is None:
@@ -628,6 +634,7 @@ class _Migration(ast.NodeVisitor):
                     )
         if match := _SQL_DROP_TABLE.search(sql):
             for name in re.split(r"[\s,]+", match.group(1).replace('"', "")):
+                name = name.rsplit(".", 1)[-1]
                 if name:
                     self._gone_from_base(node, "drop-table", name, None)
         if match := _SQL_ALTER_TABLE.search(sql):
@@ -1090,6 +1097,12 @@ def self_test() -> int:
             )
         ),
         [],
+    )
+    check("an unreadable drop", _rules_found("    op.drop_column('task', COLUMN)"), ["unresolved-drop"])
+    check(
+        "a schema-qualified table",
+        _rules_found('    op.execute("ALTER TABLE public.task DROP COLUMN video_url")\n    op.execute("DROP TABLE public.legacy")'),
+        ["drop-column", "drop-table"],
     )
     check(
         "a docstring that mentions lock_not_available",

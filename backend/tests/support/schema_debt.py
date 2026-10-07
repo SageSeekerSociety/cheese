@@ -138,19 +138,35 @@ def measure(*args: str) -> dict[str, list[str]]:
 async def _drift(url: str) -> list[str]:
     from alembic.autogenerate import compare_metadata
     from alembic.migration import MigrationContext
+    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import NullPool
 
     from app.core.db import Base
 
+    def compare(sync) -> list:
+        # Tables an extension owns (PostGIS's spatial_ref_sys on some servers)
+        # belong to the server, not to our migrations.
+        owned = set(
+            sync.execute(
+                text(
+                    "SELECT c.relname FROM pg_class c"
+                    " JOIN pg_depend d ON d.objid = c.oid AND d.deptype = 'e'"
+                    " WHERE c.relkind IN ('r', 'v', 'm', 'p')"
+                )
+            ).scalars()
+        )
+
+        def ours(name, kind, _parent) -> bool:
+            return not (kind == "table" and name in owned)
+
+        context = MigrationContext.configure(sync, opts={"include_name": ours})
+        return compare_metadata(context, Base.metadata)
+
     engine = create_async_engine(url, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
-            diffs = await connection.run_sync(
-                lambda sync: compare_metadata(
-                    MigrationContext.configure(sync), Base.metadata
-                )
-            )
+            diffs = await connection.run_sync(compare)
     finally:
         await engine.dispose()
     return sorted(drift_key(diff) for diff in diffs)
