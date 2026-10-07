@@ -271,22 +271,24 @@ class S3StorageBackend(StorageBackend):
                 ExpiresIn=expires_s,
             )
 
-    async def multipart_upload(self, key: str, content_type: str) -> str:
+    async def multipart_upload(self, key: str, content_type: str) -> tuple[str, bool]:
         """The id of the multipart upload in progress to ``key``, started if
-        there is none: whoever comes back to an object it was sending goes on
-        with the parts the bucket already holds. Of several, the one listed
-        first, so that two callers settle on the same one."""
+        there is none, and whether it was started now: whoever comes back to
+        an object it was sending goes on with the parts the bucket already
+        holds. Of several, the one listed first, so that two callers settle on
+        the same one. R2 spells the id of one upload differently each time it
+        lists it, so the id says which upload it is to the bucket alone."""
         async with self._get_client() as client:
             listed = await client.list_multipart_uploads(
                 Bucket=self._bucket, Prefix=key
             )
             for upload in listed.get("Uploads", []):
                 if upload["Key"] == key:
-                    return str(upload["UploadId"])
+                    return str(upload["UploadId"]), False
             started = await client.create_multipart_upload(
                 Bucket=self._bucket, Key=key, ContentType=content_type
             )
-            return str(started["UploadId"])
+            return str(started["UploadId"]), True
 
     async def presign_parts(
         self, key: str, upload_id: str, count: int, expires_s: int

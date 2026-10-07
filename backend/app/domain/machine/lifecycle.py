@@ -558,8 +558,10 @@ class SandboxLifecycle:
         # A finished object with no upload behind it was joined by a sweep
         # that did not get to record it: the host's answer says whether it is
         # this home.
-        upload = (
-            None if stored else await bucket.multipart_upload(key, "application/gzip")
+        upload, fresh = (
+            (None, False)
+            if stored
+            else await bucket.multipart_upload(key, "application/gzip")
         )
         urls = (
             []
@@ -575,6 +577,7 @@ class SandboxLifecycle:
             resource=resource,
             job=job,
             upload=upload,
+            fresh=fresh,
             urls=urls,
             part_size=PART_SIZE,
             wait=ARCHIVE_WAIT_S,

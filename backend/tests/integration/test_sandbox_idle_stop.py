@@ -113,7 +113,7 @@ class Bucket:
                     if number in bucket.fail_once:
                         bucket.fail_once.discard(number)
                         return self._answer(500)
-                    upload = bucket.uploads.get(query["uploadId"][0])
+                    upload = bucket.uploads.get(Bucket.upload_of(query))
                     if upload is None or upload["key"] != key:
                         return self._answer(404)
                     stored = body[:-1] if bucket.mangle else body
@@ -137,7 +137,7 @@ class Bucket:
                                 "</InitiateMultipartUploadResult>"
                             ).encode(),
                         )
-                    upload = bucket.uploads.pop(query["uploadId"][0])
+                    upload = bucket.uploads.pop(Bucket.upload_of(query))
                     asked = [
                         int(n)
                         for n in re.findall(rb"<PartNumber>(\d+)</PartNumber>", body)
@@ -166,7 +166,9 @@ class Bucket:
                     with bucket.lock:
                         listed = "".join(
                             f"<Upload><Key>{u['key']}</Key>"
-                            f"<UploadId>{upload_id}</UploadId></Upload>"
+                            # Spelled anew on every listing, as R2 does.
+                            f"<UploadId>{upload_id}.{uuid.uuid4().hex}</UploadId>"
+                            "</Upload>"
                             for upload_id, u in bucket.uploads.items()
                             if u["key"].startswith(prefix)
                         )
@@ -197,7 +199,7 @@ class Bucket:
                 key, query = self._target()
                 with bucket.lock:
                     if "uploadId" in query:
-                        bucket.uploads.pop(query["uploadId"][0], None)
+                        bucket.uploads.pop(Bucket.upload_of(query), None)
                     else:
                         bucket.objects.pop(key, None)
                         bucket.etags.pop(key, None)
@@ -211,6 +213,11 @@ class Bucket:
             access_key="test",
             secret_key="test",
         )
+
+    @staticmethod
+    def upload_of(query) -> str:
+        """The upload an id names, however it is spelled."""
+        return query["uploadId"][0].split(".")[0]
 
     def close(self) -> None:
         self._server.shutdown()
@@ -720,6 +727,10 @@ def test_a_restart_mid_archive_does_not_send_the_home_again(cloud):
 def test_an_archive_longer_than_a_sweep_waits_is_finished_by_a_later_one(
     cloud, monkeypatch
 ):
+    """The later sweep finds the upload by listing the bucket's, and R2 spells
+    one upload's id differently on every listing. On dev each sweep took that
+    for a new upload, stopped the host's job and threw its parts away, until a
+    stop that raced another call failed the archive (2026-10-07)."""
     seat = cloud.seats[0]
     a_large_home(cloud, seat)
     asleep(cloud, seat)
