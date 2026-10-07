@@ -261,10 +261,8 @@ class CloudHostHome(UuidPk, Timestamps, Base):
         ),
     )
 
-    # Never NULL since homes stopped being archived; the column's constraint
-    # follows once no release maps it otherwise.
     host_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("cloud_hosts.id", ondelete="CASCADE"), index=True, nullable=True
+        ForeignKey("cloud_hosts.id", ondelete="CASCADE"), index=True
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE")

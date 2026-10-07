@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import room_of
 from app.domain.machine.models import CloudHostHome
 from app.domain.run_record.service import FRAME as RUN_RECORD_FRAME
 from app.domain.run_record.service import as_payload as run_record_payload
@@ -39,20 +40,35 @@ async def _conversation(session: AsyncSession, home: CloudHostHome) -> uuid.UUID
     return home.topic_id
 
 
-async def _line(
-    session: AsyncSession, home: CloudHostHome, content: str, meta: dict
+async def say_in(
+    session: AsyncSession, conversation_id: uuid.UUID, content: str, meta: dict
 ) -> dict | None:
-    """Say it in the conversation: a person has something to do."""
+    """Say it in a conversation, a room's or one inside a room (a task's, a
+    支线's), as the platform. Returns what to publish once committed."""
+    room = await room_of(session, conversation_id)
     block = await announce(
         session,
-        place_id=await _conversation(session, home),
+        place_id=room,
+        task_id=None if conversation_id == room else conversation_id,
         content=content,
-        meta={"who": "platform", "home": str(home.id), **meta},
+        meta={"who": "platform", **meta},
         published_by_caller=True,
     )
     if block is None:
         return None
     return BlockOut.model_validate(block).model_dump(mode="json")
+
+
+async def _line(
+    session: AsyncSession, home: CloudHostHome, content: str, meta: dict
+) -> dict | None:
+    """Say it in the conversation: a person has something to do."""
+    return await say_in(
+        session,
+        await _conversation(session, home),
+        content,
+        {"home": str(home.id), **meta},
+    )
 
 
 async def _record(

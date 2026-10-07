@@ -17,10 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.core.storage import private_storage
-from app.domain.agent.announce import announce
-from app.domain.block.schemas import BlockOut
 from app.domain.machine.models import RetainedHomeArchive
-from app.domain.machine.progress import publish_line
+from app.domain.machine.progress import publish_line, say_in
 
 logger = logging.getLogger("cheese.machine.retained_archives")
 
@@ -54,12 +52,11 @@ async def tell(session: AsyncSession) -> int:
     told = 0
     for conversation_id, delete_after in list(until.items())[:PER_SWEEP]:
         day = (delete_after + DAY_OFFSET).date().isoformat()
-        block = await announce(
+        line = await say_in(
             session,
-            place_id=conversation_id,
-            content=say("sandboxArchivesKept", date=day),
-            meta={"who": "platform", "event_type": "sandbox_archives_kept"},
-            published_by_caller=True,
+            conversation_id,
+            say("sandboxArchivesKept", date=day),
+            {"event_type": "sandbox_archives_kept"},
         )
         await session.execute(
             update(RetainedHomeArchive)
@@ -67,10 +64,7 @@ async def tell(session: AsyncSession) -> int:
             .values(told_at=datetime.now(UTC))
         )
         await session.commit()
-        if block is not None:
-            await publish_line(
-                conversation_id, BlockOut.model_validate(block).model_dump(mode="json")
-            )
+        await publish_line(conversation_id, line)
         told += 1
     return told
 
