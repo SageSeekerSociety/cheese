@@ -12,7 +12,8 @@ already over its cap may only shrink, and a file that is under it may grow up to
 the cap and no further. Only files that CHANGED against the merge base are read,
 which is what makes it cheap enough to run on every commit.
 
-The caps are smell tests, not laws: 1000 lines for `frontend/src` code, 1500 for
+The caps are smell tests, not laws: 1000 lines for `frontend/src` code (400 under
+`frontend/src/api/`, one module per backend domain), 1500 for
 `backend/app`. A file over the cap is not a defect — it is a file that has
 stopped having one reason to change, and the honest answer at that point is a
 split (see `.claude/rules/architecture.md`), not a bigger cap.
@@ -66,6 +67,17 @@ class Cap:
 
 
 CAPS: tuple[Cap, ...] = (
+    # Ahead of the general frontend cap: the first matching prefix wins.
+    Cap(
+        prefix="frontend/src/api/",
+        extensions=(".ts",),
+        limit=400,
+        why=(
+            "src/api/ holds one module per backend domain behind the `src/api.ts` "
+            "re-export facade; a module that long is two domains, which is how api.ts "
+            "itself reached 3747 lines"
+        ),
+    ),
     Cap(
         prefix="frontend/src/",
         extensions=(".vue", ".ts", ".js"),
@@ -319,7 +331,7 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str], dict | None]:
 
     lines.append(
         f"PASS: {judged} changed file(s) judged against the merge base with {base}, "
-        f"caps {CAPS[1].limit} (backend/app) / {CAPS[0].limit} (frontend/src)"
+        "caps " + " / ".join(f"{c.limit} ({c.prefix.rstrip('/')})" for c in CAPS)
     )
     for entry in exempted:
         lines.append(f"  exempt: {entry}")
@@ -415,7 +427,9 @@ def self_test() -> int:
     check("an oversized file may hold its size", judge("backend/app/a.py", 3000, 3000), None)
     check("an oversized file may not grow", judge("backend/app/a.py", 3001, 3000) is not None, True)
     check("an oversized file may shrink", judge("backend/app/a.py", 2999, 3000), None)
-    check("cap_for picks the backend cap", cap_for("backend/app/x.py") is CAPS[1], True)
+    check("cap_for picks the backend cap", cap_for("backend/app/x.py").limit, 1500)
+    check("src/api/ gets its own, tighter cap", judge("frontend/src/api/a.ts", 401, None) is not None, True)
+    check("the general frontend cap still covers src/", cap_for("frontend/src/apiary.ts").limit, 1000)
     check("cap_for ignores a .py outside app", cap_for("backend/alembic/x.py"), None)
 
     # The exemption mechanism itself, on a path that is not exempt today —

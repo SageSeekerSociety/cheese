@@ -114,6 +114,25 @@ work panels standalone. The
 vue-router half keeps counting type-only imports on purpose, because there the
 alternative (`NavTarget` from `lib/navTarget.ts`) is what the rule points you at.)
 
+## Frontend: one API module per domain behind `src/api.ts`
+
+`frontend/src/api.ts` is a facade: it holds nothing but `export … from`
+statements, and the code lives in `frontend/src/api/<domain>.ts` (feedback,
+members, topics, `admin/gateway`, …). Importers keep writing `@/api` and tests
+keep writing `vi.mock('@/api')`; the facade is what both resolve to.
+
+- **A new endpoint goes in its domain module**, never in `api.ts`. **Enforced**
+  by `no-restricted-syntax` on `src/api.ts` in `eslint.config.mjs`.
+- **A module under `src/api/` stays under 400 lines.** Past that it is two
+  domains. **Enforced** by `.claude/scripts/check-file-sizes.py`.
+- **A module imports `./http` and its siblings, not `../api`.** Going through
+  the facade puts a call inside whatever a test mocked `@/api` with. Sixteen
+  older modules still do (`request` from `'../api'`); changing one changes what
+  its tests intercept, so it is its own change. **建议**.
+- Helpers shared by modules but not part of the public surface
+  (`legacyRequest`, `feedbackQuery`) live in `api/legacy.ts` / `api/query.ts`,
+  which the facade does not re-export.
+
 ## A scene runs standalone, and the set only grows
 
 `docs/manual/dev/scenes.md` (发布在文档站的「场景清单」一页) grades every scene —
