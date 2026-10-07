@@ -1,4 +1,11 @@
 const execution = __EXECUTION_CONFIG__;
+// On Windows the paths arrive with backslashes, from the config and from the
+// build alike. Every comparison below is spelled with "/", which Windows takes
+// as readily, so both are respelled once, here and as a call comes in.
+const slash = (path) => (typeof path === "string" ? path.replace(/\\/g, "/") : path);
+for (const key of ["central_config", "session_workspace", "executor_config", "central_tmp", "target_file"]) {
+  if (typeof execution[key] === "string") execution[key] = slash(execution[key]);
+}
 // The native server's platform tools: every row of `PLATFORM_TOOLS` in the
 // shipped cheese.py, written in with the config (`release.hook_module`).
 // Membership decides, never a name prefix: `todo_write` carries none, and a
@@ -215,6 +222,9 @@ export function register(on) {
   on("tool.call", async ($, e, next) => {
     // agentId identifies the caller; native MCP tools reject it as an argument.
     const { tool, tool_use_id, agentId, ...args } = e;
+    for (const field of ["file_path", "path", "notebook_path"]) {
+      if (typeof args[field] === "string") args[field] = slash(args[field]);
+    }
     // Only the session itself answers the room. A subagent reports to it and
     // is never held back; ToolSearch is how a deferred chat_send is reached.
     if (agentId === undefined && tool !== "ToolSearch") {

@@ -477,8 +477,9 @@ DRIVER = textwrap.dedent(
     import json, os, sys
     sys.path.insert(0, {source!r})
     import client
+    import shell_stop
     for name, value in json.loads(os.environ["DRIVER_CONSTANTS"]).items():
-        setattr(client, name, value)
+        setattr(client if hasattr(client, name) else shell_stop, name, value)
     failures = int(os.environ.get("DRIVER_FAILURES", "0"))
     kind = os.environ.get("DRIVER_FAILURE", "out-of-reach")
     real = client.RemoteClient
@@ -519,6 +520,7 @@ DRIVER = textwrap.dedent(
             return super().call(method, params, **options)
 
     client.RemoteClient = Flaky
+    shell_stop.RemoteClient = Flaky
     raise SystemExit(client.shell(sys.argv[1], sys.argv[2]))
     """
 )

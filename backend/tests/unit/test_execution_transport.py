@@ -852,6 +852,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     copied_helper = helpers / source.name
     shutil.copyfile(source, copied_helper)
     shutil.copyfile(source.with_name("proxy.js"), helpers / "proxy.js")
+    shutil.copyfile(source.with_name("shell_stop.py"), helpers / "shell_stop.py")
     shutil.copyfile(central.cheese_source(), helpers / "cheese.py")
     shutil.copyfile(executor_transport.__file__, helpers / "executor_transport.py")
     monkeypatch.setattr(central, "__file__", str(copied_helper))

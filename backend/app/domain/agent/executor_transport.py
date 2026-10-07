@@ -304,6 +304,27 @@ def _replace_file(path, text):
 SESSION_SOCKET = "CHEESE_SESSION_SOCKET"
 
 
+def dial_runner(path: str, timeout: float):
+    """The runner holding this session, at the socket it gave the session
+    (`SESSION_SOCKET`). On Windows that names the file holding the runner's
+    loopback port and the token it wants before a request (`driven/runner.py`)."""
+    import socket
+    import sys
+
+    if sys.platform == "win32":
+        with open(path) as named:
+            endpoint = json.load(named)
+        connection = socket.create_connection(
+            ("127.0.0.1", endpoint["port"]), timeout=timeout
+        )
+        connection.sendall(endpoint["token"].encode() + b"\n")
+        return connection
+    connection = socket.socket(socket.AF_UNIX)
+    connection.settimeout(timeout)
+    connection.connect(path)
+    return connection
+
+
 def register_project_hooks(config, hooks):
     """Give a running Claude Code session the project's own tool hooks.
 
@@ -316,7 +337,6 @@ def register_project_hooks(config, hooks):
     session's hooks changed. A target with no settings of its own (Codex: the
     executor runs the hooks around its calls) has nothing to change.
     """
-    import socket
     from pathlib import Path
 
     target_file = config.get("target_file")
@@ -338,9 +358,7 @@ def register_project_hooks(config, hooks):
             "request": {"subtype": "apply_flag_settings", "settings": {"hooks": hooks}}
         },
     }
-    with socket.socket(socket.AF_UNIX) as connection:
-        connection.settimeout(60)
-        connection.connect(path)
+    with dial_runner(path, 60) as connection:
         connection.sendall(json.dumps(request).encode() + b"\n")
         answer = json.loads(connection.makefile("rb").readline())
     response = answer.get("result") or {}

@@ -10,10 +10,11 @@ session go once it has sat idle.
 
 import asyncio
 import contextlib
-import fcntl
 import hashlib
+import hmac
 import json
 import os
+import secrets
 import sys
 import time
 import uuid
@@ -23,6 +24,13 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 from app.domain.agent.harness.driven.journal import Journal
+
+if sys.platform == "win32":
+    # Shipped at the archive's root (`bundle.py`): what stands in for flock
+    # and process groups on Windows.
+    import portable
+else:
+    import fcntl
 
 # Not PEP 695 syntax: this module runs on the session machine's interpreter.
 J = TypeVar("J", bound=Journal)
@@ -89,6 +97,10 @@ def socket_path(state: Path) -> str:
     way. Matching it is what lets ``hub.call_executor`` reach this runner with no
     connector change at all.
     """
+    if sys.platform == "win32":
+        # The file naming the loopback port and the token a caller sends first,
+        # which is where the connector looks on Windows (executor_windows.go).
+        return str(state / "executor.endpoint")
     digest = hashlib.sha256(str(state.resolve()).encode()).hexdigest()[:24]
     return f"/tmp/cheese-execution-{os.getuid()}-{digest}.sock"
 
@@ -204,6 +216,9 @@ class Runner(Generic[J]):  # noqa: UP046
         self.inputs: dict[str, asyncio.Task] = {}
         self.errors = None
         self.lock = None
+        # What a caller sends before its request on Windows, where the socket
+        # is a loopback port anyone on the machine can reach.
+        self.token = secrets.token_hex(32)
         # The input a person is waiting on an answer to, while one is.
         self.owed: str | None = None
         # Debts the session has already been held to once at a turn's end.
@@ -230,7 +245,10 @@ class Runner(Generic[J]):  # noqa: UP046
     def claim(self) -> None:
         """Take the state directory, or fail if another runner holds it."""
         self.lock = (self.state / "runner.lock").open("a")
-        fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if sys.platform == "win32":
+            portable.lock(self.lock, blocking=False)
+        else:
+            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         # Only the lock owner may remove a socket a crashed runner left behind.
         Path(socket_path(self.state)).unlink(missing_ok=True)
         # Nor may a debt outlive the runner that recorded it: the next one
@@ -309,10 +327,22 @@ class Runner(Generic[J]):  # noqa: UP046
 
     async def listen(self, limit: int) -> None:
         """Open the socket; last, so a backend that reaches it finds a session."""
-        self.server = await asyncio.start_unix_server(
-            self.handle, path=socket_path(self.state), limit=limit
-        )
-        os.chmod(socket_path(self.state), 0o600)
+        if sys.platform == "win32":
+            self.server = await asyncio.start_server(
+                self.handle, "127.0.0.1", 0, limit=limit
+            )
+            port = self.server.sockets[0].getsockname()[1]
+            endpoint = Path(socket_path(self.state))
+            written = endpoint.with_name(endpoint.name + ".next")
+            written.write_text(json.dumps({"port": port, "token": self.token}))
+            # Written only once the port listens, so a caller that finds the
+            # file finds a runner behind it.
+            written.replace(endpoint)
+        else:
+            self.server = await asyncio.start_unix_server(
+                self.handle, path=socket_path(self.state), limit=limit
+            )
+            os.chmod(socket_path(self.state), 0o600)
         if self.idle_exit_s:
             self.idler = asyncio.create_task(self._idle())
         if self.process is not None:
@@ -560,6 +590,10 @@ class Runner(Generic[J]):  # noqa: UP046
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         try:
+            if sys.platform == "win32" and not hmac.compare_digest(
+                (await reader.readline()).rstrip(b"\r\n"), self.token.encode()
+            ):
+                raise PermissionError("not this runner's caller")
             request = json.loads(await reader.readline())
             response = {
                 "result": await self.dispatch(

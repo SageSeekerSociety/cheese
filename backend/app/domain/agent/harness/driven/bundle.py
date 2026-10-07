@@ -19,6 +19,9 @@ SHARED = (
     "domain/agent/harness/driven/runner.py",
 )
 
+#: The Windows half of what a machine's programs ask of the operating system.
+PORTABLE = "domain/agent/harness/claude_code/remote_execution/portable.py"
+
 
 def build(
     entry: str, modules: tuple[str, ...], extra: dict[str, str] | None = None
@@ -39,6 +42,10 @@ def build(
     }
     for relative in SHARED + modules:
         files[f"app/{relative}"] = (source / relative).read_text()
+    # What stands in for flock and process groups on Windows, imported by the
+    # runner there under its own name: the same file the executor runs, not a
+    # second version of it.
+    files["portable.py"] = (source / PORTABLE).read_text()
     files.update(extra or {})
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
