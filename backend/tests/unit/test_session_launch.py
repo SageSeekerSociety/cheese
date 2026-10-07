@@ -125,6 +125,14 @@ def test_the_settings_deny_unreachable_prompt_ui_and_allow_webfetch():
     assert "WebFetch" not in denied
 
 
+def test_the_settings_add_no_claude_attribution_to_commits_or_prs():
+    """A teammate's commits and PRs carry no CLI attribution: an empty string is
+    how Claude Code is told to add none."""
+    attribution = session_settings()["attribution"]
+    assert attribution["commit"] == ""
+    assert attribution["pr"] == ""
+
+
 def test_the_settings_sync_teammate_definitions_on_start_and_prompt():
     """发现层：会话启动和每个提示都刷新一次队友分身定义文件 —— 主 agent 在
     Agent 工具的可用清单里读到可指定谁（模型范围 = 项目 AI 队友，闸在准入）。"""
