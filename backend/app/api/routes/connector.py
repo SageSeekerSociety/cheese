@@ -23,6 +23,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import (
@@ -383,6 +384,23 @@ async def agent_socket(
             time.monotonic() - opened_at,
         )
         await device_hub.detach_device(device.device_id, transport)
+        await _note_last_seen(db, device.device_id)
+
+
+async def _note_last_seen(db: AsyncSession, device_id: str) -> None:
+    """Keep when the machine was last heard from, as its link goes: the last
+    frame, not the close, which for a machine that slept comes when it wakes.
+    Committed at once, like the read that opened the link."""
+    from app.domain.device.wiring import sql_device_service
+
+    age = device_hub.last_seen_age(device_id) or 0.0
+    at = datetime.now(UTC) - timedelta(seconds=age)
+    try:
+        await sql_device_service(db).note_last_seen(device_id, at)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning("last seen not kept for %s", device_id, exc_info=True)
 
 
 # --- 现场 viewer: a browser watches a device screen's real terminal, and can type
@@ -573,6 +591,9 @@ async def _device_view(db: AsyncSession, device: Device) -> dict[str, Any]:
         # Teams this machine is registered for (为团队注册设备): every project of
         # these teams may run on it.
         "team_ids": list(device.team_ids),
+        "last_seen_at": device.last_seen_at.isoformat()
+        if device.last_seen_at
+        else None,
         "screens": await _device_screens(db, device.device_id),
     }
 

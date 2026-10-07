@@ -68,6 +68,7 @@ class SqlDeviceRepository:
         row.token = device.token
         row.owner_user_id = device.owner_user_id
         row.supply = device.supply
+        row.last_seen_at = device.last_seen_at
         if device.supply is Supply.self_hosted:
             hosted = await self._session.get(HostedDeviceRow, device.device_id)
             if hosted is None:
@@ -104,6 +105,7 @@ class SqlDeviceRepository:
             project_ids=project_ids,
             team_ids=team_ids,
             supply=row.supply,
+            last_seen_at=_aware(row.last_seen_at) if row.last_seen_at else None,
         )
 
     async def get_device(self, device_id: str) -> Device | None:

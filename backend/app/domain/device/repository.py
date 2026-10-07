@@ -36,6 +36,8 @@ class Device:
     # Supply is the stored lifecycle fact. Access is chosen per topic binding
     # (TopicDevice.visibility), never per machine.
     supply: Supply = Supply.self_hosted
+    # When the server last heard from it, as its link went; None before that.
+    last_seen_at: datetime | None = None
 
 
 @dataclass
