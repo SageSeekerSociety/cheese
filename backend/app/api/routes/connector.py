@@ -54,6 +54,7 @@ from app.domain.agent.device_hub import (
     ViewerTransport,
     device_hub,
 )
+from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
@@ -94,7 +95,6 @@ _recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
 async def recover_business_state(device_id: str) -> None:
     from app.core.background import spawn
     from app.core.db import async_session_factory
-    from app.domain.agent.harness.claude_code import owner_login
     from app.domain.local_fs.enforcement import push_grants_on_connect
 
     # The machine enforces its own copy of its directory grants, so it is sent
@@ -584,7 +584,42 @@ async def my_devices(
     """List the devices the logged-in human owns, with liveness + their open agents."""
     user_id = await _require_user(resolver)
     devices = await service.list_owned(user_id)
-    return {"devices": [await _device_view(db, d) for d in devices]}
+    views = []
+    for device in devices:
+        view = await _device_view(db, device)
+        # Whether its owner's own Claude Code is logged in there for the
+        # platform (#2991): the owner's to see, not the team's. Only a machine
+        # they enrolled themselves runs it; a cloud machine says nothing.
+        if device.supply == Supply.self_hosted:
+            view["claude_code"] = await owner_login.status(db, device.device_id)
+        views.append(view)
+    return {"devices": views}
+
+
+@router.post("/my/devices/{device_id}/claude-code")
+async def check_my_claude_code(
+    device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+) -> dict[str, Any] | None:
+    """Ask one of the caller's machines again whether their own Claude Code is
+    logged in there (#2991). They log in on the machine itself, which tells the
+    server nothing; the page showing that machine asks, rather than leaving the
+    answer from its last connection standing."""
+    user_id = await _require_user(resolver)
+    owned = {d.device_id: d for d in await service.list_owned(user_id)}
+    device = owned.get(device_id)
+    if device is None or device.supply != Supply.self_hosted:
+        raise NotFoundError(say("deviceNotYours"))
+    if device_hub.is_online(device_id):
+        try:
+            login = await owner_login.ask(device_hub, device_id)
+        except Exception:
+            # Gone or slow to answer: what it said last still stands.
+            logger.warning("claude login not checked on %s", device_id, exc_info=True)
+            login = None
+        if login is not None:
+            await owner_login.remember(db, device_id, login)
+            await db.commit()
+    return await owner_login.status(db, device_id)
 
 
 @router.patch("/my/devices/{device_id}")
