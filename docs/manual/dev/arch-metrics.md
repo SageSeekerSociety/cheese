@@ -47,7 +47,7 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 | `frontend.grade_counts.grade_lines` | 每一级的行数 | 同级组件的行数之和 | A 升 |
 | `frontend.boundary.violations` | 组件直接取数 / 读路由的处数 | 直接读 `frontend/import-boundary-baseline.json`，不重算 | 只降 |
 | `backend.contracts.per_contract` | 三条契约各自冻结了多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条 | 只降 |
-| `backend.deferred_imports` | 函数内导入的条数 | `ast` 遍历 `backend/app`，只数词法上落在函数体里的 `import` / `from ... import`（嵌套函数算一次，模块级的 `if TYPE_CHECKING:` 不算） | 只降 |
+| `backend.deferred_imports` | 函数内导入的条数，含已写明原因的 | `ast` 遍历 `backend/app`，只数词法上落在函数体里的 `import` / `from ... import`（嵌套函数算一次，模块级的 `if TYPE_CHECKING:` 不算）；计数函数从 `backend/scripts/check_deferred_imports.py` import 进来，那道闸按文件冻结的只是没写原因的那部分 | 只降 |
 | `backend.files.files_over_1000` | 后端超过 1000 行的文件数 | `backend/app/**/*.py` 的行数分布 | 只降 |
 | `backend.files.files_over_1500` | 超过上限（1500 行）的 | 同上 | 只降 |
 | `backend.files.chat_py_lines` | `agent/chat.py` 的行数 | 试点单独跟一条线 | 只降 |
@@ -69,42 +69,42 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 
 ## 当前基线 {#baseline}
 
-2026-09-29，`main@33f6ed5c`（P0 三道闸落地之后）。
+2026-10-07，`task/473c6303@f853f605`（本分支，不是 main：含本任务的改动，即函数内导入那道闸登上棘轮页之后）。
 
 | 前端 | 值 |
 |---|---|
-| 组件总数 | 414（117,754 行） |
-| A / B / C / D | 172（41.5%）/ 1（0.2%）/ 113（27.3%）/ 128（30.9%） |
-| A 级行数 | 28,151（23.9% 的行） |
-| 冻结的组件边界违规 | 91 处，57 个文件 |
+| 组件总数 | 620（131,162 行） |
+| A / B / C / D | 364（58.7%）/ 2（0.3%）/ 163（26.3%）/ 91（14.7%） |
+| A 级行数 | 69,064（52.7% 的行） |
+| 冻结的组件边界违规 | 21 处，21 个文件 |
 
 | 后端 | 值 |
 |---|---|
-| 冻结契约条目 | C1 26 + C2 56 + C3 178 = **260** |
-| 函数内导入 | 729 |
-| > 1000 行文件 | 27 |
-| > 1500 行文件 | 16 |
-| `agent/chat.py` | 6,943 行 |
+| 冻结契约条目 | C1 29 + C2 49 + C3 157 = **235** |
+| 函数内导入 | 773（写明原因的 0 条） |
+| > 1000 行文件 | 33 |
+| > 1500 行文件 | 7 |
+| `agent/chat.py` | 2,772 行 |
 
 | 文件大小 | 上限 | 超标 | 合计超出行数 |
 |---|---|---|---|
-| `frontend/src/` | 1000 | 19 | 13,804 |
-| `backend/app/` | 1500 | 16 | 21,963 |
-| **合计** | | **35** | **35,767** |
+| `frontend/src/` | 1000 | 4 | 4,423 |
+| `backend/app/` | 1500 | 7 | 4,036 |
+| **合计** | | **11** | **8,459** |
 
-最超的五处：`agent/chat.py`（+5443）、`api/routes/users.py`（+3229）、`frontend/src/api.ts`（+2747）、`review/services.py`（+2565）、`api/routes/topics.py`（+2523）。
+最超的五处：`frontend/src/api.ts`（+1779）、`frontend/src/proto-feedback-fixtures.ts`（+1629）、`agent/chat.py`（+1272）、`agent/runtime.py`（+1231）、`frontend/src/stores/feedback.ts`（+708）。
 
-热点前五（30 天 / 90 天，改次数 × 行数，fix 占比）：
+热点前五（按 30 天的改次数 × 行数排，30 天 / 90 天，fix 占比）：
 
 | 文件 | 30 天 | 90 天 |
 |---|---|---|
-| `backend/app/domain/agent/chat.py` | 149 次，49 次 fix（33%） | 246 次，82 次 fix（33%） |
-| `frontend/src/api.ts` | 106 次，15 次 fix（14%） | 178 次，29 次 fix（16%） |
-| `backend/app/api/routes/topics.py` | 90 次，26 次 fix（29%） | 153 次，38 次 fix（25%） |
-| `frontend/src/components/ChatPanel.vue` | 78 次，30 次 fix（38%） | 147 次，58 次 fix（39%） |
-| `backend/app/domain/review/services.py` | 38 次，14 次 fix（37%） | 107 次，30 次 fix（28%） |
+| `backend/app/domain/agent/chat.py` | 195 次，57 次 fix（29%） | 272 次，86 次 fix（32%） |
+| `frontend/src/api.ts` | 167 次，32 次 fix（19%） | 227 次，45 次 fix（20%） |
+| `backend/app/api/routes/topics.py` | 135 次，35 次 fix（26%） | 187 次，46 次 fix（25%） |
+| `backend/app/domain/agent/runtime.py` | 61 次，23 次 fix（38%） | 104 次，41 次 fix（39%） |
+| `frontend/src/cx_types.ts` | 125 次，29 次 fix（23%） | 171 次，37 次 fix（22%） |
 
-同一天被多个提交改：90 天里 6,196 个文件-天中有 **1,674** 个是这样；最多的是 `agent/chat.py` 的 40 天，然后 `frontend/src/api.ts` 33 天、`backend/app/core/config.py` 31 天。
+同一天被多个提交改：90 天里 11,010 个文件-天中有 **3,347** 个是这样；最多的是 `agent/chat.py` 的 45 天，然后 `frontend/src/api.ts` 和 `backend/app/core/config.py` 各 38 天。
 
 ## 和 P0 之前比 {#delta}
 
