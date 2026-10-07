@@ -42,6 +42,7 @@ import { usePreviewPick } from './preview/usePreviewPick'
 import { usePreviewQuote } from './preview/usePreviewQuote'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -676,10 +677,7 @@ async function onAnnotate(payload: AnnotateDraft) {
         {{ t('work.room.preview.openInNewWindow') }}
       </BaseButton>
     </div>
-    <div v-else class="text-center text-medium-emphasis py-8">
-      <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-      <div>{{ t('work.room.preview.empty') }}</div>
-    </div>
+    <BaseEmptyState v-else icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
 
     <PreviewLocator
       v-model:note="locatorNote"

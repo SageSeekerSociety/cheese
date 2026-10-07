@@ -11,6 +11,7 @@ import { computed, ref } from 'vue'
 
 import RoutineRow from './RoutineRow.vue'
 
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { routineRoomTarget } from '@/lib/routine'
@@ -131,10 +132,11 @@ function confirmDelete() {
         />
       </ul>
 
-      <div v-if="!routines.length && !error" class="py-8 text-center">
-        <p class="t-body c-muted">{{ t('routines.empty') }}</p>
-        <p class="t-meta c-faint mt-1">{{ t('routines.emptyHint') }}</p>
-      </div>
+      <BaseEmptyState
+        v-if="!routines.length && !error"
+        :title="t('routines.empty')"
+        :desc="t('routines.emptyHint')"
+      />
     </template>
 
     <!-- Deleting a rule is not reversible (its run history goes too): ask before it happens. -->

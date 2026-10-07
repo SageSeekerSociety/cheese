@@ -1041,6 +1041,7 @@
     "roster": {
       "loadFailed": "加载成员失败",
       "count": "{count} 位",
+      "empty": "暂无成员",
       "agentBadge": "AI 队友",
       "failed": "操作失败",
       "title": "频道成员",

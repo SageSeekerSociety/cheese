@@ -20,7 +20,7 @@
         <v-progress-linear indeterminate color="primary" height="2" />
       </div>
 
-      <p v-else-if="!available.length" class="sudo__empty">{{ t('account.sudo.noMethod') }}</p>
+      <BaseEmptyState v-else-if="!available.length" size="inline" :title="t('account.sudo.noMethod')" />
 
       <template v-else>
         <transition name="sudo-method" mode="out-in" @after-enter="focusFirst">
@@ -181,6 +181,7 @@ import { useSudoChallenge } from '@/composables/useSudoChallenge'
 import AccountField from '@/components/account/AccountField.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 
 type Method = SudoMethod
@@ -333,13 +334,6 @@ function verifyPasskey() {
   display: flex;
   align-items: center;
   height: 44px;
-}
-
-.sudo__empty {
-  margin: 0;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--text);
 }
 
 .sudo__username {

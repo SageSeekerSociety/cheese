@@ -20,6 +20,7 @@ import { useDisplay } from 'vuetify'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -369,12 +370,11 @@ function taskRowKey(row: unknown): string {
         <!-- 刚建出来的项目落在这儿时，几列空格子是它的整个第一屏。把那一屏换成
            「去哪儿开始」——板要等到真有东西可摆的时候才是有用的界面。产物那一列在
            这一屏上也不画：没有派出去过一条活的项目不可能有产物。 -->
-        <div class="board__start">
-          <p class="t-body">{{ t('work.room.noTasks') }}</p>
-          <BaseButton v-if="rootTopicId" kind="secondary" class="mt-4" @click="openHomeRoom">{{
-            t('work.board.openChat')
-          }}</BaseButton>
-        </div>
+        <BaseEmptyState
+          :title="t('work.room.noTasks')"
+          :action="rootTopicId ? t('work.board.openChat') : undefined"
+          @action="openHomeRoom"
+        />
       </template>
 
       <template v-else>
@@ -407,13 +407,16 @@ function taskRowKey(row: unknown): string {
                「离开」、在后一列是「进入」，中间那段轨迹没有共同的坐标系可言。 -->
             <TransitionGroup v-else tag="ul" name="board-card" class="board-col__list">
               <!-- 空列自己说它空，到此为止（设计规范 §8.1）。 -->
-              <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty t-body">
-                <span>{{ emptyLine(col.key) }}</span>
+              <li v-if="!inColumn(col.key).length" key="empty" class="board-col__empty">
                 <!-- Empty because of the filter: say the search box filtered it
-                     out, then offer a one-click clear -->
-                <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
-                  {{ t('work.board.clearFilter') }}
-                </BaseButton>
+                     out, then offer a one-click clear. The gate is the same as it
+                     was: with no needle there is no action to draw. -->
+                <BaseEmptyState
+                  size="inline"
+                  :title="emptyLine(col.key)"
+                  :action="findNeedle ? t('work.board.clearFilter') : undefined"
+                  @action="clearFind()"
+                />
               </li>
               <li v-for="row in inColumn(col.key)" :key="row.id">
                 <button type="button" class="board-card" @click="openTask(row)">
@@ -512,11 +515,13 @@ function taskRowKey(row: unknown): string {
                wraps each row (item-as), it never owns the container, so the list keeps its
                semantics in both paths. -->
           <ul v-if="showDone" ref="doneScroll" class="board__done-list" role="list">
-            <li v-if="!doneRows.length" class="board-col__empty t-body">
-              <span>{{ findNeedle ? t('work.board.findNone', { text: find.trim() }) : t('work.board.noneMine') }}</span>
-              <BaseButton v-if="findNeedle" kind="secondary" size="sm" class="mt-2" @click="clearFind()">
-                {{ t('work.board.clearFilter') }}
-              </BaseButton>
+            <li v-if="!doneRows.length" class="board-col__empty">
+              <BaseEmptyState
+                size="inline"
+                :title="findNeedle ? t('work.board.findNone', { text: find.trim() }) : t('work.board.noneMine')"
+                :action="findNeedle ? t('work.board.clearFilter') : undefined"
+                @action="clearFind()"
+              />
             </li>
             <VirtualList
               :items="doneRows"
@@ -744,15 +749,8 @@ function taskRowKey(row: unknown): string {
   padding: 8px;
 }
 
-.board__start {
-  padding: 48px 24px;
-  text-align: center;
-}
-
 .board-col__empty {
   padding: 8px 4px;
-  color: var(--muted);
-  line-height: 1.7;
 }
 
 .board-card {

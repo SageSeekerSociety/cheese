@@ -37,6 +37,7 @@ import NavLink from './common/NavLink.vue'
 import PublishedSite from './PublishedSite.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 
 const props = defineProps<{ projectId: string }>()
@@ -181,7 +182,9 @@ watch(
     <PublishedSite :project-id="projectId" />
     <p v-if="actionError" role="alert" class="made__error t-meta">{{ actionError }}</p>
     <ul class="made__list">
-      <li v-if="!rows.length" class="made__empty t-body">{{ t('project.artifacts.empty') }}</li>
+      <li v-if="!rows.length" class="made__empty">
+        <BaseEmptyState size="inline" :title="t('project.artifacts.empty')" />
+      </li>
       <li
         v-for="(row, index) in rows"
         :key="row.id"
@@ -385,6 +388,5 @@ watch(
 /* 空列自己说它空。和任务列的空行同一个观感（同样的内边距、同样的 --muted）。 */
 .made__empty {
   padding: 8px 4px;
-  color: var(--muted);
 }
 </style>

@@ -99,6 +99,14 @@ export default [
           message:
             'Use AdaptiveDialog (src/components/common/AdaptiveDialog.vue) or ConfirmDialog (docs/design-system.md §3.7); viewers, progress notices and shells that own their own actions keep VDialog with an eslint-disable-next-line explaining which they are.',
         },
+        {
+          // docs/design-system.md §3.12. The tree has no raw v-empty-state left
+          // after the empty-state pass; a new one needs an eslint-disable-next-line
+          // naming why BaseEmptyState's three sizes do not fit.
+          selector: 'VElement[rawName="v-empty-state"]',
+          message:
+            'Use BaseEmptyState (src/components/base/BaseEmptyState.vue, docs/design-system.md §3.12): pick size page/compact/inline instead of Vuetify empty-state props.',
+        },
       ],
     },
   },
