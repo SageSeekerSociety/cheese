@@ -29,9 +29,11 @@ const props = defineProps<{
   projectName: string
   /** 项目总览那份文档现在写着什么；还没读到是 null。 */
   overviewText: string | null
-  progress: ProgressItem[]
+  /** 最近进展；还没读到是 null。 */
+  progress: ProgressItem[] | null
   progressFailed: boolean
-  tasks: RoomTask[]
+  /** 项目的任务；还没读到是 null。没读到之前不写「0」也不写「暂无」。 */
+  tasks: RoomTask[] | null
   names: Record<string, string>
   avatars: Record<string, string>
   me: string
@@ -56,7 +58,10 @@ const overviewLong = computed(() => (props.overviewText ?? '').length > OVERVIEW
 // ---- 最近进展：按天分组，先列最近几条 ----
 const PROGRESS_FIRST = 8
 const progressAll = ref(false)
-const progressShown = computed(() => (progressAll.value ? props.progress : props.progress.slice(0, PROGRESS_FIRST)))
+const progressShown = computed(() => {
+  const all = props.progress ?? []
+  return progressAll.value ? all : all.slice(0, PROGRESS_FIRST)
+})
 
 function dayOf(iso: string): string {
   const at = new Date(iso)
@@ -90,7 +95,7 @@ function openProgress(item: ProgressItem) {
 // ---- 谁在做什么：还在进行、没停住的任务，按负责人分；我在最前 ----
 const PER_PERSON = 4
 const going = computed(() =>
-  props.tasks.filter((task) => task.status === 'open' && task.presentation.column !== 'done' && !task.stalled)
+  (props.tasks ?? []).filter((task) => task.status === 'open' && task.presentation.column !== 'done' && !task.stalled)
 )
 const people = computed(() => {
   const byOwner = new Map<string, RoomTask[]>()
@@ -130,7 +135,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
             </button>
           </div>
           <template v-if="overviewText?.trim()">
-            <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }">
+            <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }" data-user-content>
               <MarkdownView class="md-content" :source="overviewText" />
             </div>
             <button
@@ -161,8 +166,8 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
             :title="t('work.overview.progressFailed')"
             @retry="emit('retry-progress')"
           />
-          <p v-else-if="!progress.length" class="ov-empty t-body c-muted">{{ t('work.overview.noProgress') }}</p>
-          <template v-else>
+          <p v-else-if="progress?.length === 0" class="ov-empty t-body c-muted">{{ t('work.overview.noProgress') }}</p>
+          <template v-else-if="progress">
             <div v-for="group in progressDays" :key="group.day" class="ov-day">
               <h3 class="ov-day__label t-meta c-faint">{{ group.day }}</h3>
               <ul class="ov-events">
@@ -172,8 +177,15 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                       {{ t(`work.overview.kind.${item.kind}`) }}
                     </span>
                     <span class="ov-event__what t-body">
-                      <span class="ov-event__title">{{ progressTitle(item) }}</span>
-                      <span v-if="item.by" class="c-faint"> · {{ nameOf(item.by) }}</span>
+                      <!-- 写的人起的名字不翻译；版本那一句只有文件名是人写的。 -->
+                      <span
+                        class="ov-event__title"
+                        :data-user-content="item.kind === 'version' ? item.artifactName : ''"
+                        >{{ progressTitle(item) }}</span
+                      >
+                      <span v-if="item.by" class="c-faint">
+                        · <span data-user-content>{{ nameOf(item.by) }}</span></span
+                      >
                     </span>
                     <span class="ov-event__when t-meta c-faint">{{ relTime(item.at) }}</span>
                   </button>
@@ -198,10 +210,10 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           <div class="ov-head">
             <h2 class="ov-title">{{ t('work.overview.people') }}</h2>
             <button type="button" class="ov-link" data-testid="overview-all-tasks" @click="emit('all-tasks')">
-              {{ t('work.overview.allTasks', { count: going.length }) }}
+              {{ tasks ? t('work.overview.allTasks', { count: going.length }) : t('navigation.project.tasks') }}
             </button>
           </div>
-          <p v-if="!people.length" class="ov-empty t-body c-muted">{{ t('work.overview.nobody') }}</p>
+          <p v-if="tasks && !people.length" class="ov-empty t-body c-muted">{{ t('work.overview.nobody') }}</p>
           <div v-for="person in people" :key="person.owner" class="ov-person">
             <div class="ov-person__who t-body">
               <UserAvatar
@@ -210,7 +222,9 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                 :avatar="avatars[person.owner] || ''"
                 :seed="person.owner"
               />
-              <span class="ov-person__name">{{ nameOf(person.owner) || t('work.board.noAssignee') }}</span>
+              <span class="ov-person__name" :data-user-content="person.owner ? '' : undefined">{{
+                nameOf(person.owner) || t('work.board.noAssignee')
+              }}</span>
               <span class="c-faint">{{ person.tasks.length }}</span>
             </div>
             <ul class="ov-person__tasks">
@@ -220,7 +234,9 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                   class="ov-task"
                   @click="emit('open-task', { taskId: task.id, roomId: task.room_id })"
                 >
-                  <span class="ov-task__title t-body">{{ taskTitle(task) }}</span>
+                  <span class="ov-task__title t-body" :data-user-content="task.title || undefined">{{
+                    taskTitle(task)
+                  }}</span>
                   <span class="ov-task__state" :class="`ov-task__state--${stateOf(task).tone}`">
                     {{ stateOf(task).text }}
                   </span>

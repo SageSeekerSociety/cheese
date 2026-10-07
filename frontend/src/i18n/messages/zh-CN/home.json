@@ -11,9 +11,11 @@
       "start": "待你开始",
       "checksFailed": "检查未通过",
       "bounced": "已退回",
-      "decide": "待你决定"
+      "decide": "待你决定",
+      "read": "变更提醒"
     },
-    "decideFailed": "提交失败"
+    "markRead": "标为已读",
+    "actionFailed": "操作失败"
   },
   "nav": {
     "teamProjects": "项目",

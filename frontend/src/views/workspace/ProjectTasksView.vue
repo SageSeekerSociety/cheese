@@ -128,7 +128,9 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           :aria-pressed="whose === f.id"
           @click="whose = f.id"
         >
-          {{ f.label }} <span class="tasks__count">{{ counts[f.id] }}</span>
+          {{ f.label }}
+          <!-- 任务还没读到（或读失败）时不写数：那时的 0 不是真的 0。 -->
+          <span v-if="!loading && !failed" class="tasks__count">{{ counts[f.id] }}</span>
         </button>
       </div>
       <span class="tasks__spacer" />
@@ -139,6 +141,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
             type="button"
             class="tasks__chip t-body"
             :class="{ 'tasks__chip--on': !!channelId }"
+            :data-user-content="pickedChannel || undefined"
             data-testid="tasks-channel"
           >
             {{ pickedChannel ? `# ${pickedChannel}` : t('work.projectTasks.allChannels') }}
@@ -182,8 +185,12 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
         <ul class="tasks__list">
           <li v-for="task in group.tasks" :key="task.id">
             <button type="button" class="tasks__row" @click="emit('open-task', task)">
-              <span class="tasks__title t-body">{{ taskTitle(task) }}</span>
-              <span class="tasks__channel c-faint"># {{ channelTitle.get(task.room_id) ?? '' }}</span>
+              <span class="tasks__title t-body" :data-user-content="task.title || undefined">{{
+                taskTitle(task)
+              }}</span>
+              <span class="tasks__channel c-faint" :data-user-content="channelTitle.get(task.room_id) || undefined"
+                ># {{ channelTitle.get(task.room_id) ?? '' }}</span
+              >
               <span class="tasks__who">
                 <template v-if="task.owner_handle">
                   <UserAvatar
@@ -192,7 +199,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                     :avatar="avatars[task.owner_handle] || ''"
                     :seed="task.owner_handle"
                   />
-                  <span class="tasks__name">{{ nameOf(task.owner_handle) }}</span>
+                  <span class="tasks__name" data-user-content>{{ nameOf(task.owner_handle) }}</span>
                 </template>
                 <span v-if="task.contributor_handles?.length" class="c-faint"
                   >+{{ task.contributor_handles.length }}</span
@@ -219,10 +226,16 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
         <ul v-if="stalledOpen" class="tasks__list">
           <li v-for="task in stalled" :key="task.id">
             <button type="button" class="tasks__row tasks__row--stalled" @click="emit('open-task', task)">
-              <span class="tasks__title t-body">{{ taskTitle(task) }}</span>
-              <span class="tasks__channel c-faint"># {{ channelTitle.get(task.room_id) ?? '' }}</span>
+              <span class="tasks__title t-body" :data-user-content="task.title || undefined">{{
+                taskTitle(task)
+              }}</span>
+              <span class="tasks__channel c-faint" :data-user-content="channelTitle.get(task.room_id) || undefined"
+                ># {{ channelTitle.get(task.room_id) ?? '' }}</span
+              >
               <span class="tasks__who">
-                <span v-if="task.owner_handle" class="tasks__name">{{ nameOf(task.owner_handle) }}</span>
+                <span v-if="task.owner_handle" class="tasks__name" data-user-content>{{
+                  nameOf(task.owner_handle)
+                }}</span>
               </span>
               <span class="tasks__state">{{ stateOf(task).text }}</span>
               <span class="tasks__when t-meta c-faint">{{ relTime(task.last_activity_at) }}</span>

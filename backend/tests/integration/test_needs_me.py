@@ -6,6 +6,7 @@
   被退回之后没人接着改。只是任务开着不算。
 - 归档的频道是只读的，里面的事不再等任何人。
 - 芝士请他拍板而他还没拍的，在「待办」里，拍完就消失。
+- 芝士写给他的变更提醒在「待办」里，读过就消失；只记一笔的（silent）不进来。
 - 一个任务在不在等**看的这个人**，由服务端说：侧栏的点只对被等的那个人亮。
 - 好几天没人动的任务：三天提醒负责人一次，十四天算「已停滞」；在等别人审阅或回答
   的不算。
@@ -146,7 +147,7 @@ def test_a_decision_asked_of_me_waits_until_i_make_it(client):
     (item,) = _mine(client, "alice")
     assert item["reason"] == "decide"
     assert item["topicId"] == channel
-    assert item["question"] == "上线前要不要先灰度"
+    assert item["headline"] == "上线前要不要先灰度"
     assert item["options"] == ["先灰度", "直接上线"]
 
     r = client.post(
@@ -154,6 +155,39 @@ def test_a_decision_asked_of_me_waits_until_i_make_it(client):
         json={"chosen": "先灰度"},
         headers=session_auth_headers("alice"),
     )
+    assert r.status_code == 200, r.text
+    assert _mine(client, "alice") == []
+
+
+def test_a_change_alert_waits_until_i_read_it(client):
+    project = _project(client)
+    channel = _channel(client, project)
+
+    def alert(level: str, title: str) -> dict:
+        r = client.post(
+            f"/projects/{project}/alerts",
+            json={
+                "level": level,
+                "kind": "change_alert",
+                "title": title,
+                "body": "报名表单少了两个字段",
+                "target_handle": "alice",
+                "topic_id": channel,
+            },
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["data"][0]
+
+    told = alert("light", "报名表单改了")
+    alert("silent", "只记一笔")
+
+    (item,) = _mine(client, "alice")
+    assert item["reason"] == "read"
+    assert item["topicId"] == channel
+    assert item["headline"] == "报名表单改了"
+    assert item["options"] == []
+
+    r = client.post(f"/alerts/{told['id']}/read", headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
     assert _mine(client, "alice") == []
 

@@ -5,7 +5,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
-import { listAwaitingMe, resolveAlert } from '@/api'
+import { listAwaitingMe, markRead, resolveAlert } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -24,7 +24,7 @@ import NotificationFeed from '@/views/home/NotificationFeed.vue'
 // `room_task/presentation.py`），范围换成我能看见的全部项目，再按「这件事点的是谁」过滤。
 // 它答的是「现在还没处理完的有哪些」，处理完就消失。按项目分组；每一件先说要你做什么，
 // 再说是哪件事、等的是什么（提问的原话、改动的主题、停住的原因）。要你拍板的那几件，
-// 选项就摆在这一行上。
+// 选项就摆在这一行上；芝士写给你的变更提醒读过就点「标为已读」。
 //
 // 下面是**动态**：提到你、回复你、邀请你、截止提醒。它们是一条条事件，读过就算。以前
 // 它们在顶栏的铃铛里；铃铛拆了，两样东西放在同一页，人回来只看这一处。
@@ -67,16 +67,23 @@ function askOf(item: WaitingItem): { text: string; tone: 'warn' | 'danger' } {
   if (item.reason === 'reporter') return { text: t('home.inbox.reason.reporter'), tone: 'warn' }
   if (item.reason === 'asked') return { text: t('home.inbox.reason.asked'), tone: 'warn' }
   if (item.reason === 'decide') return { text: t('home.inbox.reason.decide'), tone: 'warn' }
+  if (item.reason === 'read') return { text: t('home.inbox.reason.read'), tone: 'warn' }
   if (item.phrase === 'checks_failed') return { text: t('home.inbox.reason.checksFailed'), tone: 'danger' }
   if (item.phrase === 'bounced') return { text: t('home.inbox.reason.bounced'), tone: 'warn' }
   return { text: t('home.inbox.reason.start'), tone: 'warn' }
 }
 
-/** 任务的事写任务的名字，频道自己的事写频道的；要你拍板的写那个问题。 */
+/** 任务的事写任务的名字，频道自己的事写频道的；来自通知的写通知的标题。 */
 function itemTitle(item: WaitingItem): string {
-  if (item.reason === 'decide' && item.question) return item.question
+  if (item.alertId != null && item.headline) return item.headline
   if (item.taskTitle) return taskTitle({ title: item.taskTitle, title_source: item.taskTitleSource })
   return topicTitle({ title: item.topicTitle })
+}
+
+/** 标题里人写的那一段：没起名时那一行写的是界面的「新任务」，不算。 */
+function itemTitleWritten(item: WaitingItem): string {
+  if (item.alertId != null && item.headline) return item.headline
+  return item.taskTitle ?? item.topicTitle
 }
 
 function linkTo(item: WaitingItem) {
@@ -110,22 +117,24 @@ const byProject = computed(() => {
   return groups
 })
 
-// 拍板：选了就交上去，这一件随之从清单上消失。
-const deciding = ref<number | null>(null)
-const decideError = ref('')
-async function decide(item: WaitingItem, chosen: string) {
+// 拍板、标为已读：交上去，这一件随之从清单上消失。
+const acting = ref<number | null>(null)
+const actionError = ref('')
+async function settle(item: WaitingItem, send: (alertId: number) => Promise<unknown>) {
   if (item.alertId == null) return
-  deciding.value = item.alertId
-  decideError.value = ''
+  acting.value = item.alertId
+  actionError.value = ''
   try {
-    await resolveAlert(item.alertId, chosen)
+    await send(item.alertId)
     items.value = items.value.filter((other) => other.alertId !== item.alertId)
   } catch (e) {
-    decideError.value = e instanceof Error ? e.message : t('home.inbox.decideFailed')
+    actionError.value = e instanceof Error ? e.message : t('home.inbox.actionFailed')
   } finally {
-    deciding.value = null
+    acting.value = null
   }
 }
+const decide = (item: WaitingItem, chosen: string) => settle(item, (id) => resolveAlert(id, chosen))
+const dismiss = (item: WaitingItem) => settle(item, markRead)
 </script>
 
 <template>
@@ -192,10 +201,11 @@ async function decide(item: WaitingItem, chosen: string) {
     />
     <p v-else-if="items.length === 0" class="inbox__quiet">{{ t('home.inbox.waitingEmpty') }}</p>
     <template v-else>
-      <p v-if="decideError" role="alert" class="inbox__error t-meta">{{ decideError }}</p>
+      <p v-if="actionError" role="alert" class="inbox__error t-meta">{{ actionError }}</p>
       <section v-for="group in byProject" :key="group.projectId" class="inbox__project">
         <h3 class="inbox__project-name">
-          {{ group.projectName }} <span class="inbox__count">{{ group.items.length }}</span>
+          <span data-user-content>{{ group.projectName }}</span>
+          <span class="inbox__count">{{ group.items.length }}</span>
         </h3>
         <ul class="inbox__list">
           <li
@@ -208,10 +218,12 @@ async function decide(item: WaitingItem, chosen: string) {
                 <span class="inbox-item__ask" :class="`inbox-item__ask--${askOf(item).tone}`">{{
                   askOf(item).text
                 }}</span>
-                <span class="inbox-item__title t-body">{{ itemTitle(item) }}</span>
+                <span class="inbox-item__title t-body" :data-user-content="itemTitleWritten(item) || undefined">{{
+                  itemTitle(item)
+                }}</span>
               </span>
-              <span v-if="item.detail" class="inbox-item__detail t-body">{{ item.detail }}</span>
-              <span class="inbox-item__where">
+              <span v-if="item.detail" class="inbox-item__detail t-body" data-user-content>{{ item.detail }}</span>
+              <span class="inbox-item__where" :data-user-content="item.topicTitle || undefined">
                 # {{ topicTitle({ title: item.topicTitle }) }} · {{ relTime(item.at) }}
               </span>
             </NavLink>
@@ -221,10 +233,15 @@ async function decide(item: WaitingItem, chosen: string) {
                 :key="option"
                 size="sm"
                 kind="secondary"
-                :loading="deciding === item.alertId"
+                :loading="acting === item.alertId"
                 @click="decide(item, option)"
               >
                 {{ option }}
+              </BaseButton>
+            </div>
+            <div v-else-if="item.reason === 'read'" class="inbox-item__options">
+              <BaseButton size="sm" kind="secondary" :loading="acting === item.alertId" @click="dismiss(item)">
+                {{ t('home.inbox.markRead') }}
               </BaseButton>
             </div>
           </li>

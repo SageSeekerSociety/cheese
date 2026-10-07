@@ -779,28 +779,15 @@ export function deleteOAuthConnection(userId: string, connectionId: number, sudo
   })
 }
 
-export function getInbox(projectId: string, targetHandle: string): Promise<ListPayload<InboxItem>> {
-  return request<ListPayload<InboxItem>>(
-    `/projects/${encodeURIComponent(projectId)}/inbox?target_handle=${encodeURIComponent(targetHandle)}`
-  )
-}
-
 export function markRead(alertId: number): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${alertId}/read`, { method: 'POST' })
 }
 
-// 拍板。答复之后这一条不再等人，收件箱里就没有它了。
+// 拍板。答复之后这一条不再等人，「待办」里就没有它了。
 export function resolveAlert(alertId: number, chosen: string): Promise<InboxItem> {
   return request<InboxItem>(`/alerts/${alertId}/resolve`, {
     method: 'POST',
     body: JSON.stringify({ chosen }),
-  })
-}
-
-export function sendFeedback(alertId: number, feedback: 'up' | 'down'): Promise<InboxItem> {
-  return request<InboxItem>(`/alerts/${alertId}/feedback`, {
-    method: 'POST',
-    body: JSON.stringify({ feedback }),
   })
 }
 

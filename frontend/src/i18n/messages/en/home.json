@@ -11,9 +11,11 @@
       "start": "Ready for you to start",
       "checksFailed": "Checks failed",
       "bounced": "Returned",
-      "decide": "Awaiting your decision"
+      "decide": "Awaiting your decision",
+      "read": "Change alert"
     },
-    "decideFailed": "Unable to submit"
+    "markRead": "Mark as read",
+    "actionFailed": "Something went wrong"
   },
   "nav": {
     "teamProjects": "Projects",

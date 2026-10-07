@@ -1,5 +1,6 @@
 // 项目总览：项目总览那份文档照原样显示，没写过就给一个「写一份」；谁在做什么按负责人
-// 分、我在最前，停住的和做完的不在里面；最近进展里点一件就去那件任务。
+// 分、我在最前，停住的和做完的不在里面；最近进展里点一件就去那件任务。任务和进展还
+// 没读到时不写「0」、不写「暂无」。
 import type { RoomTask } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
@@ -125,4 +126,11 @@ it('最近进展里点一件，去那件任务', async () => {
   const view = mount({ progress: [item] })
   await fireEvent.click(view.getByText('首页加载慢'))
   expect(view.emitted('open-task')).toEqual([[{ taskId: 't9', roomId: 'front' }]])
+})
+
+it('任务和进展还没读到：不写「0」，也不写「暂无」', () => {
+  const view = mount({ overviewText: null, progress: null, tasks: null })
+  expect(view.getByTestId('overview-all-tasks').textContent).not.toMatch(/\d/)
+  expect(view.queryByText(t('work.overview.nobody'))).toBeNull()
+  expect(view.queryByText(t('work.overview.noProgress'))).toBeNull()
 })

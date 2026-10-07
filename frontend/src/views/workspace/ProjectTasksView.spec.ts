@@ -111,3 +111,10 @@ it('「我负责的」只列我是负责人的', async () => {
   await fireEvent.click(view.getByRole('button', { name: new RegExp(t('work.channelTasks.mine')) }))
   expect(titles(view)).toEqual(['我的'])
 })
+
+it('任务还没读到时，筛选上不写「0」', () => {
+  const view = mount([], { loading: true })
+  const chips = Array.from(view.container.querySelectorAll('.tasks__chips button')).map((el) => el.textContent ?? '')
+  expect(chips.length).toBeGreaterThan(0)
+  for (const chip of chips) expect(chip).not.toMatch(/\d/)
+})

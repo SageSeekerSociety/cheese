@@ -57,9 +57,10 @@ class WaitingItem:
     #: 第二行：等的是什么 —— 提问的原话、递上来的改动主题、卡停住的原因、决策请求
     #: 的说明。从已有的事实里取，没有就空着，不替它编一句。
     detail: str = ""
-    #: 决策请求才有：哪一条通知、要他拍板的问题、可选的答案。
+    #: 来自一条通知的才有：哪一条通知、它的标题（决策请求要他拍板的问题、变更提醒
+    #: 说的那件事），以及决策请求可选的答案。
     alert_id: int | None = None
-    question: str = ""
+    headline: str = ""
     options: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
@@ -78,6 +79,6 @@ class WaitingItem:
             "detail": self.detail,
             "alertId": self.alert_id,
             "options": list(self.options),
-            "question": self.question,
+            "headline": self.headline,
             "at": self.at.isoformat(),
         }

@@ -31,7 +31,10 @@ from app.domain.delivery.addressing import (
     address,
     hand_of,
 )
-from app.domain.notification.services import ProjectNotificationService
+from app.domain.notification.services import (
+    ProjectNotificationService,
+    asks_for_decision,
+)
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
@@ -46,8 +49,11 @@ router = APIRouter(prefix="/awaiting-me", tags=["awaiting"])
 #: 决策请求那一行的理由。它不是一条事件点名的结果（`addressing` 的那几种），是一条
 #: 通知本身就写着收件人，所以码只在这一份清单里有。
 REASON_DECIDE = "decide"
-#: 它也不是看板上的哪一格，所以短语码同样只在这里。
+#: 它也不是任务的哪一格，所以短语码同样只在这里。
 PHRASE_DECIDE = "decision"
+#: 变更提醒：芝士说了一句「这一轮改了什么」，没有要他答的，读过就了结。
+REASON_READ = "read"
+PHRASE_CHANGED = "change_alert"
 
 #: 卡停住时，卡上那句原因就是这一行要说的「等的是什么」。
 _CARD_SAYS_WHY = frozenset({"checks_failed", "bounced"})
@@ -255,15 +261,18 @@ async def waiting_items(
             )
         )
 
-    # 芝士请他拍板、还没拍的。决策请求记在频道上（`alerts.create_notification` 把任务、
-    # 支线都折成它们所在的频道）；看不见的、归档了的频道里的不算。
-    for alert in await ProjectNotificationService(db).open_decisions(
+    # 写给他、还没了结的通知：芝士请他拍板还没拍的，和芝士说了改了什么他还没读的。两种
+    # 都记在频道上（`alerts.create_notification` 把任务、支线都折成它们所在的频道）；
+    # 看不见的、归档了的频道里的不算。
+    for alert in await ProjectNotificationService(db).still_open(
         project_ids, recipient_handle=handle
     ):
         room = rooms.get(alert.topic_id) if alert.topic_id else None
         if room is None:
             continue
-        options = (alert.metadata_payload or {}).get("options") or []
+        decision = asks_for_decision(alert)
+        listed = (alert.metadata_payload or {}).get("options") if decision else None
+        options = listed or []
         items.append(
             awaiting.WaitingItem(
                 project_id=room.project_id,
@@ -273,13 +282,13 @@ async def waiting_items(
                 task_id=None,
                 task_title=None,
                 task_title_source=None,
-                phrase=PHRASE_DECIDE,
-                reason=REASON_DECIDE,
+                phrase=PHRASE_DECIDE if decision else PHRASE_CHANGED,
+                reason=REASON_DECIDE if decision else REASON_READ,
                 at=alert.created_at,
                 detail=_one_line(alert.body or ""),
                 alert_id=alert.id,
                 options=tuple(o for o in options if isinstance(o, str)),
-                question=alert.title or "",
+                headline=alert.title or "",
             )
         )
 

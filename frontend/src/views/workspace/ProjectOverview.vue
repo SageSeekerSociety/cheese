@@ -32,9 +32,10 @@ const router = useRouter()
 const store = useWorkspaceStore()
 
 const overviewText = ref<string | null>(null)
-const progress = ref<ProgressItem[]>([])
+// 还没读到的是 null：画面据此不写「0」和「暂无」。
+const progress = ref<ProgressItem[] | null>(null)
 const progressFailed = ref(false)
-const tasks = ref<RoomTask[]>([])
+const tasks = ref<RoomTask[] | null>(null)
 
 async function loadOverview() {
   const pid = props.projectId
@@ -88,8 +89,8 @@ watch(
   () => props.projectId,
   () => {
     overviewText.value = null
-    progress.value = []
-    tasks.value = []
+    progress.value = null
+    tasks.value = null
     loadAll()
   }
 )

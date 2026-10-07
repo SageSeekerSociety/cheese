@@ -15,12 +15,14 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listAwaitingMe = vi.fn()
 const resolveAlert = vi.fn()
+const markRead = vi.fn()
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
     listAwaitingMe: (...a: unknown[]) => listAwaitingMe(...a),
     resolveAlert: (...a: unknown[]) => resolveAlert(...a),
+    markRead: (...a: unknown[]) => markRead(...a),
   }
 })
 
@@ -172,7 +174,7 @@ describe('待办上的一件事', () => {
           reason: 'decide',
           phrase: 'decision',
           alertId: 7,
-          question: '上线前要不要先灰度',
+          headline: '上线前要不要先灰度',
           options: ['先灰度', '直接上线'],
         }),
       ],
@@ -185,10 +187,23 @@ describe('待办上的一件事', () => {
     await waitFor(() => expect(screen.queryByText('上线前要不要先灰度')).toBeNull())
   })
 
+  it('芝士写给你的变更提醒：标为已读，这一件随之离开清单', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [item({ reason: 'read', phrase: 'change_alert', alertId: 8, headline: '报名表单改了' })],
+      total: 1,
+    })
+    markRead.mockResolvedValue({})
+    await mount()
+    await fireEvent.click(await screen.findByRole('button', { name: t('home.inbox.markRead') }))
+    expect(markRead).toHaveBeenCalledWith(8)
+    await waitFor(() => expect(screen.queryByText('报名表单改了')).toBeNull())
+  })
+
   it('交不上去时这一件留着，并说出来', async () => {
     store.projects = [{ id: 'p1' }]
     listAwaitingMe.mockResolvedValue({
-      data: [item({ reason: 'decide', phrase: 'decision', alertId: 7, question: '要不要灰度', options: ['先灰度'] })],
+      data: [item({ reason: 'decide', phrase: 'decision', alertId: 7, headline: '要不要灰度', options: ['先灰度'] })],
       total: 1,
     })
     resolveAlert.mockRejectedValue(new Error('无法提交'))
