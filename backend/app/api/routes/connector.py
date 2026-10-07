@@ -284,6 +284,21 @@ class _WebSocketDeviceTransport:
             raise ConnectionError(str(exc)) from exc
 
 
+@router.get("/device/me")
+async def device_me(
+    db: DbSession,
+    x_cheese_session: str | None = Header(default=None, alias="X-Cheese-Session"),
+) -> dict[str, Any]:
+    """Which device a machine's stored token still names. A machine unbound
+    since its approval keeps the token on disk, and `link connect` asks here
+    before trusting it, rather than installing a connector the server will
+    turn away on every dial."""
+    device = await owner_reads.device_for_token(db, x_cheese_session or "")
+    if device is None:
+        raise UnauthorizedError("unknown or missing device token")
+    return {"device_id": device.device_id, "name": device.name}
+
+
 @router.websocket("/agent")
 async def agent_socket(
     websocket: WebSocket,
@@ -574,8 +589,10 @@ async def my_devices(
         view = await _device_view(db, device)
         # Whether its owner's own Claude Code is logged in there for the
         # platform (#2991): the owner's to see, not the team's. Only a machine
-        # they enrolled themselves runs it; a cloud machine says nothing.
-        if device.supply == Supply.self_hosted:
+        # they enrolled themselves runs it; a cloud machine says nothing, and
+        # neither does a Windows one, where it does not run yet.
+        windows = device_hub.target(device.device_id).startswith("windows")
+        if device.supply == Supply.self_hosted and not windows:
             view["claude_code"] = await owner_login.status(db, device.device_id)
         views.append(view)
     return {"devices": views}

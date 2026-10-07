@@ -38,6 +38,7 @@ auth_entries:
   device.connect: "connector.device_connect resolves caller, explicitly rejects unauthenticated caller, authorize_project, then assigns the pending code to project. Source: app/api/routes/connector.py."
   device.user: "connector._require_user uses ActorResolver.resolve and requires authenticated actor.user_id; DeviceService owner operations additionally bind the supplied device id to that user. Source: app/api/routes/connector.py and domain/device/service.py."
   device.team: "connector._require_user plus TeamRepository.is_team_member or DeviceService team ownership checks on registration/removal. Source: app/api/routes/connector.py and domain/device/service.py."
+  device.token: "connector.device_me authenticates the durable device session token from X-Cheese-Session via device.owner_reads.device_for_token and answers only which device it names; an unknown or missing token is 401. Source: app/api/routes/connector.py."
   device.agent.ws: "connector.agent_socket authenticates durable device session token via device.owner_reads.device_for_token from X-Cheese-Session or token query; binds the socket to that device. Source: app/api/routes/connector.py."
   device.viewer.ws: "connector._may_view_screen verifies query access token and actual screen project-member/owner or topic roster membership before the viewer socket. Source: app/api/routes/connector.py."
   local.device.owner: "local_dirs._require_user requires verified user_id, then _require_owned_device checks Device.owner_user_id. All selected-directory and access-log operations stay bound to caller device ownership. Source: app/api/routes/local_dirs.py."
@@ -515,6 +516,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/connector/auth/device/poll", auth: "device.flow.code", owner: "device"}
   - {protocol: "http", method: "GET", path: "/connector/auth/device/proposed-name", auth: "device.flow.code", owner: "device"}
   - {protocol: "http", method: "POST", path: "/connector/connect", auth: "device.connect", owner: "device"}
+  - {protocol: "http", method: "GET", path: "/connector/device/me", auth: "device.token", owner: "device"}
   - {protocol: "ws", method: "WS", path: "/connector/agent", auth: "device.agent.ws", owner: "device"}
   - {protocol: "ws", method: "WS", path: "/connector/session/{sid}/screen", auth: "device.viewer.ws", owner: "device"}
   - {protocol: "http", method: "GET", path: "/connector/my/devices", auth: "device.user", owner: "device"}

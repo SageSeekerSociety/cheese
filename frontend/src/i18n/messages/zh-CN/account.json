@@ -520,7 +520,7 @@
     "screens": "运行中的现场",
     "watch": "查看现场 · {'@'}{name}",
     "commandsTitle": "用命令接入",
-    "commandsDesc": "Mac 和 Windows 电脑可在「添加设备」里下载桌面端接入。其他机器运行对应系统的命令，再运行 cheesehost link connect 并按提示批准",
+    "commandsDesc": "Mac 和 Windows 电脑可在「添加设备」里下载桌面端接入。其他机器运行对应系统的命令，再运行它最后一行给出的命令并按提示批准",
     "os": {
       "unix": "Mac / Linux",
       "windows": "Windows（PowerShell）"
@@ -539,7 +539,7 @@
     "otherMachines": "其他机器",
     "serverTitle": "服务器或未安装桌面端的电脑",
     "step1": "在要接入的机器上运行对应系统的命令",
-    "step2": "再运行 cheesehost link connect，在给出的链接里批准",
+    "step2": "再运行安装命令最后一行给出的命令，在它打印的链接里批准",
     "step3": "设备会出现在这一页，可查看现场、重命名或解绑",
     "done": "完成",
     "liveTitle": "现场 · {'@'}{name}",

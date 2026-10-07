@@ -14,6 +14,9 @@ var errNoScreens = errors.New("this machine hosts no screens: Windows devices ru
 // newTerminalManager: a Windows device hosts no screens. Screens live on the
 // central session host; what a device runs — one-shot commands and the
 // executor — needs no terminal, so there is no tmux to require.
+// CanHostScreens: a Windows machine hosts no screens, and starts without them.
+func CanHostScreens() error { return nil }
+
 func newTerminalManager() (*terminal.Manager, error) { return nil, nil }
 
 // updateSignals: there is no signal to ask for an in-place update on Windows;
