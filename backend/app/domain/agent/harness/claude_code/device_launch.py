@@ -330,6 +330,8 @@ if blob is None and api:
         api + "/connector/skill-bundles/" + want,
         headers={{"X-Cheese-Token": os.environ.get("CHEESE_TOKEN", "")}},
     )
+    # The pause between attempts grows from this step; a test sets it to 0.
+    step = float(os.environ.get("CHEESE_SKILL_FETCH_BACKOFF_S", "2"))
     for attempt in range(3):
         try:
             with urllib.request.urlopen(request, timeout=120) as answer:
@@ -338,7 +340,7 @@ if blob is None and api:
             reason = type(exc).__name__ + ": " + str(exc)[:200]
             warn("skill bundle fetch failed (" + reason + ")")
             if attempt < 2:
-                time.sleep(2 * (attempt + 1))
+                time.sleep(step * (attempt + 1))
             continue
         if intact(fetched):
             blob = fetched
