@@ -384,7 +384,7 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
                 class="profile__row profile__row--project"
                 :to="{ name: 'workspace-project', params: { projectId: p.project_id } }"
               >
-                <!-- 项目格子走 UserAvatar（kind="org" 出方角）：没挑过头像就退成项目名
+                <!-- 项目格子走 UserAvatar（kind="org" = 圆角方块，§3.14）：没挑过头像就退成项目名
                      首字母的底色方块。和左侧人像同一个组件、同一套退化，不再这里自己
                      截首字、自己上色。种子用 project_id —— 颜色跟着项目走，改名不换色。 -->
                 <UserAvatar
@@ -745,7 +745,7 @@ a.profile__row:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 项目格子自己就是 UserAvatar（见模板）：尺寸、方角、底色都由它画，这里只留
+/* 项目格子自己就是 UserAvatar（见模板）：尺寸、圆角、底色都由它画，这里只留
    「在行里不参与伸缩」这一条布局。 */
 .profile__tile {
   flex: none;

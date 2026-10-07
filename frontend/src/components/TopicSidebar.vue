@@ -401,7 +401,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :aria-current="p.id === selectedProjectId ? 'true' : undefined"
             @click="switchProjectFromSheet(p.id)"
           >
-            <!-- 项目头像走 UserAvatar（kind="org" 出方角）：和左栏人像同一个组件、同一套
+            <!-- 项目头像走 UserAvatar（kind="org" = 圆角方块，§3.14）：和左栏人像同一个组件、同一套
                  「没图就退成底色首字母」的规矩，不再这里自己截首字、自己上色。种子用
                  项目 id —— 颜色跟着项目走，改名不换色（契约 §3.14）。 -->
             <UserAvatar kind="org" :name="p.name" :seed="p.id" :size="20" class="project-switch__avatar" />

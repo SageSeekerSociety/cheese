@@ -1,7 +1,12 @@
 <template>
+  <!-- 形状（§3.14）：人是圆（`rounded="circle"`），团队、空间、项目是圆角方块。org 那一支
+       **不能写 `:rounded="false"`**：Vuetify 的 `false` 就是「方角」，它会挂上 `rounded-0`
+       ——`border-radius: 0 !important`——把下面 `shapeStyle` 里按边长算出来的圆角整条吃掉
+       （`.rounded-0` 的 !important 压得过内联样式），团队/空间/项目于是全变成直角。
+       传 `undefined` 是「这一层不表态」：圆角由 `squareRadius()` 一个人说。 -->
   <v-avatar
     :size="size"
-    :rounded="kind === 'person' ? 'circle' : false"
+    :rounded="kind === 'person' ? 'circle' : undefined"
     :style="{ ...(hasAvatar ? {} : { backgroundColor: fallbackColor }), ...shapeStyle }"
     :aria-hidden="isDecorative ? 'true' : undefined"
     :role="isDecorative ? undefined : 'img'"
