@@ -77,7 +77,7 @@ describe('pageMotion 在两栏（平板）时', () => {
   })
 
   it('从列表走进项目的其余各页照旧往里走', () => {
-    expect(splitMotion('/projects/p', '/projects/p/running')).toBe('forward')
-    expect(splitMotion('/projects/p/running', '/projects/p')).toBe('back')
+    expect(splitMotion('/projects/p', '/projects/p/overview')).toBe('forward')
+    expect(splitMotion('/projects/p/overview', '/projects/p')).toBe('back')
   })
 })

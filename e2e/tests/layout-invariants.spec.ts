@@ -518,7 +518,7 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
 
-  for (const sub of ['running', 'members', 'members/alice', 'docs/charter', 'library']) {
+  for (const sub of ['overview', 'tasks', 'members', 'members/alice', 'docs/charter', 'library']) {
     await page.goto(`${projectPath}/${sub}`);
     const head = page.locator('.app-page__head');
     await expect(head).toBeVisible();

@@ -142,8 +142,8 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
   { rename: (topic) => (renamingTopicId.value = topic.id) }
 )
 
-// 项目级页面：看板和资料库摆在项目名下那一行，其余几页、项目文档、项目设置、转让或
-// 退出都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
+// 项目级页面：总览和资料库摆在项目名下那一行，其余几页（全部任务在内）、项目文档、
+// 项目设置、转让或退出都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
 //
 // 「转让项目」两处都有（菜单里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
 // 或这个项目的团队管理员」，项目行自己就带着这个答案。
@@ -154,8 +154,9 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
 // 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变成「工作文档」。
 // 表里存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。
 const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
-  // 看板是首页，项目名下那一行的第一格。
-  'workspace-running': { label: 'navigation.project.board', icon: 'mdi-view-column-outline' },
+  // 总览是首页，项目名下那一行的第一格。
+  'workspace-overview': { label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
+  'project-tasks': { label: 'navigation.project.tasks', icon: 'mdi-format-list-checks' },
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
   'project-library': { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
   'project-members': { label: 'navigation.project.members', icon: 'mdi-account-group-outline' },
@@ -169,7 +170,7 @@ const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
 const terms = computed(() => termParams(shell.value))
 
-// 项目名下那一行只有看板和资料库，其余都进点项目名弹出的菜单（`projectPageLayout`）。
+// 项目名下那一行只有总览和资料库，其余都进点项目名弹出的菜单（`projectPageLayout`）。
 // 那一行**不再加东西**，见 .claude/rules/project-sidebar.md。
 const layout = computed(() => projectPageLayout(shell.value, KNOWN_PROJECT_PAGES))
 
@@ -215,7 +216,7 @@ const currentProjectName = computed<string>(
   () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? t('work.sidebar.chooseProject')
 )
 
-// 手机上的项目菜单（整页形态）：手机上项目名下不摆那一行，看板、资料库也在这张面板
+// 手机上的项目菜单（整页形态）：手机上项目名下不摆那一行，总览、资料库也在这张面板
 // 里；接着是桌面菜单里那几项（项目文档、其余几页、项目设置、转让或退出），顺序照桌面。
 const projectSheetOpen = ref(false)
 const projectSheetActions = computed<MenuAction[]>(() => {
@@ -387,7 +388,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
-      <!-- 手机上的项目菜单。项目名下那一行（看板、资料库）在手机上也收进这里：列表只留
+      <!-- 手机上的项目菜单。项目名下那一行（总览、资料库）在手机上也收进这里：列表只留
            频道。换项目也只能在这里——一个项目
            一格的那条竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目。 -->
       <MobileActionSheet v-if="page" v-model="projectSheetOpen" :actions="projectSheetActions">
@@ -423,9 +424,9 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <div class="t-body c-muted pa-4">{{ t('work.sidebar.chooseProjectFirst') }}</div>
         </template>
         <template v-else>
-          <!-- 列表顶上由外面填的一行（手机上是看板的摘要，见 ProjectSidebar）。 -->
+          <!-- 列表顶上由外面填的一行（手机上是去项目总览的那一行，见 ProjectSidebar）。 -->
           <slot name="top" />
-          <!-- 项目名下面一行：看板和资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
+          <!-- 项目名下面一行：总览和资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
           <TopicRailPinnedRows
             :pages="barPages"
             :route-name="routeName"
@@ -436,8 +437,8 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             @cancel-prefetch="cancelPrefetch()"
           />
 
-          <!-- 新建、改名、归档频道在项目设置的「频道」一栏，这里不放「＋」：频道少而稳定，
-               新建是一年几次的事。 -->
+          <!-- 新建频道在「浏览频道」那一页，这里不放「＋」：频道少而稳定，新建是一年几次
+               的事。 -->
           <div class="t-eyebrow side-subhead">{{ t('work.sidebar.topics') }}</div>
 
           <!-- 频道的第一行：项目自带的「综合」，固定在最上面，和其他频道同一组。 -->

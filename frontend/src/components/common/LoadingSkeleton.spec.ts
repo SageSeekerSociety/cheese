@@ -24,7 +24,6 @@ const ROW: Record<string, string> = {
   chat: '.skel__chat',
   roster: '.skel__roster',
   entry: '.skel__entry',
-  card: '.skel__card',
   site: '.skel__site',
   doc: '.skel__dsec',
   detail: '.skel__dt-sec',
@@ -47,13 +46,12 @@ describe('画几行', () => {
   })
 
   it('不说的时候每种形态自己知道一屏画几行', () => {
-    // 数字本身是「这块地方大概装得下多少」的约定：侧栏的列表最长，看板的卡最短。
+    // 数字本身是「这块地方大概装得下多少」的约定：侧栏的列表最长。
     // 改这几个数就是在改那个约定，所以钉住。
     expect(rows(draw({ variant: 'list' }), 'list').length).toBe(6)
     expect(rows(draw({ variant: 'chat' }), 'chat').length).toBe(4)
     expect(rows(draw({ variant: 'roster' }), 'roster').length).toBe(3)
     expect(rows(draw({ variant: 'entry' }), 'entry').length).toBe(3)
-    expect(rows(draw({ variant: 'card' }), 'card').length).toBe(2)
     expect(rows(draw({ variant: 'site' }), 'site').length).toBe(5)
     expect(rows(draw({ variant: 'doc' }), 'doc').length).toBe(3)
     expect(rows(draw({ variant: 'text' })).length).toBe(3)
@@ -100,15 +98,6 @@ describe('每一行长得像它替代的那一行', () => {
     // 小标，那 28px 就要在内容到达的那一刻凭空插进来。
     const container = draw({ variant: 'entry', rows: 1 })
     expect(container.querySelector('.skel__ehead')).not.toBeNull()
-  })
-
-  it('看板的卡是一个带框的块，不是几条浮着的线', () => {
-    // 一列卡的轮廓本身就是「这儿有几件事」这个信息。只画线的话，卡到齐那一刻
-    // 整列会重排一次 —— 实测过一次：骨架 54px，真卡 101px，两条换来一张。
-    const row = rows(draw({ variant: 'card', rows: 1 }), 'card')[0]
-    expect(row.querySelector('.skel__card-rule'), '卡里那条分隔线').not.toBeNull()
-    expect(row.querySelector('.skel__bone--pill'), '负责人的头像位').not.toBeNull()
-    expect(row.querySelector('.skel__bone--when'), '右端那个时间').not.toBeNull()
   })
 
   it('现场的一条动作：一行里是小圆点 + 动词 + 参数', () => {

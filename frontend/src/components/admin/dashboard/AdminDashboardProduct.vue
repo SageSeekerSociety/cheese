@@ -12,7 +12,7 @@ import AdminShareBar from '@/components/admin/AdminShareBar.vue'
 import { dayLabel, deltaOf, num } from '@/lib/adminStats'
 import { fmtNum } from '@/lib/usageFormat'
 
-// 产品健康那一屏：北极星 + 两条护栏 + 两条「今天算不出来」。
+// 产品健康那一屏：北极星 + 一条护栏 + 两条「今天算不出来」。
 //
 // 两条算不出来的（`unavailable`）**带理由**画，不画一个假 0 —— 名字是 snake_case，
 // 词条键在这张表里写全（理由同 `TAB_KEY`：拼出来的键在源码里没有一处字面量出现）。
@@ -53,21 +53,6 @@ const productKpis = computed<KpiRow[]>(() => [
         : `${Math.round(product.value.rejection.returned_rate * 100)}%`,
     loading: props.loading,
   },
-  {
-    key: 'useful',
-    label: t('feedback.dashboard.product.usefulness.title'),
-    value:
-      product.value?.usefulness.useful_rate === null || product.value?.usefulness.useful_rate === undefined
-        ? ''
-        : `${Math.round(product.value.usefulness.useful_rate * 100)}%`,
-    loading: props.loading,
-  },
-  {
-    key: 'dismiss',
-    label: t('feedback.dashboard.product.usefulness.down'),
-    value: num(product.value?.usefulness.proposal_dismissals),
-    loading: props.loading,
-  },
 ])
 
 const northSeries = computed<ChartSeries[]>(() => [
@@ -96,17 +81,6 @@ const rejectionSegments = computed(() => {
       shade: 'faint' as const,
     },
     { label: t('feedback.dashboard.product.rejection.live'), value: b.live, shade: 'faint' as const },
-  ].filter((s) => s.value > 0)
-})
-
-const usefulnessSegments = computed(() => {
-  const u = product.value?.usefulness
-  if (!u) return []
-  return [
-    { label: t('feedback.dashboard.product.usefulness.up'), value: u.up, shade: 'ink' as const },
-    { label: t('feedback.dashboard.product.usefulness.down'), value: u.down, shade: 'muted' as const },
-    { label: t('feedback.dashboard.product.usefulness.unrated'), value: u.unrated_read, shade: 'faint' as const },
-    { label: t('feedback.dashboard.product.usefulness.unread'), value: u.unread, shade: 'faint' as const },
   ].filter((s) => s.value > 0)
 })
 
@@ -159,13 +133,6 @@ const xLabels = computed(() => (product.value?.north_star.series ?? []).map((row
       :loading="loading"
     />
   </div>
-
-  <AdminShareBar
-    :title="t('feedback.dashboard.product.usefulness.title')"
-    :segments="usefulnessSegments"
-    :note="t('feedback.dashboard.product.usefulness.note')"
-    :loading="loading"
-  />
 
   <!-- 算不出来的那两条：**带理由**，不画一个假 0。 -->
   <section class="ad__split">

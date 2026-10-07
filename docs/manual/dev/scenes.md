@@ -249,7 +249,8 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/workspace/ProjectMembersView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
 | `views/workspace/ProjectShell.vue` | D | 读路由；读 store（workspace） |
 | `views/workspace/ProjectSidebar.vue` | D | 读路由；经 `lib/routePrefetch.ts` 取数；读 store（workspace） |
-| `views/workspace/RunningWorkView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
+| `views/workspace/ProjectOverview.vue` | 容器 | 画面在 `ProjectOverviewView.vue`（A 级）；取数、去任务页和文档页留在本页 |
+| `views/workspace/ProjectTasks.vue` | 容器 | 画面在 `ProjectTasksView.vue`（A 级）；取数、读地址里的频道筛选、新建任务留在本页 |
 | `views/workspace/TopicView.vue` | D | 读路由；直接取数（`api.ts`）；读 store（workspace） |
 | `views/workspace/WorkspaceEntry.vue` | D | 读路由；读 store（workspace） |
 

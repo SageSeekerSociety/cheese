@@ -184,8 +184,6 @@ class Notification(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    #: 👍/👎（spec G3）：null / "up" / "down"。
-    feedback: Mapped[str | None] = mapped_column(String(length=8), nullable=True)
 
     is_aggregatable: Mapped[bool] = mapped_column(
         "is_aggregatable", Boolean, nullable=False, default=False

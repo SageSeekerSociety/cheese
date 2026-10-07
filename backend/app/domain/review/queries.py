@@ -19,6 +19,7 @@ session。这里交出去的 `RailCard` 是一份冻结的值：没有 session�
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,6 +49,8 @@ class RailCard:
     merge_state: dict | None
     decided_by: str | None
     auto_merge_armed_by: str | None
+    #: 卡递给谁审阅 —— 「这一条在不在等看的这个人」要读它（`delivery.addressing`）。
+    reviewer_handle: str | None = None
 
 
 def _rail_card(card: AcceptCard) -> RailCard:
@@ -63,6 +66,7 @@ def _rail_card(card: AcceptCard) -> RailCard:
         merge_state=card.merge_state if isinstance(card.merge_state, dict) else None,
         decided_by=card.decided_by,
         auto_merge_armed_by=card.auto_merge_armed_by,
+        reviewer_handle=card.reviewer_handle,
     )
 
 
@@ -80,3 +84,23 @@ async def latest_cards_by_task(
     """
     cards = await AcceptCardRepository(db).latest_by_task(task_ids)
     return {task_id: _rail_card(card) for task_id, card in cards.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class Returned:
+    """一次退回：哪条活、谁退的、什么时候。"""
+
+    task_id: uuid.UUID
+    by: str | None
+    at: datetime
+
+
+async def returned_since(
+    db: AsyncSession, task_ids: list[uuid.UUID], since: datetime
+) -> list[Returned]:
+    """这些任务在 `since` 之后被退回的那几次 —— 项目总览的「最近进展」读它。"""
+    return [
+        Returned(task_id=card.task_id, by=card.decided_by, at=card.decided_at)
+        for card in await AcceptCardRepository(db).returned_since(task_ids, since)
+        if card.task_id is not None and card.decided_at is not None
+    ]

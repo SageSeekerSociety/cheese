@@ -1,34 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import {
-  BOARD_COLUMNS,
-  boardColumnCounts,
-  columnDotClass,
-  columnDotStyle,
-  columnLabel,
-  compareTasks,
-  liveBoardTasks,
-} from './board'
+import { columnDotStyle, columnLabel, liveTasks } from './board'
 
 import { setLocale } from '@/i18n'
 
 beforeEach(() => setLocale('zh-CN'))
-
-function task(over: Partial<Parameters<typeof compareTasks>[0]> = {}) {
-  return { id: 'a', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...over }
-}
-
-describe('BOARD_COLUMNS', () => {
-  it('板面只并排「还没了结」的四列', () => {
-    // 已完成收进底部折叠行，板面留给还没了结的；任务不归档，所以 archived 落不到板上。
-    expect(BOARD_COLUMNS.map((c) => c.key)).toEqual(['not_started', 'building', 'delivering', 'needs_you'])
-  })
-
-  it('列的先后是「离交付多远」，不跟着数据变', () => {
-    const twice = [BOARD_COLUMNS.map((c) => c.key), BOARD_COLUMNS.map((c) => c.key)]
-    expect(twice[0]).toEqual(twice[1])
-  })
-})
 
 describe('columnLabel', () => {
   it('每一列各有名字，包括板面上不出现的那两列', () => {
@@ -39,14 +15,6 @@ describe('columnLabel', () => {
     expect(columnLabel('needs_you')).toBe('待处理')
     expect(columnLabel('done')).toBe('已完成')
     expect(columnLabel('archived')).toBe('已归档')
-  })
-})
-
-describe('columnDotClass', () => {
-  it('列色只有一个来源 —— 看板、房间总览、侧栏拿到的是同一个 class', () => {
-    expect(columnDotClass('building')).toBe('board-dot--building')
-    // needs_you 里的下划线在 CSS 类名里是连字符，三处必须换得一模一样。
-    expect(columnDotClass('needs_you')).toBe('board-dot--needs-you')
   })
 })
 
@@ -77,65 +45,14 @@ describe('columnDotStyle', () => {
   })
 })
 
-describe('compareTasks', () => {
-  it('新动过的排前面', () => {
-    const older = task({ id: 'a', updated_at: '2026-08-01T00:00:00Z' })
-    const newer = task({ id: 'b', updated_at: '2026-08-02T00:00:00Z' })
-    expect(compareTasks(newer, older)).toBeLessThan(0)
-    expect(compareTasks(older, newer)).toBeGreaterThan(0)
-  })
-
-  it('同一时刻的两条按 id 定序 —— 板不会在两次刷新之间来回跳', () => {
-    const x = task({ id: 'aaa' })
-    const y = task({ id: 'bbb' })
-    expect(compareTasks(x, y)).toBeLessThan(0)
-    // 全序：反过来比必须给出相反的答案，不能两边都是 0。
-    expect(compareTasks(y, x)).toBeGreaterThan(0)
-  })
-
-  it('两次排序给出同一个结果，无论输入顺序', () => {
-    const rows = [task({ id: 'c' }), task({ id: 'a' }), task({ id: 'b' })]
-    const forward = [...rows].sort(compareTasks).map((r) => r.id)
-    const backward = [...rows]
-      .reverse()
-      .sort(compareTasks)
-      .map((r) => r.id)
-    expect(forward).toEqual(backward)
-    expect(forward).toEqual(['a', 'b', 'c'])
-  })
-
-  it('没有 updated_at 时退到 created_at，而不是掉到列表最上面', () => {
-    const noUpdate = { id: 'a', created_at: '2026-08-01T00:00:00Z', updated_at: undefined }
-    const newer = task({ id: 'b', updated_at: '2026-08-05T00:00:00Z' })
-    expect(compareTasks(newer, noUpdate)).toBeLessThan(0)
-  })
-})
-
-describe('liveBoardTasks / boardColumnCounts', () => {
+describe('liveTasks', () => {
   const on = (room_id: string, column: 'building' | 'delivering' | 'needs_you' | 'done') => ({
     room_id,
     presentation: { column },
   })
 
-  it('已归档房间里没走完的活不上板，交付过的照算', () => {
+  it('已归档频道里没走完的任务不列，交付过的照列', () => {
     const tasks = [on('live', 'building'), on('gone', 'needs_you'), on('gone', 'done')]
-    expect(liveBoardTasks(tasks, new Set(['gone']))).toEqual([on('live', 'building'), on('gone', 'done')])
-  })
-
-  it('摘要数的是板面三列：已完成不算，归档房间里没走完的也不算', () => {
-    const tasks = [
-      on('a', 'building'),
-      on('a', 'building'),
-      on('a', 'needs_you'),
-      on('a', 'done'),
-      on('gone', 'delivering'),
-    ]
-    const counts = boardColumnCounts(tasks, new Set(['gone']))
-    expect(Object.fromEntries(counts.map((c) => [c.key, c.count]))).toEqual({ needs_you: 1, building: 2 })
-  })
-
-  it('该你动的那一列打头', () => {
-    const tasks = [on('a', 'building'), on('a', 'delivering'), on('a', 'needs_you')]
-    expect(boardColumnCounts(tasks, new Set()).map((c) => c.key)).toEqual(['needs_you', 'building', 'delivering'])
+    expect(liveTasks(tasks, new Set(['gone']))).toEqual([on('live', 'building'), on('gone', 'done')])
   })
 })

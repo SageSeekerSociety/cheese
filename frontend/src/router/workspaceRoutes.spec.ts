@@ -70,15 +70,27 @@ describe('the project frame', () => {
     NAV
   )
 
-  // 总览和「导出与发布」退役了：前者答的每个问题都有一处答得更准的地方，后者整页
-  // 只有一块发布网站，现在摆在首页的产物清单旁边。两条旧链接都落到项目首页。
-  it.each(['overview', 'delivery'])(
-    'sends the retired /%s page to the project home',
+  // 看板和「导出与发布」退役了：看板答的两个问题分给了项目总览和全部任务，后者整页
+  // 只有一块发布网站，现在在项目总览「做出了什么」最上面。两条旧链接都落到项目总览。
+  it.each(['running', 'delivery'])(
+    'sends the retired /%s page to the project overview',
     async (suffix) => {
       const r = router()
       await r.push(`/projects/${PROJECT}/${suffix}`)
-      expect(r.currentRoute.value.name).toBe('workspace-running')
-      expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/running`)
+      expect(r.currentRoute.value.name).toBe('workspace-overview')
+      expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/overview`)
+    },
+    NAV
+  )
+
+  // 一个频道的全部任务就是项目的全部任务带上那个频道的筛选：旧地址落过去，筛选已选好。
+  it(
+    'sends a channel task list to the project task list filtered to that channel',
+    async () => {
+      const r = router()
+      await r.push(`/projects/${PROJECT}/topics/${TOPIC}/tasks`)
+      expect(r.currentRoute.value.name).toBe('project-tasks')
+      expect(r.currentRoute.value.query.channel).toBe(TOPIC)
     },
     NAV
   )
@@ -136,7 +148,8 @@ describe('页面栈的末端', () => {
     const paths = [
       `/projects/${PROJECT}/topics/t1`,
       `/projects/${PROJECT}/docs/charter`,
-      `/projects/${PROJECT}/running`,
+      `/projects/${PROJECT}/overview`,
+      `/projects/${PROJECT}/tasks`,
       `/projects/${PROJECT}/settings`,
       `/projects/${PROJECT}/members`,
     ]

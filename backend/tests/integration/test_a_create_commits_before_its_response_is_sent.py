@@ -545,7 +545,6 @@ def test_an_alert_is_committed_before_its_response_is_sent(
     ("kind", "path", "body"),
     [
         ("change_alert", "/alerts/{alert}/read", {}),
-        ("change_alert", "/alerts/{alert}/feedback", {"feedback": "up"}),
         ("change_alert", "/projects/{project}/alerts/read-all", {}),
         ("decision_request", "/alerts/{alert}/resolve", {"chosen": "yes"}),
     ],

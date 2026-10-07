@@ -112,7 +112,7 @@ def test_the_room_line_names_an_unnamed_task_in_the_readers_language(client):
     assert "「新任务」" in render(sentence, "zh-CN")
 
 
-def test_the_room_line_names_an_unnamed_task_closed_before_it_was_named(client):
+def test_the_task_line_names_an_unnamed_task_closed_before_it_was_named(client):
     _, room_id = _room(client)
     task = _unnamed_task(client, room_id)
 
@@ -121,7 +121,8 @@ def test_the_room_line_names_an_unnamed_task_closed_before_it_was_named(client):
     )
 
     assert closed.status_code == 200, closed.text
-    sentence = _room_line(client, room_id, task["id"], "task_closed")
+    # 开始、关闭说在任务自己的对话里；频道主线上那件任务只占「创建了任务」一行。
+    sentence = _room_line(client, task["id"], task["id"], "task_closed")
     assert "“New task”" in render(sentence, "en")
 
 
@@ -180,7 +181,7 @@ def test_the_migration_marks_tasks_that_were_never_named(client):
     assert _listed(client, room_id, named["id"])["title_source"] == "human"
 
 
-def test_the_room_line_names_an_unnamed_task_started_before_it_was_named(client):
+def test_the_task_line_names_an_unnamed_task_started_before_it_was_named(client):
     _, room_id = _room(client)
     task = _unnamed_task(client, room_id)
 
@@ -191,5 +192,5 @@ def test_the_room_line_names_an_unnamed_task_started_before_it_was_named(client)
     )
 
     assert started.status_code == 200, started.text
-    sentence = _room_line(client, room_id, task["id"], "task_started")
+    sentence = _room_line(client, task["id"], task["id"], "task_started")
     assert "“New task”" in render(sentence, "en")
