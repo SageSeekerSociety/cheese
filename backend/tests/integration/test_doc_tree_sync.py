@@ -52,7 +52,8 @@ def test_document_edits_keep_each_sections_author_and_change_record(client):
     # The two writes came in a row, so the task reads one line for both.
     change = next(block for block in edits if block["meta"]["doc_version"] == 2)
     assert change["author"] == changed_author
-    assert "<@alice>" in change["content"] and "芝士" in change["content"]
+    assert "<@alice>" in change["content"]
+    assert f"<@{changed_author}>" in change["content"]
     assert "+先做三个路口的实地观察。" in change["meta"]["detail"]
     assert "搭建原型" not in change["meta"]["detail"]
 
