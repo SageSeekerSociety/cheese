@@ -1276,3 +1276,76 @@ def test_a_dropped_member_may_be_the_only_one():
 def test_a_body_that_is_not_an_object_passes_untouched():
     assert _codex(b"[1,2]") == b"[1,2]"
     assert _codex(b"") == b""
+
+
+# --- a ChatGPT account that has spent its usage limit ----------------------
+
+
+def _usage_limit_body(**error) -> bytes:
+    return json.dumps(
+        {"error": {"type": "usage_limit_reached", "message": "spent", **error}}
+    ).encode()
+
+
+def test_a_usage_limit_refusal_names_when_its_account_opens_again():
+    assert (
+        core.usage_limit_reset(_usage_limit_body(resets_in_seconds=300), 1000.0, 600)
+        == 1300.0
+    )
+    assert (
+        core.usage_limit_reset(_usage_limit_body(resets_at=5000), 1000.0, 600) == 5000.0
+    )
+    assert core.usage_limit_reset(_usage_limit_body(), 1000.0, 600) == 1600.0
+
+
+def test_a_passing_rate_limit_is_not_a_spent_plan():
+    rate_limited = json.dumps({"error": {"type": "rate_limit_exceeded"}}).encode()
+    assert core.usage_limit_reset(rate_limited, 1000.0, 600) is None
+    assert core.usage_limit_reset(b"not json", 1000.0, 600) is None
+
+
+def test_a_spent_account_is_answered_here_and_probed_every_interval():
+    clock = [1000.0]
+    limits = core.ChatGPTUsageLimits(probe_s=600, now=lambda: clock[0])
+    assert limits.decide("zhifei") == (limits.SEND, 0.0)
+
+    assert limits.spent("zhifei", 1000.0 + 3 * 86400) is True
+    action, remaining = limits.decide("zhifei")
+    assert action == limits.ANSWER and remaining == 3 * 86400
+
+    clock[0] += 599
+    assert limits.decide("zhifei")[0] == limits.ANSWER
+    clock[0] += 1
+    assert limits.decide("zhifei")[0] == limits.PROBE
+    # One probe per interval, not one per request.
+    assert limits.decide("zhifei")[0] == limits.ANSWER
+    clock[0] += 600
+    assert limits.decide("zhifei")[0] == limits.PROBE
+
+
+def test_an_account_that_answers_again_is_no_longer_spent():
+    clock = [1000.0]
+    limits = core.ChatGPTUsageLimits(probe_s=600, now=lambda: clock[0])
+    limits.spent("zhifei", 1000.0 + 86400)
+    clock[0] += 600
+    assert limits.decide("zhifei")[0] == limits.PROBE
+
+    assert limits.served("zhifei") is True
+    assert limits.decide("zhifei") == (limits.SEND, 0.0)
+    assert limits.served("zhifei") is False
+
+
+def test_an_account_reopens_at_its_reset_time():
+    clock = [1000.0]
+    limits = core.ChatGPTUsageLimits(probe_s=600, now=lambda: clock[0])
+    limits.spent("zhifei", 1300.0)
+    clock[0] = 1300.0
+    assert limits.decide("zhifei")[0] == limits.REOPENED
+    assert limits.decide("zhifei") == (limits.SEND, 0.0)
+
+
+def test_one_spent_account_leaves_the_others_alone():
+    limits = core.ChatGPTUsageLimits(probe_s=600, now=lambda: 1000.0)
+    limits.spent("zhifei", 9000.0)
+    assert limits.decide("fri") == (limits.SEND, 0.0)
+    assert limits.decide("zhifei")[0] == limits.ANSWER
