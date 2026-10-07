@@ -47,13 +47,11 @@
 # fails with "network cheese-meter-gateway declared as external, but could not
 # be found"; `docker network create --internal cheese-meter-gateway` fixes it.
 #
-# The reverse listener (:443) stays on the docker bridge (172.17.0.1): only
-# sandboxes on this box reach it, and they are steered there by --add-host.
-#
-# The CONNECT listener (:8444) is where a device screen's traffic arrives: the
-# screen's `claude` dials its machine's tunnel helper through HTTPS_PROXY, and
-# the model tunnel (`/llm/tunnel`) connects here on the bridge address. No
-# machine dials it directly, so like the reverse listener it is bridge-only.
+# The CONNECT listener (:8444) is where every session's model traffic arrives:
+# the session's `claude` dials its seat's tunnel helper through HTTPS_PROXY, and
+# the model tunnel (`/llm/tunnel`) connects here on the bridge address
+# (172.17.0.1). No machine dials it directly, so it is published on the bridge
+# only.
 #
 # It authenticates anyway: it demands a scoped cheese token as
 # Proxy-Authorization before relaying anything (#198), and with no
@@ -94,14 +92,12 @@ services:
       net.ipv4.tcp_syn_retries: "3"
     command: >
       mitmdump --listen-host 0.0.0.0
-      --mode reverse:https://api.anthropic.com@8443
       --mode regular@8444
       --mode reverse:https://chatgpt.com@8445
       --ssl-insecure
       --set connection_strategy=lazy
       -s /addons/billing_addon.py
     ports:
-      - "172.17.0.1:443:8443"
       - "172.17.0.1:8444:8444"
     networks:
       # Listed because naming any network drops the implicit one: the

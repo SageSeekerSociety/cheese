@@ -23,17 +23,15 @@ only when CHEESE_ALLOW_HEADER_ATTR=1 (bridge-only deployments still on the
 fixed placeholder token). On a proxy exposed beyond the box's own docker
 bridge, leave that off — the header is whatever the machine says it is.
 
-  mitmdump -s billing_addon.py \
-    --mode reverse:https://api.anthropic.com@8443 --mode regular@8444
+  mitmdump -s billing_addon.py --mode regular@8444
 
-Two listeners, one addon: containers arrive on the reverse listener (steered by
---add-host on 443), bare DEVICE screens on the regular one (steered by
-HTTPS_PROXY — no root, no docker, so no --add-host for them). The regular
-listener demands the scoped token as Proxy-Authorization before it relays
-anything and MITMs only the Anthropic names; either way every request that
-reaches the `requestheaders` hook below is handled identically.
+Sessions arrive on the regular (CONNECT) listener: a session's `claude` is
+steered by HTTPS_PROXY to its seat's tunnel helper, and the model tunnel
+delivers the CONNECT here. The listener demands the scoped token as
+Proxy-Authorization before it relays anything and MITMs only the Anthropic
+names.
 
-A third, `--mode reverse:https://chatgpt.com@8445`, is not for sessions: it is
+A second, `--mode reverse:https://chatgpt.com@8445`, is not for sessions: it is
 where the API-key pool (LiteLLM) sends a ChatGPT subscription request, on
 `/chatgpt/<account>/…`, to have one of the platform's ChatGPT accounts put on
 it. See `_forward_to_chatgpt`.
@@ -418,8 +416,7 @@ def http_connect(flow: http.HTTPFlow) -> None:
     meter via HTTPS_PROXY, and its scoped cheese token rides as the proxy
     password (Basic userinfo of the HTTPS_PROXY URL). Without this gate an
     exposed listener is an open relay for whoever can reach it — with it, only a
-    caller that can prove "bill this project" gets a tunnel at all. Reverse-mode
-    connections never CONNECT, so the container path is untouched.
+    caller that can prove "bill this project" gets a tunnel at all.
 
     Fails CLOSED when no secret is configured, rather than trusting whoever can
     reach the bridge: a missing env var looks like nothing, and the listener
@@ -776,8 +773,8 @@ def tls_clienthello(data: tls.ClientHelloData) -> None:
     """On the CONNECT listener, MITM ONLY the Anthropic names. Everything else a
     device's HTTPS_PROXY sends here (its shell tools honor the env var too:
     pip, statsig, github…) tunnels raw — TLS stays end-to-end, so tools that do
-    not trust our CA keep working; they just detour. Reverse-mode connections
-    (the container path) are left exactly as they were."""
+    not trust our CA keep working; they just detour. The ChatGPT listener is
+    reverse mode and is left exactly as it is."""
     mode = getattr(data.context.client, "proxy_mode", None)
     if getattr(mode, "type_name", "") != "regular":
         return
@@ -881,10 +878,8 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         return
 
     # Multi-host by SNI: api.anthropic.com AND the login hosts
-    # (console.anthropic.com, platform.claude.com) are served here. Reverse
-    # mode would pin every
-    # request to api.anthropic.com; instead forward each to the host it was
-    # actually for, read from the TLS SNI.
+    # (console.anthropic.com, platform.claude.com) are served here; each request
+    # goes to the host it was actually for, read from the TLS SNI.
     sni = getattr(flow.client_conn, "sni", None)
     if sni:
         flow.request.host = sni
@@ -902,9 +897,8 @@ async def requestheaders(flow: http.HTTPFlow) -> None:
         flow.request.headers["host"] = sni
 
     # Only the Anthropic names are served, and only over TLS the proxy
-    # terminated. A caller naming any other host (an arbitrary SNI on the
-    # reverse listener, a plain-HTTP proxy request on the CONNECT one) is
-    # refused, not forwarded: this proxy relays Claude credentials and meters
+    # terminated. A caller naming any other host (a plain-HTTP proxy request on
+    # the CONNECT listener) is refused, not forwarded: this proxy relays Claude credentials and meters
     # Anthropic traffic, and is no general-purpose relay. Non-Anthropic HTTPS
     # through the CONNECT listener never reaches here (tls_clienthello tunnels
     # it raw).

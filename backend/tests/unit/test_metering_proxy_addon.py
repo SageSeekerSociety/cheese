@@ -502,13 +502,13 @@ def test_connect_legacy_bridge_only_posture_stays_explicit(monkeypatch, tmp_path
     assert flow.response is None
 
 
-def test_compose_publishes_both_session_listeners_on_the_bridge_only():
-    """Machines reach the CONNECT listener through the model tunnel, which the
-    backend connects on the bridge; sandboxes on this box use the reverse one.
-    Neither has a caller on the LAN."""
+def test_compose_publishes_only_the_connect_listener_on_the_bridge():
+    """Sessions reach the CONNECT listener through the model tunnel, which the
+    backend connects on the bridge. Nothing else of the proxy's is published,
+    and nothing on the LAN calls it."""
     text = COMPOSE.read_text()
     assert '"172.17.0.1:8444:8444"' in text
-    assert '"172.17.0.1:443:8443"' in text
+    assert ":8443" not in text and "reverse:https://api.anthropic.com" not in text
 
 
 # --- attribution: what the connection proved at CONNECT ---------------------

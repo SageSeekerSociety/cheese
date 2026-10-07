@@ -160,7 +160,7 @@ class MeteringReleaseTest(unittest.TestCase):
             # The ChatGPT listener is published nowhere; the gateway reaches it
             # on the private network, by the alias it puts in api_base.
             published = [p["target"] for p in service["ports"]]
-            self.assertEqual(sorted(published), [8443, 8444])
+            self.assertEqual(sorted(published), [8444])
             self.assertEqual(
                 service["networks"]["meter-gateway"]["aliases"], ["metering-proxy"]
             )

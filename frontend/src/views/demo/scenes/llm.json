@@ -2,7 +2,7 @@
   "title": "一次模型请求经过哪几站",
   "project": "知是",
   "topic": "登录页改版",
-  "machine": "本话题运行在：本机沙盒容器",
+  "machine": "本话题运行在：会话主机",
   "people": {
     "wang": { "name": "王长鑫" },
     "cheese": { "name": "芝士", "agent": true }
@@ -20,14 +20,14 @@
     {
       "label": "一个出口：计量代理",
       "focus": "backstage",
-      "tag": "沙盒走 :443 反代，裸进程走 :8444 CONNECT",
+      "tag": "会话主机经模型隧道走 :8444 CONNECT",
       "events": [
         { "at": 200, "do": "meter", "label": "项目额度", "value": "剩 62%" },
         { "at": 300, "do": "say", "who": "wang", "text": "<@cheese> 登录页的错误提示改成红色" },
         { "at": 900, "do": "turn", "who": "cheese", "turn": "t1" },
         { "at": 1000, "do": "hop", "station": "session", "state": "on", "note": "POST /v1/messages" },
         { "at": 1800, "do": "hop", "station": "session", "state": "ok", "note": "请求发出" },
-        { "at": 1900, "do": "hop", "station": "proxy", "state": "on", "note": "沙盒容器里改了域名解析，流量落到 :443" }
+        { "at": 1900, "do": "hop", "station": "proxy", "state": "on", "note": "隧道把请求送到 :8444" }
       ]
     },
     {

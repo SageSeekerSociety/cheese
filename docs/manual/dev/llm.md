@@ -21,7 +21,7 @@ note: 右下角「幕后」是这次请求走过的几站，顶上是项目额�
 embed: llm
 steps:
   - label: 一个出口：计量代理
-    desc: 所有会话的模型流量都经过计量代理。沙盒容器走 :443 反向代理，裸进程走 :8444 CONNECT 代理。
+    desc: 所有会话的模型流量都经过计量代理：会话主机上的 Claude Code 经模型隧道到它的 :8444 CONNECT 入口。
     link: /dev/llm#one-exit
   - label: 每个请求先问准入
     desc: 转发之前调主 API 的准入接口，回答能不能跑、走哪条路、用哪个模型名。每个请求现查，改绑模型不用重启会话。
@@ -47,24 +47,19 @@ steps:
 
 计量代理内部怎么鉴权、计量、拒绝、换凭证，以及它的前身 ccproxy，见[计量代理](/dev/metering-proxy)。
 
-所有会话的模型流量都经过计量代理（mitmproxy，`deploy/metering-proxy/`）。它有两个入口：
-
-| 入口 | 谁用 | 怎么把流量引过来 |
-|---|---|---|
-| `:443` 反向代理 | 本机的沙盒容器 | 容器里改写域名解析（`--add-host`） |
-| `:8444` CONNECT 代理 | 本机设备屏幕、云机器等裸进程 | `HTTPS_PROXY` 环境变量 |
+所有会话的模型流量都经过计量代理（mitmproxy，`deploy/metering-proxy/`）。会话只给它留了一个入口：`:8444` CONNECT 代理。助手只在会话主机上跑，它的 `HTTPS_PROXY` 指向座位自己的隧道助手，隧道助手把 CONNECT 装进模型隧道（`/llm/tunnel`），隧道再在网桥地址上连 `:8444`。
 
 订阅方式只能在传输层引流：设置 `ANTHROPIC_BASE_URL` 会让 Claude Code 切到 API key 模式、不再用订阅登录。
 
-下面这张图把入口摊开：换入口、换场景，都能看到包从哪个口进、停在哪一站，每一站的面板写着它收到什么、又交出什么。额度用完时四个入口都停住，停的位置却不一样——容器、裸进程、云机器停在准入，Codex、Pi 停在网关。
+下面这张图把入口摊开：换入口、换场景，都能看到包从哪个口进、停在哪一站，每一站的面板写着它收到什么、又交出什么。额度用完时两个入口都停住，停的位置却不一样——会话主机上的 Claude Code 停在准入，Codex、Pi 停在网关。
 
 ```demo-arch
 title: 换入口：包从哪进、在哪拦
 note: 换入口、换场景，看包停在哪一站；被拦下的那一站在图上标出来
 kind: llm
-entries: sandbox, bare, cloud, codex
+entries: cloud, codex
 scenes: ok, budget
-blocks: sandbox/budget, bare/budget, cloud/budget, codex/budget
+blocks: cloud/budget, codex/budget
 ```
 
 ## 每个请求先问准入 {#admission}
@@ -138,15 +133,15 @@ out:
 
 绑定的模型解析不出来时，返回 `allow: false` 和 `reason_kind: "binding"`，不会悄悄换到另一条路。主 API 不可达时，计量代理放行并退回订阅路，同时靠它自己的滚动 token 上限兜底。
 
-拒绝的形状由 `reason_kind` 决定，不是由「额度」这一件事决定：绑定解析不出去充值是白跑一趟，所以它回的是「重试没用」那个形状。下面这张图把不放行的两种、软放行的一种，和分身指定模型放在一起看（云机器走的是和裸进程同一条路，只多了隧道那两站）。
+拒绝的形状由 `reason_kind` 决定，不是由「额度」这一件事决定：绑定解析不出去充值是白跑一趟，所以它回的是「重试没用」那个形状。下面这张图把不放行的两种、软放行的一种，和分身指定模型放在一起看。
 
 ```demo-arch
 title: 另外三种情形：绑错、问不到、分身指定
 note: 绑定解析不出拦在准入，问不到主 API 退回订阅路，分身指定模型在准入这一站被翻译
 kind: llm
-entries: sandbox, bare
+entries: cloud
 scenes: binding, failopen, subagent
-blocks: sandbox/binding, bare/binding
+blocks: cloud/binding
 ```
 
 ## 两条路 {#routes}
