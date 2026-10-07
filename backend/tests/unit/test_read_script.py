@@ -151,6 +151,10 @@ def test_a_scanned_page_without_pymupdf_is_reported_unread(monkeypatch, tmp_path
 
     for mod in ("pymupdf", "fitz"):
         monkeypatch.setitem(sys.modules, mod, None)
+    # Loading the script in-process would otherwise write
+    # documents/scripts/__pycache__/ into the shipped skill tree, which
+    # test_native_skill_files then finds as a file nobody ships.
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
     spec = importlib.util.spec_from_file_location("read_script", READ)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
