@@ -301,9 +301,15 @@ func (h *Host) createSession(m link.Msg) {
 	// The server owns the screen's identity: it hands down an opaque token in
 	// m.Screen, which the host injects as CHEESE_SCREEN so any process the screen
 	// spawns can prove which screen it belongs to when it calls back.
-	env := make([]string, 0, len(m.Env)+1)
+	env := make([]string, 0, len(m.Env)+2)
 	if m.Screen != "" {
 		env = append(env, "CHEESE_SCREEN="+m.Screen)
+	}
+	// The connector's own PATH, which carries the runtime it placed
+	// (`devenv`): a terminal server already running from before would
+	// otherwise hand the session the PATH it started with.
+	if path := os.Getenv("PATH"); path != "" {
+		env = append(env, "PATH="+path)
 	}
 	for k, v := range m.Env {
 		env = append(env, k+"="+v)
