@@ -766,8 +766,6 @@
   "docWriterGone": "The writer's account is no longer valid",
   "docActionNeedsPerson": "This document action requires a signed-in person",
   "docActionNotForAi": "An AI account can't do this document action on a person's behalf",
-  "topicNotInUrlProject": "This channel doesn't belong to the project in the URL",
-  "topicIdInvalid": "topic isn't a valid channel ID",
   "projectCredentialManagerOnly": "Only the project owner or a team admin can manage project credentials",
   "alertKindNotFromInbox": "This kind of notification isn't written from the project inbox",
   "alertRecipientOutside": "The recipient isn't in this project or channel",

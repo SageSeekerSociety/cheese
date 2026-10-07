@@ -766,8 +766,6 @@
   "docWriterGone": "写入者账号已失效",
   "docActionNeedsPerson": "这个文档操作需要真实用户登录",
   "docActionNotForAi": "AI 账号不能代替人做这个文档操作",
-  "topicNotInUrlProject": "这个频道不属于 URL 中的项目",
-  "topicIdInvalid": "topic 不是合法的频道 id",
   "projectCredentialManagerOnly": "只有项目所有者或团队管理员能管理项目凭证",
   "alertKindNotFromInbox": "这一类通知不从项目收件箱写入",
   "alertRecipientOutside": "收件人不在这个项目或频道里",
