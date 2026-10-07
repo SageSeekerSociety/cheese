@@ -23,6 +23,9 @@ const emit = defineEmits<{ (e: 'reply', text: string): void }>()
 
 const options = computed(() => askOptions(props.block) ?? [])
 const answers = computed(() => askAnswers(props.block))
+// 带说明的选项是几段话，不是几个词：按各自内容收缩时三张卡宽窄不一，读起来像排版
+// 出了错。这时排成一列、同宽；只有短短几个词的选项才横着排成一行按钮。
+const stacked = computed(() => options.value.some((option) => option.explain))
 
 // Models are told to put their pick first and may mark it this way (Codex's
 // convention); the mark is shown as a tag and is not part of what gets sent.
@@ -38,7 +41,13 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
         {{ t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text }) }}
       </li>
     </ul>
-    <div v-else class="ask-replies__options" role="group" :aria-label="t('ask.replies.label')">
+    <div
+      v-else
+      class="ask-replies__options"
+      :class="{ 'ask-replies__options--stacked': stacked }"
+      role="group"
+      :aria-label="t('ask.replies.label')"
+    >
       <button
         v-for="option in options"
         :key="option.text"
@@ -62,6 +71,10 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+.ask-replies__options--stacked {
+  flex-direction: column;
+  max-width: 640px;
 }
 .ask-replies__option {
   display: flex;

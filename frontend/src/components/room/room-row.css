@@ -85,6 +85,7 @@
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: var(--lh-14-loose);
+  white-space: nowrap;
   color: var(--faint);
   opacity: 0;
   transition: opacity var(--dur-quick) var(--ease-standard);
