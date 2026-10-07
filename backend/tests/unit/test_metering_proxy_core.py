@@ -1304,7 +1304,7 @@ def test_a_passing_rate_limit_is_not_a_spent_plan():
     assert core.usage_limit_reset(b"not json", 1000.0, 600) is None
 
 
-def test_a_spent_account_is_answered_here_and_probed_every_interval():
+def test_a_spent_account_is_answered_here_and_checked_every_interval():
     clock = [1000.0]
     limits = core.ChatGPTUsageLimits(probe_s=600, now=lambda: clock[0])
     assert limits.decide("zhifei") == (limits.SEND, 0.0)
@@ -1316,23 +1316,78 @@ def test_a_spent_account_is_answered_here_and_probed_every_interval():
     clock[0] += 599
     assert limits.decide("zhifei")[0] == limits.ANSWER
     clock[0] += 1
-    assert limits.decide("zhifei")[0] == limits.PROBE
-    # One probe per interval, not one per request.
+    assert limits.decide("zhifei")[0] == limits.CHECK
+    # One check per interval, not one per request.
     assert limits.decide("zhifei")[0] == limits.ANSWER
     clock[0] += 600
-    assert limits.decide("zhifei")[0] == limits.PROBE
+    assert limits.decide("zhifei")[0] == limits.CHECK
 
 
-def test_an_account_that_answers_again_is_no_longer_spent():
+def test_usage_that_shows_capacity_clears_the_account():
+    clock = [1000.0]
+    limits = core.ChatGPTUsageLimits(probe_s=600, now=lambda: clock[0])
+    limits.spent("zhifei", 1000.0 + 86400)
+
+    assert limits.checked("zhifei", (False, None)) == "cleared"
+    assert limits.decide("zhifei") == (limits.SEND, 0.0)
+
+
+def test_usage_that_shows_the_account_still_spent_keeps_it_and_moves_its_reset():
+    clock = [1000.0]
+    limits = core.ChatGPTUsageLimits(probe_s=600, now=lambda: clock[0])
+    limits.spent("zhifei", 1000.0 + 86400)
+
+    assert limits.checked("zhifei", (True, 5000.0)) == "spent"
+    action, remaining = limits.decide("zhifei")
+    assert action == limits.ANSWER and remaining == 4000.0
+
+
+def test_unreadable_usage_falls_back_to_one_real_request():
     clock = [1000.0]
     limits = core.ChatGPTUsageLimits(probe_s=600, now=lambda: clock[0])
     limits.spent("zhifei", 1000.0 + 86400)
     clock[0] += 600
-    assert limits.decide("zhifei")[0] == limits.PROBE
+    assert limits.decide("zhifei")[0] == limits.CHECK
 
-    assert limits.served("zhifei") is True
-    assert limits.decide("zhifei") == (limits.SEND, 0.0)
-    assert limits.served("zhifei") is False
+    assert limits.checked("zhifei", None) == "unreadable"
+    assert limits.decide("zhifei")[0] == limits.ANSWER
+    clock[0] += 600
+    assert limits.decide("zhifei")[0] == limits.PROBE
+    # A readable answer afterwards goes back to checking.
+    limits.checked("zhifei", (True, 9e9))
+    clock[0] += 600
+    assert limits.decide("zhifei")[0] == limits.CHECK
+
+
+def _usage(allowed=True, reached=False, primary=None, secondary=None):
+    return {
+        "plan_type": "pro",
+        "rate_limit": {
+            "allowed": allowed,
+            "limit_reached": reached,
+            "primary_window": primary,
+            "secondary_window": secondary,
+        },
+    }
+
+
+def test_usage_with_room_left_is_not_spent():
+    window = {"used_percent": 0, "limit_window_seconds": 604800, "reset_at": 1792001191}
+    assert core.usage_capacity(_usage(primary=window)) == (False, None)
+
+
+def test_spent_usage_names_the_reset_of_its_full_window():
+    weekly = {"used_percent": 100, "reset_at": 9000}
+    hourly = {"used_percent": 40, "reset_at": 2000}
+    assert core.usage_capacity(
+        _usage(allowed=False, reached=True, primary=hourly, secondary=weekly)
+    ) == (True, 9000.0)
+    assert core.usage_capacity(_usage(allowed=False, reached=True)) == (True, None)
+
+
+def test_usage_without_a_rate_limit_cannot_be_read():
+    assert core.usage_capacity({"plan_type": "pro"}) is None
+    assert core.usage_capacity([]) is None
 
 
 def test_an_account_reopens_at_its_reset_time():

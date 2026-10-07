@@ -79,6 +79,8 @@ from cheese_billing_core import (  # noqa: E402
     PlatformCredential,
     StreamingUsageExtractor,
     chatgpt_route,
+    fetch_chatgpt_usage,
+    usage_capacity,
     control_answer,
     is_haiku_name,
     no_login_answer,
@@ -647,6 +649,9 @@ def _past_usage_limit(flow: http.HTTPFlow, name: str) -> bool:
     account has spent its usage limit it is answered here instead, with a 429 the
     gateway fails over on at once."""
     action, remaining = CHATGPT_LIMITS.decide(name)
+    if action == ChatGPTUsageLimits.CHECK:
+        _start_usage_check(name)
+        action = ChatGPTUsageLimits.ANSWER
     if action == ChatGPTUsageLimits.ANSWER:
         _refuse(
             flow,
@@ -659,8 +664,8 @@ def _past_usage_limit(flow: http.HTTPFlow, name: str) -> bool:
         return False
     if action == ChatGPTUsageLimits.PROBE:
         logger.info(
-            "ChatGPT account %s is spent for about %ss more; sending one request "
-            "to see whether it has reset",
+            "ChatGPT account %s is spent for about %ss more and its usage could "
+            "not be read; sending one request to see whether it has reset",
             name,
             int(remaining),
         )
@@ -669,6 +674,56 @@ def _past_usage_limit(flow: http.HTTPFlow, name: str) -> bool:
             "ChatGPT account %s has reached its reset time; sending again", name
         )
     return True
+
+
+# Usage checks under way, held so the event loop does not drop them.
+_USAGE_CHECKS: set[asyncio.Task] = set()
+
+
+def _start_usage_check(name: str) -> None:
+    """Ask ChatGPT in the background whether spent account ``name`` has
+    capacity again; the request that prompted it is answered here meanwhile."""
+    task = asyncio.get_running_loop().create_task(_check_usage(name))
+    _USAGE_CHECKS.add(task)
+    task.add_done_callback(_USAGE_CHECKS.discard)
+
+
+async def _check_usage(name: str) -> None:
+    """Read account ``name``'s usage on its own login and egress and apply it."""
+    account = CHATGPT_ACCOUNTS.get(name)
+    capacity = None
+    if account is not None:
+        token, account_id, _missing = account.token()
+        if token:
+            try:
+                status, payload = await asyncio.to_thread(
+                    fetch_chatgpt_usage,
+                    token,
+                    account_id,
+                    CHATGPT_ACCOUNTS.client_version(),
+                    20.0,
+                    egress=account.egress(),
+                )
+            except OSError as err:
+                status, payload = 0, {}
+                logger.info(
+                    "usage of ChatGPT account %s could not be read: %s", name, err
+                )
+            if status == 200:
+                capacity = usage_capacity(payload)
+            elif status:
+                logger.info(
+                    "usage of ChatGPT account %s could not be read: HTTP %s",
+                    name,
+                    status,
+                )
+    outcome = CHATGPT_LIMITS.checked(name, capacity)
+    if outcome == "cleared":
+        logger.info("ChatGPT account %s has capacity again; sending to it", name)
+    elif outcome == "unreadable":
+        logger.info(
+            "ChatGPT account %s: usage unreadable, its next look sends a request", name
+        )
 
 
 def _note_chatgpt_answer(flow: http.HTTPFlow) -> None:
