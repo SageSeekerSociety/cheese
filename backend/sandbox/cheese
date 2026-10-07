@@ -2936,6 +2936,12 @@ def _prepare_repository(repo: Path, data: dict) -> None:
     Its caller holds `<project>.lock` beside it."""
     if not repo.exists():
         _git_task(repo.parent, "init", "--bare", str(repo))
+    _wire_remote(repo, data)
+
+
+def _wire_remote(repo: Path, data: dict) -> None:
+    """`repo`'s origin is the project's forge, reached with this session's
+    credential (`cheese git-credential`)."""
     _git_task(repo, "config", "--replace-all", "credential.helper", "")
     _git_task(repo, "config", "--add", "credential.helper", "!cheese git-credential")
     _git_task(repo, "config", "credential.useHttpPath", "true")
@@ -2944,6 +2950,47 @@ def _prepare_repository(repo: Path, data: dict) -> None:
     else:
         _git_task(repo, "remote", "set-url", "origin", data["remote"])
     _configure_git_transport(repo, data)
+
+
+def _checkout() -> Path:
+    """A checkout of the project's default branch to read and try things in:
+    how a 支线, or a task not yet started, sees the code. Brought up to date
+    when nothing in it was changed. Its session's credential only reads, so
+    what is changed here stays here."""
+    data = _call("GET", "/sandbox/forge-token")["data"]
+    branch = data.get("default_branch") or "main"
+    target = Path.home() / ".cheese" / "checkout"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    remote = {
+        "remote": data["url"],
+        "forge_kind": data.get("kind"),
+        "forge_repo": data.get("repo"),
+    }
+    with (target.parent / "checkout.lock").open("a") as lock:
+        _lock(lock)
+        fresh = not (target / ".git").exists()
+        if fresh:
+            _git_task(target.parent, "init", "-q", str(target))
+        _wire_remote(target, remote)
+        tracking = f"refs/remotes/origin/{branch}"
+        # The commits, not every version of every file (`_task_worktree`).
+        _git_task(
+            target,
+            "fetch",
+            "--filter=blob:none",
+            "origin",
+            f"refs/heads/{branch}:{tracking}",
+        )
+        if fresh:
+            _git_task(target, "checkout", "-q", "-B", branch, tracking)
+        elif _git_task(target, "status", "--porcelain"):
+            print(
+                f"[cheese] {target} 里有改动，没有更新；最新的 {branch} 在 {tracking}",
+                file=sys.stderr,
+            )
+        else:
+            _git_task(target, "checkout", "-q", "-B", branch, tracking)
+    return target
 
 
 def _task_worktree(task_id: str) -> Path:
@@ -3999,6 +4046,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     pwork.add_argument("task_id", help="任务 UUID")
+    sub.add_parser(
+        "checkout",
+        help="准备项目默认分支的代码并输出路径",
+        description=(
+            "在 ~/.cheese/checkout 准备项目默认分支的代码（已有且没改过就更新到最新），"
+            "输出路径；不会改变当前 shell 的目录。支线和还没开始的任务里看代码、"
+            "跑命令用它：这里的改动留不下，要改项目请提议任务。"
+        ),
+    )
     psync = sub.add_parser(
         "sync",
         help="同步任务提交并备份未提交的文件",
@@ -4395,6 +4451,8 @@ def main() -> None:
 
     if a.cmd == "worktree":
         print(_task_worktree(a.task_id))
+    elif a.cmd == "checkout":
+        print(_checkout())
     elif a.cmd == "recover":
         _recover_task(a.task_id)
     elif a.cmd == "sync":
