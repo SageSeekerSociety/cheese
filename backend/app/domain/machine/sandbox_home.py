@@ -12,8 +12,8 @@ runs there with nothing of ours importable, like that one.
   platform compares with what the bucket stored before it lets the home go,
   and whether everything in the home is on its remote: the room's cleanup
   deletes an archive only when it was, since an archive is where unpushed
-  work goes once its home leaves the host. A home not on the host answers
-  ``absent``.
+  work goes once its home leaves the host. Also answers the core dumps it
+  left out (``skipped``). A home not on the host answers ``absent``.
 - ``drop``: delete the home from this host, once its archive is verified.
 - ``restore``: GET the archive, check it is the one that was written, and
   unpack it as the session's home, replacing any older copy left here.
@@ -131,6 +131,7 @@ def archive(cleanup, project, resource, url):
     interpreters = _interpreters(project)
 
     roots = {"home": home, "work": work, "uv-python": interpreters}
+    skipped = []
 
     def keep(info):
         # The sandbox's own /tmp lives in its home and is not kept.
@@ -143,6 +144,7 @@ def archive(cleanup, project, resource, url):
         if info.isfile() and _crash_dump(info.name):
             top, _, rest = info.name.partition("/")
             if not os.access(roots[top] / rest, os.R_OK):
+                skipped.append(info.name)
                 return None
         return info
 
@@ -177,6 +179,7 @@ def archive(cleanup, project, resource, url):
             "size": counted.size,
             "md5": counted.md5.hexdigest(),
             "published": published,
+            "skipped": skipped,
         }
     finally:
         part.unlink(missing_ok=True)

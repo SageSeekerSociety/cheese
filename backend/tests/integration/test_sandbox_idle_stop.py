@@ -660,10 +660,11 @@ def test_a_home_that_cannot_be_archived_is_not_tried_on_every_sweep(cloud):
     assert cloud.bucket.objects == {}
 
 
-def test_an_unreadable_core_dump_does_not_stop_a_home_being_archived(cloud):
+def test_an_unreadable_core_dump_does_not_stop_a_home_being_archived(cloud, caplog):
     """A process that crashed in the sandbox left a core dump the host cannot
-    read. On dev one such file failed a home's archive every six hours
-    (2026-10-05). The dump is left out; the work around it is archived."""
+    read. On dev one such file failed a home's archive every six hours, and
+    kept its host (2026-10-05). The dump is left out, and the log names it; the
+    work around it is archived and the host is let go."""
     seat = cloud.seats[0]
     home = working_on(cloud, seat, "host-a")
     dump = home / "room" / "frontend" / "core.1"
@@ -673,12 +674,18 @@ def test_an_unreadable_core_dump_does_not_stop_a_home_being_archived(cloud):
     try:
         asleep(cloud, seat)
         time_passes(cloud, seat, timedelta(days=8))
-        assert sweep(cloud)["archived"] == 1
+        with caplog.at_level("WARNING", logger="cheese.machine.lifecycle"):
+            assert sweep(cloud)["archived"] == 1
     finally:
         if dump.exists():
             dump.chmod(0o600)
+    assert any(
+        "room/frontend/core.1" in record.getMessage() for record in caplog.records
+    )
 
+    machine = host_of_machine(cloud, "host-a")
     maintain(cloud)
+    assert machine in cloud.provider.deleted
     assert tool_call(cloud, seat).get("preparing")
     host_comes_up(cloud, seat, "host-b")
     assert tool_call(cloud, seat)["target"]["device_id"] == "host-b"

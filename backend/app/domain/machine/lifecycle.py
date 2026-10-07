@@ -524,6 +524,15 @@ class SandboxLifecycle:
         logger.info(
             "cloud sandbox home %s archived (%s bytes)", home_id, written["size"]
         )
+        if skipped := written.get("skipped"):
+            # Gone with the home: say which, so a dump someone wanted can be
+            # traced to where it was.
+            logger.warning(
+                "cloud sandbox home %s archived without the core dumps the "
+                "host could not read: %s",
+                home_id,
+                ", ".join(skipped),
+            )
         return True
 
     async def _drop(
