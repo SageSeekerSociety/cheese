@@ -82,9 +82,19 @@ class ReleaseOrdering(unittest.TestCase):
             return "ahead" if ancestor == base else "behind" if ancestor == head else "diverged"
         raise AssertionError(args)
 
-    def check(self, candidate):
+    def check(self, candidate, rebuilt=False):
         with patch.object(GUARD, "command", side_effect=self.command):
-            return GUARD.should_skip(candidate)
+            return GUARD.should_skip(candidate, rebuilt=rebuilt)
+
+    def test_a_rebuild_of_the_running_release_is_released_again(self):
+        # desktop.yml rebuilds images under a tag dev may already run, to ship
+        # new installers; the healthy box runs the images being replaced.
+        self.images = {"backend": f"registry/backend:{self.middle[:7]}", "frontend": f"registry/frontend:{self.middle[:7]}"}
+        self.assertFalse(self.check(self.middle, rebuilt=True))
+
+    def test_a_rebuild_still_cannot_roll_back_a_newer_release(self):
+        self.images = {"backend": f"registry/backend:{self.newest[:7]}", "frontend": f"registry/frontend:{self.newest[:7]}"}
+        self.assertTrue(self.check(self.middle, rebuilt=True))
 
     def test_late_old_build_cannot_roll_back_newer_running_release(self):
         self.images = {"backend": f"registry/backend:{self.newest[:7]}", "frontend": f"registry/frontend:{self.newest[:7]}"}
@@ -168,16 +178,16 @@ class ReleaseOrdering(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(output.read_text(), "skip=false\n")
 
-    def test_automatic_dispatch_takes_the_policy(self):
-        # desktop.yml dispatches with automatic=true after rebuilding the images;
-        # that release must run the guard, not take the manual bypass. Without
-        # the policy script in the working directory, running the guard fails.
+    def test_rebuilt_dispatch_takes_the_policy(self):
+        # desktop.yml dispatches naming the commit it rebuilt; that release must
+        # run the guard, not take the manual bypass. Without the policy script
+        # in the working directory, running the guard fails.
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
         step = next(step for step in workflow["jobs"]["deploy"]["steps"] if step.get("id") == "release")
         with tempfile.TemporaryDirectory(dir=ROOT / ".tmp") as directory:
             output = Path(directory) / "output"
             environment = {**os.environ, "HOME": directory, "GITHUB_EVENT_NAME": "workflow_dispatch",
-                           "AUTOMATIC": "true", "CANDIDATE_SHA": "a" * 40, "GITHUB_OUTPUT": str(output)}
+                           "REBUILT": "a" * 40, "CANDIDATE_SHA": "a" * 40, "GITHUB_OUTPUT": str(output)}
             result = subprocess.run(["bash", "-eu", "-c", step["run"]], cwd=directory, env=environment, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("check-auto-deploy.py", result.stderr)
@@ -472,6 +482,74 @@ class CandidateCI(unittest.TestCase):
             self.assertEqual(gate["if"], "github.event_name == 'release'")
             self.assertIn("--require-ci", gate["run"])
 
+
+
+class DesktopRebuild(unittest.TestCase):
+    """desktop.yml rebuilds the images for new installers and asks deploy-dev to
+    release them. main can move while the rebuild runs, so the release must be
+    of the commit the rebuild built."""
+
+    built, tip = "b" * 40, "c" * 40
+
+    FAKE_GH = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$FAKE/gh.log"
+case "$1 $2" in
+  "run list") echo 77 ;;
+  "run view") [ "$3" = 77 ] && echo "$BUILT" ;;
+  "workflow run") [ "$3" = build.yml ] && echo "$TIP" > "$FAKE/main" ;;
+esac
+exit 0
+"""
+
+    def test_the_deploy_it_asks_for_is_of_the_commit_it_rebuilt(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/desktop.yml").read_text())
+        step = next(step for step in workflow["jobs"]["publish"]["steps"]
+                    if "deploy-dev.yml" in step.get("run", ""))
+        # The run number is the only expression in the script.
+        script = step["run"].replace("${{ github.run_number }}", "7")
+        self.assertNotIn("${{", script)
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            (work / "bin").mkdir()
+            (work / "bin/gh").write_text(self.FAKE_GH)
+            (work / "bin/gh").chmod(0o755)
+            (work / "out").mkdir()
+            for name in ("Cheese-Setup-x64.exe.sig", "Cheese-arm64.app.tar.gz.sig", "Cheese-x64.app.tar.gz.sig"):
+                (work / "out" / name).write_text("signature")
+            result = subprocess.run(
+                ["bash", "-e", "-c", script], cwd=work, capture_output=True, text=True, timeout=60,
+                env={**os.environ, "PATH": f"{work / 'bin'}:{os.environ['PATH']}", "FAKE": str(work),
+                     "BUILT": self.built, "TIP": self.tip, "GH_REPO": "example/app"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = (work / "gh.log").read_text().splitlines()
+        self.assertEqual(calls[-1], f"workflow run deploy-dev.yml --ref main -f rebuilt={self.built}")
+
+    def test_every_part_of_a_deploy_run_names_the_same_commit(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        expressions = {workflow["run-name"].removeprefix("Deploy ")}
+        for job in workflow["jobs"].values():
+            for step in job.get("steps", []):
+                if "CANDIDATE_SHA" in step.get("env", {}):
+                    expressions.add(step["env"]["CANDIDATE_SHA"])
+                if step.get("name", "").startswith("Check out the built commit"):
+                    expressions.add(step["with"]["ref"])
+        self.assertEqual(expressions, {"${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}"})
+        self.assertIn("rebuilt", workflow[True]["workflow_dispatch"]["inputs"])
+
+    def test_a_rebuilt_dispatch_checks_its_images_and_tests(self):
+        # Without the policy script in the working directory, the check fails:
+        # proof that a rebuilt dispatch does not take the manual bypass.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        step = next(step for step in workflow["jobs"]["eligibility"]["steps"] if step.get("id") == "check")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            result = subprocess.run(
+                ["bash", "-eu", "-c", step["run"]], cwd=directory, capture_output=True, text=True,
+                env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch", "REBUILT": self.built,
+                     "CANDIDATE_SHA": self.built, "GITHUB_OUTPUT": str(output)})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("check-auto-deploy.py", result.stderr)
+            self.assertFalse(output.exists() and output.read_text())
 
 if __name__ == "__main__":
     unittest.main()
