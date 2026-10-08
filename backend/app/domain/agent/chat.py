@@ -9,7 +9,7 @@ resumable session id on the topic.
 DB writes happen in short transactions around the (long) streaming call so we
 never hold a transaction open across the model round-trip.
 
-One turn, assembled and run, is ``room/turn.py`` (``RoomTurns``).
+Turn intake, transport steps, durable writes and live state have separate owners.
 """
 
 import asyncio
@@ -24,9 +24,9 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import BaseError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent import death_evidence, own_limit
+from app.domain.agent import death_evidence, own_limit, turn_inputs
 from app.domain.agent.compute import ComputePool
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
@@ -159,7 +159,6 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.turn import RoomTurns
 
 # 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
 # `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
@@ -188,12 +187,14 @@ from app.domain.agent.turn.intake.events import (
     _persist_tool_event,
 )
 from app.domain.agent.turn.intake.human import HumanMessages
+from app.domain.agent.turn.intake.preparation import TurnPreparation
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 
 # 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
+from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.events import _mark_step_failed, _record_step_output
 from app.domain.agent.turn_usage import record_turn_usage, reported_usage
 from app.domain.agent.work_policy import work_policy
@@ -232,12 +233,14 @@ from app.domain.identity.handles import (
 )
 from app.domain.policy import gate
 from app.domain.project.models import Project
+from app.domain.project.reads import load_project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.thread.services import conversation_inputs
+from app.domain.thread.services import conversation_inputs, threads_of_rooms
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.reads import load_topic
 from app.domain.topic_membership.services import TopicMemberService
 
 CHEESE_AUTHOR = "cheese"
@@ -274,7 +277,7 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 _CONVERSATION_ROOMS_KEPT = 2048
 
 
-class ChatService(SessionRecovery, RoomTurns):
+class ChatService(SessionRecovery):
     def __init__(
         self,
         *,
@@ -287,6 +290,7 @@ class ChatService(SessionRecovery, RoomTurns):
         gateway: LlmGateway | None = None,
     ):
         self._sessions = session_factory
+        self._turn_preparation: TurnPreparation | None = None
         self._base_prompt = base_system_prompt
         # For the turn-meta disk line only; sandbox mounting still goes through
         # the compute pool below.
@@ -342,6 +346,51 @@ class ChatService(SessionRecovery, RoomTurns):
         self._background_tasks: set[asyncio.Task] = set()
         self._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
 
+    async def dismiss(self, topic_id: uuid.UUID, seat: str) -> None:
+        """Stop the work the teammate on rosters as ``seat`` still has running
+        in this room: one taken off the room, whose every call there is now
+        refused. What it wrote so far stays."""
+        async with self._sessions() as session:
+            topic = await load_topic(session, topic_id)
+            project = topic and await load_project(session, topic.project_id)
+            agent = project and await AgentInstanceService(session).for_seat_handle(
+                project, seat
+            )
+            # It sat in the room for the room's 支线 too: their work stops as well.
+            threads = list(await threads_of_rooms(session, [topic_id]))
+        if agent is not None:
+            for conversation in (topic_id, *threads):
+                await self._compute.dismiss(conversation, agent.handle)
+
+    @property
+    def turn_preparation(self) -> TurnPreparation:
+        if self._turn_preparation is None:
+            self._turn_preparation = TurnPreparation(
+                self._sessions,
+                compute=self._compute,
+                memory=self._memory,
+                base_prompt=self._base_prompt,
+                skills=self._skills,
+                model_options=self._model_kwargs,
+                refuse=self._refuse_turn,
+                live=self.live,
+                send_effects=SendEffects(
+                    post_system_event=self.post_system_event,
+                    note_turn_context=self._note_turn_context,
+                    consume_hook_event=self._consume_hook_event,
+                    known_commits=self._known_commits,
+                    register_input=self._input_registrar,
+                    open_interval=turn_inputs.open_interval_with_input,
+                    retire_failed=turn_inputs.retire_failed,
+                    stamp_delivery=turn_inputs.stamp_delivered,
+                ),
+            )
+        return self._turn_preparation
+
+    @staticmethod
+    def _refuse_turn(message: str) -> BaseError:
+        return ValidationError(message)
+
     @property
     def messages(self) -> AssistantMessages:
         # Composition only: this stateless writer uses the service's real state
@@ -367,7 +416,7 @@ class ChatService(SessionRecovery, RoomTurns):
         """The conversation handle whose seat this turn serializes on.
 
         Resolved BEFORE the seat lock is taken, from the same facts
-        `_assemble_turn` will resolve the running agent from: an explicitly
+        `TurnPreparation.prepare` will resolve the running agent from: an explicitly
         addressed instance, the recipient the message was stamped with at
         posting, the oldest pending message's addressee (a platform turn picks
         that conversation up), and finally the room's default agent. The two
@@ -467,8 +516,8 @@ class ChatService(SessionRecovery, RoomTurns):
         platform_wrote_this = (
             is_resume or nudge_event is not None or not names_a_person(author)
         )
-        # 平台指令那一档：下面 `_converse_impl` 用它保证这段指令不会被房间里的待读
-        # 消息挤掉。重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
+        # 平台指令那一档：`TurnPreparation.converse` 保证指令不被待读消息挤掉。
+        #重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
         # 一段话重新递上来，两边都拼就是同一句说两遍。
         platform_turn = platform_wrote_this and not is_resume
         # Record the arrival-time state before persistence and acknowledgements.
@@ -589,7 +638,7 @@ class ChatService(SessionRecovery, RoomTurns):
             async with self._sessions() as session:
                 instance = await session.get(AgentInstance, recipient_instance_id)
                 if instance is None or not instance.is_active:
-                    raise ValidationError("The addressed agent is unavailable")
+                    raise self._refuse_turn(say("addressedAgentUnavailable"))
                 recipient_handle = instance.handle
         seat_handle = await self._turn_seat_handle(
             topic_id,
@@ -597,7 +646,7 @@ class ChatService(SessionRecovery, RoomTurns):
             recipient_handle=recipient_handle,
         )
         async with self._prompt_lock(topic_id, turn_id, seat_handle):
-            async for frame in self._converse_impl(
+            async for frame in self.turn_preparation.converse(
                 topic_id=topic_id,
                 content=content,
                 turn_id=turn_id,
@@ -632,7 +681,7 @@ class ChatService(SessionRecovery, RoomTurns):
             recipient_handle=recipient_handle,
         )
         async with self._prompt_lock(topic_id, turn_id, seat_handle):
-            async for frame in self._converse_impl(
+            async for frame in self.turn_preparation.converse(
                 topic_id=topic_id,
                 content=content,
                 turn_id=turn_id,
@@ -1201,7 +1250,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     # An event names who ACTED: the seat its session authors
                     # under. The pointer is keyed by the agent that seat
                     # belongs to, the key the next turn reads it back under
-                    # (the resume lookup in `_assemble_turn`); written under
+                    # (the resume lookup in `TurnPreparation.prepare`); written under
                     # the seat, it is never found and every cold start opens
                     # a new conversation. A room-derived seat, the shared one
                     # and an event that names nobody are the room's agent.
@@ -1743,22 +1792,6 @@ class ChatService(SessionRecovery, RoomTurns):
         self, session: AsyncSession, topic_id: uuid.UUID, agent: ResolvedAgent
     ) -> str:
         return await _acting_handle(session, topic_id, agent)
-
-    @staticmethod
-    async def _private_owner(session: AsyncSession, topic: Topic) -> str | None:
-        """私聊里那位人类，名册上 owner 那一席；不是私聊、或名册已经不是两席时 None。
-
-        个人记忆按他记（`MemoryScope.user`），会话开场也按他开。出处只有名册一处：
-        一间私聊就是两席的房间（结论 19），谁坐在里面由加席位、撤席位决定。
-
-        答的只是「人是哪一位」。「这间房是不是私聊」是另一个问题，由 `_is_dm` 答
-        （这个文件里 `is_private` 唯一的读点）：席位不齐的时候这里答 None，而那间
-        房仍然是私聊，名册和地点都不因为席位不齐就变回房间的那一套。
-        """
-        if not _is_dm(topic):
-            return None
-        seats = await TopicMemberService(session).private_seats(topic.id)
-        return seats[0] if seats is not None else None
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         return await _agent_handle(session, topic_id)

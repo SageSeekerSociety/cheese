@@ -83,7 +83,6 @@
     "app/domain/agent/resource_cleanup.py": 3,
     "app/domain/agent/room/sessions.py": 1,
     "app/domain/agent/room/thread_context.py": 1,
-    "app/domain/agent/room/turn.py": 6,
     "app/domain/agent/room_events.py": 4,
     "app/domain/agent/run_records.py": 1,
     "app/domain/agent/runtime.py": 11,

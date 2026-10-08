@@ -36,7 +36,7 @@ async def finish_deferred_message(
     take_recovery,
 ):
     import app.domain.agent.chat as chat_module
-    import app.domain.agent.room.turn as turn_module
+    import app.domain.agent.turn.intake.preparation as turn_module
     from app.domain.agent import pending_messages
 
     monkeypatch.setattr(pending_messages, "_runner", get_work_runner())
@@ -113,7 +113,7 @@ async def finish_deferred_message(
         else:
             from app.domain.agent_instance.services import AgentInstanceService
 
-            assemble = chat._assemble_turn
+            assemble = chat.turn_preparation.prepare
             lookup = AgentInstanceService.get_in_project
             held_blocks = turn_module.held_blocks
             held_seats = []
@@ -141,7 +141,7 @@ async def finish_deferred_message(
                     held_seats.append(kwargs["recipient_handle"])
                 return await held_blocks(session, **kwargs)
 
-            monkeypatch.setattr(chat, "_assemble_turn", tracked_assembly)
+            monkeypatch.setattr(chat.turn_preparation, "prepare", tracked_assembly)
             monkeypatch.setattr(AgentInstanceService, "get_in_project", paused_lookup)
             monkeypatch.setattr(turn_module, "held_blocks", observed_holds)
         allow.set()

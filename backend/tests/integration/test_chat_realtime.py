@@ -487,7 +487,7 @@ async def test_queued_message_retains_selected_teammate(business_db_factory, tmp
     await svc.human_messages.post_user_message(
         topic_id, author="u", content="@Second For second", turn_id=None, reply_to=None
     )
-    prepared = await svc._assemble_turn(
+    prepared = await svc.turn_preparation.prepare(
         topic_id=topic_id,
         content="@First For first",
         turn_id=original,
@@ -684,7 +684,7 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
 
 
 class RacingSeat(ChatService):
-    """Counts the turns inside `_converse_impl`, and parks the first one just
+    """Counts the turns inside `TurnPreparation.converse`, and parks the first one just
     before it takes its seat lock.
 
     `converse` asks "is a turn running?" and only then goes for the lock; the
@@ -704,6 +704,8 @@ class RacingSeat(ChatService):
         self.in_flight = 0
         self.max_in_flight = 0
         self.turns = 0
+        self._real_prepared_converse = self.turn_preparation.converse
+        self.turn_preparation.converse = self._count_prepared
 
     async def _turn_seat_handle(self, topic_id, **kwargs) -> str:
         self.seat_handle_calls += 1
@@ -718,12 +720,12 @@ class RacingSeat(ChatService):
             self.first_left_the_gap.set()
         return handle
 
-    async def _converse_impl(self, **kwargs):
+    async def _count_prepared(self, **kwargs):
         self.turns += 1
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
         try:
-            async for frame in super()._converse_impl(**kwargs):
+            async for frame in self._real_prepared_converse(**kwargs):
                 yield frame
         finally:
             self.in_flight -= 1
@@ -788,7 +790,7 @@ async def _two_requests_that_both_saw_the_seat_free(
                 first.result()  # 它先炸了：把真正的错抛出来，别只报超时
             await asyncio.sleep(0.01)
     second = asyncio.create_task(_converse_to_the_end(svc, topic_id, "Second task"))
-    # 等「第二条进了 `_converse_impl`」，不等时间：只有真进去了才说明它过了
+    # 等「第二条进了 `TurnPreparation.converse`」，不等时间：只有真进去了才说明它过了
     # 同一个「有人正在跑吗」、答了「没有」，否则它会 merge 进在跑的那一轮、
     # 根本不竞速。进得去也说明它已经拿到那把（此刻空闲的）锁。
     async with asyncio.timeout(HANG_S):
@@ -814,7 +816,7 @@ async def test_two_requests_that_both_saw_the_seat_free_never_overlap(
 
     - `_begin_self_started_turn` 自起的轮次不占席位锁；此时来一条 summon，
       live 投递一旦失败就会落到那把（空闲的）锁上、再开一轮；
-    - `_turn_seat_handle`（拿锁**前**）与 `_assemble_turn`（拿锁**后**）
+    - `_turn_seat_handle`（拿锁**前**）与 `TurnPreparation.prepare`（拿锁**后**）
       对「收件人已停用」「默认 agent 中途被换」两种输入解析出的 handle
       不同 —— 两条请求于是各键一把锁，锁形同虚设。
 

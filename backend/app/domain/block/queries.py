@@ -50,6 +50,22 @@ async def client_delivery_bundle(
     )
 
 
+async def turn_history(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> list[Block]:
+    """Read the canonical turn-history ordering in the caller's transaction."""
+    return await BlockRepository(session).turn_history(conversation_id)
+
+
+async def earlier_message_count(
+    session: AsyncSession, conversation_id: uuid.UUID, *, excluding: list[uuid.UUID]
+) -> int:
+    """Count the conversation's messages apart from the offered input batch."""
+    return await BlockRepository(session).count_messages(
+        conversation_id, excluding=excluding
+    )
+
+
 async def output_event_exists(
     session: AsyncSession, conversation_id: uuid.UUID, eid: str
 ) -> bool:

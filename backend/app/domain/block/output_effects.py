@@ -52,6 +52,13 @@ async def append_output(
     )
 
 
+async def count_prompt_attempt(
+    session: AsyncSession, block_ids: list[uuid.UUID], turn_id: uuid.UUID
+) -> int:
+    """Count this exact offered batch; the caller commits its assembly checkpoint."""
+    return await BlockRepository(session).bump_prompt_attempts(block_ids, turn_id)
+
+
 async def fail_step(
     session: AsyncSession, block_id: uuid.UUID, error: str
 ) -> Block | None:

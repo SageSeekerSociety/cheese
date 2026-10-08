@@ -999,5 +999,6 @@
   "reviewCommentSignIn": "Sign in to comment",
   "githubReviewPostFailed": "GitHub refused the review (HTTP {status}): {reply}",
   "reviewCommentSuggestionOnly": "Suggested change",
-  "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each"
+  "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each",
+  "addressedAgentUnavailable": "The addressed agent is unavailable"
 }
