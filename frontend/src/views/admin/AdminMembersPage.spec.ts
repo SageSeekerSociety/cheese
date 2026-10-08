@@ -72,6 +72,8 @@ import AdminMembersPage from './AdminMembersPage.vue'
 import i18n, { setLocale } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
+import { provideUserRefDirectory } from '@/composables/useUserRefDirectory'
+
 const ANDY_REGISTERED = '2025-11-03T08:12:44Z'
 const PENG_REGISTERED = '2026-01-04T10:00:00Z'
 const BOT_REGISTERED = '2026-03-01T00:00:00Z'
@@ -128,9 +130,16 @@ function mountPage() {
     routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
   })
   const vuetify = createVuetify({ components, directives })
+  // 句子里的人名 chip 从外壳注入的目录问「叫什么、点了去哪」（lib/userRefDirectory.ts）。
+  // 这一页单独挂起来时外壳不在，在树根上做同一件事（`composables/useUserRefDirectory.ts`
+  // ——`App.vue` 里也是这么调的）：名册里没有 andy，chip 就退回画 `@andy`，去处按当前
+  // 路由上的项目算。
   const Wrapper = {
     components: { AdminMembersPage },
     template: '<v-app><AdminMembersPage /></v-app>',
+    setup() {
+      provideUserRefDirectory()
+    },
   }
   return render(Wrapper as unknown as Component, {
     global: { plugins: [vuetify, createPinia(), router, i18n] },

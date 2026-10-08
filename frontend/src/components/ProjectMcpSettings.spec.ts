@@ -1,4 +1,6 @@
 /** 项目设置「MCP 服务器」：连接属于项目，谁授权的看得见，密钥只进不出。 */
+import type { Plugin } from 'vue'
+
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -22,6 +24,9 @@ vi.mock('vuetify-sonner', () => ({ toast: { success: sonner.success, error: sonn
 import i18n, { setLocale } from '../i18n'
 
 import ProjectMcpSettings from './ProjectMcpSettings.vue'
+
+import { userRefRoute } from '@/lib/userRef'
+import { USER_REF_DIRECTORY } from '@/lib/userRefDirectory'
 
 const tracker = {
   name: 'tracker',
@@ -53,6 +58,21 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
+// 句子里的人名 chip（「由 @某人 授权」）的名字和去处来自外壳注入的目录
+// （lib/userRefDirectory.ts；外壳那份在 composables/useUserRefDirectory.ts）。这一页
+// 单独挂起来时外壳不在，注入一个替身：名册空着，chip 退回画 `@alice`；去处是这个人
+// 在项目里的成员页——下面那条断言要的正是它画成了可点的那一支（没去处时 chip 画成
+// 一个死的 @名字，没有 data-handle）。
+const directory: Plugin = {
+  install(app) {
+    app.provide(USER_REF_DIRECTORY, {
+      name: () => null,
+      target: (handle: string) => userRefRoute(handle, 'p'),
+      navigate: () => {},
+    })
+  },
+}
+
 async function mount(url = '/projects/p/settings') {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -61,7 +81,7 @@ async function mount(url = '/projects/p/settings') {
   await router.push(url)
   const view = render(ProjectMcpSettings, {
     props: { projectId: 'p' },
-    global: { plugins: [createVuetify({ components, directives }), router, i18n] },
+    global: { plugins: [createVuetify({ components, directives }), router, i18n, directory] },
   })
   return { view, router }
 }
