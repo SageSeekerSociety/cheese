@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block
 from app.domain.room_task.checkouts import after_close
@@ -236,7 +236,9 @@ class TaskService:
                 not names_a_person(handle)
                 or await user_by_handle(self._session, handle) is None
             ):
-                raise ValidationError(say("contributorMustBeUser", handle=handle))
+                raise UnprocessableEntityError(
+                    say("contributorMustBeUser", handle=handle)
+                )
         task.reporter_handle = reporter_handle
         task.contributor_handles = contributors
         await self._session.flush()
@@ -297,7 +299,7 @@ class TaskService:
         from app.domain.project.protection import branch_protection_of
 
         if task.started_at is not None:
-            raise ValidationError(say("taskStartedAlready"))
+            raise UnprocessableEntityError(say("taskStartedAlready"))
         project = await self._session.get(Project, task.project_id)
         reviewer = (
             (reviewer_handle or "").strip()
@@ -305,7 +307,7 @@ class TaskService:
             or branch_protection_of(project).default_reviewer
         )
         if not reviewer:
-            raise ValidationError(say("reviewerRequired"))
+            raise UnprocessableEntityError(say("reviewerRequired"))
         doc = (
             await Documents(self._session).get(task.document_id)
             if task.document_id is not None
@@ -357,7 +359,7 @@ class TaskService:
     def require_open(task: Task) -> None:
         """Refuse what only an open task takes: a message to its session."""
         if task.status != TaskStatus.open:
-            raise ValidationError(say("taskClosedNoTurn"))
+            raise UnprocessableEntityError(say("taskClosedNoTurn"))
 
     async def open_thread(
         self,
@@ -380,7 +382,7 @@ class TaskService:
         if base_task_id is not None:
             parent = await self.require_in_room(room_id, base_task_id)
             if parent.branch_name is None:
-                raise ValidationError(say("pastTaskNoBranch"))
+                raise UnprocessableEntityError(say("pastTaskNoBranch"))
             # An open task's branch holds its step still to land; a closed
             # task's landed, unless it never delivered.
             if parent.status == TaskStatus.open or (
@@ -425,7 +427,7 @@ class TaskService:
         """重新打开：the task is going again. One that has landed something goes
         on from the project's latest code, like a task whose step landed."""
         if task.status is not TaskStatus.closed:
-            raise ValidationError(say("taskStillOpen"))
+            raise UnprocessableEntityError(say("taskStillOpen"))
         task.status = TaskStatus.open
         task.closed_at = None
         task.conclusion = None

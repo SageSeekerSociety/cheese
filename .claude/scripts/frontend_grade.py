@@ -20,7 +20,7 @@ an Apollo-shaped store":
      `@/services/*`, OR any module that transitively reaches one of those, OR
      it calls `fetch`/`axios` itself — or it reads a business store.
   D  it is tied to where it is mounted, or to a channel other than
-     props/emits: `useRoute`/`useRouter`/`$router`/`vue-router`,
+     props/emits: `useRoute`/`useRouter`/`$router`/`vue-router`, a rendered
      `<router-view>`/`<router-link>`, `$parent`/`$root`, an event bus, or
      `provide`/`inject`.
 
@@ -32,17 +32,16 @@ time, so it pulls in no runtime dependency and no component became
 un-standalone by declaring one — a component that only does
 `import type { PreviewSession } from '../api'` has no fetching code in it at
 all. Value imports skip type-only specifiers, `api_reach` skips them too: an
-edge that exists only as a type never enters the transitive closure. (#2174's
+edge that exists only as a type never enters the transitive closure.
+`export type … from` is erased the same way — a barrel that re-exports a type
+is not how a chain gets past it. (The router import is the one place type-only
+still counts, and it does so on purpose: `docs/manual/dev/frontend.md` bans
+`import type { RouteLocationRaw } from 'vue-router'` under
+`frontend/src/components/**` and points at `@/lib/navTarget` as the substitute,
+so the router test reads it and grades D.) (#2174's
 inventory counted them, which is how `PanelPreviewView` was called C while
 containing no fetch of its own; fixing it in this one place fixed both the
 board and the gate at once.)
-
-The router import is the one place type-only specifiers still count, and it
-does so on purpose: `docs/manual/dev/frontend.md` bans
-`import type { RouteLocationRaw } from 'vue-router'` under
-`frontend/src/components/**` too, and points at `@/lib/navTarget` as the
-substitute. So `imports_router` reads the specifier list without dropping
-them.
 
 WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
 
@@ -54,17 +53,24 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     reaches the API through a chain the regex misses is graded one letter too
     high; a `reach` computed over `.ts` and `.vue` only has the same blind
     spot. `@/` is resolved against `frontend/src`, matching `vite.config.ts`.
-    Both spellings of an edge are read — `import` and `export … from` — and
-    both are regexes over the whole file, so a specifier-shaped string in a
-    comment, a template or a string literal counts as an edge too. An edge
-    that is really spelled some third way is still missed.
+  - An edge is read in both its spellings, `import` and `export … from` (and
+    `export * from`), and both are regexes over the whole file, so a
+    specifier-shaped string in a comment, a template or a string literal counts
+    as an edge too. An index barrel is how a chain gets past the file that
+    names it, and leaving the re-export out called a page that fetched through
+    one standalone-ready.
   - A store is recognised by the `useXStore` naming convention. One spelled
     another way is invisible here.
-  - Comments are stripped before the router test: a file that mentions
-    `vue-router` in a comment — `common/NavLink.vue` explains in its header
-    why it does *not* import it — is not a file that depends on the router.
-    The template half is read tag by tag (`<router-view>`, `<router-link>`),
-    the way `scene-ratchet.py` pairs a page with its view.
+  - Comments are not code. `// 不 import vue-router` is the sentence a file
+    writes precisely BECAUSE it took its route through `useNavigation()`, and
+    reading it as a router import graded five such components D. The script
+    is matched with its `//` and `/* */` comments removed (strings, template
+    literals and regex literals are kept, so `'https://x'` is not cut at its
+    `//`); template HTML comments were already dropped by `template_blocks`.
+    The template half of the router test reads tags by name (`<router-view>`,
+    `<router-link>`), the way `scene-ratchet.py` pairs a page with its view.
+
+    python3 .claude/scripts/frontend_grade.py --self-test   prove the cases below
 
 `reasons` is the other half of the answer and exists for the gate: a failure
 that says "PanelCard is C" is a puzzle, and one that says "reaches the API
@@ -74,6 +80,8 @@ layer through components/room/composables/useRoomSocket.ts" is a task.
 from __future__ import annotations
 
 import re
+import sys
+import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -267,6 +275,124 @@ class Grade:
         return self.letter == STANDALONE
 
 
+#: Characters after which a `/` starts a regex literal rather than a division.
+_REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%<>~^")
+_AFTER_RETURN = re.compile(r"\breturn\s*$")
+
+
+def strip_js_comments(code: str) -> str:
+    r"""`code` with its `//` and `/* */` comments blanked out.
+
+    A comment is replaced by whitespace of the same shape (newlines kept), so
+    nothing that follows it moves. Quoted strings, template literals and regex
+    literals are copied through untouched: the `//` in `'https://x'` or in
+    `/https?:\/\//` is not a comment. A template literal's `${ ... }` is code
+    again — it may hold strings, comments and further template literals — so it
+    is scanned like the rest, up to the `}` that closes it. A regex literal is
+    told from a division by the character before it — the usual heuristic, and
+    the place this can still be wrong is a `/` right after a keyword other than
+    `return`.
+    """
+    out: list[str] = []
+    _strip_code(code, 0, out, in_substitution=False)
+    return "".join(out)
+
+
+def _strip_code(code: str, i: int, out: list[str], *, in_substitution: bool) -> int:
+    """Copy code from `i` into `out` with comments blanked; return where it stopped.
+
+    Inside a template literal's `${ ... }` (`in_substitution`) it stops at the
+    `}` that balances the opening brace, leaving that `}` uncopied; otherwise
+    it runs to the end of `code`.
+    """
+    n = len(code)
+    prev = ""  # last significant (non-space) character copied through
+    depth = 0  # open `{` inside a `${ ... }`
+    while i < n:
+        char = code[i]
+        nxt = code[i + 1] if i + 1 < n else ""
+        if char == "/" and nxt == "/":
+            end = code.find("\n", i)
+            end = n if end == -1 else end
+            out.append(" " * (end - i))
+            i = end
+            continue
+        if char == "/" and nxt == "*":
+            end = code.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            out.append("".join(c if c == "\n" else " " for c in code[i:end]))
+            i = end
+            continue
+        if char == "`":
+            i = _strip_template(code, i, out)
+            prev = char
+            continue
+        if char in "'\"":
+            j = i + 1
+            while j < n and code[j] != char:
+                if code[j] == "\\":
+                    j += 1
+                elif code[j] == "\n":
+                    break  # an unterminated quote ends at the line, like JS
+                j += 1
+            out.append(code[i:j + 1])
+            i = j + 1
+            prev = char
+            continue
+        if char == "/" and (
+            prev == "" or prev in _REGEX_PRECEDERS or _AFTER_RETURN.search(code[max(0, i - 40):i])
+        ):
+            j = i + 1
+            in_class = False
+            while j < n and code[j] != "\n":
+                if code[j] == "\\":
+                    j += 1
+                elif code[j] == "[":
+                    in_class = True
+                elif code[j] == "]":
+                    in_class = False
+                elif code[j] == "/" and not in_class:
+                    break
+                j += 1
+            out.append(code[i:j + 1])
+            i = j + 1
+            prev = "/"
+            continue
+        if in_substitution:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                if depth == 0:
+                    return i
+                depth -= 1
+        out.append(char)
+        if not char.isspace():
+            prev = char
+        i += 1
+    return n
+
+
+def _strip_template(code: str, i: int, out: list[str]) -> int:
+    """Copy the template literal opening at `code[i]`; return the index after it."""
+    n = len(code)
+    start = i
+    j = i + 1
+    while j < n and code[j] != "`":
+        if code[j] == "\\":
+            j += 2
+            continue
+        if code[j] == "$" and j + 1 < n and code[j + 1] == "{":
+            out.append(code[start:j + 2])
+            j = _strip_code(code, j + 2, out, in_substitution=True)
+            start = j  # the closing `}` (if any) is copied with the next run
+            if j < n:
+                j += 1
+            continue
+        j += 1
+    out.append(code[start:j + 1])
+    return j + 1
+
+
 def normalise_store(name: str) -> str:
     """`useSpaceStore` -> `space`; `usePageTitleStore` -> `pageTitle`."""
     return STORE_ALIASES.get(name, name[:1].lower() + name[1:])
@@ -356,32 +482,6 @@ def tag_names(block: str) -> list[str]:
     return names
 
 
-_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
-_LINE_COMMENT = re.compile(r"//[^\n]*")
-
-
-def strip_comments(script: str) -> str:
-    """`script` with its comments removed.
-
-    Block comments go first: a `//` inside one is prose, and stripping lines
-    first would leave the rest of the comment behind as if it were code.
-    """
-    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", script))
-
-
-def imports_router(script: str) -> bool:
-    """Does this `<script>` really import `vue-router`?
-
-    An import, not a mention: the specifier list of the comment-stripped
-    script. This is what the router test used to do with the substring
-    `"vue-router" in script`, and a file that explains in its header why it
-    does *not* import vue-router satisfied it — every component whose comment
-    mentioned the package was graded D for the prose. Type-only specifiers
-    count here on purpose; see the module docstring.
-    """
-    return any(spec == "vue-router" for _, spec in specifiers(strip_comments(script)))
-
-
 def router_tags(template: str) -> list[str]:
     """The template tags that need vue-router installed, as written.
 
@@ -410,7 +510,9 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     if reach is None:
         reach = api_reach(root)
     text = path.read_text(encoding="utf-8", errors="replace")
-    script = "\n".join(SCRIPT_BLOCK.findall(text))
+    # Comments are not code: a file that says "this does not import
+    # vue-router" in a comment is not a file that imports it.
+    script = strip_js_comments("\n".join(SCRIPT_BLOCK.findall(text)))
     template = "\n".join(template_blocks(text))
     whole = script + "\n" + template
 
@@ -450,21 +552,21 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     rendered_router_tags = router_tags(template)
     hard = bool(
         ROUTER_USE.search(whole)
-        or imports_router(script)
+        or "vue-router" in script
         or rendered_router_tags
-        or PARENT_USE.search(text)
-        or BUS_USE.search(text)
+        or PARENT_USE.search(whole)
+        or BUS_USE.search(whole)
         or INJECT_USE.search(script)
         or PROVIDE_USE.search(script)
     )
-    if ROUTER_USE.search(whole) or imports_router(script):
+    if ROUTER_USE.search(whole) or "vue-router" in script:
         reasons.append("reads the route (useRoute/useRouter/$router/vue-router)")
     if rendered_router_tags:
         tag = rendered_router_tags[0]
         reasons.append(f"renders <{tag}>, which only resolves with a router installed")
-    if PARENT_USE.search(text):
+    if PARENT_USE.search(whole):
         reasons.append("reads $parent/$root")
-    if BUS_USE.search(text):
+    if BUS_USE.search(whole):
         reasons.append("uses an event bus")
     if INJECT_USE.search(script) or PROVIDE_USE.search(script):
         reasons.append("uses provide()/inject()")
@@ -509,3 +611,144 @@ def grade_frontend(root: Path) -> dict[str, Any]:
         },
         "grade_lines": {g: lines_by_grade.get(g, 0) for g in "ABCD"},
     }
+
+
+# ---------------------------------------------------------------- self-test
+
+#: Components whose grade the comment rule decides. Each one says "vue-router"
+#: (or `useRoute(`, `$parent`) only in a comment and is A; `Real.vue` is the
+#: control that really reads the route, and `Url.vue` keeps a `//` inside a
+#: string, which must not swallow the `useRoute()` after it on the same line.
+_FIXTURE: dict[str, str] = {
+    "frontend/src/components/LineComment.vue": (
+        "<script setup lang=\"ts\">\n"
+        "// 不 import vue-router：去处走 useNavigation()，不用 useRoute()\n"
+        "defineProps<{ to: string }>()\n</script>\n<template><a>{{ to }}</a></template>\n"
+    ),
+    "frontend/src/components/BlockComment.vue": (
+        "<script setup lang=\"ts\">\n"
+        "/**\n * `state.back` 是 vue-router 记下的上一个地址；不读 $router、$parent。\n */\n"
+        "defineProps<{ to: string }>()\n</script>\n<template><a>{{ to }}</a></template>\n"
+    ),
+    "frontend/src/components/Real.vue": (
+        "<script setup lang=\"ts\">\nimport { useRoute } from 'vue-router'\n"
+        "const route = useRoute()\n</script>\n<template><a>{{ route.path }}</a></template>\n"
+    ),
+    "frontend/src/components/Url.vue": (
+        "<script setup lang=\"ts\">\n"
+        "const home = 'https://example.com'; const route = useRoute()\n"
+        "const re = /\\/\\//g; const r2 = useRoute()\n"
+        "</script>\n<template><a :href=\"home\">{{ route }}</a></template>\n"
+    ),
+    "frontend/src/components/NestedTemplate.vue": (
+        "<script setup lang=\"ts\">\n"
+        "const a = `x ${y ? `//q` : ''} z`; const route = useRoute()\n"
+        "</script>\n<template><a>{{ a }}{{ route }}</a></template>\n"
+    ),
+    "frontend/src/components/RouterLink.vue": (
+        "<script setup lang=\"ts\">\ndefineProps<{ id: string }>()\n</script>\n"
+        "<template><router-link to=\"/x\">{{ id }}</router-link></template>\n"
+    ),
+    "frontend/src/components/ViaBarrel.vue": (
+        "<script setup lang=\"ts\">\nimport { useThing } from './barrel'\n"
+        "const thing = useThing()\n</script>\n<template><div>{{ thing }}</div></template>\n"
+    ),
+    #: The API root has to exist for `@/api` to resolve to it; `is_api_root`
+    #: then reads the path, not the file.
+    "frontend/src/api.ts": "export const api = { get: () => fetch('/x') }\n",
+    "frontend/src/components/barrel.ts": "export { useThing } from './thing'\n",
+    "frontend/src/components/thing.ts": (
+        "import { api } from '@/api'\nexport const useThing = () => api.get()\n"
+    ),
+    "frontend/src/components/TypeBarrel.vue": (
+        "<script setup lang=\"ts\">\nimport type { Thing } from './typeBarrel'\n"
+        "defineProps<{ thing: Thing | null }>()\n</script>\n<template><div /></template>\n"
+    ),
+    "frontend/src/components/typeBarrel.ts": "export type { Thing } from './thing'\n",
+}
+
+
+def self_test() -> int:
+    """Grade the fixture components and require each letter."""
+    failures: list[str] = []
+
+    def check(label: str, got: Any, want: Any) -> None:
+        if got != want:
+            failures.append(f"{label}: got {got!r}, want {want!r}")
+
+    check(
+        "a // inside a string is not a comment",
+        strip_js_comments("a = 'http://x' // gone\n"),
+        "a = 'http://x'        \n",
+    )
+    check(
+        "a block comment keeps its newlines",
+        strip_js_comments("a /* x\ny */ b"),
+        "a     \n     b",
+    )
+    check(
+        "a template literal nested in ${ } does not end the outer one",
+        strip_js_comments("a = `x ${y ? `//q` : '}'} z`; f() // gone"),
+        "a = `x ${y ? `//q` : '}'} z`; f()        ",
+    )
+    check(
+        "a comment inside ${ } is still a comment",
+        strip_js_comments("a = `x ${ /* `} */ y // }\n } z` // gone"),
+        "a = `x ${          y     \n } z`        ",
+    )
+    check(
+        "a regex literal keeps its //",
+        strip_js_comments("s.replace(/\\/\\//g, '') // gone"),
+        "s.replace(/\\/\\//g, '')        ",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="frontend-grade-selftest-") as raw:
+        root = Path(raw)
+        for rel, body in _FIXTURE.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        reach = api_reach(root)
+        components = root / "frontend" / "src" / "components"
+
+        def letter(name: str) -> str:
+            return grade_component(root, components / name, reach).letter
+
+        check("vue-router named in a // comment is not a router read", letter("LineComment.vue"), "A")
+        check("vue-router, $router, $parent in a /* */ comment are not read", letter("BlockComment.vue"), "A")
+        check("a real useRoute() is still D", letter("Real.vue"), "D")
+        check("a // inside a string does not hide the code after it", letter("Url.vue"), "D")
+        check(
+            "a // in a template literal nested in ${ } does not hide the code after it",
+            letter("NestedTemplate.vue"),
+            "D",
+        )
+        router_link = grade_component(root, components / "RouterLink.vue", reach)
+        check("a page whose only router use is the tag it renders is D", router_link.letter, "D")
+        check(
+            "and the tag is the reason",
+            any("renders <router-link>" in reason for reason in router_link.reasons),
+            True,
+        )
+        check("a page that fetches through a re-export barrel is C", letter("ViaBarrel.vue"), "C")
+        check("a barrel that re-exports only a type is not an edge", letter("TypeBarrel.vue"), "A")
+
+    for failure in failures:
+        print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
+    if failures:
+        return 1
+    print(
+        "PASS: frontend_grade self-test (comments are not code: vue-router, $router "
+        "and $parent named in // and /* */ comments grade A, a real useRoute() "
+        "stays D, and a // inside a string, a regex or a template literal nested in "
+        "${ } is not a comment; a rendered <router-link> is D, a chain carried by an "
+        "`export … from` barrel is C, and one carrying only a type is A)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-test"]:
+        sys.exit(self_test())
+    print("usage: frontend_grade.py --self-test (the graders import this module)", file=sys.stderr)
+    sys.exit(2)

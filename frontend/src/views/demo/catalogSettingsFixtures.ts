@@ -127,3 +127,9 @@ export function accountProps(
     ...over,
   }
 }
+
+/** 「归档项目」那一块和它的弹窗：项目名取自模型管理那一组的夹具里的一个真项目。 */
+export const ARCHIVE_PROJECT = '课程资料整理'
+
+/** 被拒时弹窗里那句：后端 `archiveOwnerOnly` 的原话（`apiError.json`），composable 原样递下来。 */
+export const ARCHIVE_REFUSED = '只有项目所有者能归档或取消归档项目'

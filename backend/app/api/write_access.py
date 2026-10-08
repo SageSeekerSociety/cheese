@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
 from app.core.db import get_db
-from app.core.errors import BaseError, ForbiddenError, UnauthorizedError
+from app.core.errors import AuthenticationRequiredError, BaseError, ForbiddenError
 from app.core.sandbox_auth import (
     is_global_sandbox_token,
     is_valid_cheese_token,
@@ -111,7 +111,7 @@ class _CheeseOnly(WriteAccess):
                 screen_token=connection.headers.get("x-cheese-screen") or "",
             )
         if not opened:
-            raise UnauthorizedError("invalid sandbox token")
+            raise AuthenticationRequiredError("invalid sandbox token")
 
 
 async def _credential_opens(

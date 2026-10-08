@@ -62,7 +62,7 @@ repos:
       # The import graph, not the diff: this walks every module under app/ and
       # reports the ones that broke a declared boundary (api -> domain -> core,
       # no route reaching another domain's models, no cycle between sibling
-      # domains). 260 pre-existing violations are frozen inside
+      # domains). 235 pre-existing violations are frozen inside
       # backend/.importlinter as exact `importer -> imported` pairs, so this
       # blocks new ones and stays quiet about the old ones.
       #
@@ -74,6 +74,17 @@ repos:
         language: system
         pass_filenames: false
         files: ^backend/(.*\.py|\.importlinter)$
+
+      # Imports inside a function body may only go down. Each file's count of
+      # unexplained ones is frozen in backend/deferred-import-baseline.json; an
+      # import that says why (`# deferred-import: <reason>`, same line or the
+      # line above) is not counted. Whole tree, like the graph check above.
+      - id: deferred-imports
+        name: deferred imports only go down (annotated or frozen)
+        entry: bash -c 'cd backend && uv run python scripts/check_deferred_imports.py'
+        language: system
+        pass_filenames: false
+        files: ^backend/(app/.*\.py|deferred-import-baseline\.json|scripts/check_deferred_imports\.py)$
 
       # Two checks in one script: backend/alembic/HEAD must name the chain's
       # tip, and merging into main must not leave two heads. The second is only
@@ -89,7 +100,7 @@ repos:
 
       # The migrations this branch adds must be safe while the previous
       # release keeps serving (.claude/rules/migrations.md). CI runs the same
-      # script in test.yml's migration-heads job.
+      # script in test.yml's static job.
       - id: migration-safety
         name: added migrations are safe under the running release
         entry: python3 .claude/scripts/check-migration-safety.py

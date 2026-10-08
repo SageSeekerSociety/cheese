@@ -37,7 +37,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
-    ValidationError,
+    UnprocessableEntityError,
 )
 from app.core.sentences import say
 from app.domain.agent.announce import announce
@@ -484,7 +484,7 @@ async def update_task(
         # Work is handed to anyone in the project, and whoever takes it is in
         # its channel from then on.
         if body.owner_handle not in await members.project_people(place.project_id):
-            raise ValidationError(say("taskOwnerNotInProject"))
+            raise UnprocessableEntityError(say("taskOwnerNotInProject"))
         await members.take_in(place.room_id, body.owner_handle)
         await _move_off_former_owners_computer(
             db, actor, place, task, body.owner_handle
@@ -509,7 +509,7 @@ async def update_task(
         people = await members.project_people(place.project_id)
         wanted = list(dict.fromkeys(body.contributor_handles))
         if any(h not in people for h in wanted):
-            raise ValidationError(say("contributorNotInProject"))
+            raise UnprocessableEntityError(say("contributorNotInProject"))
         for handle in wanted:
             await members.take_in(place.room_id, handle)
         await tasks.set_contributors(
@@ -598,7 +598,7 @@ async def create_teammate_task(
     if named and named not in await TopicMemberService(db).project_people(
         place.project_id
     ):
-        raise ValidationError(say("taskOwnerNotInProject"))
+        raise UnprocessableEntityError(say("taskOwnerNotInProject"))
     owner = named or (origin.author if origin is not None else None)
     task = await TopicService(db).create_task(
         room_id=place.room_id,
@@ -615,7 +615,7 @@ async def create_teammate_task(
         try:
             await TaskService(db).start(task, by=task.owner_handle)
             started = True
-        except ValidationError as exc:
+        except UnprocessableEntityError as exc:
             why_not = str(exc)
     await tell_task(
         db,

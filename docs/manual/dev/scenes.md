@@ -30,7 +30,7 @@ covers:
 | **C** | 自己取数——直接 import、经中间模块绕、自己写 `fetch`/`axios`——或者读业务 store | 把取数那一段挪出去：外面拿数据，它只收结果。已合的样板：#2193 的 `views/spaces/detail/settings/BasicInfo.vue` 取数、读 store、保存、删除后跳转，同目录 `BasicInfoView.vue` 只收 props 和事件，A 级、已冻结在 ready |
 | **D** | 还绑在挂载位置上：读路由、画 `<router-view>` / `<router-link>`、`$parent` / `$root`、事件总线、`provide` / `inject` | 先把「从哪来」改成 props 或事件，再谈数据 |
 
-判据只有一份，写在 `.claude/scripts/frontend_grade.py` 里：看板（`arch-metrics.py`）和下面那条闸门读的是同一个函数，所以不会出现「看板说是 A、闸门说不是」。`vue-router` 按**真的 import 和模板里画出来的标签**算：注释里写到它不算（`components/common/NavLink.vue` 的注释就在说它替谁干活，它是 A 级）。**A 档在这一页就叫「能单独跑」**，[基线](#ratchet)冻的就是它。
+判据只有一份，写在 `.claude/scripts/frontend_grade.py` 里：看板（`arch-metrics.py`）和下面那条闸门读的是同一个函数，所以不会出现「看板说是 A、闸门说不是」。`vue-router` 按**脚本里出现的 import 和模板里画出来的标签**算：注释先被去掉，写在注释里的话不算（`components/common/NavLink.vue` 的注释就在说它替谁干活，它是 A 级）。**A 档在这一页就叫「能单独跑」**，[基线](#ratchet)冻的就是它。
 
 ## 一共多少 {#totals}
 
@@ -64,7 +64,7 @@ covers:
 
 今天就能单独跑的那 2 页：`views/404.vue`、`views/user/settings/General.vue`。
 
-2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**；2026-10-08 起是 **101 个**（`views/tasks/detail/Brief.vue` 经 barrel 够到 API，改成 container，冻结转到 `BriefView.vue`，见[这份清单怎么来的](#how)）。
+2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**。2026-10-08 判据改了两处，当天基线是 **104 个 ready、76 个 debt**：注释里提到 `vue-router` 不再算依赖后，`components/panels/preview/PreviewPage.vue`、`views/MarketViewView.vue`、`views/user/settings/ThisDeviceView.vue` 三页合格进入名单（102 → 105）；`export … from` 算一条边后，`views/tasks/detail/Brief.vue` 落到 container、冻结转到同目录的 `BriefView.vue`（105 → 104，见[这份清单怎么来的](#how)）。
 
 ## 从今天起它是一条闸门 {#ratchet}
 

@@ -1,0 +1,47 @@
+name: Rerun failed jobs
+
+# Reruns only the failed jobs of a Required CI run on a pull request, when the
+# platform's GitHub App asks with
+#   POST /repos/{owner}/{repo}/dispatches
+#   {"event_type": "rerun-failed", "client_payload": {"run_id": <id>}}
+# The App has contents:write (what a dispatch needs) but not actions:write, so
+# without this a red run meant an empty commit and every job queued again; a
+# backend shard that lost a worker now costs that shard and the jobs that
+# depend on it.
+#
+# repository_dispatch only ever runs this file as it is on the default branch,
+# so a pull request cannot change what it does or widen what it may rerun.
+on:
+  repository_dispatch:
+    types: [rerun-failed]
+
+permissions:
+  actions: write
+  contents: read
+
+# One request per run at a time; a second one for the same run waits and then
+# finds it no longer failed (or on its next attempt).
+concurrency:
+  group: rerun-failed-${{ github.event.client_payload.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  rerun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Rerun the run's failed jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.client_payload.run_id }}
+        run: |
+          case "$RUN_ID" in
+            '' | *[!0-9]*) echo "::error::client_payload.run_id must be a workflow run id"; exit 1 ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" > "$RUNNER_TEMP/run.json"
+          python3 .github/scripts/rerun-failed.py "$RUNNER_TEMP/run.json" "$GITHUB_REPOSITORY"
+          gh run rerun "$RUN_ID" --failed --repo "$GITHUB_REPOSITORY"

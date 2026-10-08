@@ -40,6 +40,22 @@ def test_storage_sample_counts_whole_filesystem_and_available_memory(
     }
 
 
+def test_disk_sample_names_each_filesystem_it_watches(monkeypatch):
+    from scripts.observe_ci_resources import disk_snapshot, observed_disks
+
+    monkeypatch.setattr(
+        os,
+        "statvfs",
+        lambda _: SimpleNamespace(f_blocks=1000, f_bavail=600, f_frsize=4096),
+    )
+    assert disk_snapshot(["/", "/runner/temp"]) == {
+        "/": {"total_bytes": 4096000, "available_bytes": 2457600},
+        "/runner/temp": {"total_bytes": 4096000, "available_bytes": 2457600},
+    }
+    monkeypatch.setenv("RUNNER_TEMP", "/runner/temp")
+    assert observed_disks()[:2] == ["/", "/runner/temp"]
+
+
 def test_sigterm_stops_command_and_monitors(tmp_path):
     output = tmp_path / "resources"
     pidfile = tmp_path / "command.pid"
@@ -80,7 +96,7 @@ def test_sigterm_stops_command_and_monitors(tmp_path):
         pids = [int(pidfile.read_text())] + [
             event["pid"] for event in events if event["event"] == "monitor_started"
         ]
-        assert len(pids) == 3
+        assert len(pids) == 4
         for pid in pids:
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
@@ -134,8 +150,8 @@ def test_command_result_and_monitor_cleanup(tmp_path, exit_code):
         for line in (output / "lifecycle.jsonl").read_text().splitlines()
     ]
     started = [event for event in events if event["event"] == "monitor_started"]
-    assert {event["monitor"] for event in started} == {"vmstat", "postgres"}
-    assert len([event for event in events if event["event"] == "monitor_stopped"]) == 2
+    assert {event["monitor"] for event in started} == {"vmstat", "postgres", "disks"}
+    assert len([event for event in events if event["event"] == "monitor_stopped"]) == 3
     for event in started:
         with pytest.raises(ProcessLookupError):
             os.kill(event["pid"], 0)

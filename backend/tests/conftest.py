@@ -39,6 +39,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool, QueuePool
 
+from scripts.assert_suite_ran import SuiteDidNotRun, read_quarantine
+
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
 # the hook. The workspace tests (and the app's git ops) spawn `git` subprocesses;
@@ -2046,6 +2048,19 @@ def _slow_baseline() -> frozenset[str]:
     )
 
 
+# Intermittent failures set aside while an issue tracks each fix; the format
+# and the rules are in the file's own header.
+_QUARANTINE = Path(__file__).with_name("quarantine.txt")
+
+
+def _quarantine() -> dict[str, str]:
+    """Each quarantined node id and the issue that owns its fix."""
+    try:
+        return read_quarantine(_QUARANTINE)
+    except SuiteDidNotRun as exc:
+        raise pytest.UsageError(str(exc)) from exc
+
+
 def _layer_of(item: pytest.Item) -> str:
     """Which layer ``item`` runs in.
 
@@ -2091,6 +2106,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     misfiled = []
     slow = _slow_baseline()
+    quarantine = _quarantine()
     for item in items:
         declared = {m.name for m in item.iter_markers()} & _LAYERS
         if declared:
@@ -2102,6 +2118,14 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             continue
         layer = _layer_of(item)
         item.add_marker(layer)
+        if item.nodeid in quarantine:
+            # The gate accepts this xfail only when its nodeid and issue
+            # match the same quarantine list; other skips still fail.
+            item.add_marker(
+                pytest.mark.xfail(
+                    strict=False, reason=f"quarantined: {quarantine[item.nodeid]}"
+                )
+            )
         if item.nodeid not in slow:
             item.stash[_CEILING] = (layer, _LAYER_CEILING_S[layer])
     if misfiled:

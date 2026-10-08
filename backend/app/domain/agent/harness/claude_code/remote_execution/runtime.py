@@ -751,19 +751,19 @@ class Executor:
 
     def _wait_command(self, command_id, process):
         code = process.wait()
-        # Negative for a POSIX child killed by signal n, kept so its reader can
-        # end the same way. Renamed in and off `running` as one step, and that
-        # step is a `finally`: a full disk (2026-10-03) must not strand a reader.
+        # Publish only a complete code; ENOSPC can leave an empty or partial file.
         temporary = self._record(command_id) / ("exit." + uuid.uuid4().hex)
-        try:
-            temporary.write_text(str(code))
-        finally:
-            with self.command_lock:
-                with contextlib.suppress(OSError):
+        written = False
+        with contextlib.suppress(OSError):
+            written = temporary.write_text(str(code)) == len(str(code))
+        with self.command_lock:
+            with contextlib.suppress(OSError):
+                if written:
                     temporary.replace(temporary.with_name("exit"))
-                self.running.pop(command_id, None)
-                self.collected[command_id] = time.time()
-        self.log(command_id, "exited", exit_code=code)
+            self.running.pop(command_id, None)
+            self.collected[command_id] = time.time()
+        with contextlib.suppress(OSError):
+            self.log(command_id, "exited", exit_code=code)
 
     def _tree(self, pid):
         """The process and its descendants, parents first. A descendant that

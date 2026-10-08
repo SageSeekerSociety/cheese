@@ -2,7 +2,8 @@
   内测版本徽标: a small fixed badge showing which backend build is running, so a
   tester can confirm their version at a glance. Renders nothing unless the box
   opted in (GET /api/version → badge:true), so it's inert in prod. Click to copy
-  the full sha.
+  the full sha. The build arrives as a prop: the shell (App.vue) asks the server,
+  this only draws the answer, so it renders with no backend at all.
 -->
 <template>
   <div
@@ -17,26 +18,19 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import type { AppVersion } from '@/api'
 
-import { type AppVersion, getAppVersion } from '@/api'
+import { ref } from 'vue'
+
 import { t } from '@/i18n'
 
-const version = ref<AppVersion | null>(null)
+const props = defineProps<{ version: AppVersion | null }>()
 const copied = ref(false)
 
-onMounted(async () => {
-  try {
-    version.value = await getAppVersion()
-  } catch {
-    // Best-effort: no badge if the endpoint is unreachable or old.
-  }
-})
-
 async function copySha() {
-  if (!version.value?.sha) return
+  if (!props.version?.sha) return
   try {
-    await navigator.clipboard.writeText(version.value.sha)
+    await navigator.clipboard.writeText(props.version.sha)
     copied.value = true
     window.setTimeout(() => (copied.value = false), 1200)
   } catch {

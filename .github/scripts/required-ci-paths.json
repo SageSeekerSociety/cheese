@@ -35,6 +35,7 @@
     ".github/workflows/cli.yml"
   ],
   "guards": [
+    "docs/**",
     "backend/**",
     "frontend/**",
     "deploy/**",
@@ -98,14 +99,6 @@
     ".github/scripts/ensure-claude-cli.sh",
     ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/mcp-contract.yml"
-  ],
-  "docs": [
-    "docs/**",
-    "backend/**",
-    "frontend/**",
-    "deploy/**",
-    "cli/**",
-    ".github/**"
   ],
   "cifast": [
     ".github/scripts/ci-fast.py",

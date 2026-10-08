@@ -170,8 +170,9 @@ def test_the_same_start_is_one_command_and_other_input_is_refused(machine):
         machine.start("once", "printf y >> count.txt")
 
 
+@pytest.mark.parametrize("partial", ["", "1"])
 def test_a_record_that_will_not_take_the_exit_code_still_ends_the_reader(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, partial
 ):
     """A record that refuses the exit code — a machine with no room left for it
     (2026-10-03) — must not leave the command in `running`: its reader would
@@ -194,7 +195,7 @@ def test_a_record_that_will_not_take_the_exit_code_still_ends_the_reader(
                 "operation": "start",
                 "command_id": "unrecorded",
                 "kind": "sh",
-                "body": "while [ ! -e go ]; do sleep 0.05; done; exit 5",
+                "body": "while [ ! -e go ]; do sleep 0.05; done; exit 15",
                 "cwd": str(workspace),
                 "env": {},
                 "merge": True,
@@ -202,10 +203,10 @@ def test_a_record_that_will_not_take_the_exit_code_still_ends_the_reader(
             }
         )
 
-        # What is written into the record goes in nowhere, as a full disk leaves
-        # no room for it: the exit code's file included.
+        # A full disk can create an empty file or write only part of the code.
         def no_room(where, *args, **kwargs):
             if where.parent == record:
+                writes(where, partial)
                 raise OSError(errno.ENOSPC, "No space left on device")
             return writes(where, *args, **kwargs)
 
