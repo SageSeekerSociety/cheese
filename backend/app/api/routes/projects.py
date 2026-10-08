@@ -360,12 +360,24 @@ async def list_project_tasks(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     if_none_match: Annotated[str | None, Header()] = None,
     status: Annotated[Literal["open", "closed"] | None, Query()] = None,
+    channel: uuid.UUID | None = None,
+    whose: Annotated[Literal["mine", "helping", "others"] | None, Query()] = None,
+    limit: Annotated[int | None, Query(ge=1, le=200)] = None,
+    before: str | None = None,
 ) -> Response:
     """Every thread in the project, each with the card it currently rides on.
 
     `status` keeps only threads in that state. The sidebar polls for the open
     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
     read.
+
+    With `limit` (and a `status`) it is a page instead, of the threads that
+    most recently moved: the closed ones only grow, and the all-tasks page
+    scrolls through them rather than reading them whole. A page can be narrowed
+    to one `channel` and to `whose` the threads are to the reader (`mine`: they
+    own it; `helping`: they are among its contributors; `others`: neither).
+    `next` is the cursor to pass as `before` for the page after; `counts` says
+    how many there are in all and by whose, for the same status and channel.
 
     The rail draws rooms and the work inside them, so it needs both halves at
     once. Two round trips, not two per room and one per thread: a project here
@@ -398,11 +410,63 @@ async def list_project_tasks(
     # 「它们各自最后一次说话」。
     # A task is seen where its channel is: a private channel's by its people.
     seen = await rooms_seen(db, resolver, actor, project_id)
+    if limit is not None:
+        if status is None:
+            raise ValidationError(say("taskPageNeedsStatus"))
+        page_rows, has_more = await TaskService(db).page_in_project(
+            project_id,
+            rooms=seen,
+            status=status,
+            channel=channel,
+            whose=whose,
+            me=actor.handle or "",
+            limit=limit,
+            before=_task_cursor(before),
+        )
+        tasks = [task for task, _ in page_rows]
+        counts = await TaskService(db).counts_in_project(
+            project_id,
+            rooms=seen,
+            status=status,
+            channel=channel,
+            me=actor.handle or "",
+        )
+        items = await _project_task_rows(db, chat, actor.handle or "", tasks)
+        last = page_rows[-1] if page_rows and has_more else None
+        return conditional_json(
+            ok(
+                {
+                    **page(items, len(items)),
+                    "has_more": has_more,
+                    "next": f"{last[1].isoformat()}|{last[0].id}" if last else None,
+                    "counts": counts,
+                }
+            ),
+            if_none_match,
+        )
     tasks = [
         t
         for t in await TaskService(db).list_in_project(project_id)
         if t.room_id in seen and (status is None or t.status == status)
     ]
+    items = await _project_task_rows(db, chat, actor.handle or "", tasks)
+    return conditional_json(ok(page(items, len(items))), if_none_match)
+
+
+def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:
+    """The (moved, id) a page cursor names; a malformed one is refused."""
+    if before is None:
+        return None
+    try:
+        moved, task_id = before.split("|", 1)
+        return datetime.fromisoformat(moved), uuid.UUID(task_id)
+    except ValueError as exc:
+        raise ValidationError(say("taskPageCursorInvalid")) from exc
+
+
+async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> list[dict]:
+    """The project rail's rows for ``tasks``: each with its board cell, its
+    card, whether it waits on ``me``, whether it stalled, when it last moved."""
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
@@ -449,7 +513,7 @@ async def list_project_tasks(
                 ),
             ),
             hand_of(shown.column),
-        ).reason_for(actor.handle or "")
+        ).reason_for(me)
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
@@ -469,7 +533,7 @@ async def list_project_tasks(
                 },
             }
         )
-    return conditional_json(ok(page(items, len(items))), if_none_match)
+    return items
 
 
 @router.get("/{project_id}/progress")

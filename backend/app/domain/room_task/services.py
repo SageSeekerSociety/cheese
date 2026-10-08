@@ -177,6 +177,46 @@ class TaskService:
         """
         return await self._repo.last_block_at_for_tasks(task_ids)
 
+    async def page_in_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+        whose: str | None,
+        me: str,
+        limit: int,
+        before: tuple[datetime, uuid.UUID] | None,
+    ) -> tuple[list[tuple[Task, datetime]], bool]:
+        """One page of the project's tasks, as `TaskRepository.page_for_project`
+        reads it."""
+        return await self._repo.page_for_project(
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            whose=whose,
+            me=me,
+            limit=limit,
+            before=before,
+        )
+
+    async def counts_in_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+        me: str,
+    ) -> dict[str, int]:
+        """The project's tasks counted by whose they are, as
+        `TaskRepository.counts_for_project` counts them."""
+        return await self._repo.counts_for_project(
+            project_id, rooms=rooms, status=status, channel=channel, me=me
+        )
+
     async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many open tasks each of these rooms has; a room with none is
         absent."""

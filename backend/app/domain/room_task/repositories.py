@@ -5,7 +5,8 @@ import uuid
 from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, cast, func, not_, or_, select, tuple_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
@@ -136,6 +137,99 @@ class TaskRepository:
             .order_by(Task.created_at, Task.id)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    @staticmethod
+    def _moved():
+        """When a task last moved: its newest block, or its creation."""
+        said = (
+            select(func.max(Block.created_at))
+            .where(Block.conversation_id == Task.id)
+            .scalar_subquery()
+        )
+        return func.coalesce(said, Task.created_at)
+
+    @staticmethod
+    def _whose(whose: str, me: str):
+        mine = Task.owner_handle == me
+        helping = cast(Task.contributor_handles, JSONB).contains([me])
+        if whose == "mine":
+            return mine
+        if whose == "helping":
+            return helping
+        return and_(Task.owner_handle.is_distinct_from(me), not_(helping))
+
+    def _in_view(
+        self,
+        stmt,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+    ):
+        stmt = stmt.where(
+            Task.project_id == project_id,
+            Task.room_id.in_(list(rooms)),
+            Task.status == TaskStatus(status),
+        )
+        return stmt if channel is None else stmt.where(Task.room_id == channel)
+
+    async def page_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+        whose: str | None,
+        me: str,
+        limit: int,
+        before: tuple[datetime, uuid.UUID] | None,
+    ) -> tuple[list[tuple[Task, datetime]], bool]:
+        """One page of the project's tasks in ``status``, the most recently moved
+        first, each with when it last moved; and whether more follow.
+
+        Narrowed to the rooms the reader sees, to one ``channel``, and to
+        ``whose`` they are to ``me``: ``mine`` (I own it), ``helping`` (I am
+        among its contributors) or ``others`` (neither). ``before`` is the
+        (moved, id) of the last row of the previous page: (moved, id) is a total
+        order, so a page never repeats or skips a row that ties on time.
+        """
+        moved = self._moved()
+        stmt = self._in_view(
+            select(Task, moved), project_id, rooms=rooms, status=status, channel=channel
+        )
+        if whose is not None:
+            stmt = stmt.where(self._whose(whose, me))
+        if before is not None:
+            stmt = stmt.where(tuple_(moved, Task.id) < before)
+        stmt = stmt.order_by(moved.desc(), Task.id.desc()).limit(limit + 1)
+        rows = [(task, at) for task, at in (await self._session.execute(stmt)).all()]
+        return rows[:limit], len(rows) > limit
+
+    async def counts_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+        me: str,
+    ) -> dict[str, int]:
+        """How many of the project's tasks in ``status`` there are, in all and
+        by whose they are to ``me``, narrowed as `page_for_project` is."""
+        counted = [
+            func.count(),
+            *(
+                func.count().filter(self._whose(whose, me))
+                for whose in ("mine", "helping", "others")
+            ),
+        ]
+        stmt = self._in_view(
+            select(*counted), project_id, rooms=rooms, status=status, channel=channel
+        )
+        row = (await self._session.execute(stmt)).one()
+        return dict(zip(("all", "mine", "helping", "others"), row, strict=True))
 
     async def list_for_projects(self, project_ids: list[uuid.UUID]) -> list[Task]:
         """同一个列表，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目。
