@@ -1,12 +1,13 @@
 // 资料库的接口：一份资料是什么样、怎么放进来、怎么换新、怎么读它的字节。
 //
-// 列清单、下载、删除还在 api.ts 里（别处早就在用）；这里是资料库页自己的那几样：上传、
-// 替换、读字节、版本列表、按版本下载、恢复旧版。
+// 下载地址和删除还在 api.ts 里（别处早就在用）；这里是列清单（一页一页）、上传、替换、
+// 读字节、版本列表、按版本下载、恢复旧版。
 import type { ApiEnvelope } from '@/cx_types'
 
 import { authToken, BASE, libraryFileRawUrl, request } from '../api'
 import { t } from '../i18n'
 
+import { libraryParams, type LibraryQuery } from './libraryQuery'
 import { refusalWords } from './noticeText'
 
 function auth(): Record<string, string> {
@@ -15,6 +16,9 @@ function auth(): Record<string, string> {
 }
 
 export interface LibraryFile {
+  type: 'file'
+  /** 这一行在资料库页那张混排的表里的位置，也是翻页的游标（后端 `app/core/rank.py`）。 */
+  rank: string
   path: string
   bytes: number
   /** Unix seconds; the list comes back newest first. */
@@ -28,6 +32,46 @@ export interface LibraryFile {
   replaced: number
   /** 你读得到的房间里有几条消息带着它。 */
   references: number
+}
+
+/** 一层里的一个文件夹：名字里 `/` 前面那一段，后端从记录表里聚出来。 */
+export interface LibraryFolder {
+  type: 'folder'
+  rank: string
+  /** 整条路径，`合同/2026`。 */
+  path: string
+  /** 最后一层，`2026`。 */
+  name: string
+  /** 里面（含更深几层）有几份文件。 */
+  count: number
+  /** 里面最近放进来的那一份的时间（Unix 秒）。 */
+  modified: number
+}
+
+export type LibraryEntry = LibraryFile | LibraryFolder
+
+export type { LibraryQuery } from './libraryQuery'
+
+export interface LibraryPage {
+  data: LibraryEntry[]
+  next: string | null
+}
+
+/** 资料库的一页（条件见 `LibraryQuery`）；`next` 是下一页的游标。 */
+export function listProjectLibrary(projectId: string, query: LibraryQuery = {}): Promise<LibraryPage> {
+  return request<LibraryPage>(`/projects/${encodeURIComponent(projectId)}/library?${libraryParams(query)}`)
+}
+
+/** 地址上点名的那一份：它不一定在已经取回来的那几页里。 */
+export function getLibraryFile(projectId: string, path: string): Promise<LibraryFile> {
+  return request<LibraryFile>(
+    `/projects/${encodeURIComponent(projectId)}/library/file?path=${encodeURIComponent(path)}`
+  )
+}
+
+/** 资料库里的每一个文件夹（整条路径），给「移动到」挑。 */
+export async function listLibraryFolders(projectId: string): Promise<string[]> {
+  return (await request<{ folders: string[] }>(`/projects/${encodeURIComponent(projectId)}/library/folders`)).folders
 }
 
 async function libraryUpload(
