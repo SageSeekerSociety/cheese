@@ -187,6 +187,7 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentUsage,
 )
+from app.domain.agent.session_host.contract import Image
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
 from app.domain.agent.turn_usage import record_turn_usage, reported_usage
 from app.domain.agent.work_policy import work_policy
@@ -226,6 +227,7 @@ from app.domain.identity.handles import (
     names_a_person,
     recipient_seat,
 )
+from app.domain.library import records as library_records
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -832,6 +834,22 @@ class ChatService(SessionRecovery, RoomTurns):
                     or place.room.status == TopicStatus.archived
                     or (place.task is not None and place.task.status != TaskStatus.open)
                 )
+                pictures = (
+                    []
+                    if place is None
+                    else [
+                        Image(
+                            image["media_type"],
+                            await library_records.read_attachment(
+                                session,
+                                place.room.project_id,
+                                place.room.id,
+                                image["path"],
+                            ),
+                        )
+                        for image in images
+                    ]
+                )
             if archived:
                 delivered = False
             else:
@@ -845,7 +863,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 delivered = await self._compute.steer(
                     topic_id,
                     line,
-                    images=images or None,
+                    images=pictures or None,
                     register_input=registrar,
                     expected_work_id=consuming_turn_id,
                     agent_handle=seat_agent,

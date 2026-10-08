@@ -21,6 +21,8 @@ import uuid
 from collections import Counter
 from datetime import UTC, datetime
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.sentences import say
 from app.domain.agent.harness.prompt import (
     is_inline_image,
@@ -35,6 +37,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.service import AgentCompacting
+from app.domain.agent.session_host.contract import Image
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
@@ -44,7 +47,7 @@ from app.domain.block.models import (
     consumed_turn,
 )
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.library import service as library
+from app.domain.library import records as library_records
 from app.domain.topic.models import (
     Topic,
     TopicKind,
@@ -266,10 +269,14 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
     ]
 
 
-def offered_attachments(
-    pending: list[Block], project_id: uuid.UUID, room_id: uuid.UUID
-) -> tuple[list[dict], set[uuid.UUID]]:
-    """The images a turn hands the session, and the attachments whose file is gone.
+async def offered_attachments(
+    session: AsyncSession,
+    pending: list[Block],
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+) -> tuple[list[Image], set[uuid.UUID]]:
+    """The images a turn hands the session, read now, and the attachments whose
+    file is gone.
 
     A message outlives its file: a library file can be deleted while a message
     still references it. Offering that file fails the read, the turn ends
@@ -281,10 +288,17 @@ def offered_attachments(
     gone = {
         b.id
         for b in attachments
-        if not library.attachment_exists(project_id, room_id, b.content)
+        if not await library_records.attachment_exists(
+            session, project_id, room_id, b.content
+        )
     }
     images = [
-        {"path": b.content, "media_type": b.mime_type}
+        Image(
+            b.mime_type or "",
+            await library_records.read_attachment(
+                session, project_id, room_id, b.content
+            ),
+        )
         for b in attachments
         if b.id not in gone and is_inline_image(b.mime_type)
     ]

@@ -225,7 +225,11 @@ def test_attachments_upload_library_and_raw_read_the_same(client):
         "path": "library/shot.png",
     }
 
-    library.write_library_file(pid_u, "原件.png", b"\x89PNG-library")
+    given = client.post(
+        f"/projects/{pid}/library",
+        files={"file": ("原件.png", b"\x89PNG-library", "image/png")},
+    )
+    assert given.status_code == 200, given.text
     named = client.post(f"/topics/{tid}/attachments", data={"library_path": "原件.png"})
     assert named.status_code == 200, named.text
     assert named.json()["data"] == {
