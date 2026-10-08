@@ -10,7 +10,7 @@
 //   都要「这个房间的活」，它们要的是同一样东西。
 // - 失败不写缓存，也不吞掉错误：调用方照旧决定失败时显示什么。
 // - 退出登录时清空（`services/account.ts`），连正在飞的请求一起作废。
-import type { Block, ListPayload, RoomTask, TopicMemberRow, TopicProgress } from '../cx_types'
+import type { ListPayload, RoomTask, TopicMemberRow, TopicProgress } from '../cx_types'
 
 import { getProgress, listRoomTasks, listTopicMembers } from '../api'
 
@@ -19,8 +19,8 @@ import { onTopicRosterChange } from './topicRosterChanges'
 export interface TopicPanelData {
   progress: TopicProgress
   members: ListPayload<TopicMemberRow>
-  /** `listRoomTasks(id, { limit: 1 })`：每条活只带最新那一块。 */
-  roomTasks: ListPayload<RoomTask & { blocks: Block[] }>
+  /** `listRoomTasks(id, { limit: 0 })`：只带支线本身，不带对话。 */
+  roomTasks: ListPayload<RoomTask>
 }
 export type TopicPanelKind = keyof TopicPanelData
 
@@ -100,7 +100,7 @@ onTopicRosterChange((topicId) => {
 })
 
 export function fetchRoomTasks(topicId: string, opts: FetchOpts = {}): Promise<TopicPanelData['roomTasks']> {
-  return fetchTopicPanel('roomTasks', topicId, () => listRoomTasks(topicId, { limit: 1 }), opts)
+  return fetchTopicPanel('roomTasks', topicId, () => listRoomTasks(topicId, { limit: 0 }), opts)
 }
 
 /** 退出登录时调用：上一个人的房间数据不能留给下一个人。测试之间也用它擦干净。 */

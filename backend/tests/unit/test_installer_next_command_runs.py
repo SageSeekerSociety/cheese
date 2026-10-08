@@ -6,6 +6,7 @@ from and the shell can find the binary: on a fresh macOS, ~/.local/bin is not
 on PATH. The served script is run for real against a local server.
 """
 
+import hashlib
 import http.server
 import json
 import os
@@ -24,6 +25,8 @@ class _ServesBinary(http.server.BaseHTTPRequestHandler):
         body = b'#!/bin/sh\necho cheesehost "$@"\n'
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
+        # install.sh checks the file against the digest the response announces.
+        self.send_header("X-Checksum-SHA256", hashlib.sha256(body).hexdigest())
         self.end_headers()
         self.wfile.write(body)
 

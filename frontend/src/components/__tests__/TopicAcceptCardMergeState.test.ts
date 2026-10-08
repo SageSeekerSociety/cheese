@@ -1,14 +1,14 @@
-/** 卡上的状态直接用合并态 (#718)。
+/** 采纳卡上的状态直接用合并态 (#718)。
  *
  * 状态词和「谁的活」都是后端算好随卡下发的（merge_state.state / who），这里断言
  * 的是屏幕上读得到的翻译不走样：
  *
- *   1. clean 画绿勾、采纳亮；非 clean 的 GitHub lane 卡采纳灰，红了哪个检查
- *      在卡上看得见；
+ *   1. clean 时采纳亮；没轮到人、点了也合不进去时（检查在跑、芝士在修）横条
+ *      上不放采纳，红了哪个检查在「改动」页顶部的合并信号里看得见；
  *   2. 平台 lane（没绑 GitHub，who 恒 human）的卡直接是 CLEAN（#363 拍板：
- *      没有检查可读），画绿勾，采纳从不按状态灰——那里的采纳纯粹是人的判断；
- *   3. 绿了自动合的开关只在项目允许、且卡停在 blocked/behind 时出现，已布防
- *      的卡写明是谁开的，点开关打的是 auto-merge 端点。
+ *      没有检查可读），采纳从不按状态灰——那里的采纳纯粹是人的判断；
+ *   3. 绿了自动合只在项目允许、且卡停在 blocked/behind 时出现在「更多操作」里，
+ *      已布防的卡写明是谁开的，关掉它打的是 auto-merge 端点。
  */
 import type { AcceptCard, MergeStateInfo } from '../../cx_types'
 
@@ -17,7 +17,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAcceptCards = vi.fn()
 const setAutoMerge = vi.fn()
@@ -37,7 +37,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import TopicAcceptCard from '../TopicAcceptCard.vue'
+import { AcceptPage, chooseMore, moreItems, stubOverlayGlobals } from './acceptHarness'
 
 import i18n, { setLocale } from '@/i18n'
 
@@ -60,7 +60,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     id: `card-${seq}`,
     topic_id: 't1',
     reviewer_handle: 'alice',
-    routing_reason: '最懂',
+    focus: '最懂',
     change_subject: 'chore: do a thing',
     change_body: null,
     status: 'pending',
@@ -119,7 +119,7 @@ async function flush() {
 async function mountWith(cards: AcceptCard[]) {
   getAcceptCards.mockResolvedValue({ data: cards, has_more: false })
   const vuetify = createVuetify({ components, directives })
-  const utils = render(TopicAcceptCard, {
+  const utils = render(AcceptPage, {
     props: { topicId: 't1', topicStatus: 'active' },
     global: { plugins: [vuetify, i18n] },
   })
@@ -127,11 +127,28 @@ async function mountWith(cards: AcceptCard[]) {
   return utils
 }
 
+/** 横条上的采纳按钮（「采纳」「采纳并完成任务」「重新采纳」「创建 PR」那一颗）；不在就是 undefined。 */
+function findAccept(container: Element): HTMLButtonElement | undefined {
+  const strip = container.querySelector('.accept-bar')
+  return Array.from(strip?.querySelectorAll('button') ?? []).find(
+    (b) => b.textContent?.includes('采纳') && !b.classList.contains('accept-bar__status')
+  ) as HTMLButtonElement | undefined
+}
 function acceptButton(container: Element): HTMLButtonElement {
-  const btn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('采纳'))
-  expect(btn, '采纳按钮应该在卡上').toBeTruthy()
+  const btn = findAccept(container)
+  expect(btn, '采纳按钮应该在横条上').toBeTruthy()
   return btn as HTMLButtonElement
 }
+/** 点开「改动」页顶部的合并信号，读它的明细（为什么现在合不了）。 */
+async function mergeDetail(container: Element): Promise<string> {
+  const signals = Array.from(container.querySelectorAll<HTMLButtonElement>('.review-head .signal'))
+  const merge = signals.find((b) => !/项检查|已批准/.test(b.textContent ?? ''))
+  if (merge) await fireEvent.click(merge)
+  return container.querySelector('.review-head')?.textContent ?? ''
+}
+
+beforeAll(() => stubOverlayGlobals(vi))
+afterAll(() => vi.unstubAllGlobals())
 
 beforeEach(() => {
   // These assertions read the Chinese copy.
@@ -154,9 +171,9 @@ describe('合的是人看到的那个 commit', () => {
         }),
       }),
     ])
-    expect(container.textContent).toContain(detail)
-    expect(acceptButton(container).disabled).toBe(true)
-    expect(container.textContent).not.toContain('仍要采纳')
+    expect(await mergeDetail(container)).toContain(detail)
+    expect(findAccept(container)).toBeUndefined()
+    expect(await moreItems(container)).not.toContain('仍要采纳')
   })
 
   it('a linked project without a PR offers creation instead of a clean acceptance', async () => {
@@ -172,7 +189,7 @@ describe('合的是人看到的那个 commit', () => {
     const { container, getByRole } = await mountWith([pending])
     const create = getByRole('button', { name: '创建 PR' }) as HTMLButtonElement
     expect(create.disabled).toBe(false)
-    expect(container.textContent).toContain('PR 尚未创建，检查状态未知')
+    expect(await mergeDetail(container)).toContain('PR 尚未创建，检查状态未知')
     expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === '采纳')).toBe(false)
     acceptCard.mockRejectedValue({ message: 'PR 已创建，请重新查看提交' })
     await fireEvent.click(create)
@@ -202,7 +219,7 @@ describe('合的是人看到的那个 commit', () => {
 })
 
 describe('卡上的状态直接用合并态', () => {
-  it('clean：绿勾 + 可以合并，采纳亮', async () => {
+  it('clean：可以合并，采纳亮', async () => {
     const { container } = await mountWith([
       githubCard({
         merge_state: mergeState({
@@ -217,7 +234,7 @@ describe('卡上的状态直接用合并态', () => {
     expect(acceptButton(container).disabled).toBe(false)
   })
 
-  it('blocked 检查红了：芝士正在处理，采纳灰，红了哪个检查看得见', async () => {
+  it('blocked 检查红了：芝士正在处理，没有采纳，红了哪个检查看得见', async () => {
     const { container } = await mountWith([
       githubCard({
         merge_state: mergeState({
@@ -229,11 +246,11 @@ describe('卡上的状态直接用合并态', () => {
     ])
 
     expect(container.textContent).toContain('芝士正在处理')
-    expect(container.textContent).toContain('必跑检查未通过')
-    expect(container.textContent).toContain('test')
-    expect(acceptButton(container).disabled).toBe(true)
-    // 为什么灰写在 title 里，人悬停就能看见。
-    expect(container.querySelector('span[title*="现在采纳不会合并"]')).toBeTruthy()
+    const detail = await mergeDetail(container)
+    expect(detail).toContain('必跑检查未通过')
+    expect(detail).toContain('test')
+    // 芝士在修：点了也合不进去，横条上不放采纳。
+    expect(findAccept(container)).toBeUndefined()
   })
 
   it('blocked 必跑检查没报到：等 CI', async () => {
@@ -248,7 +265,7 @@ describe('卡上的状态直接用合并态', () => {
     ])
 
     expect(container.textContent).toContain('等待检查')
-    expect(acceptButton(container).disabled).toBe(true)
+    expect(findAccept(container)).toBeUndefined()
   })
 
   it('behind：平台更新分支', async () => {
@@ -263,7 +280,7 @@ describe('卡上的状态直接用合并态', () => {
     ])
 
     expect(container.textContent).toContain('平台更新分支')
-    expect(acceptButton(container).disabled).toBe(true)
+    expect(findAccept(container)).toBeUndefined()
   })
 
   it('dirty：芝士正在处理', async () => {
@@ -278,8 +295,8 @@ describe('卡上的状态直接用合并态', () => {
     ])
 
     expect(container.textContent).toContain('芝士正在处理')
-    expect(container.textContent).toContain('与基线冲突')
-    expect(acceptButton(container).disabled).toBe(true)
+    expect(await mergeDetail(container)).toContain('与基线冲突')
+    expect(findAccept(container)).toBeUndefined()
   })
 
   it('unstable：红的都不在必跑名单——采纳亮，但红了哪个照样念出来', async () => {
@@ -300,12 +317,13 @@ describe('卡上的状态直接用合并态', () => {
     ])
 
     expect(container.textContent).toContain('芝士正在处理')
-    expect(container.textContent).toContain('不在必跑名单')
-    expect(container.textContent).toContain('lint')
+    const detail = await mergeDetail(container)
+    expect(detail).toContain('不在必跑名单')
+    expect(detail).toContain('lint')
     expect(acceptButton(container).disabled).toBe(false)
   })
 
-  it('blocked 必跑检查在跑：采纳灰——没有结论不是通过', async () => {
+  it('blocked 必跑检查在跑：没有采纳，没有结论不是通过', async () => {
     const { container } = await mountWith([
       githubCard({
         merge_state: mergeState({
@@ -317,16 +335,17 @@ describe('卡上的状态直接用合并态', () => {
     ])
 
     expect(container.textContent).toContain('等待检查')
-    expect(acceptButton(container).disabled).toBe(true)
+    expect(findAccept(container)).toBeUndefined()
   })
 })
 
 describe('平台 lane：采纳纯粹是人的判断', () => {
-  it('未绑项目的卡直接是 CLEAN：绿勾 + 可以合并，采纳亮（#363 拍板）', async () => {
+  it('未绑项目的卡直接是 CLEAN：可以合并，采纳亮（#363 拍板）', async () => {
     const { container } = await mountWith([card({})])
 
     expect(container.textContent).toContain('可以合并')
-    expect(container.querySelector('.mdi-check-circle')).toBeTruthy()
+    // 可以合并的那个信号画的是记号（合并图标），不是「该谁动」的圈。
+    expect(container.querySelector('.review-head .signal .mdi-source-merge')).toBeTruthy()
     expect(acceptButton(container).disabled).toBe(false)
     expect(container.textContent).not.toContain('状态更新中')
   })
@@ -375,7 +394,7 @@ describe('平台 lane：采纳纯粹是人的判断', () => {
   })
 })
 
-describe('绿了自动合的开关', () => {
+describe('绿了自动合', () => {
   it('项目允许且卡停在 blocked 时出现', async () => {
     const { container } = await mountWith([
       githubCard({
@@ -388,7 +407,7 @@ describe('绿了自动合的开关', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('通过后自动合并')
+    expect(await moreItems(container)).toContain('检查通过后自动合并')
   })
 
   it('项目不允许就不出现，哪怕卡停在 blocked', async () => {
@@ -403,7 +422,7 @@ describe('绿了自动合的开关', () => {
       }),
     ])
 
-    expect(container.textContent).not.toContain('通过后自动合并')
+    expect(await moreItems(container)).not.toContain('检查通过后自动合并')
   })
 
   it('clean 的卡没布防就不出现——没有东西可等', async () => {
@@ -418,10 +437,10 @@ describe('绿了自动合的开关', () => {
       }),
     ])
 
-    expect(container.textContent).not.toContain('通过后自动合并')
+    expect(await moreItems(container)).not.toContain('检查通过后自动合并')
   })
 
-  it('已布防的卡写明是谁开的，点开关打 auto-merge 端点', async () => {
+  it('已布防的卡写明是谁开的，关掉它打 auto-merge 端点', async () => {
     const armed = githubCard({
       auto_merge: { allowed: true, armed_by: 'bob', armed_at: '2026-09-06T00:00:00Z' },
       merge_state: mergeState({
@@ -433,14 +452,9 @@ describe('绿了自动合的开关', () => {
     setAutoMerge.mockResolvedValue(armed)
     const { container } = await mountWith([armed])
 
-    expect(container.textContent).toContain('由 @bob 开启')
+    expect(container.textContent).toContain('@bob 已开启检查通过后自动合并')
 
-    const input = container.querySelector('.v-switch input[type="checkbox"]') as HTMLInputElement
-    expect(input).toBeTruthy()
-    input.checked = false
-    // Vuetify 的开关把模型更新挂在原生 input 事件上（VSelectionControl.onInput）。
-    await fireEvent.input(input)
-    await flush()
+    await chooseMore(container, '关闭自动合并')
     // 布防等于提前采纳，所以这个开关也声明「我看的是哪一版」（见「合的是人看到
     // 的那个 commit」那一组）。
     expect(setAutoMerge).toHaveBeenCalledWith(armed.id, false, armed.merge_state.head_sha)
@@ -448,7 +462,7 @@ describe('绿了自动合的开关', () => {
 })
 
 describe('人工放行的入口', () => {
-  it('GitHub lane 非 clean 时收在小按钮后面', async () => {
+  it('GitHub lane 非 clean 时收在「更多操作」里', async () => {
     const { container } = await mountWith([
       githubCard({
         merge_state: mergeState({
@@ -459,7 +473,7 @@ describe('人工放行的入口', () => {
       }),
     ])
 
-    expect(container.textContent).toContain('仍要采纳')
+    expect(await moreItems(container)).toContain('仍要采纳')
   })
 
   it('clean 的卡没有它——正门就是开的', async () => {
@@ -473,12 +487,12 @@ describe('人工放行的入口', () => {
       }),
     ])
 
-    expect(container.textContent).not.toContain('仍要采纳')
+    expect(await moreItems(container)).not.toContain('仍要采纳')
   })
 
   it('平台 lane 没有它——那里没有 PR 可放行', async () => {
     const { container } = await mountWith([card({})])
 
-    expect(container.textContent).not.toContain('仍要采纳')
+    expect(await moreItems(container)).not.toContain('仍要采纳')
   })
 })

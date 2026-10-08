@@ -14,6 +14,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.run_record.models import RunRecord
 from app.domain.run_record.service import (
     FRAME,
@@ -45,7 +46,6 @@ async def publish(
     channel = channel or payload.get("conversation_id")
     if not channel:
         return
-    from app.domain.agent.runtime import get_broker
 
     try:
         await get_broker().publish(channel, {"type": FRAME, "record": payload})

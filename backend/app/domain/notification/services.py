@@ -6,7 +6,7 @@
 """
 
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -41,6 +40,12 @@ class _EntityPointer:
     path: str
     type: str
     id: str
+
+
+def _metadata_map_of(notification: Notification) -> dict[str, Any]:
+    """这条通知的元数据，非字典（None、字符串、旧行）一律当空。"""
+    metadata_raw = getattr(notification, "metadata_payload", None)
+    return metadata_raw if isinstance(metadata_raw, dict) else {}
 
 
 class NotificationQueryService:
@@ -153,12 +158,53 @@ class NotificationQueryService:
 
         pointers: list[_EntityPointer] = []
         for metadata in metadata_maps:
-            for key, value in metadata.items():
-                self._collect_entity_pointers(value, path=str(key), output=pointers)
+            self._pointers_in(metadata, output=pointers)
 
         if not pointers:
             return {}
 
+        resolved_by_type = await self._resolve_pointers_by_type(pointers)
+        return self._flatten_pointers(pointers, resolved_by_type)
+
+    async def resolve_entities_for_notifications(
+        self, notifications: Sequence[Notification]
+    ) -> list[dict[str, ResolvedEntityInfoDTO | None]]:
+        """一整页通知各自的实体解析结果，整页每类实体只查一次。
+
+        返回的每一项和 ``resolve_entities_from_metadata([这一条自己的 metadata])``
+        同形。逐条各解析一次是一屏 N 倍往返 —— 而且每条只剩一个 id 可查，连解析器
+        自己的批量查询也退化成单条（``ProjectEntityResolver`` 里更是逐 id
+        ``get_or_404``）。这里把整页的 id 汇总起来查一次，再摊回每一条。
+
+        摊回时**每条各摊各的**：``resolve_entities_from_metadata`` 返回的是按 path
+        拍平的字典，两条通知若有同名顶层键（都写着 ``actor``），拍进同一张表就会
+        互相覆盖。
+        """
+        pointers_per_notification: list[list[_EntityPointer]] = []
+        every_pointer: list[_EntityPointer] = []
+        for notification in notifications:
+            pointers: list[_EntityPointer] = []
+            self._pointers_in(_metadata_map_of(notification), output=pointers)
+            pointers_per_notification.append(pointers)
+            every_pointer.extend(pointers)
+
+        resolved_by_type = await self._resolve_pointers_by_type(every_pointer)
+
+        return [
+            self._flatten_pointers(pointers, resolved_by_type)
+            for pointers in pointers_per_notification
+        ]
+
+    def _pointers_in(
+        self, metadata: Mapping[str, Any], *, output: list[_EntityPointer]
+    ) -> None:
+        for key, value in metadata.items():
+            self._collect_entity_pointers(value, path=str(key), output=output)
+
+    async def _resolve_pointers_by_type(
+        self, pointers: Sequence[_EntityPointer]
+    ) -> dict[str, dict[str, ResolvedEntityInfoDTO | None]]:
+        """每一类实体查一次，问的是这批指针里出现过的全部 id。"""
         ids_by_type: dict[str, set[str]] = {}
         for pointer in pointers:
             ids_by_type.setdefault(pointer.type, set()).add(pointer.id)
@@ -169,7 +215,13 @@ class NotificationQueryService:
             if resolver is None:
                 continue
             resolved_by_type[entity_type] = await resolver.resolve(sorted(ids))
+        return resolved_by_type
 
+    def _flatten_pointers(
+        self,
+        pointers: Sequence[_EntityPointer],
+        resolved_by_type: Mapping[str, Mapping[str, ResolvedEntityInfoDTO | None]],
+    ) -> dict[str, ResolvedEntityInfoDTO | None]:
         flattened: dict[str, ResolvedEntityInfoDTO | None] = {}
         for pointer in pointers:
             entity_map = resolved_by_type.get(pointer.type) or {}
@@ -201,28 +253,47 @@ class NotificationQueryService:
                 self._collect_entity_pointers(nested, path=nested_path, output=output)
 
     async def build_notification_dto(
-        self, notification: Notification
+        self,
+        notification: Notification,
+        *,
+        resolved_entities: dict[str, ResolvedEntityInfoDTO | None] | None = None,
     ) -> NotificationDTO:
-        """Build NotificationDTO from Notification entity and its metadata."""
-        metadata_raw = getattr(notification, "metadata_payload", None)
+        """Build NotificationDTO from Notification entity and its metadata.
 
-        metadata_map: dict[str, Any]
-        if isinstance(metadata_raw, dict):
-            metadata_map = metadata_raw
+        ``resolved_entities`` 是给**已经整页解析过**的调用方用的出口：传进来就
+        不再解析一次。少了这个出口，整页批量解析反而会每条再解析一遍，N+1 照旧
+        —— 那个函数是幂等的，但不是免费的。
+        """
+        metadata_map = _metadata_map_of(notification)
+
+        if resolved_entities is None:
+            entities = (
+                await self.resolve_entities_from_metadata([metadata_map])
+                if metadata_map
+                else {}
+            )
         else:
-            metadata_map = {}
-
-        entities = (
-            await self.resolve_entities_from_metadata([metadata_map])
-            if metadata_map
-            else {}
-        )
+            entities = resolved_entities
 
         return NotificationDTO.from_notification(
             notification=notification,
             metadata_map=metadata_map,
             resolved_entities=entities,
         )
+
+    async def build_notification_dtos(
+        self, notifications: Sequence[Notification]
+    ) -> list[NotificationDTO]:
+        """整页 DTO，实体解析每类只发一次查询。列表端点走这里。"""
+        resolved_pages = await self.resolve_entities_for_notifications(notifications)
+        return [
+            await self.build_notification_dto(
+                notification, resolved_entities=resolved_entities
+            )
+            for notification, resolved_entities in zip(
+                notifications, resolved_pages, strict=True
+            )
+        ]
 
 
 def asks_for_decision(notification: Notification) -> bool:
@@ -340,11 +411,36 @@ class ProjectNotificationService:
         *,
         target_handle: str,
         unread_only: bool = False,
-    ) -> tuple[list[Notification], int]:
-        items = await self._repo.list_for_project(
+        page_size: int,
+        page_start: int | None = None,
+    ) -> tuple[list[Notification], int, int | None]:
+        """这个项目收件箱的一页：这一页的信、真总数、下一页从哪一行开始。
+
+        末尾那个数是给调用方原样喂回来的 `page_start`，而且是**含**那一行的：下一
+        次读带着它，它就是那一页的头一条。多取一行才判得出还有没有下一页 —— 它不
+        进 `data`，只借它的行号。
+
+        总数走单独一条 `count(*)`，不是这一页的条数：分页之前的写法是
+        `page(items, len(items))`，一加上限它就说谎了。
+
+        `page_start` 指的 id 不存在时从头开始，不报错 —— 和 `/notifications` 的游
+        标同一条政策（那边把解不出来的游标当「从头来」）。于是过期的游标最多让人
+        重看一遍第一页，不会是 500。
+        """
+        cursor = await self._repo.get(page_start) if page_start is not None else None
+        rows = await self._repo.list_for_project(
+            project_id,
+            recipient_handle=target_handle,
+            unread_only=unread_only,
+            limit=page_size + 1,
+            at_or_before=cursor,
+        )
+        total = await self._repo.count_for_project(
             project_id, recipient_handle=target_handle, unread_only=unread_only
         )
-        return items, len(items)
+        if len(rows) > page_size:
+            return rows[:page_size], total, rows[page_size].id
+        return rows, total, None
 
     async def inbox(
         self,
@@ -392,7 +488,12 @@ class ProjectNotificationService:
         return await self._repo.save(row)
 
     async def resolve(
-        self, notification_id: int, *, chosen: str, decided_by: str
+        self,
+        notification_id: int,
+        *,
+        chosen: str,
+        decided_by: str,
+        publish: Callable[[str, dict], Awaitable[None]],
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
         对话，芝士下一轮读得到。"""
@@ -424,7 +525,7 @@ class ProjectNotificationService:
         if block is not None:
             block_payload = BlockOut.model_validate(block).model_dump(mode="json")
             await self._session.commit()
-            await get_broker().publish(
+            await publish(
                 str(block.conversation_id),
                 {"type": "event_block", "block": block_payload},
             )

@@ -48,6 +48,8 @@ vi.mock('@/api/projectSkills', () => ({
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
+  // 页面取一份采纳卡（对话栏那一条和「改动」页顶部共用）：这里没有卡。
+  getAcceptCards: vi.fn(async () => ({ data: [], has_more: false })),
   listTopicMembers: vi.fn(() => Promise.resolve({ data: [], total: 0 })),
   listFeedbackProposals: vi.fn(() => Promise.resolve([...server.live])),
   // 频道概览里的任务：这里没有。

@@ -466,10 +466,19 @@ class TaskService:
         missing — a task that exists and has not been talked in is a real
         answer, and dropping it would make the room's thread count depend on
         whether anyone had spoken yet.
+
+        `limit=0` is that rule at its smallest: every thread, no conversation.
+        A caller drawing a roster never reads a block, and the block query is
+        the one that costs — the whole room's history, or a window function
+        over it. Skipped outright rather than run and discarded.
         """
         tasks = await self._repo.list_for_room(room_id)
-        conversations = await self._repo.conversations_for_tasks(
-            [t.id for t in tasks], limit=limit
+        conversations = (
+            {}
+            if limit == 0
+            else await self._repo.conversations_for_tasks(
+                [t.id for t in tasks], limit=limit
+            )
         )
         return [(task, conversations.get(task.id, [])) for task in tasks]
 

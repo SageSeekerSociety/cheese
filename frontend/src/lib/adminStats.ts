@@ -16,6 +16,8 @@ import type { FeedbackStatus } from '@/cx_types'
 import { fmtDelta, fmtNum } from './usageFormat'
 
 export type {
+  StatsClaudeAccount,
+  StatsClaudePool,
   StatsDays,
   StatsFeedback,
   StatsIntegrations,

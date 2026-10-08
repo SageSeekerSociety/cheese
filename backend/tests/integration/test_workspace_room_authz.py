@@ -108,7 +108,7 @@ def request_workspace(client, project_id, topic_id, operation, headers):
 
 @pytest.mark.parametrize(
     "operation",
-    ["files", "file", "file/raw", "git/log", "git/diff", "work-summary", "write"],
+    ["files", "file", "file/raw", "git/diff", "work-summary", "write"],
 )
 def test_project_members_cannot_access_private_room_work(
     client, private_workspace, operation

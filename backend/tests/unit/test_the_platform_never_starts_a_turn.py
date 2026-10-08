@@ -13,7 +13,7 @@ import pathlib
 import re
 
 from app.api.routes.topics_messages import ChatMessageIn
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner
 
 APP = pathlib.Path(__file__).resolve().parents[2] / "app"
 FRONTEND = pathlib.Path(__file__).resolve().parents[3] / "frontend" / "src"
@@ -60,7 +60,7 @@ def test_whether_a_turn_runs_has_no_default():
 
 
 def test_starting_a_turn_takes_an_addressing_result_not_a_boolean():
-    for method in (InProcessBroker.receive_message, AgentWorkRunner.submit):
+    for method in (AgentWorkRunner.receive_message, AgentWorkRunner.submit):
         params = inspect.signature(method).parameters
         assert "summon" not in params, f"{method.__qualname__} 又收了一个 summon 布尔"
     assert "addressed" in inspect.signature(AgentWorkRunner.submit).parameters

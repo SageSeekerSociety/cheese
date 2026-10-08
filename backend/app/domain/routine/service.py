@@ -35,6 +35,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
@@ -42,7 +43,7 @@ from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
 from app.domain.feedback import claims as feedback_claims
 from app.domain.feedback import triage as feedback_triage
-from app.domain.library import records as library_records
+from app.domain.library import listing as library_listing
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
@@ -726,16 +727,16 @@ async def _events_for(
     in_room = routine.spec.get("scope") == "room"
     found: list[tuple[str, str, datetime]] = []
     if trigger is RoutineTrigger.library_file_added:
-        for entry in await library_records.listing(session, routine.project_id):
-            when = datetime.fromtimestamp(entry["modified"], UTC)
-            if when >= since:
-                found.append(
-                    (
-                        f"library:{entry['path']}:{int(entry['modified'])}",
-                        f"资料库新增了《{entry['path']}》。",
-                        when,
-                    )
+        for name, when in await library_listing.added_since(
+            session, routine.project_id, since
+        ):
+            found.append(
+                (
+                    f"library:{name}:{int(when.timestamp())}",
+                    f"资料库新增了《{name}》。",
+                    when,
                 )
+            )
     elif trigger is RoutineTrigger.task_closed:
         query = select(Task).where(
             Task.project_id == routine.project_id,
@@ -977,7 +978,6 @@ async def publish_run_messages(
     line under it of its 支线."""
     if not message_ids:
         return
-    from app.domain.agent.runtime import get_broker
     from app.domain.block.repositories import BlockRepository
     from app.domain.block.schemas import BlockOut
     from app.domain.routine.reads import runs_under

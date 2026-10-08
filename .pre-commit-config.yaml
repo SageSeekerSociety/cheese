@@ -62,7 +62,7 @@ repos:
       # The import graph, not the diff: this walks every module under app/ and
       # reports the ones that broke a declared boundary (api -> domain -> core,
       # no route reaching another domain's models, no cycle between sibling
-      # domains). 235 pre-existing violations are frozen inside
+      # domains). 230 pre-existing violations are frozen inside
       # backend/.importlinter as exact `importer -> imported` pairs, so this
       # blocks new ones and stays quiet about the old ones.
       #

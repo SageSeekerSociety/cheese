@@ -277,8 +277,15 @@ def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client)
                 )
                 if not row.completed_at
             ),
-            *(("running", str(key[1])) for key in chat._hook_work if key[0] == topic),
-            *(("active", str(work)) for work in chat._active_turn_ids.get(topic, ())),
+            *(
+                ("running", str(key[1]))
+                for key in chat.live.hook_work
+                if key[0] == topic
+            ),
+            *(
+                ("active", str(work))
+                for work in chat.live.active_turn_ids.get(topic, ())
+            ),
         ]
 
     assert _wait_for(client, room, lambda: not left()), left()

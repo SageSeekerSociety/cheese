@@ -87,6 +87,34 @@ class RequiredCITest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(gate.select([path])["mcp"])
 
+    def test_what_the_equivalence_run_launches_selects_it(self):
+        # equivalence.py imports headless_contract.py, which launches the build
+        # with custom_mcp.py; client.py and release.py ship the executor's
+        # files, the sandbox CLI and the project hooks to the machine.
+        for path in (
+            "scripts/remote_execution/equivalence.py",
+            "scripts/remote_execution/custom_mcp.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",
+            "backend/app/domain/agent/project_hooks.py",
+            "backend/sandbox/cheese",
+            ".github/workflows/mcp-equivalence.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["equivalence"])
+
+    def test_the_other_build_contracts_leave_equivalence_alone(self):
+        for path in (
+            "deploy/metering-proxy/cheese_billing_core.py",
+            "scripts/remote_execution/refresh_contract.py",
+            "scripts/remote_execution/mcp_contract.py",
+            "scripts/remote_execution/acceptance.py",
+            ".github/workflows/mcp-contract.yml",
+        ):
+            with self.subTest(path=path):
+                selected = gate.select([path])
+                self.assertTrue(selected["mcp"])
+                self.assertFalse(selected["equivalence"])
+
     def test_docs_site_sources_build_the_site_before_merge(self):
         # Everything the docs build reads: pages, the generator, the files its
         # CLI, settings and CI references are generated from, and any code a

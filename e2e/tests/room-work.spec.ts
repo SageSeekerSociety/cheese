@@ -181,7 +181,13 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
       await page.locator(".rail-task", { hasText: title }).click();
       await page.getByRole("tab", { name: /改动/ }).click();
     };
-    // 「改动」只看这一件任务：清单里是它改过的文件，开着的是第一份。
+    // 「改动」只看这一件任务：全部改动里是它改过的文件，点那一段的「打开」单独看它。
+    const openLogin = () =>
+      panel
+        .locator('.diff-file[data-path="src/login.txt"]')
+        .getByRole("button", { name: "打开", exact: true })
+        .click();
+    await openLogin();
     await expect(panel.locator(".changes-bar__path")).toHaveText(
       "src/login.txt",
     );
@@ -195,6 +201,8 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
     await switchTo("修复登录校验");
     await expect(panel).toContainText("second task");
     await switchTo("调整登录样式");
+    // 回来时又是全部改动那一面；打开那份文件，没保存的草稿还在，直接是编辑那一面。
+    await openLogin();
     await expect(panel.locator(".monaco-editor")).toContainText(
       "my unsaved draft",
     );

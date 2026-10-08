@@ -10,10 +10,14 @@
 // 它得站在场景之外。面板自己也不能引这一只——场景的档位是顺着引用传下去的，
 // 一个会取数的组件被面板引进来，面板就还是「自己取数的面板」。同一条理由见
 // `components/work/PanelDocHost.vue`。
+//
+// 这一格顶部那块（这次交付的情况）也是在这里塞进去的（`AcceptReviewHead`）。
 import { ref } from 'vue'
 
 import { usePanelChanges } from '../../composables/usePanelChanges'
 import PanelChanges from '../panels/PanelChanges.vue'
+
+import AcceptReviewHead from './AcceptReviewHead.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -43,5 +47,7 @@ defineExpose({ openFile: (path: string) => panel.value?.openFile(path) })
 </script>
 
 <template>
-  <PanelChanges ref="panel" :topic-id="props.topicId" :read-only="props.readOnly" :changes="changes" />
+  <PanelChanges ref="panel" :topic-id="props.topicId" :read-only="props.readOnly" :changes="changes">
+    <template #head><AcceptReviewHead /></template>
+  </PanelChanges>
 </template>

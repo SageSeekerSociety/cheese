@@ -88,7 +88,7 @@ def test_second_card_still_blocked_while_first_is_pending(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
-            "routing_reason": "x",
+            "focus": "x",
         },
     )
     assert r.status_code == 422

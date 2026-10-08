@@ -29,11 +29,11 @@ from app.domain.agent.device_provider import (
 )
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S, ScreenSetupError
+from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.place import seat_dir, seat_key
 
 

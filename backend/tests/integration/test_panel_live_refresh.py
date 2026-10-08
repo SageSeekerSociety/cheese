@@ -19,7 +19,7 @@ from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.runtime import get_broker
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, retire_topic
@@ -152,7 +152,7 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
         headers=_agent(pid, str(task)),
     )

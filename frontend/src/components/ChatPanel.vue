@@ -73,6 +73,9 @@ const props = withDefaults(
     focusBlock?: string | null
     // 读的是房间里的一个任务的对话，而不是房间自己的（见 useChatPanel 的 `place`）。
     conversationId?: string | null
+    // 这件事单独指定了队友时，那位的 handle（任务信息卡那行「AI 队友」挑的）。
+    // 发送框那个 @ 写它，而不是房间名册上那位。空＝这件事没单独指定，跟着房间。
+    taskAgentHandle?: string | null
     // 这里此刻不能说话，以及为什么（任务只有负责人能说话、任务已关闭）。输入框的
     // 位置换成这一句，`composer-closed` 插槽接在它后面。
     composerClosed?: string | null
@@ -91,6 +94,7 @@ const props = withDefaults(
     backLabel: null,
     unreadOnOpen: 0,
     conversationId: null,
+    taskAgentHandle: null,
     composerClosed: null,
     inThread: false,
   }
@@ -129,6 +133,7 @@ const panelEmit = ((event: string, ...args: unknown[]) => {
 const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
+  taskAgentHandle: () => props.taskAgentHandle,
   alwaysSummon: () => props.alwaysSummon,
   answersInThread: () => threadable.value,
   showComposer: () => props.showComposer,

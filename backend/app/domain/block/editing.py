@@ -14,6 +14,7 @@ already read the message is told it changed, the way a message reaches it.
 """
 
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,12 +38,12 @@ from app.domain.room_task.services import TaskService
 
 if TYPE_CHECKING:
     from app.domain.agent.chat import ChatService
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
 
 async def edit_message(
     session: AsyncSession,
-    broker: "InProcessBroker",
+    publish: Callable[[str, dict], Awaitable[None]],
     block_id: uuid.UUID,
     *,
     editor: str,
@@ -95,7 +96,7 @@ async def edit_message(
     payload["reactions"] = await blocks.reactions_for_block(block.id)
     await session.commit()
     # A card's lines go out on the card's channel, where they are shown.
-    await broker.publish(
+    await publish(
         str(block.conversation_id), {"type": "block_updated", "block": payload}
     )
     if notice is not None:

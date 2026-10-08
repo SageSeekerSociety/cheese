@@ -17,9 +17,6 @@ default keep working with that teammate — it is now a member, addressed by nam
 
 Private 1:1s keep the column: it is the DM's other party, until a DM with a
 teammate records that as `private_peer` the way a DM with a person does.
-
-Downgrade restores nothing, on purpose: the seat is not lost, and which seat had
-been "the" pointer is not recoverable once a room may hold several.
 """
 
 from collections.abc import Sequence
@@ -56,4 +53,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade restores nothing, on purpose: the seat is not lost, and which seat had
+    been "the" pointer is not recoverable once a room may hold several."""
     pass

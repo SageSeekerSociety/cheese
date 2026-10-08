@@ -5,7 +5,7 @@ summary: 从有人在话题里点名 AI 队友，到结果回到房间。
 covers:
   - backend/app/domain/agent/chat.py
   - backend/app/domain/agent/runtime.py
-  - backend/app/domain/agent/activity.py
+  - backend/app/domain/agent/realtime/activity.py
   - backend/app/domain/block/waits.py
   - backend/app/domain/agent/compute.py
   - backend/app/domain/machine/session_work.py
@@ -141,7 +141,7 @@ steps:
 
 ### 串行只在座位内 {#seats-serial}
 
-组装 prompt 用的锁按座位加（`ChatService._seat_lock_for`）。开一轮之前先解析这一轮是谁的座位（`_turn_seat_handle`）：明确点名的实例、消息落库时记下的收件人、最早一条待处理消息的收件人，都没有就是房间默认队友。所以：
+组装 prompt 用的锁按座位加（`ChatService.live.seat_lock_for`）。开一轮之前先解析这一轮是谁的座位（`_turn_seat_handle`）：明确点名的实例、消息落库时记下的收件人、最早一条待处理消息的收件人，都没有就是房间默认队友。所以：
 
 - 同一位队友：一次只有一轮，后来的消息并进正在跑的那一轮。
 - 不同队友：各开各的，同时跑。
@@ -171,7 +171,7 @@ AI 发起的点名有熔断：同一话题一小时最多叫起 `AGENT_MENTIONS_
 
 ### 成员动态：谁在这个房间里忙 {#activity}
 
-房间自己没有「在跑」「卡住了」这种状态。有的是成员在做什么，而人和 AI 队友一样有：人在这个房间的输入框里打字，是 `typing`；队友在这个房间里有一轮在跑，是 `working`。两者都是某一位成员在某一个房间里的事，自动产生，过了就没（`agent/activity.py`，只在 broker 里，不落库）。
+房间自己没有「在跑」「卡住了」这种状态。有的是成员在做什么，而人和 AI 队友一样有：人在这个房间的输入框里打字，是 `typing`；队友在这个房间里有一轮在跑，是 `working`。两者都是某一位成员在某一个房间里的事，自动产生，过了就没（`agent/realtime/activity.py`，只在 broker 里，不落库）。
 
 - **房间的 socket**：一位成员开始或停下时发一帧 `activity`（`member`、`kind`、`active`、`since`；打字另带 `expires_in`）；连上时有人在忙，先发一帧 `activity_snapshot`。浏览器在输入框内容变了时至多每三秒发一次 `{"type": "typing"}`，清空时发 `{"type": "typing", "active": false}`；是谁由这条 socket 的凭据定，不看帧上写了什么。打字五秒没有新的一下就算停了，这个人的消息落进房间也算停了。
 - **干活从哪来**：broker 从轮次帧上认出「这一轮是哪位队友的」（`turn_started` 上的 `agent`），这位队友在这个房间里的第一轮开始时报 `working`，最后一轮结束时报停。同一位队友在别的房间里干活，这个房间听不到。

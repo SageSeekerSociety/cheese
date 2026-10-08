@@ -1,4 +1,4 @@
-/** 卡面上写着这次交付的是什么 (#1085 结论三/五)。
+/** 「改动」页顶部写着这次交付的是什么 (#1085 结论三/五)。
  *
  * 后端从一开始就把这两样随卡下发——这次更新的是哪一项产物、这一版交出去的是什么
  * ——而界面上一直没有画出来：人在批准一次交付，却看不见批的是哪一份。所以这里断言
@@ -7,8 +7,8 @@
  *   1. 交出去一份文件时，文件名在卡上，而且当场拿得走（快照在递卡那一刻就落好
  *      了，所以不必等采纳）；
  *   2. 交出去一个地址时，地址本身是可点的；
- *   3. 交出去一次合并时没有可拿的东西，那一格就只写产物和版本；
- *   4. 产物清单落地之前递的那些卡两样都没有，整块不出现，框子照旧。
+ *   3. 交出去一次合并时没有可拿的东西，标题是这次改动自己的标题；
+ *   4. 产物清单落地之前递的那些卡两样都没有，标题退回提交标题，采纳照旧。
  */
 import type { AcceptCard, MergeStateInfo } from '../../cx_types'
 
@@ -33,7 +33,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import TopicAcceptCard from '../TopicAcceptCard.vue'
+import { AcceptPage } from './acceptHarness'
 
 import i18n, { setLocale } from '@/i18n'
 
@@ -53,7 +53,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     id: 'card-1',
     topic_id: 't1',
     reviewer_handle: 'alice',
-    routing_reason: '最懂',
+    focus: '最懂',
     change_subject: 'chore: do a thing',
     change_body: null,
     status: 'pending',
@@ -92,7 +92,7 @@ async function flush() {
 async function mountWith(one: AcceptCard) {
   getAcceptCards.mockResolvedValue({ data: [one], has_more: false })
   const vuetify = createVuetify({ components, directives })
-  const utils = render(TopicAcceptCard, {
+  const utils = render(AcceptPage, {
     props: { topicId: 't1', topicStatus: 'active' },
     global: { plugins: [vuetify, i18n] },
   })
@@ -114,12 +114,11 @@ beforeEach(() => {
   downloadFile.mockResolvedValue(undefined)
 })
 
-describe('这次交付的是什么，写在采纳按钮上方', () => {
+describe('这次交付的是什么，点采纳之前读得到', () => {
   it('交一份文件：文件名在卡上，当场拿得走', async () => {
     const { container } = await mountWith(card({}))
 
     const text = container.textContent ?? ''
-    expect(text).toContain('这次交付')
     // 第 4 版是这张卡自己那一版，不是它前面那一版：人定的是「这一版要不要成为
     // 当前版本」。这个数由后端按卡的状态算好。
     expect(text).toContain('结题报告')
@@ -151,7 +150,7 @@ describe('这次交付的是什么，写在采纳按钮上方', () => {
     expect(button(container, '下载')).toBeUndefined()
   })
 
-  it('交一次合并：没有可拿的东西，只写产物和版本', async () => {
+  it('交一次合并：没有可拿的东西，标题是这次改动的标题', async () => {
     const { container } = await mountWith(
       card({
         artifact: { id: 'a3', name: '代码仓库', version: 7 },
@@ -159,16 +158,14 @@ describe('这次交付的是什么，写在采纳按钮上方', () => {
       })
     )
 
-    expect(container.textContent).toContain('代码仓库')
-    expect(container.textContent).toContain('第 7 版')
+    expect(container.querySelector('.review-head')?.textContent).toContain('chore: do a thing')
     expect(button(container, '下载')).toBeUndefined()
   })
 
-  it('两样都没有的旧卡：这一格不出现，框子照旧', async () => {
+  it('两样都没有的旧卡：标题退回提交标题，采纳照旧', async () => {
     const { container } = await mountWith(card({ artifact: null, deliverable: null }))
 
-    expect(container.textContent).not.toContain('这次交付')
-    // 框子本身没受影响：采纳还在，提交标题还在。
+    expect(button(container, '下载')).toBeUndefined()
     expect(button(container, '采纳')).toBeTruthy()
     expect(container.textContent).toContain('chore: do a thing')
   })

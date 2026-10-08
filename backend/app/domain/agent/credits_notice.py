@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.sentences import error_frame
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room_events import post_system_event
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
@@ -55,8 +56,6 @@ async def note_credits_refusal(
             sessions, topic_id, line, turn_id, meta=CREDITS_EXHAUSTED_META
         )
         if payload is not None:
-            from app.domain.agent.runtime import get_broker
-
             await get_broker().publish(
                 str(topic_id),
                 error_frame(line, type="error", persisted=True),

@@ -19,7 +19,7 @@ from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project
 
 if TYPE_CHECKING:
-    from app.domain.agent.hook_stream import _HookWorkState
+    from app.domain.agent.live_work import HookWorkState
 
 
 def reported_usage(route: str, result: AgentResult) -> AgentUsage | None:
@@ -42,7 +42,7 @@ def reported_usage(route: str, result: AgentResult) -> AgentUsage | None:
 
 async def record_turn_usage(
     session: AsyncSession,
-    state: "_HookWorkState",
+    state: "HookWorkState",
     usages: list[AgentUsage],
     *,
     gateway_charged: bool,

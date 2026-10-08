@@ -48,7 +48,7 @@ function pendingCard(state: MergeStateInfo): AcceptCard {
     id: 'card-1',
     topic_id: 't1',
     reviewer_handle: 'alice',
-    routing_reason: '最懂',
+    focus: '最懂',
     change_subject: 'chore: do a thing',
     change_body: null,
     status: 'pending',
@@ -97,10 +97,12 @@ async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-function acceptButton(container: Element): HTMLButtonElement {
-  const btn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('采纳'))
-  expect(btn, '采纳按钮应该在卡上').toBeTruthy()
-  return btn as HTMLButtonElement
+/** 横条上那颗能点的采纳按钮；没有、或者灰着，都是「还不能采纳」。 */
+function canAccept(container: Element): boolean {
+  const btn = Array.from(container.querySelectorAll<HTMLButtonElement>('.accept-bar button')).find(
+    (b) => b.textContent?.includes('采纳') && !b.classList.contains('accept-bar__status')
+  )
+  return !!btn && !btn.disabled
 }
 
 beforeEach(() => {
@@ -113,21 +115,21 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('待采纳的卡会自己跟上后端', () => {
-  it('后端收敛成可合并之后，采纳按钮不用刷新页面就亮', async () => {
+  it('后端收敛成可合并之后，不用刷新页面就能采纳', async () => {
     getAcceptCards.mockResolvedValue({ data: [pendingCard(JUST_LANDED)], has_more: false })
     const { container } = render(TopicAcceptCard, {
       props: { topicId: 't1', topicStatus: 'active' },
       global: { plugins: [createVuetify({ components, directives }), i18n] },
     })
     await flush()
-    expect(acceptButton(container).disabled, '刚递到手的卡还不能采纳').toBe(true)
+    expect(canAccept(container), '刚递到手的卡还不能采纳').toBe(false)
 
     // 后端这边收敛了（实测 #888 是一分钟内的事），但没有人碰过界面。
     getAcceptCards.mockResolvedValue({ data: [pendingCard(SETTLED)], has_more: false })
     await vi.advanceTimersByTimeAsync(15_000)
     await flush()
 
-    expect(acceptButton(container).disabled, '轮询过一轮之后就该能点了').toBe(false)
+    expect(canAccept(container), '轮询过一轮之后就该能点了').toBe(true)
   })
 
   // 后台重读不能把人正在打的退回理由清掉：只有换话题才清空。

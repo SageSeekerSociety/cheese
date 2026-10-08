@@ -12,37 +12,21 @@ import asyncio
 import hashlib
 import uuid
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
 
-from sqlalchemy import delete, func, literal, or_, select, update
+from sqlalchemy import delete, func, literal, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, UnprocessableEntityError
+from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
-from app.domain.conversation.services import of_rooms
 from app.domain.library import blobs, service
 from app.domain.library.models import LibraryFileRecord
 from app.domain.textfile import bytes_text_payload
 
 
-def blob_key(row: LibraryFileRecord) -> str:
-    """这一行的字节在存储里的键。
-
-    `blob_key` 这一列加上之前写下的行是空的，它们的字节还在当时的目录里：现在这
-    一份在 `.library/<项目>/<名字>`，被替换下来的在 `.library-history/<项目>/<行>/`。
-    下一次迁移把这些行补齐、把列设为非空之后，这里只剩第一句。"""
-    if row.blob_key is not None:
-        return row.blob_key
-    if row.superseded_at is None:
-        return f".library/{row.project_id}/{row.name}"
-    leaf = PurePosixPath(row.name).name
-    return f".library-history/{row.project_id}/{row.id}/{leaf}"
-
-
 async def _bytes_of(row: LibraryFileRecord) -> bytes:
-    return await asyncio.to_thread(blobs.store(row.location).get, blob_key(row))
+    return await asyncio.to_thread(blobs.store(row.location).get, row.blob_key)
 
 
 def _new_row(
@@ -68,7 +52,7 @@ def _new_row(
 
 
 async def _put(row: LibraryFileRecord, data: bytes) -> None:
-    await asyncio.to_thread(blobs.store(row.location).put, blob_key(row), data)
+    await asyncio.to_thread(blobs.store(row.location).put, row.blob_key, data)
 
 
 def _like_prefix(prefix: str) -> str:
@@ -168,29 +152,12 @@ async def read_attachment_text(
     return bytes_text_payload(await _bytes_of(row), path)
 
 
-async def listing(session: AsyncSession, project_id: uuid.UUID) -> list[dict]:
-    """资料库里现在的每一份，新放进来的在前：刚给项目的那份，正是接下来要引用的。"""
-    rows = await session.scalars(
-        _current(project_id).order_by(
-            LibraryFileRecord.created_at.desc(), LibraryFileRecord.name
-        )
-    )
-    return [
-        {
-            "path": row.name,
-            "bytes": row.bytes,
-            "modified": row.created_at.timestamp(),
-        }
-        for row in rows
-    ]
-
-
 async def stored(
     session: AsyncSession, project_id: uuid.UUID
 ) -> list[tuple[str, str, str]]:
     """现在每一份的名字、存储和键：给要在事务结束之后才搬字节的人（项目导出）。"""
     rows = await session.scalars(_current(project_id).order_by(LibraryFileRecord.name))
-    return [(row.name, row.location, blob_key(row)) for row in rows]
+    return [(row.name, row.location, row.blob_key) for row in rows]
 
 
 async def add(
@@ -231,14 +198,28 @@ async def replace(
     """把这个名字下的那一份换成新的字节。旧的那一份留着，不是删掉。
 
     引用这个名字的旧消息从此读到的是新的一份——这正是「替换」的意思：人明确说了这
-    是同一份文件的新版本。"""
+    是同一份文件的新版本。
+
+    「现在这一份」是**读出来再写回去**的一对动作（`superseded_at` 为空的那一行只有
+    一行，见 `uq_library_files_current`），两个人同时替换同一份时，两边都会读到自己
+    是唯一的那一版。所以先按 project:name 取一把锁，把这个名字上的替换排成队。
+    `restore`（把旧的一版复制回来）走的也是这里，一并排上。"""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"library-file:{project_id}:{name}"},
+    )
     current = await _current_or_404(session, project_id, name)
-    current.blob_key = blob_key(current)
-    current.superseded_at = datetime.now(UTC)
-    await session.flush()
-    row = _new_row(project_id, name, data, added_by=by, room_id=None)
-    session.add(row)
-    await session.flush()
+    try:
+        current.superseded_at = datetime.now(UTC)
+        await session.flush()
+        row = _new_row(project_id, name, data, added_by=by, room_id=None)
+        session.add(row)
+        await session.flush()
+    except IntegrityError:
+        # 锁只管走这条路的替换；不走这条路的写入（比如同时放进一份新资料）仍然能撞
+        # 上「一个名字只有一份是现在这一份」。撞上就是并发冲突，不是故障：这一次没
+        # 换成就直说，别把 500 摆给人看。事务到这里就作废了，由 `get_db` 回滚。
+        raise ConflictError(say("libraryFileBeingReplaced", name=name)) from None
     await _put(row, data)
 
 
@@ -279,7 +260,7 @@ async def remove(session: AsyncSession, *, project_id: uuid.UUID, name: str) -> 
         )
     )
     for row in rows:
-        await asyncio.to_thread(blobs.store(row.location).delete, blob_key(row))
+        await asyncio.to_thread(blobs.store(row.location).delete, row.blob_key)
 
 
 async def move(
@@ -307,7 +288,6 @@ async def move(
                 say("libraryNameTaken", name=renamed[row.name])
             )
     for row in rows:
-        row.blob_key = blob_key(row)
         row.name = renamed[row.name]
     await session.flush()
     await _follow_references(session, project_id, source, target, folder)
@@ -350,67 +330,6 @@ async def _follow_references(
         )
         .values(content=func.replace(Block.content, chip_old, chip_new))
     )
-
-
-async def replaced_counts(
-    session: AsyncSession, project_id: uuid.UUID
-) -> dict[str, int]:
-    """每个名字被替换过几次。"""
-    rows = await session.execute(
-        select(LibraryFileRecord.name, func.count())
-        .where(
-            LibraryFileRecord.project_id == project_id,
-            LibraryFileRecord.superseded_at.is_not(None),
-        )
-        .group_by(LibraryFileRecord.name)
-    )
-    return {name: n for name, n in rows}
-
-
-async def describe(
-    session: AsyncSession,
-    project_id: uuid.UUID,
-    rooms: dict[uuid.UUID, dict],
-) -> list[dict]:
-    """资料库清单，每一份带上来源：谁、什么时候、在哪个房间，被几条消息引用、替换
-    过几次。
-
-    `rooms` 是读者读得了的那些房间：房间名只写这些，引用也只数这些房间里的。"""
-    rows = list(
-        await session.scalars(
-            _current(project_id).order_by(
-                LibraryFileRecord.created_at.desc(), LibraryFileRecord.name
-            )
-        )
-    )
-    replaced = await replaced_counts(session, project_id)
-    refs = [service.library_ref(row.name) for row in rows]
-    counts: dict[str, int] = {}
-    if rooms and refs:
-        for content, n in await session.execute(
-            select(Block.content, func.count())
-            .where(
-                Block.project_id == project_id,
-                Block.kind == BlockKind.attachment,
-                Block.content.in_(refs),
-                of_rooms(Block.conversation_id, rooms),
-            )
-            .group_by(Block.content)
-        ):
-            counts[content] = n
-    return [
-        {
-            "path": row.name,
-            "bytes": row.bytes,
-            "modified": row.created_at.timestamp(),
-            "added_by": row.added_by,
-            "added_at": row.created_at.isoformat(),
-            "room": rooms.get(row.room_id) if row.room_id is not None else None,
-            "replaced": replaced.get(row.name, 0),
-            "references": counts.get(service.library_ref(row.name), 0),
-        }
-        for row in rows
-    ]
 
 
 async def versions(

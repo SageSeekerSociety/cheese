@@ -18,9 +18,10 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.domain.agent.chat import ChatService, _HookWorkState
+from app.domain.agent.chat import ChatService
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.harness.claude_code.events import Assembler
+from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.service import AgentResult
 from app.domain.agent.supply import SUBSCRIPTION
 from app.domain.agent_instance.models import AgentInstance
@@ -39,7 +40,7 @@ USAGE = {
 
 
 def _state(project, topic, seat, route):
-    return _HookWorkState(
+    return HookWorkState(
         project_id=project,
         topic_id=topic,
         work_id=uuid.uuid4(),
@@ -85,7 +86,8 @@ def _finished(seat, **changes):
 
 def _chat(factory):
     chat = ChatService.__new__(ChatService)
-    chat._sessions, chat._gateway, chat._conversation_rooms = factory, None, {}
+    chat._sessions, chat._gateway = factory, None
+    chat.live = LiveWork()
     return chat
 
 

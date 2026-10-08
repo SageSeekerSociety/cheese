@@ -73,7 +73,7 @@ def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
     machine_commits(uuid.UUID(pid), uuid.UUID(task_id), {f"work-{nth}.txt": subject})
     body: dict = {
         "change_subject": subject,
-        "routing_reason": "最懂",
+        "focus": "最懂",
         **delivery_artifact(client, room),
     }
     body.update(kw)

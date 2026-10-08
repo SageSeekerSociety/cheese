@@ -145,6 +145,37 @@ model_list:
       # 1,048,576 - 128,000, rounded down.
       max_input_tokens: 920000
 
+  # The same model self-hosted at RUC (vLLM). Its own name rather than a
+  # second deployment of deepseek-flash: the router would scatter one
+  # conversation across two backends and both prompt caches would miss.
+  # The endpoint admits campus addresses only; the dev box reaches it through
+  # 119pve (docs/infrastructure.md, "Campus model API"). Its address and key
+  # are box settings: it is a service of another team, not ours to publish.
+  - model_name: deepseek-flash-ruc
+    litellm_params:
+      # anthropic/, not deepseek/: the pinned DeepSeek adapter sends Messages
+      # requests to {api_base}/anthropic/v1/messages, DeepSeek's own path. This
+      # upstream serves Messages at /v1/messages and answers that path with a
+      # 500 after about 130 s. Plain http because that is all it serves.
+      model: anthropic/deepseek-flash
+      api_base: os.environ/RUC_DEEPSEEK_API_BASE
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY
+      # Used internally without a price of its own. The official rates are the
+      # estimate, so the budget brake behaves as it does on deepseek-flash.
+      input_cost_per_token: 0.0000003
+      output_cost_per_token: 0.0000012
+      cache_read_input_token_cost: 0.000000006
+    model_info:
+      cheese_selectable: true
+      cheese_label: DeepSeek V4.1 Flash（人大校内）
+      supports_reasoning: true
+      supports_vision: true
+      # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
+      # official route, for the same reason.
+      max_input_tokens: 920000
+      # No cheese_efforts: low and high gave the same reasoning length when
+      # measured on 2026-10-08, so offering them would promise nothing.
+
   # Price-only entries: the Claude models served through the platform's
   # subscription (the metering proxy), never through this gateway. Their tokens
   # are billed at these rates when the backend ingests the proxy's usage log,

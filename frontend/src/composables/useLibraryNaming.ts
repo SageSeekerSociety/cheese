@@ -6,8 +6,8 @@ import { computed, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
-import { type LibraryFile, moveLibraryFile } from '@/lib/libraryApi'
-import { allFolders, folderOf, leafOf } from '@/lib/libraryFolders'
+import { listLibraryFolders, moveLibraryFile } from '@/lib/libraryApi'
+import { folderOf, leafOf } from '@/lib/libraryFolders'
 
 type Pending = { path: string } | { newFolder: true }
 
@@ -15,7 +15,6 @@ export function useLibraryNaming(page: {
   projectId: () => string
   /** 现在看着的那一层。 */
   dir: () => string
-  files: () => LibraryFile[]
   goTo: (dir: string) => void
   /** 正打开着的那一份（没有是 `''`）。 */
   opened: () => string
@@ -26,10 +25,21 @@ export function useLibraryNaming(page: {
   const pending = ref<Pending | null>(null)
   const error = ref('')
   const moving = ref(false)
+  /** 「移动到」能挑的文件夹：打开名字框时问一次。 */
+  const folders = ref<string[]>([])
 
   function start(next: Pending) {
     error.value = ''
     pending.value = next
+    folders.value = []
+    if ('path' in next)
+      void listLibraryFolders(page.projectId())
+        .then((all) => {
+          if (pending.value === next) folders.value = all
+        })
+        .catch(() => {
+          // 挑不了现成的文件夹，照样能自己写一个。
+        })
   }
 
   // 名字框打开时填好的样子。
@@ -41,7 +51,7 @@ export function useLibraryNaming(page: {
         primaryLabel: t('work.library.moveConfirm'),
         name: leafOf(target.path),
         folder: folderOf(target.path),
-        folders: allFolders(page.files()),
+        folders: folders.value,
       }
     return { title: t('work.library.newFolder'), primaryLabel: t('work.library.newFolderConfirm') }
   })

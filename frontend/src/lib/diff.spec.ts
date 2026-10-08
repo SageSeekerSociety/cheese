@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { DIFF_WINDOW, numberDiffLines, parseDiffLines, splitDiffByFile } from './diff'
+import { DIFF_WINDOW, hunkLabel, numberDiffLines, parseDiffLines, splitDiffByFile } from './diff'
 
 const DIFF = `diff --git a/src/a.py b/src/a.py
 index 1111111..2222222 100644
@@ -175,5 +175,23 @@ describe('diff 行号', () => {
 describe('大文件的窗口', () => {
   it('窗口是个正数，一次画不完的那一份才有「显示剩余」', () => {
     expect(DIFF_WINDOW).toBeGreaterThan(0)
+  })
+})
+
+describe('hunkLabel', () => {
+  it('names the lines the hunk covers in the reviewed file, and the code it sits in', () => {
+    expect(hunkLabel('@@ -205,12 +205,14 @@ class NoticeRepository')).toBe('205–218 · class NoticeRepository')
+  })
+
+  it('names a one-line hunk by its line', () => {
+    expect(hunkLabel('@@ -3 +3 @@')).toBe('3')
+  })
+
+  it('falls back to the old side when the hunk only deletes', () => {
+    expect(hunkLabel('@@ -10,3 +9,0 @@')).toBe('10–12')
+  })
+
+  it('leaves a header it cannot read as it was', () => {
+    expect(hunkLabel('@@ nonsense')).toBe('@@ nonsense')
   })
 })

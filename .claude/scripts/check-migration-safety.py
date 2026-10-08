@@ -49,10 +49,16 @@ checks the ones that can be read off the source:
   lock-retry-copy
       Lock retries come from ``migration_helpers.with_lock_retries``, not a
       pasted ``DO`` block.
+  empty-downgrade
+      A migration whose ``downgrade()`` does nothing — a lone ``pass``, once
+      its docstring is set aside — must say why in that docstring: what it
+      deliberately leaves in place, or a ``raise``. The Alembic template's
+      ``Downgrade schema.`` is not a reason.
 
 Only migrations ADDED relative to the merge base with ``--base`` are judged:
 the ones on main are immutable, and judging them would make every PR pay for
-history. Statements in ``downgrade()`` are not judged.
+history. What a ``downgrade()`` *does* is still not judged for the risks
+above; only whether an empty one explains itself (``empty-downgrade``) is.
 
 An exception is written next to the statement it excuses, with a reason:
 
@@ -100,6 +106,7 @@ ERROR_RULES = frozenset(
         "lock-retry-copy",
         "unresolved-table",
         "unresolved-drop",
+        "empty-downgrade",
     }
 )
 WARNING_RULES = frozenset({"alter-column-existing", "fk-on-add-column", "unresolved"})
@@ -290,6 +297,58 @@ def _truthy(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Constant) and bool(node.value)
 
 
+# --------------------------------------------------------------------------
+# ``downgrade()``: an empty one has to say why (the ``empty-downgrade`` rule).
+# --------------------------------------------------------------------------
+
+#: What Alembic's own template leaves in a new downgrade. Carries no reason.
+_DOWNGRADE_TEMPLATE = "downgrade schema"
+
+
+def _downgrade_docstring(node: ast.FunctionDef) -> str | None:
+    """The string that opens ``node``'s body as a docstring, or ``None``."""
+    body = node.body
+    if body and isinstance(body[0], ast.Expr):
+        value = body[0].value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return value.value
+    return None
+
+
+def _is_a_reason(doc: str | None) -> bool:
+    """Whether ``doc`` states a reason — not blank, not the template."""
+    if doc is None or not doc.strip():
+        return False
+    return re.sub(r"\s+", " ", doc.strip()).rstrip(".").lower() != _DOWNGRADE_TEMPLATE
+
+
+def _downgrade_is_empty(node: ast.FunctionDef) -> bool:
+    """A ``downgrade()`` that does nothing (a lone ``pass``) and gives no reason.
+
+    The docstring is set aside first, so the Alembic template text followed by
+    ``pass`` counts as empty: writing the template is not saying why.
+    """
+    doc = _downgrade_docstring(node)
+    body = node.body[1:] if doc is not None else node.body
+    return len(body) == 1 and isinstance(body[0], ast.Pass) and not _is_a_reason(doc)
+
+
+def empty_downgrade(source: str) -> bool:
+    """Whether ``source``'s ``downgrade()`` does nothing and gives no reason.
+
+    Used by the visitor below, and by the test that keeps the migrations
+    already on main from drifting back into the shape this rule catches.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "downgrade":
+            return _downgrade_is_empty(node)
+    return False
+
+
 def _is_json_type(node: ast.AST | None) -> bool:
     """``sa.JSON`` / ``sa.JSON()`` / ``JSON(none_as_null=True)`` — not JSONB."""
     if isinstance(node, ast.Call):
@@ -407,6 +466,17 @@ class _Migration(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         if node.name == "downgrade":
+            # Its statements are not judged (see the module docstring); only an
+            # empty one that does not say why is reported, then we stop before
+            # descending into the body.
+            if _downgrade_is_empty(node):
+                self.report(
+                    node,
+                    "empty-downgrade",
+                    "downgrade() is a lone `pass` with no reason; say in a docstring what it "
+                    "deliberately leaves in place, or raise "
+                    "(the Alembic `Downgrade schema.` template is not a reason)",
+                )
             return
         self.generic_visit(node)
 
@@ -997,6 +1067,12 @@ def _rules_found(body: str, extra: str = "") -> list[str]:
     return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS))
 
 
+def _downgrade_rules(body: str) -> list[str]:
+    """The rules a source fires whose ``downgrade()`` body is ``body``."""
+    source = _HEAD + "\ndef upgrade() -> None:\n    pass\n\ndef downgrade() -> None:\n" + body + "\n"
+    return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS))
+
+
 def self_test() -> int:
     failures: list[str] = []
 
@@ -1303,13 +1379,43 @@ def self_test() -> int:
         ["validate-outside-autocommit"],
     )
 
+    # Found in review (2026-10-07): an empty downgrade has to say why. The
+    # historical migrations are the reason for the rule — a `pass` on its own
+    # reads the same whether it was thought about or never written.
+    check("a bare pass downgrade", _downgrade_rules("    pass"), ["empty-downgrade"])
+    check(
+        "a downgrade with an empty docstring",
+        _downgrade_rules('    """"""\n    pass'),
+        ["empty-downgrade"],
+    )
+    check(
+        "the Alembic template's downgrade docstring is not a reason",
+        _downgrade_rules('    """Downgrade schema."""\n    pass'),
+        ["empty-downgrade"],
+    )
+    check(
+        "a pass downgrade that says what it leaves in place",
+        _downgrade_rules('    """Nothing to put back: the previous code reads it as empty."""\n    pass'),
+        [],
+    )
+    check(
+        "a downgrade that raises",
+        _downgrade_rules('    raise NotImplementedError("b 无法反向，恢复整库转储")'),
+        [],
+    )
+    check(
+        "a real downgrade is not judged for what it does",
+        _downgrade_rules("    op.drop_column('task', 'video_url')"),
+        [],
+    )
+
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}")
     if failures:
         return 1
     print(
         "PASS: check-migration-safety self-test (drop/rename, index, constraints, columns, imports, "
-        "unreadable names, NOT VALID/VALIDATE, exceptions)"
+        "unreadable names, NOT VALID/VALIDATE, empty downgrade, exceptions)"
     )
     return 0
 

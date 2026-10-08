@@ -24,6 +24,7 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.runner import Runner
 from app.domain.agent.harness.claude_code.subscription import Subscription
+from app.domain.agent.live_work import LiveWork
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.input_identity import InputEffects
 from app.domain.delivery.models import NativeInput
@@ -57,7 +58,8 @@ def test_native_completion_commit_failure_replays_after_start_landed(
         identity = replace(_identity(project, topic), harness=CLAUDE_CODE)
         ids = await _blocks(factory, project, topic)
         chat = ChatService.__new__(ChatService)
-        chat._sessions, chat._unread_inputs = factory, {}
+        chat._sessions = factory
+        chat.live = LiveWork()
         runner = Runner(machine.state)
         identity = replace(
             identity,

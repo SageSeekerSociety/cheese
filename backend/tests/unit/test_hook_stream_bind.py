@@ -8,7 +8,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain.agent.hook_stream import _bind_user_entry, _HookWorkState
+from app.domain.agent.hook_stream import _bind_user_entry
+from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.service import AgentUserEntry
 from app.domain.agent.turn_inputs import (
     bind,
@@ -47,8 +48,8 @@ def _event(
     )
 
 
-def _state(topic_id, work_id, *, self_started: bool) -> _HookWorkState:
-    return _HookWorkState(
+def _state(topic_id, work_id, *, self_started: bool) -> HookWorkState:
+    return HookWorkState(
         project_id=uuid.uuid4(),
         topic_id=topic_id,
         work_id=work_id,
@@ -151,14 +152,15 @@ async def test_a_commit_abort_keeps_both_sides_and_a_replay_finishes(db_factory)
     await _seed(db_factory, topic, turn_t, nonce_t)
     await _crown(db_factory, topic, seat, turn_s, nonce_s, "e1", 1)
 
-    hook_work = {(topic, turn_s): _state(topic, turn_s, self_started=True)}
+    live_work = LiveWork()
+    live_work.hook_work = {(topic, turn_s): _state(topic, turn_s, self_started=True)}
     runner = _Runner()
     event = _event(f"接管 {nonce_t}", entry_id="e2", pos=2)
 
     factory = _FailOnceCommit(db_factory)
     with pytest.raises(RuntimeError, match="commit abort"):
         await _bind_user_entry(
-            factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+            factory, live_work, runner, topic_id=topic, seat=seat, event=event
         )
 
     from sqlalchemy import select
@@ -170,23 +172,25 @@ async def test_a_commit_abort_keeps_both_sides_and_a_replay_finishes(db_factory)
     assert row.state != "bound", "commit 失败：绑定整体回滚"
     s_row = await turn_row(db_factory, turn_s)
     assert s_row.stopped_at is None, "commit 失败：退休整体回滚"
-    assert (topic, turn_s) in hook_work, "commit 失败：内存 state 不丢"
+    assert (topic, turn_s) in live_work.hook_work, "commit 失败：内存 state 不丢"
     assert runner.closed == [], "commit 失败：runner marks 不动"
 
     # The replay binds again, commits, and only then drops the memory side.
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=event
     )
     s_row = await turn_row(db_factory, turn_s)
     t_row = await turn_row(db_factory, turn_t)
     assert s_row.stopped_at is not None
     assert t_row.stopped_at is None
-    assert (topic, turn_s) not in hook_work, "commit 后清理 self-started state"
+    assert (topic, turn_s) not in live_work.hook_work, (
+        "commit 后清理 self-started state"
+    )
     assert runner.closed == [turn_s], "commit 后清 runner marks"
 
     # A second replay changes nothing: the cleanup is idempotent.
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=event
     )
     assert runner.closed == [turn_s]
 
@@ -216,13 +220,13 @@ async def test_an_entry_from_a_superseded_session_moves_nothing(db_factory):
         )
         await session.commit()
 
-    hook_work: dict = {}
+    live_work = LiveWork()
     runner = _Runner()
     stale = _event(
         f"旧源 {nonce_t}", entry_id="e2", pos=2, session_id="sess-old", harness="pi"
     )
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=stale
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=stale
     )
 
     from sqlalchemy import select
@@ -241,7 +245,7 @@ async def test_an_entry_from_a_superseded_session_moves_nothing(db_factory):
         f"新源 {nonce_t}", entry_id="e2", pos=2, session_id="sess-new", harness="pi"
     )
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=fresh
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=fresh
     )
     s_row = await turn_row(db_factory, turn_s)
     assert s_row.stopped_at is not None
@@ -301,11 +305,11 @@ async def test_a_pointer_writer_and_a_bind_serialize_on_the_row(db_factory):
         event = _event(
             f"接管 {nonce_t}", entry_id="e2", pos=2, session_id="sess-old", harness="pi"
         )
-        hook_work: dict = {}
+        live_work = LiveWork()
         runner = _Runner()
         attempted = asyncio.create_task(
             _bind_user_entry(
-                db_factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+                db_factory, live_work, runner, topic_id=topic, seat=seat, event=event
             )
         )
         await asyncio.sleep(0.5)  # let the bind block on the row lock
@@ -363,7 +367,8 @@ async def test_a_replay_cleans_only_the_recorded_predecessor(db_factory):
         )
         await session.commit()
 
-    hook_work = {
+    live_work = LiveWork()
+    live_work.hook_work = {
         (topic, turn_s): _state(topic, turn_s, self_started=True),
         (topic, turn_u): _state(topic, turn_u, self_started=True),
     }
@@ -373,12 +378,12 @@ async def test_a_replay_cleans_only_the_recorded_predecessor(db_factory):
     # only the recorded predecessor.
     event = _event(f"接管 {nonce_t}", entry_id="e2", pos=2)
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=event
     )
 
-    assert (topic, turn_s) not in hook_work, "记录里的前任被清"
+    assert (topic, turn_s) not in live_work.hook_work, "记录里的前任被清"
     assert runner.closed == [turn_s]
-    assert (topic, turn_u) in hook_work, "别的 self_started 一个不碰"
+    assert (topic, turn_u) in live_work.hook_work, "别的 self_started 一个不碰"
     assert runner.closed == [turn_s], "另一个座位/代次的 marks 不动"
 
 
@@ -414,10 +419,11 @@ async def test_an_event_from_a_detached_attachment_moves_nothing(db_factory):
         attachment="old-attachment-a1",
         eid="pi:user:e2",
     )
-    hook_work = {(topic, turn_s): _state(topic, turn_s, self_started=True)}
+    live_work = LiveWork()
+    live_work.hook_work = {(topic, turn_s): _state(topic, turn_s, self_started=True)}
     runner = _Runner()
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=event
     )
 
     async with db_factory() as session:
@@ -425,18 +431,18 @@ async def test_an_event_from_a_detached_attachment_moves_nothing(db_factory):
     assert row.state != "bound", "detached 源：不绑定"
     s_row = await turn_row(db_factory, turn_s)
     assert s_row.stopped_at is None, "detached 源：不退休"
-    assert (topic, turn_s) in hook_work and runner.closed == []
+    assert (topic, turn_s) in live_work.hook_work and runner.closed == []
 
     # The same event from the seat's CURRENT attachment is accepted.
     attachments.note(seat_tuple, "old-attachment-a1")
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=event
     )
     s_row = await turn_row(db_factory, turn_s)
     t_row = await turn_row(db_factory, turn_t)
     assert s_row.stopped_at is not None, "当前源：正常接管"
     assert t_row.stopped_at is None
-    assert (topic, turn_s) not in hook_work and runner.closed == [turn_s]
+    assert (topic, turn_s) not in live_work.hook_work and runner.closed == [turn_s]
     attachments.note(seat_tuple, None)
 
 
@@ -492,10 +498,11 @@ async def test_a_reader_stalled_through_a_stop_and_reattach_moves_nothing(db_fac
         attachment="attachment-a1",
         eid="pi:user:e2",
     )
-    hook_work = {(topic, turn_s): _state(topic, turn_s, self_started=True)}
+    live_work = LiveWork()
+    live_work.hook_work = {(topic, turn_s): _state(topic, turn_s, self_started=True)}
     runner = _Runner()
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=stalled
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=stalled
     )
 
     async with db_factory() as session:
@@ -503,7 +510,7 @@ async def test_a_reader_stalled_through_a_stop_and_reattach_moves_nothing(db_fac
     assert row.state != "bound", "停顿在换代前的旧源：不绑定"
     s_row = await turn_row(db_factory, turn_s)
     assert s_row.stopped_at is None, "停顿在换代前的旧源：不退休"
-    assert (topic, turn_s) in hook_work and runner.closed == []
+    assert (topic, turn_s) in live_work.hook_work and runner.closed == []
 
     # The same entry from the seat's CURRENT attachment is accepted: the
     # pointer check passes (same conversation), the source is the live one.
@@ -518,13 +525,13 @@ async def test_a_reader_stalled_through_a_stop_and_reattach_moves_nothing(db_fac
         eid="pi:user:e2",
     )
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=live
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=live
     )
     s_row = await turn_row(db_factory, turn_s)
     t_row = await turn_row(db_factory, turn_t)
     assert s_row.stopped_at is not None, "新源：正常接管"
     assert t_row.stopped_at is None
-    assert (topic, turn_s) not in hook_work and runner.closed == [turn_s]
+    assert (topic, turn_s) not in live_work.hook_work and runner.closed == [turn_s]
     attachments.note(seat_tuple, None)
 
 
@@ -548,7 +555,8 @@ async def test_a_cleanup_cancelled_after_commit_is_finished_by_the_replay(
     await _seed(db_factory, topic, turn_t, nonce_t)
     await _crown(db_factory, topic, seat, turn_s, nonce_s, "e1", 1)
 
-    hook_work = {(topic, turn_s): _state(topic, turn_s, self_started=True)}
+    live_work = LiveWork()
+    live_work.hook_work = {(topic, turn_s): _state(topic, turn_s, self_started=True)}
     runner = _Runner()
     event = _event(f"接管 {nonce_t}", entry_id="e2", pos=2)
 
@@ -566,20 +574,20 @@ async def test_a_cleanup_cancelled_after_commit_is_finished_by_the_replay(
     try:
         with pytest.raises(asyncio.CancelledError):
             await _bind_user_entry(
-                db_factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+                db_factory, live_work, runner, topic_id=topic, seat=seat, event=event
             )
     finally:
         hs._drop_takeover_marks = original
 
     s_row = await turn_row(db_factory, turn_s)
     assert s_row.stopped_at is not None, "DB 侧已提交（不是回滚）"
-    assert (topic, turn_s) in hook_work, "取消在清理前：内存侧还在"
+    assert (topic, turn_s) in live_work.hook_work, "取消在清理前：内存侧还在"
     assert runner.closed == []
 
     # The replay binds nothing (already bound) but finishes the cleanup —
     # the durable retired_turn_id is the whole predicate.
     await _bind_user_entry(
-        db_factory, hook_work, runner, topic_id=topic, seat=seat, event=event
+        db_factory, live_work, runner, topic_id=topic, seat=seat, event=event
     )
-    assert (topic, turn_s) not in hook_work, "重放补清准确前任"
+    assert (topic, turn_s) not in live_work.hook_work, "重放补清准确前任"
     assert runner.closed == [turn_s]

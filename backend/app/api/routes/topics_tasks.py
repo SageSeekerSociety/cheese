@@ -17,10 +17,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
+from app.api.conditional import LIST_CACHE_CONTROL, etag_for_json, if_none_match_hits
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
 from app.api.response import ok, page
@@ -63,14 +64,19 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.get("/{topic_id}/tasks")
+# `response_model=None`: the 304 path returns a bare `Response`, and FastAPI
+# would otherwise try to build a response field out of `dict | Response` and
+# refuse the whole module at import. `list_topics` carries the same.
+@router.get("/{topic_id}/tasks", response_model=None)
 async def list_room_tasks(
     topic_id: uuid.UUID,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
-    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
-) -> dict:
+    response: Response,
+    limit: Annotated[int | None, Query(ge=0, le=500)] = None,
+    if_none_match: Annotated[str | None, Header()] = None,
+) -> dict | Response:
     """This room's threads — every piece of work in it, each with its own
     conversation.
 
@@ -92,6 +98,17 @@ async def list_room_tasks(
     number truncates silently — the exact failure the neighbouring default
     exists to avoid — but a caller rendering a room should be passing `limit`,
     and whoever builds that view should decide what it is.
+
+    `limit=0` is the roster shape: every thread, none of their conversation. A
+    client drawing a rail or an overview wants the threads themselves and never
+    reads a block; asking for `limit=1` made it download one message per thread
+    to throw away. 0 is spelled rather than inferred from a separate flag
+    because it is the same knob — "newest zero blocks each" — and it skips the
+    block query entirely instead of filtering its result.
+
+    条件请求：侧栏画一次 rail 就要整份清单，而一个房间这里有 ~1317 条活、`limit=0`
+    也有 1 MB 上下。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回
+    304、空 body —— 切页面时「没有新东西」不再重传这一份。
     """
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
@@ -174,7 +191,13 @@ async def list_room_tasks(
                 },
             }
         )
-    return ok(page(items, len(items)))
+    payload = ok(page(items, len(items)))
+    etag = etag_for_json(payload)
+    cache_headers = {"Cache-Control": LIST_CACHE_CONTROL, "ETag": f'"{etag}"'}
+    if if_none_match and if_none_match_hits(if_none_match, etag):
+        return Response(status_code=304, headers=cache_headers)
+    response.headers.update(cache_headers)
+    return payload
 
 
 @router.get("/{topic_id}/task")

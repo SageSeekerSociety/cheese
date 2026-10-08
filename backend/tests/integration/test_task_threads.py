@@ -201,7 +201,7 @@ def test_a_thread_carries_the_card_it_is_riding_on(client):
                     topic_id=ids["room"],
                     task_id=task.id,
                     reviewer_handle="alice",
-                    routing_reason="最懂",
+                    focus="最懂",
                     status=AcceptStatus.pending,
                 )
             )

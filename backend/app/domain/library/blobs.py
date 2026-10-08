@@ -41,8 +41,14 @@ class LocalBlobs:
         target = self._path(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}")
-        staging.write_bytes(data)
-        staging.replace(target)
+        try:
+            staging.write_bytes(data)
+            staging.replace(target)
+        finally:
+            # 写了一半的那一份（磁盘写满之类）留在存储里没人要：键是记录那一行的 id，
+            # 下一次写的是另一把键，谁也认不出它、谁也不去删它。换过去之后这里本来
+            # 就没有东西，`missing_ok` 让成功那一趟什么也不做。
+            staging.unlink(missing_ok=True)
 
     def get(self, key: str) -> bytes:
         target = self._path(key)

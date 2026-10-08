@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, listing, say
 from app.domain.library import service as library
 from app.domain.project import artifacts
@@ -102,13 +102,32 @@ async def _card_or_404(self: pkg.AcceptService, card_id: uuid.UUID) -> AcceptCar
     return card
 
 
+#: 审阅重点的上限：审阅的人要在卡上一眼读完。条数按非空行数，字数按全部条目合计。
+FOCUS_MAX_ITEMS = 3
+FOCUS_MAX_CHARS = 300
+
+
+def clean_focus(text: str) -> str:
+    """审阅重点去掉空行；超过上限时拒绝，并说清该怎么写。
+
+    超长的那一份往往是把测试结果、改了哪些函数、要拍板的取舍全塞了进来——那些
+    属于 PR 正文（`change_body`），截断只会留下半句，所以拒绝而不截。"""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    cleaned = "\n".join(lines)
+    if len(lines) > FOCUS_MAX_ITEMS or len(cleaned) > FOCUS_MAX_CHARS:
+        raise UnprocessableEntityError(
+            say("acceptFocusTooLong", items=FOCUS_MAX_ITEMS, chars=FOCUS_MAX_CHARS)
+        )
+    return cleaned
+
+
 async def create_card(
     self: pkg.AcceptService,
     *,
     topic_id: uuid.UUID,
     task_id: uuid.UUID,
     reviewer_handle: str | None = None,
-    routing_reason: str = "",
+    focus: str = "",
     change_subject: str | None = None,
     change_body: str | None = None,
     artifact: str | None = None,
@@ -119,6 +138,7 @@ async def create_card(
     completes_task: bool = True,
     admits_reviewer: ReviewerAdmission,
 ) -> AcceptCard:
+    focus = clean_focus(focus)
     topic = await self._topic_or_404(topic_id)
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
     if topic.status == TopicStatus.archived:
@@ -156,7 +176,14 @@ async def create_card(
     comparison = await ProjectFiles(
         self._session, task.project_id, task.id
     ).comparison()
-    if not comparison or not comparison.get("total_commits"):
+    # A commit that changes no file delivers nothing either: accepting it would
+    # merge an empty commit into the base and call that a delivery. Work whose
+    # result does not land on the base ends by closing the task instead.
+    if (
+        not comparison
+        or not comparison.get("total_commits")
+        or comparison.get("files") == []
+    ):
         raise ValidationError(
             say("taskBranchNothingToDeliver", branch=task.branch_name)
         )
@@ -204,7 +231,7 @@ async def create_card(
         topic_id=topic_id,
         task_id=task.id,
         reviewer_handle=reviewer_handle,
-        routing_reason=routing_reason,
+        focus=focus,
         status=AcceptStatus.pending,
         change_subject=subject,
         change_body=change_body or None,
