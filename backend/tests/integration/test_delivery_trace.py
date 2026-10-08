@@ -266,10 +266,13 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
     machine_commits(uuid.UUID(pid), uuid.UUID(mine), {"a.txt": "one\n"})
     card = _deliver(client, room, "feat: land when the batch is unreadable", [mine])
 
-    async def _blow_up(_self, _task_ids):
-        raise RuntimeError("the batch could not be read")
+    class _Unreadable(TaskService):
+        async def list_by_ids(self, task_ids):
+            raise RuntimeError("the batch could not be read")
 
-    monkeypatch.setattr(TaskService, "list_by_ids", _blow_up)
+    # Where the trailers read the batch from: that read fails, the card the
+    # accept answers with is still rendered from the tasks it names.
+    monkeypatch.setattr("app.domain.room_task.services.TaskService", _Unreadable)
     _accept(client, card["id"])
 
     body = _landed_body(client)

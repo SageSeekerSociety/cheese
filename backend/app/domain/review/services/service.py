@@ -179,6 +179,9 @@ class AcceptService:
     async def describe(self, card: AcceptCard) -> dict:
         return await cards.describe(self, card=card)
 
+    async def describe_many(self, cards_: Sequence[AcceptCard]) -> list[dict]:
+        return await cards.describe_many(self, cards=cards_)
+
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
         return await cards._enforce_protocol(self, topic=topic, decided_by=decided_by)
 

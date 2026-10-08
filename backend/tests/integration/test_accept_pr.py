@@ -239,6 +239,8 @@ class FakeGitHubPrClient:
         self.update_branch_tokens: list[str] = []
         self.check_state_error: Exception | None = None
         self.status_error: Exception | None = None
+        # How long GitHub takes to say where a PR stands.
+        self.status_delay_s: float = 0.0
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -339,6 +341,8 @@ class FakeGitHubPrClient:
     async def pull_request_status(
         self, *, owner, repo, number, token
     ) -> github_pr.PullRequestStatus:
+        if self.status_delay_s:
+            await asyncio.sleep(self.status_delay_s)
         if self.status_error is not None:
             raise self.status_error
         pr = self.prs[number]
@@ -2275,6 +2279,34 @@ def test_a_github_hiccup_on_a_read_never_breaks_the_card_list(client, app_world)
 
     assert r.status_code == 200
     assert r.json()["data"]["data"][0]["merge_state"]["state"] == "unknown"
+
+
+def test_a_slow_github_never_holds_a_card_read_and_its_answer_still_lands(
+    client, app_world, monkeypatch
+):
+    """读卡等 GitHub 有个头：等不到就先把手上那份发出去，那一次重算接着在后台做
+    完、写回卡上，下一次读就是新的。房间里每个开着的页面每 15s 读一次卡，它们
+    一起等的是同一次重算，不是各问一遍 —— 一张接一张地等 GitHub，一次读卡曾经
+    要 40 秒，排在它后面的请求全被拖住。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "accept_pr_snapshot_read_wait_s", 0.05)
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _stale_mirror_iso(client, cid)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.status_delay_s = 1.0
+
+    began = time.monotonic()
+    first = _cards(client, tid)[0]["merge_state"]["state"]
+    assert time.monotonic() - began < 0.8
+    assert first == "unknown"
+
+    deadline = time.monotonic() + 10
+    while _cards(client, tid)[0]["merge_state"]["state"] != "clean":
+        assert time.monotonic() < deadline, "the refresh never landed"
+        time.sleep(0.05)
+    assert fake.status_calls == [number]
 
 
 # ============================ 绿了自动合 =====================================
