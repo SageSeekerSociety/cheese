@@ -118,7 +118,7 @@ covers:
 | `deploy.sh` | etrip 盒子的发版入口（`.github/workflows/deploy.yml` 调 `./deploy.sh <sha>`）：拉镜像、迁移、重启、健康检查 |
 | `image-tag.sh` | 打印某个 rev 的镜像 tag（完整 sha 前 7 位） |
 | `check-app-tier.sh` | 读 `docker ps` 的输出，断言 app 层跑着的镜像 tag 等于给定值；发版和 drift 巡检都用它 |
-| `check-auto-deploy.py` | 只允许不把线上往回退的自动发版 |
+| `check-auto-deploy.py` | 只允许不把线上往回退的自动发版；同一版本已在跑、后端只因数据库或 Redis 连不上而不健康时，不再重发同一版本 |
 | `release-device-connection.sh` | 单独替换常驻的设备 WebSocket owner（普通发版永不调它，因为替换会断连接） |
 | `release-gateway.sh` | 网关平面单独发版；只在 GitHub Actions 里跑，且要 `GATEWAY_ALLOW_INTERRUPT=1` 明确承认会断流 |
 | `release-metering-proxy.sh` | 计量代理平面单独发版；同样要求 `METERING_ALLOW_INTERRUPT=1` |
@@ -202,6 +202,6 @@ covers:
 - **`cheese-db-backup.timer` 的描述与它实际频率不符**：`Description` 写 "every 6 hours"，`OnCalendar=*-*-* *:00:00` 是每小时；`db-backup.sh` 的注释又写 "every few hours"。实际频率以 `OnCalendar` 为准（每小时），[数据存在哪](/dev/data#backup)写的也是每小时。改的时候要同时改这三处。
 - **仓库里的 `cheesex-*.sh` 改了不代表盒子上会变**。两个 unit 的 `ExecStart` 是 `/usr/local/sbin/cheesex-healthcheck` 与 `/usr/local/sbin/cheesex-disk-pressure-guard`，仓库里没有任何脚本把它们装到那里。
 - **发版脚本会主动拒绝而不是自动纠正**：`read_slots` 发现 app-router 指着的端口不是两个槽位之一，就直接失败，要人工恢复。槽位之前的版本中断后留下的 `cheese-backend-next`/`cheese-frontend-next`，app-router 没指着它就由 `clear_interrupted_release` 在拉镜像、迁移之前删掉，指着它就在那里失败。手动发布两个槽位之前的旧提交时，旧脚本会先装上自己的 `app-router.conf` 并 reload（30 秒后断开 app-router 上的连接），拉镜像、跑迁移，然后在 `-b` 槽位服务期间拒绝切流量。如果回滚是在 `-b` 槽位服务期间合进 main 的，main 上已经没有带槽位的提交，此后每次自动发版都会这样走一遍再拒绝，直到有人对最后一个包含 #2770 的 SHA 手动触发发版，把服务换回第一组槽位，main 的下一次发版才能过。`deploy/tests/test-pre-slot-release.sh` 用最后一个这样的提交的脚本验证两种状态。同理 `switch_app_router` 的 `nginx -s reload` 失败会把上游文件改回去、失败整个发版，而不是让配置生效一半。
-- **`check-app-tier.sh` 证明的是"跑着的镜像对不对"，不是"服务活不活"**。它读的是 `docker ps` 输出的 tag。健康探针是另一个东西：`/healthz` 是进程级探针，带依赖检查的是 `/readyz`（`backend/app/api/routes/health.py`）。
+- **`check-app-tier.sh` 证明的是"跑着的镜像对不对"，不是"服务活不活"**。它读的是 `docker ps` 输出的 tag。健康探针是另一个东西：后端的 `/healthz` 只说进程活着；`/readyz`（`backend/app/api/routes/health.py`）在数据库、Redis 连不上或有路由模块没挂上时返回 503。数据库和 Redis 的探测每个进程同一时刻只跑一份、结果复用 1 秒，每项最多等 2.5 秒，所以公网刷它不会多占数据库连接，两个依赖都卡死时也在发版 curl 的 3 秒内答出 503。发版的 `wait_for_ready`、`deploy.sh` 和后端容器的 compose healthcheck 都看 `/readyz`。
 - **没有 systemd 的主机上，归档清理不会发生**：`deploy-docker.sh:1009-1013` 检测不到 `/run/systemd/system` 时只在日志里说一句"自己安排每分钟触发"，不会失败也不会兜底。
 - **`deploy.sh` 与 `deploy-docker.sh` 是两条不同的路**：前者是 etrip 盒子的发版入口，只做拉镜像、迁移、重启、健康检查，没有滚动、没有排空、没有回滚；dev 和 prod 走的是后者。
