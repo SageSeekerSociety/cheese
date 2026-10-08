@@ -179,4 +179,16 @@ describe('侧栏的任务清单什么时候重读', () => {
 
     expect(screen.getByTestId('topic-list').dataset.totals).toBe('{}')
   })
+
+  it('同一次改动连着说了几遍，只重读一次', async () => {
+    await openProject('p-burst')
+    reads.hold = true
+    store.tasksChanged += 1
+    store.tasksChanged += 1
+    await settle()
+    store.tasksChanged += 1
+    await settle()
+
+    expect(reads.count).toBe(2)
+  })
 })
