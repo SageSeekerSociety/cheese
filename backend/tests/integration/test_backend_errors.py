@@ -9,6 +9,7 @@ glance and the whole stack behind it — and never said in the room they
 happened in: the people there are not who reads the platform's own errors.
 """
 
+import re
 import time
 import uuid
 from unittest.mock import AsyncMock
@@ -323,6 +324,45 @@ def test_flushing_with_nothing_expired_writes_nothing(in_process_db):
 
     assert client.portal.call(backend_log.flush_expired) == 0
     assert len(_backend_events(client, tid)) == 1
+
+
+def test_a_crash_in_a_topic_is_kept_with_the_request_id_the_browser_never_sent(
+    in_process_db, crashing_route
+):
+    """A browser sends no `X-Request-ID`, so a record built from that header
+    carried an empty id on every 5xx — the one field that ties the record to
+    the request log line and to the id the caller was answered with. It is the
+    request's own id that belongs here, minted when the caller did not name
+    one, and in the shape this app mints and echoes."""
+    client = in_process_db
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+
+    with pytest.raises(RuntimeError):
+        client.get(f"/topics/{tid}/__boom_for_test")
+
+    events = _backend_events(client, tid)
+    assert len(events) == 1
+    assert re.fullmatch(r"[0-9a-f]{12}", events[0]["meta"]["request_id"])
+
+
+def test_a_crash_is_kept_with_the_request_id_the_caller_did_send(
+    in_process_db, crashing_route
+):
+    """The other half of the same rule: a caller that names the request keeps
+    that name — the id in the log and in the record is the one it can quote."""
+    client = in_process_db
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+
+    with pytest.raises(RuntimeError):
+        client.get(
+            f"/topics/{tid}/__boom_for_test", headers={"X-Request-ID": "rid-abc"}
+        )
+
+    events = _backend_events(client, tid)
+    assert len(events) == 1
+    assert events[0]["meta"]["request_id"] == "rid-abc"
 
 
 def test_a_failure_inside_the_intake_is_not_reported_back_into_it(

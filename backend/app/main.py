@@ -574,6 +574,10 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
 
     rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
     bind_context(req=rid)
+    # 也在 scope 上留一份：报错上报那一层在这个中间件**外面**，轮到它时这里的
+    # `clear_context("req")` 已经跑过了，contextvar 读不到；scope 上的 state 活得比
+    # 那次清理久（下面读 `auth_user_id` 用的是同一条路）。
+    request.state.request_id = rid
     t0 = time.perf_counter()
     # **探针不算**。`/health`、`/metrics`、`/readyz`、`/healthz` 是基础设施在按固定
     # 间隔敲的门，不是用户流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正
@@ -744,7 +748,10 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
                 exc,
                 method=request.method,
                 path=request.url.path,
-                request_id=request.headers.get("x-request-id"),
+                # 这个请求自己在 `request_context` 里认下的 id（那层把它放在 scope
+                # 上）。读入站头读到的是没人发过的值：浏览器不带 X-Request-ID，于是
+                # 每一条 5xx 都存成空 id —— 而这张表正是拿来对人的。
+                request_id=request.scope.get("state", {}).get("request_id"),
             )
         raise
 
