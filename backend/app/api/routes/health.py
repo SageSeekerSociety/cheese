@@ -10,6 +10,7 @@ from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import text
 
 from app.api.routes.admin_common import PlatformAdminDep
+from app.core import alerting
 from app.core.config import settings
 from app.core.db import PROBE_TIMEOUT_S
 
@@ -205,8 +206,6 @@ def _check_alerting() -> dict[str, Any]:
     the webhook is unset, and neither this report nor the boot path said so, so
     the whole channel could be off while every page read healthy.
     """
-    from app.core import alerting
-
     if alerting.configured():
         return {"status": "up"}
     if settings.environment != "production":
