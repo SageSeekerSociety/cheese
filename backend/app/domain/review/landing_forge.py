@@ -96,7 +96,7 @@ class GitHubLandingReads:
                 },
             )
         if resp.status_code in (403, 404):
-            raise ForgeUnavailable(f"HTTP {resp.status_code} on {path}")
+            raise ForgeUnavailable
         resp.raise_for_status()
         return resp.json()
 
@@ -130,7 +130,7 @@ class GitHubLandingReads:
 
     async def deployment(self, sha: str, since: datetime) -> Deployment | None:
         if "deployments" not in await self._tokens.granted_permissions():
-            raise ForgeUnavailable("the App was not granted deployments")
+            raise ForgeUnavailable
         recent = await self._get("/deployments", {"per_page": 30})
         later = [
             d
@@ -196,4 +196,4 @@ class ForgejoLandingReads:
         return parents[0].get("sha") if parents else None
 
     async def deployment(self, sha: str, since: datetime) -> Deployment | None:
-        raise ForgeUnavailable("Forgejo records no deployments")
+        raise ForgeUnavailable
