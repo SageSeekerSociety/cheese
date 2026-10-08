@@ -12,13 +12,13 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
+from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import stub_compute
 from tests.integration.conftest import registered
 from tests.support.hang import HANG_S
-from tests.support.run_records import records_of
 from tests.support.threads import thread_in
 
 
@@ -75,9 +75,18 @@ async def test_the_supplied_runner_observes_durable_output_and_completed_work(
         row = await independent.get(AgentTurn, work)
         assert row is not None and row.delivered_at is not None
         assert row.stopped_at is None and not row.resendable
-        assert any(
-            record.turn_id == work for record in await records_of(independent, topic)
-        )
+        (output,) = [
+            block
+            for block in await BlockRepository(independent).list_for_topic(topic)
+            if block.turn_id == work
+        ]
+        assert output.conversation_id == topic
+        assert output.meta is not None
+        assert output.meta["eid"] == "own-output"
+        if tool:
+            assert output.meta["tool"] == "Bash"
+        else:
+            assert output.content == "A session working on its own"
 
     await _consume(chat, project, topic, work, AgentResult(text="", session_id=None))
     # No finish_turn helper, coroutine finally or sweep completes this afterward.
@@ -169,7 +178,7 @@ async def test_open_and_publish_are_awaited_before_output_and_close_notification
         assert runner.recent_work() == []
         async with factory() as independent:
             assert await independent.get(AgentTurn, work) is None
-            assert await records_of(independent, topic) == []
+            assert await BlockRepository(independent).list_for_topic(topic) == []
         allow_open.set()
         await asyncio.wait_for(publishing.wait(), HANG_S)
         assert not consuming.done()
@@ -177,10 +186,15 @@ async def test_open_and_publish_are_awaited_before_output_and_close_notification
         assert runner.recent_work()[0]["tools"] == 0
         async with factory() as independent:
             assert (await independent.get(AgentTurn, work)).delivered_at is not None
-            assert any(
-                record.turn_id == work
-                for record in await records_of(independent, topic)
-            )
+            (output,) = [
+                block
+                for block in await BlockRepository(independent).list_for_topic(topic)
+                if block.turn_id == work
+            ]
+            assert output.conversation_id == topic
+            assert output.meta is not None
+            assert output.meta["eid"] == "awaited-tool"
+            assert output.meta["tool"] == "Bash"
         allow_publish.set()
         await asyncio.wait_for(consuming, HANG_S)
         assert runner.recent_work()[0]["tools"] == 1

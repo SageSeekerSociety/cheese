@@ -193,6 +193,8 @@ _CHILD = textwrap.dedent(
     from sqlalchemy.pool import NullPool
     from app.domain.agent.chat import ChatService
     from app.domain.agent.compute import ComputePool
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from tests.conftest import StubChannel
 
     DSN, TOPIC, MARKER, WS, SID = sys.argv[1:6]
@@ -208,6 +210,7 @@ _CHILD = textwrap.dedent(
         factory = async_sessionmaker(engine, expire_on_commit=False)
         screen = A()
         chat = ChatService(
+            work_runner=AgentWorkRunner(InProcessBroker()),
             session_factory=factory,
             base_system_prompt="你是芝士。",
             workspace_root=WS,

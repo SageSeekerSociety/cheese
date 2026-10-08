@@ -821,9 +821,13 @@ async def test_two_requests_that_both_saw_the_seat_free_never_overlap(
     同一间房里另一个席位的轮次照常并行，由
     `test_other_teammate_message_runs_beside_the_live_turn` 盖。
     """
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
+
     factory = business_db_factory
     screen = SlowScreen()
     svc = RacingSeat(
+        work_runner=AgentWorkRunner(InProcessBroker()),
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
@@ -850,9 +854,13 @@ async def test_the_guard_bites_when_the_seat_lock_is_taken_away(
     business_db_factory, tmp_path
 ):
     """把锁拿走，上面那条断言就该红 —— 证明它不是空转。"""
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
+
     factory = business_db_factory
     screen = SlowScreen()
     svc = SeatLockRemoved(
+        work_runner=AgentWorkRunner(InProcessBroker()),
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
