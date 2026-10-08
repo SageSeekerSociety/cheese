@@ -460,7 +460,6 @@ defineExpose({ send, linkDown, submitQuestion })
           @edit-send="editSend"
           @toggle-picker="togglePicker"
           @open-file="(path) => emit('open-file', path)"
-          @open-topic="emit('open-topic', $event)"
           @open-card="emit('open-card', $event)"
           @open-resource="
             (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)

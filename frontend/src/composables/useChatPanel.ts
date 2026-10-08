@@ -30,12 +30,14 @@ import { useChatRowActions } from '../components/chat/composables/useChatRowActi
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
 import { useActivityLines } from '../components/room/composables/useActivityLines'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
+import { useErrorFade } from '../components/room/composables/useErrorFade'
 import { useHistoryReads } from '../components/room/composables/useHistoryReads'
 import { useLiveSteps } from '../components/room/composables/useLiveSteps'
 import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
 import { useRoomActivity } from '../components/room/composables/useRoomActivity'
 import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
+import { useRoomTail } from '../components/room/composables/useRoomTail'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useRowBatch } from '../components/room/composables/useRowBatch'
 import { runRecordOf, threadStatusOf, useRunRecords } from '../components/room/composables/useRunRecords'
@@ -54,6 +56,7 @@ import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/top
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
 
+import { ANNOUNCED } from './chatPanelContract'
 import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
@@ -128,6 +131,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
   const timeline = useTimeline({ renders: rendersInRoom })
   const history = useHistoryReads({ roomId: () => place()?.id, disposed: () => disposed })
+  const tail = useRoomTail({
+    roomId: () => place()?.id,
+    reading: () => history.reading(),
+    catchUp: (roomId) => void resync.catchUp(roomId),
+  })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
 
@@ -208,17 +216,22 @@ export function useChatPanel(opts: ChatPanelOptions) {
       handleFrame(frame)
       noteFrame()
     },
-    onOpen: (reconnect) => {
-      // State frames are transient, so a re-connect rather than the first open:
-      // a doc saved while we were away has no remaining turn left to replay it.
-      if (reconnect) emit('state-changed', 'doc')
+    onOpen: (reconnect, newest) => {
+      // State frames are transient: what the room announced while we were away is
+      // gone, so a re-connect (not the first open) treats each as changed once.
+      if (reconnect) {
+        for (const resource of ANNOUNCED) emit('state-changed', resource)
+        emit('state-changed', 'topics', topic()?.id)
+        void reloadRoomTasks()
+      }
+      tail.subscribed(newest)
       // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
       sendOnSocket({ type: 'sync' })
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
       const current = place()
-      if (current?.id === topicId) void (history.entered(topicId) ? resync(topicId) : loadTopic(current))
+      if (current?.id === topicId) void (history.entered(topicId) ? resync.resync(topicId) : loadTopic(current))
     },
     errorMsg,
   })
@@ -251,17 +264,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     openSocket(topicId)
   }
 
-  // 出错提示停多久。一次没成的事（表情没加上、下载失败）说一句，够读完就淡出：一直
-  // 挂着的话它盖住输入框上方那块，而说的多半已经过去了。连不上服务器的时候不走——
-  // 那时候这一行说的是房间此刻的状态（连接被拒、正在重连、历史没读出来），它一走，
-  // 房间为什么不动就没人说了。
-  const ERROR_TOAST_MS = 6000
-  let errorTimer: ReturnType<typeof setTimeout> | undefined
-  watch([errorMsg, connected, connectRefused], ([message, online, refused]) => {
-    clearTimeout(errorTimer)
-    if (message && online && !refused) errorTimer = setTimeout(() => (errorMsg.value = null), ERROR_TOAST_MS)
-  })
-  onBeforeUnmount(() => clearTimeout(errorTimer))
+  useErrorFade(errorMsg, connected, connectRefused)
 
   // 点了「编辑」的那几条：它们离开时先收拢自己的高度，原文回到输入框。别的离开（送达
   // 后换成落库的那一条）必须是瞬间的，否则同一句话会在屏幕上出现两遍。
@@ -272,6 +275,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // a block must never show up twice (现场不能错).
   function pushBlock(b: Block) {
     history.note(b.id, b)
+    tail.hold(b.id)
     const landing = timeline.append(b)
     if (landing === 'known' || landing === 'above' || history.reading() || b.author === AUTHOR) return
     if (b.kind === 'artifact') emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
@@ -321,6 +325,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // 已经在时间线上的一行变了：原地换掉，不追加第二行。
         timeline.replace(frame.block)
         history.note(frame.block.id, frame.block)
+        tail.hold(frame.block.id)
         toSite(frame.block)
         break
       }
@@ -419,6 +424,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     editing.clear()
     composer.editingId.value = null
     unseen.value = []
+    tail.reset()
     composer.clearPendingAtts() // pending images belong to the topic they were typed in
     closeSocket()
     paging.loadingOlder.value = false
@@ -470,6 +476,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       const payload = await listBlocks(room.id, { limit: PAGE_SIZE })
       // Only apply if still the active topic (avoid race on fast switching).
       if (!stillHere()) return
+      for (const block of payload.data) tail.hold(block.id)
       // Blocks that landed while we were away append at the tail; if the user
       // was parked at the bottom, follow them so the newest message is visible
       // without a manual scroll. Compared on the LAST id, not on length: the
@@ -523,7 +530,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
     } catch (e) {
       if (stillHere()) historyReadFailed(room.id, e)
     } finally {
-      if (end()) loadingHistory.value = false
+      if (end()) {
+        loadingHistory.value = false
+        tail.check()
+      }
     }
   }
 
@@ -669,6 +679,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     timeline,
     runRecords,
     settle: (b: Block) => settleOutbox(b),
+    noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b.id)),
+    readEnded: () => tail.check(),
     scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
     socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
     failed: historyReadFailed,

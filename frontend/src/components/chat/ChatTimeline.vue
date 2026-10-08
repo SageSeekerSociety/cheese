@@ -131,7 +131,6 @@ const emit = defineEmits<{
   (e: 'edit-send', item: Outgoing): void
   (e: 'toggle-picker', blockId: string): void
   (e: 'open-file', path: string): void
-  (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
@@ -499,7 +498,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :data-row-id="m.id"
             @animationend="settleRow"
             @open-file="emitOpenFile"
-            @open-topic="emit('open-topic', $event)"
             @open-card="emit('open-card', $event)"
             @react="emitReact"
             @ask-reply="emitAskReply"

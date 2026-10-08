@@ -15,7 +15,7 @@ import TeamsRoutes from './teams'
 import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
-import { canonicalAddress, routeIds } from '@/lib/addresses'
+import { canonicalAddress, isUuid, routeIds } from '@/lib/addresses'
 import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { refreshPreviewPointer } from '@/lib/previewPointer'
@@ -173,13 +173,19 @@ router.beforeEach((to) => {
   const topicId = routeIds(to.params).topicId
   if (!topicId) return
   if (!cachedWindow(topicId)) void refreshBlockCache(topicId)
-  // 「这个房间当前预览是哪一份」也同时去问。它和消息一样不依赖话题页的代码：等那
-  // 一串 chunk 下完、话题数据回来，面板才挂得上，而它一挂上就要这份答案。这里先让
-  // 它出发，面板到手时通常已经在缓存里了（见 lib/previewPointer.ts）。失败没有人
-  // 看得见——它是顺手做的事。
-  refreshPreviewPointer(topicId).catch(() => {})
   // 房间里会点开文档预览：趁浏览器空闲把 pdf.js 先取下来（只取一次）。
   preloadPdfViewer()
+})
+
+// 「这件任务当前预览是哪一份」也和页面代码同时去问。它和消息一样不依赖任务页的代码：
+// 等那一串 chunk 下完、任务数据回来，面板才挂得上，而它一挂上就要这份答案。这里先让
+// 它出发，面板到手时通常已经在缓存里了（见 lib/previewPointer.ts）。失败没有人看得见
+// ——它是顺手做的事。只问任务：频道没有「预览」那一格。地址上还是编号、认不出是哪
+// 一件的，交给面板挂上来之后自己问。
+router.beforeEach((to) => {
+  if (to.name !== 'workspace-task' || !myId()) return
+  const taskId = routeIds(to.params).taskId
+  if (taskId && isUuid(taskId)) refreshPreviewPointer(taskId).catch(() => {})
 })
 
 // A lazily imported view is fetched at navigation time, so a release that

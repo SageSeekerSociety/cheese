@@ -5,7 +5,11 @@
 //
 // - 一次读还没回来，谁再要都等这一次，不另发一次；
 // - 不急的那一位可以说「多旧以内的我都收」（`maxAgeMs`）：别处刚读过，它就直接拿那
-//   一份。
+//   一份；
+// - 知道刚变过的那一位（`fresh`）不等还没回来的那一次：那一次在变之前就发出去了，带
+//   回来的是变之前的样子。它另发一次，之后再要的都等这新的一次。同一次改动常常连着
+//   说几遍（任务和它的频道各收到一帧）：刚发出去不到 `FRESH_JOIN_MS` 的那一次就是为
+//   它发的，跟着它走。
 //
 // 失败的那一次不留：下一位要的时候重新读，不把一次网络抖动当成答案发下去。
 //
@@ -23,15 +27,19 @@ interface Read {
 }
 
 const latest = new Map<string, Read>()
+const FRESH_JOIN_MS = 100
 
 export function readProjectTasks(
   projectId: string,
-  opts: { maxAgeMs?: number; open?: boolean } = {}
+  opts: { maxAgeMs?: number; open?: boolean; fresh?: boolean } = {}
 ): Promise<ListPayload<RoomTask>> {
   const key = opts.open ? `${projectId}:open` : projectId
   const held = latest.get(key)
   const now = Date.now()
-  if (held && (held.pending || (opts.maxAgeMs !== undefined && now - held.at < opts.maxAgeMs))) {
+  const joinable = opts.fresh
+    ? held?.pending && now - held.at < FRESH_JOIN_MS
+    : held && (held.pending || (opts.maxAgeMs !== undefined && now - held.at < opts.maxAgeMs))
+  if (held && joinable) {
     return held.promise
   }
   const promise = listProjectTasks(projectId, { open: opts.open }).then((page) => {

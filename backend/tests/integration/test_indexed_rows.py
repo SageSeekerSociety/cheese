@@ -47,7 +47,6 @@ INDEXES = {
     "ix_blocks_last_said",
     "ix_blocks_unanswered",
     "ix_blocks_agent_checks",
-    "ix_blocks_upgraded_to_topic_id",
 }
 
 

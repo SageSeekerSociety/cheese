@@ -193,7 +193,6 @@ export interface Block {
   meta?: BlockMeta | null
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
-  upgraded_to_topic_id?: string | null
   created_at: string
 }
 

@@ -31,13 +31,11 @@ class BlockOut(BaseModel):
     author_type: AuthorType
     author: str
     content: str
-    # reply_to = 对话树, refs[] = 引用(决策/PR/现场); upgraded_to_topic_id makes an
-    # upgraded block a live link.
+    # reply_to = 对话树, refs[] = 引用(决策/PR/现场).
     reply_to: uuid.UUID | None
     # Render-by-type: mimeType of an artifact block (set on artifact blocks).
     mime_type: str | None = None
     refs: list[str] = []
-    upgraded_to_topic_id: uuid.UUID | None = None
     # The agent turn that produced this block (R4): groups a turn's blocks.
     turn_id: uuid.UUID | None = None
     # Structured event payload (kind=event): {"tool", "arg", "platform"} — the

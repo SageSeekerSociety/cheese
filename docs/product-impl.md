@@ -38,7 +38,6 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 |---|---|---|
 | `reply_to` | 对话树 | 群聊回复线程 |
 | `refs[]` | 引用 | 决策/结论指回来源（如 `return_conclusion` 写 `refs=[sub_id]`） |
-| `upgraded_to_topic_id` | 活引用 | 升级过的块指向其新话题 |
 | `kind` | 块类型 | `message`/`decision`/`event`/`attachment`/`artifact`/`weekly` 等（文档上的评论在 `document_comments`，不是块） |
 | `author_type` | 作者 | `participant`（人和 agent 都是参与者）/ `platform`（平台自己）。「是人还是芝士」看 `author` 这条 handle |
 
