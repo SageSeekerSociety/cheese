@@ -14,10 +14,7 @@ code + copy contract 同一条规矩：文案在外，判断在内，中间传�
 """
 
 import enum
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from app.domain.review.models import AcceptCard
+from typing import Protocol
 
 #: `note` 列的上限。截断在写入口做一次，调用方不必自己切。
 NOTE_MAX = 2000
@@ -117,13 +114,25 @@ def note_level(code: NoteCode | None, note: str) -> NoteLevel | None:
     return NoteLevel.info
 
 
-def record(card: "AcceptCard", code: NoteCode | None, text: str) -> None:
+class NotedCard(Protocol):
+    """写入口真正会碰的那两列。
+
+    这里不具名 `AcceptCard`：`review.models` 反过来要这一片的 `NoteCode`，两边互相
+    import 就是一个环（`.importlinter` 的 C3）。写入口要的从来只是「一张有 note 和
+    note_code 的卡」，那就只声明这两列；模型天然满足，环也就没了。
+    """
+
+    note: str
+    note_code: NoteCode | None
+
+
+def record(card: NotedCard, code: NoteCode | None, text: str) -> None:
     """卡进入一个新状态：文案和码一起落。"""
     card.note = text[:NOTE_MAX]
     card.note_code = code
 
 
-def annotate(card: "AcceptCard", text: str) -> None:
+def annotate(card: NotedCard, text: str) -> None:
     """在现有 note 前面加一句，**不动码**。
 
     给的是补充说明（这次采纳为什么没走 PR、平台自己就是 forge），不是新状态。卡还
@@ -134,7 +143,7 @@ def annotate(card: "AcceptCard", text: str) -> None:
     card.note = (f"{text}；{old}" if old else text)[:NOTE_MAX]
 
 
-def clear(card: "AcceptCard") -> None:
+def clear(card: NotedCard) -> None:
     """这张卡上没有要说的了。"""
     card.note = ""
     card.note_code = None
