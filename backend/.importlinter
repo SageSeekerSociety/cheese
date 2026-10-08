@@ -115,7 +115,6 @@ ignore_imports =
     app.core.errors -> app.domain.agent.device_hub
     app.domain.agent.chat -> app.api.deps
     app.domain.platform_stats.services -> app.api.routes.health
-    app.domain.project.export -> app.api.auth
     app.domain.review.pr_poll -> app.api.deps
 
 [importlinter:contract:routes-touch-no-models]
@@ -347,7 +346,6 @@ ignore_imports =
     app.domain.review.forge -> app.domain.review.services
     app.domain.review.gate_sweep -> app.domain.agent.platform_notices
     app.domain.review.github_pr -> app.domain.agent.github_app
-    app.domain.review.notes -> app.domain.review.models
     app.domain.review.nudges -> app.domain.agent.platform_notices
     app.domain.review.pr_poll -> app.domain.agent.announce
     app.domain.review.pr_poll -> app.domain.agent.chat
