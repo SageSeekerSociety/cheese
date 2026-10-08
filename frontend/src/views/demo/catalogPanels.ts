@@ -25,6 +25,7 @@ import {
   docBundle,
   docPeopleBundle,
   docThreadsBundle,
+  FILE_DIFFS,
   fileTreeRows,
   loadBuildTail,
   loadLsOutput,
@@ -41,11 +42,14 @@ import {
   siteBundle,
   THREAD_ROWS,
   threadTime,
+  WORKSPACE_FILES,
 } from './catalogPanelsFixtures'
 import { DEMO_PROJECT, DEMO_TOPIC } from './demoPanels'
 
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
+import ChangesDiffList from '@/components/panels/ChangesDiffList.vue'
 import ChangesFileTree from '@/components/panels/ChangesFileTree.vue'
+import ChangesOpenFile from '@/components/panels/ChangesOpenFile.vue'
 import PanelChanges from '@/components/panels/PanelChanges.vue'
 import PanelDoc from '@/components/panels/PanelDoc.vue'
 import PanelPreview from '@/components/panels/PanelPreview.vue'
@@ -59,6 +63,45 @@ import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 const UI: CatalogNeed[] = ['vuetify']
 
 export const PANEL_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'changes-diff-list',
+    title: 'ChangesDiffList',
+    about: '「改动」默认那一面：这次改到的每个文件一段，差异连着往下排，段头写路径和增删，可以单独收起或打开。',
+    file: 'src/components/panels/ChangesDiffList.vue',
+    component: ChangesDiffList,
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '三个文件',
+        note: '新增、改过、删掉的各一份；git 的头信息不画，@@ 换成行号区间。删掉的文件没有「打开」。',
+        props: { diffs: FILE_DIFFS },
+        expect: '这个项目放本课程的课件和作业。',
+      },
+      {
+        name: '什么都没改',
+        note: '空的时候说「暂无改动」。',
+        props: { diffs: [] },
+        expect: '暂无改动',
+      },
+    ],
+  },
+  {
+    id: 'changes-open-file',
+    title: 'ChangesOpenFile',
+    about: '「打开其他文件」：在这个任务的版本里按名字找一份文件打开，树上只列改到的那些。',
+    file: 'src/components/panels/ChangesOpenFile.vue',
+    component: ChangesOpenFile,
+    needs: ['vuetify', 'i18n'],
+    teleport: true,
+    states: [
+      {
+        name: '刚打开',
+        note: '没输入时按路径列出来，最多五十个；输入几段字，每段都要出现在路径里，文件名里就有的排前面。',
+        props: { modelValue: true, files: WORKSPACE_FILES },
+        expect: 'syllabus.md',
+      },
+    ],
+  },
   {
     id: 'changes-diff',
     title: 'ChangesDiff',
@@ -101,8 +144,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     component: ChangesFileTree,
     needs: UI,
     args: {
-      showAll: false,
-      expandedDirs: new Set<string>(),
+      collapsedDirs: new Set<string>(),
       activePath: null,
       revealTick: 0,
       cover: false,
@@ -110,28 +152,16 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     },
     states: [
       {
-        name: '只看改动',
-        note: '一份清单，文件夹一律摊开：新增、删除写成字，改过的给 +N −M；打开着的那一份高亮。',
-        props: { rows: fileTreeRows(false), activePath: 'README.md' },
+        name: '这一支改到的文件',
+        note: '一份清单，文件夹默认摊开：新增、删除写成字，改过的给 +N −M；打开着的那一份高亮。',
+        props: { rows: fileTreeRows(), activePath: 'README.md' },
         expect: '新增',
       },
       {
-        name: '全部文件，文件夹收着',
-        note: '看整个工作区：这一支没碰过的文件也在（syllabus.md、slides），文件夹默认收着，只露出第一层；要哪个开哪个。',
-        props: { rows: fileTreeRows(true), showAll: true, emptyLabel: '暂无文件' },
-        expect: 'syllabus.md',
+        name: '收起一个文件夹',
+        note: '文件多的时候可以把读完的文件夹收起来，它的子树不再占行。',
+        props: { rows: fileTreeRows(['docs']), collapsedDirs: new Set(['docs']) },
         expectSelector: '.file-item--dir[title="docs"] .mdi-folder-outline',
-      },
-      {
-        name: '全部文件，展开一个文件夹',
-        note: '展开的文件夹贡献它的子树，下一层缩进一格：改过的、删掉的、没碰过的（week-2.md）排在一起，只有前两样带标记。',
-        props: {
-          rows: fileTreeRows(true, ['docs']),
-          showAll: true,
-          expandedDirs: new Set(['docs']),
-          emptyLabel: '暂无文件',
-        },
-        expect: 'week-2.md',
       },
       {
         name: '什么都没改',
@@ -158,13 +188,13 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '这一轮什么都没改',
-        note: '包里的树和提交记录都是空的：树上写「暂无改动」，右边写「暂无提交」。',
+        note: '包里的树和差异都是空的：两边都写「暂无改动」。',
         props: { changes: changesBundle(NOTHING_CHANGED) },
-        expect: '暂无提交',
+        expect: '暂无改动',
       },
       {
         name: '没绑仓库',
-        note: '取数那一层说这个项目没有代码仓库：一句话说清，不画一棵空树；树、提交、打开的文件都是空的，横条上文件那半也不摆。',
+        note: '取数那一层说这个项目没有代码仓库：一句话说清，不画一棵空树；树和打开的文件都是空的，横条上文件那半也不摆。',
         props: { changes: changesBundle(NO_REPO) },
         expect: '暂无代码仓库',
       },

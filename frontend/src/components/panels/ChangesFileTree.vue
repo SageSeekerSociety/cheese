@@ -12,15 +12,14 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   rows: FileRow[]
-  /** 全部文件时文件夹默认收着；只看改动时那份清单一律摊开。 */
-  showAll: boolean
-  expandedDirs: Set<string>
+  /** 收起的文件夹；其余一律摊开。 */
+  collapsedDirs: Set<string>
   activePath: string | null
   /** 外面点了一枚 <&path> 芯片：把这一行滚进视野（每一跳都加一）。 */
   revealTick: number
   /** 手机上列表盖满这一格。 */
   cover: boolean
-  /** 空的时候说哪句话：看改动时说「暂无改动」，看全部文件时说「暂无文件」。 */
+  /** 空的时候说哪句话。 */
   emptyLabel: string
   /** 并排时这一列的宽度（px），由外面那条分隔线拖出来。盖满的时候不用它。 */
   width?: number
@@ -64,10 +63,10 @@ watch(
         @click="emit('toggle-dir', row.path)"
       >
         <v-icon size="13" class="c-muted">
-          {{ !props.showAll || props.expandedDirs.has(row.path) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+          {{ props.collapsedDirs.has(row.path) ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
         </v-icon>
         <v-icon size="13" class="me-1 c-muted">
-          {{ !props.showAll || props.expandedDirs.has(row.path) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}
+          {{ props.collapsedDirs.has(row.path) ? 'mdi-folder-outline' : 'mdi-folder-open-outline' }}
         </v-icon>
         <span class="file-item__name">{{ row.name }}</span>
       </button>

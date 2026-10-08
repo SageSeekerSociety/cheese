@@ -6,20 +6,22 @@
 // 「改动」里读整块 diff 找出改了哪些文件，再切到「文件」里一个个翻出来看——两边
 // 都不是一个能验收的面。
 //
-// 合成之后只有一棵树：树上标着每个文件改了多少，点开看的是这个文件自己的 diff，
-// 要微调就切到编辑（保存冲突的两条出路原样保留）。分段开关没了。
+// 合成之后只有一棵树，标着每个文件改了多少。默认那一面把所有改动连着往下排（顶部是
+// 宿主塞进来的这次交付的情况，`head` 插槽），点树上的文件就滚到它那一段；要看全文或
+// 微调就点段头的「打开」，那一份单独开在这一格里（保存冲突的两条出路原样保留）。
+// 不在改动里的文件从「打开其他文件」挑。
 //
 // **只认 props**：改过的文件、diff、当前打开哪一份、它读回来的正文，都是从外面
 // 递进来的；点一份文件、按保存、切版本发事件出去。取数在
 // `composables/usePanelChanges.ts`，`PanelChanges.vue` 那只薄容器把它接上——
 // 于是这一格在测试和 /demo 里都只需要一串 props。
 import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevisions'
-import type { FileSource, GitCommit, RoomTask, WorkspaceFile } from '../../cx_types'
+import type { FileSource, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { DiffLine, FileDiff } from '../../lib/diff'
 import type { FileKind } from '../../lib/fileKind'
 import type { MenuAction } from '../common/menuAction'
 
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { buildFileRows, fmtBytes } from '../../lib/changesTree'
@@ -30,7 +32,9 @@ import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
 import RevisionList from './preview/RevisionList.vue'
 import ChangesDiff from './ChangesDiff.vue'
+import ChangesDiffList from './ChangesDiffList.vue'
 import ChangesFileTree from './ChangesFileTree.vue'
+import ChangesOpenFile from './ChangesOpenFile.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -45,8 +49,6 @@ const props = defineProps<{
   /** 这件任务的状态；结束了的任务还要说一句只读。 */
   sourceStatus: string
   sourceUnavailable: boolean
-  /** 树的范围：只看这一支改过的，还是整个工作区。 */
-  showAll: boolean
   fileSource: FileSource
   fileToolReady: boolean
   loading: boolean
@@ -54,11 +56,12 @@ const props = defineProps<{
   errorMsg: string | null
   noRepo: boolean
   missing: string | null
-  gitCommits: GitCommit[]
   fileDiffs: FileDiff[]
   diffByPath: Map<string, FileDiff>
-  /** 这一格该列哪些文件（只列改动 / 全部文件都算好了才递进来）。 */
+  /** 树上列的文件：这一支改到的那些。 */
   treeFiles: WorkspaceFile[]
+  /** 「打开其他文件」从这里挑：这个来源里的全部文件。 */
+  allFiles: WorkspaceFile[]
   openPath: string | null
   fileDraft: string
   fileSaving: boolean
@@ -79,7 +82,7 @@ const props = defineProps<{
   /** 修订只长在 .docx 上，别的时候这里给的是 null。 */
   revisionPath: string | null
   openRawUrl: string
-  expandedDirs: Set<string>
+  collapsedDirs: Set<string>
   revealTick: number
   draftCount: number
   docBytes: ArrayBuffer | null
@@ -92,6 +95,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'select-file', path: string): void
+  /** 回到全部改动那一面。 */
+  (e: 'close-file'): void
   (e: 'select-version', source: FileSource): void
   (e: 'toggle-dir', path: string): void
   (e: 'refresh'): void
@@ -99,7 +104,6 @@ const emit = defineEmits<{
   (e: 'save'): void
   (e: 'overwrite'): void
   (e: 'reload'): void
-  (e: 'scope-changed', showAll: boolean): void
   (e: 'view-changed', view: 'diff' | 'edit'): void
   (e: 'draft-changed', content: string): void
 }>()
@@ -117,11 +121,8 @@ const moreActions = computed<MenuAction[]>(() => {
     icon,
     onSelect,
   })
-  const list = [
-    item('scope-changed', t('work.room.changes.scopeChanged'), pick(!props.showAll), () =>
-      emit('scope-changed', false)
-    ),
-    item('scope-all', t('work.room.changes.scopeAll'), pick(props.showAll), () => emit('scope-changed', true)),
+  const list: MenuAction[] = [
+    item('open-other', t('work.room.changes.openOther'), 'mdi-file-search-outline', () => (pickerOpen.value = true)),
   ]
   if (props.currentTask?.status === 'open') {
     const live = props.fileSource === 'live'
@@ -186,18 +187,47 @@ function startTreeDrag(e: MouseEvent) {
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
 }
-function pickFile(path: string) {
+// 树上点一个改过的文件：回到全部改动那一面，滚到它那一段。
+const diffList = ref<InstanceType<typeof ChangesDiffList> | null>(null)
+async function pickFile(path: string) {
   if (!mdAndUp.value) fileListOpen.value = false
+  if (!props.diffByPath.has(path)) {
+    emit('select-file', path)
+    return
+  }
+  if (props.openPath) emit('close-file')
+  await nextTick()
+  diffList.value?.scrollTo(path)
+}
+
+const pickerOpen = ref(false)
+function openOther(path: string) {
+  pickerOpen.value = false
   emit('select-file', path)
 }
+
+// 全部改动那一面按树上的顺序排（文件夹在前、按名字），和左边那一列从上往下对得上；
+// git 吐出来的顺序和树不一样，读的人会以为漏了文件。
+const listDiffs = computed(() =>
+  buildFileRows({ files: props.treeFiles, diffByPath: props.diffByPath, collapsedDirs: new Set() })
+    .map((row) => (row.type === 'file' ? props.diffByPath.get(row.path) : undefined))
+    .filter((d): d is FileDiff => !!d)
+)
+
+// 全部改动那一面的横条上说一共改了多少。
+const totals = computed(() =>
+  props.fileDiffs.reduce((acc, d) => ({ added: acc.added + d.added, removed: acc.removed + d.removed }), {
+    added: 0,
+    removed: 0,
+  })
+)
 
 // 树上那些行：折成文件夹再摊平这件事在 lib/changesTree.ts（纯函数）。
 const fileRows = computed(() =>
   buildFileRows({
     files: props.treeFiles,
     diffByPath: props.diffByPath,
-    showAll: props.showAll,
-    expandedDirs: props.expandedDirs,
+    collapsedDirs: props.collapsedDirs,
   })
 )
 </script>
@@ -219,10 +249,30 @@ const fileRows = computed(() =>
           :title="t('work.room.changes.fileList')"
           @click="fileListOpen = !fileListOpen"
         />
-        <span class="changes-bar__path" :title="props.openPath || ''">
-          {{ (mdAndUp ? props.openPath : props.openPath?.split('/').pop()) || t('work.room.changes.noFileOpen') }}
+        <template v-if="props.openPath">
+          <BaseButton
+            kind="ghost"
+            icon="mdi-arrow-left"
+            size="sm"
+            :class="{ 'tap-target': !mdAndUp }"
+            :title="t('work.room.changes.backToAll')"
+            :aria-label="t('work.room.changes.backToAll')"
+            @click="emit('close-file')"
+          />
+          <span class="changes-bar__path" :title="props.openPath">
+            {{ mdAndUp ? props.openPath : props.openPath.split('/').pop() }}
+          </span>
+          <span v-if="props.fileDirty" class="changes-bar__dot" :title="t('work.room.changes.unsaved')" />
+        </template>
+        <span v-else class="changes-bar__summary">
+          {{
+            t('work.room.changes.summary', {
+              count: props.fileDiffs.length,
+              added: totals.added,
+              removed: totals.removed,
+            })
+          }}
         </span>
-        <span v-if="props.fileDirty" class="changes-bar__dot" :title="t('work.room.changes.unsaved')" />
       </template>
       <v-spacer v-if="mdAndUp || !props.fileToolReady" />
       <template v-if="props.fileToolReady">
@@ -262,6 +312,15 @@ const fileRows = computed(() =>
         >
           {{ t('work.room.changes.save') }}
         </BaseButton>
+        <BaseButton
+          v-if="mdAndUp && !props.openPath"
+          kind="ghost"
+          size="sm"
+          prepend-icon="mdi-file-search-outline"
+          @click="pickerOpen = true"
+        >
+          {{ t('work.room.changes.openOther') }}
+        </BaseButton>
       </template>
       <template v-if="!mdAndUp">
         <BaseButton
@@ -289,25 +348,8 @@ const fileRows = computed(() =>
           />
         </template>
         <v-list density="compact" :aria-label="t('work.room.changes.options')">
-          <!-- 树的范围。默认只列这个话题改过的文件 —— 验收要看的就是这些；全部文件
-               是为了顺手看一眼旁边那个没动过的文件。 -->
-          <v-list-subheader>{{ t('work.room.changes.scope') }}</v-list-subheader>
-          <v-list-item
-            :title="t('work.room.changes.scopeChanged')"
-            :active="!props.showAll"
-            @click="emit('scope-changed', false)"
-          >
-            <template v-if="props.fileDiffs.length" #append>
-              <span class="menu-count">{{ props.fileDiffs.length }}</span>
-            </template>
-          </v-list-item>
-          <v-list-item
-            :title="t('work.room.changes.scopeAll')"
-            :active="props.showAll"
-            @click="emit('scope-changed', true)"
-          />
           <template v-if="props.currentTask?.status === 'open'">
-            <v-list-subheader>{{ t('work.room.changes.version') }}</v-list-subheader>
+            <v-list-subheader class="pt-0">{{ t('work.room.changes.version') }}</v-list-subheader>
             <v-list-item
               :title="t('work.room.changes.liveFile')"
               :subtitle="t('work.room.changes.liveNote')"
@@ -340,7 +382,10 @@ const fileRows = computed(() =>
       <!-- 转圈，不是骨架：这块地方长出来的是一套工具（150px 文件树 + 右边一格），
          而右边那一格可能是差异、编辑器、一张图，也可能是「只读 / 二进制」提示——
          等的是什么形状，这里并不知道。判据同 PanelPreview。 -->
-      <p v-if="props.noRepo" class="source-note">{{ t('work.room.changes.noRepo') }}</p>
+      <div v-if="props.noRepo" class="changes-scroll">
+        <slot name="head" />
+        <p class="source-note">{{ t('work.room.changes.noRepo') }}</p>
+      </div>
       <div v-else-if="props.loading" class="d-flex justify-center py-8">
         <v-progress-circular indeterminate color="primary" size="28" />
       </div>
@@ -383,13 +428,12 @@ const fileRows = computed(() =>
           <ChangesFileTree
             v-if="fileListOpen"
             :rows="fileRows"
-            :show-all="props.showAll"
-            :expanded-dirs="props.expandedDirs"
+            :collapsed-dirs="props.collapsedDirs"
             :active-path="props.openPath"
             :reveal-tick="props.revealTick"
             :cover="!mdAndUp"
             :width="treeWidth"
-            :empty-label="props.showAll ? t('work.room.changes.noFiles') : t('work.room.changes.noChanges')"
+            :empty-label="t('work.room.changes.noChanges')"
             @select="pickFile"
             @toggle-dir="emit('toggle-dir', $event)"
           />
@@ -463,28 +507,11 @@ const fileRows = computed(() =>
               @update:model-value="emit('draft-changed', $event)"
               @save="emit('save')"
             />
-            <!-- 没打开文件时这一半装的是「这个话题干了什么」——提交本身是过程记录，
-               它配一个位置，但不配一个和文件并列的入口。 -->
+            <!-- 没打开文件时是全部改动那一面：这次交付的情况在最上面（宿主塞进来），下面
+                 每个改到的文件一段，连着往下排，一起滚。 -->
             <div v-else class="changes-scroll">
-              <div class="pa-3">
-                <div class="t-eyebrow mb-2">{{ t('work.room.changes.commits') }}</div>
-                <div v-if="props.gitCommits.length === 0" class="text-medium-emphasis text-body-2">
-                  {{ t('work.room.changes.noCommits') }}
-                </div>
-                <v-list v-else density="compact" class="py-0">
-                  <v-list-item v-for="c in props.gitCommits" :key="c.hash" class="px-0">
-                    <template #prepend>
-                      <v-icon size="14" class="me-1 c-faint">mdi-source-commit</v-icon>
-                    </template>
-                    <v-list-item-title class="text-body-2">
-                      {{ c.message }}
-                    </v-list-item-title>
-                    <v-list-item-subtitle class="text-caption">
-                      {{ c.hash.slice(0, 7) }} · {{ c.author }}
-                    </v-list-item-subtitle>
-                  </v-list-item>
-                </v-list>
-              </div>
+              <slot name="head" />
+              <ChangesDiffList ref="diffList" :diffs="listDiffs" @open="emit('select-file', $event)" />
             </div>
           </div>
         </div>
@@ -493,6 +520,7 @@ const fileRows = computed(() =>
     <p v-if="props.draftCount" class="source-note source-drafts">
       {{ t('work.room.changes.draftsKept') }}
     </p>
+    <ChangesOpenFile v-model="pickerOpen" :files="props.allFiles" @pick="openOther" />
   </div>
 </template>
 
@@ -568,12 +596,6 @@ const fileRows = computed(() =>
   flex: 0 0 auto;
 }
 /* ⋯ 里「改动」那一项后面的计数：改过的文件有几个。 */
-.menu-count {
-  font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
 /* 分段开关 —— 下一张卡合并 Git 与 文件 时整块删掉。
    选中态靠「浮起来的一面」（surface 底 + 1px 描边 + ink 字重）而不是靠两档灰的
    明暗差：--fill 和 --surface 的明暗次序在两个主题之间是反的（浅色 surface #fff
@@ -607,6 +629,15 @@ const fileRows = computed(() =>
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+}
+.changes-bar__summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 树上的变更标记。增删各自用 wash 底 + ink 字：mark 色（--ok / --danger）当文字

@@ -11,6 +11,8 @@ import type { Frame, PanelKey, Scene, SplitLine } from './demoScene'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
+import { provideAcceptCard } from '@/composables/useAcceptCard'
+
 import { answer } from './demoBackend'
 import DemoBackstage from './DemoBackstage.vue'
 import { DEMO_PROJECT, DEMO_TOPIC, demoTaskId, installPanelAnswers } from './demoPanels'
@@ -196,21 +198,17 @@ watch([() => props.frame.overview, () => props.frame.changes, () => props.frame.
 )
 installPanelAnswers(props.frame)
 
-// 验收卡是真的 TopicAcceptCard，它自己去取数：剧本里的卡和检查交给演示后端
-// 回答，卡一变就换一张新的，让它重新取一次（它自己十五秒才刷一回）。
-const cardKey = computed(() => JSON.stringify([props.frame.card, props.frame.checks, props.frame.cardOpen]))
-const cardBox = ref<HTMLElement | null>(null)
-
-// 卡面默认是收着的一行；剧本说要摊开，就替人点一下卡上的展开钮。卡自己去取数，
-// 所以钮要等它取回来才出现 —— 最多等一秒。
-async function openCard(): Promise<void> {
-  for (let i = 0; i < 20 && props.frame.cardOpen; i++) {
-    const toggle = cardBox.value?.querySelector<HTMLElement>('[aria-expanded="false"]')
-    if (toggle) return toggle.click()
-    await new Promise((r) => setTimeout(r, 50))
-  }
-}
-watch(cardKey, () => void nextTick(openCard), { immediate: true })
+// 验收卡是真的：横条（TopicAcceptCard）和「改动」页顶部读同一份卡（和任务页一样由这
+// 一页取、往下发）。剧本里的卡和检查交给演示后端回答，卡一变就让它重新取一次（它自己
+// 十五秒才刷一回）。
+const cardKey = computed(() => JSON.stringify([props.frame.card, props.frame.checks]))
+const accept = provideAcceptCard({
+  topicId: 'demo',
+  topicStatus: 'active',
+  get taskId() {
+    return props.frame.card?.task_id ?? null
+  },
+})
 watch(
   cardKey,
   () => {
@@ -220,6 +218,7 @@ watch(
     const conversation = card?.task_id ?? 'demo'
     answer(`/topics/${conversation}/accept-card`, card ? () => ({ data: [card], total: 1 }) : null)
     answer(`/topics/${conversation}/pr-checks`, () => checks ?? { available: false })
+    void accept.reload()
   },
   { immediate: true }
 )
@@ -323,8 +322,8 @@ function splitTask(split: SplitLine): TaskLine {
             />
           </template>
         </TransitionGroup>
-        <div v-if="frame.card" ref="cardBox" class="demo-card" data-region="card">
-          <TopicAcceptCard :key="cardKey" topic-id="demo" topic-status="active" :task-id="frame.card.task_id" docked />
+        <div v-if="frame.card" class="demo-card" data-region="card">
+          <TopicAcceptCard topic-id="demo" topic-status="active" :task-id="frame.card.task_id" />
         </div>
         <div class="demo-composer">发消息，@ 队友让它干活</div>
       </div>
