@@ -27,5 +27,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The cleared rows are not told apart from other NULL codes; nothing to restore.
+    """The cleared rows are not told apart from other NULL codes; nothing to restore."""
     pass
