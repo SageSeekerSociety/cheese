@@ -3768,13 +3768,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Health check
-         * @description Healthy means every route module mounted, not merely that the process is up.
+         * Liveness check
+         * @description Live means the process is up and answering — nothing more.
          *
-         *     A module that fails to import is skipped in production so one bad file cannot
-         *     take the app down — but the app is then serving 404s for a whole group of
-         *     endpoints, and the only party that finds out is the caller. Reporting it here
-         *     is what turns that into something monitoring can see.
+         *     Whether it should take traffic is `/readyz`'s question, and every gate that
+         *     decides that (the rollout, the container healthcheck) reads `/readyz`. This
+         *     one stays 200 through a dependency outage or an unmounted route module: a
+         *     restart fixes neither, so a liveness probe that failed on them would only
+         *     add a restart loop to the outage.
          */
         get: operations["health_check_healthz_get"];
         put?: never;
@@ -3798,8 +3799,9 @@ export interface paths {
          *
          *     Gated because it names the platform's dependencies and how each one is
          *     failing. The probes monitoring reads stay public (`/healthz`, `/readyz`,
-         *     `/health`), and `/readyz` still carries this payload in its 503 body while
-         *     something required is down — an outage stays diagnosable with no session.
+         *     `/health`); while something required is down, `/readyz`'s 503 names which
+         *     checks failed and each one's status, so an outage stays diagnosable with no
+         *     session — the error text itself is only here.
          */
         get: operations["detailed_health_check_health_detailed_get"];
         put?: never;
@@ -3850,6 +3852,13 @@ export interface paths {
          *     shows up in `/health/detailed` — that is where a human or an alert looks —
          *     but taking the process out of rotation over it would trade one degraded
          *     feature for a total outage.
+         *
+         *     The 503 is a plain JSON response, not an `HTTPException`: the app's error
+         *     envelope would replace the body with a generic "HTTP error". The body names
+         *     which required checks failed and each check's status, plus the modules that
+         *     did not mount — enough for a rollout log to say why. The error text of a
+         *     failing dependency stays behind `/health/detailed`: this route is public,
+         *     and that text can carry internal hosts and users.
          */
         get: operations["readiness_check_readyz_get"];
         put?: never;
@@ -23315,9 +23324,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": unknown;
                 };
             };
         };
