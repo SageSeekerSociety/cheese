@@ -471,7 +471,6 @@
       "upgrade": "Turn into a task",
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
-      "upgradedToTopic": "Moved to a channel",
       "showMore": "Show more",
       "showLess": "Show less",
       "wrapCode": "Wrap lines",

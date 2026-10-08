@@ -1,0 +1,41 @@
+# Weekly dependency updates, for the packages that ship.
+#
+# Companion to .github/workflows/dependency-audit.yml: that lane says a
+# dependency has an advisory against it, this one proposes the version that
+# fixes it. Without this half the audit's findings accumulate with nobody
+# owning the bump — which is the state both were added to end.
+#
+# Production dependencies only. A devDependency bump reaches no shipped build,
+# and mixing the two is how a weekly PR queue becomes noise nobody reads.
+# Times are UTC; nothing here is timezone-sensitive.
+version: 2
+updates:
+  # The SPA that ships in the frontend image.
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    allow:
+      - dependency-type: production
+    open-pull-requests-limit: 5
+    # This repo's commit titles are Conventional Commits, checked on every
+    # merge (required-ci.yml -> .github/scripts/check-commit-title.py). Left at
+    # its default, Dependabot writes "Bump x from 1 to 2", which fails that
+    # check on a PR nobody can merge.
+    commit-message:
+      prefix: "chore(deps)"
+
+  # The service that ships in the backend image (backend/Dockerfile).
+  - package-ecosystem: uv
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    allow:
+      - dependency-type: production
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"

@@ -31,6 +31,10 @@ import { resyncTail } from '../lib/tailResync'
  * 断线重连：屏幕上正是这间房，什么都不清。读回最新一页就地合进时间线，再开 socket；
  * 现场等连上后的 room_state 核对。输入框、待发的图片、正在编辑的那条、未读线、滚动
  * 位置是读的人自己的，一样不动。
+ *
+ * 补读（`catchUp`）是同一件事去掉断线的那一半：连接好好的，只是读的那一页早于订阅
+ * 生效，中间落下的那条两头都没带来（useChatPanel 的 checkTail）。socket 不动，排队
+ * 中的轮次也照旧——它们没错过什么。
  */
 export function useRoomResync(room: {
   history: ReturnType<typeof useHistoryReads>
@@ -38,6 +42,10 @@ export function useRoomResync(room: {
   runRecords: ReturnType<typeof useRunRecords>
   /** 读回来的块里有断线期间没收到回执的自己发的那条：发件箱据此收尾。 */
   settle: (block: Block) => void
+  /** 读回来的最新一页原样有哪些块（不露面的也算）。 */
+  noteRead: (blocks: Block[]) => void
+  /** 这一次读结束了（不管成没成）。 */
+  readEnded: () => void
   scroll: {
     atBottom: Ref<boolean>
     /** 跟到最新：来了新的而读的人停在底部时。 */
@@ -53,30 +61,54 @@ export function useRoomResync(room: {
   /** 读失败：说出来，能重试的排一次重连。 */
   failed: (topicId: string, error: unknown) => void
 }) {
-  return async function resync(topicId: string) {
+  /** 读最新一页并就地合进来；读到了（还在这间房）答 true。 */
+  async function readTail(
+    topicId: string,
+    read: ReturnType<typeof room.history.begin>,
+    afterOutage: boolean
+  ): Promise<boolean> {
+    await ensureFreshToken()
+    if (!read.stillHere()) return false
+    const payload = await listBlocks(topicId, { limit: PAGE_SIZE })
+    if (!read.stillHere()) return false
+    room.noteRead(payload.data)
+    const fresh = { blocks: payload.data, hasMore: !!payload.has_more }
+    fresh.blocks = applyLiveChanges(fresh, read.changes, read.reactions)
+    // 排队中的那几轮核对不了：断线期间可能已经跑完了。
+    if (afterOutage) room.runRecords.forgetWaiting()
+    const grew = mergeResyncedPage(room.timeline, room.runRecords, fresh)
+    for (const block of fresh.blocks) room.settle(block)
+    setCachedWindow(topicId, room.timeline.newest())
+    if (grew && room.scroll.atBottom.value) room.scroll.follow()
+    return true
+  }
+
+  async function resync(topicId: string) {
     const read = room.history.begin(topicId)
     room.socket.close()
     try {
-      await ensureFreshToken()
-      if (!read.stillHere()) return
-      const payload = await listBlocks(topicId, { limit: PAGE_SIZE })
-      if (!read.stillHere()) return
-      const fresh = { blocks: payload.data, hasMore: !!payload.has_more }
-      fresh.blocks = applyLiveChanges(fresh, read.changes, read.reactions)
-      // 排队中的那几轮核对不了：断线期间可能已经跑完了。
-      room.runRecords.forgetWaiting()
-      const grew = mergeResyncedPage(room.timeline, room.runRecords, fresh)
-      for (const block of fresh.blocks) room.settle(block)
-      setCachedWindow(topicId, room.timeline.newest())
-      if (grew && room.scroll.atBottom.value) room.scroll.follow()
+      if (!(await readTail(topicId, read, true))) return
       room.socket.connect(topicId)
       void room.scroll.fill()
     } catch (e) {
       if (read.stillHere()) room.failed(topicId, e)
     } finally {
-      read.end()
+      if (read.end()) room.readEnded()
     }
   }
+
+  async function catchUp(topicId: string) {
+    const read = room.history.begin(topicId)
+    try {
+      await readTail(topicId, read, false)
+    } catch (e) {
+      if (read.stillHere()) room.failed(topicId, e)
+    } finally {
+      if (read.end()) room.readEnded()
+    }
+  }
+
+  return { resync, catchUp }
 }
 
 /** 把重连后读回来的最新一页合进时间线。返回最新的那一块换没换（来了新的）。 */

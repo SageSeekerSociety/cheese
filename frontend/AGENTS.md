@@ -119,6 +119,9 @@ python3 ../.claude/scripts/catalog-ratchet.py --list   # every component, grade,
   fail; the check prints it and `pnpm run lint:catalog:update` crosses it off.
 - A catalogued component that is not grade A is not this check's concern —
   `catalog.spec.ts` decides whether it mounts.
+- A layout or a shell — `src/layouts/`, `src/proto-shell.vue` — is not a
+  candidate: it renders `<router-view>` itself, which grades D, and an entry
+  that cannot mount on its own is not worth an entry.
 
 ## A new scene runs standalone from day one
 

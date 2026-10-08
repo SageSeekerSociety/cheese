@@ -7,7 +7,7 @@
   <div>
     <AccountHeading :title="t('account.signUp.title')">
       {{ t('account.signUp.haveAccount') }}
-      <router-link to="/account/signin" class="account-link">{{ t('account.signUp.signIn') }}</router-link>
+      <NavLink to="/account/signin" class="account-link">{{ t('account.signUp.signIn') }}</NavLink>
     </AccountHeading>
 
     <v-alert v-if="error" closable type="error" variant="tonal" density="comfortable" class="mb-6">
@@ -126,6 +126,7 @@ import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 
 export type SignUpValues = {
