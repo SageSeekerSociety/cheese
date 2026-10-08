@@ -17,7 +17,7 @@ from app.api.response import ok
 from app.api.routes.topics import DbSession
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import TopicOut

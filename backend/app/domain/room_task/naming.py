@@ -628,7 +628,7 @@ async def _write(
 async def _publish(renamed: Renamed) -> None:
     """The channel's pages and the task's own page each listen on their own
     conversation, so both are told."""
-    from app.domain.agent.runtime import announce_stale
+    from app.domain.agent.staleness import announce_stale
 
     await announce_stale(renamed.room_id, "topics", id=renamed.room_id)
     # The task's page listens on the task's conversation; the row that changed

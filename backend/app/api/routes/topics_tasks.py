@@ -45,7 +45,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.own import may_work_for
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem

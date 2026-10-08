@@ -716,7 +716,7 @@ def test_a_rename_is_heard_on_the_tasks_own_page_and_in_its_channel(
 ):
     """The task's page listens on the task's conversation and the channel's
     pages on the channel's: a new title reaches both without a reload."""
-    import app.domain.agent.runtime as runtime
+    import app.domain.agent.staleness as staleness
 
     heard: list[tuple[str, str, str | None]] = []
 
@@ -725,7 +725,7 @@ def test_a_rename_is_heard_on_the_tasks_own_page_and_in_its_channel(
             (str(conversation_id), resource, str(id) if id is not None else None)
         )
 
-    monkeypatch.setattr(runtime, "announce_stale", announce)
+    monkeypatch.setattr(staleness, "announce_stale", announce)
     project = _project(client, alice)
     room = project["root_topic_id"]
     tid = _task(client, alice, room)

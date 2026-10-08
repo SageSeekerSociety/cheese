@@ -16,7 +16,7 @@ from app.api.response import ok
 from app.api.routes.projects import DbSession
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.topic.directory import channel_directory
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService

@@ -1421,7 +1421,7 @@ class ChatService(SessionRecovery, RoomTurns):
     async def thread_replied(self, conversation_id: uuid.UUID) -> None:
         """A message landed in ``conversation_id``: when that is a 支线, its
         channel's main line shows the 支线 grown."""
-        from app.domain.agent.runtime import announce_stale
+        from app.domain.agent.staleness import announce_stale
 
         room, _inner, thread = await self._conversation_place(conversation_id)
         if thread:
