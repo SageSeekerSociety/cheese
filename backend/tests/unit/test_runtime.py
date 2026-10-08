@@ -10,12 +10,17 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.core.sentences import from_descriptor
+from app.core.errors import NotFoundError
+from app.core.sentences import from_descriptor, say
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.realtime.subscriber_queue import SubscriberOverflow
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.turn.store.events import persist_room_event
+from app.domain.block.models import Block
 from app.domain.identity.actor import Actor
+from app.domain.policy.gate import OverTier
+from app.domain.topic.models import Topic
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic, open_turn, open_turn_ids, turn_row
@@ -539,6 +544,136 @@ async def test_runner_publishes_friendly_error_on_failure(db_factory):
         )
         frame = await _next_frame(q, "error")
     assert frame["type"] == "error"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("failure", "expected_refusal"),
+    [
+        pytest.param(OverTier("refusal sentinel"), True, id="expected-refusal"),
+        pytest.param(
+            NotFoundError("internal sentinel"), False, id="unexpected-base-error"
+        ),
+    ],
+)
+async def test_runner_preserves_the_expected_error_family(
+    db_factory, failure, expected_refusal
+):
+    """The original refusal family stays distinct from an internal BaseError.
+
+    Admission, execution, publication and interval closure are real; converse
+    supplies only the exception. A crash's event goes through the durable store.
+    """
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    topic_id = await a_topic(db_factory)
+    async with db_factory() as session:
+        topic = await session.get(Topic, topic_id)
+        assert topic is not None
+        project_id = topic.project_id
+
+    class _FailingChat(WorkChat):
+        session_factory = db_factory
+
+        def __init__(self):
+            self.calls: list[dict] = []
+            self.events: list[dict] = []
+
+        def replaying(self, topic_id):
+            return None
+
+        async def converse(self, **kwargs):
+            self.calls.append(kwargs)
+            raise failure
+            yield  # pragma: no cover — makes this an async generator
+
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
+            async def resolve_author(session, topic_id):
+                return "u"
+
+            payload = await persist_room_event(
+                db_factory,
+                resolve_author=resolve_author,
+                acting_agent=None,
+                project_id=project_id,
+                topic_id=topic_id,
+                content=content,
+                meta=meta or {},
+                turn_id=turn_id,
+                author="u",
+            )
+            assert payload is not None
+            self.events.append(payload)
+            return payload
+
+    chat = _FailingChat()
+    frames: list[dict] = []
+    async with broker.subscribe(str(topic_id)) as queue:
+        runner.submit(
+            chat,
+            topic_id,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
+        async with asyncio.timeout(HANG_S):
+            while True:
+                frame = await queue.get()
+                frames.append(frame)
+                if frame["type"] == "done":
+                    break
+        await runner.drain()
+        while not queue.empty():
+            frames.append(await queue.get())
+
+    assert len(chat.calls) == 1
+    assert runner.active_work_count() == 0
+    recent = runner.recent_work()
+    assert len(recent) == 1
+    record = recent[0]
+    assert record["status"] == ("error" if expected_refusal else "crashed")
+    errors = [frame for frame in frames if frame["type"] == "error"]
+    assert len(errors) == 1
+    assert sum(frame["type"] == "done" for frame in frames) == 1
+    error = errors[0]
+    events = [frame for frame in frames if frame["type"] == "event_block"]
+    async with db_factory() as session:
+        intervals = list(
+            (
+                await session.scalars(
+                    select(AgentTurn).where(AgentTurn.conversation_id == topic_id)
+                )
+            ).all()
+        )
+        rows = list(
+            (
+                await session.scalars(
+                    select(Block).where(Block.conversation_id == topic_id)
+                )
+            ).all()
+        )
+    assert len(intervals) == 1
+    assert intervals[0].stopped_at is not None
+    assert await open_turn_ids(db_factory) == set()
+    if expected_refusal:
+        assert record["detail"] == failure.message
+        assert error["message"] == failure.message
+        assert events == chat.events == rows == []
+        assert not error.get("persisted", False)
+    else:
+        assert "internal sentinel" not in repr(frames)
+        assert error["message"] == say("turnCrashed")
+        assert error["persisted"] is True
+        assert len(events) == len(chat.events) == len(rows) == 1
+        event = events[0]
+        row = rows[0]
+        assert event["block"]["id"] == str(row.id)
+        assert row.content == error["message"]
+        assert row.meta["who"] == "human"
+        assert frames.index(event) < frames.index(error)
+        assert frames.index(error) < next(
+            i for i, frame in enumerate(frames) if frame["type"] == "done"
+        )
 
 
 @pytest.mark.anyio

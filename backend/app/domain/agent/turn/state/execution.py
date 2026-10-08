@@ -5,6 +5,8 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 
+from app.core.errors import BaseError
+
 
 @dataclass(frozen=True, slots=True)
 class ExecutionState:
@@ -23,3 +25,4 @@ class ExecutionPolicy:
     first_output_timeout: float
     credential_expired_fuse: float
     resend_reason: str
+    expected_error_types: tuple[type[BaseError], ...]

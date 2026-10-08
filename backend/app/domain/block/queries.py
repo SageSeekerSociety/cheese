@@ -47,7 +47,7 @@ async def any_output_event_exists(
 async def last_turn_output(
     session: AsyncSession, conversation_id: uuid.UUID, work_id: uuid.UUID
 ) -> str | None:
-    """Read the last published text for closing-result deduplication."""
+    """Read the turn's last said text, including progress, for closing dedupe."""
     return await BlockRepository(session).last_said_in_turn(conversation_id, work_id)
 
 

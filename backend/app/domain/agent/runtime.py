@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 
 from app.core.background import hold
+from app.core.errors import AppError
 from app.core.redis import get_redis_client
 from app.core.sentences import listing, say
 from app.domain.agent import death_evidence, dispatch_log, turn_inputs
@@ -1342,6 +1343,7 @@ class AgentWorkRunner:
             self._first_output_timeout_s,
             self._credential_expired_fuse_s,
             self.RESEND_REASON,
+            expected_error_types=(AppError,),
         )
 
         async def stamped(work_id: uuid.UUID) -> None:
