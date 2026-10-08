@@ -15,13 +15,13 @@ already read the message is told it changed, the way a message reaches it.
 
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.chat import announce_mentions, text_as_sent
+from app.domain.agent.chat import SentText, text_as_sent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
@@ -41,6 +41,19 @@ if TYPE_CHECKING:
     from app.domain.agent.runtime import AgentWorkRunner
 
 
+class MentionEffects(Protocol):
+    async def __call__(
+        self,
+        session: AsyncSession,
+        sent: SentText,
+        block: Block,
+        author: str,
+        /,
+        *,
+        before: str,
+    ) -> None: ...
+
+
 async def edit_message(
     session: AsyncSession,
     publish: Callable[[str, dict], Awaitable[None]],
@@ -50,6 +63,7 @@ async def edit_message(
     content: str,
     chat: "ChatService",
     runner: "AgentWorkRunner",
+    notify_mentions: MentionEffects,
     checklist: dict | None = None,
 ) -> dict:
     """Replace the text of ``editor``'s own message, commit, and tell the room.
@@ -71,14 +85,12 @@ async def edit_message(
     already_read = consumed_turn(block) is not None
     await blocks.replace_content(block, sent.text, checklist=checklist)
     if sent.roster is not None:
-        await announce_mentions(
+        await notify_mentions(
             session,
-            sent.room,
+            sent,
             block,
             editor,
-            sent.roster,
             before=before,
-            flag_unresolved=sent.by_agent,
         )
     # A room's agent hears of an edit to a message it read; a task's message
     # was never the room's, and its own session is told through the ledger.

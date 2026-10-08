@@ -34,6 +34,10 @@ class _NothingStored:
 
 
 class FakeChat(WorkChat):
+    @property
+    def human_messages(self):
+        return self
+
     """Controllable stand-in for ChatService: converse turns block until
     released, so tests can observe concurrency and queue order."""
 

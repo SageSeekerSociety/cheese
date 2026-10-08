@@ -635,6 +635,7 @@
   "siteDomainNotIsolated": "Site 托管域名必须与平台域名隔离",
   "roomUnderRoomUseSplit": "频道下面放的是任务，不是另一个频道：改为新建任务",
   "topicNotFound": "频道不存在",
+  "chatMessageEmpty": "消息为空",
   "topicCloneIntoSelf": "不能把频道克隆到它自己",
   "topicCloneSameProject": "只能在同一项目内克隆会话",
   "topicCloneNeverRan": "源频道还没跑过（没有可克隆的会话）",

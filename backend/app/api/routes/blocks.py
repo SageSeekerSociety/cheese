@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
+from app.api.message_effects import announce_edited_message
 from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
@@ -60,6 +61,7 @@ async def edit_block(
         db,
         broker.publish,
         block_id,
+        notify_mentions=announce_edited_message,
         editor=actor.handle,
         content=body.content,
         chat=chat,

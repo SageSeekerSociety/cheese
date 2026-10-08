@@ -123,7 +123,7 @@ class RunnerIntake:
             user_block_id,
             user_block_ids,
             duplicate,
-        ) = await chat_service.post_user_message(
+        ) = await chat_service.human_messages.post_user_message(
             topic_id,
             author=author,
             content=content,

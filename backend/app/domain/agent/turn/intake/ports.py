@@ -17,18 +17,7 @@ from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
 
 
-class MessageService(Protocol):
-    @property
-    def session_factory(self) -> async_sessionmaker[AsyncSession]: ...
-
-    live: LiveWork
-
-    def has_running_turn(self, topic_id: uuid.UUID) -> bool: ...
-
-    def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None: ...
-
-    def session_took_over(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> bool: ...
-
+class HumanWriter(Protocol):
     async def post_user_message(
         self,
         topic_id: uuid.UUID,
@@ -41,6 +30,22 @@ class MessageService(Protocol):
         client_id: str | None = None,
         quoted_context: dict | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]: ...
+
+
+class MessageService(Protocol):
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]: ...
+
+    live: LiveWork
+
+    def has_running_turn(self, topic_id: uuid.UUID) -> bool: ...
+
+    def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None: ...
+
+    def session_took_over(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> bool: ...
+
+    @property
+    def human_messages(self) -> HumanWriter: ...
 
     async def post_system_event(
         self,

@@ -26,9 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent import death_evidence, own_calls, own_limit
-from app.domain.agent.announce import answer_questions
-from app.domain.agent.ask import publish_answered
+from app.domain.agent import death_evidence, own_limit
 from app.domain.agent.compute import ComputePool
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
@@ -111,7 +109,6 @@ from app.domain.agent.mentions import (
     _expand_mention_names,
     _resolve_mentions,  # noqa: F401
     _topic_refs,  # noqa: F401
-    announce_mentions,
     person_mentions,
     project_refs_text,
 )
@@ -162,7 +159,7 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.turn import RoomTurns, _is_dm, room_roster
+from app.domain.agent.room.turn import RoomTurns
 
 # 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
 # `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
@@ -190,6 +187,8 @@ from app.domain.agent.turn.intake.events import (
     _persist_subagent_result,
     _persist_tool_event,
 )
+from app.domain.agent.turn.intake.human import HumanMessages
+from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 
 # 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
@@ -226,11 +225,8 @@ from app.domain.delivery.receipts import (
     complete_work_inputs,
     terminate_work_inputs,
 )
-from app.domain.idempotency import store as idem
-from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
-    looks_like_agent_handle,
     names_a_person,
     recipient_seat,
 )
@@ -276,15 +272,6 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 #: How many conversations' rooms to remember. Well past the number of
 #: conversations one backend hears from at once; a ceiling, not a policy.
 _CONVERSATION_ROOMS_KEPT = 2048
-
-
-def _parse_uuid(raw: str | None) -> uuid.UUID | None:
-    if not raw:
-        return None
-    try:
-        return uuid.UUID(raw)
-    except ValueError:
-        return None
 
 
 class ChatService(SessionRecovery, RoomTurns):
@@ -360,6 +347,10 @@ class ChatService(SessionRecovery, RoomTurns):
         # Composition only: this stateless writer uses the service's real state
         # and transactions; it owns no copied live work or compatibility entry.
         return AssistantMessages(self._sessions, self.live, room_roster)
+
+    @property
+    def human_messages(self) -> HumanMessages:
+        return HumanMessages(self._sessions, self.thread_replied)
 
     @property
     def session_factory(self) -> async_sessionmaker:
@@ -524,7 +515,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 user_block_id,
                 user_block_ids,
                 _duplicate,
-            ) = await self.post_user_message(
+            ) = await self.human_messages.post_user_message(
                 topic_id,
                 author=author,
                 content=content,
@@ -1708,259 +1699,6 @@ class ChatService(SessionRecovery, RoomTurns):
             if payload is not None:
                 action_frames.append({"type": "event_block", "block": payload})
         return action_frames
-
-    async def post_user_message(
-        self,
-        topic_id: uuid.UUID,
-        *,
-        author: str,
-        content: str,
-        turn_id: uuid.UUID | None,
-        reply_to: str | None,
-        attachments: list[dict] | None = None,
-        client_id: str | None = None,
-        quoted_context: dict | None = None,
-    ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
-        """Persist a person's message (+ attachment blocks), its @mention notices
-        and the questions it answers in one short transaction, outside any turn lock.
-        Returns (payloads, anchor_block_id, all_block_ids, duplicate) — the
-        anchor is what 芝士's reply threads under; all ids are consumed together
-        after a mid-session delivery receipt. ``duplicate`` means the browser
-        retried a delivery whose durable result is being echoed again.
-        """
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            # A room's own line, or a task's conversation in it.
-            place = await PlaceResolver(session).conversation(topic_id)
-            if place is None:
-                raise NotFoundError("Topic not found")
-            topic = place.room
-            delivery_key = (
-                action_key(place.conversation_id, "chat_message", author, client_id)
-                if client_id
-                else None
-            )
-            if delivery_key and not await idem.claim(
-                session,
-                delivery_key,
-                action="chat_message",
-                scope_id=str(place.conversation_id),
-            ):
-                stored = await idem.stored_result(session, delivery_key)
-                if stored is None:
-                    raise RuntimeError("committed chat delivery has no stored result")
-                return (
-                    list(stored["payloads"]),
-                    uuid.UUID(stored["anchor_block_id"]),
-                    [uuid.UUID(value) for value in stored["block_ids"]],
-                    True,
-                )
-            if delivery_key:
-                assert client_id is not None
-                legacy_blocks = await blocks.client_delivery(
-                    place.room_id, author=author, client_id=client_id
-                )
-                if legacy_blocks:
-                    anchor = next(
-                        block
-                        for block in legacy_blocks
-                        if (block.meta or {}).get("client_id") == client_id
-                    )
-                    payloads = [
-                        _block_payload(BlockOut.model_validate(block))
-                        for block in legacy_blocks
-                    ]
-                    block_ids = [block.id for block in legacy_blocks]
-                    await idem.record_result(
-                        session,
-                        delivery_key,
-                        {
-                            "payloads": payloads,
-                            "anchor_block_id": str(anchor.id),
-                            "block_ids": [str(block_id) for block_id in block_ids],
-                        },
-                    )
-                    await session.commit()
-                    return payloads, anchor.id, block_ids, True
-            created_blocks: list[Block] = []
-            project = await ProjectRepository(session).get(topic.project_id)
-            if project is None:
-                raise NotFoundError("Project not found")
-            await own_calls.seat_if_named(session, project, topic, content, author)
-            agent = await self._agent_at(session, place)
-            mentions = await person_mentions(
-                session, topic, content, agent, dm=_is_dm(topic)
-            )
-            agent_handles, by_seat = mentions.agent_handles, mentions.by_seat
-            # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
-            # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
-            # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
-            # 服务端算（I13），所以这里自己认下私聊这一档。
-            #
-            # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的私聊
-            # 也是私聊，而它没有 agent 可点名 —— 认成「点了名」就等于把芝士叫进两
-            # 个人的私密对话里说话。对面是谁只有名册一个出处（`private_seats`，
-            # 它答的 owner 那一席恒是人，所以只看 peer）；名册不是恰好两席时它答
-            # None，这条消息就不点名，和这间房其余各处的退路同向。
-            seats = (
-                await TopicMemberService(session).private_seats(topic.id)
-                if _is_dm(topic)
-                else None
-            )
-            recipient = {
-                "instance_id": str(agent.instance_id),
-                "handle": agent.handle,
-                # In a task the owner talks to its agent and nobody else, so
-                # every message is addressed to it, as in a private chat with one.
-                "mentioned": place.task is not None
-                or (seats is not None and looks_like_agent_handle(seats[1])),
-            }
-            anchor_id: uuid.UUID | None = None
-            answered: list[Block] = []
-            attribution_id = turn_id
-            # B3: a reply threads under a block IN THIS TOPIC. A client that
-            # kept a stale reply target across a topic switch would otherwise
-            # write a cross-topic edge into the conversation tree — invisible on
-            # screen (the reader's timeline can't resolve the parent, so no
-            # reply cue renders) and wrong in the data that 记忆/摘要 rebuild
-            # from. Drop the edge, keep the message: losing the thread link is
-            # recoverable, refusing the send is not.
-            reply_uuid = _parse_uuid(reply_to)
-            if reply_uuid is not None:
-                parent = await blocks.get(reply_uuid)
-                if parent is None or parent.conversation_id != place.conversation_id:
-                    logger.warning(
-                        "dropped cross-topic reply_to (topic=%s, reply_to=%s)",
-                        topic_id,
-                        reply_to,
-                    )
-                    reply_uuid = None
-            if content:
-                content, roster = mentions.content, mentions.roster
-                # WHICH agent was addressed, not merely whether one was. The
-                # flag alone left `handle`/`instance_id` naming whoever the room
-                # pointed at, so @-ing the second teammate ran the first one's
-                # turn. A room holds members; the one addressed answers, exactly
-                # as for a person.
-                addressed = next(
-                    (h for h in agent_handles if f"<@{h}>" in content), None
-                )
-                if addressed is not None:
-                    recipient["mentioned"] = True
-                    named = by_seat.get(addressed)
-                    if named is not None:
-                        recipient["instance_id"] = str(named.id)
-                        recipient["handle"] = named.handle
-                    # A seat still under the room-derived handle names no
-                    # instance, and that seat IS the agent the room points at,
-                    # so the recipient resolved above is already the right one.
-                refused = await own_calls.refused(session, project, recipient, author)
-                user_block = await blocks.add(
-                    project_id=topic.project_id,
-                    conversation_id=place.conversation_id,
-                    author=author,
-                    author_type=AuthorType.participant,
-                    content=content,
-                    kind=BlockKind.message,
-                    turn_id=turn_id,
-                    reply_to=reply_uuid,  # B3: thread under another
-                    # The sender's own id for this send, echoed straight back on
-                    # the broadcast. A client that showed the message the instant
-                    # it was typed (§14.1 实时) needs to recognise its own copy
-                    # coming home; matching on text cannot do that, because this
-                    # method rewrites the text on the way in.
-                    meta={
-                        "agent_recipient": recipient,
-                        **({"client_id": client_id} if client_id else {}),
-                        **(
-                            {"quoted_context": quoted_context}
-                            if quoted_context is not None
-                            else {}
-                        ),
-                    },
-                )
-                if attribution_id is None:
-                    attribution_id = user_block.id
-                    user_block.turn_id = attribution_id
-                await own_calls.say_refused(session, place, user_block, refused)
-                await announce_mentions(session, topic, user_block, author, roster)
-                # A reply to an agent's question goes to that agent (`recipient`).
-                answered = await answer_questions(session, user_block, recipient)
-                if len(agent_handles) > 1:
-                    # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
-                    # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
-                    from app.domain.delivery.mention import record_mentions
-                    from app.domain.thread.services import answered_in
-
-                    await record_mentions(
-                        session,
-                        project_id=topic.project_id,
-                        room_id=place.room_id,
-                        conversation_id=await answered_in(session, user_block),
-                        block_id=user_block.id,
-                        author=author,
-                        content=content,
-                        quoted_context=quoted_context,
-                        by_agent=False,
-                        occurred_at=datetime.now(UTC),
-                        skip=frozenset({addressed} if addressed else ()),
-                    )
-                anchor_id = user_block.id
-                created_blocks.append(user_block)
-            # 图片输入: each image = an attachment block. content = the worktree
-            # path (a REAL file, uploaded before this message), mime_type = how
-            # to render it — structured fields, never parsed out of prose.
-            for index, att in enumerate(attachments or []):
-                att_block = await blocks.add(
-                    project_id=topic.project_id,
-                    conversation_id=place.conversation_id,
-                    author=author,
-                    author_type=AuthorType.participant,
-                    content=str(att.get("path") or ""),
-                    kind=BlockKind.attachment,
-                    mime_type=str(att.get("mime") or "") or None,
-                    turn_id=attribution_id,
-                    # An image-only send still honors the reply thread (B3).
-                    reply_to=None if content else reply_uuid,
-                    meta={
-                        "agent_recipient": recipient,
-                        **(
-                            {"client_id": client_id}
-                            if not content and index == 0 and client_id
-                            else {}
-                        ),
-                    },
-                )
-                if attribution_id is None:
-                    attribution_id = att_block.id
-                    att_block.turn_id = attribution_id
-                if anchor_id is None:
-                    anchor_id = att_block.id
-                created_blocks.append(att_block)
-            if anchor_id is None:  # guarded by the route, but never crash a turn
-                raise NotFoundError("empty message")
-            payloads = [
-                _block_payload(BlockOut.model_validate(block))
-                for block in created_blocks
-            ]
-            block_ids = [block.id for block in created_blocks]
-            if delivery_key:
-                await idem.record_result(
-                    session,
-                    delivery_key,
-                    {
-                        "payloads": payloads,
-                        "anchor_block_id": str(anchor_id),
-                        "block_ids": [str(block_id) for block_id in block_ids],
-                    },
-                )
-            await session.commit()
-        await publish_answered(place.conversation_id, answered)
-        # A person's words are what a task gets named by (room_task/naming.py).
-        if names_a_person(author) and place.task is not None:
-            naming.nudge(place.task.id, "message")
-        await self.thread_replied(place.conversation_id)
-        return payloads, anchor_id, block_ids, False
 
     async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None

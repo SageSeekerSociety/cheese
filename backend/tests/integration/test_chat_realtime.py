@@ -339,7 +339,7 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
         )
         topic_id = topic.id
         await session.commit()
-    _payloads, original, original_ids, _ = await svc.post_user_message(
+    _payloads, original, original_ids, _ = await svc.human_messages.post_user_message(
         topic_id,
         author="u",
         content="saved by the old backend",
@@ -411,7 +411,7 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
         ]
         await session.commit()
     assert before, "建项目就该播下芝士那一行"
-    payloads, _, _, _ = await svc.post_user_message(
+    payloads, _, _, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="A note for later", turn_id=None, reply_to=None
     )
     assert payloads[0]["meta"]["agent_recipient"]["handle"] == "cheese"
@@ -481,10 +481,10 @@ async def test_queued_message_retains_selected_teammate(business_db_factory, tmp
             await members.ensure_agent_seat(topic.id, agent_instance_handle(made.id))
         topic_id = topic.id
         await session.commit()
-    _, original, _, _ = await svc.post_user_message(
+    _, original, _, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="@First For first", turn_id=None, reply_to=None
     )
-    await svc.post_user_message(
+    await svc.human_messages.post_user_message(
         topic_id, author="u", content="@Second For second", turn_id=None, reply_to=None
     )
     prepared = await svc._assemble_turn(
@@ -523,7 +523,7 @@ async def test_backend_resolves_room_agent_mention(
         )
         topic_id = topic.id
         await session.commit()
-    payloads, _, _, _ = await svc.post_user_message(
+    payloads, _, _, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content=text, turn_id=None, reply_to=None
     )
     assert payloads[0]["meta"]["agent_recipient"]["mentioned"] is mentioned
@@ -568,7 +568,7 @@ async def test_backend_resolves_a_legacy_shared_seat_mention(
         await IdentityService(session).ensure_agent_user(handle=CHEESE_HANDLE)
         await TopicMemberService(session).ensure_agent_seat(topic_id, CHEESE_HANDLE)
         await session.commit()
-    payloads, _, _, _ = await svc.post_user_message(
+    payloads, _, _, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="@芝士 hello", turn_id=None, reply_to=None
     )
     assert payloads[0]["content"] == f"<@{CHEESE_HANDLE}> hello"
@@ -1625,7 +1625,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
         )
         topic_id: uuid.UUID = topic.id
         await session.commit()
-    _payloads, _block_id, block_ids, _ = await svc.post_user_message(
+    _payloads, _block_id, block_ids, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
     )
     in_flight = asyncio.Event()
@@ -1690,7 +1690,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         topic_id: uuid.UUID = topic.id
         await session.commit()
 
-    _payloads, block_id, block_ids, _ = await svc.post_user_message(
+    _payloads, block_id, block_ids, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
     )
 

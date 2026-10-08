@@ -17,6 +17,7 @@ from app.api.deps import (
     get_chat_service,
     get_work_runner,
 )
+from app.api.message_effects import announce_edited_message
 from app.api.response import ok, page
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
@@ -981,6 +982,7 @@ async def write_topic_progress(
             db,
             get_broker().publish,
             current.id,
+            notify_mentions=announce_edited_message,
             editor=actor.handle,
             content=text,
             chat=chat,

@@ -25,9 +25,29 @@ from collections.abc import Iterable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+
+
+async def message_reply_target(
+    session: AsyncSession, block_id: uuid.UUID
+) -> Block | None:
+    """Load the same-session reply target for conversation-edge validation."""
+    return await BlockRepository(session).get(block_id)
+
+
+async def client_delivery_bundle(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    author: str,
+    client_id: str,
+) -> list[Block]:
+    """Read the ordered bundle already landed by a browser delivery."""
+    return await BlockRepository(session).client_delivery(
+        conversation_id, author=author, client_id=client_id
+    )
 
 
 async def output_event_exists(
