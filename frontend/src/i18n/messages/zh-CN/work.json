@@ -517,6 +517,19 @@
         "keep": "保留为文字"
       }
     },
+    "skills": {
+      "button": "技能广场",
+      "title": "技能广场",
+      "hint": "点亮的技能，这间房里每个 AI 队友从下一轮起都会照着做。",
+      "loading": "正在读技能…",
+      "empty": "还没有可用的技能。",
+      "loadFailed": "技能列表读不出来",
+      "saveFailed": "技能没能保存",
+      "healthOk": "可用",
+      "healthDegraded": "受限",
+      "healthUnavailable": "不可用",
+      "healthUnknown": "还没探到"
+    },
     "checklist": {
       "updatedAt": "清单更新于 {time}",
       "compose": "发清单",

@@ -517,6 +517,19 @@
         "keep": "Keep as text"
       }
     },
+    "skills": {
+      "button": "Skill plaza",
+      "title": "Skill plaza",
+      "hint": "Switched-on skills — every AI teammate in this room follows them from the next turn.",
+      "loading": "Reading skills…",
+      "empty": "No skills available yet.",
+      "loadFailed": "Couldn't load the skill list",
+      "saveFailed": "Couldn't save the skill",
+      "healthOk": "Available",
+      "healthDegraded": "Limited",
+      "healthUnavailable": "Unavailable",
+      "healthUnknown": "Not probed yet"
+    },
     "checklist": {
       "updatedAt": "Checklist updated {time}",
       "compose": "Post a checklist",

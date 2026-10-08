@@ -300,3 +300,60 @@ def test_a_proposal_cannot_absorb_someones_private_memory(client):
         json=_proposal(absorbs=[f"private/{OWNER}/style.md"]),
     )
     assert refused.status_code == 422, "a project method absorbed a personal memory"
+
+
+# --- The composer's skill plaza: what a room switches on ---------------------
+
+
+def _plaza(client, room: str, headers=PERSON) -> dict[str, bool]:
+    """The room's platform skills, name → switched on."""
+    listed = client.get(f"/topics/{room}/skills", headers=headers)
+    return {s["name"]: s["enabled"] for s in listed.json()["data"]["data"]}
+
+
+def test_a_room_switches_a_platform_skill_on_and_off(client):
+    project = _project(client)
+    room = _room(client, project)
+    before = _plaza(client, room)
+    assert "wolfram" in before, "the platform's own skills are not offered"
+    assert not any(before.values()), "a new room started with a skill already on"
+
+    turned = client.put(
+        f"/topics/{room}/skills", json={"enabled": ["wolfram"]}, headers=PERSON
+    )
+    assert turned.status_code == 200, turned.text
+    assert turned.json()["data"]["enabled"] == ["wolfram"]
+    assert _plaza(client, room)["wolfram"] is True
+
+    # It is the ROOM that switched it on: a sibling room is untouched.
+    other = _room(client, project, title="另一间")
+    assert _plaza(client, other)["wolfram"] is False
+
+    off = client.put(f"/topics/{room}/skills", json={"enabled": []}, headers=PERSON)
+    assert off.status_code == 200, off.text
+    assert _plaza(client, room)["wolfram"] is False
+
+
+def test_a_room_keeps_only_the_names_the_platform_hands_it(client):
+    project = _project(client)
+    room = _room(client, project)
+    turned = client.put(
+        f"/topics/{room}/skills",
+        json={"enabled": ["wolfram", "no-such-skill", "wolfram"]},
+        headers=PERSON,
+    )
+    assert turned.status_code == 200, turned.text
+    assert turned.json()["data"]["enabled"] == ["wolfram"], "an unknown name got stored"
+
+
+def test_a_stranger_cannot_switch_a_room_on(client):
+    project = _project(client)
+    room = _room(client, project)
+    stranger = session_auth_headers("user-2")
+    assert client.get(f"/topics/{room}/skills", headers=stranger).status_code in (
+        401,
+        403,
+    )
+    assert client.put(
+        f"/topics/{room}/skills", json={"enabled": ["wolfram"]}, headers=stranger
+    ).status_code in (401, 403)

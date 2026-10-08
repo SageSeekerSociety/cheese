@@ -43,6 +43,8 @@ const props = defineProps<{
   canChecklist?: boolean
   /** 「提醒我」那一颗。房间还没定下来（没有话题）时不给。 */
   canRemind?: boolean
+  /** 十字星（技能广场）那一颗。技能是挂在话题上的，没有话题就没有广场。 */
+  canSkills?: boolean
   /** 窄屏：清单、提醒收进一颗 ⋯。 */
   collapseExtras?: boolean
 }>()
@@ -54,6 +56,7 @@ const emit = defineEmits<{
   (e: 'checklist'): void
   (e: 'toggle-summon'): void
   (e: 'remind'): void
+  (e: 'skills'): void
   (e: 'send'): void
 }>()
 
@@ -171,6 +174,18 @@ const summonText = computed(() => ({
       size="sm"
       :title="t('work.room.composer.sendPhotos')"
       @click="pickImages"
+    />
+    <!-- 十字星：技能广场。它管的是「这间房照着哪些技能做」，和附件一样属于
+         「这条消息本身」那一侧，所以挨着它们站。 -->
+    <BaseButton
+      v-if="canSkills"
+      kind="ghost"
+      class="composer-icon"
+      icon="mdi-star-four-points"
+      size="sm"
+      :title="t('work.room.skills.button')"
+      :aria-label="t('work.room.skills.button')"
+      @click="emit('skills')"
     />
     <AdaptiveMenu v-if="extrasCollapsed" :actions="menuExtras" location="top start">
       <template #activator="{ props: menu }">

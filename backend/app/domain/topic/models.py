@@ -29,6 +29,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -121,6 +122,10 @@ class Topic(UuidPk, Timestamps, Base):
     # and not a placement: where a conversation actually runs is its own
     # session's business (`agent_sessions.execution_request` / `.work_lease`).
     compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Skill names this room has switched on (the composer's skill plaza). The
+    # turn prepends their guidance, so every agent in this conversation follows
+    # them. NULL/empty = the room runs on the platform's own guidance only.
+    skills: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
     # participants' cross-project personal memory (spec §8.4).

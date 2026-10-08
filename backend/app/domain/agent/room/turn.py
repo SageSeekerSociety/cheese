@@ -64,6 +64,7 @@ from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.contract import Image
 from app.domain.agent.session_host.host import keeps_memory
+from app.domain.agent.skills import native_skill_bodies
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.agent_instance.own import owned_instance
@@ -210,6 +211,10 @@ class _TurnContext:
     # and None is what keeps the prompt byte-identical to what it was before
     # this key existed, which is the property the non-course tests pin.
     teaching: TeachingContext | None
+    # 这间房点亮的技能（技能广场）。名字取自 `shipped_skill_names()`，正文由
+    # `native_skill_bodies()` 拼进这一轮的系统提示词，所以房间里每条会话都跟着走。
+    # 空 = 这间房只用平台自己的那份指引。
+    room_skills: list[str]
 
     # What this turn was given, and what it is being asked about.
     prompt_text: str
@@ -1032,6 +1037,7 @@ class RoomTurns:
             topic_refs_for_prompt=topic_refs_for_prompt,
             artifacts=artifact_refs,
             teaching=teaching,
+            room_skills=list(topic.skills or []),
             turn_images=turn_images,
             untitled=untitled,
         )
@@ -1113,9 +1119,14 @@ class RoomTurns:
         # on what is producing the output, not on the machine underneath it.
         runtime = provider
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
+        # 技能广场点亮的原生技能：正文接在平台指引后面，房间里每条会话都拿到。
+        room_bodies = native_skill_bodies(prepared.room_skills)
+        guidance = (
+            f"{self._skills}\n\n---\n\n{room_bodies}" if room_bodies else self._skills
+        )
         system_prompt = session_system_prompt(
             self._base_prompt,
-            self._skills,
+            guidance,
             needs_place=needs_place,
             has_doc=doc_text is not None,
             role=role,

@@ -31,6 +31,7 @@ import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import GettingStartedCard from '@/components/room/GettingStartedCard.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
+import SkillPlazaDialog from '@/components/room/SkillPlazaDialog.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
 
@@ -131,6 +132,18 @@ function askBlock(answerLog: Record<string, unknown>[]) {
     },
   }
 }
+
+// ---- 技能广场（SkillPlazaDialog）---------------------------------------------
+
+/** 一间房点得到的技能：平台随会话发货的那几个原生技能。名字就是技能的名字（后端按
+ *  名字点亮、按名字取说明书），说明挂在洞里那颗的 `title` 上。 */
+const PLAZA_SKILLS = [
+  { name: 'cheese', description: '芝士自己的用法', enabled: false },
+  { name: 'wolfram', description: '用 Wolfram 把算式算准', enabled: false },
+]
+
+/** 右上角那一枚圆点说的话：能跑 / 受限 / 不能跑 / 还没探到。 */
+const PLAZA_HEALTH = { wolfram: { status: 'ok' as const, detail: 'Wolfram 通道可用' } }
 
 // ---- 任务卡（TaskCard / TaskCreatedPost）--------------------------------------
 
@@ -383,6 +396,49 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     ],
   },
 
+  {
+    id: 'room-skill-plaza',
+    title: 'SkillPlazaDialog',
+    about:
+      '技能广场：黄底一块灯板，一颗一颗「洞」按下去就亮。亮了的技能，这间房里每一个 AI 队友从下一轮起都照着做（后端把它们的说明书接进提示词）。',
+    file: 'src/components/room/SkillPlazaDialog.vue',
+    component: SkillPlazaDialog,
+    needs: UI_T,
+    teleport: true,
+    args: { modelValue: true },
+    states: [
+      {
+        name: '都熄着',
+        note: '洞是两种主题下都深的一口井，没点亮时图标是灰的；每颗的右上角一枚健康圆点。洞的数量跟着技能走，不是写死的几行几个。',
+        props: { skills: PLAZA_SKILLS, health: PLAZA_HEALTH },
+        expect: 'wolfram',
+      },
+      {
+        name: '点亮了一颗',
+        note: '点亮转琥珀、外面再围一圈琥珀；动的是图标和那圈光，井本身不动 —— 一口气点亮好几颗时整块板都不跳。',
+        props: {
+          skills: PLAZA_SKILLS.map((s) => ({ ...s, enabled: s.name === 'wolfram' })),
+          health: PLAZA_HEALTH,
+        },
+        expectSelector: '.socket--on',
+      },
+      {
+        name: '探到它跑不了',
+        note: '健康那一枚：绿=能跑、黄=受限、红=不能跑、灰=还没探到。探不到只改这一枚的颜色，不影响点亮。',
+        props: {
+          skills: PLAZA_SKILLS,
+          health: { wolfram: { status: 'unavailable', detail: '未安装 uv' } },
+        },
+        expectSelector: '.socket__dot--unavailable',
+      },
+      {
+        name: '还在读技能',
+        note: '列表还没到：底板照画，一句话替掉那一格，而不是一片空白。',
+        props: { skills: [], health: {}, loading: true },
+        expect: '正在读技能',
+      },
+    ],
+  },
   {
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',

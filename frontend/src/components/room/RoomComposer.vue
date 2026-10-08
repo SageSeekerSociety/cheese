@@ -75,6 +75,8 @@ const emit = defineEmits<{
   (e: 'retry-att', index: number): void
   (e: 'clear-reply'): void
   (e: 'add-library-file', path: string): void
+  /** 十字星被按了：技能广场挂在话题上，开它、读列表都是房间那一侧的事。 */
+  (e: 'skills'): void
 }>()
 
 /** 正文。存在哪、谁清它、怎么跨刷新，全在房间那一层。 */
@@ -462,11 +464,13 @@ defineExpose({
         :agent-name="agentName"
         :can-checklist="!!postChecklist"
         :can-remind="!!topic"
+        :can-skills="!!topic"
         :collapse-extras="!mdAndUp"
         @files="emit('files', $event)"
         @checklist="checklistOpen = true"
         @toggle-summon="toggleSummon"
         @remind="reminderOpen = true"
+        @skills="emit('skills')"
         @send="sendDraft()"
       >
         <template #chips><slot name="composer-chips" /></template>

@@ -11,13 +11,14 @@ import type { GettingStartedStepKey } from '../composables/useGettingStarted'
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { useGettingStarted } from '../composables/useGettingStarted'
 import { useStartGuide } from '../composables/useStartGuide'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
+import { useTopicSkills } from '../composables/useTopicSkills'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
@@ -32,6 +33,7 @@ import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
+import SkillPlazaDialog from './room/SkillPlazaDialog.vue'
 
 import { t } from '@/i18n'
 
@@ -277,6 +279,20 @@ const {
   AUTHOR,
 } = panel
 
+// 技能广场：这间房点亮了哪些技能、它们此刻能不能跑 —— 见 useTopicSkills。
+// 输入框旁边那颗十字星开它；点亮之后每个 agent 的提示词里就带上说明书（后端的事）。
+// 技能挂在话题上（`topics.skills`），所以话题 id 照 `place()` 同款取：有 conversationId
+// 时读它，否则读房间自己。
+const topicId = (() => {
+  const room = props.topic
+  const id = props.conversationId
+  return room && id && id !== room.id ? id : room?.id ?? null
+})()
+const { topicSkills, skillHealth, skillsLoading, openSkills, toggleSkill } = useTopicSkills(
+  () => topicId,
+  (message) => (errorMsg.value = message)
+)
+
 // 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
 // 的那一刻做一次，删掉了不会再长回来。
 watch(loadingHistory, (loading, was) => {
@@ -340,6 +356,14 @@ function dismissAndSkip() {
 // off it once for the one row that needs them, not once per render.
 const retryIndex = computed(() => (canRetryAt(rows.value.length - 1) ? rows.value.length - 1 : -1))
 const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
+
+// 技能广场。开着的时候才读列表和健康（见 useTopicSkills），所以按下十字星先开窗、
+// 再去取——取的时候窗已经开了，看得见它在读。
+const skillsOpen = ref(false)
+function openSkillsPanel() {
+  skillsOpen.value = true
+  void openSkills()
+}
 
 // The page that owns the address drives the composer through this (TopicView
 // keeps its own input bar for the root topic), so it stays exposed.
@@ -564,9 +588,19 @@ defineExpose({ send, connected, submitQuestion })
           @remove-att="removePendingAtt"
           @retry-att="(i: number) => void retryPendingAtt(i)"
           @add-library-file="(path) => void addLibraryFile(path)"
+          @skills="openSkillsPanel"
         >
           <template #composer-chips><slot name="composer-chips" /></template>
         </RoomComposer>
+        <!-- 技能广场：输入框那颗十字星开它。挂在话题上，所以没有话题时没有这一格。 -->
+        <SkillPlazaDialog
+          v-if="topic"
+          v-model="skillsOpen"
+          :skills="topicSkills"
+          :health="skillHealth"
+          :loading="skillsLoading"
+          @toggle="(name) => void toggleSkill(name)"
+        />
       </div>
     </template>
   </div>
