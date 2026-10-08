@@ -12,6 +12,7 @@ from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
     NotFoundError,
+    UpstreamUnavailableError,
     ValidationError,
 )
 from app.core.sentences import say
@@ -142,7 +143,7 @@ class ProjectFiles:
             if await AgentSessionService(self.session).sandbox_lost_in_room(
                 task.room_id
             ):
-                raise GatewayUnavailableError(say("taskSandboxReleased")) from exc
+                raise UpstreamUnavailableError(say("taskSandboxReleased")) from exc
             raise
         if result.get("error") == "not_found":
             raise NotFoundError(say("taskFileNotOnMachine"))

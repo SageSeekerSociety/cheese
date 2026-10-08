@@ -247,7 +247,7 @@ async def test_live_files_on_a_released_sandbox_say_so(monkeypatch, released):
     # answers with a missing path. The reader is told the environment was
     # released and pointed at the committed version, not shown that path. A
     # machine failure with no such record still reaches them as it was.
-    from app.core.errors import GatewayUnavailableError
+    from app.core.errors import UpstreamUnavailableError
     from app.domain.agent.device_contract import DeviceCallError
     from app.domain.repository import forge_files
 
@@ -273,7 +273,7 @@ async def test_live_files_on_a_released_sandbox_say_so(monkeypatch, released):
     missing = DeviceCallError("lstat /home/cheese/.cheese/home/p/r: no such file")
     monkeypatch.setattr(forge_files.execution, "call", AsyncMock(side_effect=missing))
     if released:
-        with pytest.raises(GatewayUnavailableError, match="已释放.*已提交版本"):
+        with pytest.raises(UpstreamUnavailableError, match="已释放.*已提交版本"):
             await files.live("diff", base_branch="main")
     else:
         with pytest.raises(DeviceCallError):
