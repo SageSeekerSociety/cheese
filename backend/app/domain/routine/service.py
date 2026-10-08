@@ -454,7 +454,7 @@ class RoutineService:
                         "取消归档后它会从下一个时刻继续，不用重新设置。"
                     ),
                     target_handle=rule.owner_handle,
-                    topic_id=room.id,
+                    conversation_id=room.id,
                     payload={"routine_id": str(rule.id)},
                 )
             stopped += len(rules)
@@ -962,7 +962,7 @@ async def _announce_finished(session: AsyncSession) -> list[Block]:
             title=f"周期任务「{routine.title}」{verdict}",
             body=body,
             target_handle=routine.owner_handle,
-            topic_id=routine.topic_id,
+            conversation_id=routine.topic_id,
             payload={"routine_id": str(routine.id), "routine_run_id": str(run.id)},
         )
     return changed

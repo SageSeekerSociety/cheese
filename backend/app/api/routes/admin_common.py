@@ -52,9 +52,9 @@ async def require_platform_admin(
     raises what comes back.
 
     The refusal being reached **from the route body** is the part that is not
-    negotiable: `/admin/*` is not in `_CHEESE_WRITE_PATHS`, that table is a
-    whitelist, so nothing in the middleware looks at this prefix and a refusal
-    left to it would not exist. Reachable, not theoretical: a device screen's
+    negotiable: the write-access declarations (`app/api/write_access.py`) only
+    ever admit 芝士 exclusively, never keep it out, so a refusal left to them
+    would not exist. Reachable, not theoretical: a device screen's
     token (`X-Cheese-Screen`) resolves on any path, including one with no topic
     in it, unlike a per-turn `cheese` credential, which `ActorResolver` refuses
     when there is no project to scope it to.

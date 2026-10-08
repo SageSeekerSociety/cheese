@@ -36,7 +36,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool, QueuePool
 
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
@@ -991,22 +991,49 @@ _EXECUTOR_PROGRAMS = (
 )
 
 
+def _process_list() -> list[tuple[int, str]]:
+    """Every process's pid and command line.
+
+    Read from /proc where there is one: it is the same list `ps` prints, and
+    starting `ps` for it cost 13 ms per test on a hosted runner, for every
+    test that has a `tmp_path`. A process that exits mid-read is skipped.
+    """
+    proc = Path("/proc")
+    if not proc.is_dir():
+        # -ww: a long tmp path is otherwise cut at the terminal width.
+        listing = subprocess.run(
+            ["ps", "-A", "-ww", "-o", "pid=,args="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        rows = []
+        for line in listing.stdout.splitlines():
+            pid, _, args = line.strip().partition(" ")
+            rows.append((int(pid), args))
+        return rows
+    rows = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        rows.append(
+            (int(entry.name), raw.replace(b"\0", b" ").decode(errors="replace"))
+        )
+    return rows
+
+
 def _executors_under(directory: Path) -> dict[int, str]:
     """Executors whose programs or state lie under `directory`, by pid."""
-    # -ww: a long tmp path is otherwise cut at the terminal width.
-    listing = subprocess.run(
-        ["ps", "-A", "-ww", "-o", "pid=,args="],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
     root = str(directory.resolve()) + os.sep
-    found = {}
-    for line in listing.stdout.splitlines():
-        pid, _, args = line.strip().partition(" ")
-        if root in args and any(program in args for program in _EXECUTOR_PROGRAMS):
-            found[int(pid)] = args
-    return found
+    return {
+        pid: args
+        for pid, args in _process_list()
+        if root in args and any(program in args for program in _EXECUTOR_PROGRAMS)
+    }
 
 
 #: The base temp of the worker that ran a test, kept for the check after its
@@ -1038,7 +1065,8 @@ def _end_leftover_executors(item: pytest.Item) -> None:
 
     Run from `pytest_runtest_teardown` once every fixture has torn down, not
     from a fixture: tests patch `subprocess`, `PATH` and `sys.platform`, and
-    only after `monkeypatch` has undone that does `ps` mean `ps`.
+    only after `monkeypatch` has undone that does the process list mean the
+    process list.
     """
     basetemp = item.stash.get(_EXECUTOR_BASETEMP, None)
     if basetemp is None:
@@ -1312,19 +1340,10 @@ def client(
     setup_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
     setup_factory = async_sessionmaker(setup_engine, expire_on_commit=False)
 
-    asyncio.run(_clear_client_db())
-    get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
-
     # agent-as-user baseline (P1): 芝士 is a real user with a platform agent-
     # binding — seeded by the migration in prod, re-seeded here after the clear.
-    async def _seed_agent_user() -> None:
-        from app.domain.identity.services import IdentityService
-
-        async with setup_factory() as session:
-            await IdentityService(session).ensure_agent_user()
-            await session.commit()
-
-    asyncio.run(_seed_agent_user())
+    asyncio.run(_clear_client_db(seed_agent_user=True))
+    get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
 
     async def override_get_db():
         async with test_factory() as session:
@@ -1353,9 +1372,9 @@ def client(
 
     try:
         with TestClient(app) as c:
-            # The cheese write-API is token-gated (app.main.cheese_token_gate); send
-            # the secret on every test request so contract tests exercising those
-            # endpoints (doc/weekly/...) aren't rejected with 401.
+            # The cheese-only write routes are token-gated (app/api/write_access.py);
+            # send the secret on every test request so tests exercising those
+            # endpoints (note/lock/...) aren't rejected with 401.
             c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]
@@ -1450,36 +1469,54 @@ def _clean_slate_queries() -> tuple[str, str]:
     return occupied, moved_sequences
 
 
-#: The loop and engine every clear of the client database runs on, made on
-#: first use. See ``_clear_client_db``.
-_clear_loop: asyncio.AbstractEventLoop | None = None
-_clear_engine = None
+#: The loop and engine the harness's own work on the client database runs on,
+#: made on first use. See ``_on_worker_connection``.
+_worker_loop: asyncio.AbstractEventLoop | None = None
+_worker_engine = None
 
 
-async def _clear_client_db() -> None:
-    """Clear this worker's client database; see ``_clear_tables``.
+def _on_worker_connection(work):
+    """Run ``work(engine)`` on this worker's own connection to the client
+    database, and return what it returns.
 
-    It runs on one connection that lives as long as the worker, on a loop of
-    its own. The clear reads every table, and a backend's first read of
-    a table loads its catalog entries: 25-45 ms on a fresh connection against
-    under 1 ms on one that has read them before, and every engine the fixtures
-    build is new per test. The loop is the connection's own because the
-    callers run on short-lived loops (``asyncio.run`` per step) that an
-    asyncpg connection cannot outlive. ``pool_pre_ping`` reconnects it if the
-    database was recreated underneath.
+    The harness's reads and writes between tests (the clear, the seeded agent
+    user, the check for transactions a test left open) all go through one
+    connection that lives as long as the worker, on a loop of its own. A
+    backend's first read of a table loads its catalog entries: 25-45 ms on a
+    fresh connection against under 1 ms on one that has read them before, and
+    every engine the fixtures build is new per test. On a hosted runner a
+    fresh connection per step cost 60 ms for the seed alone. The loop is the
+    connection's own because the callers run on short-lived loops
+    (``asyncio.run`` per step) that an asyncpg connection cannot outlive.
+    ``pool_pre_ping`` reconnects it if the database was recreated underneath.
     """
-    global _clear_loop, _clear_engine
-    if _clear_loop is None:
-        _clear_loop = asyncio.new_event_loop()
+    global _worker_loop, _worker_engine
+    if _worker_loop is None:
+        _worker_loop = asyncio.new_event_loop()
         threading.Thread(
-            target=_clear_loop.run_forever, name="client-db-clear", daemon=True
+            target=_worker_loop.run_forever, name="client-db-worker", daemon=True
         ).start()
-        _clear_engine = create_async_engine(
+        _worker_engine = create_async_engine(
             TEST_DATABASE_URL, pool_size=1, max_overflow=0, pool_pre_ping=True
         )
-    await asyncio.wrap_future(
-        asyncio.run_coroutine_threadsafe(_clear_tables(_clear_engine), _clear_loop)
-    )
+    return asyncio.run_coroutine_threadsafe(work(_worker_engine), _worker_loop)
+
+
+async def _clear_client_db(*, seed_agent_user: bool = False) -> None:
+    """Clear this worker's client database (see ``_clear_tables``) and, for
+    the fixtures that stand in for a running app, seed the platform agent user
+    the migration seeds in production."""
+
+    async def clear(engine) -> None:
+        await _clear_tables(engine)
+        if seed_agent_user:
+            from app.domain.identity.services import IdentityService
+
+            async with AsyncSession(engine, expire_on_commit=False) as session:
+                await IdentityService(session).ensure_agent_user()
+                await session.commit()
+
+    await asyncio.wrap_future(_on_worker_connection(clear))
 
 
 async def _clear_tables(engine) -> None:
@@ -1604,9 +1641,15 @@ def _migration_fingerprint() -> str:
     import hashlib
     from pathlib import Path
 
-    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    alembic = Path(__file__).resolve().parent.parent / "alembic"
     digest = hashlib.sha256()
-    for path in sorted(versions.glob("*.py")):
+    # env.py and migration_helpers.py decide what the migrations do as much as
+    # the version files: a change to either must not reuse an old template.
+    for path in [
+        alembic / "env.py",
+        alembic / "migration_helpers.py",
+        *sorted((alembic / "versions").glob("*.py")),
+    ]:
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()[:12]
@@ -1820,8 +1863,38 @@ def _ensure_template() -> bool:
         return False
 
 
-def _migrate_fresh_db(db_name: str, db_url: str) -> None:
-    """Drop + recreate a database and migrate it to head (alembic)."""
+def revision_template(revision: str) -> str | None:
+    """A template database at an older ``revision``, built once per machine per
+    migration history, or None if it could not be built.
+
+    A data-migration test replays its migration on the schema of the revision
+    before it, and walking a fresh database from nothing to that revision is
+    most of the test's time. Every test of one migration asks for the same
+    revision, so the walk is done once, under the same lock and build-then-
+    rename rule as the head template (``_ensure_template``), and each test
+    copies the result. The name carries the history's fingerprint, so a changed
+    migration never reuses an old copy, and the ``cheesex_tpl_`` prefix puts it
+    under the same stale-template cleanup.
+    """
+    import fcntl
+
+    template = f"{_TEMPLATE_DB}_{revision}"
+    lock_path = Path(tempfile.gettempdir()) / f"{template}.lock"
+    try:
+        with open(lock_path, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if not asyncio.run(_db_exists(template)):
+                building = f"{template}_building"
+                _migrate_fresh_db(building, f"{_PG_BASE}/{building}", revision)
+                asyncio.run(_rename_db(building, template))
+            _touch_template_use(template)
+            return template
+    except Exception:  # noqa: BLE001 — the caller migrates directly instead
+        return None
+
+
+def _migrate_fresh_db(db_name: str, db_url: str, revision: str = "head") -> None:
+    """Drop + recreate a database and migrate it to ``revision`` (alembic)."""
     import subprocess
     import sys
     from pathlib import Path
@@ -1832,7 +1905,7 @@ def _migrate_fresh_db(db_name: str, db_url: str) -> None:
     # `python -m alembic` works from any host (local venv or CI) without assuming
     # a `.venv/bin/alembic` path.
     result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", revision],
         cwd=backend_dir,
         env={**os.environ, "DATABASE_URL": db_url},
         capture_output=True,
@@ -1844,7 +1917,8 @@ def _migrate_fresh_db(db_name: str, db_url: str) -> None:
         # test in the session then errors with no way to tell a wedged Postgres
         # from a genuinely broken migration. Surface alembic's own words.
         raise RuntimeError(
-            f"alembic upgrade head failed for {db_name} (rc={result.returncode})\n"
+            f"alembic upgrade {revision} failed for {db_name}"
+            f" (rc={result.returncode})\n"
             f"--- stdout ---\n{result.stdout.strip()}\n"
             f"--- stderr ---\n{result.stderr.strip()}"
         )
@@ -2046,28 +2120,28 @@ def pytest_runtest_makereport(
     return report
 
 
-async def _terminate_open_transactions(db_name: str) -> list[dict]:
-    """Sessions left ``idle in transaction`` on ``db_name``, each terminated
-    after being recorded. Runs on the maintenance database so it can see and
-    end them regardless of which loop created them."""
-    import asyncpg
-
-    dsn = _PG_BASE.replace("+asyncpg", "") + "/postgres"
-    conn = await asyncpg.connect(dsn, timeout=10)
-    try:
-        rows = await conn.fetch(
-            "select pid, now()-xact_start as xact_age, left(query, 200) as query"
-            " from pg_stat_activity"
-            " where datname = $1 and backend_type = 'client backend'"
-            "   and state = 'idle in transaction'",
-            db_name,
-        )
+async def _terminate_open_transactions(engine) -> list[dict]:
+    """Sessions left ``idle in transaction`` on the client database, each
+    terminated after being recorded. Runs on the worker's own connection
+    (``_on_worker_connection``), whose loop no test owns, so it can see and end
+    them regardless of which loop created them; that connection is excluded,
+    and is never inside a transaction between tests anyway."""
+    async with engine.connect() as conn:
+        rows = (
+            await conn.exec_driver_sql(
+                "select pid, now()-xact_start as xact_age, left(query, 200) as query"
+                " from pg_stat_activity"
+                " where datname = current_database()"
+                "   and backend_type = 'client backend'"
+                "   and state = 'idle in transaction'"
+                "   and pid <> pg_backend_pid()"
+            )
+        ).mappings()
         found = [dict(r) for r in rows]
         for r in found:
-            await conn.execute("select pg_terminate_backend($1)", r["pid"])
+            await conn.exec_driver_sql(f"select pg_terminate_backend({int(r['pid'])})")
+        await conn.commit()
         return found
-    finally:
-        await conn.close()
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -2092,7 +2166,7 @@ def pytest_runtest_teardown(item: pytest.Item):
     catch a leak first, by cancelling the task that holds it; this is the
     backstop for whatever gets past that.
 
-    Cost: one connection to the maintenance DB per client-DB test, a few ms.
+    Cost: one query on the worker's own connection per client-DB test.
 
     Executors a test left running are looked for here too
     (`_end_leftover_executors`).
@@ -2118,7 +2192,7 @@ def _fail_on_open_transactions(item: pytest.Item) -> None:
         return
     if not ({"client", "python_client", "db_factory"} & set(names)):
         return
-    leaked = asyncio.run(_terminate_open_transactions(_CLIENT_DB_NAME))
+    leaked = _on_worker_connection(_terminate_open_transactions).result(timeout=60)
     if leaked:
         details = "\n".join(
             f"  pid={r['pid']} open for {r['xact_age']}\n"
@@ -2323,15 +2397,10 @@ async def python_client(
     awaitable inside anyio tests."""
     from httpx import ASGITransport, AsyncClient
 
-    from app.domain.identity.services import IdentityService
-
     engine = _production_test_engine(TEST_DATABASE_URL)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)
-    await _clear_client_db()
+    await _clear_client_db(seed_agent_user=True)
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
-    async with test_factory() as session:
-        await IdentityService(session).ensure_agent_user()
-        await session.commit()
 
     async def override_get_db():
         async with test_factory() as session:

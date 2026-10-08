@@ -18,6 +18,7 @@ from sqlalchemy import select
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.session_host import claude_code
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.main import app
@@ -29,6 +30,13 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+
+
+@pytest.fixture(autouse=True)
+def _dead_starts_read_soon(monkeypatch):
+    """A session that dies on start is read as ended at once, not after the
+    production second between a failed ping and reading the runner's log."""
+    monkeypatch.setattr(claude_code, "STARTUP_POLL_S", 0.05)
 
 
 class SilentScreen(StubChannel):

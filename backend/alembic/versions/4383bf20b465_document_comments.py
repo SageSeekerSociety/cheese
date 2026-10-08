@@ -31,7 +31,7 @@ enum label without rebuilding the type.
 
 The backend this deploy replaces is still serving while this runs. Every table
 the migration changes, and every table a foreign key it adds or a row it
-deletes reaches, is locked up front, all at once or not at all (`_lock_all`),
+deletes reaches, is locked up front, all at once or not at all (`with_lock_retries(..., nowait=True)`),
 so a live request waits for it instead of deadlocking against it.
 
 Revision ID: 4383bf20b465
@@ -42,6 +42,7 @@ Create Date: 2026-10-04
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -68,39 +69,11 @@ def _text_fields(texts: Sequence[str], keywords: Sequence[str]) -> str:
     return "{" + ", ".join(fields) + "}"
 
 
-def _lock_all(tables: str) -> None:
-    """Hold every table this migration touches before it writes anything, or
-    none of them: each attempt takes them all at once without waiting
-    (`NOWAIT`), and one that cannot is undone whole and tried again shortly.
-    Waiting with some held, the migration could hold what a live request needs
-    while it waits on that request: a deadlock, which Postgres settles by
-    killing one of them. Holding nothing while it waits, it never blocks
-    anyone until it has everything."""
-    op.execute(f"""
-        DO $$
-        DECLARE attempts integer := 0;
-        BEGIN
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE NOWAIT;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 1200 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.05);
-                END;
-            END LOOP;
-        END
-        $$
-    """)
-
-
 def upgrade() -> None:
-    _lock_all(
+    with_lock_retries(
         "topics, projects, tasks, documents, blocks, block_reactions,"
-        " doc_comment_threads, doc_comment_replies"
+        " doc_comment_threads, doc_comment_replies",
+        nowait=True,
     )
 
     op.create_table(

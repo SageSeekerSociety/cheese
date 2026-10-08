@@ -621,7 +621,7 @@ async def mail_draft(
         title=f"邮件草稿待你确认：{draft.subject}",
         body=summary + "\n在房间里的卡片上核对后点「确认发送」",
         target_handle=row.owner_handle,
-        topic_id=room,
+        conversation_id=room,
         payload={"mail_draft_id": str(draft.id), "block_id": str(block_id)},
     )
     await db.commit()

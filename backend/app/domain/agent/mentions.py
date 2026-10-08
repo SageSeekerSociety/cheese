@@ -269,7 +269,7 @@ async def _tell_thread(
             title=f"{author} 在「{topic.title}」的支线里回复了",
             body=preview,
             target_handle=h,
-            topic_id=topic.id,
+            conversation_id=topic.id,
             payload={"thread_id": str(block.conversation_id)},
         )
 
@@ -347,7 +347,7 @@ async def announce_mentions(
                 title=f"{who} 在「{topic.title}」@了你",
                 body=preview,
                 target_handle=h,
-                topic_id=topic.id,
+                conversation_id=topic.id,
             )
     if not before:
         await _tell_thread(session, topic, block, author, told=set(targets))

@@ -98,6 +98,16 @@ repos:
         pass_filenames: false
         files: ^backend/alembic/
 
+      # The migrations this branch adds must be safe while the previous
+      # release keeps serving (.claude/rules/migrations.md). CI runs the same
+      # script in test.yml's migration-heads job.
+      - id: migration-safety
+        name: added migrations are safe under the running release
+        entry: python3 .claude/scripts/check-migration-safety.py
+        language: system
+        pass_filenames: false
+        files: ^backend/alembic/versions/
+
       # --- frontend -----------------------------------------------------
       # typecheck and build are deliberately absent: both OOM on a small box, and
       # a check that dies on memory reports as a code failure. CI's frontend.yml

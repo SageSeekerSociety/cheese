@@ -23,6 +23,8 @@ A row a 支线 hangs under stays where it is, as before.
 
 from collections.abc import Sequence
 
+from migration_helpers import with_lock_retries
+
 from alembic import op
 
 revision: str = "52fee3dd7773"
@@ -40,35 +42,8 @@ def _quoted(values: Sequence[str]) -> str:
     return ", ".join("'" + value.replace("'", "''") + "'" for value in values)
 
 
-def _lock(tables: str) -> None:
-    """As in b6fcc6362b79: queue for every table, a few seconds at a time."""
-    op.execute(f"""
-        DO $$
-        DECLARE
-            attempts integer := 0;
-            outer_timeout text := current_setting('lock_timeout');
-        BEGIN
-            PERFORM set_config('lock_timeout', '3s', true);
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 100 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.2);
-                END;
-            END LOOP;
-            PERFORM set_config('lock_timeout', outer_timeout, true);
-        END
-        $$
-    """)
-
-
 def upgrade() -> None:
-    _lock("blocks")
+    with_lock_retries("blocks")
     move()
 
 
