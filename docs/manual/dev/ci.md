@@ -44,7 +44,7 @@ covers:
 title: 勾几行路径，看这套检查选了什么
 note: 左边勾上这次改到的路径，右边就是 Required CI 会要求成功的套件。选中的必须成功，没选中的必须是跳过。
 source: ci-scope
-expect: backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, cifast
+expect: backend, frontend, e2e, cli, guards, deploy, harness, remote, mcp, equivalence, cifast
 paths:
   - path: docs/manual/dev/ci.md
     label: 改文档
