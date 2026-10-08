@@ -8,7 +8,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain.agent.hook_stream import _bind_user_entry, _HookWorkState
+from app.domain.agent.hook_stream import _bind_user_entry
+from app.domain.agent.live_work import HookWorkState
 from app.domain.agent.service import AgentUserEntry
 from app.domain.agent.turn_inputs import (
     bind,
@@ -47,8 +48,8 @@ def _event(
     )
 
 
-def _state(topic_id, work_id, *, self_started: bool) -> _HookWorkState:
-    return _HookWorkState(
+def _state(topic_id, work_id, *, self_started: bool) -> HookWorkState:
+    return HookWorkState(
         project_id=uuid.uuid4(),
         topic_id=topic_id,
         work_id=work_id,

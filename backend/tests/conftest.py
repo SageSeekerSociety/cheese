@@ -857,13 +857,13 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
     that, the same way a room does.
     """
     for _ in range(tries):
-        if not any(t == topic_id for t, _ in service._hook_work) and not any(
+        if not any(t == topic_id for t, _ in service.live.hook_work) and not any(
             str(topic_id) == pending for pending in _topics_with_pending_records()
         ):
             return
         await _REAL_SLEEP(0.01)
     raise AssertionError(
-        f"turn on {topic_id} never closed; open work: {list(service._hook_work)}"
+        f"turn on {topic_id} never closed; open work: {list(service.live.hook_work)}"
     )
 
 

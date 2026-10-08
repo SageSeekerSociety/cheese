@@ -1180,7 +1180,7 @@ class _SweepChat:
         self._live_screen = live_screen
         self._seat_state = seat_state or ("live" if live_screen else "dead")
         # Conversations with real termination evidence — the double's stand-in
-        # for ChatService._dead_sessions. A seat flag is NOT evidence (FB-56):
+        # for ``LiveWork.dead_sessions``. A seat flag is NOT evidence (FB-56):
         # a row closes only when its own conversation is in here.
         self._dead_sessions = set(dead_sessions)
         self.texts: list[str] = []
