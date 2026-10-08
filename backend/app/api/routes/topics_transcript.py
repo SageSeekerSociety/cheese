@@ -110,11 +110,9 @@ async def topic_transcript(
         if cursor is None or cursor.conversation_id != place.conversation_id:
             raise NotFoundError(say("cursorEventNotFound"))
     if limit is None:
-        site = [
-            b
-            for b in await repo.list_for_topic(place.conversation_id)
-            if b.kind in kinds and (author is None or b.author == author)
-        ]
+        site = await repo.list_for_topic(
+            place.conversation_id, kinds=kinds, author=author
+        )
         has_more = False
     else:
         result = await repo.page_for_topic(
