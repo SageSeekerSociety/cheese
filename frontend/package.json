@@ -20,6 +20,8 @@
     "lint:style:update": "node scripts/stylelint-ratchet.mjs --update",
     "lint:boundary": "node scripts/import-boundary-ratchet.mjs",
     "lint:boundary:update": "node scripts/import-boundary-ratchet.mjs --update",
+    "lint:catalog": "python3 ../.claude/scripts/catalog-ratchet.py",
+    "lint:catalog:update": "python3 ../.claude/scripts/catalog-ratchet.py --update",
     "lint:i18n": "node scripts/i18n-cjk-gate.mjs",
     "lint:scenes": "python3 ../.claude/scripts/scene-ratchet.py",
     "lint:scenes:update": "python3 ../.claude/scripts/scene-ratchet.py --update",

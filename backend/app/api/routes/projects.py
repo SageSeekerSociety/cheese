@@ -19,6 +19,7 @@ from app.api.place import (
     rooms_seen,
 )
 from app.api.response import ok, page
+from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
@@ -483,7 +484,7 @@ async def project_progress(
     return ok(page(rows, len(rows)))
 
 
-@router.post("/{project_id}/memory")
+@router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])
 async def add_memory(
     project_id: uuid.UUID,
     body: dict,

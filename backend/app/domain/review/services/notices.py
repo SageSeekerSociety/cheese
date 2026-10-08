@@ -85,9 +85,11 @@ async def _announce_filed(
 
 
 async def _announce_new_artifact(
-    self: pkg.AcceptService, topic: Topic, name: str
+    self: pkg.AcceptService, topic: Topic, name: str, *, task_id: uuid.UUID
 ) -> None:
-    return await _announce_new_artifact_from_room(self._session, topic, name)
+    return await _announce_new_artifact_from_room(
+        self._session, topic, name, task_id=task_id
+    )
 
 
 def _notify_merge_result(

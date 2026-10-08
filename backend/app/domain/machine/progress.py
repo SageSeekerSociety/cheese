@@ -1,9 +1,10 @@
 """What a room is told about its sessions' sandboxes on cloud.
 
-Getting ready, waking, sleeping: those are the platform's own running, kept
-as run records (`run_record`) for the 现场, not said in the conversation.
-Only what a person has to act on is said there: a sandbox stopped for want of
-credits, an archive that could not be restored.
+Getting ready, being released when idle: those are the platform's own
+running, kept as run records (`run_record`) for the 现场, not said in the
+conversation. Only what a person has to act on, or would otherwise not know,
+is said there: a sandbox released for want of credits, a sandbox replaced
+because it stopped answering.
 
 A room hears about the sandbox (or the session's whole cloud VM), never the
 host under it: which machine a session landed on, and how that machine was
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import room_of
 from app.domain.machine.models import CloudHostHome
 from app.domain.run_record.service import FRAME as RUN_RECORD_FRAME
 from app.domain.run_record.service import as_payload as run_record_payload
@@ -38,20 +40,35 @@ async def _conversation(session: AsyncSession, home: CloudHostHome) -> uuid.UUID
     return home.topic_id
 
 
-async def _line(
-    session: AsyncSession, home: CloudHostHome, content: str, meta: dict
+async def say_in(
+    session: AsyncSession, conversation_id: uuid.UUID, content: str, meta: dict
 ) -> dict | None:
-    """Say it in the conversation: a person has something to do."""
+    """Say it in a conversation, a room's or one inside a room (a task's, a
+    支线's), as the platform. Returns what to publish once committed."""
+    room = await room_of(session, conversation_id)
     block = await announce(
         session,
-        place_id=await _conversation(session, home),
+        place_id=room,
+        task_id=None if conversation_id == room else conversation_id,
         content=content,
-        meta={"who": "platform", "home": str(home.id), **meta},
+        meta={"who": "platform", **meta},
         published_by_caller=True,
     )
     if block is None:
         return None
     return BlockOut.model_validate(block).model_dump(mode="json")
+
+
+async def _line(
+    session: AsyncSession, home: CloudHostHome, content: str, meta: dict
+) -> dict | None:
+    """Say it in the conversation: a person has something to do."""
+    return await say_in(
+        session,
+        await _conversation(session, home),
+        content,
+        {"home": str(home.id), **meta},
+    )
 
 
 async def _record(
@@ -74,9 +91,8 @@ async def tell_preparing(
     *,
     whole_machine: bool = False,
 ) -> dict | None:
-    """The first line of a sandbox getting ready: being prepared, woken
-    (``sandboxWaking``) or restored from its archive (``sandboxRestoring``).
-    A session's whole cloud VM is only ever prepared."""
+    """The first line of a sandbox (or a session's whole cloud VM) getting
+    ready."""
     return await _record(
         session,
         home,
@@ -123,13 +139,13 @@ async def tell_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
     )
 
 
-async def tell_asleep(
+async def tell_released(
     session: AsyncSession, home: CloudHostHome, minutes: int
 ) -> dict | None:
     return await _record(
         session,
         home,
-        say("sandboxAsleep", minutes=minutes),
+        say("sandboxReleased", minutes=minutes),
         {"event_type": "sandbox_asleep", "severity": "info"},
     )
 
@@ -138,17 +154,8 @@ async def tell_unpaid(session: AsyncSession, home: CloudHostHome) -> dict | None
     return await _line(
         session,
         home,
-        say("sandboxStoppedNoCredits"),
+        say("sandboxReleasedNoCredits"),
         {"event_type": "sandbox_asleep", "severity": "warn"},
-    )
-
-
-async def tell_archive_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
-    return await _line(
-        session,
-        home,
-        say("sandboxArchiveLost"),
-        {"event_type": "cloud_startup", "severity": "warn"},
     )
 
 

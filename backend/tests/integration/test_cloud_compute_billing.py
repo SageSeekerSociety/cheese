@@ -1,10 +1,10 @@
 """Cloud compute is charged in credits for the time a sandbox runs (#2320 计费).
 
-A sandbox costs a fixed price per running hour, from start to idle stop, out of
-the same credits and the same payer as the model calls of its project: the
-project's team, or the owner's personal team for their own project. Nothing is
-charged while it sleeps. With the credits spent no sandbox starts, and a
-running one stops once its room's turn is over. With no price set, no cloud
+A sandbox costs a fixed price per running hour, from start until it is
+destroyed as idle, out of the same credits and the same payer as the model
+calls of its project: the project's team, or the owner's personal team for
+their own project. With the credits spent no sandbox starts, and a running one
+is destroyed once its room's turn is over. With no price set, no cloud
 sandbox starts at all. A person's own device is never charged.
 
 The cloud here is the one ``test_sandbox_idle_stop`` builds: hosts are
@@ -150,7 +150,7 @@ def room_says(case, seat) -> list[str]:
     return run(case, read)
 
 
-def test_a_sandbox_is_charged_for_the_time_it_runs_and_not_while_it_sleeps(cloud):
+def test_a_sandbox_is_charged_for_the_time_it_runs_and_not_once_it_is_gone(cloud):
     seat = cloud.seats[0]
     working_on(cloud, seat, "host-a")
     assert meter(cloud)["opened"] == 1
@@ -165,21 +165,21 @@ def test_a_sandbox_is_charged_for_the_time_it_runs_and_not_while_it_sleeps(cloud
     assert first.conversation_id == seat.room
     assert (first.kind, first.total_tokens) == ("sandbox", 0)
 
-    # Idle, it sleeps; its last partial minute is charged as a whole one.
+    # Idle, it is destroyed; its last partial minute is charged as a whole one.
     time_passes(cloud, seat, timedelta(minutes=11))
-    assert sweep(cloud)["asleep"] == 1
+    assert sweep(cloud)["destroyed"] == 1
     meter(cloud)
     [only] = runs_of(cloud)
-    assert only.ended_at == home_of(cloud, seat).stopped_at
+    assert only.ended_at is not None
     total = 90 / 60 * PRICE + PRICE / 60
     assert sum(c.credits for c in charges(cloud)) == pytest.approx(total)
 
-    # Asleep it costs nothing, however long.
+    # Gone, it costs nothing, however long.
     meter(cloud)
     assert len(charges(cloud)) == 2
     assert [r.ended_at is not None for r in runs_of(cloud)] == [True]
 
-    # Woken by the next tool call, it is charged again from then on.
+    # The new sandbox the next tool call gets is charged from then on.
     assert tool_call(cloud, seat)["target"]["device_id"] == "host-a"
     assert meter(cloud)["opened"] == 1
     assert [r.ended_at is None for r in runs_of(cloud)] == [False, True]
@@ -228,7 +228,7 @@ def test_a_persons_own_project_pays_from_their_personal_credits(cloud):
     assert run(cloud, my_page)["lines"]["compute"] == pytest.approx(PRICE / 2)
 
 
-def test_spent_credits_start_no_sandbox_and_stop_a_running_one_after_its_turn(cloud):
+def test_spent_credits_start_no_sandbox_and_end_a_running_one_after_its_turn(cloud):
     working, newcomer = cloud.seats[0], cloud.seats[1]
     working_on(cloud, working, "host-a")
     meter(cloud)
@@ -258,7 +258,7 @@ def test_spent_credits_start_no_sandbox_and_stop_a_running_one_after_its_turn(cl
 
     # The running one finishes the turn it is in.
     sweep(cloud)
-    assert home_of(cloud, working).stopped_at is None
+    assert home_of(cloud, working) is not None
 
     async def turn_ends():
         async with cloud.client.test_request_factory() as db:
@@ -271,18 +271,18 @@ def test_spent_credits_start_no_sandbox_and_stop_a_running_one_after_its_turn(cl
 
     run(cloud, turn_ends)
     metering._checked_at = None
-    assert sweep(cloud)["asleep"] == 1
-    assert home_of(cloud, working).stopped_at is not None
-    assert (
-        "额度已用完，环境已停止。文件都留着，有了额度后下一条消息会唤醒它。"
-        in room_says(cloud, working)
+    assert sweep(cloud)["destroyed"] == 1
+    assert home_of(cloud, working) is None
+    assert any(
+        line.startswith("额度已用完，环境已释放。")
+        for line in room_says(cloud, working)
     )
     meter(cloud)
     assert all(r.ended_at is not None for r in runs_of(cloud))
 
-    # And it is not woken while the credits stay spent.
+    # And no new one starts while the credits stay spent.
     assert "额度已用完" in tool_call(cloud, working)["unavailable"]
-    assert home_of(cloud, working).stopped_at is not None
+    assert home_of(cloud, working) is None
 
 
 def test_with_no_price_set_no_cloud_sandbox_starts(cloud, monkeypatch, caplog):

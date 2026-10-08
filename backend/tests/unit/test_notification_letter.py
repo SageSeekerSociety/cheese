@@ -172,3 +172,14 @@ async def test_a_team_email_names_the_person_and_the_team(db_factory, monkeypatc
     assert sent["subject"] == "张三申请加入「前端组」"
     assert "我想一起做前端" in sent["body_html"]
     assert "张三申请加入「前端组」" in sent["body_text"]
+
+
+def test_a_question_mail_calls_the_teammate_by_its_name():
+    letter = letter_for(
+        {
+            "type": "CHEESE_QUESTION",
+            "payload": {**ROOM, "question": "先做哪一页？", "agentName": "Nova"},
+        }
+    )
+    assert letter.subject == "Nova 问你：先做哪一页？"
+    assert "芝士" not in letter.subject + letter.eyebrow

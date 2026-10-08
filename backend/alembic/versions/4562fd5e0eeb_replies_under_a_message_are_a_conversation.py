@@ -15,6 +15,7 @@ Revises: c7e2a91f4d3b
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -24,35 +25,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-def _lock(tables: str) -> None:
-    """As in b6fcc6362b79: queue for every table, a few seconds at a time."""
-    op.execute(f"""
-        DO $$
-        DECLARE
-            attempts integer := 0;
-            outer_timeout text := current_setting('lock_timeout');
-        BEGIN
-            PERFORM set_config('lock_timeout', '3s', true);
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 100 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.2);
-                END;
-            END LOOP;
-            PERFORM set_config('lock_timeout', outer_timeout, true);
-        END
-        $$
-    """)
-
-
 def upgrade() -> None:
-    _lock("conversations, task_proposals, blocks")
+    with_lock_retries("conversations, task_proposals, blocks")
     op.drop_constraint("ck_conversations_kind", "conversations", type_="check")
     op.create_check_constraint(
         "ck_conversations_kind",

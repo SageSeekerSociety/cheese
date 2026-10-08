@@ -32,7 +32,6 @@ class FakeMicroCloud:
         self.customers: dict[str, dict] = {}
         self.accounts: dict[tuple[int, str], dict] = {}
         self.claims = []
-        self.wakes: list[tuple[str, int]] = []
 
     async def list_offerings(self):
         if self._offerings is None:
@@ -75,34 +74,8 @@ class FakeMicroCloud:
         self.machines[self._next_id] = machine
         return machine
 
-    #: Set to make every machine call fail as when MicroCloud is unreachable.
-    down = False
-
     async def get_machine(self, machine_id):
-        if self.down:
-            raise MicroCloudError("MicroCloud unreachable: connection refused")
         return self.machines.get(machine_id)
-
-    # --- waking a parked machine -------------------------------------------
-
-    #: What a resume or start leaves the machine in: ``resuming``/``starting``
-    #: as MicroCloud answers an accepted one, or e.g. ``suspended`` for one
-    #: that failed back.
-    wakes_to: str | None = None
-
-    def _woken(self, machine_id, kind, moving):
-        if self.down:
-            raise MicroCloudError("MicroCloud unreachable: connection refused")
-        self.wakes.append((kind, machine_id))
-        machine = self.machines[machine_id]
-        machine["status"] = self.wakes_to or moving
-        return dict(machine)
-
-    async def resume_machine(self, machine_id):
-        return self._woken(machine_id, "resume", "resuming")
-
-    async def start_machine(self, machine_id):
-        return self._woken(machine_id, "start", "starting")
 
     async def find_machine(self, customer_id, hostname):
         for machine in self.machines.values():

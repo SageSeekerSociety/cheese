@@ -69,14 +69,12 @@ export interface ComputeProposal {
   content: string
 }
 
-// 一个话题一个容器：改的是整个房间，每条会话都跟着搬，先推送，推不上去就整个不换。`abandonUnpushed` 只在原来那台
-// 够不着时成立（`WorkComputerUnreachable`）；`ifIdle` 跳过正在干活的房间（409 SessionWorking）；`visibility` 是房间在
-// 点名那台上能看到什么，不给就保持原样，新绑上的是隔离环境。
+// 一个话题一个容器：改的是整个房间，每条会话都跟着搬，搬之前尽力推送一次，推没推上去都搬。`ifIdle` 跳过正在干活的
+// 房间（409 SessionWorking）；`visibility` 是房间在点名那台上能看到什么，不给就保持原样，新绑上的是隔离环境。
 export function setTopicComputeChoice(
   topicId: string,
   choice: ComputeChoice,
   options: {
-    abandonUnpushed?: boolean
     ifIdle?: boolean
     visibility?: 'host' | 'isolated'
   } = {}
@@ -85,7 +83,6 @@ export function setTopicComputeChoice(
     method: 'PUT',
     body: JSON.stringify({
       choice,
-      ...(options.abandonUnpushed ? { abandon_unpushed: true } : {}),
       ...(options.ifIdle ? { if_idle: true } : {}),
       ...(options.visibility ? { visibility: options.visibility } : {}),
     }),

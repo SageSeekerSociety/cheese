@@ -27,6 +27,7 @@ from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
     open_task,
     post_message,
@@ -159,33 +160,95 @@ def test_an_ai_teammate_cannot_create_a_task(client):
     assert client.get(f"/topics/{room_id}/tasks").json()["data"]["data"] == []
 
 
-def test_a_proposal_becomes_a_task_owned_by_whoever_accepts_it(client):
-    project_id, room_id = _room(client)
-    _with_bob(client, project_id, room_id)
-    proposal = client.post(
-        f"/topics/{room_id}/task-proposals",
-        json={"title": "迁移旧数据", "summary": "把旧表搬到新表"},
-        headers=room_agent_headers(client, room_id),
+def _teammate_in(client, room_id: str, thread_id: str) -> dict[str, str]:
+    """The credential the room's AI teammate answers with in that 支线."""
+    project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
+    token = mint_scoped_token(
+        project_id=project_id,
+        topic_id=thread_id,
+        agent_handle=room_agent_seat(client, room_id),
     )
-    assert proposal.status_code == 200, proposal.text
-    block_id = proposal.json()["data"]["id"]
+    return {"X-Cheese-Token": token}
 
-    accepted = client.post(
-        f"/topics/{room_id}/task-proposals/{block_id}/accept",
-        headers=session_auth_headers("bob"),
-    )
 
-    assert accepted.status_code == 200, accepted.text
-    task = accepted.json()["data"]
-    assert task["owner_handle"] == "bob"
-    assert task["title"] == "迁移旧数据"
-    # One proposal, one task: the second person to click gets told, not a twin.
-    again = client.post(
-        f"/topics/{room_id}/task-proposals/{block_id}/accept",
+def _default_reviewer(client, project_id: str, handle: str) -> None:
+    r = client.put(
+        f"/projects/{project_id}/branch-protection",
+        json={"default_reviewer": handle},
         headers=session_auth_headers("alice"),
     )
-    assert again.status_code == 422
-    assert len(client.get(f"/topics/{room_id}/tasks").json()["data"]["data"]) == 1
+    assert r.status_code == 200, r.text
+
+
+def _tasks(client, room_id: str) -> list[dict]:
+    return client.get(f"/topics/{room_id}/tasks").json()["data"]["data"]
+
+
+def test_a_task_someone_asked_for_is_theirs_and_starts_at_once(client):
+    project_id, room_id = _room(client)
+    _with_bob(client, project_id, room_id)
+    _default_reviewer(client, project_id, "alice")
+    thread = in_thread(client, room_id, "alice")
+
+    r = client.post(
+        f"/topics/{thread}/teammate-tasks",
+        json={
+            "title": "迁移旧数据",
+            "summary": "把旧表搬到新表",
+            "owner_handle": "bob",
+            "start": True,
+        },
+        headers=_teammate_in(client, room_id, thread),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["started"] is True
+    [task] = _tasks(client, room_id)
+    assert task["owner_handle"] == "bob"
+    assert task["started_at"] is not None
+    assert task["presentation"]["phrase"] != "discussing"
+
+
+def test_a_teammates_own_idea_waits_for_its_owner_to_start(client):
+    project_id, room_id = _room(client)
+    _default_reviewer(client, project_id, "alice")
+    thread = in_thread(client, room_id, "alice")
+
+    r = client.post(
+        f"/topics/{thread}/teammate-tasks",
+        json={"title": "顺手重构", "summary": "把重复的两段合成一个函数"},
+        headers=_teammate_in(client, room_id, thread),
+    )
+
+    assert r.status_code == 200, r.text
+    [task] = _tasks(client, room_id)
+    # Nobody named: whoever wrote the message the 支线 hangs under.
+    assert task["owner_handle"] == "alice"
+    assert task["started_at"] is None
+
+
+def test_one_message_becomes_several_tasks_under_it(client):
+    project_id, room_id = _room(client)
+    thread = in_thread(client, room_id, "alice")
+    root = client.get(f"/topics/{thread}/thread").json()["data"]["root"]["id"]
+    agent = _teammate_in(client, room_id, thread)
+
+    for title in ("表单字段精简", "学号格式校验"):
+        r = client.post(
+            f"/topics/{thread}/teammate-tasks",
+            json={"title": title, "summary": "按支线里定的做"},
+            headers=agent,
+        )
+        assert r.status_code == 200, r.text
+    made = client.post(f"/blocks/{root}/upgrade", headers=session_auth_headers("alice"))
+    assert made.status_code == 200, made.text
+
+    tasks = _tasks(client, room_id)
+    assert len(tasks) == 3
+    assert {t["upgraded_from_block_id"] for t in tasks} == {root}
+    # None of them adds a line to the channel's main line.
+    main_line = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
+    assert not [b for b in main_line if (b.get("meta") or {}).get("task_id")]
 
 
 def _told(client, task_id: str) -> str:
@@ -205,24 +268,18 @@ def _told(client, task_id: str) -> str:
     return client.portal.call(read)
 
 
-def test_a_task_made_from_a_proposal_is_handed_the_discussion_behind_it(client):
+def test_a_task_a_teammate_created_is_handed_the_discussion_behind_it(client):
     """The task's own session never reads the room, so what was agreed there
-    reaches the task with the proposal or not at all. On dev (2026-10-05) a
+    reaches the task when it is created or not at all. On dev (2026-10-05) a
     task proposed with no summary started knowing none of the five changes
     agreed in its room."""
     _project_id, room_id = _room(client)
-    post_message(
-        client, room_id, "alice", {"content": "删场次的通知选 B：发布时一起发"}
-    )
-    block_id = client.post(
-        f"/topics/{room_id}/task-proposals",
-        json={"title": "通知改到发布时", "summary": "发布时按人汇总变更"},
-        headers=room_agent_headers(client, room_id),
-    ).json()["data"]["id"]
-
+    thread = in_thread(client, room_id, "alice")
+    post_message(client, thread, "alice", {"content": "删场次的通知选 B：发布时一起发"})
     task = client.post(
-        f"/topics/{room_id}/task-proposals/{block_id}/accept",
-        headers=session_auth_headers("alice"),
+        f"/topics/{thread}/teammate-tasks",
+        json={"title": "通知改到发布时", "summary": "发布时按人汇总变更"},
+        headers=_teammate_in(client, room_id, thread),
     ).json()["data"]
 
     told = _told(client, task["id"])
@@ -230,59 +287,32 @@ def test_a_task_made_from_a_proposal_is_handed_the_discussion_behind_it(client):
     assert "删场次的通知选 B" in told
 
 
-def test_a_proposal_that_says_nothing_of_the_work_is_refused(client):
+def test_a_task_that_says_nothing_of_the_work_is_refused(client):
     _project_id, room_id = _room(client)
+    thread = in_thread(client, room_id, "alice")
 
     r = client.post(
-        f"/topics/{room_id}/task-proposals",
+        f"/topics/{thread}/teammate-tasks",
         json={"title": "顺手重构", "summary": ""},
-        headers=room_agent_headers(client, room_id),
+        headers=_teammate_in(client, room_id, thread),
     )
 
-    assert r.status_code == 400
-    proposals = client.get(
-        f"/topics/{room_id}/task-proposals", headers=session_auth_headers("alice")
-    ).json()["data"]
-    assert proposals == []
+    assert 400 <= r.status_code < 500
+    assert _tasks(client, room_id) == []
 
 
-def test_a_dismissed_proposal_cannot_be_accepted_later(client):
+def test_a_person_creates_tasks_their_own_way_not_as_a_teammate(client):
     _project_id, room_id = _room(client)
-    block_id = client.post(
-        f"/topics/{room_id}/task-proposals",
-        json={"title": "顺手重构", "summary": "把重复的两段合成一个函数"},
-        headers=room_agent_headers(client, room_id),
-    ).json()["data"]["id"]
-
-    dismissed = client.post(
-        f"/topics/{room_id}/task-proposals/{block_id}/dismiss",
-        headers=session_auth_headers("alice"),
-    )
-    assert dismissed.status_code == 200, dismissed.text
+    thread = in_thread(client, room_id, "alice")
 
     r = client.post(
-        f"/topics/{room_id}/task-proposals/{block_id}/accept",
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 422
-    assert client.get(f"/topics/{room_id}/tasks").json()["data"]["data"] == []
-
-
-def test_an_ai_teammate_cannot_accept_its_own_proposal(client):
-    _project_id, room_id = _room(client)
-    agent = room_agent_headers(client, room_id)
-    block_id = client.post(
-        f"/topics/{room_id}/task-proposals",
+        f"/topics/{thread}/teammate-tasks",
         json={"title": "自己批", "summary": "改一处文案"},
-        headers=agent,
-    ).json()["data"]["id"]
-
-    r = client.post(
-        f"/topics/{room_id}/task-proposals/{block_id}/accept", headers=agent
+        headers=session_auth_headers("alice"),
     )
 
     assert r.status_code == 403
-    assert client.get(f"/topics/{room_id}/tasks").json()["data"]["data"] == []
+    assert _tasks(client, room_id) == []
 
 
 # —— 开始 ————————————————————————————————————————————————————————————————

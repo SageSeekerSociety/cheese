@@ -68,7 +68,11 @@ class Placed:
 
 class CentralChannel(DeviceChannel):
     def __init__(self, executor):
-        super().__init__(hub=executor._hub, session_factory=executor._session_factory)
+        super().__init__(
+            hub=executor._hub,
+            session_factory=executor._session_factory,
+            reconnect_grace_s=executor._reconnect_grace_s,
+        )
         self.executor = executor
         self.name = executor.name
         self.deferred_work = True

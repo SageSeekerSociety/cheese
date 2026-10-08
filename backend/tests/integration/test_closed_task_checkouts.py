@@ -1,9 +1,9 @@
 """A closed task's checkout leaves the machines its room worked on.
 
-Only once its work is on the forge: a checkout holding uncommitted files,
-unpushed commits or a running process stays. A machine that was offline when
-the task closed — the one a room has left included — is swept when it
-connects again.
+Whatever it holds that was not pushed: each turn's checkpoint already sent the
+task's work to its branch and snapshot. Only a checkout a process is still
+inside stays. A machine that was offline when the task closed — the one a room
+has left included — is swept when it connects again.
 """
 
 import asyncio
@@ -179,7 +179,7 @@ async def _until(condition, timeout: float = 30.0) -> None:
     await asyncio.wait_for(poll(), timeout)
 
 
-async def test_closing_removes_published_checkouts_and_keeps_unpublished_ones(
+async def test_closing_removes_closed_checkouts_but_one_a_process_is_inside(
     client, tmp_path, monkeypatch
 ):
     room = await _room(client, tmp_path)
@@ -202,11 +202,11 @@ async def test_closing_removes_published_checkouts_and_keeps_unpublished_ones(
         inside.kill()
         inside.wait()
 
-    assert not paths[published].exists()
-    assert str(paths[published]) not in git(machine.cache, "worktree", "list")
-    for kept in (unpushed, edited, busy, still_open):
+    for gone in (published, unpushed, edited):
+        assert not paths[gone].exists()
+        assert str(paths[gone]) not in git(machine.cache, "worktree", "list")
+    for kept in (busy, still_open):
         assert paths[kept].exists()
-    assert (paths[edited] / "draft.txt").read_text() == "not committed\n"
 
 
 async def test_a_machine_offline_at_close_is_swept_when_it_connects(

@@ -24,7 +24,7 @@ import asyncio
 import logging
 import uuid
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -293,6 +293,13 @@ async def retarget_completed_dependencies(
             Task.status == TaskStatus.open,
             or_(
                 parent.status == TaskStatus.closed,
+                # A step of the parent landed and it went on on a new branch:
+                # what was stacked on the old one now stacks on the target.
+                and_(
+                    parent.delivered_head.is_not(None),
+                    Task.base_branch != parent.branch_name,
+                    Task.base_branch != parent.base_branch,
+                ),
                 select(AcceptCard.id)
                 .where(
                     AcceptCard.task_id == parent.id,
@@ -332,11 +339,21 @@ async def retarget_completed_dependencies(
                     and parent_card.status == AcceptStatus.rejected
                     else None
                 )
-                if ancestor.status != TaskStatus.closed and rejected_id is None:
+                stepped = (
+                    ancestor.status == TaskStatus.open
+                    and ancestor.delivered_head is not None
+                    and task.base_branch
+                    not in (ancestor.branch_name, ancestor.base_branch)
+                )
+                if (
+                    ancestor.status != TaskStatus.closed
+                    and rejected_id is None
+                    and not stepped
+                ):
                     continue
                 event_type = (
                     EVENT_DEPENDENCY_CLOSED
-                    if ancestor.status == TaskStatus.closed
+                    if ancestor.status == TaskStatus.closed or stepped
                     else EVENT_DEPENDENCY_REJECTED
                 )
                 delivered = bool(ancestor.accepted_at or ancestor.delivered_head)
@@ -354,7 +371,8 @@ async def retarget_completed_dependencies(
                 key = action_key(task.id, event_type, ancestor.id, *parent_state)
                 if await idem.stored_result(session, key) is not None:
                     continue
-                retarget = delivered and task.base_branch == ancestor.branch_name
+                # The parent's branch, or one of its earlier steps' branches.
+                retarget = delivered and task.base_branch != base
                 client = None
                 if retarget and task.pr_number is not None:
                     from app.domain.review.services import AcceptService

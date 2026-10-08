@@ -267,3 +267,19 @@ def test_a_person_naming_two_agents_wakes_both(client, stub_hooks):
     assert row.payload["eventType"] == mention.BY_PERSON
     assert row.state == "received", row.last_error
     assert len(arrivals) == 2, arrivals
+
+
+def test_a_person_mentioned_by_a_teammate_is_told_the_teammates_own_name(client):
+    """The alert says who @-ed you by the name the teammate goes by, the one its
+    chip in the room shows; never one fixed name for every teammate."""
+    project_id, room_id, _, reviewer = _room_with_two_agents(client)
+    join_project_team(client, project_id, "bob")
+    _publish(client, room_id, _as(project_id, room_id, reviewer), "<@bob> 看一下")
+    wait_work_idle()
+
+    alerts = client.get(
+        f"/projects/{project_id}/alerts", headers=session_auth_headers("bob")
+    ).json()["data"]["data"]
+    [alert] = [a for a in alerts if a["kind"] == "MENTION"]
+    assert alert["title"].startswith("评审 "), alert["title"]
+    assert "芝士" not in alert["title"]

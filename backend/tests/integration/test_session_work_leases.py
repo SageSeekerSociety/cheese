@@ -241,13 +241,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     first_id, first_device, first_token = identities[0]
     second_id, second_device, _ = identities[1]
     choice_path = f"/topics/{topic_id}/compute-profile"
-    selection = {
-        "choice": {
-            "name": "Second machine",
-            "profile": "device",
-            "device_id": second_device,
-        }
-    }
     from app.domain.agent_instance.models import AgentInstance
 
     async with client.test_factory() as db:
@@ -287,9 +280,8 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]
         is old_online
     )
-    # An agent may change its own work destination once its work is pushed on
-    # the machine it leaves. Away from a machine that cannot be reached for
-    # that, only a person may switch, and says so explicitly.
+    # An agent may change its own work destination; the machine it leaves gets
+    # one checkpoint first, if it can be reached.
     from app.domain.agent.models import AgentTurn
 
     async with client.test_factory() as db:
@@ -350,17 +342,9 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
                 headers={"X-Cheese-Token": first_token},
                 json={"profile": "device", "device_id": second_device},
             )
-            if old_online and background_state == "running":
-                assert response.status_code == 200, response.text
-            else:
-                assert response.status_code == 409, response.text
-                assert response.json()["error"]["name"] == "WorkComputerUnreachable"
-                response = client.put(
-                    choice_path,
-                    headers=owner_headers,
-                    json={**selection, "abandon_unpushed": True},
-                )
-                assert response.status_code == 200, response.text
+            # Reachable or not, its checkpoint through or not: the agent's own
+            # switch goes ahead.
+            assert response.status_code == 200, response.text
         finally:
             release.set()
         finished = pending_call.result(timeout=10)

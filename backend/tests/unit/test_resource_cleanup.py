@@ -1,12 +1,16 @@
 """Protect original bytes and keep late subprocesses away from reused work."""
 
 import gzip
+import hashlib
+import http.server
+import io
 import json
 import os
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import uuid
 
@@ -555,9 +559,8 @@ def test_teardown_stops_the_executor_a_previous_root_installed(tmp_path):
     nothing moves them until the room is prepared again, and a room being torn
     down never will be. Reading only the current root answers "this room never
     had an executor", and that answer is acted on: the detached daemon is left
-    running under a home that is then deleted out from under it, the private
-    seat it holds is never released, and publication is checked on the branch
-    meant for rooms that have no executor.
+    running under a home that is then deleted out from under it, and the private
+    seat it holds is never released.
     """
     resource = str(uuid.uuid4())
     home = tmp_path / resource
@@ -664,14 +667,6 @@ def test_a_private_chats_container_is_released_out_of_the_seat_that_holds_it(
     assert not home.exists()
 
 
-def test_unpublished_source_blocks_cleanup(tmp_path):
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-    (tmp_path / "source.py").write_text("work in progress")
-    with pytest.raises(RuntimeError, match="working-tree changes"):
-        cleanup.check_published(tmp_path)
-    assert (tmp_path / "source.py").exists()
-
-
 def test_private_cleanup_rejects_another_generation(tmp_path):
     resource = str(uuid.uuid4())
     marker = tmp_path / ".cheese/remote-target.json"
@@ -682,58 +677,143 @@ def test_private_cleanup_rejects_another_generation(tmp_path):
         cleanup.session_target(tmp_path, str(uuid.uuid4()))
 
 
-def test_task_work_is_checked_before_removing_the_room_home(tmp_path):
-    home, work = tmp_path / "home", tmp_path / "legacy-work"
+def test_removal_deletes_a_home_whatever_was_not_pushed(tmp_path):
+    """A room's cleanup gives its sessions one checkpoint before it gets here,
+    and every turn left a snapshot: nothing on the machine holds the home."""
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home, _work = cleanup.resource_paths(tmp_path, project, resource)
     task = home / ".cheese/tasks" / str(uuid.uuid4())
     task.mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(task)], check=True)
-    (task / "source.py").write_text("unpublished task work")
-    with pytest.raises(RuntimeError, match="working-tree changes"):
-        cleanup.check_resource_publication(home, work)
-    assert (task / "source.py").read_text() == "unpublished task work"
+    (task / "source.py").write_text("work in progress")
+    subprocess.run(["git", "init", "-q", str(home / "room")], check=True)
+    (home / "room/notes.md").write_text("unfinished research")
+
+    removed = run_cleanup(tmp_path, "remove", project, resource)
+
+    assert removed.returncode == 0, removed.stderr
+    assert not home.exists()
 
 
-def test_unpublished_room_notes_block_home_removal(tmp_path):
-    home, work = tmp_path / "home", tmp_path / "legacy-work"
-    room = home / "room"
-    room.mkdir(parents=True)
-    (room / "notes.md").write_text("unfinished research")
-    with pytest.raises(RuntimeError, match="no Git publication record"):
-        cleanup.check_resource_publication(home, work)
-    assert (room / "notes.md").read_text() == "unfinished research"
+class _Bucket:
+    """A presigned PUT URL's other end: what it was sent, and its answer."""
+
+    def __init__(self, status=200):
+        received = self.received = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_PUT(self):
+                length = int(self.headers["Content-Length"])
+                received.append(self.rfile.read(length))
+                self.send_response(status)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}/kept.tar.gz?sig=x"
+
+    def close(self):
+        self.server.shutdown()
 
 
-def test_bare_cache_keeps_unpublished_commits_after_checkout_is_removed(tmp_path):
-    home, work = tmp_path / "home", tmp_path / "legacy-work"
-    repo = home / ".cheese/repositories/project.git"
-    seed = tmp_path / "seed"
-    seed.mkdir()
-    for args in (
-        ["init", "-q", "-b", "main"],
-        [
-            "-c",
-            "user.name=test",
-            "-c",
-            "user.email=test@example.com",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "unpublished work",
-        ],
-    ):
-        subprocess.run(["git", "-C", str(seed), *args], check=True, capture_output=True)
-    repo.parent.mkdir(parents=True)
-    subprocess.run(
-        ["git", "clone", "--bare", str(seed), str(repo)],
-        check=True,
+@pytest.fixture
+def bucket():
+    answering = _Bucket()
+    yield answering
+    answering.close()
+
+
+def keep_room(machine_home, project, resource, url):
+    return subprocess.run(
+        [sys.executable, cleanup.__file__, "keep-room", project, resource, "-", "-"],
+        # The bucket here is on loopback, past any proxy the environment names.
+        env={
+            **os.environ,
+            "HOME": str(machine_home),
+            "CHEESE_KEEP_URL": url,
+            "no_proxy": "*",
+        },
         capture_output=True,
+        text=True,
+        timeout=60,
     )
-    with pytest.raises(RuntimeError, match="unpublished commits"):
-        cleanup.check_resource_publication(home, work)
-    # A fetched origin ref is the publication evidence used by task checkouts.
-    subprocess.run(
-        ["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "main"],
-        check=True,
-        capture_output=True,
-    )
-    cleanup.check_resource_publication(home, work)
+
+
+def _old_room(tmp_path):
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home, _work = cleanup.resource_paths(tmp_path, project, resource)
+    (home / "room/memory").mkdir(parents=True)
+    (home / "room/memory/notes.md").write_text("365 notes")
+    (home / "room/deck.pptx").write_bytes(b"PK slides")
+    return project, resource, home
+
+
+def test_an_old_rooms_files_are_sent_to_the_bucket_as_they_are(tmp_path, bucket):
+    project, resource, home = _old_room(tmp_path)
+
+    kept = keep_room(tmp_path, project, resource, bucket.url)
+
+    assert kept.returncode == 0, kept.stderr
+    [sent] = bucket.received
+    answer = json.loads(kept.stdout)["kept"]
+    assert answer == {"size": len(sent), "md5": hashlib.md5(sent).hexdigest()}
+    with tarfile.open(fileobj=io.BytesIO(sent)) as bundle:
+        files = {
+            member.name: bundle.extractfile(member).read()
+            for member in bundle.getmembers()
+            if member.isfile()
+        }
+    assert files == {
+        "room/memory/notes.md": b"365 notes",
+        "room/deck.pptx": b"PK slides",
+    }
+    # Sending is not deleting: the room's cleanup does that afterwards.
+    assert (home / "room/deck.pptx").exists()
+    assert not list((tmp_path / ".cheese/cleanup").glob("*.tar.gz"))
+
+
+@pytest.mark.parametrize("room", ["git checkout", "empty", "has an executor", "none"])
+def test_a_home_with_nothing_off_the_forge_sends_nothing(tmp_path, bucket, room):
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home, _work = cleanup.resource_paths(tmp_path, project, resource)
+    home.mkdir(parents=True)
+    if room != "none":
+        (home / "room").mkdir()
+    if room == "git checkout":
+        subprocess.run(["git", "init", "-q", str(home / "room")], check=True)
+        (home / "room/source.py").write_text("committed or not, it has a forge")
+    if room == "has an executor":
+        (home / "room/out.txt").write_text("made in a sandbox")
+        (home / ".cheese").mkdir()
+        (home / ".cheese/remote-target.json").write_text(
+            json.dumps({"kind": "device", "resource_id": resource})
+        )
+
+    kept = keep_room(tmp_path, project, resource, bucket.url)
+
+    assert kept.returncode == 0, kept.stderr
+    assert json.loads(kept.stdout) == {"kept": None}
+    assert bucket.received == []
+
+
+def test_an_old_rooms_files_are_not_dropped_when_there_is_no_bucket(tmp_path):
+    project, resource, _home = _old_room(tmp_path)
+
+    kept = keep_room(tmp_path, project, resource, "")
+
+    assert kept.returncode != 0
+    assert "no bucket" in kept.stderr
+
+
+def test_a_refused_upload_is_a_failure(tmp_path):
+    project, resource, _home = _old_room(tmp_path)
+    refusing = _Bucket(status=403)
+    try:
+        kept = keep_room(tmp_path, project, resource, refusing.url)
+    finally:
+        refusing.close()
+
+    assert kept.returncode != 0

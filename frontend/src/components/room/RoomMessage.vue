@@ -408,20 +408,16 @@ function renderPlain(text: string): string {
         :names="refs.mentionNames"
         @reply="emit('ask-reply', block, $event)"
       />
-      <!-- 转出去的块指向它变成的东西。房间里转出来的是一个任务，私聊里转出来的
-         才是房间——两个字段各指一张表，同时只会有一个非空。 -->
+      <!-- 私聊里转出去的块指向它变成的那个房间。频道里转出来的任务挂在消息下面
+         （ChatTimeline 的任务卡），不在这里。 -->
       <button
-        v-if="block.upgraded_to_task_id || block.upgraded_to_topic_id"
+        v-if="block.upgraded_to_topic_id"
         type="button"
         class="im-upgraded"
-        @click="
-          block.upgraded_to_task_id
-            ? emit('open-card', block.upgraded_to_task_id)
-            : emit('open-topic', block.upgraded_to_topic_id!)
-        "
+        @click="emit('open-topic', block.upgraded_to_topic_id!)"
       >
         <v-icon size="13">mdi-arrow-top-right</v-icon>
-        {{ block.upgraded_to_task_id ? t('work.room.message.upgradedToTask') : t('work.room.message.upgradedToTopic') }}
+        {{ t('work.room.message.upgradedToTopic') }}
       </button>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->

@@ -38,8 +38,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import hashlib
 import http.client
+import io
 import json
 import os
 import re
@@ -462,20 +464,28 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_task",
-            "提议一个任务：在当前对话里放一张提议卡，由人决定是否创建。创建的人就是负责人，"
-            "任务有自己的对话和工作目录，由那里的 AI 队友去做。你不能自己创建任务。",
+            "在当前支线里创建一个任务，挂在支线所在的那条消息下面。任务有自己的对话和"
+            "工作目录，由那里的 AI 队友去做。有人让你去做：start 填 true、owner 填"
+            "说这话的人，建好就开始。你自己想到的：start 填 false，任务停在讨论中，"
+            "你在支线里问一次负责人要不要开始。",
             {
                 "title": _text("任务标题"),
                 "summary": _text(
                     "要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
-                    "任务那边的 AI 队友只能从这里和提议前的几条消息知道讨论"
+                    "任务那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
                 ),
+                "owner": _text("负责人 handle，就是要这件事的人；省略是支线所在那条消息的作者"),
+                "start": {
+                    "type": "boolean",
+                    "description": "有人让你去做填 true；你自己想到的填 false",
+                },
             },
-            ["title", "summary"],
+            ["title", "summary", "start"],
         ),
         _tool(
             "cheese_close_task",
-            "放弃或撤销当前任务时显式关闭；正常交付在采纳后自动关闭。",
+            "放弃或撤销当前任务，或者任务的结论不是一次合并（调研、讨论出的决定）时，"
+            "显式关闭；最后一步的交付采纳后任务自动关闭。",
             {
                 "conclusion": _text("关闭原因或最终说明"),
                 "reported_by": _text("需求提出者的 handle"),
@@ -486,6 +496,8 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_accept_request",
             "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
+            "任务可以分几步交付：completes_task 说这次是不是最后一步。最后一步采纳后任务"
+            "完成并关闭；不是最后一步，采纳后任务还开着，平台会叫你从最新代码接着做下一步。"
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
@@ -509,8 +521,12 @@ PLATFORM_TOOLS = ToolTable(
                 "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
                 "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
                 "deliver_url": _text("交出去的地址"),
+                "completes_task": {
+                    "type": "boolean",
+                    "description": "这次交付做完了整个任务填 true；分步做、后面还有步骤填 false",
+                },
             },
-            ["subject"],
+            ["subject", "completes_task"],
         ),
         _tool(
             "cheese_describe",
@@ -1232,8 +1248,13 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_task":
         return {
             "method": "POST",
-            "path": f"/topics/{topic}/task-proposals",
-            "body": {"title": args["title"], "summary": args.get("summary") or ""},
+            "path": f"/topics/{topic}/teammate-tasks",
+            "body": {
+                "title": args["title"],
+                "summary": args.get("summary") or "",
+                "start": args.get("start") is True,
+                **_given(args, "owner:owner_handle"),
+            },
         }
     if tool == "cheese_close_task":
         return {
@@ -1264,6 +1285,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                     "about",
                     "deliver",
                     "deliver_url",
+                    "completes_task",
                 ),
             },
         }
@@ -1936,8 +1958,10 @@ def _accept_request(args: dict, host) -> str:
     # 递卡之后的那一段（等采纳、PR 红了怎么修）在这一刻最有用，所以跟着返回说。
     lines.append(
         "接下来等验收人采纳。PR 的检查失败或和目标分支冲突时平台会叫你：在这条任务"
-        "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，不要为这条任务再递一张卡。"
+        "的目录里修好、提交，用 cheese push-fix 更新原来的 PR，这一步不要再递一张卡。"
     )
+    if args.get("completes_task") is False:
+        lines.append("这不是最后一步：采纳后任务还开着，平台会叫你接着做下一步。")
     return "\n".join(lines)
 
 
@@ -2355,10 +2379,19 @@ _STEPS = {
 
 
 def _say_task(args, data, env) -> str:
-    return (
-        f"已提议任务「{args['title']}」，等人决定是否创建。"
-        "创建后它在自己的对话里由那里的 AI 队友去做。"
-    )
+    data = data or {}
+    owner = data.get("owner_handle") or "负责人"
+    made = f"已创建任务「{data.get('title') or args['title']}」，负责人 {owner}。"
+    if data.get("started"):
+        return made + "任务已经开始，由它自己对话里的 AI 队友去做。"
+    if args.get("start") is True:
+        return (
+            made
+            + f"没能直接开始：{data.get('not_started_because') or '原因不明'}。"
+            + f"在这里告诉 {owner}，请他在任务里点「开始」。"
+        )
+    return made + f"任务停在讨论中：在这里问一次 {owner} 要不要开始，问过就不再追。"
+
 
 
 def _say_lock(args, data, env) -> str:
@@ -3060,6 +3093,11 @@ def _task_worktree(task_id: str) -> Path:
                 str(task_dir),
                 start,
             )
+            # A checkout made here for the first time: this environment is new,
+            # and what the task had not pushed when its last one went away is
+            # in the platform's snapshot (`_restore_snapshot`).
+            admin = Path(_git_task(task_dir, "rev-parse", "--absolute-git-dir"))
+            (admin / _RESTORE_PENDING).write_text("")
         marker = Path(
             _git_task(task_dir, "rev-parse", "--git-path", "cheese-task.json")
         )
@@ -3088,6 +3126,10 @@ def _task_worktree(task_id: str) -> Path:
             "exec cheese sync\n"
         )
         hook.chmod(0o755)
+        _follow_task_branch(task_dir, data)
+        # Before the environment is prepared: what comes back may change what
+        # it installs.
+        _restore_snapshot(task_dir, data)
     # The room has no checkout. Branch dependencies belong to this task and
     # must be prepared on every open, including after local branch changes.
     if (Path.home() / ".cheese-environment/config.json").exists():
@@ -3102,6 +3144,64 @@ def _task_worktree(task_id: str) -> Path:
         if result.returncode:
             raise SystemExit(result.returncode)
     return task_dir
+
+
+def _follow_task_branch(worktree: Path, data: dict) -> None:
+    """Move a checkout still on one of its task's earlier branches onto the
+    current one.
+
+    A task that delivers in steps gets a new branch, cut from the project's
+    latest code, each time a step lands. What this checkout has that did not
+    land comes along: the commits made after the landed head (`landed`), and
+    the files not yet committed. A checkout an agent moved to a branch of its
+    own is left alone; `cheese sync` refuses to deliver it as before.
+    """
+    branch = data["branch"]
+    try:
+        found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+    except RuntimeError:
+        return
+    earlier = "task/" + uuid.UUID(data["task_id"]).hex[:8]
+    if found == branch or not (found == earlier or found.startswith(earlier + "-")):
+        return
+    head = _git_task(worktree, "rev-parse", "HEAD")
+    landed = data.get("landed")
+    since = landed if landed and _is_ancestor(worktree, landed, head) else head
+    quiet = ("-c", "core.hooksPath=/dev/null")
+    dirty = bool(_git_task(worktree, "status", "--porcelain", "--untracked-files=all"))
+    if dirty:
+        _git_task(worktree, "add", "-A")
+        _git_task(
+            worktree, *quiet, "commit", "-q", "--no-verify", "-m", "cheese: carry over"
+        )
+    _git_task(worktree, *quiet, "switch", "-q", "-C", branch)
+    try:
+        _git_task(
+            worktree,
+            *quiet,
+            "rebase",
+            "-q",
+            "--onto",
+            f"refs/remotes/origin/{data['base']}",
+            since,
+        )
+    except RuntimeError as exc:
+        try:
+            _git_task(worktree, *quiet, "rebase", "--abort")
+        except RuntimeError:
+            pass
+        _git_task(worktree, *quiet, "switch", "-q", found)
+        _git_task(worktree, "branch", "-q", "-D", branch)
+        if dirty:
+            _git_task(worktree, "reset", "-q", "HEAD~1")
+        raise SystemExit(
+            f"[cheese] 这条任务上一次的交付已经合并，下一步要在新分支 {branch} 上做，"
+            f"但这里还没合并的改动和最新代码冲突，没能带过去（{exc}）。"
+            f"在 {found} 上把冲突解决掉（和 origin/{data['base']} 合并或变基），"
+            "再执行一次 cheese worktree。"
+        ) from exc
+    if dirty:
+        _git_task(worktree, "reset", "-q", "HEAD~1")
 
 
 class _BranchQueued(RuntimeError):
@@ -3324,6 +3424,24 @@ def _sync_task(task_id: str) -> list[str]:
             project = _need("CHEESE_PROJECT", PROJECT)
             data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
             closed = data["closed"]
+            if (admin / _RESTORE_PENDING).exists():
+                if closed:
+                    # Nothing was restored here, so nothing here is newer than
+                    # the platform's snapshot, which stays the task's backup.
+                    record.write(
+                        f"{datetime.now(UTC).isoformat()} not backed up: the "
+                        "snapshot was never restored here\n"
+                    )
+                    return []
+                cache = Path.home() / ".cheese" / "repositories"
+                with (cache / f"{project}.lock").open("a") as lock:
+                    _lock(lock)
+                    restored = _restore_snapshot(worktree, data)
+                if not restored:
+                    raise RuntimeError(
+                        "the platform's snapshot of this task is not restored "
+                        "here yet, so nothing is backed up over it"
+                    )
             if not closed:
                 # Only a delivery talks to the forge. A closed task is only
                 # backed up, to the platform, so it skips the forge probe that
@@ -3378,6 +3496,10 @@ def _sync_task(task_id: str) -> list[str]:
                 return left_out
             branch = data["branch"]
             found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
+            if found != branch:
+                # A step of the task landed since this checkout was opened.
+                _task_worktree(task_id)
+                found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
                 raise RuntimeError(f"Expected task branch {branch}, found {found}")
             _once_more_if_transient(
@@ -3594,26 +3716,33 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
         bundle.unlink(missing_ok=True)
 
 
-def _recover_task(task_id):
-    task_id = str(uuid.UUID(task_id))
-    data = _call("GET", f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/latest")[
-        "data"
-    ]
+def _recovery_dir(task_id: str, snapshot: dict) -> Path:
+    """Where a task's snapshot is checked out on its own, beside every checkout
+    of the task and overwriting none of them."""
     recovery_root = Path.home() / ".cheese" / "recovered"
     recovery_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    recovered = recovery_root / f"{task_id}-{data['snapshot_sha'][:12]}"
-    if recovered.exists():
-        raise RuntimeError(f"Recovery directory already exists: {recovered}")
-    bundle = recovery_root / f".cheese-recovery-{data['id']}.bundle"
-    _raw_request(
-        "GET",
-        f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{data['id']}",
-        None,
-        str(bundle),
-    )
+    return recovery_root / f"{task_id}-{snapshot['snapshot_sha'][:12]}"
+
+
+def _download_snapshot(task_id: str, snapshot: dict, bundle: Path) -> list[str]:
+    """Save the bundle of `snapshot` to `bundle`, checked against its digest;
+    return the commits it needs and does not carry.
+
+    Nothing on stdout: `cheese worktree` prints only its directory there."""
+    said = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(said):
+            _raw_request(
+                "GET",
+                f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot['id']}",
+                None,
+                str(bundle),
+            )
+    except SystemExit:
+        raise RuntimeError(said.getvalue().strip() or "下载快照失败") from None
     with bundle.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    if digest != data["digest"]:
+    if digest != snapshot["digest"]:
         raise RuntimeError("Task backup checksum failed; no files were restored")
     # gitformat-bundle: prerequisite records start with '-', before the blank
     # line ending the header. Complete migration bundles need no live branch.
@@ -3626,6 +3755,35 @@ def _recover_task(task_id):
                 raise RuntimeError("Incomplete task backup header")
             if line.startswith(b"-"):
                 prerequisites.append(line[1:].split()[0].decode())
+    return prerequisites
+
+
+def _unbundle(repo: Path, bundle: Path, prerequisites: list[str]) -> None:
+    """Put the snapshot's objects into `repo`, the task's repository on this
+    machine. Its caller holds `<project>.lock` beside it.
+
+    The prerequisites by commit, not by the task's base branch: a stacked
+    task's base is deleted once it merges, and a machine that never had the
+    task has nothing else to fetch it by. The forge keeps those commits (a
+    merged PR keeps its head), and this copy already fetches objects by id
+    whenever it reads a file it holds no contents for."""
+    if prerequisites:
+        _git_task(repo, "fetch", "--filter=blob:none", "origin", *prerequisites)
+    _git_task(repo, "bundle", "verify", str(bundle))
+    _git_task(repo, "bundle", "unbundle", str(bundle))
+
+
+def _recover_task(task_id):
+    task_id = str(uuid.UUID(task_id))
+    data = _call("GET", f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/latest")[
+        "data"
+    ]
+    recovered = _recovery_dir(task_id, data)
+    if recovered.exists():
+        raise RuntimeError(f"Recovery directory already exists: {recovered}")
+    recovery_root = recovered.parent
+    bundle = recovery_root / f".cheese-recovery-{data['id']}.bundle"
+    prerequisites = _download_snapshot(task_id, data, bundle)
     if prerequisites:
         project = _need("CHEESE_PROJECT", PROJECT)
         task = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
@@ -3635,14 +3793,7 @@ def _recover_task(task_id):
         with (cache / f"{project}.lock").open("a") as lock:
             _lock(lock)
             _prepare_repository(repo, task)
-            # By commit, not by the task's base branch: a stacked task's base is
-            # deleted once it merges, and a machine that never had the task has
-            # nothing else to fetch it by. The forge keeps those commits (a
-            # merged PR keeps its head), and this copy already fetches objects
-            # by id whenever it reads a file it holds no contents for.
-            _git_task(repo, "fetch", "--filter=blob:none", "origin", *prerequisites)
-            _git_task(repo, "bundle", "verify", str(bundle))
-            _git_task(repo, "bundle", "unbundle", str(bundle))
+            _unbundle(repo, bundle, prerequisites)
             _git_task(repo, "worktree", "prune")
             _git_task(
                 repo,
@@ -3666,6 +3817,153 @@ def _recover_task(task_id):
     if _LEFT_OUT_HEADER in message:
         left_out = message.split(_LEFT_OUT_HEADER, 1)[1].strip()
         print(f"备份时没有带上这些未跟踪的文件，恢复出来的目录里没有它们：\n{left_out}")
+
+
+# In a task checkout's git directory while the platform's snapshot of the task
+# has yet to be brought into it: written when this environment makes the
+# checkout for the first time, removed once `_restore_snapshot` has settled
+# what the snapshot holds. Until then nothing is backed up from the checkout,
+# so a fresh one never takes the place of the snapshot it should have restored.
+_RESTORE_PENDING = "cheese-restore-pending"
+
+# What a snapshot never holds, said with every restore: an agent that finds its
+# files back would otherwise expect the rest of its old environment too.
+_NOT_CARRIED = (
+    "没有带过来的：依赖和缓存、生成目录（node_modules、.venv 之类）、"
+    "任务目录以外的文件（包括 /tmp）、正在运行的进程——需要的重新安装、重新启动。"
+)
+
+
+def _snapshot_time(snapshot: dict) -> str:
+    try:
+        when = datetime.fromisoformat(snapshot["created_at"])
+    except (KeyError, TypeError, ValueError):
+        return "时间未知"
+    return when.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _changed_files(worktree: Path, old: str, new: str) -> dict[str, int]:
+    """How many files differ from `old` to `new`, by kind of change."""
+    counts = {"M": 0, "A": 0, "D": 0}
+    listed = _git_task(
+        worktree, "diff", "--name-status", "--no-renames", "-z", old, new, raw=True
+    )
+    fields = [field for field in listed.split("\0") if field]
+    for status in fields[::2]:
+        kind = "M" if status[0] == "T" else status[0]
+        counts[kind] = counts.get(kind, 0) + 1
+    return counts
+
+
+def _restore_snapshot(worktree: Path, data: dict) -> bool:
+    """Bring the platform's latest snapshot of the task into `worktree`, made
+    afresh in this environment; whether that is settled.
+
+    Only a checkout still marked `_RESTORE_PENDING`, so asking again is free.
+    Its caller holds `<project>.lock`. What happened goes to stderr, where the
+    agent that opened the checkout reads it; a failure leaves the mark for the
+    next `cheese worktree` or `cheese sync` to try again.
+    """
+    admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+    pending = admin / _RESTORE_PENDING
+    if not pending.exists():
+        return True
+    task_id = data["task_id"]
+    try:
+        told = _apply_snapshot(worktree, admin, data)
+    except (Exception, SystemExit) as exc:
+        print(
+            f"[cheese] 任务 {task_id}：没能从平台快照恢复上次没推送的工作（{exc}）。"
+            "现在这个目录里只有分支上已推送的内容；下次 cheese worktree 或 "
+            "cheese sync 会再试，在那之前这里的改动不会备份，平台上那份快照不会"
+            "被它替掉。",
+            file=sys.stderr,
+        )
+        return False
+    pending.unlink()
+    if told:
+        print(told, file=sys.stderr)
+    return True
+
+
+def _apply_snapshot(worktree: Path, admin: Path, data: dict) -> str | None:
+    """Restore the task's latest snapshot into `worktree` when it holds work
+    the checkout does not, never over work already there; what to tell the
+    agent, or None when there is nothing to restore."""
+    task_id = data["task_id"]
+    found = _call(
+        "GET",
+        f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/latest",
+        tolerate=(404,),
+    )
+    if found.get("ok") is False:
+        return None  # The task was never backed up.
+    snapshot = found["data"]
+    head, saved = snapshot["head_sha"], snapshot["snapshot_sha"]
+    here = _git_task(worktree, "rev-parse", "HEAD")
+    if saved == here or _is_ancestor(worktree, saved, here):
+        return None  # Everything in it is already on the branch.
+    repo = Path(
+        _git_task(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    )
+    bundle = admin / f"cheese-restore-{snapshot['id']}.bundle"
+    try:
+        _unbundle(repo, bundle, _download_snapshot(task_id, snapshot, bundle))
+    finally:
+        bundle.unlink(missing_ok=True)
+    when = _snapshot_time(snapshot)
+    work = saved != head
+    files = _changed_files(worktree, head, saved) if work else {}
+    count = sum(files.values())
+    dirty = _git_task(worktree, "status", "--porcelain", "--untracked-files=all")
+    if head == here or _is_ancestor(worktree, here, head):
+        reason = "这个目录里已经有改动" if dirty else None
+    elif _is_ancestor(worktree, head, here):
+        if not work:
+            return None  # Its commits are on the branch, and there is nothing else.
+        reason = f"分支已经前进到 {here[:12]}，快照是在更早的 {head[:12]} 上做的"
+    elif not work and head == data.get("landed"):
+        return None  # The step it backed up has landed.
+    else:
+        reason = f"分支 {data['branch']} 和快照的提交历史分叉了"
+    if reason is not None:
+        recovered = _recovery_dir(task_id, snapshot)
+        if not recovered.exists():
+            _git_task(repo, "worktree", "prune")
+            _git_task(repo, "worktree", "add", "--detach", str(recovered), saved)
+        return (
+            f"[cheese] 任务 {task_id} 在平台上有一份快照（{when}），但{reason}，"
+            "没有自动套用，免得覆盖这里的东西。快照原样放在独立目录 "
+            f"{recovered}（相对 {head[:12]} 改了 {count} 个文件），"
+            "需要的内容从那里取，可以用 git diff 对照。"
+        )
+    quiet = ("-c", "core.hooksPath=/dev/null")
+    lines = []
+    if here != head:
+        ahead = _git_task(worktree, "rev-list", "--count", f"{here}..{head}")
+        _git_task(worktree, *quiet, "merge", "-q", "--ff-only", head)
+        lines.append(
+            f"{ahead} 个没推送的提交已放回分支 {data['branch']}，"
+            "下次 cheese sync 会推上去"
+        )
+    if work:
+        # The snapshot's files into the checkout and its index back to HEAD:
+        # each edit comes back as an unstaged change, each new file untracked.
+        _git_task(worktree, "read-tree", "-m", "-u", head, saved)
+        _git_task(worktree, "reset", "-q")
+        lines.append(
+            f"{count} 个文件的改动已放回工作区（修改 {files['M']}、新增 "
+            f"{files['A']}、删除 {files['D']}；都是未暂存的状态）"
+        )
+    message = (
+        f"[cheese] 这是一个新环境。任务 {task_id} 上次检查点（{when}）时还没推送"
+        "的工作已从平台快照恢复：" + "；".join(lines) + "。" + _NOT_CARRIED
+    )
+    record = _git_task(worktree, "log", "-1", "--format=%B", saved)
+    if _LEFT_OUT_HEADER in record:
+        left_out = record.split(_LEFT_OUT_HEADER, 1)[1].strip()
+        message += f"\n备份时就略过、这次也没有回来的未跟踪文件：\n{left_out}"
+    return message
 
 
 def _has_work_to_sync(worktree: Path) -> bool:
@@ -3707,7 +4005,7 @@ def _sync_all_tasks() -> None:
             _sync_task(worktree.name)
         except (Exception, SystemExit) as exc:
             failed.append(worktree.name)
-            # The platform reads these lines (`session_work._failed_tasks`).
+            # The platform logs these lines (`session_work.checkpoint`).
             closed = isinstance(exc, _ClosedTaskNotBackedUp)
             which = "已结束的任务" if closed else "任务"
             print(f"[cheese] {which} {worktree.name} 同步失败：{exc}", file=sys.stderr)
@@ -4058,7 +4356,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="准备任务工作目录并输出路径",
         description=(
             "准备已有任务的工作目录，输出路径；不会改变当前 shell 的目录。"
-            "任务由人创建，cheese_task 只能提议。"
+            "任务的一步交付合并以后，再执行一次会把目录换到下一步的新分支上。"
         ),
     )
     pwork.add_argument("task_id", help="任务 UUID")
@@ -4068,7 +4366,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "在 ~/.cheese/checkout 准备项目默认分支的代码（已有且没改过就更新到最新），"
             "输出路径；不会改变当前 shell 的目录。支线和还没开始的任务里看代码、"
-            "跑命令用它：这里的改动留不下，要改项目请提议任务。"
+            "跑命令用它：这里的改动留不下，要改项目就创建任务（cheese_task）。"
         ),
     )
     psync = sub.add_parser(
