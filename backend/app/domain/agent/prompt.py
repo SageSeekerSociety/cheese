@@ -46,7 +46,6 @@ from app.domain.block.models import (
     agent_notice,
     consumed_turn,
 )
-from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import records as library_records
 from app.domain.topic.models import (
@@ -275,14 +274,13 @@ async def live_inputs(
 ) -> tuple[Block | None, Block | None]:
     """Read the persisted authored message, quote and validated reply edge."""
     stored = replied = None
-    blocks = BlockRepository(session)
     for block_id in block_ids:
-        block = await blocks.get(block_id)
+        block = await session.get(Block, block_id)
         if block is not None:
             if block.kind == BlockKind.message:
                 stored = block
             if block.reply_to is not None:
-                replied = await blocks.get(block.reply_to)
+                replied = await session.get(Block, block.reply_to)
     return stored, replied
 
 
