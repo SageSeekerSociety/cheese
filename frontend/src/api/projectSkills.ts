@@ -78,3 +78,34 @@ export function declineProjectSkill(id: string): Promise<ProjectSkill> {
 export function deleteProjectSkill(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/skills/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+
+// ---- 技能广场：一间房点亮了哪些技能，和它们现在能不能跑 ----
+//
+// 每间房各点各的（后端 `topics.skills`）。列的是平台随会话发货的原生技能；点亮的
+// 那些，房间里的每一个 agent 从下一轮起都照着做（后端把说明书接进提示词）。
+export interface TopicSkill {
+  name: string
+  description: string
+  enabled: boolean
+}
+
+export interface SkillHealth {
+  status: 'ok' | 'degraded' | 'unavailable'
+  detail: string
+}
+
+export function listTopicSkills(topicId: string): Promise<ListPayload<TopicSkill>> {
+  return request<ListPayload<TopicSkill>>(`/topics/${encodeURIComponent(topicId)}/skills`)
+}
+
+export function setTopicSkills(topicId: string, enabled: string[]): Promise<{ enabled: string[] }> {
+  return request<{ enabled: string[] }>(`/topics/${encodeURIComponent(topicId)}/skills`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  })
+}
+
+export function getSkillHealth(topicId: string, name: string): Promise<SkillHealth> {
+  const path = `/topics/${encodeURIComponent(topicId)}/skills/${encodeURIComponent(name)}/health`
+  return request<SkillHealth>(path)
+}

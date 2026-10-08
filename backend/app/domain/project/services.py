@@ -107,7 +107,22 @@ class ProjectService:
             intent=intent,
             project_id=project_id,
         )
-        project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
+        # P0（本地补丁）：新建项目就把算力默认值落库，`get_compute_configs` 读到的
+        # 就是当初显示给用户的那一份。否则 stored 是空、shown 是读时算出来的
+        # `compute_default_name()`，两边会随部署环境漂移（迁移 e2c7a4b97310 给老项目
+        # 补的正是这一份）。
+        from app.domain.agent.compute_configs import (
+            ProjectComputeConfigs,
+            standard_choice,
+        )
+
+        project.settings = {
+            **(project.settings or {}),
+            "forge_kind": forge_kind,
+            "compute_configs": ProjectComputeConfigs(
+                default=standard_choice()
+            ).model_dump(),
+        }
         root = await self._topics.add(
             project_id=project.id,
             title="综合",
@@ -134,7 +149,13 @@ class ProjectService:
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":
-            await provision_repository(project.id, self._session)
+            from app.core.config import settings
+
+            # ponytail: 本地没配 Forgejo 时跳过建仓，项目照样建得起来（上限：
+            # 该项目没有代码仓库；要用 git 功能的路由仍会如实报
+            # forgeHostingNotConfigured。升级路径：配 FORGEJO_URL 后此分支自动恢复）。
+            if settings.forgejo_url or settings.environment != "development":
+                await provision_repository(project.id, self._session)
         # What the person said they wanted to do, carried into the project's
         # overview, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)

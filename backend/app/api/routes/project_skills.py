@@ -4,8 +4,13 @@ An AI teammate may draft or edit one; a person confirms, restores or deletes,
 because what is confirmed is what every later session in the project follows.
 """
 
+import asyncio
 import base64
 import binascii
+import json
+import os
+import shutil
+import time
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -16,9 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
+from app.domain.agent import skills as native_skills
 from app.domain.agent.platform_notices import (
     EVENT_SKILL_PROPOSED,
     SEVERITY_INFO,
@@ -462,3 +469,126 @@ async def delete_skill(
     await service.publish(project_id)
     await _changed(row)
     return ok({"deleted": str(skill_id)})
+
+
+# --- The composer's skill plaza: what a room can switch on ---------------------
+#
+# About the ROOM, not the project: the platform's shipped skills
+# (`sandbox/skills`). They already reach every executor, so switching one on only
+# tells this room's agents to follow it — the body rides the turn's prompt
+# (`agent/room/turn.py`). Which ones are on lives in `topics.skills`.
+
+
+class TopicSkillsIn(BaseModel):
+    enabled: list[str] = Field(default_factory=list)
+
+
+def _platform_catalog() -> list[dict]:
+    """The shipped skills whose guidance can actually be put in a prompt — a name
+    with no `SKILL.md` on disk (`cheese-docs`, built by composition) is left out:
+    a socket that lights up and does nothing is worse than no socket."""
+    out: list[dict] = []
+    for name in native_skills.shipped_skill_names():
+        doc = native_skills.native_skill_doc(name)
+        if doc is None:
+            continue
+        out.append({"name": name, "description": doc[0]})
+    return out
+
+
+@router.get("/topics/{topic_id}/skills")
+async def list_topic_skills(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    place = await TopicService(db).place_or_404(topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    enabled = set(place.room.skills or [])
+    items = [{**s, "enabled": s["name"] in enabled} for s in _platform_catalog()]
+    return ok(page(items, len(items)))
+
+
+@router.put("/topics/{topic_id}/skills", dependencies=[ROUTE_DECIDES])
+async def set_topic_skills(
+    topic_id: uuid.UUID,
+    body: TopicSkillsIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    place = await TopicService(db).place_or_404(topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    # Only names the platform can actually hand this room: an unknown one would
+    # ride the prompt as a promise nothing backs (`native_skill_bodies`).
+    known = {s["name"] for s in _platform_catalog()}
+    enabled = list(dict.fromkeys(n for n in body.enabled if n in known))
+    place.room.skills = enabled or None
+    await db.commit()
+    return ok({"enabled": enabled})
+
+
+# --- Is this skill runnable right now? ----------------------------------------
+#
+# A switch that says "on" while the tool it names cannot run is worse than no
+# switch. Only Wolfram has a real probe (`scripts/wolfram_mcp.py health`, which
+# reaches the official MCP); the rest answer by their files being present, which
+# is all "loadable" means for a prompt-only skill.
+
+_HEALTH_TTL_S = 300
+_health_cache: dict[str, tuple[float, dict]] = {}
+
+
+async def _probe_wolfram() -> dict:
+    # ponytail: 探针在 backend 主机上起一个子进程跑技能自带脚本（上限：宿主要有
+    # uv 且能连到 MCP；探不到就如实说 unavailable/degraded，绝不假装可用）。
+    root = native_skills.native_skill_dir("wolfram")
+    script = root / "scripts" / "wolfram_mcp.py" if root is not None else None
+    if script is None or not script.is_file():
+        return {"status": "unavailable", "detail": "技能文件缺失"}
+    if shutil.which("uv") is None:
+        return {"status": "unavailable", "detail": "未安装 uv"}
+    proc = await asyncio.create_subprocess_exec(
+        "uv",
+        "run",
+        "--quiet",
+        "--script",
+        str(script),
+        "health",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        # 探针跑的是装船目录里的脚本：别让它在平台的技能树里甩下 __pycache__。
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+    except TimeoutError:
+        proc.kill()
+        return {"status": "degraded", "detail": "探针超时"}
+    if proc.returncode != 0:
+        return {"status": "degraded", "detail": "探针执行失败"}
+    try:
+        payload = json.loads(out.decode() or "{}")
+    except ValueError:
+        return {"status": "degraded", "detail": "探针输出无法解析"}
+    reachable = bool((payload.get("wolfram") or {}).get("available"))
+    return {
+        "status": "ok" if reachable else "degraded",
+        "detail": "Wolfram 通道可用" if reachable else "Wolfram 通道不可达",
+    }
+
+
+@router.get("/topics/{topic_id}/skills/{name}/health")
+async def skill_health(
+    topic_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    place = await TopicService(db).place_or_404(topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    if name not in {s["name"] for s in _platform_catalog()}:
+        raise NotFoundError("Unknown skill")
+    now = time.monotonic()
+    cached = _health_cache.get(name)
+    if cached is not None and now - cached[0] < _HEALTH_TTL_S:
+        return ok(cached[1])
+    result = (
+        await _probe_wolfram() if name == "wolfram" else {"status": "ok", "detail": ""}
+    )
+    _health_cache[name] = (now, result)
+    return ok(result)
