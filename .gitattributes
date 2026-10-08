@@ -1,0 +1,4 @@
+# Generated, committed so review sees API contract changes; GitHub folds their diffs.
+backend/openapi.json linguist-generated=true
+backend/openapi-untyped.json linguist-generated=true
+frontend/src/api/openapi.d.ts linguist-generated=true

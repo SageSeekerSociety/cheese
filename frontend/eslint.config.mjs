@@ -122,6 +122,23 @@ export default [
       ],
     },
   },
+  {
+    // `src/api.ts` is the API layer's facade: every `@/api` importer (and every
+    // `vi.mock('@/api')`) resolves here, and the code lives in one module per
+    // domain under src/api/. A function written here would make it a second
+    // home for that code again, which is how it once reached 3747 lines.
+    files: ['src/api.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'Program > :not(ExportAllDeclaration, ExportNamedDeclaration[source])',
+          message:
+            'src/api.ts only re-exports (`export … from`). Put the code in the src/api/<domain>.ts module it belongs to.',
+        },
+      ],
+    },
+  },
   prettier,
   {
     rules: {

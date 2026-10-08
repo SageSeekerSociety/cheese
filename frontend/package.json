@@ -26,6 +26,9 @@
     "lint:scenes": "python3 ../.claude/scripts/scene-ratchet.py",
     "lint:scenes:update": "python3 ../.claude/scripts/scene-ratchet.py --update",
     "scene:split": "node scripts/scene-split.mjs",
+    "gen:api-types": "node scripts/gen-api-types.mjs",
+    "check:api-types": "node scripts/gen-api-types.mjs --check",
+    "check:request-paths": "node scripts/check-request-paths.mjs",
     "prettier": "prettier --write \"**/*.{vue,js,jsx,ts,tsx}\"",
     "test": "vitest"
   },
@@ -129,6 +132,7 @@
     "globals": "^15.15.0",
     "happy-dom": "^13.10.1",
     "jsdom": "^29.1.1",
+    "openapi-typescript": "7.13.0",
     "prettier": "3.2.4",
     "sass": "^1.89.2",
     "stylelint-config-standard": "^36.0.1",

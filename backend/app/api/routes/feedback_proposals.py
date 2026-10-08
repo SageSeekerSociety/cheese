@@ -22,11 +22,12 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
@@ -38,7 +39,9 @@ from app.domain.block.schemas import BlockOut
 from app.domain.feedback import proposals as proposal_rules
 from app.domain.feedback.schemas import (
     FeedbackCreate,
+    FeedbackDetail,
     FeedbackProposalIn,
+    FeedbackProposalOut,
     FeedbackProposalResult,
 )
 from app.domain.feedback.services import FeedbackService
@@ -46,6 +49,11 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["feedback"])
+
+
+class Dismissed(BaseModel):
+    dismissed: bool
+
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -93,7 +101,9 @@ async def _require_proposal_block(
     return block
 
 
-@router.get("/{topic_id}/feedback-proposals")
+@router.get(
+    "/{topic_id}/feedback-proposals", **typed_response(list[FeedbackProposalOut])
+)
 async def list_feedback_proposals(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -109,7 +119,7 @@ async def list_feedback_proposals(
     return ok(cards)
 
 
-@router.post("/{topic_id}/feedback-proposals")
+@router.post("/{topic_id}/feedback-proposals", **typed_response(FeedbackProposalResult))
 async def propose_feedback(
     topic_id: uuid.UUID,
     body: FeedbackProposalIn,
@@ -155,7 +165,9 @@ async def propose_feedback(
     return ok(result.model_dump(mode="json"))
 
 
-@router.post("/{topic_id}/feedback-proposals/{block_id}/dismiss")
+@router.post(
+    "/{topic_id}/feedback-proposals/{block_id}/dismiss", **typed_response(Dismissed)
+)
 async def dismiss_feedback_proposal(
     topic_id: uuid.UUID,
     block_id: uuid.UUID,
@@ -178,7 +190,10 @@ async def dismiss_feedback_proposal(
     return ok({"dismissed": True})
 
 
-@router.post("/{topic_id}/feedback-proposals/{block_id}/accept")
+@router.post(
+    "/{topic_id}/feedback-proposals/{block_id}/accept",
+    **typed_response(FeedbackDetail),
+)
 async def accept_feedback_proposal(
     topic_id: uuid.UUID,
     block_id: uuid.UUID,

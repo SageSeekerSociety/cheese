@@ -109,6 +109,15 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files deferred-imports
 
+      # backend/openapi.json is the API as this app serves it; the frontend's
+      # types are generated from it (frontend/src/api/openapi.d.ts, checked in
+      # frontend.yml). The same run holds the ratchet on untyped responses:
+      # backend/openapi-untyped.json only shrinks, so a new route declares what
+      # it returns. A step, not a test: building the document takes longer than
+      # the pure layer's per-test ceiling. See scripts/export_openapi.py.
+      - name: OpenAPI document current, no new untyped response
+        run: uv run python -m scripts.export_openapi --check
+
       - name: Independently collect every required backend case
         id: collect
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
