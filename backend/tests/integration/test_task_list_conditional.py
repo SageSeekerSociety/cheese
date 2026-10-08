@@ -61,6 +61,28 @@ def test_the_project_task_list_serves_an_etag_and_304(client):
     assert len(changed.json()["data"]["data"]) == 2
 
 
+def test_the_project_task_list_can_be_asked_for_open_tasks_only(client):
+    """侧栏只挂还在进行的任务，每 30 秒读一次；它不必把已经关掉的上千件也拿回来。"""
+    pid = _project(client)
+    room = _room(client, pid, "运维")
+    going = open_task(client, room, "还在做的", start=False)
+    done = open_task(client, room, "做完了的", start=False)
+    r = client.post(
+        f"/topics/{done['id']}/close",
+        json={"conclusion": "做完了"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    def titles(**params) -> set[str]:
+        listed = client.get(f"/projects/{pid}/tasks", params=params)
+        assert listed.status_code == 200, listed.text
+        return {t["title"] for t in listed.json()["data"]["data"]}
+
+    assert titles() == {going["title"], done["title"]}
+    assert titles(status="open") == {going["title"]}
+
+
 def test_the_room_task_list_serves_an_etag_and_304(client):
     pid = _project(client)
     room = _room(client, pid, "运维")

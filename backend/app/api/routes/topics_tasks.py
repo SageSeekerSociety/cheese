@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.conditional import LIST_CACHE_CONTROL, etag_for_json, if_none_match_hits
+from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
 from app.api.response import ok, page
@@ -64,19 +64,15 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-# `response_model=None`: the 304 path returns a bare `Response`, and FastAPI
-# would otherwise try to build a response field out of `dict | Response` and
-# refuse the whole module at import. `list_topics` carries the same.
 @router.get("/{topic_id}/tasks", response_model=None)
 async def list_room_tasks(
     topic_id: uuid.UUID,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
-    response: Response,
     limit: Annotated[int | None, Query(ge=0, le=500)] = None,
     if_none_match: Annotated[str | None, Header()] = None,
-) -> dict | Response:
+) -> Response:
     """This room's threads — every piece of work in it, each with its own
     conversation.
 
@@ -191,13 +187,7 @@ async def list_room_tasks(
                 },
             }
         )
-    payload = ok(page(items, len(items)))
-    etag = etag_for_json(payload)
-    cache_headers = {"Cache-Control": LIST_CACHE_CONTROL, "ETag": f'"{etag}"'}
-    if if_none_match and if_none_match_hits(if_none_match, etag):
-        return Response(status_code=304, headers=cache_headers)
-    response.headers.update(cache_headers)
-    return payload
+    return conditional_json(ok(page(items, len(items))), if_none_match)
 
 
 @router.get("/{topic_id}/task")

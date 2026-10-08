@@ -1,7 +1,8 @@
 /**
  * 侧栏挂在频道下面的任务，读的是整个项目的任务清单。后端每读一次都要把全项目的任务
  * 算一遍（dev 上一个项目 1400 多条），所以它只在有理由的时候读：任务变了，或者手上那份
- * 已经旧了。在频道之间切来切去不是理由；看不见的标签页也不该一直读。
+ * 已经旧了。在频道之间切来切去不是理由；看不见的标签页也不该一直读。它只挂还在进行的
+ * 任务，也就只要这些：已经关掉的是它们的十几倍。
  *
  * 用的是真的项目框路由、真的 ProjectSidebar 和真的 `readProjectTasks`；只把接口换成
  * 计数的替身。
@@ -58,11 +59,12 @@ const store = reactive({
 })
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
-const reads = vi.hoisted(() => ({ count: 0 }))
+const reads = vi.hoisted(() => ({ count: 0, closedToo: false }))
 vi.mock('@/api/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/tasks')>()),
-  listProjectTasks: async () => {
+  listProjectTasks: async (_projectId: string, opts: { open?: boolean } = {}) => {
     reads.count += 1
+    if (!opts.open) reads.closedToo = true
     return { data: [], total: 0 }
   },
 }))
@@ -91,6 +93,7 @@ async function openProject(projectId: string) {
 
 beforeEach(() => {
   reads.count = 0
+  reads.closedToo = false
   visibility = 'visible'
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility })
   vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
@@ -101,6 +104,12 @@ afterEach(() => {
 })
 
 describe('侧栏的任务清单什么时候重读', () => {
+  it('只要还在进行的任务', async () => {
+    await openProject('p-open')
+    expect(reads.count).toBe(1)
+    expect(reads.closedToo).toBe(false)
+  })
+
   it('在频道之间切换不重读', async () => {
     const router = await openProject('p-switch')
     expect(reads.count).toBe(1)
