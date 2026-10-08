@@ -1452,8 +1452,24 @@ def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkey
 
     r = _make_card_response(client, tid)
     assert r.status_code == 422, r.text
-    assert "没有可交付的提交" in r.json()["message"]
+    assert "没有可交付的改动" in r.json()["message"]
     assert _branch_of_record(client, tid) in r.json()["message"]
+    assert _cards(client, tid) == []
+
+
+def test_a_branch_holding_only_an_empty_commit_files_no_card(client, app_world):
+    """一个不改任何文件的提交也没有东西可交：采纳它只会往主干并进一条空提交，
+    还算作一次交付。递卡当场被拒，卡上不留一张。"""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    task = delivery_task(client, tid, commit=False)
+    machine_commits(
+        task.project_id, task.id, {}, "chore: open the card", allow_empty=True
+    )
+
+    r = _make_card_response(client, tid)
+    assert r.status_code == 422, r.text
+    assert "没有可交付的改动" in r.json()["message"]
     assert _cards(client, tid) == []
 
 
