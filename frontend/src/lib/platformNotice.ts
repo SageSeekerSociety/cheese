@@ -129,6 +129,7 @@ export const AGENT_STATUS_EVENTS = new Set([
   'card_redescribed',
   'deploy_done',
   'deploy_failed',
+  'main_checks_failed',
   'room_merge',
   'conclusion_settled',
   'archive_deferred',

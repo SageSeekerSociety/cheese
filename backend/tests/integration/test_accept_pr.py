@@ -32,6 +32,7 @@ from tests.integration.conftest import (
     room_text,
     session_auth_headers,
 )
+from tests.landing import summary_turn_ends
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
@@ -2074,6 +2075,8 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert card["decided_by"] == rejected["decided_by"]
     assert card["pr_head_sha"] == rejected["pr_head_sha"]
     assert card["pr_merged_at"] is not None
+    # The task closes once its AI teammate has written it up.
+    summary_turn_ends(client, delivery_task_id(client, tid))
     assert _room_open_tree_branch(client, tid) is None
     assert _branch_of_record(client, tid) == branch
     assert fake.merge_calls == []
