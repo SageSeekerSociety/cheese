@@ -28,6 +28,7 @@ from app.domain.agent.device_hub import (
 )
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
+from app.domain.room_task.place import session_keeps_work
 from app.domain.topic.models import Topic
 
 router = APIRouter(tags=["execution"])
@@ -191,7 +192,18 @@ async def execute(
     # Windows machine, a whole cloud VM — what it changed would stay among
     # other work, so there it only reads. Its ``ro`` is for an owner that
     # predates this (`bind_resource_token`).
-    if claims.get("scratch"):
+    #
+    # ``scratch`` is what the place said when the credential was signed, and a
+    # session that is working keeps that credential until it goes quiet
+    # (`screen_identity`, ``CHEESE_KEEPS_NOTHING``): a task its owner starts
+    # mid-turn goes on presenting one that says its work is not kept, and on a
+    # machine it shares it would only be allowed to read. So ask the place now,
+    # the question the forge token already asks (`session_keeps_work`) — which
+    # is also what frees it: ``scratch`` sets ``ro`` too
+    # (`bind_resource_token`), and one that is no longer scratch is no longer
+    # read-only either.
+    scratch = bool(claims.get("scratch"))
+    if scratch and not await session_keeps_work(db, session_id):
         if lease.get("own"):
             if _carries_work_off(payload.method, payload.params):
                 raise ForbiddenError("This credential's work stays on its machine")
@@ -200,7 +212,9 @@ async def execute(
             or _native_read(payload.method, payload.params)
         ):
             raise ForbiddenError("This credential only reads a shared machine")
-    elif claims.get("ro") and not _reads(payload.method, payload.params):
+    elif (
+        not scratch and claims.get("ro") and not _reads(payload.method, payload.params)
+    ):
         raise ForbiddenError("This credential only reads the machine's files")
     target = lease
     if _checkpoints(payload.method, payload.params) and (

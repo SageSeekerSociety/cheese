@@ -5,16 +5,17 @@
 """
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.place import readable_rooms
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import ValidationError
@@ -32,6 +33,40 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 #: 资料库页上一次放进来的文件多大为止；和对话里上传附件是同一条线。
 MAX_LIBRARY_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+class LibraryRoom(BaseModel):
+    """一份资料是在哪个房间给出来的（`room_ref`）：房间的 id 和名字。"""
+
+    id: str
+    title: str
+
+
+class LibraryFileOut(BaseModel):
+    """清单里的一份文件（`library_listing._describe` 写的那一行）。"""
+
+    type: Literal["file"]
+    path: str
+    bytes: int
+    modified: float
+    added_by: str | None
+    added_at: str
+    room: LibraryRoom | None
+    replaced: int
+    references: int
+    rank: str
+
+
+class LibraryFoldersOut(BaseModel):
+    """资料库里的每一个文件夹（整条路径），给「移动到」挑。"""
+
+    folders: list[str]
+
+
+class LibraryMoved(BaseModel):
+    """每个旧名字变成了什么（`library_records.move`）；名字没变时是空的。"""
+
+    moved: dict[str, str]
 
 
 @router.get("/{project_id}/library/raw")
@@ -153,7 +188,7 @@ async def list_library(
     return ok({"data": entries, "next": after})
 
 
-@router.get("/{project_id}/library/file")
+@router.get("/{project_id}/library/file", **typed_response(LibraryFileOut))
 async def library_file(
     project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -163,7 +198,7 @@ async def library_file(
     return ok(await library_listing.one(db, project_id, rooms, _library_path(path)))
 
 
-@router.get("/{project_id}/library/folders")
+@router.get("/{project_id}/library/folders", **typed_response(LibraryFoldersOut))
 async def library_folders(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -261,7 +296,11 @@ async def delete_library_file(
     return ok({"deleted": True})
 
 
-@router.post("/{project_id}/library/move", dependencies=[ROUTE_DECIDES])
+@router.post(
+    "/{project_id}/library/move",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryMoved),
+)
 async def move_library_file(
     project_id: uuid.UUID,
     db: DbSession,

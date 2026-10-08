@@ -1,0 +1,139 @@
+# Dependency vulnerability scanning — visible on every run, blocking on none.
+#
+# Nothing in this repo looked for advisories against the packages it ships, so
+# a vulnerable version could stay installed for as long as nobody happened to
+# look it up. Both scans below are `continue-on-error: true` on purpose: this
+# lane's contribution is that a finding becomes visible — a summary line and a
+# warning annotation — not that it fails a pull request whose diff has nothing
+# to do with it. A blocking gate belongs in Required CI later, once the tree is
+# clean enough for it to be green.
+#
+# Both triggers, because either alone misses a class of finding:
+#   - pull_request: the advisory shows up beside the change that introduces it.
+#   - schedule:     an advisory published after the last commit, where there is
+#                   no diff to trigger on at all. A pull_request-only lane can
+#                   never see that one.
+name: Dependency audit
+
+on:
+  pull_request:
+    branches: [main]
+    # Only when the dependency set can have changed — a code-only pull request
+    # cannot bring in a new package, and the weekly run covers everything else.
+    paths:
+      - frontend/package.json
+      - frontend/pnpm-lock.yaml
+      - backend/pyproject.toml
+      - backend/uv.lock
+      - .github/workflows/dependency-audit.yml
+  schedule:
+    - cron: '17 6 * * 1' # Mondays 06:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing below pushes, and neither scan runs a dependency's install
+          # scripts (`pnpm audit` reads the lockfile, `uv export` reads the
+          # lock, pip-audit queries the index), so the token has no reason to
+          # stay in .git/config.
+          persist-credentials: false
+
+      # pnpm comes from frontend/package.json's `packageManager` field, the way
+      # frontend.yml takes it. Deliberately NOT pnpm/action-setup with a
+      # hard-coded major: that overrides the pinned version, and a newer pnpm
+      # reading this lockfile is exactly the drift a frozen install exists to
+      # prevent.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Enable corepack
+        run: corepack enable
+
+      # --prod: only the frontend packages that ship. An advisory against a
+      # devDependency is real, but it cannot reach a user, and a lane that
+      # mixes the two is a lane nobody reads. --audit-level=high sets only the
+      # exit code; the report printed above it still lists every severity.
+      - name: pnpm audit (frontend, shipped dependencies)
+        id: pnpm_audit
+        continue-on-error: true
+        working-directory: frontend
+        run: pnpm audit --prod --audit-level=high
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+
+      # pip-audit reads a requirements file. `uv export` turns the lock into
+      # one without re-resolving anything, and `--no-dev` is the same set the
+      # production image installs (backend/Dockerfile: `uv sync --frozen
+      # --no-dev`). The project itself is left out — it is on no index to be
+      # looked up.
+      - name: Export the locked production requirements
+        working-directory: backend
+        run: |
+          uv export --frozen --no-dev --no-emit-project \
+            --format requirements-txt \
+            --output-file "$RUNNER_TEMP/backend-requirements.txt"
+
+      # --no-deps + --disable-pip: audit exactly the versions the lock names and
+      # install nothing. Left to itself, pip-audit resolves by asking pip to
+      # dry-run install the set in a throwaway venv — and for a package with no
+      # wheel (lxml) that builds from source and dies on missing libxml2
+      # headers. The export above is already the full transitive closure, so
+      # there is nothing left to resolve.
+      - name: pip-audit (backend, locked requirements)
+        id: pip_audit
+        continue-on-error: true
+        run: |
+          uvx pip-audit --disable-pip --no-deps \
+            --requirement "$RUNNER_TEMP/backend-requirements.txt"
+
+      # Neither scan can fail this job, so a finding would otherwise live only
+      # in a log nobody opens. This is what turns each one into something a
+      # person sees: a line in the run summary, and a warning annotation.
+      - name: Surface any finding
+        if: ${{ !cancelled() }}
+        env:
+          PNPM_OUTCOME: ${{ steps.pnpm_audit.outcome }}
+          PIP_OUTCOME: ${{ steps.pip_audit.outcome }}
+        run: |
+          pnpm_result="no high-or-worse advisory"
+          if [ "$PNPM_OUTCOME" = failure ]; then
+            pnpm_result="**findings — or the scan could not reach the registry**"
+          fi
+          pip_result="no known vulnerability"
+          if [ "$PIP_OUTCOME" = failure ]; then
+            pip_result="**findings — or the scan could not reach the index**"
+          fi
+          {
+            echo "## Dependency audit"
+            echo
+            echo "Both scans report only; nothing here fails a check."
+            echo
+            echo "| scan | covers | result |"
+            echo "| --- | --- | --- |"
+            echo "| \`pnpm audit --prod --audit-level=high\` | frontend, dependencies that ship | $pnpm_result |"
+            echo "| \`pip-audit\` over \`uv export --no-dev\` | backend, dependencies that ship | $pip_result |"
+            echo
+            echo "A non-zero scan means either a finding or an unreachable"
+            echo "registry/index — the step's own log says which."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PNPM_OUTCOME" = failure ]; then
+            echo "::warning title=pnpm audit::the frontend's shipped dependencies came back non-zero — see the 'pnpm audit' step log"
+          fi
+          if [ "$PIP_OUTCOME" = failure ]; then
+            echo "::warning title=pip-audit::the backend's locked dependencies came back non-zero — see the 'pip-audit' step log"
+          fi

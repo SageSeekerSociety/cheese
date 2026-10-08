@@ -28,10 +28,11 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.response import ok, page
+from app.api.response import Deleted, Page, ok, page, typed_response
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
 from app.core.sentences import say
@@ -49,9 +50,11 @@ from app.domain.feedback.paging import THREAD_PAGE
 from app.domain.feedback.schemas import (
     CommentCreate,
     CommentLikeOut,
+    CommentOut,
     FeedbackCard,
     FeedbackCounts,
     FeedbackCreate,
+    FeedbackDetail,
     FeedbackMeta,
     SupportOut,
 )
@@ -60,6 +63,28 @@ from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
+
+
+# Response shapes these routes build by hand (``{**page(...), "counts": ...}``),
+# written down so OpenAPI can name them. Documentation only: see
+# ``typed_response``.
+class FeedbackListOut(Page[FeedbackCard]):
+    counts: FeedbackCounts
+
+
+class FeedbackMineOut(Page[FeedbackCard]):
+    #: Absent for a visitor, who gets an empty page and no tab numbers.
+    counts: FeedbackCounts | None = None
+
+
+class CommentPageOut(BaseModel):
+    items: list[CommentOut]
+    next_cursor: str | None
+
+
+class FeedbackReadOut(BaseModel):
+    last_read_at: datetime
+
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -213,7 +238,7 @@ async def _is_platform_admin(db: DbSession, who: Actor) -> bool:
     return await _may_manage(db, who)
 
 
-@router.get("/meta")
+@router.get("/meta", **typed_response(FeedbackMeta))
 async def get_feedback_meta(
     db: DbSession,
     service: FeedbackServiceDep,
@@ -242,7 +267,7 @@ async def get_feedback_meta(
     return ok(meta.model_dump(mode="json"))
 
 
-@router.get("/counts")
+@router.get("/counts", **typed_response(FeedbackCounts))
 async def get_feedback_counts(
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
@@ -270,7 +295,7 @@ async def get_feedback_counts(
     return ok(payload.model_dump(mode="json"))
 
 
-@router.post("/read")
+@router.post("/read", **typed_response(FeedbackReadOut))
 async def mark_feedback_read(
     db: DbSession,
     service: FeedbackServiceDep,
@@ -289,7 +314,7 @@ async def mark_feedback_read(
     return ok({"last_read_at": at.isoformat()})
 
 
-@router.get("/mine")
+@router.get("/mine", **typed_response(FeedbackMineOut))
 async def list_my_feedback(
     service: FeedbackServiceDep,
     resolver: ActorResolverDep,
@@ -311,7 +336,7 @@ async def list_my_feedback(
     return ok({**page(items, total), "counts": await service.counts(handle=who.handle)})
 
 
-@router.get("")
+@router.get("", **typed_response(FeedbackListOut))
 async def list_feedback(
     db: DbSession,
     service: FeedbackServiceDep,
@@ -354,7 +379,7 @@ async def list_feedback(
     return ok({**page(items, total), "counts": await service.counts(handle=handle)})
 
 
-@router.post("")
+@router.post("", **typed_response(FeedbackDetail))
 async def create_feedback(
     body: FeedbackCreate,
     db: DbSession,
@@ -389,7 +414,7 @@ async def create_feedback(
     )
 
 
-@router.get("/{feedback_ref}")
+@router.get("/{feedback_ref}", **typed_response(FeedbackDetail))
 async def get_feedback(
     feedback_ref: str,
     db: DbSession,
@@ -414,7 +439,7 @@ async def get_feedback(
     )
 
 
-@router.delete("/{feedback_id}")
+@router.delete("/{feedback_id}", **typed_response(Deleted))
 async def delete_feedback(
     feedback_id: uuid.UUID,
     db: DbSession,
@@ -445,7 +470,7 @@ async def delete_feedback(
     return ok({"deleted": True})
 
 
-@router.get("/{feedback_id}/comments")
+@router.get("/{feedback_id}/comments", **typed_response(CommentPageOut))
 async def list_feedback_comments(
     feedback_id: uuid.UUID,
     db: DbSession,
@@ -509,7 +534,7 @@ async def list_feedback_comments(
     )
 
 
-@router.post("/{feedback_id}/comments")
+@router.post("/{feedback_id}/comments", **typed_response(CommentOut))
 async def create_feedback_comment(
     feedback_id: uuid.UUID,
     body: CommentCreate,
@@ -543,7 +568,7 @@ async def create_feedback_comment(
     return ok(created[0].model_dump(mode="json"))
 
 
-@router.delete("/{feedback_id}/comments/{comment_id}")
+@router.delete("/{feedback_id}/comments/{comment_id}", **typed_response(Deleted))
 async def delete_feedback_comment(
     feedback_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -564,7 +589,9 @@ async def delete_feedback_comment(
     return ok({"deleted": True})
 
 
-@router.post("/{feedback_id}/comments/{comment_id}/likes")
+@router.post(
+    "/{feedback_id}/comments/{comment_id}/likes", **typed_response(CommentLikeOut)
+)
 async def like_feedback_comment(
     feedback_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -591,7 +618,9 @@ async def like_feedback_comment(
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
 
-@router.delete("/{feedback_id}/comments/{comment_id}/likes")
+@router.delete(
+    "/{feedback_id}/comments/{comment_id}/likes", **typed_response(CommentLikeOut)
+)
 async def unlike_feedback_comment(
     feedback_id: uuid.UUID,
     comment_id: uuid.UUID,
@@ -612,7 +641,7 @@ async def unlike_feedback_comment(
     return ok(CommentLikeOut(count=count, liked=liked).model_dump(mode="json"))
 
 
-@router.post("/{feedback_id}/supports")
+@router.post("/{feedback_id}/supports", **typed_response(SupportOut))
 async def support_feedback(
     feedback_id: uuid.UUID,
     db: DbSession,
@@ -633,7 +662,7 @@ async def support_feedback(
     return ok(SupportOut(count=count, supported=supported).model_dump(mode="json"))
 
 
-@router.delete("/{feedback_id}/supports")
+@router.delete("/{feedback_id}/supports", **typed_response(SupportOut))
 async def unsupport_feedback(
     feedback_id: uuid.UUID,
     db: DbSession,
@@ -666,7 +695,7 @@ async def _claimer(
     return who, project_id
 
 
-@router.post("/{feedback_ref}/claim")
+@router.post("/{feedback_ref}/claim", **typed_response(FeedbackDetail))
 async def claim_feedback(
     feedback_ref: str,
     db: DbSession,
@@ -701,7 +730,7 @@ async def claim_feedback(
     )
 
 
-@router.delete("/{feedback_ref}/claim")
+@router.delete("/{feedback_ref}/claim", **typed_response(FeedbackDetail))
 async def release_feedback(
     feedback_ref: str,
     db: DbSession,
