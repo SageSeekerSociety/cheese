@@ -390,3 +390,79 @@ def test_one_cursor_at_a_time_and_only_with_a_limit(client):
     assert both.status_code == 422
     unbounded = client.get(f"/topics/{tid}/blocks", params={"around": ids[1]})
     assert unbounded.status_code == 422
+
+
+# --- filters narrow inside the paging ----------------------------------------
+
+
+def _room_with_steps(client) -> tuple[str, list[str]]:
+    """A room where an agent's steps (kept out of the room) far outnumber what
+    it says. Returns the room and its shown messages' texts, oldest first."""
+    tid = _topic(client)
+    pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
+    stamp = datetime.now(UTC)
+    said: list[str] = []
+
+    async def seed() -> None:
+        async with client.test_factory() as session:
+            for i in range(60):
+                shown = i % 6 == 0
+                if shown:
+                    said.append(f"said {i}")
+                session.add(
+                    Block(
+                        id=uuid.uuid4(),
+                        project_id=uuid.UUID(pid),
+                        conversation_id=uuid.UUID(tid),
+                        author="cheese" if shown else "cheese-steps",
+                        author_type=AuthorType.participant,
+                        content=f"said {i}" if shown else f"step {i}",
+                        kind=BlockKind.message if shown else BlockKind.event,
+                        meta=None if shown else {"in_room": False, "tool": "Bash"},
+                        created_at=stamp + timedelta(seconds=i),
+                        updated_at=stamp,
+                    )
+                )
+            await session.commit()
+
+    asyncio.run(seed())
+    return tid, said
+
+
+def test_a_page_of_what_the_room_shows_is_full_of_it(client):
+    tid, said = _room_with_steps(client)
+
+    payload = _blocks(client, tid, limit=4, shown="true")
+
+    # Four shown rows, not the four newest blocks of which none is shown.
+    assert _texts(payload) == said[-4:]
+    assert payload["has_more"] is True
+    assert payload["total"] == len(said)
+
+    seen = _texts(payload)
+    while payload["has_more"]:
+        payload = _blocks(
+            client, tid, limit=4, shown="true", before=payload["oldest_id"]
+        )
+        seen = _texts(payload) + seen
+    assert seen == said
+
+
+def test_what_the_room_keeps_out_can_be_read_on_its_own(client):
+    tid, said = _room_with_steps(client)
+
+    hidden = _blocks(client, tid, shown="false")["data"]
+    steps = _blocks(client, tid, kind="event", author="cheese-steps")["data"]
+
+    assert len(hidden) == 60 - len(said)
+    assert [b["id"] for b in steps] == [b["id"] for b in hidden]
+
+
+def test_opening_at_a_row_the_filter_leaves_out_does_not_show_it(client):
+    tid, said = _room_with_steps(client)
+    step = _blocks(client, tid, shown="false")["data"][10]
+
+    payload = _blocks(client, tid, limit=4, around=step["id"], shown="true")
+
+    assert step["id"] not in [b["id"] for b in payload["data"]]
+    assert all(text.startswith("said") for text in _texts(payload))

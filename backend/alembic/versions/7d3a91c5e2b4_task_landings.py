@@ -1,7 +1,7 @@
 """tasks close after their summary turn; what a merge did on the default branch
 
 Revision ID: 7d3a91c5e2b4
-Revises: 4195c0bc87ad
+Revises: f17973b3f7b6
 
 A task whose last delivery merged stays open while its AI teammate writes it
 up, and closes when that turn ends: `tasks.closing_since` says it is in that
@@ -18,7 +18,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "7d3a91c5e2b4"
-down_revision: str | Sequence[str] | None = "4195c0bc87ad"
+down_revision: str | Sequence[str] | None = "f17973b3f7b6"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

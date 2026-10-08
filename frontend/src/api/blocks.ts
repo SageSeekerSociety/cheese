@@ -24,7 +24,9 @@ export function listBlocks(
   topicId: string,
   opts?: { limit?: number; before?: string; after?: string; around?: string }
 ): Promise<BlockPage> {
-  const q = new URLSearchParams()
+  // 对话栏只读房间里显示的那些：一个干着活的房间，块大多是队友干活的步骤（现场读
+  // 它们，走 socket 和 `/transcript`），不筛的话一页里多半没有一行画得出来。
+  const q = new URLSearchParams({ shown: 'true' })
   if (opts?.limit !== undefined) q.set('limit', String(opts.limit))
   if (opts?.before) q.set('before', opts.before)
   if (opts?.after) q.set('after', opts.after)

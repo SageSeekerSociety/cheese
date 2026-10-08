@@ -40607,7 +40607,7 @@
           "topics"
         ],
         "summary": "List Topic Blocks",
-        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)",
+        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)\n\nFilters narrow the timeline inside the paging, so a page holds `limit` rows\nof what was asked for and `has_more` counts the same set (filtering a page\nafterwards returns fewer rows and pages through holes):\n\n- `kind` (repeatable): only these kinds of block;\n- `author`: only blocks signed by this handle;\n- `shown=true`: only what the room's conversation shows\n  (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only\n  what it keeps out of the room (an agent's steps, notices for an agent).\n\nCursors still name any block of the conversation, shown or not.",
         "operationId": "list_topic_blocks_topics__topic_id__blocks_get",
         "parameters": [
           {
@@ -40687,6 +40687,59 @@
                 }
               ],
               "title": "Around"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BlockKind"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Author"
+            }
+          },
+          {
+            "name": "shown",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Shown"
             }
           }
         ],
