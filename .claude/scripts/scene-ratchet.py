@@ -252,13 +252,8 @@ def load_frontend_grade() -> Any:
 # ------------------------------------------------------------------ the scenes
 
 
-def scene_paths(root: Path, reach: set[Path] | None = None) -> list[str]:
-    """Every scene, as a repo-relative path, sorted. Pages then panels.
-
-    Pages come from the router's import graph rather than from a list of
-    routes: a page is a `.vue` under `views/` that the router reaches, and a
-    new route is picked up by existing. Panels are the directory.
-    """
+def route_pages(root: Path) -> list[str]:
+    """Router-reached pages, without panels or a container's sibling views."""
     src = root / "frontend" / "src"
     if not src.is_dir():
         raise Unjudgeable(f"no {SRC_DIR}/ under {root}")
@@ -293,6 +288,13 @@ def scene_paths(root: Path, reach: set[Path] | None = None) -> list[str]:
             elif resolved.suffix == ".ts":
                 stack.append(resolved)  # a router module, or one that names pages
 
+    return sorted(pages)
+
+
+def scene_paths(root: Path, reach: set[Path] | None = None) -> list[str]:
+    """Every scene, as a repo-relative path: pages, sibling views, then panels."""
+    pages = set(route_pages(root))
+    src = root / "frontend" / "src"
     panels = {
         p.relative_to(root).as_posix()
         for p in (src / "components" / "panels").rglob("*.vue")

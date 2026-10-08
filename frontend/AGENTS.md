@@ -152,6 +152,37 @@ Whether a standalone-ready scene is in the preview site is not this check's
 question: every grade-A component, scene or not, must be catalogued or pending —
 see `pnpm run lint:catalog` under "The component preview site" above.
 
+## Existing scene debt only loses dependencies
+
+`pnpm run lint:scene-debt` checks three exact sets in
+`scene-debt-baseline.json`; `pnpm run lint:scene-debt:update` only removes
+entries, and refuses to write if any set gained an entry. CI also compares the
+baseline to the approved merge base, so hand-adding an exemption fails too.
+
+- **Non-A child edges:** a router-reached non-A page that is not a verified
+  container, paired with each non-A `.vue` it value-imports and actually
+  renders. Repeated tags count once; unused imports, comments and attribute
+  examples do not. Replacing one child with a different child is new debt,
+  even when the count stays the same. The scene grader and container rule are
+  shared with `lint:scenes`; panels and unrouted sibling views are not pages.
+- **Route reads:** those debt pages calling `useRoute`, including renamed and
+  namespace imports. Use the router's `props` mapping for parameters; keeping
+  a data-fetching container's route read is allowed by this page-debt check.
+- **Legacy network imports:** production `.vue`/`.ts`/`.js`/`.tsx`/`.jsx`
+  source files importing `src/network`, including files within that stack,
+  type-only imports, re-exports and literal dynamic imports. Specs and type
+  declaration files are excluded. Alias and relative spellings are the same
+  dependency. History is frozen per importer file, not per import statement;
+  a new file uses `@/api` or a domain module, never `@/network`.
+
+The script scanner uses TypeScript's parser; missing dependencies, invalid
+source and unreadable baselines are exit 2 (cannot judge), never a pass. Its
+unit tests run under `pnpm run test:ratchet`; the gate's functional self-tests
+run in CI's frontend check. The same three records appear in ratchet snapshots.
+
+Sources for the migration shape: [Vue Router props](https://router.vuejs.org/guide/essentials/passing-props.html)
+and [ESLint restricted imports](https://eslint.org/docs/latest/rules/no-restricted-imports).
+
 ## Caps and conventions
 
 - Files under `src/` over **1000 lines** may not grow; 19 are already there and

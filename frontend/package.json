@@ -25,6 +25,8 @@
     "lint:i18n": "node scripts/i18n-cjk-gate.mjs",
     "lint:scenes": "python3 ../.claude/scripts/scene-ratchet.py",
     "lint:scenes:update": "python3 ../.claude/scripts/scene-ratchet.py --update",
+    "lint:scene-debt": "python3 ../.claude/scripts/scene-debt-ratchet.py --base origin/main",
+    "lint:scene-debt:update": "python3 ../.claude/scripts/scene-debt-ratchet.py --base origin/main --update",
     "scene:split": "node scripts/scene-split.mjs",
     "gen:api-types": "node scripts/gen-api-types.mjs",
     "check:api-types": "node scripts/gen-api-types.mjs --check",

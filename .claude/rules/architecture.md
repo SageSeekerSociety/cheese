@@ -19,6 +19,7 @@ One command runs all five: `task boundaries`. Individually:
 | Component imports | `pnpm --dir frontend run lint:boundary` |
 | File sizes | `python3 .claude/scripts/check-file-sizes.py` |
 | Scenes run standalone | `pnpm --dir frontend run lint:scenes` |
+| Scene child/route debt and old network importers only shrink | `pnpm --dir frontend run lint:scene-debt` |
 | Grade-A components are in the catalog | `pnpm --dir frontend run lint:catalog` |
 
 All five print their baseline and their refresh command when they fail, and each

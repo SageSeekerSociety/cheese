@@ -113,6 +113,7 @@ tasks:
       - task: be:boundaries
       - task: fe:lint:boundary
       - task: fe:lint:scenes
+      - task: fe:lint:scene-debt
       - task: fe:lint:catalog
       - python3 .claude/scripts/check-file-sizes.py
 

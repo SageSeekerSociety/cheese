@@ -179,6 +179,13 @@ repos:
       # a component off the list. Same grader
       # as scene-ratchet. The writer is `pnpm run lint:catalog:update`, which
       # only ever removes.
+      - id: scene-debt-ratchet
+        name: scene dependencies and legacy imports only go down
+        entry: python3 .claude/scripts/scene-debt-ratchet.py --base origin/main
+        language: system
+        pass_filenames: false
+        files: ^(frontend/.*|\.claude/scripts/(frontend_grade|scene-ratchet|scene-debt-ratchet|test_scene_debt_ratchet|ratchet_report)\.py)$
+
       - id: catalog-ratchet
         name: grade-A components are in the catalog (python ratchet)
         entry: python3 .claude/scripts/catalog-ratchet.py
