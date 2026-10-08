@@ -124,3 +124,57 @@ describe('复制出去的链接', () => {
     expect(router.resolve(to).fullPath).toBe('/projects/helper/tasks/318')
   })
 })
+
+describe('改写地址不吃掉身后那一页', () => {
+  // 真实的页面表会在跳转时拉各页的代码；这里只留守卫认的那几样：项目框、参数名、路由名。
+  const Page = { render: () => null }
+  function guarded() {
+    const r = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: Page },
+        {
+          path: '/projects/:projectId',
+          meta: { projectFrame: true },
+          component: Page,
+          children: [
+            { path: '', name: 'workspace-project', component: Page },
+            { path: 'channels/:topicId', name: 'workspace-room', component: Page },
+            { path: 'tasks/:taskId', name: 'workspace-task', component: Page },
+          ],
+        },
+      ],
+    })
+    r.beforeEach((to) => canonicalAddress(to))
+    return r
+  }
+  function backOnce(r: ReturnType<typeof guarded>): Promise<string> {
+    return new Promise((done) => {
+      const stop = r.afterEach((to) => {
+        stop()
+        done(to.fullPath)
+      })
+      r.back()
+    })
+  }
+
+  it('拿 UUID 拼的链接点过去，返回回到点之前那一页', async () => {
+    const r = guarded()
+    await r.push('/')
+    await r.push(`/projects/${PROJECT}/channels/${ROOM}`)
+    await r.push(`/projects/${PROJECT}/tasks/${TASK}`)
+    expect(r.currentRoute.value.fullPath).toBe('/projects/helper/tasks/318')
+
+    expect(await backOnce(r)).toBe('/projects/helper/channels/7')
+    expect(await backOnce(r)).toBe('/')
+  })
+
+  it('本来就是换掉当前这一格的，改写后也只换这一格', async () => {
+    const r = guarded()
+    await r.push('/')
+    await r.push(`/projects/${PROJECT}/channels/${ROOM}`)
+    await r.replace(`/projects/${PROJECT}/tasks/${TASK}`)
+
+    expect(await backOnce(r)).toBe('/')
+  })
+})
