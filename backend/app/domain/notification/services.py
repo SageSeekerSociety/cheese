@@ -412,11 +412,36 @@ class ProjectNotificationService:
         *,
         target_handle: str,
         unread_only: bool = False,
-    ) -> tuple[list[Notification], int]:
-        items = await self._repo.list_for_project(
+        page_size: int,
+        page_start: int | None = None,
+    ) -> tuple[list[Notification], int, int | None]:
+        """这个项目收件箱的一页：这一页的信、真总数、下一页从哪一行开始。
+
+        末尾那个数是给调用方原样喂回来的 `page_start`，而且是**含**那一行的：下一
+        次读带着它，它就是那一页的头一条。多取一行才判得出还有没有下一页 —— 它不
+        进 `data`，只借它的行号。
+
+        总数走单独一条 `count(*)`，不是这一页的条数：分页之前的写法是
+        `page(items, len(items))`，一加上限它就说谎了。
+
+        `page_start` 指的 id 不存在时从头开始，不报错 —— 和 `/notifications` 的游
+        标同一条政策（那边把解不出来的游标当「从头来」）。于是过期的游标最多让人
+        重看一遍第一页，不会是 500。
+        """
+        cursor = await self._repo.get(page_start) if page_start is not None else None
+        rows = await self._repo.list_for_project(
+            project_id,
+            recipient_handle=target_handle,
+            unread_only=unread_only,
+            limit=page_size + 1,
+            at_or_before=cursor,
+        )
+        total = await self._repo.count_for_project(
             project_id, recipient_handle=target_handle, unread_only=unread_only
         )
-        return items, len(items)
+        if len(rows) > page_size:
+            return rows[:page_size], total, rows[page_size].id
+        return rows, total, None
 
     async def inbox(
         self,
