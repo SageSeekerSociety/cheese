@@ -58,6 +58,12 @@ convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
+`deepseek-flash-ruc` is the same model self-hosted at RUC. Set
+`RUC_DEEPSEEK_API_BASE` (the endpoint's address, no path) and
+`RUC_DEEPSEEK_API_KEY` in `$HOME/gateway/compose/.env` before releasing. The
+endpoint admits campus addresses only, so a box serving it needs the route in
+docs/infrastructure.md ("Campus model API").
+
 The gateway also joins `cheese-meter-gateway`, an internal network shared only
 with the metering proxy, where the proxy's ChatGPT accounts answer at
 `http://metering-proxy:8445/chatgpt/<name>` (deploy/metering-proxy/README.md).
