@@ -500,6 +500,56 @@ const ARCH_SAMPLES = {
   }
   registerArchFacts(nested)
 }
+
+// The component inventory (gen/components.py). Scene rows come first, grouped by
+// which of the three scenes they are; every other component is grouped by the
+// directory it lives in. Read-only in both directions: nothing on this page can
+// fail the build, and nothing here is written back to a baseline.
+const COMPONENT_STATE = { catalogued: '已收录', pending: '待收录', new: '新增', uncatalogued: '未收录' }
+const SCENE_KIND = { page: '路由页', view: '视图', panel: '工作面板' }
+function componentsReference(data) {
+  const t = data.totals
+  const table = (list) => `| 组件 | 档位 | 收录 |\n|---|---|---|\n${list.map((c) => `| \`${c.path}\` | ${c.grade} | ${COMPONENT_STATE[c.state]} |`).join('\n')}`
+  const section = (label, list) => `### ${label}（${list.length}）\n\n${table(list)}\n`
+  const scenes = Object.keys(SCENE_KIND).filter((k) => t.scene_kinds[k]).map((k) => section(SCENE_KIND[k], data.components.filter((c) => c.scene === k)))
+  const byDir = new Map()
+  for (const c of data.components.filter((c) => !c.scene)) {
+    const dir = c.path.split('/').slice(1, -1).join('/') // drop the leading `src/`
+    if (!byDir.has(dir)) byDir.set(dir, [])
+    byDir.get(dir).push(c)
+  }
+  const rest = [...byDir.keys()].sort().map((dir) => section(dir ? `\`${dir}/\`` : '`src/`', byDir.get(dir)))
+  const s = t.states
+  const a = (state) => data.components.filter((c) => c.grade === 'A' && c.state === state).length
+  return `# 组件总览 {#ref-components}
+
+\`frontend/src\` 下除预览站自身（\`src/views/demo/\`）的每一个 \`.vue\`，一行一个。三列各由一处检查给出，这一页只读它们，不新加任何会判红的条件：
+
+- **档位** 是 \`.claude/scripts/frontend_grade.py\` 判的 A/B/C/D；**A 就是「给一组 props 就能单独出画面」**，能进预览站的那一档。判据和怎么往上升档见[场景清单](/dev/scenes)。
+- **收录** 是 \`/demo/catalog\` 有没有它，由 \`.claude/scripts/catalog-ratchet.py\` 认——从 \`src/views/demo/catalog.ts\` 走到的某个文件 import 了它、并把它写成某条条目的 \`component:\`。
+- **场景** 是它属不属于 \`.claude/scripts/scene-ratchet.py\` 认的场景（路由页、页面的视图、工作面板），见[场景清单](/dev/scenes#scenes)。
+
+## 一共多少 {#totals}
+
+| | 数量 |
+|---|---|
+| 组件（\`frontend/src\` 下 \`.vue\`，不含预览站自身） | ${t.components} |
+| 档位 A / B / C / D | ${t.grades.A} / ${t.grades.B} / ${t.grades.C} / ${t.grades.D} |
+| 已收录 / 待收录 / 新增 / 未收录 | ${s.catalogued} / ${s.pending} / ${s.new} / ${s.uncatalogued} |
+| 其中 A 档：已收录 / 待收录 / 新增 | ${a('catalogued')} / ${a('pending')} / ${a('new')} |
+| 场景：路由页 / 视图 / 工作面板 | ${t.scene_kinds.page} / ${t.scene_kinds.view} / ${t.scene_kinds.panel} |
+
+收录的四态里只有前三种是 \`catalog-ratchet.py\` 的账（\`pnpm run lint:catalog\` 报的就是 A 档那一行）：**已收录**在预览站上；**待收录**冻结在 \`frontend/catalog-baseline.json\` 里，只许减少；**新增**是这条闸门唯一会拦红的状态。剩下的 **未收录** 是 B/C/D 档——单独渲染不了，收进预览站也挂不起来，所以既不进目录也不进 \`pending\`。已收录里那 ${s.catalogued - a('catalogued')} 个非 A 档是收进去了但挂不起来的，归 \`catalog.spec.ts\` 管。
+
+## 场景（${t.scenes}）
+
+${scenes.join('\n')}
+## 其余组件（${t.components - t.scenes}） {#rest}
+
+不是场景的组件，按源目录分组。
+
+${rest.join('\n')}`
+}
 function referencePages() {
   const out = {}
   const cli = gen('cli.py')
@@ -584,6 +634,13 @@ ${workflows.map((w) => `| \`${w.f}\` | ${mdCell(w.name)} | ${w.triggers.map((t) 
 `,
   }
   out['ref-prompt'] = promptReference()
+  const components = gen('components.py')
+  out['ref-components'] = {
+    title: '组件总览', kind: '参考',
+    covers: ['.claude/scripts/frontend_grade.py', '.claude/scripts/catalog-ratchet.py', '.claude/scripts/scene-ratchet.py', 'frontend/catalog-baseline.json', 'frontend/scene-baseline.json'],
+    summary: `frontend/src 下全部 ${components.totals.components} 个 .vue 组件：每个的档位（A 能单独渲染）、有没有进预览站 /demo/catalog、属于哪个场景。`,
+    body: componentsReference(components),
+  }
   return out
 }
 
