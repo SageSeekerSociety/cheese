@@ -68,8 +68,10 @@ import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SETTINGS_ENTRIES } from './catalogSettings'
+import { SHARED_ENTRIES } from './catalogShared'
 import { TASK_FORM_ENTRIES } from './catalogTaskForm'
 import { USAGE_ENTRIES } from './catalogUsage'
+import { VIEW_ENTRIES } from './catalogViews'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
 import AdminActionList from '@/components/admin/AdminActionList.vue'
@@ -967,6 +969,11 @@ export const CATALOG: CatalogEntry[] = [
   ...DOC_BLOCK_ENTRIES,
   ...BASE_ENTRIES,
   ...PANEL_ENTRIES,
+  // 跨目录的共用件那一组（表壳与它的表头格、富文本编辑器与附件图、页头、句子里的人）在
+  // 自己的文件里：`catalogShared.ts`（数据在 `catalogSharedFixtures.ts`）。
+  ...SHARED_ENTRIES,
+  // 整页那两件（一项产物的版本历史、小队的对外一面）在自己的文件里：`catalogViews.ts`。
+  ...VIEW_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */
