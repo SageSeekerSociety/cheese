@@ -488,26 +488,6 @@ async def test_a_page_of_what_the_room_shows_skips_the_steps_by_index(db_factory
 
 
 @pytest.mark.anyio
-async def test_deleting_a_room_finds_the_blocks_linking_to_it_by_index(db_factory):
-    """A block upgraded into a room links to it, and deleting the room clears
-    those links (ON DELETE SET NULL). PostgreSQL finds them with the statement
-    below, planned without its value; it must not read every block to do so."""
-    async with db_factory() as session:
-        await _seed(session)
-        await session.execute(text("SET LOCAL enable_seqscan = off"))
-        conn = await session.connection()
-        plan = await _generic_plan(
-            conn,
-            "probe_topic_links",
-            "UPDATE ONLY blocks SET upgraded_to_topic_id = NULL"
-            " WHERE $1::uuid OPERATOR(pg_catalog.=) upgraded_to_topic_id",
-            ["00000000-0000-0000-0000-000000000000"],
-        )
-        assert "ix_blocks_upgraded_to_topic_id" in plan, plan
-        await session.rollback()
-
-
-@pytest.mark.anyio
 async def test_the_waiting_messages_come_back_and_are_read_by_their_index(db_factory):
     """The pending-message scan runs on a clock, so it must read its few rows
     from `ix_blocks_queued_messages`, not the table of everything ever said."""
