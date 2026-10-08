@@ -83,6 +83,22 @@ export function prefetchingChunks(): boolean {
   return chunksInFlight > 0
 }
 
+/** 一条路由记录上挂着的懒加载 chunk，全下下来。 */
+function warmComponents(components: Record<string, unknown> | null | undefined): void {
+  for (const component of Object.values(components ?? {})) {
+    if (!isLazyLoader(component)) continue
+    try {
+      const loading = component() as Promise<unknown> | unknown
+      if (loading instanceof Promise) {
+        chunksInFlight++
+        void loading.catch(() => {}).finally(() => chunksInFlight--)
+      }
+    } catch {
+      // 失败就是没预热成，下次点进去照常走一遍，用户看不见任何东西
+    }
+  }
+}
+
 function warmRoute(router: Router, to: RouteLocationRaw): void {
   let resolved: ReturnType<Router['resolve']>
   try {
@@ -92,20 +108,24 @@ function warmRoute(router: Router, to: RouteLocationRaw): void {
   }
   if (warmedRoutes.has(resolved.fullPath)) return
   warmedRoutes.add(resolved.fullPath)
-  for (const record of resolved.matched) {
-    for (const component of Object.values(record.components ?? {})) {
-      if (!isLazyLoader(component)) continue
-      try {
-        const loading = component() as Promise<unknown> | unknown
-        if (loading instanceof Promise) {
-          chunksInFlight++
-          void loading.catch(() => {}).finally(() => chunksInFlight--)
-        }
-      } catch {
-        // 失败就是没预热成，下次点进去照常走一遍，用户看不见任何东西
-      }
-    }
-  }
+  for (const record of resolved.matched) warmComponents(record.components)
+}
+
+/** 按页名预热过的那些页。同一页的不同地址（另一个话题、另一个任务）要的是同一段代码。 */
+const warmedPages = new Set<string>()
+
+/**
+ * 按**页名**预热一页的代码，不看地址里的参数。
+ *
+ * 给「这个框架底下那几页」用：框架那一层手上没有每一页的 `topicId` / `kind`，也不该
+ * 为了预热编一份出来。同一页的不同地址要的是同一段代码，按名字记一次就够。
+ */
+function warmPage(router: Router, name: string): void {
+  if (warmedPages.has(name)) return
+  const record = router.getRoutes().find((candidate) => candidate.name === name)
+  if (!record) return
+  warmedPages.add(name)
+  warmComponents(record.components)
 }
 
 /**
@@ -161,6 +181,28 @@ export function warmRoutesWhenIdle(router: Router, targets: RouteLocationRaw[]):
     const target = queue.shift()
     if (target === undefined) return
     warmRoute(router, target)
+    cancel = whenIdle(next)
+  }
+  cancel = whenIdle(next)
+  return () => {
+    queue.length = 0
+    cancel()
+  }
+}
+
+/**
+ * 同上，但按**页名**点名（见 `warmPage`）。
+ *
+ * 给一个框架层用它自己那几页：它手上只有页名，没有每一页的地址参数。
+ */
+export function warmPagesWhenIdle(router: Router, names: readonly string[]): () => void {
+  if (!connectionAllows()) return () => {}
+  const queue = [...names]
+  let cancel: () => void = () => {}
+  const next = () => {
+    const name = queue.shift()
+    if (name === undefined) return
+    warmPage(router, name)
     cancel = whenIdle(next)
   }
   cancel = whenIdle(next)

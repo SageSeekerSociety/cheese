@@ -372,5 +372,7 @@
   "computeCloud": "Cloud environment",
   "computeCloudVm": "Whole cloud VM",
   "taskQuiet": "No progress on the task \"{title}\" for {days} days",
-  "roomFilesKept": "Files from this conversation's earlier working folder are kept until {date} and then deleted. To get them back, contact the platform administrator."
+  "roomFilesKept": "Files from this conversation's earlier working folder are kept until {date} and then deleted. To get them back, contact the platform administrator.",
+  "taskFileEdited": "{who} edited {path} {lines} and told {agent}",
+  "taskFileEditedLines": "lines {lines}"
 }

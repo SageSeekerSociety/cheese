@@ -20,10 +20,10 @@ from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.integration.conftest import (
-    chat_ws_url,
     join_project_team,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -189,7 +189,7 @@ def _project_with_a_roster(client, owner: str, member: str) -> str:
 
 def _send(client, topic_id: str, content: str, author: str) -> None:
     """人在房间里说一句话（不唤醒芝士）：@ 的通知在这条消息落库时就发出去了。"""
-    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+    with room_socket(client, topic_id, author) as ws:
         post_message(client, topic_id, author, {"content": content})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):

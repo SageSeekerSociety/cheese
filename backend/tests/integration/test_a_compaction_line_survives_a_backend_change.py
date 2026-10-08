@@ -14,6 +14,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block
@@ -21,10 +22,10 @@ from app.domain.run_record.models import RunRecord
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
 )
 from tests.support.run_records import records_of
 
@@ -100,6 +101,7 @@ def _room(client) -> tuple[str, uuid.UUID]:
 def _service(client):
     def build(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/compaction-across-backends-ws",
@@ -113,7 +115,7 @@ def _start_compacting(client, room: str, service) -> StubChannel:
     before = Compacts()
     old_backend = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old_backend
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 接着做"})
         _until(
             ws,

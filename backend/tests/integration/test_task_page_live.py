@@ -11,8 +11,8 @@ import pytest
 
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
-    chat_ws_url,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.integration.test_accept_pr import app_world as app_world
@@ -66,7 +66,7 @@ def _notice(event_type: str):
 def test_the_task_page_hears_its_card_filed_and_returned(client):
     room, task = _task(client)
 
-    with client.websocket_connect(chat_ws_url(task, "alice")) as page:
+    with room_socket(client, task, "alice") as page:
         filed = client.post(
             f"/topics/{task}/accept-card",
             headers=delivery_headers(client, room),
@@ -94,7 +94,7 @@ def test_a_card_that_fails_to_land_tells_no_page(client):
     """提交之后才说：一次被拒的递卡什么都没写下，页面也就什么都不该听到。"""
     room, task = _task(client)
 
-    with client.websocket_connect(chat_ws_url(task, "alice")) as page:
+    with room_socket(client, task, "alice") as page:
         refused = client.post(
             f"/topics/{task}/accept-card",
             headers=delivery_headers(client, room),

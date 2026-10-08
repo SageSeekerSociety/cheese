@@ -121,11 +121,16 @@ async def doc_text_of(
     return text
 
 
-async def session_keeps_work(session: AsyncSession, session_id: str | None) -> bool:
+async def session_keeps_work(
+    session: AsyncSession, session_id: str | uuid.UUID | None
+) -> bool:
     """Whether the agent session ``session_id`` may carry its work into the
     project (`Place.keeps_work`): what a machine credential naming it asks
     before it is handed what pushes. One naming no session, or a session that
-    is gone, has no 支线 or unstarted task to answer for, and keeps its work."""
+    is gone, has no 支线 or unstarted task to answer for, and keeps its work.
+
+    ``session_id`` is whatever the caller holds — a claim read off a token, or
+    the id of the session row it looked up, which is a UUID."""
 
     try:
         row = await session.get(AgentSession, uuid.UUID(str(session_id)))

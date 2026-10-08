@@ -8,6 +8,8 @@
 //   一份。
 //
 // 失败的那一次不留：下一位要的时候重新读，不把一次网络抖动当成答案发下去。
+//
+// 只要还在进行的（`open`）是另一份，各自共用：侧栏只挂这些，每 30 秒读一次。
 import type { ListPayload, RoomTask } from '@/cx_types'
 
 import { listProjectTasks } from '@/api'
@@ -22,24 +24,28 @@ interface Read {
 
 const latest = new Map<string, Read>()
 
-export function readProjectTasks(projectId: string, opts: { maxAgeMs?: number } = {}): Promise<ListPayload<RoomTask>> {
-  const held = latest.get(projectId)
+export function readProjectTasks(
+  projectId: string,
+  opts: { maxAgeMs?: number; open?: boolean } = {}
+): Promise<ListPayload<RoomTask>> {
+  const key = opts.open ? `${projectId}:open` : projectId
+  const held = latest.get(key)
   const now = Date.now()
   if (held && (held.pending || (opts.maxAgeMs !== undefined && now - held.at < opts.maxAgeMs))) {
     return held.promise
   }
-  const promise = listProjectTasks(projectId).then((page) => {
+  const promise = listProjectTasks(projectId, { open: opts.open }).then((page) => {
     rememberNumbered('tasks', page.data)
     return page
   })
   const read: Read = { at: now, pending: true, promise }
-  latest.set(projectId, read)
+  latest.set(key, read)
   read.promise.then(
     () => {
       read.pending = false
     },
     () => {
-      if (latest.get(projectId) === read) latest.delete(projectId)
+      if (latest.get(key) === read) latest.delete(key)
     }
   )
   return read.promise

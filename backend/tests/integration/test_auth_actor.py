@@ -11,6 +11,7 @@ from tests.integration.conftest import (
     join_project_team,
     open_task,
     post_project,
+    room_socket,
     session_auth_headers,
     session_token,
 )
@@ -134,7 +135,7 @@ def test_ws_outsider_token_rejected(client):
     """越权: an outsider's token on the chat WS is refused before any message."""
     _, tid = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
-    with client.websocket_connect(f"/topics/{tid}/chat?token={outsider}") as ws:
+    with room_socket(client, tid, "mallory", token=outsider) as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
 

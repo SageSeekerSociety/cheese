@@ -28,6 +28,7 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block, BlockKind
@@ -107,6 +108,7 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
     tid = _topic(client, pid)
     text = "我先把这五条落到代码上逐一自查，不动手改。"
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",
@@ -155,6 +157,7 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
     tid = _topic(client, pid)
     text = "好的"
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",

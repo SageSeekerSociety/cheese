@@ -43,6 +43,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'edit-overview'): void
   (e: 'open-task', task: { taskId: string; roomId: string }): void
+  // 鼠标左键按下去了：任务页的代码是懒加载的，等松开再下就白等这几十毫秒
+  //（和侧栏任务行的 `press` 同一条）。
+  (e: 'press-task', task: { taskId: string; roomId: string }): void
   (e: 'open-artifact', artifactId: string): void
   (e: 'all-tasks'): void
   (e: 'retry-progress'): void
@@ -233,6 +236,11 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                   type="button"
                   class="ov-task"
                   @click="emit('open-task', { taskId: task.id, roomId: task.room_id })"
+                  @pointerdown="
+                    $event.pointerType === 'mouse' &&
+                      $event.button === 0 &&
+                      emit('press-task', { taskId: task.id, roomId: task.room_id })
+                  "
                 >
                   <span class="ov-task__title t-body" :data-user-content="task.title || undefined">{{
                     taskTitle(task)

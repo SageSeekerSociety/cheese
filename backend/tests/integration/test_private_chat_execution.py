@@ -9,6 +9,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
@@ -73,6 +74,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # 房间选了哪条通道，私聊也走哪条——房间的选择是房间的，不因为私聊而改写。
         screen = project_machine
         svc = ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=factory,
             compute=ComputePool([central.runtime, project_machine.runtime], "cloud"),
             base_system_prompt="You are Cheese.",

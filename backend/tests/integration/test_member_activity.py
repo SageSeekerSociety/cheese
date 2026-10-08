@@ -10,12 +10,12 @@ leaks into another room, even one the same member sits in.
 import uuid
 
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     new_project,
     post_message,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -35,7 +35,7 @@ def _activity(frame: dict) -> bool:
 def _snapshot(client, room: str, handle: str) -> list[dict]:
     """Who a socket opened now is told is busy. Nothing is sent when nobody is,
     so the ping's answer marks the end of what the connect brought."""
-    with client.websocket_connect(chat_ws_url(room, handle)) as ws:
+    with room_socket(client, room, handle) as ws:
         ws.send_json({"type": "ping"})
         frames = _until(ws, lambda f: f["type"] == "pong")
     snapshots = [f for f in frames if f["type"] == "activity_snapshot"]
@@ -74,8 +74,8 @@ def _header(client, room: str) -> list[dict]:
 def test_a_person_typing_reaches_the_other_members_of_that_room_only(client):
     _, room, other = _two_rooms(client)
     with (
-        client.websocket_connect(chat_ws_url(room, "bob")) as bob,
-        client.websocket_connect(chat_ws_url(room, "alice")) as alice,
+        room_socket(client, room, "bob") as bob,
+        room_socket(client, room, "alice") as alice,
     ):
         alice.send_json({"type": "typing"})
         seen = _until(bob, _activity)[-1]
@@ -98,8 +98,8 @@ def test_a_person_typing_reaches_the_other_members_of_that_room_only(client):
 def test_a_message_landing_ends_its_authors_typing(client):
     _, room, _ = _two_rooms(client)
     with (
-        client.websocket_connect(chat_ws_url(room, "bob")) as bob,
-        client.websocket_connect(chat_ws_url(room, "alice")) as alice,
+        room_socket(client, room, "bob") as bob,
+        room_socket(client, room, "alice") as alice,
     ):
         alice.send_json({"type": "typing"})
         _until(bob, _activity)
@@ -116,8 +116,8 @@ def test_a_message_landing_ends_its_authors_typing(client):
 def test_the_member_is_the_sockets_owner_not_a_field_of_the_frame(client):
     _, room, _ = _two_rooms(client)
     with (
-        client.websocket_connect(chat_ws_url(room, "bob")) as bob,
-        client.websocket_connect(chat_ws_url(room, "alice")) as alice,
+        room_socket(client, room, "bob") as bob,
+        room_socket(client, room, "alice") as alice,
     ):
         alice.send_json({"type": "typing", "member": "bob"})
         seen = _until(bob, _activity)[-1]
@@ -136,7 +136,7 @@ def test_an_agent_turn_is_that_agent_working_in_that_room_only(client, stub_hook
     seat = room_agent_seat(client, room)
     # 芝士 is called in a 支线 of the room and works there.
     thread = in_thread(client, room, "alice")
-    with client.websocket_connect(chat_ws_url(thread, "alice")) as ws:
+    with room_socket(client, thread, "alice") as ws:
         post_message(client, thread, "alice", {"content": "@芝士 跑一下测试"})
         started = _until(ws, lambda f: _activity(f) and f["kind"] == "working")[-1]
         assert started["member"] == seat
@@ -158,13 +158,13 @@ def test_sync_answers_with_the_rooms_live_state_even_when_nobody_is_busy(client)
     """A reconnecting client keeps what it showed and reconciles against this
     answer, so it has to come whether or not anything is going on."""
     _, room, other = _two_rooms(client)
-    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+    with room_socket(client, room, "bob") as bob:
         bob.send_json({"type": "sync"})
         idle = _until(bob, lambda f: f["type"] == "room_state")[-1]
         assert idle["turn_ids"] == []
         assert idle["members"] == []
 
-        with client.websocket_connect(chat_ws_url(room, "alice")) as alice:
+        with room_socket(client, room, "alice") as alice:
             alice.send_json({"type": "typing"})
             _until(bob, _activity)
             bob.send_json({"type": "sync"})
@@ -172,7 +172,7 @@ def test_sync_answers_with_the_rooms_live_state_even_when_nobody_is_busy(client)
             assert _who(busy["members"]) == [("alice", "typing")]
 
             # The other room's answer says nothing about this one.
-            with client.websocket_connect(chat_ws_url(other, "bob")) as elsewhere:
+            with room_socket(client, other, "bob") as elsewhere:
                 elsewhere.send_json({"type": "sync"})
                 there = _until(elsewhere, lambda f: f["type"] == "room_state")[-1]
                 assert there["members"] == []

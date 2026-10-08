@@ -76,6 +76,12 @@ class NudgeKind(enum.StrEnum):
     ready = "ready"
 
 
+#: Ends every comment the platform itself posts on a PR (a 退回's comments, see
+#: `review/comment_publish.py`). Those already reached 芝士 with the 退回, so the
+#: poller must not hand them back as a reviewer speaking on the PR.
+PLATFORM_REVIEW_MARK = "<!-- cheese:review-comment -->"
+
+
 @dataclass(frozen=True)
 class ReviewSignal:
     """PR 上一条需要芝士看的评审动静。

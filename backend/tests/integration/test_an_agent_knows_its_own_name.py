@@ -8,11 +8,11 @@ the prompt it is started with are the real ones.
 """
 
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -39,7 +39,7 @@ def test_a_renamed_teammate_is_told_its_name(client, stub_hooks):
     assert renamed.status_code == 200, renamed.text
 
     thread = in_thread(client, room, "alice")
-    with client.websocket_connect(chat_ws_url(thread, "alice")) as ws:
+    with room_socket(client, thread, "alice") as ws:
         post_message(client, thread, "alice", {"content": f"<@{seat}> 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass

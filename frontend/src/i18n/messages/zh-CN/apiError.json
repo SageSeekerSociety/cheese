@@ -984,5 +984,18 @@
   "projectSlugFormat": "短名只能用小写字母、数字和连字符，3 到 32 位，不能以连字符开头或结尾",
   "projectSlugReserved": "这个短名留作平台页面使用，换一个",
   "projectSlugTaken": "这个短名已被别的项目使用过，换一个",
-  "acceptFocusTooLong": "审阅重点最多 {items} 条、合计 {chars} 字以内，每条一句，写审阅时要确认什么。测试结果和验证过程写进 body"
+  "acceptFocusTooLong": "审阅重点最多 {items} 条、合计 {chars} 字以内，每条一句，写审阅时要确认什么。测试结果和验证过程写进 body",
+  "reviewCommentNotFound": "批注不存在",
+  "reviewCommentAlreadySent": "批注已经送出，不能再改",
+  "reviewCommentNotAwaitingReview": "只能在待审阅时写批注",
+  "reviewCommentNotAllowed": "只有任务的负责人、协作者和审阅人可以写批注",
+  "reviewCommentTooLong": "批注太长",
+  "reviewCommentEmpty": "批注没有内容",
+  "reviewCommentBadLines": "批注的行号不对",
+  "reviewCommentNotSendable": "要一起送出的批注里有不能送出的一条，刷新后重试",
+  "reviewCommentOutcomeUnknown": "上一轮的批注里没有 {id} 这一条",
+  "reviewCommentSignIn": "登录后才能写批注",
+  "githubReviewPostFailed": "GitHub 拒绝了这次评审（HTTP {status}）：{reply}",
+  "reviewCommentSuggestionOnly": "修改建议",
+  "taskFileEditsOverlap": "这个文件在你打开之后又被改过，有和你改的位置重叠的地方，逐处选一个版本"
 }

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.conditional import LIST_CACHE_CONTROL, etag_for_json, if_none_match_hits
+from app.api.conditional import conditional_json
 from app.api.deps import (
     get_broker,
     get_chat_service,
@@ -284,10 +284,6 @@ def _topic_out(
     return data
 
 
-#: 侧栏每 30 秒轮询一次整份话题清单，和另外两份清单共用同一套条件请求指令。
-TOPICS_LIST_CACHE_CONTROL = LIST_CACHE_CONTROL
-
-
 @router.get("", response_model=None)
 async def list_topics(
     project_id: uuid.UUID,
@@ -295,12 +291,11 @@ async def list_topics(
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
     resolver: ActorResolverDep,
-    response: Response,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
     active_since: datetime | None = None,
     if_none_match: Annotated[str | None, Header()] = None,
-) -> dict | Response:
+) -> Response:
     """The project's topics.
 
     `sort=last_activity_at` orders by when something last HAPPENED in each topic
@@ -311,7 +306,7 @@ async def list_topics(
     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
     this is the endpoint the sidebar lists from.
 
-    条件请求：`ETag` 由整份信封的规范化 JSON 算出（`etag_for_json`），`If-None-Match`
+    条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
     徽章会因为成员刚被拉进来、一张验收卡刚落地、某个队友刚开始干活而变，而这些都不动
     `updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。
@@ -361,16 +356,7 @@ async def list_topics(
         )
         for t in topics
     ]
-    payload = ok(page(items, total))
-    etag = etag_for_json(payload)
-    cache_headers = {
-        "Cache-Control": TOPICS_LIST_CACHE_CONTROL,
-        "ETag": f'"{etag}"',
-    }
-    if if_none_match and if_none_match_hits(if_none_match, etag):
-        return Response(status_code=304, headers=cache_headers)
-    response.headers.update(cache_headers)
-    return payload
+    return conditional_json(ok(page(items, total)), if_none_match)
 
 
 @router.get("/names")

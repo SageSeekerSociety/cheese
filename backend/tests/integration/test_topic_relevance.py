@@ -22,12 +22,12 @@ import pytest
 from tests.ask_fixtures import active_ask, question_row
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     open_task,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -82,7 +82,7 @@ def _card(client, tid: str, reviewer: str) -> str:
 
 def _say(client, tid: str, speaker: str, text: str) -> None:
     """Post a human message, no agent turn — mentions fire on the block persist."""
-    with client.websocket_connect(chat_ws_url(tid, speaker)) as ws:
+    with room_socket(client, tid, speaker) as ws:
         post_message(client, tid, speaker, {"content": text})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):

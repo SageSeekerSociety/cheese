@@ -32,7 +32,7 @@
 // 审阅本来就在那边看。
 import type { CardPhase } from '@/lib/topicState'
 
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 
 import { injectAcceptCard, useAcceptCard } from '@/composables/useAcceptCard'
 
@@ -40,6 +40,7 @@ import AcceptDeliveringFace from '@/components/accept/AcceptDeliveringFace.vue'
 import AcceptDockBar from '@/components/accept/AcceptDockBar.vue'
 import AcceptGateFace from '@/components/accept/AcceptGateFace.vue'
 import AcceptRejectForm from '@/components/accept/AcceptRejectForm.vue'
+import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string
@@ -85,7 +86,24 @@ const {
   onRejectCard,
   agentName,
   agentHandle,
+  comments,
 } = card
+
+// 退回那一块里列的批注：没送出的那几条，每条写着在哪。
+const rejectComments = computed(() =>
+  comments.drafts.value.map((c) => ({
+    id: c.id,
+    where: `${c.path.split('/').pop()}:${c.line_start === c.line_end ? c.line_start : `${c.line_start}–${c.line_end}`}`,
+    text: c.body || t('work.room.review.suggestion'),
+    suggestion: c.suggestion !== null,
+    held: comments.held.value.has(c.id),
+  }))
+)
+const unsent = computed(() =>
+  pendingCard.value && comments.drafts.value.length
+    ? t('work.room.review.unsentCount', { count: comments.drafts.value.length })
+    : ''
+)
 
 // 决策在聊天，审查在面板: where the topic stands is not this box's private business.
 // The header states it and the panel opens on the tab it calls for, so the one word
@@ -144,8 +162,10 @@ defineExpose({ reload: card.reload })
             v-if="pendingCard && showRejectInput"
             v-model:note="rejectNote"
             :busy="acceptBusy"
+            :comments="rejectComments"
             @cancel="cancelReject"
             @confirm="onRejectCard"
+            @hold="comments.hold"
           />
           <AcceptDockBar
             v-else
@@ -161,6 +181,7 @@ defineExpose({ reload: card.reload })
             :revoke="!pendingCard && !gateCard && !deliveringCard && !!acceptedCard"
             :expandable="!!(gateCard || deliveringCard)"
             :expanded="expanded"
+            :aside="unsent"
             @review="emit('review')"
             @toggle="expanded = !expanded"
             @accept="onAcceptCard"

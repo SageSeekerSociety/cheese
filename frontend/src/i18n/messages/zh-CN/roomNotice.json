@@ -372,5 +372,7 @@
   "computeCloud": "云端环境",
   "computeCloudVm": "整台云虚拟机",
   "taskQuiet": "任务「{title}」已经 {days} 天没有进展",
-  "roomFilesKept": "这里以前工作目录里的文件已另存一份，会保留到 {date}，之后删除。需要取回其中的文件，请联系平台管理员。"
+  "roomFilesKept": "这里以前工作目录里的文件已另存一份，会保留到 {date}，之后删除。需要取回其中的文件，请联系平台管理员。",
+  "taskFileEdited": "{who} 修改了 {path} {lines}，已告诉 {agent}",
+  "taskFileEditedLines": "第 {lines} 行"
 }

@@ -13,6 +13,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -53,6 +54,7 @@ async def test_two_writers_of_one_event_land_a_single_message(
 ):
     factory = business_db_factory  # type: ignore[attr-defined]
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -89,6 +91,7 @@ async def test_a_genuinely_new_event_still_lands(business_db_factory, tmp_path):
     the last one — 「好的」 twice in one turn is two messages."""
     factory = business_db_factory  # type: ignore[attr-defined]
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),

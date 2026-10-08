@@ -160,6 +160,8 @@ function row(spec: {
     // 正是能删的那一位。这一格不能写死 `false`：那会让「删除」这个入口在预览里一次
     // 都不出现，而预览正是拿来看这类东西的地方。
     can_delete: spec.can_delete ?? true,
+    can_claim: false,
+    can_release: false,
   }
 }
 
@@ -208,15 +210,13 @@ function detailPage(item: FeedbackDetail, after: string | null): FeedbackDetail 
   return { ...item, thread, thread_next_cursor: next }
 }
 
+const rung = (status: FeedbackStatus, by_handle: string | null, at: string) => ({ status, by_handle, at, note: null })
+
 /** 时间线：从提交到当前状态每一步都留一条，和真实实现一样是 append-only。 */
 function ladderUpTo(status: FeedbackStatus, created: string): FeedbackDetail['timeline'] {
   const ladder: FeedbackStatus[] = ['received', 'in_progress', 'resolved', 'deployed']
   const end = ladder.indexOf(status)
-  return ladder.slice(0, end + 1).map((step, index) => ({
-    status: step,
-    by_handle: index === 0 ? null : 'andy',
-    at: created,
-  }))
+  return ladder.slice(0, end + 1).map((step, index) => rung(step, index === 0 ? null : 'andy', created))
 }
 
 /** 一条评论。`reply_to_handle` / `likes` / `liked` / `can_delete` 这四列是这一版
@@ -2522,7 +2522,7 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
     if (item.status !== wanted) {
       item.status = wanted
       item.last_activity_at = new Date(BASE_MS).toISOString()
-      item.timeline = [...item.timeline, { status: wanted, by_handle: ME, at: item.last_activity_at }]
+      item.timeline = [...item.timeline, rung(wanted, ME, item.last_activity_at)]
     }
     return { data: item }
   }
@@ -2560,7 +2560,7 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
       // 标成安全问题是一次**路由决定**：提的人应当看得见，而且从这一刻起同事看不见它
       // 了。两件事从行本身都看不出来，所以进时间线 —— 和 `patch_admin` 一样，记的是
       // **当时**的状态（改安全标记不改状态）。
-      item.timeline = [...item.timeline, { status: item.status, by_handle: ME, at: new Date(BASE_MS).toISOString() }]
+      item.timeline = [...item.timeline, rung(item.status, ME, new Date(BASE_MS).toISOString())]
     }
     return { data: item }
   }

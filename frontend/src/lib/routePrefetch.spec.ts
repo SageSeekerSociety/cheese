@@ -363,6 +363,91 @@ describe('首屏之后空闲预取路由', () => {
   })
 })
 
+describe('框架层按页名空闲预取', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    desktop()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 两条各带参数的懒加载路由：框架层手上没有那些参数，只能点名。 */
+  function namedRouter() {
+    const overview = vi.fn(async () => ({ default: { template: '<div />' } }))
+    const task = vi.fn(async () => ({ default: { template: '<div />' } }))
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/p/:id/overview', name: 'workspace-overview', component: overview },
+        { path: '/p/:id/t/:topic/task/:task', name: 'workspace-task', component: task },
+      ],
+    })
+    return { router, overview, task }
+  }
+
+  it('按名字热，不为地址里的参数编一个出来', async () => {
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview, task } = namedRouter()
+
+    warmPagesWhenIdle(router, ['workspace-overview', 'workspace-task'])
+    expect(overview).not.toHaveBeenCalled() // 空闲之前不下
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(overview).toHaveBeenCalledTimes(1)
+    expect(task).toHaveBeenCalledTimes(1)
+  })
+
+  it('同一页只下一次（换个话题回来不该再下一遍）', async () => {
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview } = namedRouter()
+
+    warmPagesWhenIdle(router, ['workspace-overview'])
+    await vi.advanceTimersByTimeAsync(100)
+    warmPagesWhenIdle(router, ['workspace-overview'])
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(overview).toHaveBeenCalledTimes(1)
+  })
+
+  it('页名对不上就当没这回事', async () => {
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview } = namedRouter()
+
+    warmPagesWhenIdle(router, ['nope'])
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(overview).not.toHaveBeenCalled()
+  })
+
+  it('省流量时一个都不下', async () => {
+    connection({ saveData: true })
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview } = namedRouter()
+
+    warmPagesWhenIdle(router, ['workspace-overview'])
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(overview).not.toHaveBeenCalled()
+  })
+
+  it('人在这期间离开了：取消之后剩下的不再下', async () => {
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview, task } = namedRouter()
+
+    const cancel = warmPagesWhenIdle(router, ['workspace-overview', 'workspace-task'])
+    await vi.advanceTimersByTimeAsync(0)
+    cancel()
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(overview).toHaveBeenCalledTimes(1)
+    expect(task).not.toHaveBeenCalled()
+  })
+})
+
 describe('按下去就预取', () => {
   beforeEach(() => {
     vi.useFakeTimers()

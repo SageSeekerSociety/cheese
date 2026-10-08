@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
@@ -20,11 +21,11 @@ from app.main import app
 from tests.ask_fixtures import wait_turn_idle
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -156,7 +157,7 @@ def test_document_reaches_agent_as_file(client, stub_hooks, filename, content, m
         f"/topics/{topic_id}/attachments",
         files={"file": (filename, content, mime)},
     ).json()["data"]
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         # 正文只有一个 @：点名写在正文里（I13），一份没点名的文件只是落在房间
         # 里。输入框上对着一个附件按 ⌘Enter，发出去的就是这一条。
         post_message(
@@ -211,7 +212,7 @@ def test_office_document_lands_in_the_room(client, stub_hooks, filename, mime):
         f"/topics/{topic_id}/attachments",
         files={"file": (filename, b"PK\x03\x04", mime)},
     ).json()["data"]
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(
             client, topic_id, "user-1", {"content": "这是说明书", "attachments": [att]}
         )
@@ -299,7 +300,7 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ho
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         asked = post_message(
             client,
             topic_id,
@@ -353,7 +354,7 @@ def test_image_only_message_allowed(client, stub_hooks):
     _, topic_id = _create_project_and_thread(client)
     att = _upload(client, topic_id)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(
             client, topic_id, "user-1", {"content": "@芝士", "attachments": [att]}
         )
@@ -412,13 +413,14 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
 
     screen = HeldScreen()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([screen.runtime], screen.name),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         if midturn:
             post_message(client, topic_id, "user-1", {"content": "@芝士 等待"})
             assert screen.started.wait(5)
@@ -471,6 +473,7 @@ def _run_on_non_embedding_backend(client, tmp_path) -> _NoEmbedScreen:
     and hand back the screen the prompt will actually reach."""
     screen = _NoEmbedScreen()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -485,7 +488,7 @@ def test_prompt_does_not_claim_attachment_when_backend_drops_images(client, tmp_
     att = _upload(client, topic_id)
     screen = _run_on_non_embedding_backend(client, tmp_path)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(
             client,
             topic_id,
@@ -511,7 +514,7 @@ def test_embedding_backend_still_says_the_image_is_attached(client, stub_hooks):
     _, topic_id = _create_project_and_thread(client)
     att = _upload(client, topic_id)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(
             client, topic_id, "user-1", {"content": "@芝士 看图", "attachments": [att]}
         )
@@ -533,7 +536,7 @@ def test_a_deleted_library_file_does_not_wedge_the_room(client, stub_hooks):
     )
     assert gone.status_code == 200, gone.text
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(
             client,
             topic_id,
@@ -553,7 +556,7 @@ def test_a_deleted_library_file_does_not_wedge_the_room(client, stub_hooks):
         block.get("type") == "image" for block in handed["content"]
     )
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 那就先不看图了"})
         frames = _drain_until_done(ws)
 

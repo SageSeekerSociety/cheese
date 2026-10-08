@@ -12,6 +12,8 @@ import hashlib
 import json
 from typing import Any
 
+from starlette.responses import Response
+
 #: 清单类响应共用的缓存指令：它是**登录用户**的私有视图（每一行都带「与我的相关性」
 #: 「是不是等我」这类按人算的字段），所以只能是 `private`；`no-cache` 要求客户端每次
 #: 带 `If-None-Match` 回来问一句，命中 ETag 就回 304、空 body —— 没有变化的那些轮询
@@ -66,3 +68,25 @@ def etag_for_json(data: Any) -> str:
         data, sort_keys=True, ensure_ascii=False, separators=(",", ":")
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def conditional_json(
+    data: Any, if_none_match: str | None, *, cache_control: str = LIST_CACHE_CONTROL
+) -> Response:
+    """``data`` as a JSON response with its ETag, or a 304 when the client has it.
+
+    The body is serialized once and the tag is the digest of those very bytes.
+    Hashing a canonical copy and then letting the framework encode the payload
+    again serialized a list of 1,300 tasks three times per read on dev
+    (2026-10-08): about 200 of the 700 ms it took. The serialization is the
+    canonical one ``etag_for_json`` describes, so equal content gives an equal
+    tag however the payload was built.
+    """
+    body = json.dumps(
+        data, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    etag = hashlib.sha256(body).hexdigest()
+    headers = {"Cache-Control": cache_control, "ETag": f'"{etag}"'}
+    if if_none_match and if_none_match_hits(if_none_match, etag):
+        return Response(status_code=304, headers=headers)
+    return Response(body, media_type="application/json", headers=headers)

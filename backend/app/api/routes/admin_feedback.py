@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.response import ok, page
+from app.api.response import Page, ok, page, typed_response
 from app.core.db import get_db
 from app.core.errors import ForbiddenError
 from app.domain.authz import policy
@@ -31,6 +31,8 @@ from app.domain.feedback import services as feedback_services
 from app.domain.feedback.models import Feedback
 from app.domain.feedback.schemas import (
     FeedbackCard,
+    FeedbackCounts,
+    FeedbackDetail,
     FeedbackPatch,
     FeedbackStatusIn,
     NoteCreate,
@@ -38,6 +40,17 @@ from app.domain.feedback.schemas import (
 from app.domain.identity.services import IdentityService
 
 router = APIRouter(prefix="/admin/feedback", tags=["feedback"])
+
+
+class FeedbackAdminCounts(FeedbackCounts):
+    #: Only here: it counts private and security rows too.
+    #: See ``FeedbackService.counts``.
+    unassigned: int
+
+
+class FeedbackAdminListOut(Page[FeedbackCard]):
+    counts: FeedbackAdminCounts
+
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -107,7 +120,7 @@ async def _detail(
     return view.model_dump(mode="json")
 
 
-@router.get("")
+@router.get("", **typed_response(FeedbackAdminListOut))
 async def list_admin_feedback(
     service: FeedbackServiceDep,
     handle: FeedbackAdminDep,
@@ -159,7 +172,7 @@ async def list_admin_feedback(
     )
 
 
-@router.get("/{feedback_id}")
+@router.get("/{feedback_id}", **typed_response(FeedbackDetail))
 async def get_admin_feedback(
     feedback_id: uuid.UUID,
     service: FeedbackServiceDep,
@@ -169,7 +182,7 @@ async def get_admin_feedback(
     return ok(await _detail(service, row, handle=handle))
 
 
-@router.patch("/{feedback_id}")
+@router.patch("/{feedback_id}", **typed_response(FeedbackDetail))
 async def patch_admin_feedback(
     feedback_id: uuid.UUID,
     body: FeedbackPatch,
@@ -190,7 +203,7 @@ async def patch_admin_feedback(
     return response
 
 
-@router.post("/{feedback_id}/status")
+@router.post("/{feedback_id}/status", **typed_response(FeedbackDetail))
 async def set_admin_feedback_status(
     feedback_id: uuid.UUID,
     body: FeedbackStatusIn,
@@ -209,7 +222,7 @@ async def set_admin_feedback_status(
     return response
 
 
-@router.post("/{feedback_id}/notes")
+@router.post("/{feedback_id}/notes", **typed_response(FeedbackDetail))
 async def create_admin_feedback_note(
     feedback_id: uuid.UUID,
     body: NoteCreate,

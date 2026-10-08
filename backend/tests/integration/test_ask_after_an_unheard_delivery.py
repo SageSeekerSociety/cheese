@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
@@ -26,11 +27,11 @@ from app.main import app
 from tests.ask_fixtures import agent_credential
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
 )
 
 QUESTION = {
@@ -122,6 +123,7 @@ def test_a_question_after_an_unheard_delivery_is_not_refused(client):
     seat = room_agent_seat(client, room)
     channel = FirstSendLost()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/ask-unheard-delivery-ws",
@@ -151,7 +153,7 @@ def test_a_question_after_an_unheard_delivery_is_not_refused(client):
     )
     assert not service.has_running_turn(uuid.UUID(room))
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 好了吗"})
         while ws.receive_json()["type"] != "user_block":
             pass

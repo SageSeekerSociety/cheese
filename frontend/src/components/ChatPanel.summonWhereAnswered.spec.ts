@@ -33,7 +33,6 @@ vi.mock('@/api', async () => {
       ],
       total: 2,
     }),
-    chatWsUrl: () => 'ws://test/ws',
   }
 })
 

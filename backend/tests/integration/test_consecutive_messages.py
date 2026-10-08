@@ -98,8 +98,9 @@ async def _a_topic(factory) -> uuid.UUID:
     return topic_id
 
 
-def _service(factory, screen: WorkingScreen, tmp_path) -> ChatService:
+def _service(factory, screen: WorkingScreen, tmp_path, runner) -> ChatService:
     return ChatService(
+        work_runner=runner,
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -119,9 +120,9 @@ async def test_an_unsummoned_message_reaches_the_turn_already_running(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
     # 一轮开起来，并且停在半路（会话还活着）。
@@ -156,9 +157,9 @@ async def test_a_bare_mention_after_a_message_carries_both_in_order(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
     await runner.receive_message(
@@ -194,9 +195,9 @@ async def test_an_unsummoned_message_on_an_idle_topic_starts_nothing(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
     await runner.receive_message(
@@ -216,9 +217,9 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(
     """闲着时攒下的那条没 @ 的消息，必须出现在下一轮的 prompt 里。"""
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
     await runner.receive_message(
@@ -247,9 +248,9 @@ async def test_a_reply_sent_mid_turn_carries_the_message_it_answers(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
     await runner.receive_message(

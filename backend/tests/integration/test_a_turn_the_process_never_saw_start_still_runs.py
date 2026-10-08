@@ -32,7 +32,7 @@ import pytest
 
 from app.domain.agent import turn_adoption
 from app.domain.agent.models import AgentTurn
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import post_project, room_socket
 
 SEAT = "cheese-seat-busy"
 
@@ -182,7 +182,7 @@ def test_a_page_connecting_to_a_backend_that_never_saw_the_turn_start_is_told_it
     room = _room(client)
     turns = _seed(client, room)
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         seen = _frames_on_connect(ws)
 
     assert "turn_active" in seen, sorted(seen)
@@ -195,7 +195,7 @@ def test_a_page_connecting_to_a_backend_that_never_saw_the_turn_start_is_told_it
 def test_the_turn_ending_ends_it_for_the_next_page(client, stub_hooks):
     room = _room(client)
     turns = _seed(client, room)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         _frames_on_connect(ws)
 
     _stop(client, turns["open"])
@@ -206,7 +206,7 @@ def test_the_turn_ending_ends_it_for_the_next_page(client, stub_hooks):
         broker.publish(room, {"type": "turn_finished", "turn_id": str(turns["open"])})
     )
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         seen = _frames_on_connect(ws)
     assert "turn_active" not in seen
 
@@ -226,7 +226,7 @@ def test_a_turn_that_ends_on_the_other_container_stops_showing_as_running(
     room = _room(client)
     turns = _seed(client, room)
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         seen = _frames_on_connect(ws)
         assert seen["turn_active"]["turn_ids"] == [str(turns["open"])]
         frames = _Frames(ws)
@@ -248,7 +248,7 @@ def test_a_turn_running_on_the_other_container_shows_while_connected(
     monkeypatch.setattr(turn_adoption, "RECONCILE_EVERY_S", TICK_S)
     room = _room(client)
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         seen = _frames_on_connect(ws)
         assert "turn_active" not in seen, "the room starts idle"
         frames = _Frames(ws)
@@ -280,7 +280,7 @@ def test_a_turn_the_database_has_not_ended_is_left_alone(
     undelivered = _a_turn(client, room, delivered=False)
     unborn = uuid.uuid4()  # no row anywhere, like a turn not yet filed
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         _frames_on_connect(ws)
         frames = _Frames(ws)
         for turn_id in (undelivered, unborn):

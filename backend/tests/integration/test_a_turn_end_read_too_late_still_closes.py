@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.driven.subscription import STALE_S
@@ -25,10 +26,10 @@ from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -112,6 +113,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/late-turn-end-ws",
@@ -121,7 +123,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
     before = FirstPromptOnly()
     old_backend = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old_backend
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 看一眼 CI"})
         assert _wait_for(
             client, room, lambda: before.sessions and _written(before, room)
