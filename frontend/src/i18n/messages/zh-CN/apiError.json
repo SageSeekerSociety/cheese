@@ -128,6 +128,8 @@
   "artifactNameTaken": "《{name}》已经是清单上另一项了。它们确实是同一个东西，就把这一项合并到它；不是的话，换一个说得出区别的名字。",
   "computeKindUnavailable": "这类环境尚未接入，暂不可选：{name}",
   "deviceNotInProject": "设备不属于当前项目",
+  "deviceApproveSignIn": "需要登录才能批准设备",
+  "deviceManageSignIn": "需要登录才能管理设备",
   "cloudNotAvailable": "云端尚未接入，暂不可用",
   "cloudVmNotAvailable": "这个部署没有提供整台云虚拟机",
   "deviceNotInProjectOrTeam": "设备不属于当前项目或团队",

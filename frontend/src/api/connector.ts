@@ -1,6 +1,6 @@
 import { refusalWords } from '../lib/noticeText'
 
-import { authHeaders } from './http'
+import { ApiError, authHeaders } from './http'
 
 // The connector lives at the origin root (`/connector/*`), not under `/api`, and its
 // responses are plain JSON (no ApiEnvelope). This mirrors `request` but skips the
@@ -16,13 +16,15 @@ export async function connectorRequest<T>(path: string, init?: RequestInit): Pro
   })
   if (!res.ok) {
     let message = `HTTP ${res.status}`
+    let name: string | undefined
     try {
       const body = await res.json()
       message = refusalWords(body) || body?.detail || message
+      name = body?.error?.name
     } catch {
       // non-JSON error body — keep the status message
     }
-    throw new Error(message)
+    throw new ApiError(res.status, message, name)
   }
   return (await res.json()) as T
 }

@@ -4,7 +4,7 @@
 // the download instead.
 import { reactive } from 'vue'
 
-import { connectDevice, deviceProposedName, listMyDevices } from '../api'
+import { ApiError, connectDevice, deviceProposedName, listMyDevices } from '../api'
 
 import { desktopCan } from './desktopApp'
 
@@ -168,7 +168,7 @@ async function myDevices() {
     return (await listMyDevices()).devices
   } catch (e) {
     // The connector answers a user with no device yet as if nobody were signed in.
-    if (e instanceof Error && e.message.includes('requires a logged-in user')) return []
+    if (e instanceof ApiError && e.status === 401) return []
     throw e
   }
 }
