@@ -183,7 +183,7 @@ describe('统计页 · 用量那一屏', () => {
 })
 
 describe('统计页 · 平台那一屏', () => {
-  it('五张 KPI、机器四行、健康三格、配额与缺口那几块', async () => {
+  it('五张 KPI、机器四行、健康四格、配额与缺口那几块', async () => {
     const { container } = await openTab('平台')
 
     expect(kpiLabels(container).slice(0, 3)).toEqual(['账号总数', '真人', 'Agent'])
@@ -197,9 +197,9 @@ describe('统计页 · 平台那一屏', () => {
     )
     expect(machineValues).toEqual(['7', '5', '3', '2'])
 
-    // 健康度三格：这一刻的，每一格带自己的状态点。
+    // 健康度四格：这一刻的，每一格带自己的状态点。
     const health = Array.from(container.querySelectorAll('.ad__health-cell'))
-    expect(health).toHaveLength(3)
+    expect(health).toHaveLength(4)
     expect(health.every((cell) => cell.querySelector('.ad__health-dot--ok'))).toBe(true)
 
     // 配额与缺口：磁盘、宿主机池的沙箱槽位、预览三条计量，加两张状态分布。

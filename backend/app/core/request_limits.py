@@ -54,6 +54,15 @@ CONCURRENCY = "concurrency"
 # process that is busy, which is the moment it matters most.
 _EXEMPT = ("/health", "/healthz", "/metrics")
 
+# Probes that are exempt only when no client address stands behind them: the
+# rollout's curl through the published port and the container's healthcheck on
+# loopback reach the app from a trusted proxy hop with nothing forwarded.
+# `/readyz` is public, so a request that carries a client's address is counted
+# like any other — exempting it too would hand anyone an unlimited route. Not
+# "any loopback address": behind a proxy that appends to X-Forwarded-For, the
+# address resolved is the one the client wrote, and it can write 127.0.0.2.
+_EXEMPT_UNADDRESSED = ("/readyz",)
+
 # GCRA over one key: the stored value is the theoretical arrival time (TAT) in
 # milliseconds. Integers throughout — Redis turns a Lua number into a string
 # with 14 significant digits, and a millisecond timestamp already uses 13.
@@ -312,6 +321,12 @@ class RequestLimits:
             return
         path: str = scope.get("path", "")
         if path in _EXEMPT or path.startswith("/health/"):
+            await self.app(scope, receive, send)
+            return
+        if (
+            path in _EXEMPT_UNADDRESSED
+            and resolved_client_address(Request(scope)) is None
+        ):
             await self.app(scope, receive, send)
             return
         principal = principal_of(scope)

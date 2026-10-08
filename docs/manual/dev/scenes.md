@@ -64,7 +64,7 @@ covers:
 
 今天就能单独跑的那 2 页：`views/404.vue`、`views/user/settings/General.vue`。
 
-2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。
+2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**。
 
 ## 从今天起它是一条闸门 {#ratchet}
 
@@ -74,8 +74,8 @@ covers:
 
 | 名单 | 是什么 | 只能 |
 |---|---|---|
-| `ready` | 今天就能单独跑的场景（10 个） | 增（掉档就红） |
-| `debt` | 仓库里本来就跑不起来的场景（128 个） | 减（变 A 会提示你收紧） |
+| `ready` | 今天就能单独跑的场景（102 个） | 增（掉档就红） |
+| `debt` | 仓库里本来就跑不起来的场景（77 个） | 减（变 A 会提示你收紧） |
 
 不在两份名单里的场景就是**新的**——这也是为什么债务必须一条条列出来，而不是记一个数字：没有这张表，「新」和「旧」没法分。六种结果：
 
@@ -326,4 +326,4 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 2. **A 档的先补目录**，成本几乎为零：还没挂的 A 级组件（不止场景，所有组件）列在 `frontend/catalog-baseline.json` 的 `pending` 里，`python3 .claude/scripts/catalog-ratchet.py --list` 逐个标出来（见[上面](#catalog-ratchet)）。挂一个就跑 `pnpm run lint:catalog:update` 划掉一个；挂上去之后，改外观和改排版就有地方看效果。
 3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；每拆出一个就跑 `pnpm run lint:scenes:update` 把它从 `debt` 搬进 `ready`。
 4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/` 已按「参数当 props 进视图」拆完（2026-10-05），`views/workspace/`、`views/spaces/` 两块各还要一个方案，动哪块由产品定。
-5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：97 → 0。
+5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：77 → 0。
