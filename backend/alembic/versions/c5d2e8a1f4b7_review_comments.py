@@ -31,7 +31,9 @@ def upgrade() -> None:
         sa.Column(
             "task_id",
             sa.Uuid(),
-            sa.ForeignKey("tasks.id", ondelete="CASCADE"),
+            sa.ForeignKey(
+                "tasks.id", ondelete="CASCADE", name="fk_review_comments_task_id_tasks"
+            ),
             nullable=False,
         ),
         sa.Column("author_handle", sa.String(64), nullable=False),
@@ -45,14 +47,22 @@ def upgrade() -> None:
         sa.Column(
             "parent_id",
             sa.Uuid(),
-            sa.ForeignKey("review_comments.id", ondelete="CASCADE"),
+            sa.ForeignKey(
+                "review_comments.id",
+                ondelete="CASCADE",
+                name="fk_review_comments_parent_id_review_comments",
+            ),
             nullable=True,
         ),
         sa.Column("state", sa.String(16), nullable=False, server_default="draft"),
         sa.Column(
             "card_id",
             sa.Uuid(),
-            sa.ForeignKey("accept_cards.id", ondelete="SET NULL"),
+            sa.ForeignKey(
+                "accept_cards.id",
+                ondelete="SET NULL",
+                name="fk_review_comments_card_id_accept_cards",
+            ),
             nullable=True,
         ),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
@@ -60,6 +70,12 @@ def upgrade() -> None:
         sa.Column("outcome_note", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "state IN ('draft', 'sent')", name="ck_review_comments_state"
+        ),
+        sa.CheckConstraint(
+            "outcome IN ('handled', 'not_handled')", name="ck_review_comments_outcome"
+        ),
     )
     op.create_index(
         "ix_review_comments_task_id_created_at",

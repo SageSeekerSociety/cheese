@@ -45,7 +45,9 @@ class ReviewComment(UuidPk, Timestamps, Base):
     )
 
     task_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE")
+        ForeignKey(
+            "tasks.id", ondelete="CASCADE", name="fk_review_comments_task_id_tasks"
+        )
     )
     author_handle: Mapped[str] = mapped_column(String(64))
     path: Mapped[str] = mapped_column(String(1024))
@@ -62,22 +64,47 @@ class ReviewComment(UuidPk, Timestamps, Base):
     #: A 修改建议: what the lines should read instead.
     suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("review_comments.id", ondelete="CASCADE"), nullable=True, index=True
+        ForeignKey(
+            "review_comments.id",
+            ondelete="CASCADE",
+            name="fk_review_comments_parent_id_review_comments",
+        ),
+        nullable=True,
+        index=True,
     )
     state: Mapped[ReviewCommentState] = mapped_column(
-        Enum(ReviewCommentState, native_enum=False, length=16),
+        Enum(
+            ReviewCommentState,
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+            name="ck_review_comments_state",
+        ),
         default=ReviewCommentState.draft,
         server_default=ReviewCommentState.draft.value,
     )
     #: The card it was sent back with.
     card_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("accept_cards.id", ondelete="SET NULL"), nullable=True, index=True
+        ForeignKey(
+            "accept_cards.id",
+            ondelete="SET NULL",
+            name="fk_review_comments_card_id_accept_cards",
+        ),
+        nullable=True,
+        index=True,
     )
     sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     outcome: Mapped[ReviewCommentOutcome | None] = mapped_column(
-        Enum(ReviewCommentOutcome, native_enum=False, length=16), nullable=True
+        Enum(
+            ReviewCommentOutcome,
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+            name="ck_review_comments_outcome",
+        ),
+        nullable=True,
     )
     #: 芝士's one line on how it was handled, or why not.
     outcome_note: Mapped[str | None] = mapped_column(Text, nullable=True)
