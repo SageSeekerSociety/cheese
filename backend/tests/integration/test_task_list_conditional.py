@@ -105,9 +105,10 @@ def test_limit_zero_returns_every_thread_without_its_conversation(client):
     for row in rows:
         assert row["blocks"] == [], "调用方不看块，就别让它下载"
 
-    # 不传 limit 仍然是「整份历史」：agent 读历史不能被悄悄截断。
+    # 不传 limit 仍然是「整份历史」：agent 读历史不能被悄悄截断。比块的总数，不比某
+    # 一条有没有块 —— 没人说过话的支线也有平台自己写的块（开任务那一条），按条断言会
+    # 把「平台写了块」误判成「短路没生效」。
     whole = client.get(f"/topics/{room}/tasks").json()["data"]["data"]
+    assert sum(len(row["blocks"]) for row in whole) > 0, "不传 limit 时要带回对话"
     spoken_row = next(row for row in whole if row["id"] == spoken["id"])
-    quiet_row = next(row for row in whole if row["id"] == quiet["id"])
     assert spoken_row["blocks"], "说过话的那条必须带回它的对话"
-    assert quiet_row["blocks"] == []
