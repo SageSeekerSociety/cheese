@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.agent.step_output import output_tail
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.output_effects import append_output, fail_step, retain_step_output
+from app.domain.block.queries import output_event_exists
 from app.domain.block.schemas import BlockOut
 
 logger = logging.getLogger("app.domain.agent.room_events")
@@ -66,8 +67,7 @@ async def persist_room_event(
     if platform_unsolicited:
         meta = {**meta, "platform_unsolicited": True}
     async with sessions() as session:
-        blocks = BlockRepository(session)
-        if eid and await blocks.has_eid(inner_id or topic_id, eid):
+        if eid and await output_event_exists(session, inner_id or topic_id, eid):
             return None
         # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
         # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
@@ -78,7 +78,8 @@ async def persist_room_event(
             room_id=topic_id,
             task_id=inner_id,
         )
-        block = await blocks.add(
+        block = await append_output(
+            session,
             project_id=landed.project_id,
             conversation_id=landed.conversation_id,
             author=(author or acting_agent or await resolve_author(session, topic_id)),
@@ -101,7 +102,7 @@ async def _mark_step_failed(
     Never fails a turn over a red dot."""
     try:
         async with sessions() as session:
-            block = await BlockRepository(session).mark_step_failed(block_id, error)
+            block = await fail_step(session, block_id, error)
             payload = (
                 BlockOut.model_validate(block).model_dump(mode="json")
                 if block is not None
@@ -121,9 +122,7 @@ async def _record_step_output(
     output, total = output_tail(text)
     try:
         async with sessions() as session:
-            block = await BlockRepository(session).record_step_output(
-                block_id, output, total
-            )
+            block = await retain_step_output(session, block_id, output, total)
             payload = (
                 BlockOut.model_validate(block).model_dump(mode="json")
                 if block is not None

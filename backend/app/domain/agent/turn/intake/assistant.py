@@ -14,6 +14,7 @@ from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent.turn.store.assistant import persist_assistant_message
 from app.domain.block.models import AuthorType
 from app.domain.topic.models import Topic
+from app.domain.topic.reads import load_topic
 
 
 class AssistantMessages:
@@ -88,6 +89,7 @@ class AssistantMessages:
             )
         stored = await persist_assistant_message(
             self.sessions,
+            load_topic=load_topic,
             prepare_mentions=self._prepare_mentions,
             notify_mentions=announce_mentions,
             resolve_author=_agent_handle,

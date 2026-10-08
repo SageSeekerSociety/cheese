@@ -30,6 +30,27 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 
 
+async def output_event_exists(
+    session: AsyncSession, conversation_id: uuid.UUID, eid: str
+) -> bool:
+    """Read whether this conversation already materialized an output event."""
+    return await BlockRepository(session).has_eid(conversation_id, eid)
+
+
+async def any_output_event_exists(
+    session: AsyncSession, conversation_id: uuid.UUID, eids: list[str]
+) -> bool:
+    """Recognize every id carried by a coalesced output in the same transaction."""
+    return await BlockRepository(session).has_any_eid(conversation_id, eids)
+
+
+async def last_turn_output(
+    session: AsyncSession, conversation_id: uuid.UUID, work_id: uuid.UUID
+) -> str | None:
+    """Read the last published text for closing-result deduplication."""
+    return await BlockRepository(session).last_said_in_turn(conversation_id, work_id)
+
+
 async def latest_preview(
     db: AsyncSession, conversation_id: uuid.UUID
 ) -> BlockOut | None:

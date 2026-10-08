@@ -16,7 +16,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.errors import AppError
+from app.core.errors import BaseError
 from app.core.obs import bind_context, clear_context
 from app.core.sentences import error_frame, say
 from app.domain.agent.platform_failures import (
@@ -497,7 +497,7 @@ async def execute(
         # summon once the host re-auths; a wedged one re-enters the machine
         # that just died; an environment that never came up needs a person.
         # All three now wait for someone to look — the event above said so.
-    except AppError as exc:
+    except BaseError as exc:
         rec["status"] = "error"
         rec["detail"] = exc.message
         rec["duration_s"] = round(time.monotonic() - t0, 1)

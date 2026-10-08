@@ -8,15 +8,22 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ConflictError
+from app.core.sentences import say
 from app.domain.agent.turn.store.events import EventAuthorResolver
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.output_effects import append_output
+from app.domain.block.queries import any_output_event_exists, last_turn_output
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.topic.models import Topic
-from app.domain.topic.repositories import TopicRepository
+
+
+class TopicLoader(Protocol):
+    async def __call__(
+        self, session: AsyncSession, topic_id: uuid.UUID
+    ) -> Topic | None: ...
 
 
 class AssistantMentions(Protocol):
@@ -56,6 +63,7 @@ class StoredAssistant:
 async def persist_assistant_message(
     sessions: async_sessionmaker[AsyncSession],
     *,
+    load_topic: TopicLoader,
     prepare_mentions: AssistantMentions,
     notify_mentions: MentionNotifier,
     resolve_author: EventAuthorResolver,
@@ -91,7 +99,6 @@ async def persist_assistant_message(
         meta = {**(meta or {}), **extra_meta}
     known_ids = [e for e in dict.fromkeys((eid, *eids)) if e]
     async with sessions() as session:
-        blocks = BlockRepository(session)
         publication_key = None
         publication_input = {
             "text": text,
@@ -109,9 +116,9 @@ async def persist_assistant_message(
             ):
                 previous = await idem.stored_result(session, publication_key)
                 if previous is None or previous["input"] != publication_input:
-                    raise ConflictError("request_id was used for another message")
+                    raise ConflictError(say("chatPublicationIdReused"))
                 return StoredAssistant(previous["block"], False, None)
-        if known_ids and await blocks.has_any_eid(topic_id, known_ids):
+        if known_ids and await any_output_event_exists(session, topic_id, known_ids):
             return StoredAssistant(None, False, None)
         # `has_any_eid` alone is a SELECT followed by an INSERT, and the same
         # hook event reaches this method from two places at once — the turn's
@@ -139,14 +146,14 @@ async def persist_assistant_message(
             scope_id=str(topic_id),
         ):
             return StoredAssistant(None, False, None)
-        topic = await TopicRepository(session).get(topic_id)
+        topic = await load_topic(session, topic_id)
         text, roster = await prepare_mentions(
             session, project_id, topic, text, roster, topic_refs
         )
         if (
             closing
             and turn_id is not None
-            and await blocks.last_said_in_turn(topic_id, turn_id) == text
+            and await last_turn_output(session, topic_id, turn_id) == text
         ):
             return StoredAssistant(None, False, None)
         author = author or await resolve_author(session, topic_id)
@@ -159,7 +166,8 @@ async def persist_assistant_message(
             room_id=topic_id,
             task_id=inner_id,
         )
-        block = await blocks.add(
+        block = await append_output(
+            session,
             project_id=landed.project_id,
             conversation_id=landed.conversation_id,
             author=author,

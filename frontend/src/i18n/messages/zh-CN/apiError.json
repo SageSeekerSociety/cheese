@@ -924,6 +924,7 @@
   "upstreamUnavailable": "上游服务不可用",
   "gatewayTimeout": "上游没有及时应答",
   "invalidRequestParameters": "请求参数不合法",
+  "chatPublicationIdReused": "同一 request_id 已用于另一条消息",
   "clientDisconnected": "客户端已断开",
   "deviceOffline": "设备 {device} 离线",
   "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知",

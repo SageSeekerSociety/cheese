@@ -924,6 +924,7 @@
   "upstreamUnavailable": "Upstream unavailable",
   "gatewayTimeout": "Upstream did not answer in time",
   "invalidRequestParameters": "Invalid request parameters",
+  "chatPublicationIdReused": "This request_id was already used for another message",
   "clientDisconnected": "The client disconnected",
   "deviceOffline": "Device {device} is offline",
   "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown",
