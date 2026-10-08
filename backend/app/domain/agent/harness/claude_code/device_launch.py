@@ -26,6 +26,9 @@ from app.domain.agent import machine_launcher
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
+from app.domain.agent.harness.claude_code.remote_execution import (
+    launch as executor_launch,
+)
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
@@ -709,9 +712,7 @@ class ClaudeLaunch:
 
     @property
     def execution(self) -> ExecutorLaunch:
-        from app.domain.agent.harness.claude_code.remote_execution import launch
-
-        return launch
+        return executor_launch
 
     def on(self, place: MachinePlace) -> MachineLaunch:
         return on_machine(

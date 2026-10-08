@@ -68,7 +68,6 @@
     "app/domain/agent/harness/claude_code/remote_execution/release.py": 6,
     "app/domain/agent/harness/claude_code/remote_execution/runtime.py": 2,
     "app/domain/agent/harness/claude_code/remote_execution/shell_stop.py": 2,
-    "app/domain/agent/harness/claude_code/session_launch.py": 2,
     "app/domain/agent/harness/pi/journal.py": 1,
     "app/domain/agent/hook_stream.py": 8,
     "app/domain/agent/host_failure.py": 2,
