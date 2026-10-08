@@ -36,6 +36,7 @@ from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import build_session_opening, build_system_prompt
+from app.domain.agent.live_work import LiveWork
 from app.domain.agent.platform_notices import (
     EVENT_MEMORY_CHANGED,
     SEVERITY_INFO,
@@ -80,17 +81,15 @@ class _MemoryHost(Protocol):
     """这条路的收件人：``ChatService`` 上留在原地的协作者。
 
     跑整理是**一轮真会话**（`runtime.send` 后读 `runtime.reading`），会话那套机件
-    里有两件跟着这一簇走不了：``_lock_for`` 是每个房间一把、换环境也在用的那把
-    锁，``_model_kwargs`` 内部还要问项目的档位与队友配置。它们各自还有别的调用
-    方，方法在 ``ChatService`` 上原样留着。原生输入登记也由 host 提供，空效果仍
-    须登记输入身份。
+    里还有一件跟着这一簇走不了：``_model_kwargs`` 内部要问项目的档位与队友配置。
+    它还有别的调用方，方法在 ``ChatService`` 上原样留着。原生输入登记也由 host
+    提供，空效果仍须登记输入身份。房间锁是纯状态，收在 ``live_work.LiveWork`` 里
+    （那里的 ``lock_for``），按显式协作者传进来。
     本模块声明自己会问哪些，类型在调用点核对；这里只列签名，不写实现。
 
-    库里其余几件（会话工厂、算力池、网关、网关锁、基础提示词）不在这里：它们是
-    注入进来的协作者，按 ``gateway_usage._model_kwargs`` 的口径走显式入参。
+    库里其余几件（会话工厂、算力池、网关、网关锁、基础提示词、``live``）不在这里：
+    它们是注入进来的协作者，按 ``gateway_usage._model_kwargs`` 的口径走显式入参。
     """
-
-    def _lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock: ...
 
     def _input_registrar(self, effects: InputEffects) -> InputRegistrar: ...
 
@@ -125,6 +124,7 @@ class MemoryLedger:
         gateway_lock: asyncio.Lock,
         base_prompt: str,
         host: _MemoryHost,
+        live: LiveWork,
     ) -> None:
         self._sessions = sessions
         self._compute = compute
@@ -132,6 +132,7 @@ class MemoryLedger:
         self._gateway_lock = gateway_lock
         self._base_prompt = base_prompt
         self._host = host
+        self._live = live
         # 每一个座位（对话, agent）这一轮的记忆账：在哪间房、署谁的名、算谁的
         # private（组装那一轮时记下，见 `remember_turn`）。两个对账时刻手上只有
         # 那个座位的会话，所以这份点名只能从别的时刻留下来。没记过的座位按「只
@@ -375,7 +376,7 @@ class MemoryLedger:
         usage: AgentUsage | None = None
         failed = False
         try:
-            async with self._host._lock_for(root_topic_id):
+            async with self._live.lock_for(root_topic_id):
                 model_kwargs = (
                     await self._host._model_kwargs(
                         project_id, runtime, root_topic_id, platform=True

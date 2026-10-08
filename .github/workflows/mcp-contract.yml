@@ -7,8 +7,9 @@ name: Claude Code build contracts
 # driver speaks (#1606) is unpublished too; headless_contract.py checks the
 # parts of it the driver relies on, including through the remote-execution
 # plugin. equivalence.py checks that a room's Bash, run through the shell
-# prefix on the executor, is what the same build does running there itself.
-# Changes to the plugin and its executor run all three. And the metering proxy
+# prefix on the executor, is what the same build does running there itself;
+# against the pinned build it runs in mcp-equivalence.yml, on its own paths,
+# and against the newest build in `latest` below. And the metering proxy
 # renews the platform's Claude login with a copy of this build's token
 # refresh, which refresh_contract.py holds to the build's own, byte for byte.
 
@@ -50,8 +51,8 @@ jobs:
       # The script and what it imports are standard library only, so this job
       # skips `uv sync` and its several minutes.
       - name: Let a session have its own namespace, and install zsh
-        # The headless contract and the equivalence check launch sessions the
-        # way a room does; the MCP contract checks the build's zsh too.
+        # The headless contract launches sessions the way a room does; the MCP
+        # contract checks the build's zsh too.
         run: |
           .github/scripts/allow-user-namespaces.sh
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh zsh
@@ -94,55 +95,6 @@ jobs:
         with:
           name: mcp-contract-pinned-${{ github.sha }}
           path: tmp/mcp-contract/pinned/
-
-  equivalence:
-    # The same build as `pinned`. Each shell's run takes about six minutes;
-    # after the contracts above and one another they made `pinned` the
-    # longest job in Required CI, so the two shells run side by side here.
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [bash, zsh]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: '22'
-      # Restore only: warm-caches.yml saves this key on main.
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.npm
-          key: npm-remote-execution-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/remote_execution/package-lock.json') }}
-      - run: .github/scripts/ensure-claude-cli.sh
-      - name: Let a session have its own namespace
-        run: .github/scripts/allow-user-namespaces.sh
-      - name: Install FUSE for the forwarded project view, and zsh
-        # The equivalence check mounts the view a room's session works in.
-        # libfuse2 (fusepy) mounts through `fusermount`; Ubuntu 24.04 ships
-        # only `fusermount3`, which takes the same arguments. zsh is the
-        # executor shell of the zsh run.
-        run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh fuse3 libfuse2t64 zsh
-          command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
-          python3 -m venv tmp/equivalence-venv
-          tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
-      - name: Remote Bash is equivalent to Claude Code on the executor (${{ matrix.shell }})
-        run: >-
-          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
-          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
-          --shell ${{ matrix.shell }} --output tmp/mcp-contract/pinned/equivalence-${{ matrix.shell }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        continue-on-error: true
-        # A quota-refused upload retries until the JOB timeout cancels the job
-        # — 20 minutes after the tests passed, reported as cancelled, which
-        # `continue-on-error` never gets to tolerate. Bound the step instead.
-        timeout-minutes: 3
-        if: always()
-        with:
-          name: mcp-contract-pinned-equivalence-${{ matrix.shell }}-${{ github.sha }}
-          path: tmp/mcp-contract/pinned/equivalence-${{ matrix.shell }}/
 
   latest:
     # The next upgrade, checked before it is what we are debugging. Deliberately

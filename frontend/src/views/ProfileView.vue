@@ -285,9 +285,11 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
               <!-- 一个团队一行：名字在行中间折开，读起来就分不清是一个团队还是两个。 -->
               <ul class="profile__teams" data-user-content>
                 <li v-for="team in profile.teams" :key="team.id">
-                  <router-link v-if="team.handle" :to="{ name: 'TeamsDetail', params: { handle: team.handle } }">{{
-                    team.name
-                  }}</router-link>
+                  <router-link
+                    v-if="team.handle"
+                    :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
+                    >{{ team.name }}</router-link
+                  >
                   <span v-else>{{ team.name }}</span>
                 </li>
               </ul>

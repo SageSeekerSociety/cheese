@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import Receive, Scope, Send
 
 from app.api.auth import ActorResolverDep
+from app.auth.project_access import may_read_project
 from app.core.db import get_db
+from app.core.errors import AuthenticationRequiredError, ForbiddenError
+from app.domain.identity.services import IdentityService
 from app.domain.project.export import create_archive
 
 
@@ -36,7 +39,18 @@ async def export_project(
     db: Annotated[AsyncSession, Depends(get_db)],
     resolver: ActorResolverDep,
 ) -> FileResponse:
-    archive, _ = await create_archive(project_id, db, resolver)
+    # Who is asking, and what they may read, is answered here: this layer owns
+    # the credential, and the archive builder is handed the answers. It gets
+    # the resolver only for the last question — which of the project's rooms
+    # this caller reads — because the room list is in hand there.
+    actor = await resolver.resolve(project_id=project_id)
+    if actor.via != "token" or actor.user_id is None:
+        raise AuthenticationRequiredError("Project export requires a human login")
+    if await IdentityService(db).is_agent(actor.handle) or not await may_read_project(
+        db, project_id=project_id, handle=actor.handle
+    ):
+        raise ForbiddenError("Project export requires project access")
+    archive, _ = await create_archive(project_id, db, actor, resolver)
     return ProjectArchiveResponse(
         archive,
         media_type="application/x-tar",

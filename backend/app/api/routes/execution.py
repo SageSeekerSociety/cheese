@@ -85,6 +85,10 @@ def _carries_work_off(method: str, params: dict) -> bool:
         return True
     if method == "invoke":
         return params.get("server", "native") != "native"
+    return _checkpoints(method, params)
+
+
+def _checkpoints(method: str, params: dict) -> bool:
     return method == "control" and params.get("subtype") == "checkpoint"
 
 
@@ -199,6 +203,16 @@ async def execute(
     elif claims.get("ro") and not _reads(payload.method, payload.params):
         raise ForbiddenError("This credential only reads the machine's files")
     target = lease
+    if _checkpoints(payload.method, payload.params) and (
+        await machine_owner_reads.sandbox_destroyed(
+            db, target["device_id"], target.get("resource_id")
+        )
+    ):
+        # The turn ended after its sandbox was destroyed while idle: there is
+        # nothing on a machine to push, and what the sandbox held was pushed
+        # and backed up by the checkpoint of the turn that last used it. The
+        # host may be gone too, so asking it would only fail.
+        return {}
     if not (
         await machine_owner_reads.active_cloud_host(db, target["device_id"])
         or await owner_reads.execution_device_authorized(

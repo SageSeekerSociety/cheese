@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -276,6 +276,16 @@ class ProjectService:
         """``{name, avatar_id}`` for someone not on the roster yet, by the same
         rules a roster row follows."""
         return await self._repo.person(handle)
+
+    async def get_projects_by_ids(
+        self, project_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, Project]:
+        """一批项目，按 id 索引，一次查完。
+
+        和 :meth:`get` 是同一道门（都不筛归档），给手上已经攒了一整页外键的调用方
+        用 —— 通知列表的实体解析逐条 :meth:`get` 就是一屏 N 次往返。
+        """
+        return await self._repo.get_by_ids(project_ids)
 
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)

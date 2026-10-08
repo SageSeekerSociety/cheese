@@ -321,7 +321,7 @@ def test_a_task_waiting_on_a_review_is_not_called_quiet(client):
         json={
             "change_subject": "chore(test): file a card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     assert r.status_code == 200, r.text

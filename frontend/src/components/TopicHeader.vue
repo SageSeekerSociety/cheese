@@ -42,16 +42,11 @@ const props = defineProps<{
   me: string
   /** ChatPanel's live socket state — the dot that says 已连接 / 未连接. */
   connected: boolean
-  /** 专注模式 (spec §7.1): the panel spans the workspace, the chat is hidden. */
-  focus: boolean
-  /** 专注模式只在面板和对话并排开着时成立。 */
-  canFocus?: boolean
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggle-focus'): void
   (e: 'open-topic', topicId: string): void
   (e: 'rename', title: string): void
   (e: 'toggle-panel'): void
@@ -121,11 +116,6 @@ watch(
 // 有 AI 队友能访问整台机器。工作电脑写在成员名册里，这件事不能跟着收进名册：它是
 // 权限，不是设置，要一直看得见。名册读到了就告诉这里。
 const machineNotice = ref<string | null>(null)
-
-function toggleFocus() {
-  usageOpen.value = false
-  emit('toggle-focus')
-}
 
 // 手机上话题列表没有行尾那颗 ⋯，改名、归档原本只有长按那一行才找得到。⋯ 面板里
 // 放的是同一份（topicActions），只是这里重命名另起一页。
@@ -251,17 +241,6 @@ useCommands(roomCommands)
         @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"
       />
 
-      <!-- 专注模式开着的时候，出口必须摆在外面：对话栏已经让开了，这一颗就是
-           「你现在在专注模式里」的那句话。进去的入口在 ⋯ 里。 -->
-      <BaseButton
-        v-if="mdAndUp && focus"
-        icon="mdi-arrow-collapse"
-        size="sm"
-        :title="t('work.room.menu.exitFocus')"
-        :aria-label="t('work.room.menu.exitFocus')"
-        @click="emit('toggle-focus')"
-      />
-
       <!-- 右侧面板的开关。手机上面板是页签里的一格，没有这颗。 -->
       <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
 
@@ -281,18 +260,6 @@ useCommands(roomCommands)
           />
         </template>
         <v-card min-width="300" class="room-menu">
-          <!-- 专注模式：面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
-               永远只有一个窗格，没有第二栏可以让开；平板横放那一档里对话永远占满
-               整宽、面板才是那只浮层，所以专注在这里也没有位置。 -->
-          <button
-            v-if="mdAndUp && canFocus"
-            type="button"
-            class="room-menu__row room-menu__row--action"
-            @click="toggleFocus"
-          >
-            <v-icon size="16">{{ focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand' }}</v-icon>
-            <span>{{ focus ? t('work.room.menu.exitFocus') : t('work.room.menu.focus') }}</span>
-          </button>
           <TopicUsageSummary
             class="room-menu__usage"
             :loading="usageLoading"
@@ -473,30 +440,6 @@ useCommands(roomCommands)
 /* ⋯ 菜单。一行一件事，行高和别处的菜单一样（36px），分段靠一条 --line。 */
 .room-menu {
   padding-block: 4px;
-}
-.room-menu__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-  min-height: 36px;
-  padding: 4px 16px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: 14px;
-  line-height: var(--lh-14);
-  text-align: left;
-}
-.room-menu__row--action {
-  justify-content: flex-start;
-  gap: 8px;
-  cursor: pointer;
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.room-menu__row--action:hover {
-  background: var(--fill);
 }
 .room-menu__usage {
   margin-top: 4px;

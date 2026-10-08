@@ -11,9 +11,8 @@
 
 - ``self._sessions`` → ``sessions``：一个 sessionmaker，事务边界逐字不变 —— 原来在
   哪里 ``async with self._sessions()``，现在还在哪里；
-- ``self._hook_work`` / ``self._active_turn_ids`` → ``hook_work`` /
-  ``active_turn_ids``：这一轮的现场状态（```chat._HookWorkState````）。本模块只读它
-  两个字段里的一处 —— 这一轮是谁在做，用来给事件署名。
+- ``self._hook_work`` → ``live``：这一轮的现场状态（``live_work.LiveWork``）。本模块
+  只读它一处 —— 这一轮是谁在做，用来给事件署名。
 
 ``ChatService`` 上留一行同名委托，``chat.py`` 重新导出这里的每个名字，所以调用点与
 测试都不用改（``runtime.py`` 经 ``chat_service.post_system_event`` 说的那些话，走的
@@ -22,9 +21,7 @@
 
 import logging
 import uuid
-from collections.abc import Mapping
 from datetime import datetime
-from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -40,6 +37,7 @@ from app.domain.agent.event_lines import (
     _subagent_result_meta,
     _tool_event_meta,
 )
+from app.domain.agent.live_work import LiveWork
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import RUN_RECORD_EVENTS
 from app.domain.agent.queries import _agent_handle, _block_payload
@@ -57,23 +55,10 @@ from app.domain.identity.handles import recipient_seat
 
 logger = logging.getLogger(__name__)
 
-#: 现场状态查表的键：一间房 + 这一轮。
-TurnKey = tuple[uuid.UUID, uuid.UUID]
-
 #: How far back a turn's change summary walks the topic branch's history.
 #: Rendering the diff is `event_lines.py`'s job; how far back to look is this
 #: side's (the git half is environment, that half is the contract).
 _CHANGE_COMMIT_WALK = 30
-
-
-class _TurnActor(Protocol):
-    """``chat._HookWorkState`` 里本模块用到的唯一一个字段。
-
-    「这一轮是谁在做」是署名的依据：几位队友同坐一间房时，拿房间的默认队友署名会
-    把现场整轮记到别人头上。类型写在这里而不是 import ``chat``：那个方向是环。
-    """
-
-    acting_agent: str
 
 
 async def _turn_seat(session: AsyncSession, turn_id: uuid.UUID) -> str | None:
@@ -173,7 +158,7 @@ async def _keep_run_record(
 
 async def _persist_room_event(
     sessions: async_sessionmaker,
-    hook_work: Mapping[TurnKey, _TurnActor],
+    live: LiveWork,
     *,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -215,7 +200,9 @@ async def _persist_room_event(
     # 时的回落：几位队友同坐一间房时，拿默认那位署名会把现场整轮记到别人头上。
     # A turn is kept under its conversation: the task's when there is one.
     state = (
-        hook_work.get((inner_id or topic_id, turn_id)) if turn_id is not None else None
+        live.hook_work.get((inner_id or topic_id, turn_id))
+        if turn_id is not None
+        else None
     )
     async with sessions() as session:
         blocks = BlockRepository(session)
@@ -252,7 +239,7 @@ async def _persist_room_event(
 
 async def _persist_tool_event(
     sessions: async_sessionmaker,
-    hook_work: Mapping[TurnKey, _TurnActor],
+    live: LiveWork,
     *,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -277,7 +264,7 @@ async def _persist_tool_event(
     )
     return await _persist_room_event(
         sessions,
-        hook_work,
+        live,
         project_id=project_id,
         topic_id=topic_id,
         content=_format_tool_event(name, preview),
@@ -298,7 +285,7 @@ async def _persist_tool_event(
 
 async def _persist_subagent_result(
     sessions: async_sessionmaker,
-    hook_work: Mapping[TurnKey, _TurnActor],
+    live: LiveWork,
     *,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -311,7 +298,7 @@ async def _persist_subagent_result(
     """Land a returning subagent's conclusion in the room timeline."""
     return await _persist_room_event(
         sessions,
-        hook_work,
+        live,
         project_id=project_id,
         topic_id=topic_id,
         content=_subagent_event_text(event.description, event.text),
@@ -326,7 +313,7 @@ async def _persist_subagent_result(
 
 async def _persist_change_summary(
     sessions: async_sessionmaker,
-    hook_work: Mapping[TurnKey, _TurnActor],
+    live: LiveWork,
     *,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
@@ -342,7 +329,7 @@ async def _persist_change_summary(
     grey line in a drawer nobody has open."""
     return await _persist_room_event(
         sessions,
-        hook_work,
+        live,
         project_id=project_id,
         topic_id=topic_id,
         content=_format_change_summary(changeset.files),
@@ -451,7 +438,7 @@ async def _known_commits(
 ) -> set[str] | None:
     """The topic branch's commits right now — the baseline the turn's change
     summary is measured against. None when it cannot be read (see
-    _HookWorkState.known_commits)."""
+    HookWorkState.known_commits)."""
     try:
         from app.domain.repository.forge_files import ProjectFiles
         from app.domain.room_task.services import TaskService

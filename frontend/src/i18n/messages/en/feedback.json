@@ -264,6 +264,7 @@
       "redis": "Redis",
       "event_loop": "Event loop",
       "routes": "Route modules",
+      "alerting": "Alert channel",
       "note": "This moment only — not stock, not a window. Same checks as /health/detailed."
     },
     "spine": {
@@ -392,6 +393,36 @@
       "burn": "Burn rate",
       "eta": "Exhaust eta",
       "note": "Exhausted / low / unlimited are three mutually exclusive sets — unlimited is the ABSENCE of a grant. Burn rate is derived from resource_usage (compute_grants has no deduction ledger). ETA is linear extrapolation; unlimited and zero-burn both render —."
+    },
+    "pool": {
+      "title": "Claude account pool",
+      "note": "Read from a snapshot the metering proxy writes beside the usage ledger (accounts.json), not from the database — the accounts behind the subscription route live only on the proxy's machine. The states are the proxy's own: cooling is a rate limit with a reset time, disabled has none and needs a manual reset. The snapshot ages, so when it is old it says when it was written.",
+      "state": {
+        "available": "Available",
+        "cooling": "Cooling",
+        "disabled": "Disabled",
+        "unknown": "Unknown state"
+      },
+      "coolingUntil": "Cooling until {time}",
+      "failures": "{n} consecutive failures",
+      "allAvailable": "All {n} accounts available",
+      "allCooling": "All {n} accounts cooling",
+      "counts": "{n} accounts: {parts}",
+      "coolingCount": "{n} cooling",
+      "disabledCount": "{n} disabled",
+      "unknownCount": "{n} unknown",
+      "earliest": "earliest recovery {time}",
+      "needsReset": "the disabled ones need a manual reset",
+      "separator": ", ",
+      "tailSeparator": " — ",
+      "stale": "Snapshot written {age}",
+      "reason": {
+        "notConfigured": "This deployment has no subscription metering proxy, so the pool is not on the board",
+        "missing": "The metering proxy has not written a pool snapshot yet (it may not be running)",
+        "unreadable": "The pool snapshot could not be read",
+        "malformed": "The pool snapshot is not in a shape we can read",
+        "unknown": "The pool snapshot could not be read"
+      }
     },
     "extras": {
       "title": "Quotas and gaps",

@@ -48,5 +48,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The array was never a valid state, so there is nothing to put back.
+    """The array was never a valid state, so there is nothing to put back."""
     pass

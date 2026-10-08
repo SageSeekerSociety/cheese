@@ -106,7 +106,7 @@ class BadRequestError(BaseError):
 
 class NotFoundError(BaseError):
     def __init__(
-        self, message: str = "Resource not found", data: Any | None = None
+        self, message: str = say("resourceNotFound"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_404_NOT_FOUND, message, data)
 
@@ -121,13 +121,15 @@ class NotFoundError(BaseError):
 
 
 class ForbiddenError(BaseError):
-    def __init__(self, message: str = "Access denied", data: Any | None = None) -> None:
+    def __init__(
+        self, message: str = say("accessDenied"), data: Any | None = None
+    ) -> None:
         super().__init__(HTTP_403_FORBIDDEN, message, data)
 
 
 class AuthenticationRequiredError(BaseError):
     def __init__(
-        self, message: str = "Authentication required", data: Any | None = None
+        self, message: str = say("signInRequired"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, data)
 
@@ -148,7 +150,7 @@ class UnprocessableEntityError(BaseError):
 
 
 class InternalServerError(BaseError):
-    def __init__(self, message: str = "Internal server error") -> None:
+    def __init__(self, message: str = say("serverInternalError")) -> None:
         super().__init__(HTTP_500_INTERNAL_SERVER_ERROR, message, None)
 
 
@@ -166,12 +168,12 @@ class AccessDeniedError(ForbiddenError):
             data["resourceType"] = resource_type
         if resource_id is not None:
             data["resourceId"] = resource_id
-        super().__init__(message="Access denied", data=data or None)
+        super().__init__(message=say("accessDenied"), data=data or None)
 
 
 class PermissionDeniedError(ForbiddenError):
     def __init__(
-        self, message: str = "Permission denied", data: Any | None = None
+        self, message: str = say("permissionDenied"), data: Any | None = None
     ) -> None:
         super().__init__(message, data)
 
@@ -188,12 +190,12 @@ class SudoRequiredError(ForbiddenError):
 
 
 class TokenExpiredError(BaseError):
-    def __init__(self, message: str = "Token has expired") -> None:
+    def __init__(self, message: str = say("tokenExpired")) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, None)
 
 
 class InvalidTokenError(BaseError):
-    def __init__(self, message: str = "Invalid token") -> None:
+    def __init__(self, message: str = say("invalidToken")) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, None)
 
 
@@ -206,14 +208,14 @@ class NameAlreadyExistsError(ConflictError):
 
 
 class QuotaExceededError(BaseError):
-    def __init__(self, message: str = "Quota exceeded") -> None:
+    def __init__(self, message: str = say("quotaExceeded")) -> None:
         super().__init__(HTTP_429_TOO_MANY_REQUESTS, message, None)
 
 
 class SystemBusyError(BaseError):
     def __init__(
         self,
-        message: str = "System is busy, please try again later",
+        message: str = say("systemBusy"),
         data: Any | None = None,
     ) -> None:
         super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
@@ -226,7 +228,7 @@ class UpstreamUnavailableError(BaseError):
     outage that passes on its own says ``retryable = True``."""
 
     def __init__(
-        self, message: str = "Upstream unavailable", data: Any | None = None
+        self, message: str = say("upstreamUnavailable"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
 
@@ -238,7 +240,7 @@ class GatewayTimeoutError(BaseError):
     Not retryable: the one call that raises it (an execution, a POST) may
     or may not have run, so sending it again is not the same request."""
 
-    def __init__(self, message: str = "Upstream did not answer in time") -> None:
+    def __init__(self, message: str = say("gatewayTimeout")) -> None:
         super().__init__(HTTP_504_GATEWAY_TIMEOUT, message, None)
 
 
@@ -340,7 +342,7 @@ async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
-    message = _validator_sentence(exc) or "Invalid request parameters"
+    message = _validator_sentence(exc) or say("invalidRequestParameters")
     # A validator's own `raise ValueError(...)` travels in `ctx["error"]` as the
     # exception object, which `JSONResponse` cannot serialize: the handler then
     # raised, and any body refused by a custom validator answered 500. Its

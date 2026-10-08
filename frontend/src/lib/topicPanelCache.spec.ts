@@ -54,7 +54,7 @@ describe('话题面板缓存', () => {
     const a = fetchRoomTasks('t1')
     const b = fetchRoomTasks('t1')
     expect(listRoomTasks).toHaveBeenCalledTimes(1)
-    expect(listRoomTasks).toHaveBeenCalledWith('t1', { limit: 1 })
+    expect(listRoomTasks).toHaveBeenCalledWith('t1', { limit: 0 })
     d.settle(page(2))
     expect(await a).toBe(await b)
   })

@@ -58,6 +58,7 @@ import {
   WANG_LINES,
 } from './catalogFixtures'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
+import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
 import { MODELS_ENTRIES } from './catalogModels'
 import { NOTIFICATION_ENTRIES } from './catalogNotifications'
@@ -585,6 +586,8 @@ export const CATALOG: CatalogEntry[] = [
   // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
   // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
   ...KNOWLEDGE_ENTRIES,
+  // 资料库页拆出来的三件：`catalogLibrary.ts`。
+  ...LIBRARY_ENTRIES,
   // 发题表单那一组（从 1089 行的 TaskForm 拆出来的七张卡加两个弹窗，夹具在自己
   // 那一份里）在自己的文件里：`catalogTaskForm.ts`。
   ...TASK_FORM_ENTRIES,

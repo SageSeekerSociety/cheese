@@ -48,7 +48,7 @@ function pendingCard(state: MergeStateInfo): AcceptCard {
     id: 'card-1',
     topic_id: 't1',
     reviewer_handle: 'alice',
-    routing_reason: '最懂',
+    focus: '最懂',
     change_subject: 'chore: do a thing',
     change_body: null,
     status: 'pending',

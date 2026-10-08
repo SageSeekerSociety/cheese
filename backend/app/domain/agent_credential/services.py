@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
@@ -30,18 +31,15 @@ from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
 
-_EPOCH_KEY = "agent_credential_epoch"
 _DAY_S = 86400
 
 
 def credential_epoch_of(project: Project) -> int:
     """The project's current credential generation. A project that has never
     revoked anything sits at 0, which is also what the first issued credential
-    carries — so no backfill is needed for projects that predate this."""
-    raw = (project.settings or {}).get(_EPOCH_KEY)
-    if isinstance(raw, bool) or not isinstance(raw, int):
-        return 0
-    return raw
+    carries — so a row that predates the column needs no backfill beyond the
+    default it was created with."""
+    return project.agent_credential_epoch
 
 
 @dataclass(frozen=True)
@@ -117,10 +115,28 @@ class ProjectAgentCredentialService:
     async def revoke(self, *, project_id: uuid.UUID) -> int:
         """Retire every credential issued for this project so far, and return the
         new generation. Idempotent in effect, not in value: calling twice simply
-        retires nothing the second time."""
+        retires nothing the second time.
+
+        The generation advances IN the database, never by reading the row and
+        writing it back. It sits beside the project's settings rather than in
+        them because every settings writer replaces that blob whole: one that
+        read before this call landed and flushed after it could put the old
+        generation back, and every credential this call had just retired would
+        work again."""
         project = await self._get_or_404(project_id)
-        epoch = credential_epoch_of(project) + 1
-        await self._projects.merge_settings(project, {_EPOCH_KEY: epoch})
+        stmt = (
+            update(Project)
+            .where(Project.id == project_id)
+            .values(agent_credential_epoch=Project.agent_credential_epoch + 1)
+            .returning(Project.agent_credential_epoch)
+            .execution_options(synchronize_session=False)
+        )
+        epoch = (await self._session.execute(stmt)).scalar_one()
+        # The row moved underneath the instance this session holds; drop its
+        # stale generation so anything reading through this same session — a
+        # caller that revoked and then reads, or a test sharing one — sees the
+        # bump. A real request gets its own session, where this is a no-op.
+        self._session.expire(project, ["agent_credential_epoch"])
         return epoch
 
     async def current_epoch(self, *, project_id: uuid.UUID) -> int:

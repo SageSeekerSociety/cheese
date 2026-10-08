@@ -5,10 +5,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.conditional import LIST_CACHE_CONTROL, etag_for_json, if_none_match_hits
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
@@ -351,13 +352,18 @@ async def list_weeklies(
     return ok(page(items, len(items)))
 
 
-@router.get("/{project_id}/tasks")
+# `response_model=None`: the 304 path returns a bare `Response`, and FastAPI
+# would otherwise try to build a response field out of `dict | Response` and
+# refuse the whole module at import. `list_topics` carries the same.
+@router.get("/{project_id}/tasks", response_model=None)
 async def list_project_tasks(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> dict:
+    response: Response,
+    if_none_match: Annotated[str | None, Header()] = None,
+) -> dict | Response:
     """Every thread in the project, each with the card it currently rides on.
 
     The rail draws rooms and the work inside them, so it needs both halves at
@@ -374,6 +380,12 @@ async def list_project_tasks(
     and the one phrase to print on it — derived here rather than in the client,
     so every client gives the same answer (`room_task/presentation.py`). Two
     round trips still: it is computed from the two batches already fetched.
+
+    条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB
+    出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空
+    body —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的
+    状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，
+    翻的时候本来就该重画。
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -456,7 +468,13 @@ async def list_project_tasks(
                 },
             }
         )
-    return ok(page(items, len(items)))
+    payload = ok(page(items, len(items)))
+    etag = etag_for_json(payload)
+    cache_headers = {"Cache-Control": LIST_CACHE_CONTROL, "ETag": f'"{etag}"'}
+    if if_none_match and if_none_match_hits(if_none_match, etag):
+        return Response(status_code=304, headers=cache_headers)
+    response.headers.update(cache_headers)
+    return payload
 
 
 @router.get("/{project_id}/progress")
