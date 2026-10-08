@@ -9513,6 +9513,18 @@ export interface paths {
          *     - `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one
          *     - `?limit=N&around=<block_id>` → that block with about N/2 on each side: a
          *       conversation opened at one message (a search hit, a quoted reply)
+         *
+         *     Filters narrow the timeline inside the paging, so a page holds `limit` rows
+         *     of what was asked for and `has_more` counts the same set (filtering a page
+         *     afterwards returns fewer rows and pages through holes):
+         *
+         *     - `kind` (repeatable): only these kinds of block;
+         *     - `author`: only blocks signed by this handle;
+         *     - `shown=true`: only what the room's conversation shows
+         *       (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only
+         *       what it keeps out of the room (an agent's steps, notices for an agent).
+         *
+         *     Cursors still name any block of the conversation, shown or not.
          */
         get: operations["list_topic_blocks_topics__topic_id__blocks_get"];
         put?: never;
@@ -37594,6 +37606,9 @@ export interface operations {
                 before?: string | null;
                 after?: string | null;
                 around?: string | null;
+                kind?: components["schemas"]["BlockKind"][] | null;
+                author?: string | null;
+                shown?: boolean | null;
             };
             header?: never;
             path: {
