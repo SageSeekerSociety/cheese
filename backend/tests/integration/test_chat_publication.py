@@ -291,8 +291,9 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
     shows nothing while someone waits.
     """
     from app.domain.agent import chat as chat_module
-    from app.domain.agent.room import turn as turn_module
     from app.domain.agent.turn.intake import assistant as assistant_module
+    from app.domain.agent.turn.steps import send as send_module
+    from app.domain.agent.turn.store import session_inputs as session_inputs_module
 
     topic, headers = make_room(client)
     chat = client.app.dependency_overrides[get_chat_service]()
@@ -304,7 +305,8 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
             return clock
 
     monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(turn_module, "datetime", Clock)
+    monkeypatch.setattr(send_module, "datetime", Clock)
+    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
     monkeypatch.setattr(assistant_module, "datetime", Clock)
     assert settings.chat_progress_reminder_after_s == 600
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
@@ -394,8 +396,9 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
     that just spoke, counting the silence from turn start."""
     from app.api.deps import get_work_runner
     from app.domain.agent import chat as chat_module
-    from app.domain.agent.room import turn as turn_module
     from app.domain.agent.turn.intake import assistant as assistant_module
+    from app.domain.agent.turn.steps import send as send_module
+    from app.domain.agent.turn.store import session_inputs as session_inputs_module
 
     topic, headers = room(client)
     chat = client.app.dependency_overrides[get_chat_service]()
@@ -407,7 +410,8 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
             return clock
 
     monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(turn_module, "datetime", Clock)
+    monkeypatch.setattr(send_module, "datetime", Clock)
+    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
     monkeypatch.setattr(assistant_module, "datetime", Clock)
     threshold = 90
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
