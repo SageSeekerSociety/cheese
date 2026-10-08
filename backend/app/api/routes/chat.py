@@ -34,7 +34,8 @@ running here and who is busy. The opening `turn_active` / `activity_snapshot`
 are sent only when something is going on, so a client cannot tell "nobody is
 busy" from "not told yet" by them. A client that resubscribes keeps what it was
 showing and asks; the answer is what it reconciles against.)
-(`newest` is the room's newest block once the subscription is registered.
+(`newest` is the newest block the room shows once the subscription is
+registered — what its pages read, `GET /topics/{id}/blocks?shown=true`.
 A client reads the room's history over HTTP, and a block stored after that
 read but before the subscription was registered reaches it by neither path; a
 client that does not hold `newest` reads the room's tail again. Anything stored

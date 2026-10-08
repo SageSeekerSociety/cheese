@@ -33,6 +33,7 @@ from app.domain.block.indexed_rows import (
     MACHINE_EVENT_ROWS,
     QUESTION_ROWS,
     QUEUED_MESSAGE_ROWS,
+    SHOWN_ROWS,
     UNANSWERED_ROWS,
 )
 from app.domain.common import Timestamps, UuidPk
@@ -179,6 +180,16 @@ class Block(UuidPk, Timestamps, Base):
     # whole history.
     __table_args__ = (
         Index("ix_blocks_conversation_created_at", "conversation_id", "created_at"),
+        # The conversation as the room shows it, newest first: a room opens on
+        # one page of it. Without the predicate in the index, a page of 50 shown
+        # rows reads past the thousands of steps stored between them.
+        Index(
+            "ix_blocks_shown",
+            "conversation_id",
+            "created_at",
+            "id",
+            postgresql_where=SHOWN_ROWS,
+        ),
         # 未读: count, per conversation, the messages someone else wrote after
         # the reader's cursor. Its only selective predicate lives elsewhere, so
         # without this the planner read the whole table — every 30 seconds, for

@@ -11,6 +11,10 @@ subscription took hold. A page that does not hold that message reads the tail
 again; anything stored later is published to it.
 """
 
+import asyncio
+import uuid
+
+from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.integration.conftest import (
     post_message,
     post_project,
@@ -54,3 +58,32 @@ def test_the_newest_message_matches_what_a_fresh_read_ends_with(client):
 
     with room_socket(client, room, "alice") as ws:
         assert ws.subscribed["newest"] == _newest_read(client, room)
+
+
+def test_a_step_kept_out_of_the_room_is_not_what_it_names(client):
+    """The page reads only what the room shows, so the newest it is told about is
+    the newest of those: a step stored after it would send it reading again for
+    a row it never draws."""
+    room = _room(client)
+    said = post_message(client, room, "alice", {"content": "房间里说的最后一句"})
+    pid = client.get(f"/topics/{room}").json()["data"]["project_id"]
+
+    async def step() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                Block(
+                    project_id=uuid.UUID(pid),
+                    conversation_id=uuid.UUID(room),
+                    kind=BlockKind.event,
+                    author_type=AuthorType.participant,
+                    author="cheese",
+                    content="ran tests",
+                    meta={"in_room": False, "tool": "Bash"},
+                )
+            )
+            await session.commit()
+
+    asyncio.run(step())
+
+    with room_socket(client, room, "alice") as ws:
+        assert ws.subscribed["newest"] == said["id"]

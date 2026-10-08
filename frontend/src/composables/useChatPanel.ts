@@ -434,9 +434,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
       timeline.show(cached)
       rowBatch.startFor(room.id, focus)
       if (!focus) restoreScroll(room.id)
-      // 缓存里只有一页，而最新那一段几乎全是 `in_room:false` 的回合事件——一页常常画
-      // 不满一屏（一条消息飘在半空、下面空一片）。不等上面那条请求回来，现在就按真实
-      // 行往回补：补的时候滚动补偿把最新那条钉在底部，历史往上长。见 useChatPaging。
+      // 缓存里只有一页，高屏上一页短消息可能画不满（一条消息飘在半空、下面空一片）。
+      // 不等上面那条请求回来，现在就往回补：补的时候滚动补偿把最新那条钉在底部，历史
+      // 往上长。见 useChatPaging。
       void paging.fillViewportIfNeeded()
     } else {
       timeline.show({ blocks: [], hasMore: false })
@@ -464,9 +464,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
         timeline.show(warmed)
         rowBatch.startFor(room.id, focus)
         if (!focus) restoreScroll(room.id)
-        // 预热回来的是同样的一页，而最新那一段几乎全是 `in_room:false` 的回合事件，
-        // 一页只画得出一两行——这时候撤骨架露出来还是「一条消息飘在半空」。先按真实行
-        // 补满一屏再撤，和下面正式那一页补法一致。见 useChatPaging.fillViewportIfNeeded。
+        // 预热回来的是同样的一页：先补满一屏再撤骨架，和下面正式那一页补法一致。见
+        // useChatPaging.fillViewportIfNeeded。
         await paging.fillViewportIfNeeded()
         if (!stillHere()) return
         loadingHistory.value = false
@@ -522,9 +521,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
       else if (!shown) restoreScroll(room.id)
       else if (grew && atBottom.value) autoScroll()
       if (!parallelSocket && !connectRefused.value) connectSocket(room.id)
-      // 开场这一窗先按真实行补满一屏，再让骨架撤（下面 finally 才把 loadingHistory 落下）：
-      // 最新那一段几乎全是 `in_room:false` 的回合事件，一页 50 块常常只画得出一两行，补完
-      // 之前露出来就是「一条消息飘在半空」，补完再露才是首屏一屏历史。见 useChatPaging。
+      // 开场这一窗先补满一屏，再让骨架撤（下面 finally 才把 loadingHistory 落下）：补完
+      // 之前露出来就是「一条消息飘在半空」。见 useChatPaging。
       await paging.fillViewportIfNeeded()
       done()
     } catch (e) {
