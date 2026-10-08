@@ -181,7 +181,6 @@
     "topics.status"
   ],
   "foreign_keys_without_index": [
-    "blocks.upgraded_to_topic_id",
     "cloud_host_homes.project_id",
     "cloud_hosts.project_id",
     "compute_runs.topic_id",
