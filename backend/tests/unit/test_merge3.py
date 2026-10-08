@@ -32,7 +32,11 @@ def test_different_edits_of_the_same_line_conflict_and_keep_both():
     regions = merge(BASE, mine, theirs)
     assert merged_text(regions) is None
     (conflict,) = [r for r in regions if r.conflict]
-    assert (conflict.base, conflict.mine, conflict.theirs) == ("c\n", "mine\n", "theirs\n")
+    assert (conflict.base, conflict.mine, conflict.theirs) == (
+        "c\n",
+        "mine\n",
+        "theirs\n",
+    )
     # Everything around the conflict is still there, in order.
     text = "".join(r.text if not r.conflict else "|" for r in regions)
     assert text == "a\nb\n|d\ne\nf\n"

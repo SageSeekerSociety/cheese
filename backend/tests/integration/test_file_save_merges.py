@@ -104,9 +104,7 @@ def test_a_save_is_said_in_the_task_and_told_to_the_teammate(client):
                 select(Block).where(Block.conversation_id == task_id)
             )
             return [
-                b
-                for b in rows
-                if (b.meta or {}).get("event_type") == "file_edited"
+                b for b in rows if (b.meta or {}).get("event_type") == "file_edited"
             ]
 
     (line,) = asyncio.run(lines())
