@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="mentioner" keypath="notifications.MENTION.title" tag="span">
+      <i18n-t v-if="mentioner" scope="global" keypath="notifications.MENTION.title" tag="span">
         <template #mentioner><UserRef :handle="mentioner.handle" :name="mentioner.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>

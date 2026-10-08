@@ -62,6 +62,7 @@ import {
 } from './catalogFixtures'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { MODELS_ENTRIES } from './catalogModels'
+import { NOTIFICATION_ENTRIES } from './catalogNotifications'
 import { PANEL_ENTRIES } from './catalogPanels'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
@@ -699,6 +700,9 @@ export const CATALOG: CatalogEntry[] = [
   ...ACCEPT_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
+  // 通知渲染那一组（十件「一条动态长什么样」，数据在 `catalogNotificationsFixtures.ts`）
+  // 在自己的文件里：`catalogNotifications.ts`。
+  ...NOTIFICATION_ENTRIES,
   // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
   // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
   ...KNOWLEDGE_ENTRIES,

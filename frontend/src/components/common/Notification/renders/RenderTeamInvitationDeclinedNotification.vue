@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="decliner" keypath="notifications.TEAM_INVITATION_DECLINED.title" tag="span">
+      <i18n-t v-if="decliner" scope="global" keypath="notifications.TEAM_INVITATION_DECLINED.title" tag="span">
         <template #decliner><UserRef :handle="decliner.handle" :name="decliner.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>
