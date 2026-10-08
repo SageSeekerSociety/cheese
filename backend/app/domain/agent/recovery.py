@@ -70,9 +70,7 @@ class SessionRecovery:
         sessions_factory = getattr(self, "_sessions", None)
         if sessions_factory is not None:
             async with sessions_factory() as session:
-                await death_evidence.refresh(
-                    session, self._compute, self.live
-                )
+                await death_evidence.refresh(session, self._compute, self.live)
         # One per seat, not per room: teammates in one room run side by side,
         # and a seat left out here is re-attached but never read again until
         # somebody next addresses it. A seat is a conversation's — the room's

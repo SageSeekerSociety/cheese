@@ -1,23 +1,8 @@
-"""这一进程正在跑的活：按房间、按轮次键住的进程内状态。
-
-``ChatService`` 上原来散着一堆 dict/set —— 谁在跑一轮（``hook_work`` /
-``active_turn_ids``）、这一轮的现场提示（``retry_notes`` / ``waiting_notes`` /
-``compact_notes``）、一间房最后由哪个坐席开过会话（``room_session_agents``）、
-每把座位锁与房间锁……它们共同回答一个问题：**这台进程此刻手上正接着哪些活**。
-收到这里，是因为读写它们的那几处（``hook_stream``、``room_events``、
-``recovery``、``room.turn``、``input_registration``、``death_evidence``）本来就
-是「状态 → 处理器」一个方向：处理器拿这份状态做判决、落库、广播，而这份状态谁也
-不问。
-
-依赖方向只有一条：本模块是叶子，**不** import ``chat``、``hook_stream``、
-``runtime``，也不 import 任何回指它们的模块。收编之前那些处理器各自接一手散装
-的 dict（``hook_work`` / ``active_turn_ids`` / 几张 note 表 / ``agents``）；现在它们
-接一个 ``live: LiveWork``，谁持有什么、谁该清理什么，只有一个地方看得见。
-
-进程内的东西不进库：这些表全是缓存与现场（``HookWorkState`` 的注释反复讲的那条
-界限——账不靠这里落，重启丢的只是标签的准确度，不是记录）。所以本对象**只活一个
-进程**：``ChatService`` 建一份，进程没了它就没，谁也答不出「上一层那台进程在跑
-什么」。把「谁在跑」变成查询是另一条线（轮次状态进库），本模块不碰那条线的语义。
+"""Per-process liveness and cache: what this process is working on right now,
+keyed by room and by turn. Held and owned by ``ChatService`` (``ChatService.live``)
+and read by the handlers that decide, persist and broadcast. None of it is a
+source of truth: it lives and dies with the process, and the durable rows are
+written elsewhere.
 """
 
 import asyncio
@@ -88,12 +73,13 @@ class HookWorkState:
 
 
 class LiveWork:
-    """这台进程此刻手上正接着的活，按房间、按轮次键住。
+    """This process's per-room, per-turn state.
 
-    一张进程里只有一份（``ChatService.live``）。表本身是公开的——处理器直接读写
-    ``live.hook_work`` 这样的一格；只有那五件「按什么键、清了要连带清什么」的纯状态
-    操作才是方法，因为它们的不变量不在任何单一处理器里：``hook_work`` 与
-    ``active_turn_ids`` 必须同生同灭，座位锁与房间锁必须按同一个键复用。
+    One per process (``ChatService.live``). The tables are public — handlers
+    read and write a cell like ``live.hook_work`` directly — and the methods
+    are the pure keying operations (which lock a seat shares, whether a turn
+    is active, which live turn owns an inbound message) whose rules no single
+    handler owns.
     """
 
     def __init__(self) -> None:
@@ -188,13 +174,13 @@ class LiveWork:
     ) -> uuid.UUID | None:
         """The live turn an inbound message belongs to, if unambiguous.
 
-        Today turns on a topic serialize, so the active set holds at most one
-        id and this is that id (a missing hook state cannot rule it out, which
-        preserves the old single-slot tolerance; ``strict`` is for callers
-        that must NOT deliver without a state). When several turns are live
-        — parallel agents in one room — only an exact ``matches`` hit decides,
-        and only when exactly one hits: delivering to a guessed turn is worse
-        than holding the message for none.
+        With no ``matches``, a single active turn on the topic is the answer.
+        With several live turns (parallel seats in one room) only an exact
+        ``matches`` hit decides, and only when exactly one hits: delivering to
+        a guessed turn is worse than holding the message for none. A live id
+        with no hook state cannot be ruled out — the old single-slot tolerance
+        — unless the caller passes ``strict``, which refuses to deliver
+        without a state.
         """
         active = self.active_turn_ids.get(topic_id)
         if not active:

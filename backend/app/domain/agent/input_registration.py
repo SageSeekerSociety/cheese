@@ -27,15 +27,11 @@ def input_registrar(
     probe_unread: bool = False,
     fence_delivery: bool = False,
 ) -> InputRegistrar:
-    return _Registration(
-        session_factory, effects, live, probe_unread, fence_delivery
-    )
+    return _Registration(session_factory, effects, live, probe_unread, fence_delivery)
 
 
 class _Registration:
-    def __init__(
-        self, session_factory, effects, live, probe_unread, fence_delivery
-    ):
+    def __init__(self, session_factory, effects, live, probe_unread, fence_delivery):
         self.session_factory = session_factory
         self.effects = effects
         self.live = live
@@ -57,9 +53,9 @@ class _Registration:
         if rejected is not None:
             raise rejected
         if self.probe_unread:
-            self.live.unread_inputs.setdefault(
-                identity.conversation_id, {}
-            ).setdefault(identity.input_id, time.monotonic())
+            self.live.unread_inputs.setdefault(identity.conversation_id, {}).setdefault(
+                identity.input_id, time.monotonic()
+            )
 
     async def withdraw(self, identity: InputIdentity) -> None:
         async with self.session_factory() as session:

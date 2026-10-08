@@ -146,9 +146,7 @@ class SeatPrewarm:
         runtime = chat._compute.seat_runtime(topic_id, seat)
         if runtime is None:
             return "not_held"
-        async with self._slots, seat_admission(
-            chat.live.seat_lock_for(topic_id, seat)
-        ):
+        async with self._slots, seat_admission(chat.live.seat_lock_for(topic_id, seat)):
             live = runtime.prewarm_due(session)
             if live is None:
                 return "not_due"

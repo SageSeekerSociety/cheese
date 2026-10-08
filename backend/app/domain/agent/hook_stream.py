@@ -82,6 +82,7 @@ from app.domain.run_record import service as run_records
 
 logger = logging.getLogger(__name__)
 
+
 class _WorkRunner(Protocol):
     """轮次运行器里本模块用到的面（``runtime.AgentWorkRunner``）。
 
@@ -420,9 +421,7 @@ async def _bind_user_entry(
                     at=datetime.now(UTC),
                 )
             await session.commit()
-    await _drop_takeover_marks(
-        sessions, live, work_runner, topic_id, seat, generation
-    )
+    await _drop_takeover_marks(sessions, live, work_runner, topic_id, seat, generation)
 
 
 async def _consume_hook_event(
@@ -583,9 +582,7 @@ async def _consume_hook_event(
                 frame = {"type": "block_updated", "block": without_output(payload)}
     elif isinstance(event, AgentCompacting):
         if event.done:
-            await _note_compaction(
-                sessions, live, turn_id, event, channel=channel
-            )
+            await _note_compaction(sessions, live, turn_id, event, channel=channel)
         else:
             if turn_id not in live.compact_notes:
                 # The backend this one replaced may have landed the line while
