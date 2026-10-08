@@ -10,10 +10,10 @@ import pytest
 
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
 )
 
 
@@ -50,7 +50,7 @@ def _display(meta: dict) -> dict:
 
 
 def _chat(client, topic_id: str) -> None:
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass

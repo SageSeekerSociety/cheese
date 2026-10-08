@@ -11,12 +11,12 @@ import uuid
 
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.quoted_context import slide_quote
@@ -122,7 +122,7 @@ def test_a_persons_message_is_live_for_the_room_and_wakes_who_it_names(
     # 芝士 is called in a 支线: everyone watching it sees the message there.
     topic_id = in_thread(client, room, "alice")
     request_id = str(uuid.uuid4())
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         stored = post_message(
             client,
             topic_id,
@@ -148,7 +148,7 @@ def test_a_persons_message_is_live_for_the_room_and_wakes_who_it_names(
 
 def test_a_message_that_names_nobody_wakes_nobody(client, stub_hooks):
     _, topic_id = _room(client)
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         post_message(client, topic_id, "alice", {"content": "我们今晚开会"})
         frames = _until_done(ws)
     assert "turn_started" not in [f["type"] for f in frames]
@@ -172,7 +172,7 @@ def test_a_retried_send_lands_once_and_wakes_once(client, stub_hooks):
     stub_hooks.on_start = lambda: started.append(1)
     request_id = str(uuid.uuid4())
     body = {"content": "@芝士 只说一次", "request_id": request_id}
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         first = post_message(client, topic_id, "alice", body)
         _until_done(ws)
     again = post_message(client, topic_id, "alice", body)

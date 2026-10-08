@@ -20,11 +20,11 @@ from app.domain.agent.compute import ComputePool
 from app.main import app
 from tests.conftest import settle_turn
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
 )
 from tests.integration.test_claude_session_records import _until
 from tests.integration.test_native_batch_ownership import _blocks
@@ -95,7 +95,7 @@ def test_new_full_service_process_reuses_original_native_executor(
             if busy
             else "初始回答"
         )
-        with client.websocket_connect(chat_ws_url(str(topic), "alice")) as ws:
+        with room_socket(client, str(topic), "alice") as ws:
             # 这个 socket 只把房间里的东西推过来，不收发言（`test_chat_ws_auth`
             # 钉的就是那条拒绝）；说话走 POST，和别的用例一样。
             post_message(

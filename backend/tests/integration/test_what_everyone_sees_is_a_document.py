@@ -13,10 +13,10 @@ everyone` 往这份文档里追加的那一路——它把总览写成了只增�
 """
 
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.living_doc import overview_of
@@ -45,7 +45,7 @@ def _say(client, topic_id: str, text: str = "@芝士 现在什么状态") -> Non
     """在这个房间的一条支线里叫芝士说一句，等它跑完——人叫芝士，芝士在支线里
     答。提示词落在 `stub_hooks` 上。"""
     thread = in_thread(client, topic_id, "user-1")
-    with client.websocket_connect(chat_ws_url(thread, "user-1")) as ws:
+    with room_socket(client, thread, "user-1") as ws:
         post_message(client, thread, "user-1", {"content": text})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):

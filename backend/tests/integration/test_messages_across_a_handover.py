@@ -23,10 +23,10 @@ from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.run_records import records_of
@@ -70,7 +70,7 @@ def _queued(client, room: str) -> list:
 
 
 def _say(client, room: str, content: str) -> None:
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": content})
         while ws.receive_json()["type"] != "user_block":
             pass

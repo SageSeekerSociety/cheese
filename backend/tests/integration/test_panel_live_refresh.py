@@ -25,11 +25,11 @@ from app.main import app
 from tests.conftest import StubChannel, retire_topic
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     open_task,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.integration.test_accept_pr import app_world as app_world
@@ -258,7 +258,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
     # 芝士 answers in a 支线 of the room: that is where the turn shows.
     topic_id = in_thread(client, room, "alice")
     seen: list[dict] = []
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         post_message(client, topic_id, "alice", {"content": "@芝士 改一下文档"})
         while True:
             frame = ws.receive_json()
@@ -347,7 +347,7 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
             )
             return sum((row.meta or {}).get("action") == "notify" for row in rows)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")):
+    with room_socket(client, topic_id, "alice"):
         post_message(client, topic_id, "alice", {"content": "@芝士 发个通知"})
         deadline = time.monotonic() + 5
         while asyncio.run(cards()) != 1:

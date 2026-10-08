@@ -18,11 +18,11 @@ from app.domain.delivery import mention
 from app.domain.delivery.models import Delivery
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.quoted_context import prompt_quote, slide_quote
@@ -249,7 +249,7 @@ def test_agent_mentions_stop_at_the_hourly_fuse_and_say_so(client, monkeypatch):
 def test_a_person_naming_two_agents_wakes_both(client, stub_hooks):
     project_id, room_id, cheese, reviewer = _room_with_two_agents(client)
     arrivals = _record_arrivals(stub_hooks)
-    with client.websocket_connect(chat_ws_url(room_id, "alice")) as ws:
+    with room_socket(client, room_id, "alice") as ws:
         post_message(
             client,
             room_id,

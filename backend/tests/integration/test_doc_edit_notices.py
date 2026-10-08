@@ -17,9 +17,9 @@ from sqlalchemy import update
 
 from app.domain.block.models import Block
 from tests.integration.conftest import (
-    chat_ws_url,
     open_task,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 from tests.integration.test_message_edit import _room, _say_in_task
@@ -107,7 +107,7 @@ def test_an_open_page_sees_the_line_change_in_place(client):
     task = _task(client)
     _store(client, task, "第一段", "alice")
     first = _edit_lines(client, task)[0]
-    with client.websocket_connect(chat_ws_url(task, "bob")) as bob:
+    with room_socket(client, task, "bob") as bob:
         _store(client, task, "第一段\n\n第二段", "bob")
         # Something said after the store: its frame comes after the store's,
         # so the page stops waiting even if the store pushed nothing.

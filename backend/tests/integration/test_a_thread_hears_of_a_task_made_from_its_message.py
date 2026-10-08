@@ -9,16 +9,16 @@ routes, the turn and what its session is sent are the real ones.
 """
 
 from tests.integration.conftest import (
-    chat_ws_url,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
 
 def _ask(client, thread: str, text: str) -> None:
-    with client.websocket_connect(chat_ws_url(thread, "alice")) as ws:
+    with room_socket(client, thread, "alice") as ws:
         post_message(client, thread, "alice", {"content": text})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass

@@ -18,13 +18,13 @@ from app.domain.block.repositories import BlockRepository
 from app.main import app
 from tests.conftest import stub_compute, wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     open_task,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -43,7 +43,7 @@ def _room(client) -> tuple[str, str]:
 
 def _say(client, room: str, author: str, content: str) -> str:
     """Post a plain message as ``author`` the way the browser does; its id."""
-    with client.websocket_connect(chat_ws_url(room, author)) as ws:
+    with room_socket(client, room, author) as ws:
         post_message(client, room, author, {"content": content})
         block_id = ""
         while True:
@@ -77,7 +77,7 @@ def _next_update(ws) -> dict:
 def test_the_author_edits_and_the_room_sees_it_live(client):
     room, _ = _room(client)
     said = _say(client, room, "alice", "周五交初稿")
-    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+    with room_socket(client, room, "bob") as bob:
         response = _edit(client, said, "周六交初稿", session_auth_headers("alice"))
         assert response.status_code == 200, response.text
         seen = _next_update(bob)
@@ -103,7 +103,7 @@ def test_an_edit_keeps_the_reactions_on_the_message(client):
         json={"emoji": "👍"},
         headers=session_auth_headers("bob"),
     )
-    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+    with room_socket(client, room, "bob") as bob:
         _edit(client, said, "周六交初稿", session_auth_headers("alice"))
         seen = _next_update(bob)
     assert [r["emoji"] for r in seen["reactions"]] == ["👍"]
@@ -145,7 +145,7 @@ def test_an_agent_edits_its_own_message_through_the_same_route(client):
     assert posted.status_code == 200, posted.text
     message = posted.json()["data"]
     assert message["author"] == room_agent_seat(client, room)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as alice:
+    with room_socket(client, room, "alice") as alice:
         response = _edit(client, message["id"], "先看 issue，再写测试", headers)
         assert response.status_code == 200, response.text
         seen = _next_update(alice)
@@ -388,7 +388,7 @@ def test_a_task_message_is_edited_by_its_author_under_the_same_rules(client):
     task = _task(client, room)
     said = _say_in_task(client, room, task, "alice", "接口先别动")
     assert _edit(client, said, "改掉", session_auth_headers("bob")).status_code == 403
-    with client.websocket_connect(chat_ws_url(task, "bob")) as bob:
+    with room_socket(client, task, "bob") as bob:
         response = _edit(client, said, "接口可以动了", session_auth_headers("alice"))
         assert response.status_code == 200, response.text
         seen = _next_update(bob)
