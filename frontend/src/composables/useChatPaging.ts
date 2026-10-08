@@ -61,23 +61,12 @@ export function useChatPaging(deps: ChatPagingDeps) {
   // browser choked on all three of transfer, JSON parse, and 2226 live DOM nodes.
   const loadingOlder = ref(false)
 
-  // A page of very short messages, or a stretch of blocks that do not surface in
-  // the room at all (`in_room:false` turn events — 295 of the newest 300 blocks
-  // in a real topic), can leave the pane with less on it than fills the
-  // viewport. Then there is nothing to scroll, no scroll event fires, and the
-  // rest of the history is unreachable — so top up until the pane actually
-  // scrolls.
-  //
-  // Bound on how many pages one fill may read: opening a room sweeps back past
-  // the hidden tail until the pane is full (usually ~5-6 pages in a live topic),
-  // and this stops it dead if a room really has nothing to show for pages on end.
-  const MAX_OPENING_PULLS = 24
-
-  // Bound on pulling consecutive pages that render NOTHING (a whole page of
-  // hidden events). Every "load older" keeps going until a page adds a visible
-  // row, so a page that draws nothing cannot strand the reader at the top of a
-  // pane that will not move — but not forever, either.
-  const MAX_EMPTY_PULLS = 12
+  // A page of very short messages on a tall screen can leave the pane with less
+  // on it than fills the viewport. Then there is nothing to scroll, no scroll
+  // event fires, and the rest of the history is unreachable — so top up until the
+  // pane actually scrolls. Pages hold only what the room shows (`listBlocks`), so
+  // this is a page or two at most; the bound stops it dead if it is not.
+  const MAX_OPENING_PULLS = 4
 
   /**
    * The pane holds more than a screenful of history. While the opening skeleton
@@ -104,14 +93,11 @@ export function useChatPaging(deps: ChatPagingDeps) {
   }
 
   /**
-   * One `before` page, prepended to the window. Returns how many ROWS the page
-   * added (`0` if it drew nothing), or null if the topic switched or there is no
-   * cursor any more.
+   * One `before` page, prepended to the window. Returns null if the topic
+   * switched or there is no cursor any more.
    */
-  async function pullOlderPage(tid: string): Promise<{ added: number } | null> {
-    // 游标是「窗口读到哪了」，不是「窗口里画得出来的最老那条」：最新那一页整页不露面
-    //（事件远多于消息的房间里很常见）时窗口里一条都没有，拿 `messages[0]` 当游标就
-    // 一步都翻不动——房间开出来是空的。见 useTimeline.oldestLoaded。
+  async function pullOlderPage(tid: string): Promise<true | null> {
+    // 游标是「窗口读到哪了」（useTimeline.oldestLoaded）。
     const cursor = timeline.oldestLoaded()
     if (!cursor) return null
     const el = scrollRef.value
@@ -135,7 +121,7 @@ export function useChatPaging(deps: ChatPagingDeps) {
     // lib/contentVisibility.
     beginMeasuredLayout(el)
     const before = el ? { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } : null
-    const added = timeline.prepend(payload.data, payload.has_more)
+    timeline.prepend(payload.data, payload.has_more)
     await nextTick()
     const sc = scrollRef.value
     if (sc && before) sc.scrollTop = scrollTopAfterPrepend(before, sc.scrollHeight)
@@ -146,7 +132,7 @@ export function useChatPaging(deps: ChatPagingDeps) {
     // them pulls the reader up by their height on every page. See capWindow.
     timeline.capNewest()
     if (!hasNewer.value) setCachedWindow(tid, timeline.newest())
-    return { added }
+    return true
   }
 
   async function loadOlder(budget = MAX_OPENING_PULLS) {
@@ -154,18 +140,8 @@ export function useChatPaging(deps: ChatPagingDeps) {
     if (!scrollRef.value || !tid || loadingOlder.value || !hasMore.value) return
     loadingOlder.value = true
     let failed = false
-    let pulls = 0
     try {
-      // 一页画不出行就再翻一页，直到这一页真的接上了看得见的历史（画出来的行 > 0）或者
-      // 历史到头。整页不露面的那一带（最新那一段多是 in_room:false 的回合事件）翻一页
-      // 长一分，没有滚动事件，只翻一页就停会把上面那些消息永远卡住。
-      let added = 0
-      do {
-        const page = await pullOlderPage(tid)
-        if (page === null) return
-        added = page.added
-        pulls++
-      } while (added === 0 && hasMore.value && pulls < MAX_EMPTY_PULLS && pulls < budget)
+      if ((await pullOlderPage(tid)) === null) return
     } catch (e) {
       failed = true
       errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
@@ -177,7 +153,7 @@ export function useChatPaging(deps: ChatPagingDeps) {
     // Only now that the flag is clear can another page be pulled, if the pane
     // still isn't tall enough to scroll. Not after a failure — that would retry
     // a broken request in a tight loop.
-    if (!failed) await fillViewportIfNeeded(budget - pulls)
+    if (!failed) await fillViewportIfNeeded(budget - 1)
   }
 
   // --- a window opened in the middle of the history ---------------------------
