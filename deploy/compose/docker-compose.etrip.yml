@@ -100,7 +100,7 @@ services:
     cap_add:
       - SYS_PTRACE
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/healthz"]
+      test: ["CMD", "curl", "-f", "http://localhost:8081/readyz"]
       interval: 30s
       timeout: 10s
       start_period: 30s

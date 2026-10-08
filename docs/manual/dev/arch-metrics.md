@@ -69,67 +69,84 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 
 ## 当前基线 {#baseline}
 
-2026-09-29，`main@33f6ed5c`（P0 三道闸落地之后）。
+2026-10-07，`main@a523f1ae`。数取自 CI 在这个版本上跑出的 `arch-metrics.json`。
 
 | 前端 | 值 |
 |---|---|
-| 组件总数 | 414（117,754 行） |
-| A / B / C / D | 172（41.5%）/ 1（0.2%）/ 113（27.3%）/ 128（30.9%） |
-| A 级行数 | 28,151（23.9% 的行） |
-| 冻结的组件边界违规 | 91 处，57 个文件 |
+| 组件总数 | 619（131,203 行） |
+| A / B / C / D | 357（57.7%）/ 2（0.3%）/ 162（26.2%）/ 98（15.8%） |
+| A 级行数 | 68,441（52.2% 的行） |
+| 冻结的组件边界违规 | 24 处，24 个文件 |
 
 | 后端 | 值 |
 |---|---|
-| 冻结契约条目 | C1 26 + C2 56 + C3 178 = **260** |
-| 函数内导入 | 729 |
-| > 1000 行文件 | 27 |
-| > 1500 行文件 | 16 |
-| `agent/chat.py` | 6,943 行 |
+| 冻结契约条目 | C1 29 + C2 56 + C3 164 = **249** |
+| 函数内导入 | 850 |
+| > 1000 行文件 | 33 |
+| > 1500 行文件 | 7 |
+| `agent/chat.py` | 2,772 行 |
 
 | 文件大小 | 上限 | 超标 | 合计超出行数 |
 |---|---|---|---|
-| `frontend/src/` | 1000 | 19 | 13,804 |
-| `backend/app/` | 1500 | 16 | 21,963 |
-| **合计** | | **35** | **35,767** |
+| `frontend/src/` | 1000 | 4 | 4,423 |
+| `backend/app/` | 1500 | 7 | 4,036 |
+| **合计** | | **11** | **8,459** |
 
-最超的五处：`agent/chat.py`（+5443）、`api/routes/users.py`（+3229）、`frontend/src/api.ts`（+2747）、`review/services.py`（+2565）、`api/routes/topics.py`（+2523）。
+最超的五处：`frontend/src/api.ts`（+1779）、`frontend/src/proto-feedback-fixtures.ts`（+1629）、`agent/chat.py`（+1272）、`agent/runtime.py`（+1231）、`frontend/src/stores/feedback.ts`（+708）。
 
-热点前五（30 天 / 90 天，改次数 × 行数，fix 占比）：
+热点前五（按 30 天排；改次数 × 行数，fix 占比）：
 
 | 文件 | 30 天 | 90 天 |
 |---|---|---|
-| `backend/app/domain/agent/chat.py` | 149 次，49 次 fix（33%） | 246 次，82 次 fix（33%） |
-| `frontend/src/api.ts` | 106 次，15 次 fix（14%） | 178 次，29 次 fix（16%） |
-| `backend/app/api/routes/topics.py` | 90 次，26 次 fix（29%） | 153 次，38 次 fix（25%） |
-| `frontend/src/components/ChatPanel.vue` | 78 次，30 次 fix（38%） | 147 次，58 次 fix（39%） |
-| `backend/app/domain/review/services.py` | 38 次，14 次 fix（37%） | 107 次，30 次 fix（28%） |
+| `backend/app/domain/agent/chat.py` | 195 次，57 次 fix（29%） | 272 次，86 次 fix（32%） |
+| `frontend/src/api.ts` | 167 次，32 次 fix（19%） | 227 次，45 次 fix（20%） |
+| `backend/app/api/routes/topics.py` | 135 次，35 次 fix（26%） | 188 次，46 次 fix（24%） |
+| `backend/app/domain/agent/runtime.py` | 61 次，23 次 fix（38%） | 104 次，41 次 fix（39%） |
+| `frontend/src/cx_types.ts` | 125 次，29 次 fix（23%） | 171 次，37 次 fix（22%） |
 
-同一天被多个提交改：90 天里 6,196 个文件-天中有 **1,674** 个是这样；最多的是 `agent/chat.py` 的 40 天，然后 `frontend/src/api.ts` 33 天、`backend/app/core/config.py` 31 天。
+按 90 天排，第五是 `backend/app/core/config.py`（185 次，40 次 fix，22%），`cx_types.ts` 排第六。窗口里的提交：30 天 2,073 个（fix 956），90 天 2,877 个（fix 1,206）。
 
-## 和 P0 之前比 {#delta}
+同一天被多个提交改：90 天里 11,016 个文件-天中有 **3,352** 个是这样；最多的是 `agent/chat.py` 的 45 天，然后 `frontend/src/api.ts` 和 `backend/app/core/config.py` 各 38 天。
 
-对照点是 `721f7b04`——P0 三道闸和两个定点改动（#2118 / #2120 / #2122）合入前的那个 tip。
+## 和上一版基线比 {#delta}
+
+对照点是上一版基线：2026-09-29，`main@33f6ed5c`。「之前」列是那一版脚本的输出，「现在」列是上面的 `main@a523f1ae`。差值是两份输出相减，不是一次 `--compare` 跑出来的。自己要比两个版本，用：
 
 ```
-python3 .claude/scripts/arch-metrics.py --compare 721f7b04
+python3 .claude/scripts/arch-metrics.py --compare 33f6ed5c
 ```
 
 | 指标 | 之前 | 现在 | 差 |
 |---|---|---|---|
-| `backend.files.chat_py_lines` | 7211 | 6943 | **−268** |
-| `size.excess_lines` | 36035 | 35767 | **−268** |
-| `frontend.grade_counts.grades.A` | 171 | 172 | +1 |
-| `frontend.grade_counts.grade_lines.A` | 28325 | 28151 | −174 |
-| `frontend.grade_counts.components` | 412 | 414 | +2 |
-| `hotspots.90d.commits` | 2123 | 2128 | +5 |
-| `backend.contracts.total` | n/a | 260 | 新测的 |
-| `frontend.boundary.violations` | n/a | 91 | 新测的 |
+| `frontend.grade_counts.components` | 414 | 619 | +205 |
+| `frontend.grade_counts.lines` | 117754 | 131203 | +13449 |
+| `frontend.grade_counts.grades.A` | 172 | 357 | **+185** |
+| `frontend.grade_counts.grades.B` | 1 | 2 | +1 |
+| `frontend.grade_counts.grades.C` | 113 | 162 | +49 |
+| `frontend.grade_counts.grades.D` | 128 | 98 | **−30** |
+| `frontend.grade_counts.grade_lines.A` | 28151 | 68441 | +40290 |
+| `frontend.boundary.violations` | 91 | 24 | **−67** |
+| `frontend.boundary.files` | 57 | 24 | −33 |
+| `backend.contracts.per_contract.api-domain-core`（C1） | 26 | 29 | +3 |
+| `backend.contracts.per_contract.routes-touch-no-models`（C2） | 56 | 56 | 0 |
+| `backend.contracts.per_contract.domains-acyclic`（C3） | 178 | 164 | −14 |
+| `backend.contracts.total` | 260 | 249 | −11 |
+| `backend.deferred_imports` | 729 | 850 | +121 |
+| `backend.files.files_over_1000` | 27 | 33 | +6 |
+| `backend.files.files_over_1500` | 16 | 7 | −9 |
+| `backend.files.chat_py_lines` | 6943 | 2772 | **−4171** |
+| `size.offenders` | 35 | 11 | −24 |
+| `size.excess_lines` | 35767 | 8459 | **−27308** |
+| `hotspots.90d.commits` | 2128 | 2877 | +749 |
+| `shared_days.shared_days` | 1674 | 3352 | +1678 |
 
-两点要读清楚：
+几点要读清楚：
 
-- 这次对照的两个版本只差两个小时（`#2117` 和 `#2122` 是同一天下午的提交），所以**大部分数是噪声**，只有 `chat.py` 那 −268 行是有含义的：一次定点拆分当场就把它变成了超出上限的总行数减少，一道棘轮做不到这件事。
-- 契约和前端边界那两行是 `n/a`，因为那份基线在那个版本上还不存在。这不是没测到，是那时候还没有东西可测。
+- 超标总行数从 35,767 降到 8,459，`chat.py` 一个文件就降了 4,171 行。超过 1500 行的后端文件从 16 个降到 7 个，但超过 1000 行的从 27 个升到 33 个：拆出来的文件大多落在 1000–1500 之间，没有落到 1000 以下。
+- 组件多了 205 个，A 多了 185 个，D 少了 30 个。A 的占比从 41.5% 到 57.7%，A 级行数占比从 23.9% 到 52.2%。组件边界违规从 91 处降到 24 处。
+- 两条往反方向走的线：函数内导入多了 121 条；C1 契约多冻了 3 条（C3 少了 14 条，总数仍降 11）。
+- 热点和同日多提交两项随提交量涨（90 天提交数多了 749 个），不单独说明结构变差。
 
 ## 下一步看什么 {#next}
 
-看下面四个方向就够了：A 级占比（现在是 41.5%）；两条「只降」的线——260 和 91——有没有一个月内掉下来；超标的总行数 35,767 有没有往下走；热点里 `chat.py` 的 fix 占比 33% 有没有降。哪一项都不许卡死（`.claude/rules/architecture.md` 里写的理由），这个脚本也不为它们报红。
+看下面四个方向就够了：A 级占比（现在是 57.7%）；两条「只降」的线——249 和 24——有没有一个月内继续掉；超标的总行数 8,459 有没有往下走，以及 1000–1500 行之间那 26 个后端文件会不会再长过上限；热点里 `chat.py` 的 fix 占比（30 天 29%、90 天 32%）有没有降。函数内导入（850）在涨，也值得看一眼。哪一项都不许卡死（`.claude/rules/architecture.md` 里写的理由），这个脚本也不为它们报红。

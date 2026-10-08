@@ -8,13 +8,13 @@
 // what it looks like.
 //
 // What lives here: the roster and the turns, the timeline window and its paging
-// (listBlocks is called in exactly four places, all of them in useChatPaging),
+// (listBlocks is called from useChatPaging, loadTopic and roomResync),
 // the socket frames and what each one means for the window, the scroll position
 // policy, the unread/received animation sets, and the error banner. What
 // does not: the composer (useChatComposer), the pointer affordances on a row
 // (useChatRowActions), the per-row entrance animations (useTimelineMotion), any
 // markup, and the decisions that belong to the page a panel is rendered from.
-import type { Block, ChatAttachment, ReactionAgg, Topic, WsServerFrame } from '../cx_types'
+import type { Block, ChatAttachment, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
@@ -30,6 +30,7 @@ import { useChatRowActions } from '../components/chat/composables/useChatRowActi
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
 import { useActivityLines } from '../components/room/composables/useActivityLines'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
+import { useHistoryReads } from '../components/room/composables/useHistoryReads'
 import { useLiveSteps } from '../components/room/composables/useLiveSteps'
 import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
 import { useRoomActivity } from '../components/room/composables/useRoomActivity'
@@ -58,6 +59,7 @@ import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
+import { applyRoomState, useRoomResync } from './useRoomResync'
 import { useRoomTasks } from './useRoomTasks'
 
 import i18n, { t } from '@/i18n'
@@ -139,6 +141,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
   const timeline = useTimeline({ renders: rendersInRoom })
+  const history = useHistoryReads({ roomId: () => place()?.id, disposed: () => disposed })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
 
@@ -160,7 +163,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   function replaceShown(block: Block) {
     if (!timeline.find(block.id)) return
     timeline.replace(block)
-    historyChanges?.set(block.id, block)
+    history.note(block.id, block)
   }
 
   // 自己的清单：发一张、点记号改一步 —— 见 useOwnChecklist。
@@ -174,7 +177,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const { reactionPickerFor, applyReactions, onReact, togglePicker } = useMessageReactions({
     find: (id) => timeline.find(id),
     errorMsg,
-    pendingHistory: () => historyReactions,
+    pendingHistory: history.pendingReactions,
     me: AUTHOR,
   })
 
@@ -222,11 +225,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // State frames are transient, so a re-connect rather than the first open:
       // a doc saved while we were away has no remaining turn left to replay it.
       if (reconnect) emit('state-changed', 'doc')
+      // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
+      sendOnSocket({ type: 'sync' })
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
       const current = place()
-      if (current?.id === topicId) void loadTopic(current)
+      if (current?.id === topicId) void (history.entered(topicId) ? resync(topicId) : loadTopic(current))
     },
     errorMsg,
   })
@@ -259,13 +264,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     openSocket(topicId)
   }
 
-  // Append a block unless it's already in the timeline: after a switch-away /
-  // return, history (DB) and the broker's in-progress-turn replay overlap, and
-  // a block must never show up twice (现场不能错).
-  let historyChanges: Map<string, Block | null> | null = null
-  let historyReactions: Map<string, ReactionAgg[]> | null = null
-  let historyGeneration = 0
-
   // 出错提示停多久。一次没成的事（表情没加上、下载失败）说一句，够读完就淡出：一直
   // 挂着的话它盖住输入框上方那块，而说的多半已经过去了。连不上服务器的时候不走——
   // 那时候这一行说的是房间此刻的状态（连接被拒、正在重连、历史没读出来），它一走，
@@ -282,10 +280,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 后换成落库的那一条）必须是瞬间的，否则同一句话会在屏幕上出现两遍。
   const editing = new Set<string>()
 
+  // Append a block unless it's already in the timeline: after a switch-away /
+  // return, history (DB) and the broker's in-progress-turn replay overlap, and
+  // a block must never show up twice (现场不能错).
   function pushBlock(b: Block) {
-    historyChanges?.set(b.id, b)
+    history.note(b.id, b)
     const landing = timeline.append(b)
-    if (landing === 'known' || landing === 'above' || historyChanges !== null || b.author === AUTHOR) return
+    if (landing === 'known' || landing === 'above' || history.reading() || b.author === AUTHOR) return
     if (b.kind === 'artifact') emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
     if (landing === 'shown') arrived.add(b.id)
     if ((landing === 'held' || !atBottom.value) && b.kind !== 'event') unseen.value.push(b.id)
@@ -332,7 +333,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'block_updated': {
         // 已经在时间线上的一行变了：原地换掉，不追加第二行。
         timeline.replace(frame.block)
-        historyChanges?.set(frame.block.id, frame.block)
+        history.note(frame.block.id, frame.block)
         toSite(frame.block)
         break
       }
@@ -364,7 +365,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         autoScroll()
         break
       case 'retract_block':
-        historyChanges?.set(frame.block_id, null)
+        history.note(frame.block_id, null)
         timeline.remove(frame.block_id)
         break
       case 'agent_control':
@@ -378,6 +379,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
         break
       case 'activity_snapshot':
         activity.snapshot(frame.members)
+        break
+      case 'room_state':
+        applyRoomState(frame, { turns, runRecords, activity, liveSteps, typing })
         break
       case 'thread_activity':
         emit('thread-activity', frame.thread_id, frame.member, frame.active)
@@ -401,13 +405,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 卸载之后还在飞的那几个请求回来时，不该再往一个已经没了的面板上写东西。
   let disposed = false
 
+  function historyReadFailed(roomId: string, e: unknown) {
+    if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
+    // A failed history fetch must not terminate socket recovery during an outage.
+    if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) retryLater(roomId)
+  }
+
   async function loadTopic(room: Topic, entering = false) {
-    const generation = ++historyGeneration
-    const changes = new Map<string, Block | null>()
-    historyChanges = changes
-    const reactions = new Map<string, ReactionAgg[]>()
-    historyReactions = reactions
-    const stillHere = () => !disposed && generation === historyGeneration && place()?.id === room.id
+    const { changes, reactions, stillHere, done, end } = history.begin(room.id, true)
     // 地址点名了一条消息：落到它上面，而不是上次停的地方。
     const focus = focusBlock() ?? null
     errorMsg.value = null
@@ -526,20 +532,11 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // 最新那一段几乎全是 `in_room:false` 的回合事件，一页 50 块常常只画得出一两行，补完
       // 之前露出来就是「一条消息飘在半空」，补完再露才是首屏一屏历史。见 useChatPaging。
       await paging.fillViewportIfNeeded()
+      done()
     } catch (e) {
-      if (!stillHere()) return
-      if (e instanceof ApiError && [401, 403, 404].includes(e.status)) closeSocket()
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
-      // A failed history fetch must not terminate socket recovery during an outage.
-      if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) {
-        retryLater(room.id)
-      }
+      if (stillHere()) historyReadFailed(room.id, e)
     } finally {
-      if (generation === historyGeneration) {
-        historyChanges = null
-        historyReactions = null
-        loadingHistory.value = false
-      }
+      if (end()) loadingHistory.value = false
     }
   }
 
@@ -680,6 +677,16 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom,
     rowsPending: () => rowBatch.pending.value,
   })
+  const resync = useRoomResync({
+    history,
+    timeline,
+    runRecords,
+    settle: (b: Block) => settleOutbox(b),
+    scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
+    socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
+    failed: historyReadFailed,
+  })
+
   const { loadingOlder, loadingNewer, openAt, onTimelineScroll } = paging
 
   const motion = useTimelineMotion({

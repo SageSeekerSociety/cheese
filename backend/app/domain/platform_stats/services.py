@@ -192,9 +192,9 @@ class PlatformStatsService:
             },
             "machines": await self._machines.counts(),
             # 「平台现在健康吗」——和上面两组的差别是**这一刻**的，不是存量也不是
-            # 窗口。复用 `/health/detailed` 那一套判据（`_REQUIRED_CHECKS` 的同一批
-            # 检查），不在这里另写一份「什么算健康」：两处各写一份的话，看板说健康、
-            # readyz 说不健康，而两边各自都看着对。
+            # 窗口。读的是 `/health/detailed` 那份报告（`health_report()`），不在这里
+            # 另写一份「什么算健康」。它比 readyz 宽：事件循环卡顿也会让它显示
+            # degraded，而 readyz 只看 `_REQUIRED_CHECKS`。
             "health": await _health_snapshot(),
             # 三样缺口：磁盘压力（**只覆盖后端这一台**）、预览连接（**进程内存**）、
             # 机器状态普查（**没有容器清单**）。各自的口径写在 `gaps.py` 上。
@@ -267,8 +267,8 @@ async def _health_snapshot() -> dict:
     判据本身在 `health_report()` 里，这里做的是同一件事的第二次回答 —— 所以它只取
     「状态 + 一句话」，绝不重算健康与否：`status` 原样带出来，页面照读。
 
-    `overall` 是三者里最差的那一个（up < stalling < down），而不是「多数票」：
-    一个 down 的 Redis 不该被两个 up 投成「healthy」。
+    `overall` 原样取 `health_report()` 的结论：任何一项不是 up/skipped 就是
+    「degraded」，不是「多数票」—— 一个 down 的 Redis 不该被其余几项投成「healthy」。
     """
     from app.api.routes import health as health_routes
 

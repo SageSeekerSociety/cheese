@@ -152,6 +152,22 @@ export function useRoomTurns(options: {
     return true
   }
 
+  /**
+   * 重连后服务端说的「此刻在跑的全部轮次」（`room_state` 帧）。屏幕上一直留着断线前
+   * 的那几轮；断线期间结束了的在这里悄悄撤掉（不演「做完了」那一下，那是早就过去
+   * 的事），还在跑的原样留着，新开始的接上。
+   */
+  function reconcile(ids: string[], since?: Record<string, unknown>, agents?: Record<string, string>) {
+    const live = new Set(ids)
+    for (const id of [...activeTurnIds.value, ...Object.keys(turnStarts.value)]) if (!live.has(id)) ended(id)
+    activeTurnIds.value = live
+    for (const id of ids) {
+      const at = since?.[id]
+      began(id, typeof at === 'number' ? at * 1000 : Date.now(), agents?.[id])
+    }
+    awaitingReply.value = live.size > 0
+  }
+
   /** 换了房间：上一个房间的轮次和这里无关。 */
   function reset() {
     awaitingReply.value = false
@@ -170,6 +186,7 @@ export function useRoomTurns(options: {
     started,
     finished,
     settleIfIdle,
+    reconcile,
     reset,
   }
 }
