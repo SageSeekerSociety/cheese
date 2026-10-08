@@ -34,6 +34,8 @@ const props = withDefaults(
     /** 历史卡：点这一条在上面展开它当年的那张卡。 */
     expandable?: boolean
     expanded?: boolean
+    /** 跟在状态后面的一句，比如还有几条批注没送出。 */
+    aside?: string
   }>(),
   {
     column: null,
@@ -45,6 +47,7 @@ const props = withDefaults(
     revoke: false,
     expandable: false,
     expanded: false,
+    aside: '',
   }
 )
 
@@ -85,6 +88,7 @@ function onStatus() {
       <span v-if="column" class="accept-bar__dot" :style="columnDotStyle(column)" aria-hidden="true" />
       <v-icon v-else :color="color" size="18">{{ icon }}</v-icon>
       <span class="accept-bar__title">{{ title }}</span>
+      <span v-if="aside" class="accept-bar__aside">{{ aside }}</span>
       <v-icon v-if="expandable" size="16" class="accept-bar__caret">{{
         expanded ? 'mdi-chevron-down' : 'mdi-chevron-up'
       }}</v-icon>
@@ -161,6 +165,16 @@ function onStatus() {
   margin-inline: 4px;
   border: 2px solid var(--faint);
   border-radius: 50%;
+}
+.accept-bar__aside {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 .accept-bar__caret {
   flex: none;

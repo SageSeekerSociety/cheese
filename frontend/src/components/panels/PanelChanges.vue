@@ -18,6 +18,7 @@
 // 回来。加取数动作在组合式函数里加，加画法在展示组件里加，这一只基本不再长。
 import type { PanelChangesBundle } from '../../composables/usePanelChanges'
 import type { FileSource } from '../../cx_types'
+import type { ReviewBundle } from '../../types/reviewComment'
 
 import PanelChangesView from './PanelChangesView.vue'
 
@@ -27,8 +28,10 @@ const props = withDefaults(
     readOnly?: boolean
     /** 这一格的取数（`composables/usePanelChanges.ts` 那一包）。 */
     changes: PanelChangesBundle
+    /** 这件任务的批注，宿主从采纳卡那份里递进来。 */
+    review?: ReviewBundle | null
   }>(),
-  { readOnly: false }
+  { readOnly: false, review: null }
 )
 
 const {
@@ -85,6 +88,9 @@ const {
   downloadOpenFile,
   saveFile,
   overwriteFile,
+  fileMerge,
+  resolveMerge,
+  cancelMerge,
   reloadOpenFile,
 } = props.changes
 
@@ -163,6 +169,9 @@ defineExpose({ openFile })
     :doc-loading="docLoading"
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"
+    :review="props.review"
+    :file-merge="fileMerge"
+    :agent-name="props.review?.agentName ?? ''"
     @select-file="onSelectFile"
     @close-file="closeFile"
     @select-version="onSelectVersion"
@@ -171,6 +180,8 @@ defineExpose({ openFile })
     @download="onDownload"
     @save="saveFile"
     @overwrite="overwriteFile"
+    @resolve-merge="resolveMerge"
+    @cancel-merge="cancelMerge"
     @reload="reloadOpenFile"
     @view-changed="setView"
     @draft-changed="setDraft"

@@ -12,14 +12,18 @@ again as a reviewer speaking.
 """
 
 import asyncio
+import functools
 import logging
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core.forge_http import forge_client
+from app.core.sentences import say
 from app.domain.project.forge import proposal_client
 from app.domain.review.comment_models import ReviewComment
+from app.domain.review.github_pr import GitHubPRClient, GitHubPRError
 from app.domain.review.models import AcceptCard
 from app.domain.review.pr_signals import PLATFORM_REVIEW_MARK
 from app.domain.topic.models import Topic
@@ -36,6 +40,55 @@ def comment_text(comment: ReviewComment) -> str:
         parts.append(f"```suggestion\n{comment.suggestion}\n```")
     parts.append(PLATFORM_REVIEW_MARK)
     return "\n\n".join(parts)
+
+
+async def _post_github_review(
+    client: GitHubPRClient,
+    number: int,
+    *,
+    commit_id: str | None,
+    body: str,
+    comments: list[dict],
+) -> None:
+    """One review of comments on lines, or, when GitHub refuses a line that is
+    not in the PR's diff, the same review with every comment written into its
+    body."""
+    token, _ = await client.tokens.write_token()
+    inline = [
+        {
+            "path": c["path"],
+            "line": c["line"],
+            "side": "RIGHT",
+            "body": c["body"],
+            **(
+                {"start_line": c["start_line"], "start_side": "RIGHT"}
+                if c.get("start_line") and c["start_line"] < c["line"]
+                else {}
+            ),
+        }
+        for c in comments
+    ]
+    payload: dict = {"event": "COMMENT", "body": body, "comments": inline}
+    if commit_id:
+        payload["commit_id"] = commit_id
+    url = client._url(f"/pulls/{number}/reviews")
+    async with forge_client(transport=client._transport, timeout=30.0) as http:
+        resp = await http.post(url, json=payload, headers=client._headers(token))
+        if resp.status_code == 422 and inline:
+            folded = "\n\n".join(
+                [body, *(f"`{c['path']}:{c['line']}`\n{c['body']}" for c in comments)]
+            )
+            resp = await http.post(
+                url,
+                json={"event": "COMMENT", "body": folded},
+                headers=client._headers(token),
+            )
+    if resp.status_code not in (200, 201):
+        raise GitHubPRError(
+            say(
+                "githubReviewPostFailed", status=resp.status_code, reply=resp.text[:300]
+            )
+        )
 
 
 def dispatch(
@@ -79,7 +132,12 @@ async def _run(
                 )
                 if part
             )
-            await client.post_review(
+            post = (
+                functools.partial(_post_github_review, client)
+                if isinstance(client, GitHubPRClient)
+                else client.post_review
+            )
+            await post(
                 card.pr_number,
                 commit_id=card.pr_head_sha,
                 body=body,

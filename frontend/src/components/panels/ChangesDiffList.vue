@@ -7,24 +7,101 @@
 //
 // 它不自己滚：外面那一列（顶部还有这次交付的情况）一起滚，所以段头里的位置由外面问
 // （`scrollTo`）。
+import type { DiffReview, ReviewComment, ReviewCommentDraft } from '@/types/reviewComment'
 import type { FileDiff } from '../../lib/diff'
 
 import { computed, ref } from 'vue'
 
-import { parseDiffLines } from '../../lib/diff'
+import { numberDiffLines, parseDiffLines } from '../../lib/diff'
+import ReviewCommentBox from '../review/ReviewCommentBox.vue'
+import ReviewCommentCard from '../review/ReviewCommentCard.vue'
 
 import ChangesDiff from './ChangesDiff.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-const props = defineProps<{ diffs: FileDiff[] }>()
+const props = withDefaults(defineProps<{ diffs: FileDiff[]; review?: DiffReview | null }>(), { review: null })
 
 // 每个文件的行只在 diff 换了时重算：模板里现算的话，每画一次都是一份新数组，下面那
 // 一段会当它换了文件，把点开的「显示剩余」收回去。
 const linesByPath = computed(() => new Map(props.diffs.map((d) => [d.path, parseDiffLines(d.body)])))
 
-const emit = defineEmits<{ (e: 'open', path: string): void }>()
+const emit = defineEmits<{
+  (e: 'open', path: string): void
+  (e: 'comment', draft: ReviewCommentDraft): void
+  (e: 'edit-comment', id: string, body: string, suggestion: string | null): void
+  (e: 'remove-comment', id: string): void
+}>()
+
+// ---- 批注：挂在它说的那几行下面。 ----
+// 正在写的那一条：哪个文件、哪几行、那几行现在的字。
+const composing = ref<{ path: string; start: number; end: number; text: string } | null>(null)
+
+/** 这一条该挂在哪一行下面：未发送的按写的时候那几行的末行，送出过的按那几行在这一版里
+ *  的位置；那几行已经不在了是 null。 */
+function anchorOf(c: ReviewComment): number | null {
+  if (c.state === 'draft') return c.line_end
+  return c.current_line === null ? null : c.current_line + (c.line_end - c.line_start)
+}
+// 这一版的差异里露出来的那些行：挂不上去的批注放在文件头上。
+const shownLines = computed(
+  () =>
+    new Map(
+      props.diffs.map((d) => [
+        d.path,
+        new Set(
+          numberDiffLines(linesByPath.value.get(d.path) ?? [])
+            .filter((r) => r.kind !== 'del' && r.newNumber != null)
+            .map((r) => r.newNumber as number)
+        ),
+      ])
+    )
+)
+const topLevel = computed(() => (props.review?.comments ?? []).filter((c) => !c.parent_id))
+function repliesOf(id: string) {
+  return (props.review?.comments ?? []).filter((c) => c.parent_id === id)
+}
+function atLine(path: string, line: number) {
+  if (!shownLines.value.get(path)?.has(line)) return []
+  return topLevel.value.filter((c) => c.path === path && anchorOf(c) === line)
+}
+function atHead(path: string) {
+  const shown = shownLines.value.get(path)
+  return topLevel.value.filter((c) => {
+    if (c.path !== path) return false
+    const at = anchorOf(c)
+    return at === null || !shown?.has(at)
+  })
+}
+function where(c: ReviewComment) {
+  if (c.state === 'sent' && c.current_line === null) return t('work.room.review.gone')
+  const start = c.state === 'draft' ? c.line_start : (c.current_line as number)
+  const end = start + (c.line_end - c.line_start)
+  return t('work.room.review.lines', { lines: start === end ? `${start}` : `${start}–${end}` })
+}
+function onPick(path: string, start: number, end: number, text: string) {
+  composing.value = { path, start, end, text }
+}
+function submitNew(body: string, suggestion: string | null) {
+  const c = composing.value
+  if (!c) return
+  emit('comment', { path: c.path, line_start: c.start, line_end: c.end, line_text: c.text, body, suggestion })
+  composing.value = null
+}
+function reply(parentId: string, body: string) {
+  const parent = topLevel.value.find((c) => c.id === parentId)
+  if (!parent) return
+  emit('comment', {
+    path: parent.path,
+    line_start: parent.line_start,
+    line_end: parent.line_end,
+    line_text: parent.line_text,
+    body,
+    suggestion: null,
+    parent_id: parentId,
+  })
+}
 
 const collapsed = ref(new Set<string>())
 function toggle(path: string) {
@@ -86,7 +163,54 @@ defineExpose({ scrollTo })
           {{ t('work.room.changes.openFile') }}
         </BaseButton>
       </div>
-      <ChangesDiff v-if="!collapsed.has(d.path)" :lines="linesByPath.get(d.path) ?? []" inline />
+      <template v-if="!collapsed.has(d.path)">
+        <ReviewCommentCard
+          v-for="c in atHead(d.path)"
+          :key="c.id"
+          :comment="c"
+          :replies="repliesOf(c.id)"
+          :where="where(c)"
+          :mine="c.author === review?.me"
+          :writable="!!review?.writable"
+          :agent-name="review?.agentName ?? ''"
+          :busy="review?.busy"
+          @edit="(id, b, s) => emit('edit-comment', id, b, s)"
+          @remove="(id) => emit('remove-comment', id)"
+          @reply="reply"
+        />
+        <ChangesDiff
+          :lines="linesByPath.get(d.path) ?? []"
+          inline
+          :commentable="!!review?.writable"
+          :selected="composing?.path === d.path ? composing : null"
+          @pick="(s, e, text) => onPick(d.path, s, e, text)"
+        >
+          <template #after="{ line }">
+            <ReviewCommentCard
+              v-for="c in atLine(d.path, line)"
+              :key="c.id"
+              :comment="c"
+              :replies="repliesOf(c.id)"
+              :where="where(c)"
+              :mine="c.author === review?.me"
+              :writable="!!review?.writable"
+              :agent-name="review?.agentName ?? ''"
+              :busy="review?.busy"
+              @edit="(id, b, s) => emit('edit-comment', id, b, s)"
+              @remove="(id) => emit('remove-comment', id)"
+              @reply="reply"
+            />
+            <ReviewCommentBox
+              v-if="composing && composing.path === d.path && composing.end === line"
+              :line-text="composing.text"
+              :submit-label="t('work.room.review.add')"
+              :busy="review?.busy"
+              @submit="submitNew"
+              @cancel="composing = null"
+            />
+          </template>
+        </ChangesDiff>
+      </template>
     </section>
   </div>
 </template>
