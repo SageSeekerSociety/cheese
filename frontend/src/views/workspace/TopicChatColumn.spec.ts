@@ -115,10 +115,10 @@ describe('对话栏的接线', () => {
     // 会白多 /docs + /doc/history 两条）。重连才补离线时错过的保存，见
     // ChatPanel.reconnect.spec.ts。
     sockets.at(-1)?.onopen?.()
-    expect(emitted()['state-changed'] ?? []).not.toContainEqual(['doc'])
+    expect(emitted()['state-changed'] ?? []).not.toContainEqual(['doc', undefined])
     // 房间落下一帧 state/doc（文档真被存回了）：转上去，让文档那一格刷新。
     sockets.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'state', resource: 'doc' }) })
-    expect(emitted()['state-changed']).toContainEqual(['doc'])
+    expect(emitted()['state-changed']).toContainEqual(['doc', undefined])
   })
 
   it('未读数一路透传到对话栏，新消息线才画得出来', async () => {

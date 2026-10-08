@@ -16,7 +16,7 @@ from app.api.response import ok
 from app.api.routes.projects import DbSession
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.topic.directory import channel_directory
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -71,7 +71,7 @@ async def step_into_channel(
             content=say("channelSteppedIn", actor=f"<@{actor.handle}>"),
         )
     await db.commit()
-    await announce_stale(topic.id, "topics")
+    await announce_stale(topic.id, "topics", id=topic.id)
     return ok({"topic_id": str(topic.id), "joined": True})
 
 
@@ -101,5 +101,5 @@ async def hand_over_channel(
             ),
         )
     await db.commit()
-    await announce_stale(topic.id, "topics")
+    await announce_stale(topic.id, "topics", id=topic.id)
     return ok({"topic_id": str(topic.id), "manager": body.handle})

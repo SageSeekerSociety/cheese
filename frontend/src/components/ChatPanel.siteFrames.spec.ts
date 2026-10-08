@@ -144,3 +144,26 @@ describe('对话栏把现场的帧转过去', () => {
     expect(view.emitted<[Record<string, number>]>('site-turns').at(-1)![0]).toEqual({})
   })
 })
+
+describe('一个资源变了的帧往上报', () => {
+  it('帧指名了变的那一行：那一个 id 也带上去，面板据此只重取那一行', async () => {
+    const { view, socket } = await open()
+
+    socket.emit({ type: 'state', resource: 'topics', id: 'room-9' })
+    await flush()
+
+    expect(
+      view.emitted<[string, string?]>('state-changed'),
+      'the room row that changed must reach the parent'
+    ).toContainEqual(['topics', 'room-9'])
+  })
+
+  it('没指名（老后端、或没有单行的帧）：照旧只报资源，面板整块重取', async () => {
+    const { view, socket } = await open()
+
+    socket.emit({ type: 'state', resource: 'topics' })
+    await flush()
+
+    expect(view.emitted<[string, string?]>('state-changed')).toContainEqual(['topics', undefined])
+  })
+})

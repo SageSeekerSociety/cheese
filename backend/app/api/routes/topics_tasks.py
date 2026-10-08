@@ -45,7 +45,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.own import may_work_for
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
@@ -341,7 +341,7 @@ async def conclude_task(
     await tell_origin(db, task, ended)
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -367,7 +367,7 @@ async def reopen_task(
     )
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -413,7 +413,7 @@ async def create_task(
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -445,7 +445,7 @@ async def start_task(
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     await dispatch(chat)
     return ok(out)
 
@@ -477,7 +477,7 @@ async def update_task(
         await tasks.set_contributors(task, leaving)
         out = await _task_out(db, chat, task)
         await db.commit()
-        await announce_stale(place.room_id, "topics")
+        await announce_stale(place.room_id, "topics", id=place.room_id)
         return ok(out)
     members = TopicMemberService(db)
     if "owner_handle" in body.model_fields_set and body.owner_handle:
@@ -517,7 +517,7 @@ async def update_task(
         )
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -637,6 +637,6 @@ async def create_teammate_task(
     if key is not None:
         await idem.record_result(db, key, out)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     await dispatch(chat)
     return ok(out)

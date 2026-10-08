@@ -28,7 +28,7 @@ from app.auth.project_access import may_read_project
 from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.notification.models import Notification
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
