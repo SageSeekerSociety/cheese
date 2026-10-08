@@ -519,6 +519,9 @@ const unreadOnOpen = store.unreadMap[props.topicId]?.messages ?? 0
 // 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
 const roomMembers = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
+// 任务那一栏「做这件事的队友」能挑的几位：这间房名册上的 AI 队友。换的时候后端也只认
+// 名册上那个座位，所以给的就是名册。
+const roomAgents = computed<TopicMemberRow[]>(() => roomMembers.value.filter((m) => m.agent))
 const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
@@ -600,6 +603,7 @@ void openPlace()
         :member-names="memberNames"
         :agent-name="store.agentName"
         :people="taskPeople"
+        :agents="roomAgents"
         :machine="taskMachine"
         :machine-error="taskMachineError"
         :starting="taskStarting"
@@ -612,6 +616,7 @@ void openPlace()
         :hand-over="taskPage.handOver"
         :rename="taskPage.rename"
         :set-collaborators="taskPage.setCollaborators"
+        :set-agent="taskPage.setAgent"
         :load-machine="taskPage.loadMachine"
         :panel-open="panelOpen"
         @open-room="backToRoom"

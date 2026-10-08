@@ -2084,6 +2084,9 @@
   },
   "task": {
     "agent": "AI teammate",
+    "agentEdit": "Change",
+    "agentHeading": "Which AI teammate does this",
+    "agentHint": "Whoever you pick takes over from the next turn",
     "machine": "Environment",
     "followsRoom": "Follows the channel",
     "details": "Task details",
