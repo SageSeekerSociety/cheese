@@ -41,7 +41,7 @@ breaks every query on that table the moment the migration commits — #2914
 dropped `task.video_url` in the same PR that unmapped it (`694b0dbaf5eb`).
 
 `.claude/scripts/check-migration-safety.py` enforces the rules marked ✓ on
-every migration a PR **adds** (CI: `migration-heads` job; locally: the
+every migration a PR **adds** (CI: backend `static` job; locally: the
 `migration-safety` pre-commit hook). Migrations on main are not re-judged.
 
 1. **One transaction per migration.** `env.py` sets

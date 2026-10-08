@@ -151,9 +151,12 @@ jobs:
       # while migrations run?). Needs main's history for the merge base; a
       # depth-1 checkout has none. Rules: .claude/rules/migrations.md.
       - name: Fetch main for comparison
+        id: migration_history
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: git fetch --no-tags --unshallow origin
 
       - name: Added migrations are safe under the running release
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.migration_history.outcome == 'success' }}
         # The job's default working directory is backend/; the script takes
         # repository paths.
         working-directory: ${{ github.workspace }}

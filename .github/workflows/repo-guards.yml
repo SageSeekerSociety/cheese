@@ -123,6 +123,8 @@ jobs:
       # this fetch is what makes the guard judgeable at all. Note the command:
       # a `--depth=1` here would RE-shallow origin/main and undo the merge base.
       - name: Fetch main for comparison
+        id: history
+        if: ${{ !cancelled() }}
         run: git fetch --no-tags --unshallow origin
 
       - name: Alembic chain would not fork on merge
@@ -147,13 +149,18 @@ jobs:
       # The changelog is built from release tags and the commits between: the
       # history is already whole from the fetch above, the tags are not.
       - name: Fetch release tags for the changelog
+        id: docs_tags
+        if: ${{ !cancelled() && steps.history.outcome == 'success' }}
         run: git fetch --tags --force origin
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        id: docs_node
+        if: ${{ !cancelled() }}
         with:
           node-version: 22
 
       - name: Build the docs site
+        if: ${{ !cancelled() && steps.docs_node.outcome == 'success' && steps.docs_tags.outcome == 'success' }}
         working-directory: docs/site
         env:
           OUT: ${{ runner.temp }}/docs
