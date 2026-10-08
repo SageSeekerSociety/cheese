@@ -17,98 +17,97 @@
 // would actually merge — except on the platform lane, where accepting is
 // purely a human judgment.
 //
-// It owns its own data (the card list, the PR-checks poll) rather than taking
-// them as props: everything here is about this one topic's cards and nothing
-// outside needs to read them. TopicView only ever says 「重新拉一次」 (`reload`),
-// which it does when 芝士 files a card or a `cheese` command changes one
-// mid-turn.
+// The data (the card list, the PR-checks poll) lives in `useAcceptCard`. A page
+// that shows the card in more than one place takes one copy with
+// `provideAcceptCard` and every box on it reads that copy; rendered on its own,
+// the box takes its own. TopicView only ever says 「重新拉一次」 (`reload`),
+// which it does when 芝士 files a card or a `cheese` command changes one mid-turn.
 //
-// 这一件现在只剩**接线**：判断与动作在 `composables/useAcceptCard.ts`，五张脸的
+// 这一件现在只剩**接线**：判断与动作在 `composables/useAcceptCard.ts`，几张脸的
 // 画法在 `components/accept/*.vue`，谁点哪一下打哪个动作看下面那个模板就够了。
 // 拆开之前它是一块 1215 行的模板（#2143）。
+//
+// 待审阅的卡在这里只剩一条（AcceptDockBar）：状态，加上轮到人时的「退回 / 采纳」。
+// 交的是什么、检查怎样、审阅重点、改派和作废都在「改动」页顶部（ChangesReviewHead），
+// 审阅本来就在那边看。
 import type { CardPhase } from '@/lib/topicState'
 
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 
-import { useAcceptCard } from '@/composables/useAcceptCard'
+import { injectAcceptCard, useAcceptCard } from '@/composables/useAcceptCard'
 
-import AcceptDecidedFace from '@/components/accept/AcceptDecidedFace.vue'
 import AcceptDeliveringFace from '@/components/accept/AcceptDeliveringFace.vue'
 import AcceptDockBar from '@/components/accept/AcceptDockBar.vue'
 import AcceptGateFace from '@/components/accept/AcceptGateFace.vue'
-import AcceptPendingFace from '@/components/accept/AcceptPendingFace.vue'
+import AcceptRejectForm from '@/components/accept/AcceptRejectForm.vue'
+import { t } from '@/i18n'
 
 const props = defineProps<{
   topicId: string
   topicStatus: string
   taskId?: string | null
-  /** 贴在对话栏输入框上方：平时只剩一行横条，点开才是整张卡。不贴底的时候（任务卡
-   *  详情里）整张卡照旧摊开。 */
-  docked?: boolean
+  /** 手机上对话和「改动」是两个页签：这一条只放「审阅」，决定在「改动」页底部。 */
+  reviewButton?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'phase', phase: CardPhase): void
-  /** 去验收: show me what I am being asked to accept. */
+  /** 去审阅: show me what I am being asked to accept. */
   (e: 'review'): void
+  /** 正在写退回理由：这段时间输入框让给退回那一块。 */
+  (e: 'rejecting', on: boolean): void
 }>()
 
+// 页面已经取了一份（provideAcceptCard）就读那一份：对话栏、面板底部、「改动」页顶部
+// 看的是同一张卡的同一刻。单独渲染时（预览站、测试）自己取。
+const card = injectAcceptCard() ?? useAcceptCard(props)
 const {
   acceptBusy,
   expanded,
-  showDetail,
   hasBox,
   bar,
+  barColumn,
+  decisionOpen,
+  acceptLabel,
   phase,
   loaded,
   animate,
-  // 台面上的那几张卡
   pendingCard,
   acceptedCard,
   deliveringCard,
   gateCard,
-  // 待采纳那张脸要读的
-  mergeBadge,
-  mergeReasons,
-  forgeDeclaration,
-  needsPr,
   acceptBlockedTitle,
-  autoMergeVisible,
-  autoMergeArmedBy,
-  pendingNote,
   deliveryNote,
-  reviewerChoices,
   prChecks,
-  // 展开的小表单
   showGateOutput,
   showRejectInput,
   rejectNote,
-  showVoidInput,
-  voidNote,
-  showForceMergeInput,
-  forceMergeReason,
-  deliverableBusy,
-  deliverableError,
-  // 动作
-  reload,
-  onDownloadDeliverable,
-  onApproveCard,
-  onReassignCard,
   onAcceptCard,
   onRevokeCard,
-  onForceMerge,
-  onToggleAutoMerge,
   onRejectCard,
-  onVoidCard,
-  // 画的时候顺手要用的
-  author,
   agentName,
   agentHandle,
-} = useAcceptCard(props)
+  comments,
+} = card
 
-// 决策在聊天，审查在面板: the card stays here — accepting is a social decision
-// and needs the conversation around it — but where the topic stands is not this
-// box's private business. The header states it and the panel opens on the tab it
-// calls for, so the one word travels up rather than the card list travelling out.
+// 退回那一块里列的批注：没送出的那几条，每条写着在哪。
+const rejectComments = computed(() =>
+  comments.drafts.value.map((c) => ({
+    id: c.id,
+    where: `${c.path.split('/').pop()}:${c.line_start === c.line_end ? c.line_start : `${c.line_start}–${c.line_end}`}`,
+    text: c.body || t('work.room.review.suggestion'),
+    suggestion: c.suggestion !== null,
+    held: comments.held.value.has(c.id),
+  }))
+)
+const unsent = computed(() =>
+  pendingCard.value && comments.drafts.value.length
+    ? t('work.room.review.unsentCount', { count: comments.drafts.value.length })
+    : ''
+)
+
+// 决策在聊天，审查在面板: where the topic stands is not this box's private business.
+// The header states it and the panel opens on the tab it calls for, so the one word
+// travels up rather than the card list travelling out.
 //
 // It is reported only once the cards are actually in: before that, 「没有卡」 and
 // 「卡还没拉回来」 look identical from outside, and the panel would open on 文档
@@ -117,7 +116,14 @@ watch([loaded, phase], () => {
   if (loaded.value) emit('phase', phase.value)
 })
 
-defineExpose({ reload })
+const rejecting = () => !!pendingCard.value && showRejectInput.value
+watch(rejecting, (on) => emit('rejecting', on), { immediate: true })
+
+function cancelReject() {
+  showRejectInput.value = false
+}
+
+defineExpose({ reload: card.reload })
 </script>
 
 <template>
@@ -126,23 +132,12 @@ defineExpose({ reload })
   <Transition name="accept-fold" :css="animate">
     <div v-if="hasBox" class="accept-fold">
       <div class="accept-fold__inner">
-        <!-- 贴在输入框上方的一条：平时只有一行（这是什么、等谁、去验收），点开才
-             在它上面展开整张卡。它原来是对话末尾一张 280px 高的卡，一递上来对话就
-             只剩几行；而它说的是「有一个决定在等人」，这件事一行就说得完。 -->
-        <div class="accept-dock" :class="{ 'accept-dock--docked': docked }">
-          <!-- 点横条展开 / 收起，和整张卡进出同一个折叠：展开的那一块是从横条上长
-               出来的，不是凭空跳出来一张卡。 -->
+        <div class="accept-dock">
+          <!-- 历史卡（闸门那两张、交付中那张）点横条才在它上面展开当年那张卡。 -->
           <Transition name="accept-fold">
-            <div v-if="showDetail" class="accept-fold">
+            <div v-if="expanded && (gateCard || deliveringCard)" class="accept-fold">
               <div class="accept-fold__inner">
                 <div id="accept-detail" class="accept-dock__detail">
-                  <!-- 不贴底的时候没有横条，卡自己的标题行就在这里。 -->
-                  <div v-if="!docked" class="accept-head">
-                    <v-icon :color="bar.color" size="19">{{ bar.icon }}</v-icon>
-                    <span class="t-title">{{ bar.title }}</span>
-                  </div>
-
-                  <!-- 闸门未过 / 闸门没跑成：历史卡的两张只读脸。 -->
                   <AcceptGateFace
                     v-if="gateCard"
                     :card="gateCard"
@@ -151,44 +146,6 @@ defineExpose({ reload })
                     :agent-handle="agentHandle"
                     @update:open="showGateOutput = $event"
                   />
-
-                  <AcceptPendingFace
-                    v-else-if="pendingCard"
-                    v-model:show-reject-input="showRejectInput"
-                    v-model:reject-note="rejectNote"
-                    v-model:show-void-input="showVoidInput"
-                    v-model:void-note="voidNote"
-                    v-model:show-force-merge-input="showForceMergeInput"
-                    v-model:force-merge-reason="forceMergeReason"
-                    :card="pendingCard"
-                    :badge="mergeBadge"
-                    :reasons="mergeReasons"
-                    :forge-declaration="forgeDeclaration"
-                    :note="pendingNote"
-                    :reviewer-choices="reviewerChoices"
-                    :busy="acceptBusy"
-                    :blocked-title="acceptBlockedTitle"
-                    :needs-pr="needsPr"
-                    :auto-merge-visible="autoMergeVisible"
-                    :auto-merge-armed-by="autoMergeArmedBy"
-                    :pr-checks="prChecks"
-                    :docked="!!docked"
-                    :my-handle="author"
-                    :agent-name="agentName"
-                    :agent-handle="agentHandle"
-                    :deliverable-busy="deliverableBusy"
-                    :deliverable-error="deliverableError"
-                    @accept="onAcceptCard"
-                    @review="emit('review')"
-                    @approve="onApproveCard"
-                    @reassign="onReassignCard"
-                    @download="onDownloadDeliverable"
-                    @reject="onRejectCard"
-                    @void="onVoidCard"
-                    @force-merge="onForceMerge"
-                    @toggle-auto-merge="onToggleAutoMerge"
-                  />
-
                   <!-- 已采纳等合并 (`pr_open`, #718 退役): 历史卡的兜底脸，只读、不转圈。 -->
                   <AcceptDeliveringFace
                     v-else-if="deliveringCard"
@@ -196,29 +153,40 @@ defineExpose({ reload })
                     :checks="prChecks"
                     :note="deliveryNote"
                   />
-
-                  <!-- Accepted topic: 采纳可撤销 (spec §6.3). -->
-                  <AcceptDecidedFace
-                    v-else-if="acceptedCard"
-                    :card="acceptedCard"
-                    :busy="acceptBusy"
-                    @revoke="onRevokeCard"
-                  />
                 </div>
               </div>
             </div>
           </Transition>
 
+          <AcceptRejectForm
+            v-if="pendingCard && showRejectInput"
+            v-model:note="rejectNote"
+            :busy="acceptBusy"
+            :comments="rejectComments"
+            @cancel="cancelReject"
+            @confirm="onRejectCard"
+            @hold="comments.hold"
+          />
           <AcceptDockBar
-            v-if="docked"
+            v-else
+            :title="bar.title"
             :icon="bar.icon"
             :color="bar.color"
-            :title="bar.title"
-            :sub="bar.sub"
+            :column="gateCard ? null : barColumn"
+            :decide="!gateCard && decisionOpen"
+            :accept-label="acceptLabel"
+            :blocked-title="acceptBlockedTitle"
+            :busy="acceptBusy"
+            :review-button="!!pendingCard && !gateCard && reviewButton"
+            :revoke="!pendingCard && !gateCard && !deliveringCard && !!acceptedCard"
+            :expandable="!!(gateCard || deliveringCard)"
             :expanded="expanded"
-            :can-review="!!pendingCard"
-            @toggle="expanded = !expanded"
+            :aside="unsent"
             @review="emit('review')"
+            @toggle="expanded = !expanded"
+            @accept="onAcceptCard"
+            @reject="showRejectInput = true"
+            @revoke="onRevokeCard"
           />
         </div>
       </div>
@@ -229,9 +197,13 @@ defineExpose({ reload })
 <style scoped>
 .accept-fold {
   display: grid;
+  /* 列宽的下限不能是内容的最小宽度：卡里一个没有断点的长串（下划线连起来的标识符）
+     会把整张卡撑得比对话栏宽，右边被裁掉。 */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1fr;
 }
 .accept-fold__inner {
+  min-width: 0;
   min-height: 0;
 }
 /* 进来走 --dur-base 的减速，走掉快一档、加速离开（§9.3）。 */
@@ -255,28 +227,19 @@ defineExpose({ reload })
   grid-template-rows: 0fr;
   opacity: 0;
 }
-/* 贴着输入框的那一块：一条顶线把它和对话分开，底色和对话栏一样。展开的详情有上
-   限，再长就在里面滚——它不能把对话整个盖住。 */
+/* 贴着输入框的那一块：一条边框把它和对话分开，底色和对话栏一样。展开的历史卡有上
+   限，再长就在里面滚：它不能把对话整个盖住。 */
+/* 左右缩进和输入框里那一圈内边距（RoomComposer 的 12px）对齐。 */
 .accept-dock {
-  margin-top: 8px;
-  border: 1px solid var(--ok);
-  border-radius: var(--radius-lg);
-}
-.accept-dock--docked {
   margin: 0 12px 8px;
-  border-color: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
-.accept-dock--docked .accept-dock__detail {
+.accept-dock__detail {
   /* 按看得见的那一截算：手机上键盘弹起来时，50vh 会把输入框顶到屏幕外。 */
   max-height: calc((var(--app-height, 100dvh) - var(--keyboard-inset, 0px)) * 0.5);
   overflow-y: auto;
   border-bottom: 1px solid var(--line);
-}
-.accept-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 12px 0;
 }
 </style>

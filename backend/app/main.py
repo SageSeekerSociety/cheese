@@ -164,6 +164,51 @@ async def lifespan(application: FastAPI):
     get_work_runner().hold_turns()
     get_work_runner().own_sessions(False)
 
+    # The jobs are built once per process and started in two places: the ones the
+    # ownership lock still guards start with the lock, below (`taken_over`), and
+    # the ones that have left it start at boot, beside it. A job leaving the lock
+    # is one flag per PR (迁移顺序 3e) — `core/job_runs.py` holds the tick lease
+    # that then keeps a job scheduled on every process from running a tick twice.
+    jobs[:] = background.periodic_jobs(
+        chat=get_chat_service(),
+        machines=CloudPoolSweeper(async_session_factory),
+        sandboxes=SandboxSweeper(async_session_factory),
+        compute=ComputeMeterSweeper(async_session_factory),
+        sessions=async_session_factory,
+    )
+    runs = JobRuns(async_session_factory)
+
+    async def start_jobs(*, owner_only: bool) -> None:
+        """Start this process's share of the jobs, each with the time it last ran
+        so one that is already overdue runs at once (`PeriodicRunner.start`)."""
+        mine = [job for job in jobs if job.owner_only is owner_only]
+        try:
+            last_runs = await runs.load(
+                [job.name for job in mine if job.interval_seconds > 0],
+                datetime.now(UTC),
+            )
+        except Exception:  # noqa: BLE001 — never block startup; jobs wait one interval
+            get_logger("cheesex.runtime").exception("periodic job runs unreadable")
+            last_runs = {}
+        for job in mine:
+            job.start(runs, last_runs.get(job.name))
+
+    async def flush_held_errors() -> None:
+        """Keep the summaries this process's `intake` is still holding, full
+        window or not (迁移顺序 2e).
+
+        The `backend error flush` job closes a burst window on a clock, and only
+        once it has filled 300 s. Whatever this process collected in its last
+        minutes is nobody else's: the next process holds its own windows, never
+        this one's. So it is flushed on the way out — at the handover, and again
+        at the last moment of this process's life, because the drain in between
+        keeps serving requests.
+        """
+        try:
+            await backend_log.flush_all()
+        except Exception:  # noqa: BLE001 — never block handing over
+            get_logger("cheesex.runtime").exception("backend error flush failed")
+
     async def take_over() -> None:
         await ownership.acquire()
         held_the_work.append(
@@ -224,8 +269,8 @@ async def lifespan(application: FastAPI):
         # so a redeploy kills every check in flight and nobody ever calls
         # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
         # from ever filing another card (create_card's mutex). This runs BEFORE the
-        # periodic loop starts, and does the whole point of the startup path: right
-        # now `gate.in_flight_card_ids()` is empty, so everything past the deadline
+        # periodic loop starts, and does the whole point of the startup path: no
+        # gate can be running in this process yet, so everything past the deadline
         # is provably abandoned by the process that died, not by this one.
         try:
             swept = await background.sweep_abandoned_gates(get_chat_service())
@@ -238,24 +283,10 @@ async def lifespan(application: FastAPI):
         except Exception:  # noqa: BLE001 — never block startup
             get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
-        jobs[:] = background.periodic_jobs(
-            chat=get_chat_service(),
-            machines=CloudPoolSweeper(async_session_factory),
-            sandboxes=SandboxSweeper(async_session_factory),
-            compute=ComputeMeterSweeper(async_session_factory),
-            sessions=async_session_factory,
-        )
-        runs = JobRuns(async_session_factory)
-        try:
-            last_runs = await runs.load(
-                [job.name for job in jobs if job.interval_seconds > 0],
-                datetime.now(UTC),
-            )
-        except Exception:  # noqa: BLE001 — never block startup; jobs wait one interval
-            get_logger("cheesex.runtime").exception("periodic job runs unreadable")
-            last_runs = {}
-        for job in jobs:
-            job.start(runs, last_runs.get(job.name))
+        # The jobs the lock still guards start here, now that this process holds
+        # it. The ones that have left it started at boot (`start_jobs` above), so
+        # a handover neither stops them nor waits for them.
+        await start_jobs(owner_only=True)
         background.spawn(
             sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
             name="cleanup startup recovery",
@@ -271,6 +302,14 @@ async def lifespan(application: FastAPI):
             )
 
     taking_over = asyncio.create_task(take_over(), name="take over running work")
+
+    # The jobs no longer behind the ownership lock run on every process, so they
+    # start at boot rather than when the lock arrives: that, and not the lock, is
+    # what leaves no gap in them across a handover. None today — 迁移顺序 3e
+    # flips them one at a time — so this is still the empty case.
+    background.spawn(
+        start_jobs(owner_only=False), name="scheduled jobs beside the lock"
+    )
 
     # Questions asked of sessions are read by whichever process holds each
     # one's lease, not by the one that owns the running work: this process
@@ -353,7 +392,13 @@ async def lifespan(application: FastAPI):
         for task in forge_events:
             task.cancel()
         await asyncio.gather(*forge_events, return_exceptions=True)
-        for job in reversed(jobs):
+        # Before the jobs stop, because `backend error flush` is the only thing
+        # that would have closed this process's windows, and it is going away.
+        await flush_held_errors()
+        # Only the lock's share of them: a job that has left the lock is not the
+        # lock's to give away, and it keeps ticking here until the process goes
+        # (`start_jobs`).
+        for job in reversed([job for job in jobs if job.owner_only]):
             await job.stop()
         await ownership.release()
 
@@ -402,6 +447,10 @@ async def lifespan(application: FastAPI):
             await asyncio.gather(reading_questions, return_exceptions=True)
             await get_consumptions().let_go()
             await hand_over_once()
+            # The backend serves through its drain, so requests since the
+            # handover can have opened windows nobody else can flush: this is
+            # the last moment they exist.
+            await flush_held_errors()
             if listening_for_handover:
                 loop.remove_signal_handler(signal.SIGUSR1)
             if hasattr(hub_runtime, "close"):
@@ -574,16 +623,23 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
 
     rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
     bind_context(req=rid)
+    # 也在 scope 上留一份：报错上报那一层在这个中间件**外面**，轮到它时这里的
+    # `clear_context("req")` 已经跑过了，contextvar 读不到；scope 上的 state 活得比
+    # 那次清理久（下面读 `auth_user_id` 用的是同一条路）。
+    request.state.request_id = rid
     t0 = time.perf_counter()
-    # **探针不算**。`/health` 与 `/metrics` 是基础设施在按固定间隔敲的门，不是用户
-    # 流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正的路由挤下去，而
-    # 「当前正在处理的请求数」也会恒 ≥1（读它的那一次自己就在里面）。这一条和上面
-    # 那条日志里的 `/health` 例外是同一个判断。
+    # **探针不算**。`/health`、`/metrics`、`/readyz`、`/healthz` 是基础设施在按固定
+    # 间隔敲的门，不是用户流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正
+    # 的路由挤下去，「当前正在处理的请求数」也会恒 ≥1（读它的那一次自己就在里面），
+    # 而容器的 healthcheck 每 15 秒一次的 `/readyz` 会稳坐榜首——真实端点一秒也没被叫
+    # 过，看板上却看着比谁都忙。这一条和下面日志里的探针例外是同一个判断。
     path_now = request.url.path
     probe = (
         path_now == "/metrics"
         or path_now == "/health"
         or path_now.startswith("/health/")
+        or path_now == "/readyz"
+        or path_now == "/healthz"
     )
     if not probe:
         # 正在处理的请求数。**必须在 `call_next` 外面一进一出**，而且走 `finally`
@@ -647,7 +703,9 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
         if cl_out and cl_out.isdigit():
             net_io.note_http_bytes(response_body=int(cl_out))
     # WS upgrades and health probes are logged by their own layers; skip noise.
-    if request.url.path != "/health":
+    # `/readyz` and `/healthz` are the same knock as `/health`, one healthcheck
+    # interval apart — a line every 15 seconds is the loudest thing in the log.
+    if request.url.path not in ("/health", "/readyz", "/healthz"):
         # Who and from where, when known. `auth_user_id` is set by
         # get_auth_user (request.state rides scope, so it survives the
         # middleware task boundary). `client` is the address uvicorn resolved
@@ -726,12 +784,23 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
     except Exception as exc:
         # A failure inside the intake endpoint itself must not report into the
         # same channel (a broken intake would amplify every other error).
-        if not request.url.path.startswith("/api/backend-errors"):
+        #
+        # The path compared here is the one THIS app was handed, not the one a
+        # caller typed: the gateway forwards the public origin's `/api/` with a
+        # trailing slash in nginx's `proxy_pass`, so `/api/backend-errors`
+        # arrives as `/backend-errors` — the stripping API_GATEWAY_MOUNT
+        # describes. Compared against the public spelling, this guard never
+        # matched a request at all, so an exception raised by the intake itself
+        # was reported straight back into the intake.
+        if request.url.path != "/backend-errors":
             await backend_log.report_request_failure(
                 exc,
                 method=request.method,
                 path=request.url.path,
-                request_id=request.headers.get("x-request-id"),
+                # 这个请求自己在 `request_context` 里认下的 id（那层把它放在 scope
+                # 上）。读入站头读到的是没人发过的值：浏览器不带 X-Request-ID，于是
+                # 每一条 5xx 都存成空 id —— 而这张表正是拿来对人的。
+                request_id=request.scope.get("state", {}).get("request_id"),
             )
         raise
 

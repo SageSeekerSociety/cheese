@@ -39,6 +39,8 @@ from the domains it starts.
 import asyncio
 import contextlib
 import logging
+import os
+import socket
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from datetime import UTC, datetime
@@ -56,6 +58,11 @@ logger = logging.getLogger("cheesex.background")
 # Strong references to everything in flight. Entries remove themselves on
 # completion, so this is bounded by concurrency, not by history.
 _INFLIGHT: set[asyncio.Task[Any]] = set()
+
+# Which process a tick was taken by, for the lease row's `run_by`: the hostname
+# names the deployment slot (a container has one of its own), the pid the process
+# inside it. Truncated to the column, which is longer than any hostname.
+_PROCESS = f"{socket.gethostname()}:{os.getpid()}"[:200]
 
 
 def _report_failure(task: asyncio.Task[Any]) -> None:
@@ -124,9 +131,11 @@ def inflight_count() -> int:
 
 
 class RunRecord(Protocol):
-    """Where a job's runs are kept; `app.core.job_runs.JobRuns` in the app."""
+    """Where a job's ticks are leased; `app.core.job_runs.JobRuns` in the app."""
 
-    async def record(self, name: str, at: datetime) -> None: ...
+    async def claim(
+        self, name: str, *, interval_s: float, who: str, now: datetime
+    ) -> bool: ...
 
 
 class PeriodicRunner:
@@ -149,6 +158,14 @@ class PeriodicRunner:
     process start instead, an hourly job on a box that redeploys every twenty
     minutes would never run. Without a recorded run a job is first due one
     interval after this start.
+
+    ``owner_only`` says where the job is allowed to run, and so where
+    ``main.lifespan`` starts it. True — every job today — means only the process
+    holding the ownership lock (`core/ownership.py`) schedules it, and it starts
+    when that lock is taken. False means the job no longer depends on the lock:
+    every process starts it, and the tick lease it takes in ``runs`` is what
+    keeps one tick from being run twice. A job moving out of the lock is flipped
+    here, one job per PR.
     """
 
     def __init__(
@@ -156,10 +173,13 @@ class PeriodicRunner:
         name: str,
         interval_seconds: float,
         job: Callable[[], Awaitable[Any]],
+        *,
+        owner_only: bool = True,
     ) -> None:
         self._name = name
         self._interval = interval_seconds
         self._job = job
+        self._owner_only = owner_only
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -170,6 +190,11 @@ class PeriodicRunner:
     def interval_seconds(self) -> float:
         """Seconds between runs; 0 or less means this box does not run it."""
         return self._interval
+
+    @property
+    def owner_only(self) -> bool:
+        """Whether only the process holding the ownership lock runs this."""
+        return self._owner_only
 
     def start(self, runs: "RunRecord", last_run: datetime | None = None) -> None:
         """Begin looping. A non-positive interval means this box does not run
@@ -189,14 +214,40 @@ class PeriodicRunner:
                 await self._task
             self._task = None
 
+    async def _take_tick(self, runs: "RunRecord") -> bool:
+        """Whether this tick is this process's to run.
+
+        The lease is one row per job, taken for one interval: whichever process
+        wins the UPDATE runs this tick, and the others move on. That is what
+        lets a job be scheduled on every process — the ownership lock no longer
+        being between it and its schedule (``owner_only``) — without the tick
+        running twice or being recorded twice.
+
+        Losing the race is the ordinary case for such a job, not a failure:
+        nothing is logged, nothing is reported, the next tick comes.
+
+        A lease that cannot be TAKEN is the opposite case. It is how two ticks
+        are kept apart, and refusing to run on a database blip would stop every
+        scheduled job on the box at once — including the ones that would have
+        noticed a job that stopped. So the tick runs anyway, at ERROR.
+        """
+        try:
+            return await runs.claim(
+                self._name,
+                interval_s=self._interval,
+                who=_PROCESS,
+                now=datetime.now(UTC),
+            )
+        except Exception:  # noqa: BLE001 — a tick that cannot be leased still runs
+            logger.exception("%s: could not take its tick; running anyway", self._name)
+            return True
+
     async def _loop(self, runs: "RunRecord", wait: float) -> None:
         while True:
             await asyncio.sleep(wait)
             wait = self._interval
-            try:
-                await runs.record(self._name, datetime.now(UTC))
-            except Exception:  # noqa: BLE001 — the run matters more than its record
-                logger.exception("%s: could not record its run", self._name)
+            if not await self._take_tick(runs):
+                continue
             try:
                 result = await self._job()
             except asyncio.CancelledError:
@@ -359,6 +410,15 @@ def periodic_jobs(
     the only switch a job has. A job whose interval is 0 by DEFAULT is one no
     deployment runs unless it opts in; that is a decision, and it should be made
     on purpose.
+
+    Adding a job here means making it safe to run twice, and safe to run beside
+    another process's copy of itself. The ownership lock (`core/ownership.py`)
+    only softens that: `keep_holding` probes the lock every 10s, and the loop
+    above never re-reads the owner, so a process that lost its connection keeps
+    running every job for that window before it shuts itself down. Do not assume
+    the platform has one process — make the job re-entrant or idempotent on its
+    own (a claim row, a unique key, `with_for_update(skip_locked=True)`), and
+    let that, not the lock, be what stops a doubled run from doubling its effect.
     """
     from app.api.deps import get_work_runner
     from app.domain import backend_log

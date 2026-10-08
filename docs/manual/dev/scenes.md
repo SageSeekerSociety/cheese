@@ -6,6 +6,8 @@ covers:
   - .claude/scripts/frontend_grade.py
   - .claude/scripts/scene-ratchet.py
   - .claude/scripts/catalog-ratchet.py
+  - frontend/scripts/scene-split.mjs
+  - frontend/scripts/scene-split-core.mjs
   - frontend/scene-baseline.json
   - frontend/catalog-baseline.json
   - frontend/src/components/panels/
@@ -106,6 +108,14 @@ covers:
 | `$parent` / `$root`、事件总线 | 改成 props / 事件 |
 
 改完 `pnpm run lint:scenes`；它判成 A 了，会提示你跑 `--update` 把这一条从 `debt` 搬进 `ready`（搬进去就再也不许掉出来了）。
+
+#### 脚手架：先把画面那一半拆出来 {#scene-split}
+
+「把画面放进 `<页面名>View.vue`」这一步是机械的，有工具做：`pnpm run scene:split -- src/views/某页.vue` 打出计划——视图该收哪些 props、哪些 `v-model`、哪些事件，哪些 import 要搬过去，脚本里的 `route.params.X` 会改写成 `props.X`、那条路由记录要不要补 `props: true`——外加一份**它不敢替你决定的地方**（模板里的 `<slot>`、`$route`、解析不出来的表达式、`<component :is>`）。
+
+加 `--write` 才落盘；只要「需要人来」那份清单非空，它一个字节都不写，也不覆盖已经存在的视图。写的是骨架：props 的名字和类型它认得出来，**哪些值该由页面传下来、这一页该不该拆，是产品决定**，工具只把机械的部分做掉。写完照旧跑上面三条命令，页面那半边（取数、路由、store）自己接着改。
+
+判据在 `frontend/scripts/scene-split-core.mjs`，样例页面盯着它：`pnpm run test:ratchet`。
 
 ### 基线怎么更新 {#update-baseline}
 

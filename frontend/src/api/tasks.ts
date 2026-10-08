@@ -1,12 +1,63 @@
 // 任务：一个人负责、和 AI 队友在自己的对话里做成的一件事，挂在它所在的房间下。
 // 任务就是一段对话，地址用它自己的 id（`/topics/{task}/…`）；谁能看任务，由谁能进它
 // 所在的房间决定。列出、新建任务和 AI 的提议挂在房间下。
-import type { RoomTask } from '../cx_types'
+import type { ListPayload, RoomTask } from '../cx_types'
 
-import { request } from './http'
+import { shareInFlight } from '../lib/inflight'
+
+import { authToken, request, requestConditional } from './http'
 
 function taskPath(taskId: string): string {
   return `/topics/${encodeURIComponent(taskId)}`
+}
+
+// 两份任务清单（整个项目的、一个房间的）上一次读到的 payload 和它的 ETag，按请求路径
+// 记着，和 api.ts 里 `topicListCache` 那一套同理。两份都很沉：这个项目 1373 条活 2 MB
+// 出头，房间那份 `limit=0` 也还有 1 MB 上下，而侧栏每切一次页面就要重读一次。服务端
+// 答 304 时把手里这同一个 payload 原样交回，调用方的赋值就是一次同引用的赋值 —— Vue
+// 的 ref setter 见到同一个对象会跳过触发。变了才落新的一份。
+const taskListCache = new Map<string, { etag: string | null; payload: ListPayload<RoomTask> }>()
+
+/** 带条件请求的任务清单读法：304 就交回攥着的那一份，没变的那一次不解析、不重画。 */
+function readTaskList(path: string): Promise<ListPayload<RoomTask>> {
+  // 同一个房间开一次，几条独立的代码路会几乎同时要它（面板画 rail、频道概览、对话栏
+  // 画「已派出」），后来的人跟着在飞的那条走，不再各发一份。键里带 token：和 `roomRead`
+  // 一样，换了人就不能接上一个人的飞行（304 那条路是直接把对象交回去的）。
+  return shareInFlight(`tasks:${authToken()}:${path}`, () => {
+    const cached = taskListCache.get(path)
+    return requestConditional<ListPayload<RoomTask>>(path, cached?.etag ?? null).then((result) => {
+      if (result.notModified) {
+        if (cached) return cached.payload
+        // 304 但手里没留底（刚重启、缓存已清）：退回一次无条件读，别把空手当没变。
+        return request<ListPayload<RoomTask>>(path)
+      }
+      if (!result.data) throw new Error('empty task list response')
+      taskListCache.set(path, { etag: result.etag, payload: result.data })
+      return result.data
+    })
+  })
+}
+
+// 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
+// → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
+// `open` 只要还在进行的：侧栏只挂这些，而已经关掉的是它们的十几倍。
+export function listProjectTasks(projectId: string, opts: { open?: boolean } = {}): Promise<ListPayload<RoomTask>> {
+  const path = `/projects/${encodeURIComponent(projectId)}/tasks`
+  return readTaskList(opts.open ? `${path}?status=open` : path)
+}
+
+/** Tasks in this room, each with its own branch and delivery. */
+export function listRoomTasks(
+  roomId: string,
+  // 每条支线最多带回多少块对话。画 rail、画概览的调用方一个块都不看，所以取 0 ——
+  // 后端对 0 直接跳过取块的那一次查询，整份清单只剩支线本身。不传的话后端会把房间里
+  // 每条支线的全部历史都吐回来（它自己的 docstring 说明了为什么没有默认上限）。
+  opts?: { limit?: number }
+): Promise<ListPayload<RoomTask>> {
+  const q = new URLSearchParams()
+  if (opts?.limit != null) q.set('limit', String(opts.limit))
+  const query = q.toString() ? `?${q.toString()}` : ''
+  return readTaskList(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
 /** 一个任务。它的对话和房间的一样读（`/topics/{task}/blocks`）。 */

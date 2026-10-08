@@ -14,6 +14,7 @@ The rules, as stated before the code was written:
 import uuid
 from contextlib import asynccontextmanager
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.thread import reads as thread_reads
@@ -86,6 +87,7 @@ def test_the_run_keeps_its_results_and_a_question_after_it_does_not(client, tmp_
     room, _routine, _run, conversation, submitted = _fired(client)
     screen = Screen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=ComputePool([screen.runtime], screen.name),
         base_system_prompt="You are Cheese.",
@@ -134,7 +136,7 @@ def test_a_settled_run_says_how_it_went_at_the_bottom_of_the_main_line(
     client, monkeypatch
 ):
     room, _routine, run, _conversation, _submitted = _fired(client)
-    from app.domain.agent.runtime import get_broker
+    from app.domain.agent.realtime.broker import get_broker
 
     broker = get_broker()
     original = broker.publish

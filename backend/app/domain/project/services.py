@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -276,11 +277,43 @@ class ProjectService:
         rules a roster row follows."""
         return await self._repo.person(handle)
 
+    async def get_projects_by_ids(
+        self, project_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, Project]:
+        """一批项目，按 id 索引，一次查完。
+
+        和 :meth:`get` 是同一道门（都不筛归档），给手上已经攒了一整页外键的调用方
+        用 —— 通知列表的实体解析逐条 :meth:`get` 就是一屏 N 次往返。
+        """
+        return await self._repo.get_by_ids(project_ids)
+
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
         return project
+
+    async def lock_settings(self, project: Project) -> None:
+        """锁住这个项目那一行并重读它的 settings（``FOR NO KEY UPDATE``）。
+
+        改 settings 前先走这里，合并的才是当下这一份；见
+        :meth:`ProjectRepository.lock_settings`。
+        """
+        await self._repo.lock_settings(project)
+
+    async def merge_settings(
+        self,
+        project: Project,
+        patch: Mapping[str, object],
+        *,
+        remove: Iterable[str] = (),
+    ) -> dict[str, object]:
+        """改 settings 里那几个键，其余照数据库当下的样子留着。
+
+        写 settings 的正路，改一个键的调用点都走它——见
+        :meth:`ProjectRepository.merge_settings`。
+        """
+        return await self._repo.merge_settings(project, patch, remove=remove)
 
     async def archive(self, project_id: uuid.UUID, *, by: str) -> Project:
         """Archive the project (idempotent): it leaves its members' lists,

@@ -38,9 +38,9 @@ measures, how to read it, and today's numbers: `docs/manual/dev/arch-metrics.md`
 ## Backend: the import graph is checked, not assumed
 
 `backend/.importlinter` declares three contracts (import-linter, AST-based, so
-an import inside a function counts too — of the 33 import statements behind the
-29 frozen layer violations, two are at module level (one of them under
-`if TYPE_CHECKING:`), and the rest are inside functions, which is how an import
+an import inside a function counts too — of the 30 import statements behind the
+27 frozen layer violations, one is at module level under
+`if TYPE_CHECKING:`, and the other 29 are inside functions, which is how an import
 that "would never happen" happens):
 
 - **api → domain → core, never backwards.** A route may not reach into a
@@ -62,7 +62,7 @@ the graph rather than transcribed by hand.
 Freeze policy, which is the whole ratchet:
 
 - Every current violation is frozen in the same file as an exact
-  `importer -> imported` pair — 29 + 49 + 157 = 235 today (C1 + C2 + C3). New
+  `importer -> imported` pair — 27 + 49 + 153 = 229 today (C1 + C2 + C3). New
   ones fail CI.
 - No wildcards. `check_boundaries.py` fails (exit 1) on any `*` in the freeze,
   because an exemption that can absorb a file nobody looked at is not an
@@ -89,7 +89,7 @@ lifetime; new ones are an admission, not a habit.
 An `import` inside a function body is invisible to whoever reads the top of the
 module, and to every tool that reads dependencies from module level —
 import-linter sees it, almost nothing else does. It is also the usual way a
-cycle is dodged instead of removed: 27 of the 29 frozen layer violations above
+cycle is dodged instead of removed: 26 of the 27 frozen layer violations above
 are imports inside a function. So such an import either moves to the top of the
 module, or says why it cannot, on the same line or the line directly above:
 
@@ -165,6 +165,25 @@ through `useNavigation`, seven panel components that came out of making the
 work panels standalone. The
 vue-router half keeps counting type-only imports on purpose, because there the
 alternative (`NavTarget` from `lib/navTarget.ts`) is what the rule points you at.)
+
+## Frontend: one API module per domain behind `src/api.ts`
+
+`frontend/src/api.ts` is a facade: it holds nothing but `export … from`
+statements, and the code lives in `frontend/src/api/<domain>.ts` (feedback,
+members, topics, `admin/gateway`, …). Importers keep writing `@/api` and tests
+keep writing `vi.mock('@/api')`; the facade is what both resolve to.
+
+- **A new endpoint goes in its domain module**, never in `api.ts`. **Enforced**
+  by `no-restricted-syntax` on `src/api.ts` in `eslint.config.mjs`.
+- **A module under `src/api/` stays under 400 lines.** Past that it is two
+  domains. **Enforced** by `.claude/scripts/check-file-sizes.py`.
+- **A module imports `./http` and its siblings, not `../api`.** Going through
+  the facade puts a call inside whatever a test mocked `@/api` with. Sixteen
+  older modules still do (`request` from `'../api'`); changing one changes what
+  its tests intercept, so it is its own change. **建议**.
+- Helpers shared by modules but not part of the public surface
+  (`legacyRequest`, `feedbackQuery`) live in `api/legacy.ts` / `api/query.ts`,
+  which the facade does not re-export.
 
 ## A scene runs standalone, and the set only grows
 

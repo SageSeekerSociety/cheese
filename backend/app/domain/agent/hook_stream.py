@@ -8,24 +8,21 @@
 搬出来时按原样搬 —— 入参出参就是它们与调用方之间全部的约定，行为一格没动。形状
 变化只有两类，都是「没有 `self` 可用了」：
 
-- ``self._sessions`` 与五张现场状态的表（``_hook_work``、``_retry_notes``、
-  ``_waiting_notes``、``_compact_notes``、``_room_session_agents``、
-  ``_active_turn_ids``）→ 同名入参：一个 sessionmaker 与那几个 dict，逐字不变；
+- ``self._sessions`` → ``sessions``：一个 sessionmaker，事务边界逐字不变；这一轮
+  的进程内状态（现场状态表、几张 note 表、房间坐席表）→ ``live``，见
+  ``app.domain.agent.live_work``：状态与处理器之间只有「处理器读状态」一个方向，
+  本模块不再接散装的那几张 dict；
 - 留在 ``ChatService`` 上、这条路回头要问的那些事（开一轮、落一条助手消息、关
   一轮的书、谁在做哪条活……）→ ``service``，见 ``_HookStream``：它是这条路的
   收件人，本模块只声明自己会问什么，pyright 在调用点核对 ``ChatService`` 答不答
   得上来。
 
-现场状态 ``_HookWorkState`` 也跟着搬来了：``_close_hook_work`` 与
-``_announce_action`` 收的就是它，``chat.py`` 重新导出这个名字，那两处的签名一格
-没动。``_TOOL_ACTION``、``_turn_failure_notice``、``_is_out_of_credit`` 只被这条
-线用到，一并搬走，``chat.py`` 仍然导得出来。
+现场状态 ``HookWorkState`` 搬去了 ``live_work.py`` 那片叶子；``_TOOL_ACTION``、
+``_turn_failure_notice``、``_is_out_of_credit`` 只被这条线用到，一并留在这里。
 """
 
-import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -34,6 +31,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.sentences import NoticeText, error_frame, say
 from app.domain.agent import attachments, turn_inputs
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
+from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.nonce import nonce_in
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
@@ -53,6 +51,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.prompt import _compaction_notice
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room_events import (
     _mark_step_failed,
@@ -76,86 +75,14 @@ from app.domain.agent.service import (
     AgentUserEntry,
     proves_output,
 )
+from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
 from app.domain.delivery.receipts import inputs_answered_inside
-from app.domain.memory.models import MemoryScope
 from app.domain.room_task.place import PlaceResolver
 from app.domain.run_record import service as run_records
 
 logger = logging.getLogger(__name__)
-
-#: 现场状态查表的键：一间房 + 这一轮。
-TurnKey = tuple[uuid.UUID, uuid.UUID]
-
-
-@dataclass
-class _HookWorkState:
-    """Persistence context for work whose events arrive on a subscription."""
-
-    project_id: uuid.UUID
-    topic_id: uuid.UUID
-    work_id: uuid.UUID
-    pending_ids: set[uuid.UUID]
-    reply_to: uuid.UUID | None
-    # None where no prompt was assembled to read one — `_persist_assistant_message`
-    # then loads it, which is NOT the same as passing []: [] means 私聊 (no member
-    # list at all), and conflating the two flags every @ as a non-member.
-    roster: list[dict] | None
-    topic_refs: list[dict]
-    continuation_id: uuid.UUID | None
-    route: str
-    acting_agent: str
-    # Attribution and memory part ways here, deliberately: `acting_agent` is
-    # the seat of the agent that ran this turn (who did it), while the pool
-    # belongs to that agent across rooms (whose memory it is). Resolved at turn
-    # start and carried, because the hook path reaches turn end with no session
-    # left open to ask.
-    agent_pool: tuple[MemoryScope, str] | None
-    user_text: str
-    started_at: datetime
-    agent_instance_handle: str | None = None
-    # The model this turn's session was launched on, for the usage row a turn
-    # with no reported usage still writes. "" where this process never
-    # assembled a turn for the session (a screen recovered on the way up).
-    model: str = ""
-    assistant_count: int = 0
-    last_chat_at: datetime | None = None
-    # When this turn was last told it had gone quiet — NOT whether it has been.
-    # A flag meant one reminder per silent stretch, so a turn that worked for
-    # three hours without publishing was asked once, at the ten-minute mark, and
-    # then left alone for the remaining two hours and fifty minutes. The room
-    # showing nothing for that long is the complaint this reminder exists for.
-    last_progress_reminder_at: datetime | None = None
-    #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。结果回来时要
-    #: 写上输出、挂了要标红的就是那一块。只在内存里、只活这一轮：重启丢掉的只是几
-    #: 截输出和几个红点，不是记录。
-    steps: dict[str, uuid.UUID] = field(default_factory=dict)
-
-    # The topic branch's commits as of turn start — what makes "this turn's
-    # changes" answerable at turn end. A task rather than a value, because the
-    # read shells out to git and creates the repo on first use; see where it is
-    # started. `None` (or a read that failed) means the turn lands NO change
-    # summary rather than a wrong one: with no baseline, every commit looks new.
-    known_commits: asyncio.Task[set[str] | None] | None = None
-    # Did the SESSION open this work rather than the platform? Then its
-    # bookkeeping has no coroutine to fall out of, and turn end is the only
-    # place the marks it left in the runner can be dropped.
-    self_started: bool = False
-
-
-class _WorkRunner(Protocol):
-    """轮次运行器里本模块用到的面（``runtime.AgentWorkRunner``）。
-
-    「这条会话又出活了」和「会话自己开的那一轮，把它在运行器里留的记号收掉」是
-    这条路要说的两句话。类型写在这里而不是 import ``runtime``：那个实例由
-    ``app/api/deps.py`` 建出来，本模块够不着也不该够着 ``app.api`` —— 它从调用
-    方手上拿（``_compute`` 那两处也是这么绑的）。
-    """
-
-    def note_session_output(self, turn_id: uuid.UUID, *, tool: bool) -> None: ...
-
-    def close_turn_the_session_started(self, turn_id: uuid.UUID) -> None: ...
 
 
 class _HookStream(Protocol):
@@ -167,9 +94,6 @@ class _HookStream(Protocol):
     在调用点核对；这里只列签名，不写实现。
     """
 
-    #: 一间房最后由哪个坐席开的会话 —— 事件自己没带坐席时的退路。
-    _room_session_agents: dict[uuid.UUID, str]
-
     async def _begin_self_started_turn(
         self,
         project_id: uuid.UUID,
@@ -179,7 +103,7 @@ class _HookStream(Protocol):
         opened: bool = False,
         agent_handle: str | None = None,
         session_id: str | None = None,
-    ) -> _HookWorkState | None: ...
+    ) -> HookWorkState | None: ...
 
     async def _room_of_conversation(
         self, conversation_id: uuid.UUID
@@ -218,7 +142,7 @@ class _HookStream(Protocol):
         closing: bool = False,
     ) -> dict | None: ...
 
-    async def _announce_action(self, state: _HookWorkState, resource: str) -> None: ...
+    async def _announce_action(self, state: HookWorkState, resource: str) -> None: ...
 
     async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool: ...
 
@@ -233,7 +157,7 @@ class _HookStream(Protocol):
     ) -> None: ...
 
     async def _close_hook_work(
-        self, state: _HookWorkState, result: AgentResult
+        self, state: HookWorkState, result: AgentResult
     ) -> list[dict]: ...
 
     async def _forget_room_claims(self, topic_id: uuid.UUID) -> None: ...
@@ -347,8 +271,8 @@ def _with_log(meta: dict, log: str | None) -> dict:
 
 async def _drop_takeover_marks(
     sessions,
-    hook_work,
-    work_runner: "_WorkRunner",
+    live: LiveWork,
+    work_runner: "SessionTurnEvents",
     topic_id: uuid.UUID,
     seat: str,
     generation: uuid.UUID,
@@ -373,7 +297,7 @@ async def _drop_takeover_marks(
         retired = owner.retired_turn_id if owner is not None else None
         if retired is None:
             return
-        state = hook_work.get((topic_id, retired))
+        state = live.hook_work.get((topic_id, retired))
         if state is None or not state.self_started:
             return
         closed = await session.scalar(
@@ -381,14 +305,14 @@ async def _drop_takeover_marks(
         )
     if closed is None:
         return
-    if hook_work.pop((topic_id, retired), None) is not None:
+    if live.hook_work.pop((topic_id, retired), None) is not None:
         work_runner.close_turn_the_session_started(retired)
 
 
 async def _bind_user_entry(
     sessions,
-    hook_work,
-    work_runner: "_WorkRunner",
+    live: LiveWork,
+    work_runner: "SessionTurnEvents",
     *,
     topic_id: uuid.UUID,
     seat: str | None,
@@ -485,21 +409,14 @@ async def _bind_user_entry(
                     at=datetime.now(UTC),
                 )
             await session.commit()
-    await _drop_takeover_marks(
-        sessions, hook_work, work_runner, topic_id, seat, generation
-    )
+    await _drop_takeover_marks(sessions, live, work_runner, topic_id, seat, generation)
 
 
 async def _consume_hook_event(
     service: _HookStream,
     sessions: async_sessionmaker,
-    hook_work: dict[TurnKey, _HookWorkState],
-    retry_notes: dict[uuid.UUID, uuid.UUID],
-    waiting_notes: dict[uuid.UUID, uuid.UUID],
-    compact_notes: dict[uuid.UUID, uuid.UUID],
-    room_session_agents: dict[uuid.UUID, str],
-    active_turn_ids: dict[uuid.UUID, set[uuid.UUID]],
-    work_runner: _WorkRunner,
+    live: LiveWork,
+    work_runner: SessionTurnEvents,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
@@ -509,11 +426,10 @@ async def _consume_hook_event(
     platform_unsolicited: bool,
 ) -> None:
     """Persist and broadcast one event from a live screen subscription."""
-    from app.domain.agent.runtime import get_broker
 
     broker = get_broker()
     frame: dict | None = None
-    state = hook_work.get((topic_id, turn_id))
+    state = live.hook_work.get((topic_id, turn_id))
     if state is None and platform_unsolicited and proves_output([event]):
         # Nobody fed this session anything and it is producing output anyway
         # — one of its workers finished and the completion notice woke it.
@@ -530,7 +446,7 @@ async def _consume_hook_event(
             # room-keyed fallback below answers "who spoke LAST", not
             # "whose session this output came from".
             agent_handle=getattr(event, "agent_handle", None)
-            or room_session_agents.get(topic_id),
+            or live.room_session_agents.get(topic_id),
             session_id=getattr(event, "session_id", None),
         )
     # `topic_id` names the session's conversation: a room's, or a task's own.
@@ -542,23 +458,23 @@ async def _consume_hook_event(
     if not isinstance(event, AgentRetrying):
         # Anything else the turn does ends a streak of retries: the request
         # went through. The next retry is news of its own.
-        retry_notes.pop(turn_id, None)
+        live.retry_notes.pop(turn_id, None)
     if isinstance(event, AgentResult):
-        waiting_notes.pop(turn_id, None)
+        live.waiting_notes.pop(turn_id, None)
         # The turn ended with the compaction still open (it was stopped, or
         # the session died): the line must not go on saying it is compacting.
         # Asked of the room, not only of this process: the line may have been
         # landed by the backend this one replaced.
         await _note_compaction(
             sessions,
-            compact_notes,
+            live,
             turn_id,
             AgentCompacting(done=True, error=say("contextCompactSessionEnded")),
             channel=channel,
         )
     if isinstance(event, AgentSessionInfo):
         if event.agent_handle:
-            room_session_agents[topic_id] = event.agent_handle
+            live.room_session_agents[topic_id] = event.agent_handle
         await service._save_session_pointer(
             topic_id,
             event.session_id,
@@ -574,11 +490,11 @@ async def _consume_hook_event(
         seat = (
             event.agent_handle
             or (state.acting_agent if state is not None else None)
-            or room_session_agents.get(topic_id)
+            or live.room_session_agents.get(topic_id)
         )
         await _bind_user_entry(
             sessions,
-            hook_work,
+            live,
             work_runner,
             topic_id=topic_id,
             seat=seat,
@@ -613,7 +529,7 @@ async def _consume_hook_event(
         args = event.input or {}
         payload = await _persist_tool_event(
             sessions,
-            hook_work,
+            live,
             project_id=project_id,
             topic_id=room_id,
             name=name,
@@ -653,21 +569,19 @@ async def _consume_hook_event(
                 frame = {"type": "block_updated", "block": without_output(payload)}
     elif isinstance(event, AgentCompacting):
         if event.done:
-            await _note_compaction(
-                sessions, compact_notes, turn_id, event, channel=channel
-            )
+            await _note_compaction(sessions, live, turn_id, event, channel=channel)
         else:
-            if turn_id not in compact_notes:
+            if turn_id not in live.compact_notes:
                 # The backend this one replaced may have landed the line while
                 # this compaction (or an earlier attempt nobody heard end) was
                 # under way. It is the same news: say it on that line.
                 running = await _running_compactions(sessions, turn_id)
                 if running:
-                    compact_notes[turn_id] = running[-1]
+                    live.compact_notes[turn_id] = running[-1]
             content, meta = _compaction_notice(event)
             await _keep_note(
                 sessions,
-                compact_notes,
+                live.compact_notes,
                 room_id,
                 turn_id,
                 content,
@@ -679,7 +593,7 @@ async def _consume_hook_event(
     elif isinstance(event, AgentRetrying):
         await _note_retry(
             sessions,
-            retry_notes,
+            live,
             room_id,
             turn_id,
             event,
@@ -690,7 +604,7 @@ async def _consume_hook_event(
     elif isinstance(event, AgentToolResult):
         payload = await _persist_subagent_result(
             sessions,
-            hook_work,
+            live,
             project_id=project_id,
             topic_id=room_id,
             event=event,
@@ -815,7 +729,7 @@ async def _consume_hook_event(
                 # nor the completion context may be discarded before commit.
                 raise
             else:
-                hook_work.pop((topic_id, turn_id), None)
+                live.hook_work.pop((topic_id, turn_id), None)
                 if state.self_started:
                     # No coroutine owns this one, so there is no `finally`
                     # anywhere else to drop the marks it left in the runner.
@@ -828,12 +742,7 @@ async def _consume_hook_event(
         await _end_inputs_answered_inside(
             service,
             sessions,
-            hook_work,
-            retry_notes,
-            waiting_notes,
-            compact_notes,
-            room_session_agents,
-            active_turn_ids,
+            live,
             work_runner,
             project_id,
             topic_id,
@@ -853,13 +762,8 @@ async def _consume_hook_event(
 async def _end_inputs_answered_inside(
     service: _HookStream,
     sessions: async_sessionmaker,
-    hook_work: dict[TurnKey, _HookWorkState],
-    retry_notes: dict[uuid.UUID, uuid.UUID],
-    waiting_notes: dict[uuid.UUID, uuid.UUID],
-    compact_notes: dict[uuid.UUID, uuid.UUID],
-    room_session_agents: dict[uuid.UUID, str],
-    active_turn_ids: dict[uuid.UUID, set[uuid.UUID]],
-    work_runner: _WorkRunner,
+    live: LiveWork,
+    work_runner: SessionTurnEvents,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
@@ -885,22 +789,17 @@ async def _end_inputs_answered_inside(
         open_turns = set(
             await AgentTurnRepository(session).still_open(topic_id, read_inside)
         )
-    running = active_turn_ids.get(topic_id, set())
+    running = live.active_turn_ids.get(topic_id, set())
     taken = [
         work
         for work in read_inside
-        if work in open_turns or work in running or (topic_id, work) in hook_work
+        if work in open_turns or work in running or (topic_id, work) in live.hook_work
     ]
     for input_turn in taken:
         await _consume_hook_event(
             service,
             sessions,
-            hook_work,
-            retry_notes,
-            waiting_notes,
-            compact_notes,
-            room_session_agents,
-            active_turn_ids,
+            live,
             work_runner,
             project_id,
             topic_id,
@@ -936,7 +835,7 @@ async def close_on_stop(service, topic_id: uuid.UUID, turn_id: uuid.UUID) -> Non
 
 async def _note_retry(
     sessions: async_sessionmaker,
-    retry_notes: dict[uuid.UUID, uuid.UUID],
+    live: LiveWork,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
     event: AgentRetrying,
@@ -993,7 +892,7 @@ async def _note_retry(
     }
     await _keep_note(
         sessions,
-        retry_notes,
+        live.retry_notes,
         topic_id,
         turn_id,
         content,
@@ -1006,7 +905,7 @@ async def _note_retry(
 
 async def _note_compaction(
     sessions: async_sessionmaker,
-    compact_notes: dict[uuid.UUID, uuid.UUID],
+    live: LiveWork,
     turn_id: uuid.UUID,
     event: AgentCompacting,
     *,
@@ -1017,7 +916,7 @@ async def _note_compaction(
     Which line that is comes from the room, not from this process's memory:
     dev replaces its backend on every merge, and a compaction that started
     under one backend ends under the next, which never saw the line land."""
-    remembered = compact_notes.pop(turn_id, None)
+    remembered = live.compact_notes.pop(turn_id, None)
     lines = await _running_compactions(sessions, turn_id)
     if remembered is not None and remembered not in lines:
         lines.append(remembered)
@@ -1040,8 +939,7 @@ async def _running_compactions(
 
 async def _note_reachability(
     sessions: async_sessionmaker,
-    hook_work: dict[TurnKey, _HookWorkState],
-    waiting_notes: dict[uuid.UUID, uuid.UUID],
+    live: LiveWork,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     work_id: uuid.UUID,
@@ -1052,7 +950,7 @@ async def _note_reachability(
     over — the same line both times."""
     del project_id
     if reachable:
-        block_id = waiting_notes.pop(work_id, None)
+        block_id = live.waiting_notes.pop(work_id, None)
         if block_id is None:
             return
         await _restate_note(
@@ -1063,7 +961,7 @@ async def _note_reachability(
             str(topic_id),
         )
         return
-    state = hook_work.get((topic_id, work_id))
+    state = live.hook_work.get((topic_id, work_id))
     meta = {
         **notice(
             EVENT_DEVICE_WAITING,
@@ -1081,7 +979,7 @@ async def _note_reachability(
         place = await PlaceResolver(session).conversation(topic_id)
     await _keep_note(
         sessions,
-        waiting_notes,
+        live.waiting_notes,
         place.room_id if place is not None else topic_id,
         work_id,
         say("deviceWaiting"),

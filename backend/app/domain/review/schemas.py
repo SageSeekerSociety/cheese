@@ -8,6 +8,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.domain.review.models import AcceptStatus
 
 
+class CommentOutcome(BaseModel):
+    id: uuid.UUID
+    handled: bool
+    note: str = Field(default="", max_length=2000)
+
+
 class AcceptCardCreate(BaseModel):
     # 未指定就用项目默认验收人 (#718 设置表「任务默认 reviewer」). Optional here
     # and resolved in the service — same reason `change_subject` is: the thing
@@ -15,7 +21,9 @@ class AcceptCardCreate(BaseModel):
     # default is a sentence telling them how to fix it, not pydantic's
     # `Field required`.
     reviewer_handle: str | None = Field(default=None, max_length=64)
-    routing_reason: str = ""
+    # 审阅重点，长度在 review/services 里把关：超了要回一句教人怎么写的话，
+    # 不是 pydantic 的 `String should have at most N characters`。
+    focus: str = ""
     # What the change IS, as one commit title line — becomes the PR title
     # and the squash commit subject. REQUIRED since 2026-08-17, but enforced in
     # review/services.py rather than here: a Pydantic-required field answers
@@ -47,6 +55,8 @@ class AcceptCardCreate(BaseModel):
     deliver_url: str | None = Field(default=None, max_length=1024)
     # 这次交付是不是任务的最后一步。不是的话，采纳后任务还开着，接着做下一步。
     completes_task: bool = True
+    # 上一次退回附带的批注，芝士逐条说处理了没有（`review/comments.py`）。
+    comment_outcomes: list[CommentOutcome] = Field(default_factory=list, max_length=200)
 
 
 class AcceptCardDescribe(BaseModel):
@@ -81,6 +91,26 @@ class AcceptDecision(BaseModel):
 class RejectDecision(BaseModel):
     decided_by: str = Field(min_length=1, max_length=64)
     note: str = ""
+    #: The decider's draft comments that go back with this 退回.
+    comment_ids: list[uuid.UUID] = Field(default_factory=list, max_length=200)
+
+
+class ReviewCommentIn(BaseModel):
+    """A comment on lines of the version under review, or a reply (`parent_id`)."""
+
+    path: str = Field(default="", max_length=1024)
+    line_start: int = 0
+    line_end: int = 0
+    line_text: str = Field(default="", max_length=200_000)
+    commit_sha: str | None = Field(default=None, max_length=64)
+    body: str = ""
+    suggestion: str | None = None
+    parent_id: uuid.UUID | None = None
+
+
+class ReviewCommentEdit(BaseModel):
+    body: str = ""
+    suggestion: str | None = None
 
 
 class VoidDecision(BaseModel):
@@ -121,7 +151,7 @@ class AcceptCardOut(BaseModel):
     topic_id: uuid.UUID
     task_id: uuid.UUID | None = None
     reviewer_handle: str
-    routing_reason: str
+    focus: str
     # The commit this card will become, as filed — so the reviewer can see the
     # subject that is about to enter the project's history BEFORE accepting,
     # which is the last moment anyone can object to it.

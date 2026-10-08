@@ -19,7 +19,7 @@
     {
       "label": "卡递上来，检查还在跑",
       "focus": "card",
-      "tag": "检查没跑完，采纳按钮是灰的",
+      "tag": "检查没跑完，横条上只写在等检查，还没有采纳按钮",
       "events": [
         {
           "at": 200,
@@ -36,10 +36,9 @@
         {
           "at": 500,
           "do": "card",
-          "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "你提的需求，由你验收",
+            "focus": "手机上改成了单列，宽屏仍是两列",
             "change_subject": "feat(signup): new sign-up page",
             "pr_number": 214,
             "pr_url": "#",
@@ -85,7 +84,7 @@
     {
       "label": "检查通过，打开审阅",
       "focus": "card",
-      "tag": "卡上变成「可以合并」；点「审阅」逐个文件看改动",
+      "tag": "轮到你了：横条上就是退回和采纳，右侧「改动」顶部是检查和审阅重点",
       "panel": "changes",
       "changes": {
         "files": [
@@ -110,10 +109,9 @@
         {
           "at": 900,
           "do": "card",
-          "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "你提的需求，由你验收",
+            "focus": "手机上改成了单列，宽屏仍是两列",
             "change_subject": "feat(signup): new sign-up page",
             "pr_number": 214,
             "pr_url": "#",
@@ -237,10 +235,9 @@
         {
           "at": 500,
           "do": "card",
-          "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "你提的需求，由你验收",
+            "focus": "手机上改成了单列，宽屏仍是两列",
             "change_subject": "feat(signup): new sign-up page",
             "pr_number": 214,
             "pr_url": "#",
@@ -301,15 +298,15 @@
     {
       "label": "要几个人批准时",
       "focus": "card",
-      "tag": "项目要求 2 人批准：卡上显示 1/2，凑够才合",
+      "panel": "changes",
+      "tag": "项目要求 2 人批准：「改动」顶部显示 1/2，凑够才合",
       "events": [
         {
           "at": 200,
           "do": "card",
-          "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "改了登录流程，按项目规则需要两人批准",
+            "focus": "登录流程改了，确认旧账号还能正常登录",
             "change_subject": "fix(auth): keep session after password reset",
             "pr_number": 219,
             "pr_url": "#",

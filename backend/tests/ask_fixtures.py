@@ -19,7 +19,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import settle_turn
-from tests.integration.conftest import chat_ws_url, post_message, room_agent_seat
+from tests.integration.conftest import post_message, room_agent_seat, room_socket
 
 
 def agent_credential(project, topic, seat) -> dict[str, str]:
@@ -81,7 +81,7 @@ def active_ask(
                 stop()
                 client.portal.call(lambda: settle_turn(chat, uuid.UUID(str(topic))))
             return
-        with client.websocket_connect(chat_ws_url(topic, actor)) as ws:
+        with room_socket(client, topic, actor) as ws:
             post_message(client, topic, actor, {"content": f"<@{seat}> 等我提问"})
             assert started.wait(5), "the admitted runner never received its input"
             try:

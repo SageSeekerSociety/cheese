@@ -1,4 +1,9 @@
-"""Sticky Claude account selection with durable, single-probe cooldowns."""
+"""Sticky Claude account selection with durable, single-probe cooldowns.
+
+Also publishes the pool's state as ``accounts.json`` next to the ledger, for the
+admin board to read — see ``snapshot``. The pool exists only on this box, and
+the backend has no route to it.
+"""
 
 import json
 import logging
@@ -7,6 +12,7 @@ import os
 import time
 from collections import OrderedDict
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 from cheese_billing_core import PlatformCredential
 
@@ -14,10 +20,15 @@ log = logging.getLogger("cheese.accounts")
 
 
 class ClaudeAccounts:
-    def __init__(self, primary: PlatformCredential, *, now=time.time):
+    def __init__(
+        self, primary: PlatformCredential, *, now=time.time, snapshot_path=None
+    ):
         self.primary = primary
         self.now = now
         self.path = primary.path.parent / "cooldowns.json"
+        # Where to publish the pool for the backend to read; None = nowhere,
+        # which is what tests that only exercise selection pass.
+        self.snapshot_path = Path(snapshot_path) if snapshot_path else None
         self.credentials = {"primary": primary}
         self.affinity = OrderedDict()
         self.cursor = 0
@@ -47,6 +58,61 @@ class ClaudeAccounts:
         with os.fdopen(fd, "w") as output:
             json.dump(self.state, output, allow_nan=False)
         os.replace(temporary, self.path)
+        # Every state change goes through here, so the published copy can never
+        # lag a cooldown by more than one write. Billing calls `snapshot` too:
+        # `retry_after` is a countdown and would otherwise be counted from the
+        # last cooldown change, however long ago that was.
+        self.snapshot()
+
+    def snapshot(self):
+        """Publish the pool where the backend can read it — beside the ledger.
+
+        The accounts and their cooldowns exist only on this box, inside this
+        process. The backend has no route here, but it already reads the
+        ledger's directory (mounted for usage ingest), so one small JSON file
+        next to `usage.jsonl` is the whole channel.
+
+        Atomic (temp file + `os.replace`): the reader picks it up at an
+        arbitrary moment, and a torn file would read as an empty pool. A failed
+        write is logged, never raised — this is a report, and losing it must not
+        cost a model call.
+        """
+        if self.snapshot_path is None:
+            return
+        accounts = []
+        for name in self.accounts():
+            status = self.state.get(name)
+            until = status.get("until") if status else None
+            if status is None:
+                state = "available"
+            elif until is None:
+                # A spent allowance with no reset to wait for: an operator has
+                # to clear it, time will not.
+                state = "disabled"
+            else:
+                state = "cooling"
+            accounts.append(
+                {
+                    "name": name,
+                    "state": state,
+                    "until": until,
+                    "failures": (status or {}).get("failures", 0),
+                }
+            )
+        document = {
+            "written_at": self.now(),
+            "retry_after": self.retry_after(),
+            "accounts": accounts,
+        }
+        try:
+            self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.snapshot_path.with_suffix(".tmp")
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as output:
+                json.dump(document, output, allow_nan=False)
+            os.replace(temporary, self.snapshot_path)
+        except OSError as error:
+            log.warning("could not publish the Claude account snapshot: %s", error)
 
     def select(self, session, excluded=(), *, request_id=None):
         if self.path.exists():

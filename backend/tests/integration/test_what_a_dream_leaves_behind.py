@@ -10,6 +10,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.block.models import Block, BlockKind
@@ -76,6 +77,7 @@ async def _dream_and_listen(client, tmp_path) -> tuple[dict, list[str]]:
     factory = client.test_request_factory
     screen = DreamingScreen(tmp_path)
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=ComputePool([screen.runtime], screen.name),
         base_system_prompt="You are Cheese.",

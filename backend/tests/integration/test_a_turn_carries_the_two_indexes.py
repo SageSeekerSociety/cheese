@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import HARNESSES
@@ -76,6 +77,7 @@ async def _turn_on(
             )
         )
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=ComputePool([screen.runtime], screen.name),
         base_system_prompt="You are Cheese.",

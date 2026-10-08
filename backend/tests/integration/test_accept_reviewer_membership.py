@@ -76,7 +76,7 @@ def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
     machine_commits(uuid.UUID(pid), uuid.UUID(task_id), {f"work-{nth}.txt": subject})
     body: dict = {
         "change_subject": subject,
-        "routing_reason": "最懂",
+        "focus": "最懂",
         **delivery_artifact(client, room),
     }
     body.update(kw)
@@ -90,7 +90,7 @@ def _cards(client, room: str) -> list[dict]:
 def _reassign(client, card_id: str, reviewer: str, *, by: str = OWNER):
     return client.post(
         f"/accept-cards/{card_id}/reassign",
-        json={"reviewer_handle": reviewer, "routing_reason": "换个人更合适"},
+        json={"reviewer_handle": reviewer, "focus": "换个人更合适"},
         headers=session_auth_headers(by),
     )
 
@@ -178,7 +178,6 @@ def test_a_card_can_be_reassigned_to_a_member_of_the_room(client):
 
     assert r.status_code == 200, r.text
     assert r.json()["data"]["reviewer_handle"] == OTHER_MEMBER
-    assert r.json()["data"]["routing_reason"] == "换个人更合适"
 
 
 # --- 递卡：名字由默认路由选出来 ---------------------------------------------

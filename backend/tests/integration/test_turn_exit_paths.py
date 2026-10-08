@@ -39,6 +39,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import harness_for
 from app.domain.agent_session.services import AgentSessionService
@@ -114,6 +115,7 @@ def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:
     """Drive one turn to completion (or to its failure) on the client DB."""
     screen = _Screen(mode=mode)
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -191,6 +193,8 @@ _CHILD = textwrap.dedent(
     from sqlalchemy.pool import NullPool
     from app.domain.agent.chat import ChatService
     from app.domain.agent.compute import ComputePool
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from tests.conftest import StubChannel
 
     DSN, TOPIC, MARKER, WS, SID = sys.argv[1:6]
@@ -206,6 +210,7 @@ _CHILD = textwrap.dedent(
         factory = async_sessionmaker(engine, expire_on_commit=False)
         screen = A()
         chat = ChatService(
+            work_runner=AgentWorkRunner(InProcessBroker()),
             session_factory=factory,
             base_system_prompt="你是芝士。",
             workspace_root=WS,
@@ -322,6 +327,7 @@ def test_no_session_announced_leaves_the_pointer_null(client, tmp_path):
     transcript that was never written."""
     topic_id = _seed_topic(client)
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(_SilentScreen()),
         base_system_prompt="你是芝士。",

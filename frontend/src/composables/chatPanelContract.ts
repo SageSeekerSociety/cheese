@@ -17,8 +17,12 @@ export interface ChatPanelEmit {
   // 标题左边那颗 ← 被按了。去哪儿由拥有这个地址的人决定，不是这里。
   (e: 'back'): void
   // A cheese command changed a platform resource (doc/topics/...) —
-  // the parent refreshes that panel live, mid-turn.
-  (e: 'state-changed', resource: string): void
+  // the parent refreshes that panel live, mid-turn. `id` is the `state` frame's
+  // `id`: the single row that changed, when the backend named one (for `topics`
+  // the room, never the conversation the frame arrived on); the parent reads
+  // that row back instead of the whole panel. Absent on an older backend and on
+  // frames with no single row to name — the parent reloads the whole panel.
+  (e: 'state-changed', resource: string, id?: string): void
   // 芝士摆出来一份东西（`cheese show` / `cheese serve`）：房间里多了一块 kind=artifact
   // 的卡，当前预览跟着它换。对话栏是这条 socket 的家，面板自己听不到，所以往上报一
   // 声，面板据此立刻去问一次指针——而不是等下一次轮询（那要十几秒）。
@@ -70,6 +74,9 @@ export interface ChatPanelOptions {
   /** 读的是这个房间里的一段别的对话（一个任务）：消息、连接、发送都走它；名册、
    *  附件仍是房间的。没有就是房间自己。 */
   conversationId?: () => string | null
+  /** 读的是一个任务、而这件事单独指定了队友时，那位的 handle；空＝跟着房间那位。
+   *  发送框那个 @ 写谁、「这一栏此刻说给谁听」都按它算。 */
+  taskAgentHandle?: () => string | null
   alwaysSummon: () => boolean
   /** 这里是频道主线：叫芝士的消息在它底下的支线里回答，那一轮的开工、收工发给支线，
    *  这里听不到。没有就是在原处回答（任务、支线、私聊、已归档的频道）。 */

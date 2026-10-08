@@ -21,7 +21,8 @@ import pytest
 from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.models import Block
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -97,8 +98,9 @@ async def _a_topic(factory) -> uuid.UUID:
     return topic_id
 
 
-def _service(factory, screen: WorkingScreen, tmp_path) -> ChatService:
+def _service(factory, screen: WorkingScreen, tmp_path, runner) -> ChatService:
     return ChatService(
+        work_runner=runner,
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -118,20 +120,19 @@ async def test_an_unsummoned_message_reaches_the_turn_already_running(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
-    runner.subscribe_messages()
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
     # 一轮开起来，并且停在半路（会话还活着）。
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="wangchangxin", content="@芝士 去查一下这条链路"
     )
     await asyncio.wait_for(screen.started.wait(), 5)
 
     # 干活途中，有人不带 @ 地说了一句正事。
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="wangchangxin", content="直接说你准备怎么改"
     )
 
@@ -156,21 +157,20 @@ async def test_a_bare_mention_after_a_message_carries_both_in_order(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
-    runner.subscribe_messages()
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="wangchangxin", content="@芝士 去查一下这条链路"
     )
     await asyncio.wait_for(screen.started.wait(), 5)
 
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="wangchangxin", content="直接说你准备怎么改"
     )
-    await broker.receive_message(svc, topic_id, author="wangchangxin", content="@芝士")
+    await runner.receive_message(svc, topic_id, author="wangchangxin", content="@芝士")
 
     await _until(lambda: len(screen.delivered) == 2)
     heads = [p.split("\n\n", 1)[0] for p in screen.delivered]
@@ -195,13 +195,12 @@ async def test_an_unsummoned_message_on_an_idle_topic_starts_nothing(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
-    runner.subscribe_messages()
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="wangchangxin", content="先记一句"
     )
     await asyncio.sleep(0.1)
@@ -218,16 +217,15 @@ async def test_the_next_prompt_still_carries_an_unsummoned_message(
     """闲着时攒下的那条没 @ 的消息，必须出现在下一轮的 prompt 里。"""
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
-    runner.subscribe_messages()
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="wangchangxin", content="先记一句"
     )
-    await broker.receive_message(svc, topic_id, author="wangchangxin", content="@芝士")
+    await runner.receive_message(svc, topic_id, author="wangchangxin", content="@芝士")
     await asyncio.wait_for(screen.started.wait(), 5)
 
     assert len(screen.prompts) == 1
@@ -250,16 +248,15 @@ async def test_a_reply_sent_mid_turn_carries_the_message_it_answers(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = WorkingScreen()
-    svc = _service(factory, screen, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=10.0)
-    runner.subscribe_messages()
+    svc = _service(factory, screen, tmp_path, runner)
     topic_id = await _a_topic(factory)
 
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="wangchangxin", content="B 组第 7 行录错了，应该是 0.42"
     )
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="wangchangxin", content="@芝士 去查一下这条链路"
     )
     await asyncio.wait_for(screen.started.wait(), 5)
@@ -271,7 +268,7 @@ async def test_a_reply_sent_mid_turn_carries_the_message_it_answers(
             )
         )
 
-    await broker.receive_message(
+    await runner.receive_message(
         svc,
         topic_id,
         author="wangchangxin",

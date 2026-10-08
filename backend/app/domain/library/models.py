@@ -1,9 +1,12 @@
-"""资料库里每一份文件是谁、在哪次对话里给的 (#2114 第一节的一部分)。
+"""资料库的清单：每一份文件叫什么、字节在哪、是谁在哪次对话里给的 (#2114 第一节)。
 
-文件本身还在磁盘上（`service.library_root`），按名字寻址；这张表只记磁盘记不住的
-事：谁给的、在哪个房间、什么时候，以及它被替换过几次。一行是一份存下来的字节：
-「替换为新版本」把旧的那一行标成被取代、字节挪进历史目录，再为新字节记一行——所以
-同一个名字可以有几行，`superseded_at` 为空的那一行是现在这一份。
+这张表就是资料库本身——列出来的是这里的行，不是磁盘上的目录。一行是一份存下来的
+字节：「替换为新版本」把旧的那一行标成被取代，再为新字节记一行——所以同一个名字
+可以有几行，`superseded_at` 为空的那一行是现在这一份。
+
+名字里的 `/` 就是文件夹：没有文件夹表，一个文件夹在它里面还有文件时存在。名字和
+字节的位置（`location` + `blob_key`，见 `blobs`）是分开的两件事，所以改名、挪进
+文件夹只改 `name`。
 """
 
 import uuid
@@ -32,8 +35,14 @@ class LibraryFileRecord(UuidPk, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    #: 资料库里的名字，也就是它的地址（`library/<name>`）。
+    #: 资料库里的名字，也就是它的地址（`library/<name>`）；`/` 分出文件夹。
     name: Mapped[str] = mapped_column(String(512))
+    #: 字节存在哪一种存储里（`blobs.LOCAL`）。
+    location: Mapped[str] = mapped_column(
+        String(16), default="local", server_default="local"
+    )
+    #: 字节在那个存储里的键（`blobs.new_key`）。
+    blob_key: Mapped[str] = mapped_column(String(1024))
     bytes: Mapped[int] = mapped_column(BigInteger)
     sha256: Mapped[str] = mapped_column(String(64))
     #: 谁放进来的（handle）。

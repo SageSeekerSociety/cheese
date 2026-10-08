@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
@@ -128,6 +129,7 @@ async def run(descriptor):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     channel = SocketChannel(descriptor)
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=descriptor["workspace"],
@@ -143,7 +145,7 @@ async def run(descriptor):
         busy = descriptor["mode"].endswith("busy")
         if busy:
             assert status["working"] and status["work_id"] == str(work)
-            assert (topic, work) in chat._hook_work
+            assert (topic, work) in chat.live.hook_work
             assert await chat.notify_running_turn(
                 topic,
                 "原答者已提交回答",
@@ -151,7 +153,7 @@ async def run(descriptor):
             )
             Path(descriptor["gate"]).touch()
         else:
-            assert not status["working"] and not chat._hook_work
+            assert not status["working"] and not chat.live.hook_work
             from app.api.deps import get_work_runner
             from app.domain.delivery.addressing import Addressed, Recipient
 
@@ -181,7 +183,7 @@ async def run(descriptor):
                 if (
                     status["working"]
                     or status["tasks"]
-                    or chat._hook_work
+                    or chat.live.hook_work
                     or follow_up_owed(descriptor["state"])
                 ):
                     quiet_since = None

@@ -49,7 +49,13 @@ async def delivery_landed(
         task.closed_at = now
         after_close(session, task.room_id)
     await session.flush()
-    _after_commit(session, task.room_id, {"type": "state", "resource": "topics"})
+    # The room's row in the sidebar is what changed (its task count/status), so
+    # name the room for the client's per-row refetch.
+    _after_commit(
+        session,
+        task.room_id,
+        {"type": "state", "resource": "topics", "id": str(task.room_id)},
+    )
     await tell_origin(
         session,
         task,

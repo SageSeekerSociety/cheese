@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.agent.announce import announce
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.machine.models import CloudHostHome
@@ -177,7 +178,6 @@ def _vm(whole_machine: bool) -> dict:
 
 
 async def publish_line(topic_id: uuid.UUID, payload: dict | None) -> None:
-    from app.domain.agent.runtime import get_broker
 
     if payload is None:
         return

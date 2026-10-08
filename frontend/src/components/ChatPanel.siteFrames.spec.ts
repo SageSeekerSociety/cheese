@@ -8,16 +8,19 @@ import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
+vi.mock('../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
-    chatWsUrl: () => 'ws://test/chat',
   }
 })
 
@@ -142,5 +145,28 @@ describe('对话栏把现场的帧转过去', () => {
     socket.emit({ type: 'turn_finished', turn_id: 'turn-a' })
     await flush()
     expect(view.emitted<[Record<string, number>]>('site-turns').at(-1)![0]).toEqual({})
+  })
+})
+
+describe('一个资源变了的帧往上报', () => {
+  it('帧指名了变的那一行：那一个 id 也带上去，面板据此只重取那一行', async () => {
+    const { view, socket } = await open()
+
+    socket.emit({ type: 'state', resource: 'topics', id: 'room-9' })
+    await flush()
+
+    expect(
+      view.emitted<[string, string?]>('state-changed'),
+      'the room row that changed must reach the parent'
+    ).toContainEqual(['topics', 'room-9'])
+  })
+
+  it('没指名（老后端、或没有单行的帧）：照旧只报资源，面板整块重取', async () => {
+    const { view, socket } = await open()
+
+    socket.emit({ type: 'state', resource: 'topics' })
+    await flush()
+
+    expect(view.emitted<[string, string?]>('state-changed')).toContainEqual(['topics', undefined])
   })
 })

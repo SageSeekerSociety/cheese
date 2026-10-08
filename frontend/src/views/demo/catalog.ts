@@ -22,21 +22,20 @@ import type { Component } from 'vue'
 import { avatarColor } from '@/utils/avatar'
 
 import { ACCEPT_ENTRIES } from './catalogAccept'
+import { ADMIN_ENTRIES } from './catalogAdmin'
+import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import { DOC_BLOCK_ENTRIES } from './catalogDoc'
+import { FEEDBACK_ENTRIES } from './catalogFeedback'
 import {
   ACCEPT_CARD,
   ACCEPT_DONE,
-  ACTION_ROWS,
-  ADMIN_QUEUE,
   AGENT_NAME,
   ASK_ANSWERED,
   ASK_OPEN,
-  BAR_ROWS,
-  BAR_ROWS_LONG,
   CARD_FILED,
   CHANGES_EMPTY,
   changesPanelProps,
@@ -45,11 +44,9 @@ import {
   docSession,
   EXCERPTS,
   FEEDBACK_ROWS,
-  KPI_STATES,
   LONG_ROW,
   NAV_ITEMS,
   NO_REPO,
-  NUMBER_ROWS,
   OPEN_FILES,
   PREVIEW_EMPTY,
   previewPanelProps,
@@ -61,22 +58,25 @@ import {
   WANG_LINES,
 } from './catalogFixtures'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
+import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
 import { MODELS_ENTRIES } from './catalogModels'
+import { NOTIFICATION_ENTRIES } from './catalogNotifications'
 import { PANEL_ENTRIES } from './catalogPanels'
+import { PUBLIC_ENTRIES } from './catalogPublic'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
+import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SETTINGS_ENTRIES } from './catalogSettings'
+import { SHARED_ENTRIES } from './catalogShared'
 import { SHELL_ENTRIES } from './catalogShell'
+import { SKILL_ENTRIES } from './catalogSkills'
 import { TASK_FORM_ENTRIES } from './catalogTaskForm'
 import { USAGE_ENTRIES } from './catalogUsage'
+import { VIEW_ENTRIES } from './catalogViews'
 
 import LegalLinks from '@/components/account/LegalLinks.vue'
-import AdminActionList from '@/components/admin/AdminActionList.vue'
-import AdminBarChart from '@/components/admin/AdminBarChart.vue'
-import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
-import AdminNumberList from '@/components/admin/AdminNumberList.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
@@ -343,7 +343,7 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'accept-card',
     title: 'TopicAcceptCard',
-    about: '输入框上方那张验收卡：平时一行横条，点开是整张卡。',
+    about: '输入框上方那一条采纳横条：现在在等什么，轮到人时在这里退回或采纳。详情在「改动」页顶部。',
     file: 'src/components/TopicAcceptCard.vue',
     component: TopicAcceptCard,
     // 这张卡自己去接口取数（`getAcceptCards` / `getPrChecks`），也读工作区 store。
@@ -351,16 +351,10 @@ export const CATALOG: CatalogEntry[] = [
     states: [
       {
         name: '贴在输入框上方',
-        note: '收着的一行：待谁审阅、改动的标题。点一下才摊开（这里不点，看的就是这一行）。',
+        note: '一行：待谁审阅，以及退回和采纳两颗按钮。交的是什么不在这一行上。',
         // 卡上带着哪一条活的 id：不传就只看「不属于任何一条活」的那些卡（见组件里那个 filter）。
-        props: { topicId: 'demo', topicStatus: 'active', taskId: ACCEPT_CARD?.task_id, docked: true },
-        expect: 'docs: add a welcome note',
-      },
-      {
-        name: '整张摊开',
-        note: '不贴底的时候（任务卡详情里）整张摊开：改动说明、检查、采纳与退回都在。',
-        props: { topicId: 'demo', topicStatus: 'active', taskId: ACCEPT_CARD?.task_id, docked: false },
-        expect: '采纳',
+        props: { topicId: 'demo', topicStatus: 'active', taskId: ACCEPT_CARD?.task_id },
+        expect: '采纳并完成任务',
       },
     ],
   },
@@ -422,129 +416,9 @@ export const CATALOG: CatalogEntry[] = [
       },
     ],
   },
-  {
-    id: 'admin-kpi-card',
-    title: 'AdminKpiCard',
-    about: '看板 KPI 行里的一张卡：有没有 to 决定它是不是一个可点的东西。',
-    file: 'src/components/admin/AdminKpiCard.vue',
-    component: AdminKpiCard,
-    // 口径注那一颗（AdminNoteTip）用 useI18n。
-    needs: ['vuetify', 'i18n', 'router'],
-    states: [
-      {
-        name: '可点的一张',
-        note: '有去向：指针、hover 底色、进 Tab 顺序三样都有，还带着环比和逐日折线。',
-        props: KPI_STATES.linked,
-        expect: '12,048',
-      },
-      {
-        name: '只看不点的一张',
-        note: '没有去向：cursor / hover / Tab 三样一样都不给；口径注（note）这时才生效。',
-        props: KPI_STATES.plain,
-        expect: '316',
-      },
-      {
-        name: '拿不到值',
-        note: 'value 是空串画长破折号，不画 0：「没读到」和「读出来了，是零」必须长得不一样。',
-        props: KPI_STATES.empty,
-        expect: '—',
-      },
-      {
-        name: '首次加载',
-        note: '骨架的形状和真卡完全一样：到货那一刻不重排。',
-        props: { label: '待分诊', value: '', loading: true, spark: [] },
-        needs: UI,
-      },
-    ],
-  },
-  {
-    id: 'admin-bar-chart',
-    title: 'AdminBarChart',
-    about: '看板上的横向排行：名字在左、条在中间、数值在右。',
-    file: 'src/components/admin/AdminBarChart.vue',
-    component: AdminBarChart,
-    needs: ['vuetify', 'i18n', 'router'],
-    states: [
-      {
-        name: '一张榜',
-        note: '每一行本身就是文字（名字和数值都是真文本，条是装饰），读屏直接读得到。',
-        props: { title: '最花 token 的项目', rows: BAR_ROWS },
-        expect: '空间协作',
-      },
-      {
-        name: '名字长到装不下',
-        note: '名字那一格走省略号、挂 title，数值那两列不被挤走。',
-        props: { title: '最花 token 的项目', rows: BAR_ROWS_LONG },
-        expect: '一个名字长到会走省略号的项目',
-      },
-      {
-        name: '没有数据',
-        note: '空态是「还没读到」，不是画一根 0 的柱。',
-        props: { title: '最花 token 的项目', rows: [] },
-      },
-      {
-        name: '首次加载',
-        note: '骨架行，行高和真行一样。',
-        props: { title: '最花 token 的项目', rows: [], loading: true },
-        needs: ['vuetify', 'i18n'],
-      },
-    ],
-  },
-  {
-    id: 'admin-number-list',
-    title: 'AdminNumberList',
-    about: '看板右侧的迷你列表：整行一个 <a>，行里没有第二个可聚焦的东西。',
-    file: 'src/components/admin/AdminNumberList.vue',
-    component: AdminNumberList,
-    needs: ['vuetify', 'i18n', 'router'],
-    states: [
-      {
-        name: '三行',
-        note: '状态名和颜色各只有一处定义（feedbackMeta），这里只画。',
-        props: { title: '需处理 · 3', rows: NUMBER_ROWS, moreTo: ADMIN_QUEUE },
-        expect: '导出一个月的数据要等四十秒',
-      },
-      {
-        name: '空',
-        note: '没有行也没有「查看全部」：这一格就是没东西。',
-        props: { title: '需处理 · 0', rows: [] },
-      },
-      {
-        name: '首次加载',
-        note: '骨架行，和真行的行高一样（28px 那条行高是这一块立得住的前提）。',
-        props: { title: '需处理 · 3', rows: [], loading: true },
-        needs: ['vuetify', 'i18n'],
-      },
-    ],
-  },
-  {
-    id: 'admin-action-list',
-    title: 'AdminActionList',
-    about: '「等你处理 / 卡住了」那一列：有去向的行整行是目的地，没有的就不装成链接。',
-    file: 'src/components/admin/AdminActionList.vue',
-    component: AdminActionList,
-    needs: ['vuetify', 'i18n', 'router'],
-    states: [
-      {
-        name: '三条',
-        note: 'tone 只有 warn / danger 用状态色，其余走中性阶；第二行没有去向，是静态的。',
-        props: { title: '等你处理', empty: '今天没有卡住的事', rows: ACTION_ROWS, moreTo: ADMIN_QUEUE },
-        expect: '合并 #2100（前端边界闸）',
-      },
-      {
-        name: '空屏',
-        note: '空态是一句邀请（「今天没有卡住的事」），不是一句道歉。',
-        props: { title: '等你处理', empty: '今天没有卡住的事', rows: [] },
-        expect: '今天没有卡住的事',
-      },
-      {
-        name: '首次加载',
-        note: '骨架行。',
-        props: { title: '等你处理', empty: '今天没有卡住的事', rows: [], loading: true },
-        needs: ['vuetify', 'i18n'],
-      },
-    ],
-  },
+  // admin 那一组（看板的 KPI 卡与横向排行、迷你列表、待办那一列）在自己的文件里：
+  // `catalogAdmin.ts`。
+  ...ADMIN_ENTRIES,
   {
     id: 'app-page',
     title: 'AppPage',
@@ -699,11 +573,17 @@ export const CATALOG: CatalogEntry[] = [
   // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
   // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
   ...ACCEPT_ENTRIES,
+  ...REVIEW_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
+  // 通知渲染那一组（十件「一条动态长什么样」，数据在 `catalogNotificationsFixtures.ts`）
+  // 在自己的文件里：`catalogNotifications.ts`。
+  ...NOTIFICATION_ENTRIES,
   // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
   // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
   ...KNOWLEDGE_ENTRIES,
+  // 资料库页拆出来的三件：`catalogLibrary.ts`。
+  ...LIBRARY_ENTRIES,
   // 发题表单那一组（从 1089 行的 TaskForm 拆出来的七张卡加两个弹窗，夹具在自己
   // 那一份里）在自己的文件里：`catalogTaskForm.ts`。
   ...TASK_FORM_ENTRIES,
@@ -788,7 +668,7 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'panel-changes',
     title: 'PanelChangesView',
-    about: '改动那一格：一棵标着增删的树，点开是这一份文件自己的逐行 diff。',
+    about: '改动那一格：一棵标着增删的树，默认把全部改动连着排，单独打开一份可以看全文或编辑。',
     file: 'src/components/panels/PanelChangesView.vue',
     component: PanelChangesView,
     needs: UI,
@@ -806,13 +686,19 @@ export const CATALOG: CatalogEntry[] = [
       },
       {
         name: '这一轮什么都没改',
-        note: '树上写「暂无改动」，右边那一半装的是提交记录 —— 它也没有，于是写「暂无提交」。',
+        note: '树上和右边都写「暂无改动」。',
         props: CHANGES_EMPTY,
-        expect: '暂无提交',
+        expect: '暂无改动',
       },
       {
-        name: '一份文件自己的 diff',
-        note: '树上每行一个文件（+N −M 标着改了多少），点开的是它自己那一段：文件头、hunk 头、增删各自着色，定位得到行。',
+        name: '全部改动',
+        note: '默认那一面：树上每行一个文件（+N −M 标着改了多少），右边每个文件一段连着往下排。顶部那块（这次交付的情况）由宿主塞进 head 插槽，这里没有。',
+        props: changesPanelProps({ openPath: null, openDiff: null, openDiffLines: [] }),
+        expect: '3 个文件',
+      },
+      {
+        name: '单独打开一份',
+        note: '点段头的「打开」：只看这一份，横条上有返回、差异和全文两面。',
         props: changesPanelProps(),
         expect: '这个项目放本课程的课件和作业',
       },
@@ -968,6 +854,21 @@ export const CATALOG: CatalogEntry[] = [
   ...DOC_BLOCK_ENTRIES,
   ...BASE_ENTRIES,
   ...PANEL_ENTRIES,
+  // 跨目录的共用件那一组（表壳与它的表头格、富文本编辑器与附件图、页头、句子里的人）在
+  // 自己的文件里：`catalogShared.ts`（数据在 `catalogSharedFixtures.ts`）。
+  ...SHARED_ENTRIES,
+  // 整页那两件（一项产物的版本历史、小队的对外一面）在自己的文件里：`catalogViews.ts`。
+  ...VIEW_ENTRIES,
+  // 反馈详情那一组（从详情页右栏拆出来的处理人、评论条、评论楼、进展时间线，数据在
+  // `catalogFeedbackFixtures.ts`）在自己的文件里：`catalogFeedback.ts`。
+  ...FEEDBACK_ENTRIES,
+  // 技能详情抽屉那一件在自己的文件里：`catalogSkills.ts`。
+  ...SKILL_ENTRIES,
+  // 附件那两件（一条消息里的图、一份文档的第一页）在自己的文件里：`catalogAttachments.ts`。
+  ...ATTACHMENT_ENTRIES,
+  // 公共站那几页（三个公共页共用的外壳、首页、方案页，和首页里那段房间）在自己的文件
+  // 里：`catalogPublic.ts`。
+  ...PUBLIC_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */

@@ -64,7 +64,6 @@ vi.mock('../../api', async () => {
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listFiles: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTerminal: vi.fn().mockResolvedValue({ available: false }),

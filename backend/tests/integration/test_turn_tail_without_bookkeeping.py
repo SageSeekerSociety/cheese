@@ -1,7 +1,7 @@
 """The tail of a turn read by a backend that holds none of its bookkeeping.
 
 dev hands running turns to a new backend on every deploy. On 2026-09-27 the
-backend that read the last records of a teammate's turn had no ``_hook_work`` for
+backend that read the last records of a teammate's turn had no ``live.hook_work`` for
 it, and 现场 showed three things wrong: the calls and the closing words were
 signed by the room's default agent, the closing words landed twice (once as the
 message, once as the turn's result), and they sorted above the calls made before
@@ -15,6 +15,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.claude_code.events import Assembler
 from app.domain.agent.service import AgentResult
@@ -76,12 +77,13 @@ async def test_a_turns_tail_read_without_its_bookkeeping_lands_as_it_happened(
     work = uuid.uuid4()
     # A fresh service: the process that took the turn over, holding nothing.
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="fixture",
         workspace_root=str(tmp_path),
         compute=Mock(),
     )
-    assert not service._hook_work
+    assert not service.live.hook_work
     assembler = Assembler({})
 
     async def deliver() -> None:
@@ -128,6 +130,7 @@ async def test_a_result_that_says_something_new_still_lands(client, tmp_path):
     project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
     work = uuid.uuid4()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="fixture",
         workspace_root=str(tmp_path),

@@ -170,7 +170,7 @@ async def send_chat_message(
     if not content and not attachments:
         raise ValidationError(say("messageOrAttachment"))
     # The turn a person's message starts is named after the block it anchors.
-    anchor_id = await get_broker().receive_message(
+    anchor_id = await get_work_runner().receive_message(
         chat,
         place.conversation_id,
         author=actor.handle,

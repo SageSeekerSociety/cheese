@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
-from app.common.auth import verify_access_token
+from app.common.auth import AccessClaims, verify_access_token
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
@@ -62,6 +62,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
 from app.domain.team.repositories import TeamRepository
+from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
@@ -245,7 +246,7 @@ async def device_connect(
     owner, and optionally assigns it to ``project_id``."""
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
-        raise UnauthorizedError("Approving a device requires a logged-in user")
+        raise UnauthorizedError(say("deviceApproveSignIn"))
 
     if body.project_id is not None:
         await resolver.authorize_project(actor, project_id=body.project_id)
@@ -438,8 +439,25 @@ class _WebSocketViewerTransport:
         await self._websocket.send_bytes(data)
 
 
+async def _sign_in_lasts(session: AsyncSession, claims: AccessClaims) -> bool:
+    """Whether the sign-in the token names may still act at all.
+
+    ``verify_access_token`` reads the signature and the expiry and nothing
+    else, so a token outlives its session -- deliberately, for the length of a
+    request. A connection is the caller that outlives it by far more: signed
+    out, revoked from the device list, password changed or reset, idle past
+    the timeout, or theft suspected, the session ends and the token keeps
+    working until it expires. A token that names no session has none to ask
+    about, and one that names no person has no session to look up.
+    """
+    if claims.sid is None or claims.user_id is None:
+        return True
+    sign_ins = SessionService(session)
+    return await sign_ins.live_handle(claims.user_id, claims.sid) is not None
+
+
 async def _may_view_screen(
-    session: AsyncSession, screen: HubScreen, token: str | None
+    session: AsyncSession, screen: HubScreen, claims: AccessClaims | None
 ) -> bool:
     """Only a logged-in human who shares the screen's project (a project member/owner)
     or its topic (a topic-roster member) may watch its 现场 (P1 authz shape). Browsers
@@ -448,11 +466,12 @@ async def _may_view_screen(
     A screen working in a private channel, or in one of its tasks, is that
     channel's: only someone seated in it watches, project managers included —
     the same door as the channel's own routes (``authorize_topic``).
+
+    Asked at the handshake and again on the viewer's clock, which is why the
+    caller holds the claims rather than the token: what a lasting view stands
+    on is the sign-in, not the 15-minute access token it was opened with.
     """
-    if not token:
-        return False
-    claims = verify_access_token(token)
-    if claims is None:
+    if claims is None or not await _sign_in_lasts(session, claims):
         return False
     # Membership is keyed by handle.
     handle = claims.handle
@@ -481,6 +500,12 @@ def _as_int(value: object, default: int) -> int:
     return n if 0 < n <= 10000 else default
 
 
+#: How often a live viewer is asked again whether it may still watch and type:
+#: often enough that a sign-in which ended stops driving the machine, rarely
+#: enough to cost nothing while a screen is only being watched.
+VIEW_RECHECK_EVERY_S = 25.0
+
+
 @router.websocket("/session/{sid}/screen")
 async def viewer_socket(
     websocket: WebSocket,
@@ -502,10 +527,19 @@ async def viewer_socket(
     Nothing is forwarded before the viewer has attached, so keystrokes cannot
     reach a pane that was never subscribed.
 
+    The door is asked again every ``VIEW_RECHECK_EVERY_S`` while the view lasts:
+    the handshake is not the last word, so a view ends with the sign-in and the
+    membership that opened it rather than at the next reconnect.
+
     Unknown-screen and not-authorized close identically (1008) so a screen id
     can't be enumerated."""
     screen = device_hub.screen(sid)
-    authorized = screen is not None and await _may_view_screen(db, screen, token)
+    claims = verify_access_token(token or "")
+    authorized = (
+        screen is not None
+        and claims is not None
+        and await _may_view_screen(db, screen, claims)
+    )
     # Release the authz read-transaction before the viewer's (long-lived) relay loop.
     # A WS-injected ``get_db`` session lives until the socket closes, so leaving the
     # transaction open would park it `idle in transaction` for the whole view — the
@@ -521,9 +555,30 @@ async def viewer_socket(
     transport: ViewerTransport = _WebSocketViewerTransport(websocket)
     device_id = screen.device_id
     attached = False  # attach (and subscribe) only once the viewer reports its size
+    incoming: asyncio.Task[Any] | None = None  # a receive must not be cancelled
+    # The review is a clock of its own, never a per-keystroke errand: the viewer
+    # typing steadily is exactly the one whose sign-in must not lapse unnoticed,
+    # so a busy view is asked as often as an idle one. The tick is made once a
+    # period and is not remade when a frame arrives.
+    review = asyncio.create_task(asyncio.sleep(VIEW_RECHECK_EVERY_S))
     try:
         while True:
-            message = await websocket.receive()
+            if incoming is None:
+                incoming = asyncio.create_task(websocket.receive())
+            done, _ = await asyncio.wait(
+                {incoming, review}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if review in done:
+                review = asyncio.create_task(asyncio.sleep(VIEW_RECHECK_EVERY_S))
+                if not await _may_view_screen(db, screen, claims):
+                    await websocket.close(code=4401, reason="this sign-in has ended")
+                    break
+                # The same footgun as the check before the handshake: a read left
+                # open parks this socket's session `idle in transaction`.
+                await db.commit()
+                continue
+            message = incoming.result()
+            incoming = None
             if message["type"] == "websocket.disconnect":
                 break
             text = message.get("text")
@@ -554,6 +609,9 @@ async def viewer_socket(
     except WebSocketDisconnect:
         pass
     finally:
+        review.cancel()
+        if incoming is not None:
+            incoming.cancel()
         if attached:
             await device_hub.detach_viewer(device_id, sid, transport)
 
@@ -572,7 +630,7 @@ class BindTeamRequest(BaseModel):
 async def _require_user(resolver: ActorResolverDep) -> int:
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
-        raise UnauthorizedError("Managing devices requires a logged-in user")
+        raise UnauthorizedError(say("deviceManageSignIn"))
     return actor.user_id
 
 

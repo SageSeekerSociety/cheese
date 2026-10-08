@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.core import background
 from app.core.config import settings
@@ -23,10 +24,10 @@ from app.domain.block.models import Block
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.run_records import records_of
@@ -37,6 +38,7 @@ def _room(client) -> tuple[str, StubChannel, ChatService]:
     room = project.json()["data"]["root_topic_id"]
     channel = StubChannel()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/handover-messages-ws",
@@ -70,7 +72,7 @@ def _queued(client, room: str) -> list:
 
 
 def _say(client, room: str, content: str) -> None:
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": content})
         while ws.receive_json()["type"] != "user_block":
             pass
@@ -210,6 +212,7 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
     channel = _SlowToSetUp()
     channel.slow = uuid.UUID(busy)
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/handover-messages-ws",
@@ -273,8 +276,10 @@ def test_a_message_whose_wake_up_was_missed_starts_on_the_next_sweep(
     ]
 
     class Runs:
-        async def record(self, name, at):
-            pass
+        """This process takes every tick; the lease row is not what's under test."""
+
+        async def claim(self, name, *, interval_s, who, now):
+            return True
 
     begun = time.monotonic()
     client.portal.call(sweep.start, Runs())

@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
@@ -138,6 +139,7 @@ def _running_turn(client, topic_id: str) -> _Screen:
     """One ChatService for the whole test, with a turn running on this topic and
     a screen to receive what the platform sends it."""
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/doc-notice-ws",
@@ -149,7 +151,7 @@ def _running_turn(client, topic_id: str) -> _Screen:
     )
     work_id = uuid.uuid4()
     screen = _Screen(session, work_id, service.confirm_prompt_receipt)
-    service._active_turn_ids[uuid.UUID(topic_id)] = {work_id}
+    service.live.active_turn_ids[uuid.UUID(topic_id)] = {work_id}
     service._compute.steer = screen.steer  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen
@@ -220,6 +222,7 @@ def test_a_doc_edit_between_turns_is_pushed_at_nobody(client):
     _put(client, tid, DOC, 0)
     screen = _Screen()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/doc-notice-ws",
@@ -395,7 +398,7 @@ async def test_a_notice_that_names_no_block_is_never_replayed(client):
     _, tid = _project_topic(client)
     screen = _running_turn(client, tid)
     service = app.dependency_overrides[get_chat_service]()
-    service._active_turn_ids.clear()
+    service.live.active_turn_ids.clear()
 
     assert (
         client.portal.call(

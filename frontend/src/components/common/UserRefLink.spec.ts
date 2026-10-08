@@ -31,6 +31,10 @@ const { room, members } = vi.hoisted(() => ({
   members: [] as { user_handle: string; role: string; name: string; agent: boolean }[],
 }))
 
+vi.mock('../../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     members,
@@ -50,14 +54,14 @@ vi.mock('@/api', async () => {
     getPrivateChat: vi.fn().mockResolvedValue(room),
     listProjectAgents: vi.fn().mockResolvedValue({ data: [] }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
-    chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
   }
 })
+
+import { provideUserRefDirectory } from '@/composables/useUserRefDirectory'
 
 import UserRefLink from './UserRefLink.vue'
 
@@ -113,8 +117,20 @@ const settle = async () => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
+/** 外壳在 App.vue 注入真名册；这里在树根上做同一件事。 */
+function withDirectory(child: () => ReturnType<typeof h>) {
+  return defineComponent({
+    setup() {
+      provideUserRefDirectory()
+      return child
+    },
+  })
+}
+
 function mountRef(router: Router, props: Record<string, unknown>) {
-  return render(UserRefLink as unknown as Component, { props, global: { plugins: [vuetify, router] } })
+  return render(withDirectory(() => h(UserRefLink, props)) as unknown as Component, {
+    global: { plugins: [vuetify, router] },
+  })
 }
 
 /** 私聊里一条 @ 了 handle 的消息：点它那颗 chip，看私聊页把人带到哪。 */
@@ -205,9 +221,7 @@ describe('UserRefLink：句子里的一个人', () => {
   it('点人名不会同时触发所在那一行自己的点击', async () => {
     const router = await makeRouter('/projects/p1/settings')
     const onRow = vi.fn()
-    const Row = defineComponent({
-      render: () => h('div', { onClick: onRow }, [h(UserRefLink, { handle: 'alice', name: '爱丽丝' })]),
-    })
+    const Row = withDirectory(() => h('div', { onClick: onRow }, [h(UserRefLink, { handle: 'alice', name: '爱丽丝' })]))
     const { getByText } = render(Row, { global: { plugins: [vuetify, router] } })
     await fireEvent.click(getByText('@爱丽丝'))
     expect(onRow).not.toHaveBeenCalled()
@@ -221,5 +235,26 @@ describe('UserRefLink：句子里的一个人', () => {
     await fireEvent.click(chip)
     await settle()
     expect(router.currentRoute.value.path).toBe('/projects/p1/settings')
+  })
+
+  it('没人注入名册（组件目录、单独挂载）：画出 @handle，不能点', async () => {
+    const router = await makeRouter('/projects/p1/settings')
+    members.splice(0, members.length, { user_handle: 'alice', role: 'member', name: '爱丽丝', agent: false })
+    const { getByText } = render(UserRefLink as unknown as Component, {
+      props: { handle: 'alice' },
+      global: { plugins: [vuetify, router] },
+    })
+    const chip = getByText('@alice')
+    expect(chip.getAttribute('role')).toBeNull()
+    await fireEvent.click(chip)
+    await settle()
+    expect(router.currentRoute.value.path).toBe('/projects/p1/settings')
+  })
+
+  it('注入了名册：只给 handle 时名字从项目成员里取', async () => {
+    const router = await makeRouter('/projects/p1/settings')
+    members.splice(0, members.length, { user_handle: 'alice', role: 'member', name: '爱丽丝', agent: false })
+    const { getByText } = mountRef(router, { handle: 'alice' })
+    expect(getByText('@爱丽丝')).toBeTruthy()
   })
 })

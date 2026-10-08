@@ -48,6 +48,8 @@ vi.mock('@/api/projectSkills', () => ({
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
+  // 页面取一份采纳卡（对话栏那一条和「改动」页顶部共用）：这里没有卡。
+  getAcceptCards: vi.fn(async () => ({ data: [], has_more: false })),
   listTopicMembers: vi.fn(() => Promise.resolve({ data: [], total: 0 })),
   listFeedbackProposals: vi.fn(() => Promise.resolve([...server.live])),
   // 频道概览里的任务：这里没有。
@@ -70,6 +72,7 @@ vi.mock('@/components/ChatPanel.vue', () => ({
     emits: ['state-changed'],
     template: `<div>
       <button data-testid="feedback-frame" @click="$emit('state-changed', 'feedback')" />
+      <button data-testid="topics-frame" @click="$emit('state-changed', 'topics', 'room-a')" />
       <slot name="timeline-end" />
     </div>`,
   },
@@ -111,6 +114,8 @@ function setup() {
     markRead: vi.fn(),
     openProject: vi.fn(),
     refreshTopics: vi.fn(),
+    refreshTopicRow: vi.fn(),
+    noteTasksChanged: vi.fn(),
     refreshUnread: vi.fn(),
     setChatPct: vi.fn(),
   })
@@ -184,5 +189,30 @@ describe('feedback proposal cards on an open page', () => {
     server.live = []
     await fireEvent.click(view.getByTestId('feedback-frame'))
     await waitFor(() => expect(view.baseElement.textContent).not.toContain('Sandbox cannot resolve hosts'))
+  })
+})
+
+describe('一个话题变了的帧到达开着页面的人', () => {
+  it('指名了是哪一行就只重取那一行，任务清单那一路照旧', async () => {
+    const { router, view } = setup()
+    await router.push('/projects/p1/topics/topic-a')
+    await waitFor(() => expect(view.baseElement.textContent).toContain('Room A'))
+
+    const mocked = store.value as {
+      refreshTopicRow: ReturnType<typeof vi.fn>
+      refreshTopics: ReturnType<typeof vi.fn>
+      noteTasksChanged: ReturnType<typeof vi.fn>
+    }
+    mocked.refreshTopicRow.mockClear()
+    mocked.refreshTopics.mockClear()
+    mocked.noteTasksChanged.mockClear()
+
+    await fireEvent.click(view.getByTestId('topics-frame'))
+
+    await waitFor(() => expect(mocked.refreshTopicRow).toHaveBeenCalledWith('room-a'))
+    // 改一个房间名不该重下整份清单（400 多个话题近 300KB）。
+    expect(mocked.refreshTopics).not.toHaveBeenCalled()
+    // 但任务清单那条路还得走着：建、改名、关都要跟着变。
+    expect(mocked.noteTasksChanged).toHaveBeenCalled()
   })
 })

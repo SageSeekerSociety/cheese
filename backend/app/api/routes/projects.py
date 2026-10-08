@@ -3,12 +3,13 @@
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.conditional import conditional_json
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
@@ -351,14 +352,20 @@ async def list_weeklies(
     return ok(page(items, len(items)))
 
 
-@router.get("/{project_id}/tasks")
+@router.get("/{project_id}/tasks", response_model=None)
 async def list_project_tasks(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> dict:
+    if_none_match: Annotated[str | None, Header()] = None,
+    status: Annotated[Literal["open", "closed"] | None, Query()] = None,
+) -> Response:
     """Every thread in the project, each with the card it currently rides on.
+
+    `status` keeps only threads in that state. The sidebar polls for the open
+    ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
+    read.
 
     The rail draws rooms and the work inside them, so it needs both halves at
     once. Two round trips, not two per room and one per thread: a project here
@@ -374,6 +381,12 @@ async def list_project_tasks(
     and the one phrase to print on it — derived here rather than in the client,
     so every client gives the same answer (`room_task/presentation.py`). Two
     round trips still: it is computed from the two batches already fetched.
+
+    条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB
+    出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空
+    body —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的
+    状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，
+    翻的时候本来就该重画。
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -388,7 +401,7 @@ async def list_project_tasks(
     tasks = [
         t
         for t in await TaskService(db).list_in_project(project_id)
-        if t.room_id in seen
+        if t.room_id in seen and (status is None or t.status == status)
     ]
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
@@ -456,7 +469,7 @@ async def list_project_tasks(
                 },
             }
         )
-    return ok(page(items, len(items)))
+    return conditional_json(ok(page(items, len(items))), if_none_match)
 
 
 @router.get("/{project_id}/progress")
@@ -596,14 +609,14 @@ async def save_forge_attribution(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
     if body.requester_coauthor is None:
-        values.pop("forge_requester_coauthor", None)
+        await service.merge_settings(project, {}, remove=("forge_requester_coauthor",))
     else:
-        values["forge_requester_coauthor"] = body.requester_coauthor
-    project.settings = values
-    await db.flush()
+        await service.merge_settings(
+            project, {"forge_requester_coauthor": body.requester_coauthor}
+        )
     return await get_forge_attribution(project_id, db, resolver)
 
 
@@ -643,9 +656,9 @@ async def set_task_naming(
     mode = body.get("mode")
     if mode not in naming.MODES:
         raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
-    project = await ProjectService(db).get_or_404(project_id)
-    project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
-    await db.flush()
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
+    await service.merge_settings(project, {naming.SETTINGS_KEY: mode})
     return await get_task_naming(project_id, db, resolver)
 
 
@@ -929,9 +942,13 @@ async def set_branch_protection(
     never dual-written. Who may change review policy is the steward dependency's
     question: the project's owner, or an owner/admin of its team.
     """
-    project = await ProjectRepository(db).get(project_id)
+    repo = ProjectRepository(db)
+    project = await repo.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    # What is written here is read from what is stored (the current rule, merged
+    # with the body), so the read has to happen under the lock.
+    await repo.lock_settings(project)
     new_settings = {**(project.settings or {})}
     if any(key in body for key in _BRANCH_PROTECTION_KEYS):
         try:
@@ -979,7 +996,8 @@ async def set_project_upstream(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
     if await binding_for_project(project_id, db) is not None:
         raise ConflictError(say("repoAlreadyConnected"))
     if (project.settings or {}).get("forge_kind") != "github_app":
@@ -989,6 +1007,5 @@ async def set_project_upstream(
     if raw and parsed is None:
         raise ValidationError(say("githubRepoUrlRequired"))
     url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
-    project.settings = {**(project.settings or {}), "github_repository_url": url}
-    await db.flush()
+    await service.merge_settings(project, {"github_repository_url": url})
     return ok({"url": url})

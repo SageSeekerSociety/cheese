@@ -10,12 +10,15 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep, require_seated_in_its_room
+from app.api.deps import get_chat_service
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
 from app.core.db import get_db
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
+from app.domain.agent.chat import ChatService
+from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
@@ -182,42 +185,56 @@ async def write_file(
     project_id: uuid.UUID,
     body: dict,
     db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
 ) -> dict:
     """Save an edited workspace file (人改文件即指令). Writes to the topic's
     worktree.
 
-    `version` is the one the caller read. Sending it makes the write conditional:
-    if 芝士 (or anyone else) wrote the file in between, the save is rejected with
-    409 instead of silently erasing their work, and the panel shows the conflict.
+    `version` is the one the caller read and `base` the text it read. If the
+    file moved on in between, the two sets of edits are merged against `base`:
+    a clean merge is saved, overlapping edits answer 409 with the regions to
+    pick from. A person's save is then said in the task, and the task's AI
+    teammate is told before its next tool call to re-read the file.
     """
     await ProjectService(db).get_or_404(project_id)
     path = (body.get("path") or "").strip()
     content = body.get("content") or ""
     version = body.get("version") or None
+    base = body.get("base")
     if not path:
         raise ValidationError("path is required")
     if task is None:
         raise ValidationError(say("chooseTaskToEdit"))
-    saved = await ProjectFiles(db, project_id, task, release_session=True).write(
-        path, content, version
+    actor = await resolver.resolve(project_id=project_id, topic_id=task)
+    saved = await ProjectFiles(db, project_id, task, release_session=True).save(
+        path, content, version, base if isinstance(base, str) else None
     )
-    return ok({"path": path, "version": saved["version"], "source": "live"})
-
-
-@router.get("/{project_id}/git/log", dependencies=[Depends(require_project_access)])
-async def git_log(
-    project_id: uuid.UUID,
-    db: DbSession,
-    topic: uuid.UUID | None = None,
-    task: uuid.UUID | None = None,
-) -> dict:
-    await ProjectService(db).get_or_404(project_id)
-    # A topic asks about ITS commits (its branch minus the base), never the
-    # project's — the project log is other topics' work.
-    rows = await ProjectFiles(db, project_id, task, release_session=True).history()
-    return ok(page(rows, len(rows)))
+    row = await TaskService(db).get(task)
+    if row is not None and actor.authenticated and actor.via != "cheese":
+        said = await announce_edit(
+            db,
+            task=row,
+            who=actor.handle,
+            path=path,
+            previous=saved["previous"],
+            content=saved.get("content", content),
+        )
+        await db.commit()
+        if said is not None:
+            line, told = said
+            await chat.notify_running_turn(row.id, told, blocks=[line.id])
+    return ok(
+        {
+            "path": path,
+            "version": saved["version"],
+            "source": "live",
+            "merged": saved["merged"],
+            **({"content": saved["content"]} if saved["merged"] else {}),
+        }
+    )
 
 
 @router.get("/{project_id}/git/diff", dependencies=[Depends(require_project_access)])
@@ -257,29 +274,24 @@ async def topic_work_summary(
     ``has_run`` is the topic's captured session, not its message count: 现场
     shows what 芝士 did, and a room where only people talked has no 现场 to open.
 
-    ``changed_files`` combines the open tasks' changed paths for the room's
-    badge. The changes panel selects one task before showing its diff.
+    ``changed_files`` is a task's own changed paths, for the badge on its 改动
+    tab. A channel has no 改动 tab (changes belong to tasks and are read on the
+    task's page, #2422), so it answers none and compares no branch: comparing
+    every open task in a busy channel took past the timeout on every visit.
     """
     await ProjectService(db).get_or_404(project_id)
     place = await TopicService(db).place_or_404(topic_id)
-    # A task's page asks about that task alone; a room's about its open tasks.
-    if place.task_id is not None:
-        one = await TaskService(db).get(place.task_id)
-        tasks = [one] if one is not None else []
-    else:
-        tasks = await TaskService(db).list_in_room(place.room_id)
+    one = (
+        await TaskService(db).get(place.task_id) if place.task_id is not None else None
+    )
     has_run = await AgentSessionService(db).has_run(place.conversation_id)
-    paths = set()
-    try:
-        # Bound the whole summary, including all task comparisons.
-        async with asyncio.timeout(15):
-            for work in tasks:
-                if work.branch_name and work.status == "open":
-                    paths.update(
-                        await ProjectFiles(
-                            db, project_id, work.id, release_session=True
-                        ).changed_files()
-                    )
-    except TimeoutError as exc:
-        raise GatewayUnavailableError(say("changeSummaryTimeout")) from exc
+    paths: list[str] = []
+    if one is not None and one.branch_name and one.status == "open":
+        try:
+            async with asyncio.timeout(15):
+                paths = await ProjectFiles(
+                    db, project_id, one.id, release_session=True
+                ).changed_files()
+        except TimeoutError as exc:
+            raise GatewayUnavailableError(say("changeSummaryTimeout")) from exc
     return ok({"changed_files": sorted(paths), "has_run": has_run})

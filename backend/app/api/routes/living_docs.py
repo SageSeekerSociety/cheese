@@ -23,6 +23,7 @@ from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store, tell_origin_room
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
+from app.core import rank
 from app.core.errors import (
     AuthenticationRequiredError,
     ConflictError,
@@ -94,14 +95,26 @@ def _origin(resolver: ActorResolver, reached_actor) -> uuid.UUID | None:
 
 @projects.get("/{project_id}/documents")
 async def project_documents(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict:
-    """The project's own documents, the latest changed first. A room's living
-    document is the room's and is not listed."""
+    """The project's own documents, the latest changed first, a page at a time
+    (`next` is the cursor of the following page, null at the end). A room's
+    living document is the room's and is not listed. The order is the one
+    `app.core.rank` writes down, so the library page can merge these with the
+    library's own pages into one list."""
     actor = await resolver.resolve(project_id=project_id, read_only=True)
     await authorize_in_project(resolver, actor, project_id)
-    docs = await Documents(db).of_project(project_id)
-    return ok({"data": [document_row(doc) for doc in docs]})
+    after = rank.decode(cursor) if cursor else None
+    docs = await Documents(db).of_project(project_id, after=after, limit=limit + 1)
+    rows = [
+        {**document_row(doc), "rank": rank.encode(1, doc.updated_at, str(doc.id))}
+        for doc in docs[:limit]
+    ]
+    return ok({"data": rows, "next": rows[-1]["rank"] if len(docs) > limit else None})
 
 
 @projects.post("/{project_id}/documents")

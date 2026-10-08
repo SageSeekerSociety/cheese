@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import errno
+import logging
 import time
 import uuid
 
@@ -11,11 +12,9 @@ from sqlalchemy import select
 
 from app.core.sentences import from_descriptor
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.realtime.subscriber_queue import SubscriberOverflow
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.identity.actor import Actor
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat
@@ -94,6 +93,56 @@ async def test_broker_fans_out_then_stops_on_unsubscribe():
 
 
 @pytest.mark.anyio
+async def test_a_subscriber_that_falls_behind_is_cut_off(caplog):
+    """A connection reading slower than the room publishes is dropped from the
+    channel and handed a sentinel to hang up on. Holding its frames instead is
+    how one stuck browser grows the process without bound — and its pings keep
+    being answered, so nothing else would ever notice."""
+    broker = InProcessBroker(max_subscriber_bytes=64)
+    big = {"type": "delta", "text": "x" * 200}
+    with caplog.at_level(logging.WARNING, logger="cheesex.runtime"):
+        async with broker.subscribe("c") as slow, broker.subscribe("c") as fast:
+            await broker.publish("c", big)
+            # One frame always fits an empty queue: the budget bounds a
+            # backlog, not a single block the room happened to publish.
+            assert (await asyncio.wait_for(fast.get(), 1))["text"] == "x" * 200
+            # `fast` gave its bytes back by reading; `slow` has not, so the
+            # second frame is one it can no longer be afforded.
+            await broker.publish("c", big)
+            assert (await asyncio.wait_for(fast.get(), 1))["text"] == "x" * 200
+
+            assert slow.overflowed is True
+            assert (await slow.get())["text"] == "x" * 200
+            assert isinstance(await slow.get(), SubscriberOverflow)
+
+            # The sentinel is the last thing it is ever given: it is off the
+            # channel, so the next frame goes only to the connection that is
+            # keeping up.
+            await broker.publish("c", {"type": "delta", "text": "later"})
+            assert slow.empty()
+            assert (await asyncio.wait_for(fast.get(), 1))["text"] == "later"
+            assert broker._subs["c"] == {fast}
+    assert any("broker_subscriber_overflow" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_replay_is_trimmed_rather_than_cutting_a_new_subscriber_off(caplog):
+    """A catch-up replay too large for the budget keeps the newest frames and
+    drops the oldest. A fresh connection must not be hung up on by a buffer it
+    did not cause: refused on every connect, it would reconnect forever."""
+    broker = InProcessBroker(max_subscriber_bytes=64)
+    await broker.publish("c", {"type": "turn_started", "turn_id": "t"})
+    await broker.publish("c", {"type": "delta", "text": "old"})
+    await broker.publish("c", {"type": "delta", "text": "x" * 200})
+    with caplog.at_level(logging.WARNING, logger="cheesex.runtime"):
+        async with broker.subscribe("c", replay=True) as q:
+            assert q.overflowed is False
+            replayed = [q.get_nowait()["text"] for _ in range(q.qsize())]
+    assert replayed == ["x" * 200]
+    assert any("broker_replay_trimmed" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.anyio
 async def test_reaction_frames_fan_out_but_never_buffer():
     # Reactions are standalone state updates (they can fire between turns):
     # delivered live, but never buffered — otherwise an idle channel would look
@@ -113,11 +162,11 @@ async def test_reaction_frames_fan_out_but_never_buffer():
 async def test_what_an_agent_is_writing_is_live_only(monkeypatch):
     """A draft goes to whoever watches the room now and is kept nowhere: a
     client that joins mid-turn is not handed an old one."""
-    from app.domain.agent import runtime as agent_runtime
+    from app.domain.agent import live_frames
     from app.domain.agent.live_frames import publish_live
 
     broker = InProcessBroker()
-    monkeypatch.setattr(agent_runtime, "get_broker", lambda: broker)
+    monkeypatch.setattr(live_frames, "get_broker", lambda: broker)
     topic, turn = uuid.uuid4(), uuid.uuid4()
     await broker.publish(str(topic), {"type": "turn_started", "turn_id": str(turn)})
     async with broker.subscribe(str(topic)) as q:
@@ -1128,7 +1177,7 @@ class _SweepChat:
         self._live_screen = live_screen
         self._seat_state = seat_state or ("live" if live_screen else "dead")
         # Conversations with real termination evidence — the double's stand-in
-        # for ChatService._dead_sessions. A seat flag is NOT evidence (FB-56):
+        # for ``LiveWork.dead_sessions``. A seat flag is NOT evidence (FB-56):
         # a row closes only when its own conversation is in here.
         self._dead_sessions = set(dead_sessions)
         self.texts: list[str] = []

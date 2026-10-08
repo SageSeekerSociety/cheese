@@ -24,8 +24,8 @@ from app.domain.room_task.models import Task
 from app.domain.textfile import content_version
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
-    chat_ws_url,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.integration.test_file_panel_safety import (  # noqa: F401
@@ -130,7 +130,7 @@ def _docx() -> bytes:
 
 def test_shown_registers_lists_and_broadcasts_the_same_card(client):
     _pid, tid = _room(client)
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+    with room_socket(client, tid, "alice") as ws:
         r = client.post(
             f"/topics/{tid}/shown",
             headers=session_auth_headers("alice"),
@@ -225,7 +225,11 @@ def test_attachments_upload_library_and_raw_read_the_same(client):
         "path": "library/shot.png",
     }
 
-    library.write_library_file(pid_u, "原件.png", b"\x89PNG-library")
+    given = client.post(
+        f"/projects/{pid}/library",
+        files={"file": ("原件.png", b"\x89PNG-library", "image/png")},
+    )
+    assert given.status_code == 200, given.text
     named = client.post(f"/topics/{tid}/attachments", data={"library_path": "原件.png"})
     assert named.status_code == 200, named.text
     assert named.json()["data"] == {

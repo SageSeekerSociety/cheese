@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceCallError
@@ -23,10 +24,10 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
 )
 
 
@@ -42,6 +43,7 @@ class StillWorking(StubChannel):
 
 def _service(client, channel: StubChannel) -> ChatService:
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/teammates-handover-ws",
@@ -76,7 +78,7 @@ def _room_with_a_teammate(client) -> str:
 
 
 def _say(client, room: str, content: str) -> None:
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": content})
         while ws.receive_json()["type"] != "user_block":
             pass

@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import text as sql
 
+from app.api import deps as session_turn_deps
 from app.core.config import settings
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.chat import ChatService
@@ -33,7 +34,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.device.models import DeviceRow, DeviceTopicRow
@@ -273,6 +274,7 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     factory = business_db_factory
     channel = HandsRefused()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=ComputePool([channel.runtime], channel.name),
         base_system_prompt="You are Cheese.",
@@ -310,6 +312,7 @@ async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_pa
     factory = business_db_factory
     channel = HandsRefused()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=ComputePool([channel.runtime], channel.name),
         base_system_prompt="You are Cheese.",

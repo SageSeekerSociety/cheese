@@ -24,10 +24,10 @@ from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -93,7 +93,7 @@ def _turn(client, topic_id: str, content: str = "hi") -> str:
     """
     addressed = content if "<@" in content else f"@芝士 {content}"
     thread = in_thread(client, topic_id, "alice")
-    with client.websocket_connect(chat_ws_url(thread, "alice")) as ws:
+    with room_socket(client, thread, "alice") as ws:
         post_message(client, thread, "alice", {"content": addressed})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):

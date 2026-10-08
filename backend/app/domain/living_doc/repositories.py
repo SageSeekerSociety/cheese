@@ -3,9 +3,20 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import ColumnElement, Uuid, and_, column, delete, select, table, update
+from sqlalchemy import (
+    ColumnElement,
+    Uuid,
+    and_,
+    column,
+    delete,
+    or_,
+    select,
+    table,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.rank import Rank
 from app.domain.living_doc.models import Document, DocumentNode
 
 # Which documents a task or a project points at. Bare tables: ``room_task`` and
@@ -37,12 +48,24 @@ class DocumentRepository:
     async def get(self, document_id: uuid.UUID) -> Document | None:
         return await self._session.get(Document, document_id)
 
-    async def of_project(self, project_id: uuid.UUID) -> list[Document]:
-        """The project's own documents, no task's, the latest changed first."""
+    async def of_project(
+        self, project_id: uuid.UUID, *, after: Rank | None, limit: int
+    ) -> list[Document]:
+        """The project's own documents, no task's, the latest changed first —
+        the order `app.core.rank` writes down, picking up after ``after``."""
+        query = select(Document).where(project_own(project_id))
+        if after is not None:
+            query = query.where(
+                or_(
+                    Document.updated_at < after.at,
+                    and_(
+                        Document.updated_at == after.at,
+                        Document.id > uuid.UUID(after.tie),
+                    ),
+                )
+            )
         rows = await self._session.scalars(
-            select(Document)
-            .where(project_own(project_id))
-            .order_by(Document.updated_at.desc(), Document.id)
+            query.order_by(Document.updated_at.desc(), Document.id).limit(limit)
         )
         return list(rows)
 

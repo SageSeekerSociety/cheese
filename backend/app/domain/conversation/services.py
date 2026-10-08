@@ -8,9 +8,20 @@ the roster, the work computer and the files are its room's.
 
 import uuid
 
-from sqlalchemy import ColumnElement, Uuid, column, func, or_, select, table, union_all
+from sqlalchemy import (
+    ColumnElement,
+    Subquery,
+    Uuid,
+    any_,
+    bindparam,
+    column,
+    func,
+    select,
+    table,
+    union_all,
+)
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import InstrumentedAttribute
 
 from app.domain.conversation.models import Conversation, ConversationKind
 
@@ -69,38 +80,39 @@ async def rooms_of_inner(
     return found
 
 
-def of_room(
-    column, room_id: uuid.UUID | ColumnElement[uuid.UUID] | InstrumentedAttribute
-) -> ColumnElement[bool]:
+def conversations_of(room_ids) -> Subquery:
+    """Every conversation of these rooms — each room's own, its tasks' and its
+    支线' — as rows of ``(id, room_id)``.
+
+    The rooms travel as one array parameter, however many there are. A
+    conversation is matched by membership in this one set rather than by three
+    alternatives (``= room OR IN tasks OR IN 支线``): PostgreSQL cannot use an
+    index on ``OR`` of ``IN`` subqueries, so that shape read the whole table
+    the rows live in — every block ever said, for `MemberWaits` 1.5 s per
+    `GET /topics` on dev (2026-10-08, 480k blocks)."""
+    rooms = bindparam(None, list(room_ids), type_=ARRAY(Uuid))
+    own = func.unnest(rooms).table_valued(column("id", Uuid)).render_derived()
+    return union_all(
+        select(own.c.id, own.c.id.label("room_id")),
+        select(_tasks.c.id, _tasks.c.room_id).where(_tasks.c.room_id == any_(rooms)),
+        select(_threads.c.id, _threads.c.room_id).where(
+            _threads.c.room_id == any_(rooms)
+        ),
+    ).subquery("conversations_of")
+
+
+def of_room(column, room_id: uuid.UUID) -> ColumnElement[bool]:
     """Rows of a room's conversations: the room's own and every task and
     支线 in it.
 
     For a room-wide question (the room's machine, its spend, its sessions).
-    A question about one conversation compares ``column`` with its id.
-    ``room_id`` may be a column of the enclosing query (a correlated lookup)."""
-    return or_(
-        column == room_id,
-        column.in_(
-            select(_tasks.c.id)
-            .where(_tasks.c.room_id == room_id)
-            .correlate_except(_tasks)
-        ),
-        column.in_(
-            select(_threads.c.id)
-            .where(_threads.c.room_id == room_id)
-            .correlate_except(_threads)
-        ),
-    )
+    A question about one conversation compares ``column`` with its id."""
+    return of_rooms(column, [room_id])
 
 
 def of_rooms(column, room_ids) -> ColumnElement[bool]:
     """``of_room`` for several rooms at once."""
-    room_ids = list(room_ids)
-    return or_(
-        column.in_(room_ids),
-        column.in_(select(_tasks.c.id).where(_tasks.c.room_id.in_(room_ids))),
-        column.in_(select(_threads.c.id).where(_threads.c.room_id.in_(room_ids))),
-    )
+    return column.in_(select(conversations_of(room_ids).c.id))
 
 
 def room_column(column) -> ColumnElement[uuid.UUID]:

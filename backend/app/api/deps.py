@@ -20,11 +20,10 @@ from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
+from app.domain.agent.pending_messages import bind_runner
 from app.domain.agent.profiles import ProfileRegistry, build_registry
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    get_broker,
-)
+from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.device.service import DeviceService
@@ -152,6 +151,7 @@ def get_chat_service() -> ChatService:
         workspace_root=settings.workspace_root,
         profiles=get_profile_registry(),
         compute=get_compute_pool(),
+        work_runner=get_work_runner(),
         gateway=get_llm_gateway(),
     )
 
@@ -179,7 +179,7 @@ def get_work_runner() -> AgentWorkRunner:
         credential_expiry_of=topic_credential_expiry,
         host_has_room=HostMemory().has_room,
     )
-    runner.subscribe_messages()
+    bind_runner(runner)
     return runner
 
 

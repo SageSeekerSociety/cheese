@@ -82,7 +82,7 @@
 		reverse_proxy 127.0.0.1:8081
 	}
 	handle /api/* {
-		# WebSocket (/api/topics/*/chat) works out of the box via reverse_proxy
+		# WebSocket (/api/rooms/live) works out of the box via reverse_proxy
 		reverse_proxy 127.0.0.1:8099
 	}
 	handle /debug/* {

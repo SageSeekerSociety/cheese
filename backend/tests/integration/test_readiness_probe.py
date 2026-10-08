@@ -108,6 +108,32 @@ async def test_two_hung_dependencies_are_a_503_within_the_rollout_wait(
     assert elapsed < 1.5
 
 
+async def test_a_healthcheck_is_not_counted_as_user_traffic(monkeypatch) -> None:
+    """The container asks `/readyz` every 15 seconds and the rollout asks
+    `/healthz`. Counted as calls, they top the route board and hold the
+    "requests in flight" gauge above zero — the dashboard reads as a busy
+    platform while no caller ever reached the API. Same judgement as `/health`
+    and `/metrics`, which were already excluded."""
+    from app.core import route_metrics
+
+    monkeypatch.setattr(db, "probe_engine", _CountingEngine(hold_s=0))
+
+    async def _up():
+        return {"status": "up"}
+
+    monkeypatch.setattr(health, "_check_redis", _up)
+    route_metrics.reset()
+
+    async with _client() as client:
+        assert (await client.get("/readyz")).status_code == 200
+        assert (await client.get("/healthz")).status_code == 200
+        # A route a person calls is still counted — otherwise the assertion
+        # above would pass on a board that counts nothing at all.
+        assert (await client.get("/version")).status_code == 200
+
+    assert [r["route"] for r in route_metrics.snapshot()] == ["/version"]
+
+
 async def test_a_caller_that_hangs_up_does_not_cancel_the_shared_probe(
     monkeypatch,
 ) -> None:
@@ -123,3 +149,44 @@ async def test_a_caller_that_hangs_up_does_not_cancel_the_shared_probe(
     database, _redis = await second
     assert database["status"] == "up"
     assert engine.opened == 1
+
+
+async def test_a_production_box_with_no_alert_webhook_says_so_but_stays_ready(
+    monkeypatch,
+) -> None:
+    """The alert channel is reported, never required.
+
+    With no webhook configured, `alerting.send` is a no-op — every page reads
+    healthy while nothing that breaks reaches a human. Producing is the one
+    deployment where that matters, so there the check reads `down`. It must not
+    reach `/readyz`: the rollout and the container healthcheck read only that,
+    and pulling a machine that answers every request out of rotation over a
+    missing setting trades an invisible gap for a real outage.
+    """
+    from app.core import alerting
+    from app.core.config import settings
+
+    monkeypatch.setattr(db, "probe_engine", _CountingEngine(hold_s=0))
+
+    async def _up():
+        return {"status": "up"}
+
+    monkeypatch.setattr(health, "_check_redis", _up)
+    monkeypatch.setattr(alerting, "configured", lambda: False)
+
+    monkeypatch.setattr(settings, "environment", "production")
+    async with _client() as client:
+        assert (await client.get("/readyz")).status_code == 200
+    report = await health.health_report()
+    assert report["checks"]["alerting"]["status"] == "down"
+    assert report["status"] == "degraded"
+
+    # Dev and test do not open Feishu; unset there is the normal state.
+    monkeypatch.setattr(settings, "environment", "development")
+    assert (await health.health_report())["checks"]["alerting"]["status"] == "skipped"
+
+    # Configured, it is one more green entry and the overall reads healthy.
+    monkeypatch.setattr(alerting, "configured", lambda: True)
+    report = await health.health_report()
+    assert report["checks"]["alerting"] == {"status": "up"}
+    assert report["status"] == "healthy"

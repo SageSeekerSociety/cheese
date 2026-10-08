@@ -12,10 +12,10 @@ from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -62,7 +62,7 @@ def test_publication_is_durable_live_and_does_not_wake_model(
     client, stub_hooks, content
 ):
     topic, headers = room(client)
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         response = publish(client, topic, headers, content)
         assert response.status_code == 200, response.text
         block = response.json()["data"]
@@ -150,7 +150,7 @@ def test_blank_message_is_rejected(client, content):
 def test_raw_terminal_output_never_publishes_even_after_stop(client, stub_hooks):
     topic, _ = room(client)
     stub_hooks.reply = "This terminal output must remain in activity."
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         frames = []
         while True:
@@ -177,7 +177,7 @@ def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
     """
     topic, headers = private_room(client)
     stub_hooks.reply = "这段是终端里的最终答复。"
-    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+    with room_socket(client, topic, "user-1") as ws:
         post_message(client, topic, "user-1", {"content": "@芝士 帮我记一下偏好"})
         frames = []
         while True:
@@ -226,7 +226,7 @@ def test_publish_during_work_keeps_the_turn_open(client, stub_hooks, monkeypatch
         stub_hooks.says(topic_id, raw_text)
 
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         turn_id = None
         while True:
@@ -326,7 +326,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         return True
 
     monkeypatch.setattr(chat, "notify_running_turn", delayed_notice)
-    with client.websocket_connect(chat_ws_url(topic, speaker)) as ws:
+    with room_socket(client, topic, speaker) as ws:
         post_message(client, topic, speaker, {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
@@ -387,7 +387,7 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
     """The publish endpoint attributes a publication through the runner's live
     work, which only knows turns THIS process executes. A remote executor's
     turn publishes over HTTP with turn_id=None — yet its turn is exactly the
-    one the silence sweep is tracking (`_active_turn_ids`). The publication
+    one the silence sweep is tracking (`live.active_turn_ids`). The publication
     must still refresh `last_chat_at`, or the sweep keeps "reminding" a turn
     that just spoke, counting the silence from turn start."""
     from app.api.deps import get_work_runner
@@ -424,7 +424,7 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
     # The executor is remote: this process runs no work for the topic, so the
     # endpoint's runner lookup attributes nothing.
     monkeypatch.setattr(get_work_runner(), "live_work_for_topic", lambda _t: None)
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
@@ -440,13 +440,15 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
         import dataclasses
 
         clock += timedelta(seconds=threshold)
-        own = next(s for (t, _), s in chat._hook_work.items() if t == uuid.UUID(topic))
+        own = next(
+            s for (t, _), s in chat.live.hook_work.items() if t == uuid.UUID(topic)
+        )
         rival_id = uuid.uuid4()
         rival = dataclasses.replace(
             own, work_id=rival_id, acting_agent="cheese-other", started_at=clock
         )
-        chat._hook_work[(uuid.UUID(topic), rival_id)] = rival
-        chat._active_turn_ids[uuid.UUID(topic)] = {rival_id}
+        chat.live.hook_work[(uuid.UUID(topic), rival_id)] = rival
+        chat.live.active_turn_ids[uuid.UUID(topic)] = {rival_id}
 
         sent = publish(client, topic, headers).json()["data"]
         assert next_block(ws)["id"] == sent["id"]
@@ -472,30 +474,31 @@ def test_publication_attribution_never_guesses_between_agents():
     from types import SimpleNamespace
 
     from app.domain.agent.chat import ChatService
+    from app.domain.agent.live_work import LiveWork
 
     topic = uuid.uuid4()
     a, b = uuid.uuid4(), uuid.uuid4()
-    svc = SimpleNamespace(
-        _hook_work={
-            (topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a"),
-            (topic, b): SimpleNamespace(work_id=b, acting_agent="cheese-b"),
-        },
-        _active_turn_ids={topic: {a}},
-    )
+    live = LiveWork()
+    live.hook_work = {
+        (topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a"),
+        (topic, b): SimpleNamespace(work_id=b, acting_agent="cheese-b"),
+    }
+    live.active_turn_ids = {topic: {a}}
+    svc = SimpleNamespace(live=live)
     attribute = ChatService._attributed_work_id
     # A third party publishes: two live turns, neither theirs — no guess.
     assert attribute(svc, topic, "cheese-c") is None
     # The publisher's own turn wins even when it is not the active one.
     assert attribute(svc, topic, "cheese-b") == b
     # Both live turns are the publisher's: the active one breaks the tie.
-    svc._hook_work[(topic, b)] = SimpleNamespace(work_id=b, acting_agent="cheese-a")
+    live.hook_work[(topic, b)] = SimpleNamespace(work_id=b, acting_agent="cheese-a")
     assert attribute(svc, topic, "cheese-a") == a
     # One live turn only: unambiguous whoever publishes (a token naming no
     # agent seat resolves to the room's roster, which may differ).
-    svc._hook_work = {(topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a")}
+    live.hook_work = {(topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a")}
     assert attribute(svc, topic, "cheese-c") == a
     # Nothing live: nothing to attribute.
-    svc._hook_work = {}
+    live.hook_work = {}
     assert attribute(svc, topic, "cheese-a") is None
 
 
@@ -509,38 +512,37 @@ def test_consuming_work_id_only_delivers_when_unambiguous():
     """
     from types import SimpleNamespace
 
-    from app.domain.agent.chat import ChatService
+    from app.domain.agent.live_work import LiveWork
 
     topic = uuid.uuid4()
     a, b = uuid.uuid4(), uuid.uuid4()
-    svc = SimpleNamespace(
-        _hook_work={
-            (topic, a): SimpleNamespace(work_id=a, agent_instance_handle="inst-a"),
-            (topic, b): SimpleNamespace(work_id=b, agent_instance_handle="inst-b"),
-        },
-        _active_turn_ids={topic: {a, b}},
-    )
-    consume = ChatService._consuming_work_id
+    live = LiveWork()
+    live.hook_work = {
+        (topic, a): SimpleNamespace(work_id=a, agent_instance_handle="inst-a"),
+        (topic, b): SimpleNamespace(work_id=b, agent_instance_handle="inst-b"),
+    }
+    live.active_turn_ids = {topic: {a, b}}
+    consume = LiveWork.consuming_work_id
     to = lambda handle: lambda s: s.agent_instance_handle == handle  # noqa: E731
     # Exactly one match: delivered there.
-    assert consume(svc, topic, to("inst-a")) == a
-    assert consume(svc, topic, to("inst-b")) == b
+    assert consume(live, topic, to("inst-a")) == a
+    assert consume(live, topic, to("inst-b")) == b
     # No match, or both match: held rather than guessed.
-    assert consume(svc, topic, to("inst-c")) is None
-    assert consume(svc, topic, lambda s: True) is None
+    assert consume(live, topic, to("inst-c")) is None
+    assert consume(live, topic, lambda s: True) is None
     # No matcher and several live: held.
-    assert consume(svc, topic) is None
+    assert consume(live, topic) is None
     # A live id without hook state is tolerated (single-slot compatibility)…
-    svc._active_turn_ids = {topic: {a, b}}
-    del svc._hook_work[(topic, b)]
-    assert consume(svc, topic, to("inst-a")) is None  # b still could be it
+    live.active_turn_ids = {topic: {a, b}}
+    del live.hook_work[(topic, b)]
+    assert consume(live, topic, to("inst-a")) is None  # b still could be it
     # …unless the caller is strict: then a missing state cannot receive.
-    svc._active_turn_ids = {topic: {b}}
-    assert consume(svc, topic, to("inst-b"), strict=True) is None
-    assert consume(svc, topic, to("inst-b"), strict=False) == b
+    live.active_turn_ids = {topic: {b}}
+    assert consume(live, topic, to("inst-b"), strict=True) is None
+    assert consume(live, topic, to("inst-b"), strict=False) == b
     # One live turn with its state: the everyday case.
-    svc._hook_work[(topic, b)] = SimpleNamespace(
+    live.hook_work[(topic, b)] = SimpleNamespace(
         work_id=b, agent_instance_handle="inst-b"
     )
-    assert consume(svc, topic, to("inst-b")) == b
-    assert consume(svc, topic) == b
+    assert consume(live, topic, to("inst-b")) == b
+    assert consume(live, topic) == b

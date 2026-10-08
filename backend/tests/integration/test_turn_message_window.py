@@ -15,6 +15,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.project.services import ProjectService
@@ -74,6 +75,7 @@ def _said(message: dict) -> str:
 
 async def _service(factory, agent: StubChannel, tmp_path) -> ChatService:
     return ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(agent),
         base_system_prompt="你是芝士。",

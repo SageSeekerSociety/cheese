@@ -1,5 +1,6 @@
 /**
- * 房间这条 WebSocket 的**传输层**：连上、断了自动重连、心跳、换掉假活的那条、关掉。
+ * 一个房间的**传输层**：连上、断了自动重连、心跳、换掉假活的那条、关掉。房间不再各开一条
+ * WebSocket，而是在页面那一条上订阅（`lib/roomLink`）；拿到的房间通道和 WebSocket 一个样子。
  *
  * **它不认识任何一种帧的含义。** 帧怎么解读是房间的状态机（`handleFrame`），那件事
  * 要碰消息列表、待办、轮次、发件箱、错误横幅十几样东西，搬进来只会把同一堆东西
@@ -12,18 +13,17 @@
 
 import type { Ref } from 'vue'
 import type { WsClientMessage, WsServerFrame } from '../../../cx_types'
+import type { RoomChannel } from '../../../lib/roomLink'
 
-import { onScopeDispose, ref } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
-import { chatWsUrl } from '../../../api'
 import { t } from '../../../i18n'
+import { openRoomChannel } from '../../../lib/roomLink'
 
 export function useRoomSocket(options: {
   /** 此刻在哪个话题上；切走了就不该再为上一个重连。 */
   topicId: () => string | undefined
-  /** 连哪条 socket。不给就是这个话题的房间 socket；团队页给的是团队那条。 */
-  url?: (topicId: string) => string
   /** 收到一帧（`pong` 已经在这里吃掉了）。 */
   onFrame: (frame: WsServerFrame) => void
   /** 刚连上：链路又通了，断线期间没送出去的消息可以再走一次。`reconnect` 为真表示这
@@ -41,7 +41,7 @@ export function useRoomSocket(options: {
   // reconnect with backoff; every deliberate teardown funnels through
   // closeSocket(), which cancels it. The reconnect callback refetches history so
   // gaps from the outage are filled in.
-  let socket: WebSocket | null = null
+  let socket: RoomChannel | null = null
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let retryDelayMs = 1000
   // 上一次成功连上的是哪一间房：把「重连」和「进这间房的第一次连接」分开。切到别的
@@ -112,6 +112,33 @@ export function useRoomSocket(options: {
     announceTimer = null
   }
 
+  // What the header says about the link: down only once the room has gone this
+  // long without it. Entering a room opens a new socket, and while it
+  // handshakes over the Hong Kong relay `connected` is false — said as 未连接,
+  // that is a lie on every switch. A drop the first reconnect heals is the same
+  // blip the banner above waits out, so the header waits as long.
+  const linkDown = ref(false)
+  let linkDownTimer: ReturnType<typeof setTimeout> | null = null
+  function clearLinkDownTimer() {
+    if (linkDownTimer) clearTimeout(linkDownTimer)
+    linkDownTimer = null
+  }
+  watch(
+    connected,
+    (up) => {
+      if (up) {
+        clearLinkDownTimer()
+        linkDown.value = false
+      } else if (!linkDown.value && !linkDownTimer) {
+        linkDownTimer = setTimeout(() => {
+          linkDownTimer = null
+          if (!connected.value) linkDown.value = true
+        }, OUTAGE_ANNOUNCE_MS)
+      }
+    },
+    { immediate: true, flush: 'sync' }
+  )
+
   function scheduleReconnect(topicId: string) {
     if (retryTimer || connectRefused.value) return
     const delay = retryDelayMs
@@ -140,8 +167,9 @@ export function useRoomSocket(options: {
 
   // OPEN is only the browser's last observation: a socket whose path stopped
   // carrying frames stays OPEN until TCP gives up, which took 6.5 minutes once.
-  // A ping nobody answers decides the link is gone: drop that socket without
-  // telling it, and let `reconnect` reconcile history and open a fresh one.
+  // A ping nobody answers decides the link is gone: drop it — the whole page's
+  // link, since every room on it is just as cut off — and let `reconnect`
+  // reconcile history and subscribe again on a fresh one.
   function replaceStaleSocket() {
     const topicId = options.topicId()
     const stale = socket
@@ -152,7 +180,7 @@ export function useRoomSocket(options: {
     stale.onmessage = null
     stale.onerror = null
     stale.onclose = null
-    stale.close()
+    stale.drop()
     connected.value = false
     options.reconnect(topicId)
     return true
@@ -177,7 +205,7 @@ export function useRoomSocket(options: {
     noteHeartbeatAnswer()
   }
 
-  function startHeartbeat(ws: WebSocket) {
+  function startHeartbeat(ws: RoomChannel) {
     stopHeartbeat()
     heartbeatTimer = setInterval(() => {
       if (socket !== ws || ws.readyState !== WebSocket.OPEN || pongTimer) return
@@ -192,7 +220,7 @@ export function useRoomSocket(options: {
 
   function openSocket(topicId: string) {
     closeSocket()
-    const ws = new WebSocket((options.url ?? chatWsUrl)(topicId))
+    const ws = openRoomChannel(topicId)
     socket = ws
 
     ws.onopen = () => {
@@ -217,12 +245,12 @@ export function useRoomSocket(options: {
       // drop has lasted long enough to be one (see OUTAGE_ANNOUNCE_MS).
       noteLinkDown()
     }
-    ws.onmessage = (ev: MessageEvent) => {
+    ws.onmessage = (ev: { data: string }) => {
       // Guard against frames from a stale socket after topic switch.
       if (socket !== ws) return
       let frame: WsServerFrame
       try {
-        frame = JSON.parse(ev.data as string) as WsServerFrame
+        frame = JSON.parse(ev.data) as WsServerFrame
       } catch {
         return
       }
@@ -254,10 +282,13 @@ export function useRoomSocket(options: {
   onScopeDispose(() => {
     closeSocket()
     noteLinkUp()
+    clearLinkDownTimer()
   })
 
   return {
     connected,
+    /** The link has been down long enough to say so (see `linkDown` above). */
+    linkDown,
     /** 连接在开始阶段就被拒了（认证/权限），重连帮不上忙——由房间的状态机置位。 */
     connectRefused,
     isConnectRefusal,

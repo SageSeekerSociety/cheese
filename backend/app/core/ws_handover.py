@@ -8,7 +8,7 @@ so for the rest of that time the browser is connected to a process with nothing
 to say. Ending those sockets at the handover, with 1012 (service restart), sends
 each browser back through app-router to the backend that now runs the work.
 The client reconnects on any close it did not ask for and re-reads what it
-missed (`useRoomSocket.ts`).
+missed (`useRoomSocket.ts`, `roomLink.ts`).
 
 Only the sockets app-router carries are ended. Device, screen, model and forge
 connections reach this process through the standing ingress and outlive the
@@ -30,7 +30,7 @@ Send = Callable[[Message], Awaitable[None]]
 
 SERVICE_RESTART = 1012
 
-BUSINESS_SOCKETS = re.compile(r"^/(?:topics/[^/]+/chat|notifications/live)$")
+BUSINESS_SOCKETS = re.compile(r"^/(?:rooms/live|notifications/live)$")
 
 
 class _Socket:

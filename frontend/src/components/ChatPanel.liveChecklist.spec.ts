@@ -14,13 +14,13 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listBlocks: vi.fn(),
   listRoomTasks: vi.fn().mockResolvedValue({ data: [] }),
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
   getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-  chatWsUrl: (id: string) => `ws://test/chat/${id}`,
 }))
 
 import { listBlocks } from '../api'

@@ -45,7 +45,7 @@ def _file_card(client, room: str, reviewer: str) -> None:
         json={
             "change_subject": "chore(test): file a card",
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     assert r.status_code == 200, r.text

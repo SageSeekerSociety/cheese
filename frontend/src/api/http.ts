@@ -7,7 +7,7 @@ import type { ApiEnvelope } from '../cx_types'
 
 import { t } from '../i18n'
 import { desktopAppHeaders } from '../lib/desktopApp'
-import { refusalText } from '../lib/noticeText'
+import { refusalText, refusalWords } from '../lib/noticeText'
 import { rateLimitedText, rateLimitRetryMs } from '../lib/rateLimit'
 import { refreshSession } from '../lib/session'
 import { isTransportFailure, readJson, transportFailureMessage } from '../lib/transportFailure'
@@ -69,11 +69,29 @@ export class ApiError extends Error {
     message: string,
     readonly code?: string,
     readonly requestId?: string,
-    readonly retryable?: boolean
+    readonly retryable?: boolean,
+    /** What the refusal carries about itself (`error.data`), e.g. a save's merge regions. */
+    readonly data?: unknown
   ) {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+/** A refusal, as the error a caller raises: the sentence the server said
+ *  (`refusalWords`), with the status beside it when it said nothing, plus the
+ *  name the backend gave the condition (`error.name`) as `code`. Callers tell
+ *  one refusal from another by those fields, never by substring-matching the
+ *  sentence.
+ *
+ *  Lives here, not beside `legacyRequest`: `api.ts` is over its size cap and
+ *  frozen (`.claude/scripts/check-file-sizes.py`), so that call site may only
+ *  shrink. Fold it back when the two request stacks do. */
+export function refusalError(res: Response, body: unknown, path: string): ApiError {
+  const serverSaid = refusalWords(body)
+  const http = `HTTP ${res.status}`
+  const said = serverSaid ? t('global.labelWithAside', { label: serverSaid, aside: http }) : `${http} for ${path}`
+  return new ApiError(res.status, said, (body as { error?: { name?: string } } | null)?.error?.name)
 }
 
 export class RequestTimeoutError extends Error {
@@ -285,7 +303,10 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
       throw new ApiError(res.status, transportFailureMessage(method, res.status))
     }
     if (!res.ok) {
-      const details = body as { message?: string; error?: { name?: string; message?: string; retryable?: boolean } }
+      const details = body as {
+        message?: string
+        error?: { name?: string; message?: string; retryable?: boolean; data?: unknown }
+      }
       if (
         details.error?.retryable !== false &&
         attempt < GET_RETRY_DELAYS_MS.length &&
@@ -304,7 +325,8 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
         serverSaid || t('global.request.failed', { status: res.status }),
         details.error?.name,
         res.headers?.get('X-Request-ID') ?? undefined,
-        details.error?.retryable
+        details.error?.retryable,
+        details.error?.data
       )
     }
     const envelope = body as ApiEnvelope<T>

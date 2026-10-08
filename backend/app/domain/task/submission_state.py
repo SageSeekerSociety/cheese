@@ -11,8 +11,9 @@
 - 否则一版没交、还没过截止                            → ``NOT_SUBMITTED``
 
 「被驳回、过了截止还没重交」落在 ``FAILED``：截止清扫对它写的就是这个值（它在
-``_SWEEPABLE_STATUSES`` 里），推导若给出别的值，清扫写下的 ``FAILED`` 会被下一次
-重推（或回填）翻回去，两边来回打架。
+``indexed_rows.SWEEPABLE_ROWS`` 里，那个谓词同时也是
+``ix_task_membership_deadline`` 的索引条件），推导若给出别的值，清扫写下的
+``FAILED`` 会被下一次重推（或回填）翻回去，两边来回打架。
 
 ``has_work_in_hand`` 就是这份清单的前两条 —— 「手上有活」当且仅当推出来的状态是
 ``SUCCESS`` 或 ``PENDING_REVIEW``。截止时间清扫任务（``deadline_scheduler``）靠它

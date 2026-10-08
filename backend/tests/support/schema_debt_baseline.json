@@ -181,7 +181,6 @@
     "topics.status"
   ],
   "foreign_keys_without_index": [
-    "blocks.upgraded_to_topic_id",
     "cloud_host_homes.project_id",
     "cloud_hosts.project_id",
     "compute_runs.topic_id",
@@ -198,17 +197,12 @@
     "task_access_domain.task_id",
     "task_attachment.attachment_id",
     "task_attachment.task_id",
-    "task_membership.task_id",
-    "task_submission.membership_id",
-    "task_submission_entry.task_submission_id",
-    "task_submission_review.submission_id",
     "task_tag_relation.task_id",
     "tasks.base_task_id",
     "tasks.document_id",
     "tasks.historical_delivery_id",
     "team.plan_key",
     "team_membership_application.team_id",
-    "team_user_relation.team_id",
     "topics.upgraded_from_block_id"
   ],
   "json_not_jsonb": [

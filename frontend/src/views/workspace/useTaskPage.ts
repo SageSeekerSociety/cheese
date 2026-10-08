@@ -137,6 +137,19 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     }
   }
 
+  // ---- 做这件事的队友：负责人换；不选（null）就是跟着房间的那位 ----
+  async function setAgent(handle: string | null): Promise<boolean> {
+    if (!task.value) return false
+    actionError.value = null
+    try {
+      task.value = { ...task.value, ...(await updateTask(task.value.id, { agent_handle: handle })) }
+      return true
+    } catch (e) {
+      actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
+      return false
+    }
+  }
+
   // ---- 做它的电脑：负责人那一格点开时才读 ----
   const machine = ref<TopicComputeProfile | null>(null)
   const machineError = ref(false)
@@ -181,6 +194,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     isOwner,
     takesPart,
     setCollaborators,
+    setAgent,
     isOpen,
     people,
     starting,

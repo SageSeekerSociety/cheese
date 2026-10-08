@@ -22,3 +22,10 @@ afterEach(async () => {
   const { clearTopicPanelCache } = await import('@/lib/topicPanelCache')
   clearTopicPanelCache()
 })
+
+// 房间连接（lib/roomLink.ts）也是模块级的：上一个用例开的那条（连着它那个替身
+// WebSocket）不能让下一个用例的房间接着在上面订阅。
+afterEach(async () => {
+  const { resetRoomLink } = await import('@/lib/roomLink')
+  resetRoomLink()
+})

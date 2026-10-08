@@ -6,6 +6,10 @@ project: its sync is refused, the project's MCP servers stay out of reach, and
 the forge token it is handed reads and never pushes. On a machine it shares
 with others it only reads, because what it changed would stay among their
 work.
+
+The place decides that, not the credential: one signed before its task was
+started goes on saying so until the session goes quiet, and the started task
+works all the same.
 """
 
 import uuid
@@ -182,6 +186,31 @@ async def test_on_a_shared_machine_it_only_reads(
     else:
         assert response.status_code == 403, response.text
         remote.assert_not_awaited()
+
+
+@pytest.mark.parametrize("own", [True, False, None])
+@pytest.mark.parametrize("call", [BASH, SHELL, WRITE, EDIT, READ])
+async def test_a_started_task_works_though_its_credential_says_scratch(
+    client, monkeypatch, own, call
+):
+    """A credential is signed when the session starts and replaced only once
+    the session goes quiet (`screen_identity`): a task its owner starts
+    mid-turn goes on presenting one that says its work is not kept. The place
+    decides, so on a machine it shares it works all the same."""
+    held = await _session(client, "started", own=own)
+    response, remote = _execute(client, monkeypatch, held, *call)
+    assert response.status_code == 200, response.text
+    remote.assert_awaited()
+
+
+@pytest.mark.parametrize("call", [SYNC, MCP, MCP_TOOL])
+async def test_a_started_task_carries_its_work_off_though_it_says_scratch(
+    client, monkeypatch, call
+):
+    held = await _session(client, "started")
+    response, remote = _execute(client, monkeypatch, held, *call)
+    assert response.status_code == 200, response.text
+    remote.assert_awaited()
 
 
 class _Forge:

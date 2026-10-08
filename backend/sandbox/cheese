@@ -484,8 +484,9 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_close_task",
-            "放弃或撤销当前任务，或者任务的结论不是一次合并（调研、讨论出的决定）时，"
-            "显式关闭；最后一步的交付采纳后任务自动关闭。",
+            "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
+            "替别人解冲突让他自己推、只给提需求的人这一次用的文件），写明结论关闭；"
+            "最后一步的交付采纳后任务自动关闭。",
             {
                 "conclusion": _text("关闭原因或最终说明"),
                 "reported_by": _text("需求提出者的 handle"),
@@ -496,6 +497,9 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_accept_request",
             "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
+            "递卡交的是要并进主干的改动，或产物清单上一项的新一版；结果不进主干的任务"
+            "用 cheese_close_task 结束，不递卡。任务分支上要有改动了文件的提交，"
+            "空提交会被打回。"
             "任务可以分几步交付：completes_task 说这次是不是最后一步。最后一步采纳后任务"
             "完成并关闭；不是最后一步，采纳后任务还开着，平台会叫你从最新代码接着做下一步。"
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
@@ -514,7 +518,11 @@ PLATFORM_TOOLS = ToolTable(
                     "末尾的 (#N) 平台会加，不要写"
                 ),
                 "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
-                "reason": _text("验收证据和要对方检查的内容"),
+                "focus": _text(
+                    "审阅重点：请审阅的人确认的事，最多 3 条，每条一句，合计 300 字以内，"
+                    "一行一条。只写需要人判断的地方（取舍、可能出乎意料的行为），"
+                    "测试结果和验证过程写进 body，不在这里重复"
+                ),
                 "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用英文"),
                 "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
                 "new_artifact": _text("清单上还没有的东西的真名"),
@@ -524,6 +532,23 @@ PLATFORM_TOOLS = ToolTable(
                 "completes_task": {
                     "type": "boolean",
                     "description": "这次交付做完了整个任务填 true；分步做、后面还有步骤填 false",
+                },
+                "comment_outcomes": {
+                    "type": "array",
+                    "description": (
+                        "上一次退回附带了批注时必填：逐条说处理了没有。id 照抄退回消息里"
+                        "方括号中的那个；handled 处理了填 true，没处理填 false；note 一句话，"
+                        "处理了写怎么改的，没处理写为什么。审阅的人看着这一句核对"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "handled": {"type": "boolean"},
+                            "note": {"type": "string"},
+                        },
+                        "required": ["id", "handled", "note"],
+                    },
                 },
             },
             ["subject", "completes_task"],
@@ -1274,7 +1299,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": here + "/accept-card",
             "body": {
-                "routing_reason": args.get("reason") or "",
+                "focus": args.get("focus") or "",
                 "change_subject": args["subject"],
                 **_given(
                     args,
@@ -1286,6 +1311,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                     "deliver",
                     "deliver_url",
                     "completes_task",
+                    "comment_outcomes",
                 ),
             },
         }

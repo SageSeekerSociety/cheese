@@ -116,7 +116,7 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
                 topic_id=room,
                 task_id=first.id,
                 reviewer_handle="alice",
-                routing_reason="ready",
+                focus="ready",
                 change_subject="feat: add first result",
                 # 这道门（「审阅人在不在房间里」）有它自己的用例：
                 # `test_accept_reviewer_membership.py`。这个文件的房间是直接写库

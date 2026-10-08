@@ -13,7 +13,7 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import AgentSession, SessionPlace
+from app.domain.agent_session.models import LOST_KEY, AgentSession, SessionPlace
 from app.domain.agent_session.repositories import AgentSessionRepository
 
 
@@ -108,6 +108,12 @@ class AgentSessionService:
         """Every place a session in this room is sitting on."""
         rows = await self._repo.placed_in_room(room_id)
         return [place for row in rows if (place := row.place()) is not None]
+
+    async def sandbox_lost_in_room(self, room_id: uuid.UUID) -> bool:
+        """A session in this room had its cloud sandbox destroyed and has not
+        been placed in a new one yet (``LOST_KEY``)."""
+        rows = await self._repo.placed_in_room(room_id)
+        return any((row.execution_request or {}).get(LOST_KEY) for row in rows)
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
         """Which harness the room's one pane belongs to, if anything is on it.

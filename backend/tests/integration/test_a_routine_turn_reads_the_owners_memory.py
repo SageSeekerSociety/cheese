@@ -12,6 +12,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.delivery.models import Delivery
@@ -100,6 +101,7 @@ def _prompt_of_the_routine_turn(client, tmp_path, room: str, submitted: dict):
     """
     screen = Screen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=ComputePool([screen.runtime], screen.name),
         base_system_prompt="You are Cheese.",
@@ -162,6 +164,7 @@ def test_another_rooms_turn_does_not_carry_the_routine_owner(client, tmp_path):
 
     screen = Screen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=ComputePool([screen.runtime], screen.name),
         base_system_prompt="You are Cheese.",

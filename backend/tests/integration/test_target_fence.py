@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.core.errors import ValidationError
 from app.domain.agent.input_registration import input_registrar
+from app.domain.agent.live_work import LiveWork
 from app.domain.delivery import agent
 from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.models import Delivery, NativeInput
@@ -76,7 +77,7 @@ def test_a_missing_target_ends_only_a_current_attempt(
         if expiry == "during_fence":
             moments = iter((stamp, stamp + timedelta(minutes=3)))
             monkeypatch.setattr(agent, "now", lambda: next(moments))
-        unread = {}
+        live = LiveWork()
         with pytest.raises(ValidationError):
             if caller == "begin_send":
                 await agent.begin_send(factory, delivery_id, requested_attempt)
@@ -84,12 +85,12 @@ def test_a_missing_target_ends_only_a_current_attempt(
                 registrar = input_registrar(
                     factory,
                     InputEffects(delivery_id=delivery_id, attempt_id=requested_attempt),
-                    unread,
+                    live,
                     probe_unread=True,
                     fence_delivery=True,
                 )
                 await registrar(identity)
-        assert unread == {}
+        assert live.unread_inputs == {}
         async with factory() as session:
             row = await session.get(Delivery, delivery_id)
             assert row.state == expected

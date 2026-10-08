@@ -6,9 +6,12 @@ so an ``except`` written for either catches both, and must answer with the
 same envelope as everything else.
 """
 
+import json
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app.core.errors import (
     AppError,
@@ -98,12 +101,43 @@ def test_both_families_answer_with_the_same_envelope(exc: BaseError) -> None:
     assert body["error"]["retryable"] is False
 
 
-def test_a_deprecated_error_answers_a_stream_with_an_event() -> None:
-    response = _client(GatewayUnavailableError("down")).get(
-        "/boom", headers={"accept": "text/event-stream"}
+def test_a_deprecated_error_answers_a_stream_with_the_same_envelope() -> None:
+    """A refusal asked for as a stream carries the same body a JSON answer
+    would, so a caller switches on ``error.name`` and ``error.retryable``
+    whichever way it asked instead of reading the sentence."""
+    refused = GatewayUnavailableError("down")
+    streamed = _client(refused).get("/boom", headers={"accept": "text/event-stream"})
+    assert streamed.status_code == 503
+    event, data = streamed.text.strip().split("\n")
+    assert event == "event: error"
+    assert (
+        json.loads(data.removeprefix("data: ")) == _client(refused).get("/boom").json()
     )
-    assert response.status_code == 503
-    assert response.text.startswith("event: error")
+
+
+def test_a_request_refused_by_validation_answers_a_stream_with_the_same_envelope() -> (
+    None
+):
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    class Payload(BaseModel):
+        count: int
+
+    @app.post("/count")
+    async def count(payload: Payload) -> Payload:
+        return payload
+
+    client = TestClient(app, raise_server_exceptions=False)
+    refused = {"json": {"count": "many"}}
+    streamed = client.post("/count", headers={"accept": "text/event-stream"}, **refused)
+    assert streamed.status_code == 400
+    event, data = streamed.text.strip().split("\n")
+    assert event == "event: error"
+    assert (
+        json.loads(data.removeprefix("data: "))
+        == client.post("/count", **refused).json()
+    )
 
 
 def test_app_error_has_no_handler_of_its_own() -> None:

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.domain.agent import prewarm
@@ -25,7 +26,7 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.main import app
 from tests.integration import test_central_room_sessions as central_sessions
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import room_socket
 from tests.integration.test_a_release_restarts_quiet_sessions import IDLE, ReleaseHub
 from tests.integration.test_central_room_sessions import sessions
 from tests.support.hang import HANG_S
@@ -66,6 +67,7 @@ def _backend(client, hub, tmp_path):
     claude = sessions(central)
     claude.bind_owns_sessions(lambda: SimpleNamespace(owns_sessions=True))
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="System",
         workspace_root=str(tmp_path / "ws"),
@@ -123,7 +125,7 @@ async def test_opening_the_room_starts_the_session_before_any_message(
         _running_then_let_go, service, claude, hub, project, topic
     )
 
-    with client.websocket_connect(chat_ws_url(topic, "alice")):
+    with room_socket(client, topic, "alice"):
 
         async def started():
             await _until(lambda: old.sid in hub.closed and len(hub.opened) == 1)
@@ -144,7 +146,7 @@ async def test_a_room_is_looked_at_once_per_window_however_much_is_typed(
     room_full = AsyncMock(return_value=False)
     monkeypatch.setattr(service.prewarm._memory, "has_room", room_full)
 
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         # Looked at on opening, while the host had no room for it. The look
         # runs after the socket is accepted, so wait for it rather than for a
         # fixed time: on a busy runner it can take longer than any guess.
@@ -184,7 +186,7 @@ async def test_a_full_session_host_starts_nothing(client, idle_room, monkeypatch
         service.prewarm._memory, "has_room", AsyncMock(return_value=False)
     )
 
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         ws.send_json({"type": "typing"})
         client.portal.call(asyncio.sleep, 0.5)
     assert hub.closed == closed

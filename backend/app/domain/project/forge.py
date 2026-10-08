@@ -37,7 +37,10 @@ from app.domain.agent.github_app import (
     repository_named,
 )
 from app.domain.project.models import Project, ProjectForge, ProjectGitInstallation
-from app.domain.project.repositories import ProjectGitInstallationRepository
+from app.domain.project.repositories import (
+    ProjectGitInstallationRepository,
+    ProjectRepository,
+)
 from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient
 from app.domain.review.github_pr import (
     GitHubPRClient,
@@ -156,10 +159,9 @@ async def _record_rename(
             upstream = (project.settings or {}) if project else {}
             parsed = parse_github_repo(upstream.get("github_repository_url"))
             if project and parsed and "/".join(parsed).lower() == old.lower():
-                project.settings = {
-                    **upstream,
-                    "github_repository_url": f"https://github.com/{name}",
-                }
+                await ProjectRepository(writer).merge_settings(
+                    project, {"github_repository_url": f"https://github.com/{name}"}
+                )
             # GitHub's redirect from the old name ends the day someone creates
             # a repository under it, so a task's PR link moves with the rename.
             # A review card's own record moves when the card is next used

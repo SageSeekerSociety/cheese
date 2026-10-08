@@ -40,14 +40,16 @@ def _with_key(error: dict, message: object) -> dict:
     return error if key is None else {**error, "i18n": key}
 
 
-def _event_error(message: object) -> str:
+def _event_error(body: dict) -> str:
     """An ``event: error`` frame for a client that asked for a stream.
 
-    ``data`` is JSON, like every other frame on the streams we serve: the
-    sentence as ``message`` and, when it was said with ``say()``, its key as
-    ``i18n`` — the same ``{key, params}`` an error body carries."""
-    data = _with_key({"message": str(message)}, message)
-    return f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    ``data`` is JSON, like every other frame on the streams we serve, and it is
+    the very body the JSON branch would have answered with — the sentence as
+    ``message``, plus the ``error`` object carrying ``name``, ``data`` and
+    ``retryable`` (and ``i18n`` when the sentence came from ``say()``). A caller
+    then tells one condition from another the same way whichever way the
+    refusal arrived, instead of branching on the sentence."""
+    return f"event: error\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
 class BaseError(Exception):
@@ -104,7 +106,7 @@ class BadRequestError(BaseError):
 
 class NotFoundError(BaseError):
     def __init__(
-        self, message: str = "Resource not found", data: Any | None = None
+        self, message: str = say("resourceNotFound"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_404_NOT_FOUND, message, data)
 
@@ -119,13 +121,15 @@ class NotFoundError(BaseError):
 
 
 class ForbiddenError(BaseError):
-    def __init__(self, message: str = "Access denied", data: Any | None = None) -> None:
+    def __init__(
+        self, message: str = say("accessDenied"), data: Any | None = None
+    ) -> None:
         super().__init__(HTTP_403_FORBIDDEN, message, data)
 
 
 class AuthenticationRequiredError(BaseError):
     def __init__(
-        self, message: str = "Authentication required", data: Any | None = None
+        self, message: str = say("signInRequired"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, data)
 
@@ -146,7 +150,7 @@ class UnprocessableEntityError(BaseError):
 
 
 class InternalServerError(BaseError):
-    def __init__(self, message: str = "Internal server error") -> None:
+    def __init__(self, message: str = say("serverInternalError")) -> None:
         super().__init__(HTTP_500_INTERNAL_SERVER_ERROR, message, None)
 
 
@@ -164,12 +168,12 @@ class AccessDeniedError(ForbiddenError):
             data["resourceType"] = resource_type
         if resource_id is not None:
             data["resourceId"] = resource_id
-        super().__init__(message="Access denied", data=data or None)
+        super().__init__(message=say("accessDenied"), data=data or None)
 
 
 class PermissionDeniedError(ForbiddenError):
     def __init__(
-        self, message: str = "Permission denied", data: Any | None = None
+        self, message: str = say("permissionDenied"), data: Any | None = None
     ) -> None:
         super().__init__(message, data)
 
@@ -186,12 +190,12 @@ class SudoRequiredError(ForbiddenError):
 
 
 class TokenExpiredError(BaseError):
-    def __init__(self, message: str = "Token has expired") -> None:
+    def __init__(self, message: str = say("tokenExpired")) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, None)
 
 
 class InvalidTokenError(BaseError):
-    def __init__(self, message: str = "Invalid token") -> None:
+    def __init__(self, message: str = say("invalidToken")) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, None)
 
 
@@ -204,14 +208,14 @@ class NameAlreadyExistsError(ConflictError):
 
 
 class QuotaExceededError(BaseError):
-    def __init__(self, message: str = "Quota exceeded") -> None:
+    def __init__(self, message: str = say("quotaExceeded")) -> None:
         super().__init__(HTTP_429_TOO_MANY_REQUESTS, message, None)
 
 
 class SystemBusyError(BaseError):
     def __init__(
         self,
-        message: str = "System is busy, please try again later",
+        message: str = say("systemBusy"),
         data: Any | None = None,
     ) -> None:
         super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
@@ -224,7 +228,7 @@ class UpstreamUnavailableError(BaseError):
     outage that passes on its own says ``retryable = True``."""
 
     def __init__(
-        self, message: str = "Upstream unavailable", data: Any | None = None
+        self, message: str = say("upstreamUnavailable"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
 
@@ -236,7 +240,7 @@ class GatewayTimeoutError(BaseError):
     Not retryable: the one call that raises it (an execution, a POST) may
     or may not have run, so sending it again is not the same request."""
 
-    def __init__(self, message: str = "Upstream did not answer in time") -> None:
+    def __init__(self, message: str = say("gatewayTimeout")) -> None:
         super().__init__(HTTP_504_GATEWAY_TIMEOUT, message, None)
 
 
@@ -278,7 +282,7 @@ async def base_error_handler(
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
     if "text/event-stream" in accept:
-        body = _event_error(exc.args[0])
+        body = _event_error(exc.to_response_body())
         return PlainTextResponse(
             content=body, status_code=exc.status_code, media_type="text/event-stream"
         )
@@ -303,7 +307,9 @@ async def http_exception_handler(
     # did not mention it.
     headers = getattr(exc, "headers", None)
     if "text/event-stream" in accept:
-        body = _event_error(detail)
+        body = _event_error(
+            format_error_response(status_code=exc.status_code, message=detail)
+        )
         return PlainTextResponse(
             content=body,
             status_code=exc.status_code,
@@ -336,20 +342,19 @@ async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
-    message = _validator_sentence(exc) or "Invalid request parameters"
-    if "text/event-stream" in accept:
-        body = _event_error(message)
-        return PlainTextResponse(
-            content=body,
-            status_code=HTTP_400_BAD_REQUEST,
-            media_type="text/event-stream",
-        )
+    message = _validator_sentence(exc) or say("invalidRequestParameters")
     # A validator's own `raise ValueError(...)` travels in `ctx["error"]` as the
     # exception object, which `JSONResponse` cannot serialize: the handler then
     # raised, and any body refused by a custom validator answered 500. Its
     # sentence is what the caller needs, so it goes out as text.
     data = {"details": jsonable_encoder(exc.errors(), custom_encoder={Exception: str})}
     body = BadRequestError(message, data=data).to_response_body()
+    if "text/event-stream" in accept:
+        return PlainTextResponse(
+            content=_event_error(body),
+            status_code=HTTP_400_BAD_REQUEST,
+            media_type="text/event-stream",
+        )
     return JSONResponse(status_code=HTTP_400_BAD_REQUEST, content=body)
 
 

@@ -4,18 +4,19 @@
 // 发之前真正要确认的是「附的是不是那一份」，而 `report.docx` 这个名字答不了，
 // 封面能。
 //
-// 两种来源，同一张画布。PDF 浏览器自己就读得了，直接取原始字节——走
-// `previewFileBytes` 而不是图片那个地址助手，因为原始端点对非图片只在
+// 两种来源，同一张画布。PDF 浏览器自己就读得了，直接取原始字节——走 AttachmentSource
+// 的 `fileBytes` 而不是图片那条路，因为原始端点对非图片只在
 // `download=true` 时才发字节（PreviewPages 也是为这个用它）。Word 和幻灯片
 // 浏览器画不了，平台先用 LibreOffice 转一次：一份约 2.5 秒，后端按内容哈希缓存，
 // 所以同一个文件只转一次，而且读者后面在预览面板里打开它时也是这一份。
 //
 // 这 2.5 秒里方格不转圈，就摆这个类型的图标：转两秒半的圈比直接给一个说明类型的
 // 图标更难受，而且图标本身已经是一个正确的答案，页面来了再替上去。
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { inject, onBeforeUnmount, ref, watch } from 'vue'
 
-import { previewDocumentPdf, previewFileBytes } from '../api'
 import { fileIcon, NEEDS_CONVERSION, suffixOf } from '../lib/fileKind'
+
+import { ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
 
 type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
@@ -27,6 +28,11 @@ const props = defineProps<{
 }>()
 
 let lib: PdfLib | null = null
+
+// 字节从外壳注入的 AttachmentSource 问（lib/attachmentSource.ts），不是自己 import
+// src/api.ts——这一颗 import 了它，渲染这份缩略图的每一个组件都得跟着装后端。没人
+// 注入时拿到的是「取不到」，方格里摆类型图标。
+const source = inject(ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE)
 // Every load gets a number, so a reply that arrives after the props moved on
 // cannot draw over the tile that replaced it.
 let generation = 0
@@ -41,7 +47,7 @@ const mark = () => fileIcon(props.path)
 
 /** 这份文档的 PDF 字节：本来就是 PDF 就直接取，否则让平台转一次。 */
 function pdfBytes(topicId: string, path: string): Promise<ArrayBuffer> {
-  return NEEDS_CONVERSION.has(suffixOf(path)) ? previewDocumentPdf(topicId, path) : previewFileBytes(topicId, path)
+  return NEEDS_CONVERSION.has(suffixOf(path)) ? source.documentPdf(topicId, path) : source.fileBytes(topicId, path)
 }
 
 /** pdf.js needs its worker pinned before the first getDocument, or it guesses

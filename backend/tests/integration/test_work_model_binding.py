@@ -17,12 +17,13 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.core.config import settings
 from app.domain.agent import gateway_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_instance.models import AgentInstance
@@ -75,6 +76,7 @@ def _card(client, ids) -> dict:
 
 def _chat(factory, tmp_path) -> ChatService:
     return ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(),
         base_system_prompt="你是芝士。",

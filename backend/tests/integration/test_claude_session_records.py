@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
@@ -26,10 +27,10 @@ from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.room_reader import room_reader
@@ -103,7 +104,7 @@ def test_a_tool_that_failed_marks_its_step_with_what_it_said(client, stub_hooks)
 
     stub_hooks.emit_turn = turn
     room = _room(client)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 转一下文档"})
         frames = _until_done(ws)
     assert frames[-1]["type"] == "done", frames[-1]
@@ -167,7 +168,7 @@ def test_an_input_counts_as_received_only_once_the_session_echoes_it(
     stub_hooks.emit_turn = turn
     room = _room(client)
     topic = uuid.UUID(room)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 看一下"})
         _until(
             ws,
@@ -205,7 +206,7 @@ def test_a_long_command_gets_the_progress_reminder_written_to_the_session(
     stub_hooks.emit_turn = turn
     room = _room(client)
     topic = uuid.UUID(room)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
         _until(
             ws,
@@ -243,7 +244,7 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
     stub_hooks.emit_turn = turn
     room = _room(client)
     topic = uuid.UUID(room)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
         _until(
             ws,
@@ -329,7 +330,7 @@ def test_a_message_without_live_handoff_waits_for_completion_then_recovers(
     async def no_live_handoff(*args, **kwargs):
         return None
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
         _until(
             ws,
@@ -391,7 +392,7 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
 
     stub_hooks.emit_turn = turn
     room = _room(client)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 编一下"})
         _until(
             ws,
@@ -427,6 +428,7 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",
@@ -435,7 +437,7 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
 
     before = StillWorking()
     app.dependency_overrides[get_chat_service] = lambda: service(before)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 睡一会"})
         _until(
             ws,
@@ -482,6 +484,7 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",
@@ -490,7 +493,7 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
 
     before = StillWorking()
     app.dependency_overrides[get_chat_service] = lambda: service(before)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 睡一会"})
         _until(
             ws,
@@ -527,7 +530,7 @@ def test_a_message_joins_the_turn_the_next_backend_picked_up(client):
     """Not a second turn started beside the one still running."""
     topic, room, _ = _picked_up_by_a_new_backend(client)
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 顺便把闹钟关了"})
         _until_done(ws)
 
@@ -587,6 +590,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",
@@ -596,13 +600,13 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     before = StillWorking()
     old = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@Opus 睡一会"})
         _until(
             ws,
             lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
         )
-    (running,) = old._hook_work.values()
+    (running,) = old.live.hook_work.values()
     assert running.agent_instance_handle == "opus"
     client.portal.call(before.runtime.stop_listening)
 
@@ -616,12 +620,12 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     app.dependency_overrides[get_chat_service] = lambda: replaced
     assert client.portal.call(replaced.recover_sessions) == 1
 
-    (recovered,) = replaced._hook_work.values()
+    (recovered,) = replaced.live.hook_work.values()
     assert recovered.agent_instance_handle == "opus"
 
     # A message to the teammate joins the recovered turn — it must not start
     # a second turn beside the teammate's own.
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@Opus 接着睡"})
         _until_done(ws)
 

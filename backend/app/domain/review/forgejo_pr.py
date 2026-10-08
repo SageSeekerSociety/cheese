@@ -397,6 +397,27 @@ class ForgejoPRClient:
             "POST", f"/issues/{number}/comments", json={"body": body}
         )
 
+    async def post_review(self, number, *, commit_id, body, comments):
+        """One review of line comments; when Forgejo refuses it, one PR comment
+        carrying them all, so the record still reaches the PR."""
+        payload = {
+            "event": "COMMENT",
+            "body": body,
+            "comments": [
+                {"path": c["path"], "new_position": c["line"], "body": c["body"]}
+                for c in comments
+            ],
+        }
+        if commit_id:
+            payload["commit_id"] = commit_id
+        try:
+            return await self._request("POST", f"/pulls/{number}/reviews", json=payload)
+        except GitHubPRError:
+            folded = "\n\n".join(
+                [body, *(f"`{c['path']}:{c['line']}`\n{c['body']}" for c in comments)]
+            )
+            return await self.comment(number, folded)
+
     async def check_runs(self, ref):
         token, _ = await self.tokens.installation_token()
         runs = await self.client.list_check_runs(

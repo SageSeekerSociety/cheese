@@ -28,7 +28,6 @@ vi.mock('@/api', async () => ({
   listBlocks: (...args: unknown[]) => listBlocks(...args),
   listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
   listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-  chatWsUrl: () => 'ws://test/chat',
 }))
 
 import { PAGE_SIZE } from '../lib/blockPaging'

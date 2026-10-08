@@ -153,7 +153,7 @@
     {
       "label": "验收卡出现：待你审阅",
       "focus": "card",
-      "tag": "卡上写着待谁审阅、推荐理由和合并后的提交标题",
+      "tag": "输入框上方写着待谁审阅，「改动」顶部是标题和审阅重点",
       "panel": "changes",
       "events": [
         {
@@ -171,10 +171,9 @@
         {
           "at": 500,
           "do": "card",
-          "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "你提的需求，由你验收",
+            "focus": "手机上改成了单列，宽屏仍是两列",
             "change_subject": "docs: add a welcome note",
             "change_body": "在仓库根目录加 README.md，一句话介绍这个项目。",
             "pr_number": 1,

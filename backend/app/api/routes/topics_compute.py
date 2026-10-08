@@ -398,7 +398,7 @@ async def set_topic_compute_profile(
             raise ValidationError(say("deviceNotInProject"))
     project = await ProjectRepository(db).get(topic.project_id)
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
     if (
         the_task is not None
         and device_id is not None

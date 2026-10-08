@@ -1,9 +1,10 @@
-"""「现场」这一格的摘要只答房间。
+"""工作面板的摘要：哪几格该摆出来，「改动」上挂什么数。
 
-`/projects/{pid}/topics/{id}/work-summary` 说这一格该不该摆出来（`has_run`）。
-它只答**房间**；拿一个任务的 id 去问，答的是 404。
+`/projects/{pid}/topics/{id}/work-summary` 说「现场」这一格该不该摆出来（`has_run`），
+频道和任务各答各的。
 
-`changed_files` 汇总这个房间里每个进行中任务各自分支上的改动，房间的改动数就是它。
+`changed_files` 是一件任务自己分支上的改动，「改动」页签上的数字就是它。频道没有
+「改动」页签（改动属于任务，在任务页看，#2422），所以频道答的是空的。
 """
 
 import asyncio
@@ -81,8 +82,11 @@ def test_a_room_that_has_run_says_so(client):
     assert _summary(client, pid, room).json()["data"]["has_run"] is True
 
 
-def test_room_summary_combines_its_independent_tasks(client):
-    """The room summary includes paths from every open task branch."""
+def test_changes_are_counted_on_each_task_and_never_on_the_channel(client):
+    """每件任务数它自己分支上的改动；频道一件也不数。
+
+    频道上没有「改动」页签可以挂这个数，而把频道里每件开着的任务都拿去比一遍，
+    十几件任务就超过上限，频道页每次打开都是 503。"""
     pid, room = _room(client)
     first = _task(client, room)
     second = _task(client, room)
@@ -95,7 +99,8 @@ def test_room_summary_combines_its_independent_tasks(client):
         {"second.txt": "Second task\n"},
         "Second change",
     )
-    assert _summary(client, pid, room).json()["data"]["changed_files"] == [
-        "first.txt",
-        "second.txt",
+    assert _summary(client, pid, first).json()["data"]["changed_files"] == ["first.txt"]
+    assert _summary(client, pid, second).json()["data"]["changed_files"] == [
+        "second.txt"
     ]
+    assert _summary(client, pid, room).json()["data"]["changed_files"] == []

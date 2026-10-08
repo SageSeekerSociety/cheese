@@ -13,7 +13,12 @@ is the question "can this be mounted on its own, without a backend, a route or
 an Apollo-shaped store":
 
   A  nothing but props and emits. Standalone-ready: the only thing missing is a
-     fixture in the shape its props describe.
+     fixture in the shape its props describe. An `inject(KEY, fallback)` with a
+     fallback is allowed here: the component mounts on its own and draws the
+     fallback, and the shell (or a catalog story) fills the seam when it wants
+     the real thing — GitLab's condition for injected values
+     (`fe_guide/vue.md`, "provide/inject"). `provide()` alone is allowed too:
+     handing a value down says nothing about where the provider is mounted.
   B  it reads an app-chrome store (`usePageTitleStore`, `useNavigationStore`) —
      stores the shell owns, not the data a page is about.
   C  it reaches the network: it imports `@/api`, `@/network/*` or
@@ -21,8 +26,9 @@ an Apollo-shaped store":
      it calls `fetch`/`axios` itself — or it reads a business store.
   D  it is tied to where it is mounted, or to a channel other than
      props/emits: `useRoute`/`useRouter`/`$router`/`vue-router`, a rendered
-     `<router-view>`/`<router-link>`, `$parent`/`$root`, an event bus, or
-     `provide`/`inject`.
+     `<router-view>`/`<router-link>`, `$parent`/`$root`, an event bus, or an
+     `inject(KEY)` with no fallback — mounted outside its provider, that one is
+     `undefined` and the component breaks.
 
   The first letter that applies, worst first, is the grade: a component that
   reads the route AND fetches is D, not C.
@@ -67,8 +73,15 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     is matched with its `//` and `/* */` comments removed (strings, template
     literals and regex literals are kept, so `'https://x'` is not cut at its
     `//`); template HTML comments were already dropped by `template_blocks`.
-    The template half of the router test reads tags by name (`<router-view>`,
-    `<router-link>`), the way `scene-ratchet.py` pairs a page with its view.
+    The same stripping applies to `api_reach`: `lib/loadFailure.ts` names
+    `axios` in a comment and was read as a module that fetches, which made
+    every component that imported it C. The template half of the router test
+    reads tags by name (`<router-view>`, `<router-link>`), the way
+    `scene-ratchet.py` pairs a page with its view.
+  - "Has a fallback" is read off the call: a top-level comma inside
+    `inject(...)`. `inject(KEY, undefined)` passes that test and still hands
+    back `undefined`; the regex cannot tell a useful fallback from a useless
+    one.
 
     python3 .claude/scripts/frontend_grade.py --self-test   prove the cases below
 
@@ -111,8 +124,7 @@ ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
 ROUTER_TAGS = {"routerview", "routerlink"}
 PARENT_USE = re.compile(r"\$parent|\$root")
 BUS_USE = re.compile(r"\beventBus\b|\$eventBus\b")
-INJECT_USE = re.compile(r"\binject\s*\(")
-PROVIDE_USE = re.compile(r"\bprovide\s*\(")
+INJECT_CALL = re.compile(r"\binject\s*(?:<[^>()]*>)?\s*\(")
 RAW_HTTP = re.compile(r"\bfetch\s*\(|\baxios\b")
 
 #: Stores whose identity is app chrome rather than business data (the audit's list).
@@ -231,7 +243,7 @@ def api_reach(root: Path) -> set[Path]:
     for path in sorted(list(src.rglob("*.ts")) + list(src.rglob("*.vue"))):
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = code_of(path, path.read_text(encoding="utf-8", errors="replace"))
         deps: set[Path] = set()
         direct = bool(RAW_HTTP.search(text))
         for is_type, spec in specifiers(text):
@@ -496,6 +508,53 @@ def router_tags(template: str) -> list[str]:
             if name.lower().replace("-", "") in ROUTER_TAGS]
 
 
+def code_of(path: Path, text: str) -> str:
+    """The code in a `.ts` or `.vue` file, with its comments gone.
+
+    A `.ts` file is all script. A `.vue` file is its `<script>` blocks (comments
+    stripped) plus its template blocks (HTML comments already dropped there).
+    """
+    if path.suffix == ".vue":
+        script = strip_js_comments("\n".join(SCRIPT_BLOCK.findall(text)))
+        return script + "\n" + "\n".join(template_blocks(text))
+    return strip_js_comments(text)
+
+
+def bare_injects(script: str) -> int:
+    """How many `inject(...)` calls in `script` have no fallback argument.
+
+    The call's arguments are scanned to the parenthesis that closes it, with
+    brackets and quotes balanced; a comma at the top level means a second
+    argument, so the component mounts without a provider. `script` is expected
+    comment-free (`strip_js_comments`).
+    """
+    count = 0
+    for match in INJECT_CALL.finditer(script):
+        i, n = match.end(), len(script)
+        depth, quote, comma = 0, "", False
+        while i < n:
+            char = script[i]
+            if quote:
+                if char == "\\":
+                    i += 1
+                elif char == quote:
+                    quote = ""
+            elif char in "'\"`":
+                quote = char
+            elif char in "([{":
+                depth += 1
+            elif char in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif char == "," and depth == 0:
+                comma = True
+            i += 1
+        if not comma:
+            count += 1
+    return count
+
+
 def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
     """Grade the component at `path` (a `.vue` or a `.ts` file under src).
 
@@ -520,7 +579,7 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     api_direct = bool(RAW_HTTP.search(script))
     if api_direct:
         reasons.append("calls fetch()/axios itself")
-    for spec in specifiers(text):
+    for spec in specifiers(script):
         is_type, specifier = spec
         if is_type:
             continue  # a type-only import pulls in no runtime dependency
@@ -556,8 +615,7 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
         or rendered_router_tags
         or PARENT_USE.search(whole)
         or BUS_USE.search(whole)
-        or INJECT_USE.search(script)
-        or PROVIDE_USE.search(script)
+        or bare_injects(script)
     )
     if ROUTER_USE.search(whole) or "vue-router" in script:
         reasons.append("reads the route (useRoute/useRouter/$router/vue-router)")
@@ -568,8 +626,8 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
         reasons.append("reads $parent/$root")
     if BUS_USE.search(whole):
         reasons.append("uses an event bus")
-    if INJECT_USE.search(script) or PROVIDE_USE.search(script):
-        reasons.append("uses provide()/inject()")
+    if bare_injects(script):
+        reasons.append("inject()s a value with no fallback (cannot mount outside its provider)")
 
     business = stores - BENIGN_STORES
     for name in sorted(business):
@@ -665,6 +723,36 @@ _FIXTURE: dict[str, str] = {
         "defineProps<{ thing: Thing | null }>()\n</script>\n<template><div /></template>\n"
     ),
     "frontend/src/components/typeBarrel.ts": "export type { Thing } from './thing'\n",
+    # provide/inject: a fallback makes the component mountable on its own.
+    "frontend/src/components/InjectFallback.vue": (
+        "<script setup lang=\"ts\">\nimport { inject } from 'vue'\n"
+        "const dir = inject<Dir>(DIR_KEY, { name: (h: string) => h, go: () => {} })\n"
+        "const f = inject(K2, () => ({ a: '(,)' }), true)\n"
+        "</script>\n<template><a>{{ dir.name('x') }}{{ f }}</a></template>\n"
+    ),
+    "frontend/src/components/InjectBare.vue": (
+        "<script setup lang=\"ts\">\nimport { inject } from 'vue'\n"
+        "const ok = inject(K1, null)\nconst sort = inject<Sort>(fn(SORT_KEY, 'a,b'))\n"
+        "</script>\n<template><a>{{ sort }}{{ ok }}</a></template>\n"
+    ),
+    "frontend/src/components/ProvideOnly.vue": (
+        "<script setup lang=\"ts\">\nimport { provide } from 'vue'\n"
+        "provide(SORT_KEY, { by: 'name' })\n</script>\n<template><slot /></template>\n"
+    ),
+    # A module that names axios only in a comment does not reach the network.
+    "frontend/src/lib/failure.ts": (
+        "// The shape axios gives a failed request; nothing here calls it.\n"
+        "/* fetch( is not called either */\nexport const reason = (e: unknown) => String(e)\n"
+    ),
+    "frontend/src/components/UsesFailure.vue": (
+        "<script setup lang=\"ts\">\nimport { reason } from '@/lib/failure'\n"
+        "defineProps<{ e: unknown }>()\n</script>\n<template><a>{{ reason(e) }}</a></template>\n"
+    ),
+    "frontend/src/lib/fetcher.ts": "export const get = (u: string) => fetch(u)\n",
+    "frontend/src/components/UsesFetcher.vue": (
+        "<script setup lang=\"ts\">\nimport { get } from '@/lib/fetcher'\n"
+        "void get('/x')\n</script>\n<template><a /></template>\n"
+    ),
 }
 
 
@@ -732,6 +820,11 @@ def self_test() -> int:
         )
         check("a page that fetches through a re-export barrel is C", letter("ViaBarrel.vue"), "C")
         check("a barrel that re-exports only a type is not an edge", letter("TypeBarrel.vue"), "A")
+        check("inject() with a fallback (generic, factory) mounts alone: A", letter("InjectFallback.vue"), "A")
+        check("an inject() with no fallback beside one that has it is still D", letter("InjectBare.vue"), "D")
+        check("provide() alone is not tied to where it is mounted: A", letter("ProvideOnly.vue"), "A")
+        check("a module naming axios/fetch( only in comments does not reach the API", letter("UsesFailure.vue"), "A")
+        check("a module that really calls fetch() still reaches the API", letter("UsesFetcher.vue"), "C")
 
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
@@ -742,7 +835,9 @@ def self_test() -> int:
         "and $parent named in // and /* */ comments grade A, a real useRoute() "
         "stays D, and a // inside a string, a regex or a template literal nested in "
         "${ } is not a comment; a rendered <router-link> is D, a chain carried by an "
-        "`export … from` barrel is C, and one carrying only a type is A)"
+        "`export … from` barrel is C, and one carrying only a type is A; inject() with "
+        "a fallback and provide() alone grade A, a bare inject() stays D; a module "
+        "naming axios only in a comment does not fetch)"
     )
     return 0
 

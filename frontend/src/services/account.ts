@@ -9,6 +9,7 @@ import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { clearPageCache } from '@/lib/pageCache'
 import { resetPreviewPointerCache } from '@/lib/previewPointer'
+import { resetRoomLink } from '@/lib/roomLink'
 import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
 import { clearTopicPanelCache } from '@/lib/topicPanelCache'
 import { UserApi } from '@/network/api/users'
@@ -75,11 +76,13 @@ function storedUserId(): number | undefined {
  * 认不出新身份时（OAuth 回调只给令牌，用户信息随后才拉）当作换了人：那条路径只在
  * 一次全新的登录里走到，宁可多清一次。
  */
-/** 话题里的几份内存缓存：消息窗口、工作面板的进度/成员/派出的活、预览指针，都是这个人的房间内容。 */
+/** 话题里的几份内存缓存：消息窗口、工作面板的进度/成员/派出的活、预览指针，都是这个人的房间内容；
+ *  还有这个页面的房间连接，连着的是上一个人看着的那些房间。 */
 function clearRoomCaches(): void {
   clearBlockCache()
   clearTopicPanelCache()
   resetPreviewPointerCache()
+  resetRoomLink()
 }
 
 export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next: number | undefined): boolean {

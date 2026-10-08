@@ -9,6 +9,7 @@ import uuid
 import pytest
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute_configs import (
@@ -50,13 +51,17 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
     business_db_factory, tmp_path
 ):
     from app.domain.agent.compute import ComputePool
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.domain.agent_instance.services import AgentInstanceService
     from app.domain.block.models import consumed_turn
 
     factory = business_db_factory
     provider = _SlowLiveScreen()
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
     svc = ChatService(
+        work_runner=runner,
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -92,13 +97,10 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
 
     run = asyncio.create_task(first_turn())
     await asyncio.wait_for(provider.started.wait(), HANG_S)
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    runner.subscribe_messages()
     quote = slide_quote(f"  @Second <@{other}> <@{current}>\n")
     client_id = str(uuid.uuid4())
     try:
-        landed = await broker.receive_message(
+        landed = await runner.receive_message(
             svc,
             topic_id,
             author="alice",
@@ -123,7 +125,7 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
         async with factory() as session:
             saved = await BlockRepository(session).get(landed)
             assert consumed_turn(saved) is not None
-        again = await broker.receive_message(
+        again = await runner.receive_message(
             svc,
             topic_id,
             author="alice",
@@ -244,12 +246,16 @@ class InstantScreen(StubChannel):
     ],
 )
 async def test_retried_client_delivery_is_persisted_and_submitted_once(
-    business_db_factory, tmp_path, content, attachments, expected_blocks
+    business_db_factory, tmp_path, monkeypatch, content, attachments, expected_blocks
 ):
-    from app.domain.agent.runtime import InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     factory = business_db_factory
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
     svc = ChatService(
+        work_runner=runner,
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
         base_system_prompt="You are Cheese.",
@@ -264,12 +270,15 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
         topic_id = topic.id
         await session.commit()
 
-    broker = InProcessBroker()
     submitted = []
-    broker.subscribe_messages(lambda *args, **kwargs: submitted.append((args, kwargs)))
+    monkeypatch.setattr(
+        runner,
+        "_receive_message",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
     async with broker.subscribe(str(topic_id)) as browser:
         first, second = await asyncio.gather(
-            broker.receive_message(
+            runner.receive_message(
                 svc,
                 topic_id,
                 author="u",
@@ -277,7 +286,7 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
                 attachments=attachments,
                 client_id="same-browser-delivery",
             ),
-            broker.receive_message(
+            runner.receive_message(
                 svc,
                 topic_id,
                 author="u",
@@ -307,12 +316,16 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
 
 @pytest.mark.anyio
 async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
-    business_db_factory, tmp_path
+    business_db_factory, tmp_path, monkeypatch
 ):
-    from app.domain.agent.runtime import InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     factory = business_db_factory
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
     svc = ChatService(
+        work_runner=runner,
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
         base_system_prompt="You are Cheese.",
@@ -340,10 +353,13 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
         anchor.meta = {**(anchor.meta or {}), "client_id": "pre-upgrade-delivery"}
         await session.commit()
 
-    broker = InProcessBroker()
     submitted = []
-    broker.subscribe_messages(lambda *args, **kwargs: submitted.append((args, kwargs)))
-    retried = await broker.receive_message(
+    monkeypatch.setattr(
+        runner,
+        "_receive_message",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    retried = await runner.receive_message(
         svc,
         topic_id,
         author="u",
@@ -374,6 +390,7 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
 
     factory = business_db_factory
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
         base_system_prompt="You are Cheese.",
@@ -434,6 +451,7 @@ async def test_queued_message_retains_selected_teammate(business_db_factory, tmp
 
     factory = business_db_factory
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
         base_system_prompt="You are Cheese.",
@@ -491,6 +509,7 @@ async def test_backend_resolves_room_agent_mention(
 ):
     factory = business_db_factory
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
         base_system_prompt="You are Cheese.",
@@ -524,6 +543,7 @@ async def test_backend_resolves_a_legacy_shared_seat_mention(
     """
     factory = business_db_factory
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
         base_system_prompt="You are Cheese.",
@@ -559,11 +579,15 @@ async def test_backend_resolves_a_legacy_shared_seat_mention(
 async def test_backend_mention_starts_when_browser_did_not_summon(
     business_db_factory, tmp_path
 ):
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     factory = business_db_factory
     screen = InstantScreen()
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
     svc = ChatService(
+        work_runner=runner,
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
@@ -577,10 +601,7 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
         )
         topic_id = topic.id
         await session.commit()
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    runner.subscribe_messages()
-    landed = await broker.receive_message(
+    landed = await runner.receive_message(
         svc, topic_id, author="u", content="@芝士 check this"
     )
     # The turn ends when it ends. A deadline here raced it and cancelled it
@@ -603,12 +624,16 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     一轮锁的只是自己那一席 —— 默认 agent 的轮次被捏住不放时，@Second 的
     消息起 Second 自己的一轮，两条会话同时在跑。
     """
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.domain.agent_instance.services import AgentInstanceService
 
     factory = business_db_factory
     screen = SlowScreen()
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
     svc = ChatService(
+        work_runner=runner,
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
@@ -636,12 +661,9 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     ):
         pass
     await screen.started.wait()
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    runner.subscribe_messages()
     # 点名由服务端从正文算（I13）：`@Second` 落库时展开成它的席位，那一位队友的
     # handle 是 `second`，不以 `cheese` 开头 —— 寻址认席位才起得了这一轮。
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="u", content="@Second Second task"
     )
     # The default agent's turn is still held — Second's runs beside it: its
@@ -707,12 +729,28 @@ class RacingSeat(ChatService):
             self.in_flight -= 1
 
 
-class SeatLockRemoved(RacingSeat):
-    """The same service with the lock taken away — a fresh lock per call is no
-    lock at all. It exists to show the test below is not vacuous."""
+class _SeatLocksNeverTaken:
+    """Wraps the service's `live` state, handing out a fresh seat lock every
+    call — a fresh lock per call is no lock at all. Every other read/write of
+    the live state passes straight through to the real ``LiveWork``."""
 
-    def _seat_lock_for(self, topic_id, agent_handle):
+    def __init__(self, live) -> None:
+        self._live = live
+
+    def seat_lock_for(self, topic_id, agent_handle):
         return asyncio.Lock()
+
+    def __getattr__(self, name):
+        return getattr(self._live, name)
+
+
+class SeatLockRemoved(RacingSeat):
+    """The same service with the lock taken away. It exists to show the test
+    below is not vacuous."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.live = _SeatLocksNeverTaken(self.live)
 
 
 async def _a_topic(factory) -> uuid.UUID:
@@ -783,9 +821,13 @@ async def test_two_requests_that_both_saw_the_seat_free_never_overlap(
     同一间房里另一个席位的轮次照常并行，由
     `test_other_teammate_message_runs_beside_the_live_turn` 盖。
     """
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
+
     factory = business_db_factory
     screen = SlowScreen()
     svc = RacingSeat(
+        work_runner=AgentWorkRunner(InProcessBroker()),
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
@@ -812,9 +854,13 @@ async def test_the_guard_bites_when_the_seat_lock_is_taken_away(
     business_db_factory, tmp_path
 ):
     """把锁拿走，上面那条断言就该红 —— 证明它不是空转。"""
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
+
     factory = business_db_factory
     screen = SlowScreen()
     svc = SeatLockRemoved(
+        work_runner=AgentWorkRunner(InProcessBroker()),
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
@@ -857,13 +903,18 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
 ):
     """两位队友在同一间房里各跑各的一轮，后端这时被换掉：新进程接回来以后，
     两位后来说的话都当场落进房间，不必等谁再被点名一次。"""
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.domain.agent_instance.services import AgentInstanceService
 
     factory = business_db_factory
 
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=runner,
             session_factory=factory,
             compute=stub_compute(channel),
             base_system_prompt="You are Cheese.",
@@ -893,10 +944,7 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
         topic_id=topic_id, author="u", content="First task", summon=True
     ):
         pass
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    runner.subscribe_messages()
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="u", content="@Second Second task"
     )
     async with asyncio.timeout(HANG_S):
@@ -942,6 +990,7 @@ async def test_execution_notes_are_retained_outside_public_replies(
 ):
     factory = business_db_factory
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(ProcessNotesScreen()),
         base_system_prompt="You are Cheese.",
@@ -981,6 +1030,7 @@ async def test_first_turn_materializes_inherited_compute_before_running(
     factory = business_db_factory  # type: ignore[attr-defined]
     screen = InstantScreen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="You are Cheese.",
@@ -1046,6 +1096,7 @@ async def test_a_teammate_joining_later_starts_on_the_rooms_choice(
 
     factory = business_db_factory  # type: ignore[attr-defined]
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(DeferredScreen()),
         base_system_prompt="You are Cheese.",
@@ -1100,6 +1151,7 @@ async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_p
 
     agent = SlowScreen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(agent),
         base_system_prompt="你是芝士。",
@@ -1181,6 +1233,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     """
     factory = business_db_factory  # type: ignore[attr-defined]
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         # 座位限流不在任何一条分类规则里 —— 这正是要测的"没命中"。
         compute=stub_compute(
@@ -1252,6 +1305,7 @@ async def test_storage_exhaustion_is_a_persistent_platform_event(
     factory = business_db_factory  # type: ignore[attr-defined]
     agent = StorageFullScreen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(agent),
         base_system_prompt="你是芝士。",
@@ -1312,6 +1366,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     factory = business_db_factory  # type: ignore[attr-defined]
     provider = _SlowLiveScreen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -1385,7 +1440,8 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
 ):
     """A transport exception after registration keeps the input for reconciliation."""
     from app.domain.agent.compute import ComputePool
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.domain.block.models import consumed_turn
     from app.domain.delivery.input_holds import seat_has_unfinished_input
     from tests.conftest import close_topic_subscriptions
@@ -1424,7 +1480,9 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
             return await super().call(handle, method, params)
 
     provider = _NoScreen()
+    runner = AgentWorkRunner(InProcessBroker())
     svc = ChatService(
+        work_runner=runner,
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -1511,7 +1569,6 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
         provider.release.set()
         await asyncio.wait_for(first, HANG_S)
         await finish_turn(svc, topic_id)
-        runner = AgentWorkRunner(InProcessBroker())
         assert await runner.resume_lost_messages(svc, topic_id=topic_id) == 0
         assert await assert_unknown_input() == original_rows
         assert len(provider.sessions) == 1
@@ -1554,6 +1611,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
 
     factory = business_db_factory  # type: ignore[attr-defined]
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
         base_system_prompt="你是芝士。",
@@ -1588,7 +1646,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
         return True
 
     monkeypatch.setattr(svc._compute, "steer", slow_deliver)
-    svc._active_turn_ids[topic_id] = {uuid.uuid4()}
+    svc.live.active_turn_ids[topic_id] = {uuid.uuid4()}
     merge = asyncio.create_task(
         svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
     )
@@ -1617,6 +1675,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     factory = business_db_factory  # type: ignore[attr-defined]
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(InstantScreen()),
         base_system_prompt="你是芝士。",
@@ -1670,7 +1729,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     monkeypatch.setattr(svc._compute, "steer", fake_deliver)
     turn_id = uuid.uuid4()
-    svc._active_turn_ids[topic_id] = {turn_id}
+    svc.live.active_turn_ids[topic_id] = {turn_id}
 
     assert (
         await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
@@ -1733,12 +1792,17 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
 ):
     """后端换人时，一间房的会话积压很长、要回放很久：别的房间照常起轮次，这间房
     里点名芝士的那条等回放完再开跑，等得久了房间里会说一声。"""
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     factory = business_db_factory
 
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=runner,
             session_factory=factory,
             compute=stub_compute(channel),
             base_system_prompt="You are Cheese.",
@@ -1775,23 +1839,20 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
     for session_runner in after.sessions.values():
         session_runner.channel = after
     replaced = service(after)
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
     runner.REPLAY_NOTICE_S = 0.2
-    runner.subscribe_messages()
 
     # Taking the sessions over does not wait for the slow room's backlog.
     async with asyncio.timeout(HANG_S):
         assert await replaced.recover_sessions() == 2
 
-    await broker.receive_message(
+    await runner.receive_message(
         replaced, quick, author="u", content="@芝士 quick room task"
     )
     async with asyncio.timeout(HANG_S):
         while "quick room task" not in (after.last_prompt or ""):
             await asyncio.sleep(0.05)
 
-    await broker.receive_message(
+    await runner.receive_message(
         replaced, slow, author="u", content="@芝士 slow room task"
     )
 

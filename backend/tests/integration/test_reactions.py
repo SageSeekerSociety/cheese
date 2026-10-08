@@ -8,17 +8,18 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.api.auth import ActorResolver
 from app.domain.agent.chat import ChatService
 from tests.conftest import finish_turn, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     post_message,
     post_project,
     registered,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -37,7 +38,7 @@ def _create_topic(client, owner: str = "alice") -> str:
 
 def _post_message(client, topic_id: str, content: str, author: str) -> str:
     """Post a plain (unsummoned) message as `author`; returns the new block's id."""
-    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+    with room_socket(client, topic_id, author) as ws:
         post_message(client, topic_id, author, {"content": content})
         block_id = ""
         while True:
@@ -120,7 +121,7 @@ def test_reaction_broadcasts_live_ws_frame(client):
     topic_id = _create_topic(client)
     block_id = _post_message(client, topic_id, "看这条", "alice")
 
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         out = _toggle(client, block_id, "👀", "bob")
         frame = ws.receive_json()
     assert frame == {
@@ -158,7 +159,7 @@ def test_a_reaction_fired_while_the_socket_is_still_authorising_is_not_lost(
 
     monkeypatch.setattr(ActorResolver, "resolve", slow_resolve)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         out = _toggle(client, block_id, "👀", "bob")
         frame = ws.receive_json()
 
@@ -183,7 +184,7 @@ def test_summon_gets_cheese_seen_receipt(client):
     moment the turn starts — broadcast live and persisted on the block."""
     # 芝士 answers in a 支线: that is where it is called and acknowledges.
     topic_id = in_thread(client, _create_topic(client), "alice")
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         post_message(client, topic_id, "alice", {"content": "@芝士 芝士帮我看看"})
         frames = []
         while True:
@@ -217,6 +218,7 @@ async def test_resume_turn_adds_no_receipt(business_db_factory, tmp_path):
     factory = business_db_factory  # type: ignore[attr-defined]
 
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),

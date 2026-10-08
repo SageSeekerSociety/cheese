@@ -161,6 +161,7 @@ def test_viewer_authorization_survives_unrelated_membership_column_drops(
     from types import SimpleNamespace
 
     from app.api.routes.connector import _may_view_screen
+    from app.common.auth import verify_access_token
     from app.domain.project.models import ProjectMember
     from app.domain.topic.models import TopicMembership
 
@@ -174,11 +175,20 @@ def test_viewer_authorization_survives_unrelated_membership_column_drops(
         await db_session.flush()
         await _without_column(db_session, "topic_memberships", "role")
         screen = SimpleNamespace(project_id=project, topic_id=room)
-        assert await _may_view_screen(db_session, screen, session_token("viewer"))
-        assert await _may_view_screen(db_session, screen, session_token("owner"))
-        assert not await _may_view_screen(db_session, screen, session_token("outsider"))
-        assert not await _may_view_screen(db_session, screen, "bad-token")
-        assert not await _may_view_screen(db_session, screen, None)
+
+        def claims(token: str | None):
+            # The viewer route reads the token once, at the handshake, and holds
+            # the claims from then on: see `_may_view_screen`.
+            return verify_access_token(token or "")
+
+        viewer = claims(session_token("viewer"))
+        owner = claims(session_token("owner"))
+        outsider = claims(session_token("outsider"))
+        assert await _may_view_screen(db_session, screen, viewer)
+        assert await _may_view_screen(db_session, screen, owner)
+        assert not await _may_view_screen(db_session, screen, outsider)
+        assert not await _may_view_screen(db_session, screen, claims("bad-token"))
+        assert not await _may_view_screen(db_session, screen, claims(None))
 
     _portal.call(ask)
 

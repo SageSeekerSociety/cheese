@@ -145,7 +145,8 @@ export const DASHBOARD_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-dashboard-usage',
     title: 'AdminDashboardUsage',
-    about: '用量那一屏：窗口内的 token 与调用、每天一条线、最花的项目、成本，和额度燃尽那三个名单。',
+    about:
+      '用量那一屏：窗口内的 token 与调用、每天一条线、最花的项目、成本，额度燃尽那三个名单，和订阅通路身后的 Claude 账号池。',
     file: 'src/components/admin/dashboard/AdminDashboardUsage.vue',
     component: AdminDashboardUsage,
     needs: UI,

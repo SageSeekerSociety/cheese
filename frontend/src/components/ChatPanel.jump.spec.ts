@@ -11,12 +11,12 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listBlocks: vi.fn(),
   listRoomTasks: vi.fn().mockResolvedValue({ data: [] }),
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
-  chatWsUrl: () => 'ws://test/chat',
 }))
 // 发出去的那条还在路上：它先以待发的样子出现在最底下。
 vi.mock('../api/messages', () => ({ postChatMessage: vi.fn(() => new Promise(() => {})) }))

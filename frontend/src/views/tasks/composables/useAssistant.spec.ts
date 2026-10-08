@@ -115,7 +115,16 @@ describe('题目页上问芝士', () => {
     serve(
       () =>
         new Response(
-          `event: error\ndata: ${JSON.stringify({ message: '请先登录', i18n: { key: 'signInFirst', params: {} } })}\n\n`,
+          // 帧里的 data 就是同一支 JSON 会答的错误体（app/core/errors.py `_event_error`）。
+          `event: error\ndata: ${JSON.stringify({
+            code: 401,
+            message: '请先登录',
+            error: {
+              name: 'UnauthorizedError',
+              message: '请先登录',
+              i18n: { key: 'signInFirst', params: {} },
+            },
+          })}\n\n`,
           { status: 401, headers: { 'content-type': 'text/event-stream' } }
         )
     )

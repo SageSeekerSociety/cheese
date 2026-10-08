@@ -23,13 +23,20 @@ pytestmark = pytest.mark.anyio
 
 
 class _Runs:
-    """Where the runner writes each run."""
+    """Where the runner leases each tick. By default every tick is ours."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, wins: bool = True) -> None:
         self.last: dict[str, datetime] = {}
+        self.claims: list[str] = []
+        self._wins = wins
 
-    async def record(self, name: str, at: datetime) -> None:
-        self.last[name] = at
+    async def claim(
+        self, name: str, *, interval_s: float, who: str, now: datetime
+    ) -> bool:
+        self.claims.append(name)
+        if self._wins:
+            self.last[name] = now
+        return self._wins
 
 
 async def _runs_within(
@@ -167,6 +174,66 @@ async def test_stopping_ends_the_loop():
     assert ran_by_stop > 0, "the loop never ran, so stopping proves nothing"
     await asyncio.sleep(0.05)
     assert calls == ran_by_stop
+
+
+async def test_a_tick_another_process_holds_is_skipped_quietly():
+    """每个任务、每一拍一个租约：租约不是本进程的，这一拍就不跑。
+
+    这是任务能离开全局锁的前提 —— 每个进程都排它，靠租约保证一拍只有一个人跑。
+    输掉这一拍既不是失败也不是要报的事：不出一行日志，等下一拍。
+    """
+    calls = 0
+    runs = _Runs(wins=False)
+
+    async def job():
+        nonlocal calls
+        calls += 1
+
+    runner = PeriodicRunner("leased elsewhere", 0.01, job)
+    runner.start(runs)
+    await asyncio.sleep(0.3)
+    await runner.stop()
+
+    assert calls == 0, "a tick that another process held was run anyway"
+    assert len(runs.claims) >= 2, "the loop stopped asking for ticks"
+
+
+async def test_a_tick_that_cannot_be_leased_still_runs():
+    """领不到租约（数据库抖了一下）不能变成「所有定时任务一起停摆」。
+
+    租约是用来把两拍分开的，不是用来决定今天跑不跑的：领不到还要照跑，并且要
+    大声 —— 否则一次连接故障就会静默地让每一个计划任务停下，包括那些本该发现
+    这件事的任务。
+    """
+
+    class _Broken:
+        async def claim(self, name, *, interval_s, who, now):
+            raise RuntimeError("数据库连接没了")
+
+    ran = asyncio.Event()
+
+    async def job():
+        ran.set()
+
+    runner = PeriodicRunner("unleasable job", 0.01, job)
+    runner.start(_Broken())
+    try:
+        await asyncio.wait_for(ran.wait(), timeout=2)
+    finally:
+        await runner.stop()
+
+
+def test_a_job_is_the_lock_holder_s_until_it_is_moved_out():
+    """`owner_only` 的默认值就是今天全部 29 个任务的样子：由持锁进程跑。
+
+    这条开关存在的理由是**一个个搬出去**，所以默认必须是「还在锁里」；默认反过来
+    会让每一个任务在它自己那一改动里悄悄离开锁。
+    """
+
+    async def job(): ...
+
+    assert PeriodicRunner("by default", 60, job).owner_only is True
+    assert PeriodicRunner("moved out", 60, job, owner_only=False).owner_only is False
 
 
 # --- 哪些任务真的会被跑 -------------------------------------------------------

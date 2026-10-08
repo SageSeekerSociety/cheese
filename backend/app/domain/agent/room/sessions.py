@@ -63,6 +63,7 @@ from app.domain.agent.reads import (
     Working,
     Writing,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.room.stopwatch import Stopwatch, timed
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.agent.session_host.contract import (
@@ -86,7 +87,6 @@ from app.domain.delivery.input_identity import (
     WorkCompletion,
     WorkTermination,
 )
-from app.domain.library import service as library
 from app.domain.project_skill.service import session_skill_files
 
 if TYPE_CHECKING:
@@ -902,7 +902,7 @@ class RoomSessions:
         acting: str | None = None,
         needs_place: bool = True,
         keeps_nothing: bool = False,
-        images: list[dict] | None = None,
+        images: list[Image] | None = None,
         owes_reply: bool = False,
         session_opening: str = "",
         opening_changes: str = "",
@@ -946,7 +946,7 @@ class RoomSessions:
             )
             if not live.takes_inputs:
                 raise InputProtocolUnavailable()
-            pictures = self._images(session, images)
+            pictures = tuple(images or ())
             on_mark(work_id)
             await self._consume(
                 session.project_id,
@@ -1030,7 +1030,7 @@ class RoomSessions:
         self,
         topic_id: uuid.UUID,
         text: str,
-        images: list[dict] | None = None,
+        images: list[Image] | None = None,
         *,
         register_input: InputRegistrar,
         expected_work_id: uuid.UUID | None = None,
@@ -1072,7 +1072,7 @@ class RoomSessions:
             uuid.uuid4(),
             work,
         )
-        pictures = self._images(live.session, images)
+        pictures = tuple(images or ())
         await register_input(identity)
         await self._submit(
             live,
@@ -1126,19 +1126,6 @@ class RoomSessions:
             working = [seat for seat in working if self.work[seat] == expected_work_id]
         return working[0] if len(working) == 1 else None
 
-    @staticmethod
-    def _images(session: SessionRef, images: list[dict] | None) -> tuple[Image, ...]:
-        """The room's attachments, as the pictures said along with words."""
-        return tuple(
-            Image(
-                image["media_type"],
-                library.read_attachment(
-                    session.project_id, session.topic_id, image["path"]
-                ),
-            )
-            for image in images or ()
-        )
-
     @contextlib.asynccontextmanager
     async def reading(
         self, work_id: uuid.UUID
@@ -1171,7 +1158,6 @@ class RoomSessions:
 
     async def announce(self, topic: uuid.UUID) -> None:
         """Tell the room its session's controls moved."""
-        from app.domain.agent.runtime import get_broker
 
         await get_broker().publish(
             str(topic),

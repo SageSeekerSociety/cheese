@@ -30,11 +30,8 @@ from app.domain.agent import attachments
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.service import AgentResult
 from tests.conftest import stub_compute
 from tests.support.room_reader import room_reader
@@ -123,8 +120,9 @@ async def test_a_backend_that_dies_hands_the_work_over_too(db_factory):
 class _Chat(ChatService):
     """Real admission and seat identity, with a scripted conversation."""
 
-    def __init__(self, session_factory, turn) -> None:
+    def __init__(self, session_factory, turn, *, work_runner: AgentWorkRunner) -> None:
         super().__init__(
+            work_runner=work_runner,
             session_factory=session_factory,
             base_system_prompt="",
             workspace_root="",
@@ -157,7 +155,7 @@ async def _answers():
 @pytest.mark.anyio
 async def test_a_message_waits_for_the_takeover_and_is_then_answered(db_factory):
     runner = AgentWorkRunner(InProcessBroker())
-    chat = _Chat(db_factory, _answers)
+    chat = _Chat(db_factory, _answers, work_runner=runner)
     runner.hold_turns()
 
     runner.submit(
@@ -186,7 +184,7 @@ async def test_letting_go_leaves_a_delivered_turn_open_for_the_next_backend(
     topic = await a_topic(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
     runner.submit(
-        _Chat(db_factory, delivered_and_working),
+        _Chat(db_factory, delivered_and_working, work_runner=runner),
         topic,
         author="u",
         content="fix the login page",
@@ -213,7 +211,7 @@ async def test_a_send_cut_off_by_letting_go_never_arrives_afterwards(db_factory)
 
     runner = AgentWorkRunner(InProcessBroker())
     runner.submit(
-        _Chat(db_factory, still_sending),
+        _Chat(db_factory, still_sending, work_runner=runner),
         await a_topic(db_factory),
         author="u",
         content="fix the login page",
