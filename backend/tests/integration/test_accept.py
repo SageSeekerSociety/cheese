@@ -137,7 +137,7 @@ def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
     ]
     assert delivered["accepted_by"] == "alice"
     assert delivered["accepted_at"] is not None
-    assert delivered["status"] == "closed"
+    assert delivered["presentation"]["phrase"] == "accepted"
     assert topic["accepted_at"] is None
 
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
