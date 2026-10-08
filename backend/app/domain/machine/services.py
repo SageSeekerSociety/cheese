@@ -39,6 +39,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent.compute_configs import ComputeChoice
+from app.domain.agent_session.models import LOST_KEY
 from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
@@ -65,7 +66,6 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.progress import publish_line, tell_lost, tell_replaced
 from app.domain.machine.repositories import CloudHostRepository
-from app.domain.machine.sandbox_wait import LOST_KEY
 from app.domain.machine.supply import pick_offering
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicStatus

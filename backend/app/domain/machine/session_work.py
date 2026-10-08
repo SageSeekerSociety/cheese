@@ -36,7 +36,7 @@ from app.domain.agent.machine_address import device_api_base, site_forward, ws_u
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
 from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_instance.own import owned_by_session
-from app.domain.agent_session.models import AgentSession
+from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
 from app.domain.device.supply import (
@@ -54,7 +54,6 @@ from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
     EXECUTOR_SETUP_FAILED,
-    LOST_KEY,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
     VM_PREPARING,

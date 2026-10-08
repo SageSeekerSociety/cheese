@@ -295,3 +295,29 @@ describe('这一支的活', () => {
     expect(getGitDiff).toHaveBeenLastCalledWith('p1', 'room-1', 't-1', 'live')
   })
 })
+
+describe('待审阅和取不到的时候', () => {
+  it('待审阅的任务默认看交上来的那一版，不去读现场', async () => {
+    listRoomTasks.mockResolvedValue({
+      data: [{ ...openTask(), card: { id: 'c-1', status: 'pending' } }],
+      total: 1,
+    })
+    mount()
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'committed'))
+    expect(listFiles).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'committed')
+    expect(getGitDiff).not.toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live')
+  })
+
+  it('后台重取失败时，已经看到的改动留在原地', async () => {
+    const { rerender } = mount()
+    await waitFor(() => expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy())
+    getGitDiff.mockRejectedValue(new Error('任务的环境空闲后已释放'))
+    listFiles.mockRejectedValue(new Error('任务的环境空闲后已释放'))
+    const before = getGitDiff.mock.calls.length
+    await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true, refreshTick: 1 })
+    await waitFor(() => expect(getGitDiff.mock.calls.length).toBeGreaterThan(before))
+    await waitFor(() => expect(listFiles.mock.calls.length).toBeGreaterThan(1))
+    expect(screen.queryByText('任务的环境空闲后已释放')).toBeNull()
+    expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy()
+  })
+})

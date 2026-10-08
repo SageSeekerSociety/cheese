@@ -560,6 +560,7 @@
   "revisionDiffNotFound": "There's no diff for this version",
   "taskFileReadBeforeSave": "Load the file before saving changes",
   "taskMachineNotResponding": "The task's environment isn't responding right now. Load the file again before continuing, or view the committed version",
+  "taskSandboxReleased": "The task's environment was released after being idle. You can view the committed version",
   "committedReviewNotReady": "The review record for the committed version hasn't been created yet. Refresh in a moment",
   "committedDirNotFound": "The committed directory doesn't exist",
   "forgeIncompleteDirectory": "The code hosting service didn't return the whole directory",

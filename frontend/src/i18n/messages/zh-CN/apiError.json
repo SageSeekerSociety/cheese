@@ -560,6 +560,7 @@
   "revisionDiffNotFound": "此版本的差异不存在",
   "taskFileReadBeforeSave": "请先读取文件，再保存修改",
   "taskMachineNotResponding": "任务的环境暂时无法响应，重新读取文件后再操作；也可以查看已提交版本",
+  "taskSandboxReleased": "任务的环境空闲后已释放；可以查看已提交版本",
   "committedReviewNotReady": "已提交版本的评审记录尚未创建，请稍后刷新",
   "committedDirNotFound": "已提交的目录不存在",
   "forgeIncompleteDirectory": "代码托管服务未返回完整目录",

@@ -238,3 +238,43 @@ def test_live_diff_includes_committed_staged_unstaged_and_untracked_work(live):
     assert "-Original report" in diff and "+Live report" in diff
     assert "+Staged addition" in diff and "+Untracked addition" in diff
     assert git("status", "--porcelain") == before
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("released", [True, False])
+async def test_live_files_on_a_released_sandbox_say_so(monkeypatch, released):
+    # A cloud sandbox left idle is destroyed with its home; the machine then
+    # answers with a missing path. The reader is told the environment was
+    # released and pointed at the committed version, not shown that path. A
+    # machine failure with no such record still reaches them as it was.
+    from app.core.errors import GatewayUnavailableError
+    from app.domain.agent.device_contract import DeviceCallError
+    from app.domain.repository import forge_files
+
+    task = SimpleNamespace(id=uuid.uuid4(), room_id=uuid.uuid4())
+    room = SimpleNamespace(id=task.room_id, resource_id=None)
+    session = SimpleNamespace(get=AsyncMock(return_value=room))
+    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id)
+    monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
+    monkeypatch.setattr(
+        forge_files.AgentSessionService,
+        "places_in_room",
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(resource_id=str(room.id), lease={"kind": "device"})
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        forge_files.AgentSessionService,
+        "sandbox_lost_in_room",
+        AsyncMock(return_value=released),
+    )
+    missing = DeviceCallError("lstat /home/cheese/.cheese/home/p/r: no such file")
+    monkeypatch.setattr(forge_files.execution, "call", AsyncMock(side_effect=missing))
+    if released:
+        with pytest.raises(GatewayUnavailableError, match="已释放.*已提交版本"):
+            await files.live("diff", base_branch="main")
+    else:
+        with pytest.raises(DeviceCallError):
+            await files.live("diff", base_branch="main")

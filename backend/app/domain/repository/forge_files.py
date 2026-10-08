@@ -16,7 +16,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent import execution
-from app.domain.agent.device_hub import DeviceNotReady, DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.forge import (
     binding_for_project,
@@ -134,6 +134,16 @@ class ProjectFiles:
                 )
         except (TimeoutError, DeviceOffline, DeviceNotReady) as exc:
             raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+        except DeviceCallError as exc:
+            # A cloud sandbox left idle is destroyed with its home, and the
+            # room's lease still names it until the next tool call places the
+            # session again. The machine's own words for that are a missing
+            # path; say what happened instead.
+            if await AgentSessionService(self.session).sandbox_lost_in_room(
+                task.room_id
+            ):
+                raise GatewayUnavailableError(say("taskSandboxReleased")) from exc
+            raise
         if result.get("error") == "not_found":
             raise NotFoundError(say("taskFileNotOnMachine"))
         if result.get("error") == "conflict":
