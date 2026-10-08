@@ -161,6 +161,21 @@ request()
         self.run_gate("--update", rc=1)
         self.assertEqual(before, self.baseline.read_bytes())
 
+    def test_shorthand_component_registries_cannot_hide_new_child_edges(self) -> None:
+        self.page("<div/>")
+        self.run_gate("--update")
+        before = self.baseline.read_bytes()
+        for template, script in (
+            ('<component :is="choices.Child"/>', "const choices = { Child }"),
+            ('<component :is="choices.Child"/>', "const choices = { Child: Child }"),
+            ('<component :is="({Child}).Child"/>', ""),
+        ):
+            self.page(template, script)
+            self.run_gate("--update", rc=1)
+            self.assertEqual(before, self.baseline.read_bytes())
+        self.page('<component v-for="Child in items" :is="({Child}).Child"/>')
+        self.run_gate()
+
     def test_failed_update_preserves_baseline_and_reports_cannot_judge(self) -> None:
         self.page("<div/>")
         before = self.baseline.read_bytes()

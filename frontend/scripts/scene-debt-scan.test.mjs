@@ -120,6 +120,7 @@ test('dynamic selectors respect loop, slot and nested expression bindings', () =
     '<my-list v-slot="{value: Child}"><component :is="Child"/></my-list>',
     '<component v-for="selection in items" :is="selection"/>',
     '<component :is="items.map(Child => Child)"/>',
+    '<component v-for="Child in items" :is="({Child}).Child"/>',
   ])
     assert.deepEqual(scanScript('P.ts', code, [template]).rendered, [], template)
   assert.deepEqual(
@@ -127,6 +128,17 @@ test('dynamic selectors respect loop, slot and nested expression bindings', () =
     ['Child']
   )
   assert.deepEqual(scanScript('P.ts', code, ['<component :is="Child"/>']).rendered, ['Child'])
+})
+
+test('shorthand component registries resolve their value binding', () => {
+  for (const declaration of ['const choices = { Child }', 'const choices = { Child: Child }']) {
+    const code = `import Child from './Child.vue'; ${declaration}`
+    assert.deepEqual(scanScript('P.ts', code, ['<component :is="choices.Child"/>']).rendered, ['Child'])
+  }
+  assert.deepEqual(
+    scanScript('P.ts', "import Child from './Child.vue'", ['<component :is="({Child}).Child"/>']).rendered,
+    ['Child']
+  )
 })
 
 test('unparseable code cannot produce a zero-debt answer', () => {

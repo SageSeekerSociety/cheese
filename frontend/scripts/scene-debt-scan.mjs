@@ -177,7 +177,11 @@ export function scanScript(file, code, blocks = []) {
   function references(node, seen = new Set()) {
     if (ts.isIdentifier(node)) {
       const local = node.text
-      if (checker.getSymbolAtLocation(node) !== scriptBindings.get(local)) return
+      const symbol =
+        ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+          ? checker.getShorthandAssignmentValueSymbol(node.parent)
+          : checker.getSymbolAtLocation(node)
+      if (symbol !== scriptBindings.get(local)) return
       if (Object.hasOwn(components, local)) {
         rendered.add(local)
         return
