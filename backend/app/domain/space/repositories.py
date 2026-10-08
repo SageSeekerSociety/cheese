@@ -19,6 +19,7 @@ from app.domain.space.models import (
     SpaceUserRank,
 )
 from app.domain.tag.models import Tag
+from app.domain.task.models import TaskAccessDomain
 
 
 class SpaceRepository:
@@ -587,6 +588,48 @@ class SpaceDomainGroupDomainRepository:
         )
         result = await self._session.execute(stmt)
         return {int(row[0]) for row in result.all()}
+
+    async def list_group_ids_by_task_ids(
+        self, *, space_id: int, task_ids: Sequence[int]
+    ) -> dict[int, set[int]]:
+        """一次取回多道题各自的域组，按题目分组（组内无序，调用方排）。
+
+        列表接口一屏就要给一整页题配访问域组，逐题各发两条就是 40 条查询；这条是
+        它的批量版本，逐题的答案与 ``TaskAccessDomainRepository.list_by_task_id``
+        接 ``list_group_ids_by_domains`` 逐字一致，但保留 task → group 的归属
+        —— 一把梭成一个集合会把 A 题的组安到 B 题上。没有访问域、或在本题所属
+        板里没有对应组的题不在结果里。
+
+        放在这里而不是 ``TaskAccessDomainRepository``：那边的 import 会给
+        ``app.domain.task.repositories`` 添一条指向 space 的边，``domains-acyclic``
+        契约（C3）当场变红。
+        """
+        if not task_ids:
+            return {}
+        stmt = (
+            select(TaskAccessDomain.task_id, SpaceDomainGroup.id)
+            .join(
+                SpaceDomainGroupDomain,
+                SpaceDomainGroupDomain.domain == TaskAccessDomain.domain,
+            )
+            .join(
+                SpaceDomainGroup,
+                SpaceDomainGroup.id == SpaceDomainGroupDomain.group_id,
+            )
+            .where(
+                TaskAccessDomain.task_id.in_(list(task_ids)),
+                TaskAccessDomain.deleted_at.is_(None),
+                SpaceDomainGroupDomain.deleted_at.is_(None),
+                SpaceDomainGroup.space_id == space_id,
+                SpaceDomainGroup.deleted_at.is_(None),
+            )
+            .distinct()
+        )
+        result = await self._session.execute(stmt)
+        grouped: dict[int, set[int]] = {}
+        for task_id, group_id in result.all():
+            grouped.setdefault(int(task_id), set()).add(int(group_id))
+        return grouped
 
 
 class SpaceMemberRepository:

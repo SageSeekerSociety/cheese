@@ -39,11 +39,12 @@ vi.mock('../api/projectDocuments', () => ({
 vi.mock('../lib/libraryApi', () => ({
   uploadLibraryFile: vi.fn(),
   replaceLibraryFile: vi.fn(),
+  moveLibraryFile: vi.fn(),
   libraryFileBytes: vi.fn(),
 }))
 
 const { deleteLibraryFile, downloadFile, listProjectLibrary } = await import('../api')
-const { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } = await import('../lib/libraryApi')
+const { libraryFileBytes, moveLibraryFile, replaceLibraryFile, uploadLibraryFile } = await import('../lib/libraryApi')
 
 afterEach(cleanup)
 
@@ -281,5 +282,89 @@ describe('资料库读不到时', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '清除筛选' }))
     await waitFor(() => expect(rowNames(container)).toEqual(['预算表(2).xlsx', '预算表.xlsx', '结题报告.docx']))
+  })
+})
+
+/** 名字里的 `/` 是文件夹：不搜不筛时一层一层地看，一搜就是整个资料库。 */
+describe('资料库的文件夹', () => {
+  beforeEach(() => {
+    vi.mocked(listProjectLibrary).mockResolvedValue({
+      data: [file('合同/2026/报价.xlsx'), file('合同/附件.pdf'), file('结题报告.docx')],
+      total: 3,
+    })
+    vi.mocked(moveLibraryFile).mockResolvedValue({ moved: {} })
+  })
+
+  async function open(url = '/projects/p1/library') {
+    const view = await renderRaw(url)
+    await waitFor(() => expect(rowNames(view.container).length).toBeGreaterThan(0))
+    return view
+  }
+
+  async function menuItem(baseElement: Element, owner: string, label: string) {
+    await fireEvent.click(screen.getByRole('button', { name: `${owner} 的操作` }))
+    return waitFor(() => {
+      const item = Array.from(baseElement.querySelectorAll('.v-list-item, [role="menuitem"]')).find(
+        (b) => b.textContent?.trim() === label
+      )
+      expect(item).toBeTruthy()
+      return item as HTMLElement
+    })
+  }
+
+  function dialogButton(baseElement: Element, label: string) {
+    return Array.from(baseElement.querySelectorAll('button')).find(
+      (b) => b.textContent?.trim() === label
+    ) as HTMLElement
+  }
+
+  it('最上层先列文件夹，点进去是那一层，点所在位置回到上一层', async () => {
+    const { container, router } = await open()
+    expect(rowNames(container)).toEqual(['合同', '结题报告.docx'])
+
+    await fireEvent.click(screen.getByText('合同'))
+    await waitFor(() => expect(rowNames(container)).toEqual(['2026', '附件.pdf']))
+    expect(router.currentRoute.value.query.dir).toBe('合同')
+
+    await fireEvent.click(screen.getByRole('button', { name: t('navigation.project.library') }))
+    await waitFor(() => expect(rowNames(container)).toEqual(['合同', '结题报告.docx']))
+  })
+
+  it('一搜就是整个资料库里对得上的，写完整路径', async () => {
+    const { container } = await open()
+    await fireEvent.update(screen.getByRole('searchbox', { name: '搜索标题和内容' }), '报价')
+    await waitFor(() => expect(rowNames(container)).toEqual(['合同/2026/报价.xlsx']))
+  })
+
+  it('在一个文件夹里上传，就放进这个文件夹', async () => {
+    const { container } = await open('/projects/p1/library?dir=合同')
+    const input = container.querySelector('input[type="file"][multiple]') as HTMLInputElement
+    await pick(input, [new File(['a'], 'a.txt')])
+    await waitFor(() => expect(uploadLibraryFile).toHaveBeenCalledWith('p1', expect.any(File), '合同'))
+  })
+
+  it('移动或重命名把新的完整名字交给服务端，再重新列一遍', async () => {
+    const { baseElement } = await open('/projects/p1/library?dir=合同')
+    await fireEvent.click(await menuItem(baseElement, '附件.pdf', '移动或重命名'))
+    const name = await waitFor(() => screen.getByLabelText('名称') as HTMLInputElement)
+    expect(name.value).toBe('附件.pdf')
+    await fireEvent.update(name, '附件-旧.pdf')
+    await fireEvent.click(dialogButton(baseElement, '移动'))
+    await waitFor(() => expect(moveLibraryFile).toHaveBeenCalledWith('p1', '合同/附件.pdf', '合同/附件-旧.pdf'))
+    await waitFor(() => expect(listProjectLibrary).toHaveBeenCalledTimes(2))
+  })
+
+  it('删除一个文件夹先说清里面几份会一起删，答应了才删', async () => {
+    const { container, baseElement } = await open()
+    await fireEvent.click(await menuItem(baseElement, '合同', '删除'))
+    await waitFor(() => expect(baseElement.textContent).toContain('文件夹里的 2 份文件会一起删除'))
+    expect(deleteLibraryFile).not.toHaveBeenCalled()
+
+    const confirm = Array.from(baseElement.querySelectorAll('.v-card-actions button')).find(
+      (b) => b.textContent?.trim() === '删除'
+    )
+    await fireEvent.click(confirm!)
+    await waitFor(() => expect(deleteLibraryFile).toHaveBeenCalledWith('p1', '合同'))
+    await waitFor(() => expect(rowNames(container)).toEqual(['结题报告.docx']))
   })
 })

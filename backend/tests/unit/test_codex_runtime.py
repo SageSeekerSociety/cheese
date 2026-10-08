@@ -15,10 +15,9 @@ from app.domain.agent.harness import CODEX, SessionRef
 from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.driven.runner import LONG_POLL
-from app.domain.agent.room import sessions as room_sessions
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentMessage, AgentResult
-from app.domain.agent.session_host.contract import StartRefused
+from app.domain.agent.session_host.contract import Image, StartRefused
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.models import SessionPlace
 from app.domain.agent_session.services import AgentSessionService
@@ -187,18 +186,15 @@ async def test_room_send_steer_and_reconnect_keep_one_work_owner(tmp_path):
     marks = []
     replacement = None
     try:
-        with patch.object(
-            room_sessions.library, "read_attachment", return_value=b"fixture"
-        ):
-            assert await runtime.send(
-                session,
-                "first",
-                system_prompt="system",
-                work_id=work,
-                on_mark=marks.append,
-                register_input=register_input,
-                images=[{"path": "uploads/image.png", "media_type": "image/png"}],
-            )
+        assert await runtime.send(
+            session,
+            "first",
+            system_prompt="system",
+            work_id=work,
+            on_mark=marks.append,
+            register_input=register_input,
+            images=[Image("image/png", b"fixture")],
+        )
         assert marks == [work]
         assert inputs[0]["input_id"] == str(work)
         assert inputs[0]["images"] == ["data:image/png;base64,Zml4dHVyZQ=="]
