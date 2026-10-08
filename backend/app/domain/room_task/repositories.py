@@ -2,9 +2,10 @@
 those threads work on."""
 
 import uuid
+from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
@@ -76,19 +77,49 @@ class TaskRepository:
         )
         return {room: n for room, n in (await self._session.execute(stmt)).all()}
 
-    async def list_for_room(self, room_id: uuid.UUID) -> list[Task]:
-        """This room's threads, oldest first.
+    async def list_for_room(
+        self,
+        room_id: uuid.UUID,
+        *,
+        status: str | None = None,
+        ids: Collection[uuid.UUID] | None = None,
+        origins: Collection[uuid.UUID] | None = None,
+        with_branch: bool = False,
+        latest: int | None = None,
+    ) -> list[Task]:
+        """This room's threads, oldest first, narrowed:
+
+        - ``status``: only open, or only closed;
+        - ``ids`` / ``origins``: only these tasks, or the ones made from these
+          blocks — either one matching is enough;
+        - ``with_branch``: only tasks that have a branch of their own;
+        - ``latest``: only the newest N — by when they closed for closed tasks,
+          by when they were created otherwise — newest first.
 
         Ties on created_at break by id so the order is total — the backfill
         stamps a whole project's tasks from `topics.created_at`, and rows that
         were created in the same instant must still come back in one fixed
         order rather than whatever the planner felt like.
         """
-        stmt = (
-            select(Task)
-            .where(Task.room_id == room_id)
-            .order_by(Task.created_at, Task.id)
-        )
+        stmt = select(Task).where(Task.room_id == room_id)
+        if status is not None:
+            stmt = stmt.where(Task.status == TaskStatus(status))
+        if ids is not None or origins is not None:
+            stmt = stmt.where(
+                or_(
+                    Task.id.in_(list(ids or ())),
+                    Task.upgraded_from_block_id.in_(list(origins or ())),
+                )
+            )
+        if with_branch:
+            stmt = stmt.where(Task.branch_name.is_not(None))
+        if latest is None:
+            stmt = stmt.order_by(Task.created_at, Task.id)
+        else:
+            moment = Task.closed_at if status == TaskStatus.closed else Task.created_at
+            stmt = stmt.order_by(moment.desc().nulls_last(), Task.id.desc()).limit(
+                latest
+            )
         return list((await self._session.scalars(stmt)).all())
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[Task]:
