@@ -1,4 +1,4 @@
-"""AgentWorkRunner + Broker: run agent work as background jobs.
+"""AgentWorkRunner: receive messages and run agent work as background jobs.
 
 WebSocket connections subscribe and relay; they never own model work. A
 disconnect drops only the subscriber while the background request or live
