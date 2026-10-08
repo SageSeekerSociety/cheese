@@ -43,7 +43,9 @@ const online = useOnline()
   color: rgb(var(--v-theme-on-warning));
   white-space: nowrap;
   background: rgb(var(--v-theme-warning));
-  border-radius: 0 0 10px 10px;
+  border-radius: 0;
+  border-bottom-right-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
   transform: translateX(-50%);
 }
