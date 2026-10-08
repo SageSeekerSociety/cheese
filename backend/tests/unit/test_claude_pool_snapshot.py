@@ -43,7 +43,7 @@ def test_no_configured_log_means_nowhere_to_look():
     assert snapshot_path("   ") is None
     body = read_claude_pool(None, now=NOW)
     assert body["accounts"] == []
-    assert "订阅版计量代理" in body["reason"]
+    assert body["reason"] == "not-configured"
 
 
 def test_the_snapshot_is_looked_for_beside_the_ledger():
@@ -75,7 +75,7 @@ def test_the_pool_reads_back_as_the_proxy_wrote_it(tmp_path):
 def test_a_missing_file_is_a_reason_not_an_error():
     body = read_claude_pool(Path("/nonexistent/accounts.json"), now=NOW)
     assert body["accounts"] == []
-    assert "还没有写下" in body["reason"]
+    assert body["reason"] == "missing"
 
 
 def test_an_unparseable_file_is_a_reason_not_an_error(tmp_path):
@@ -83,7 +83,7 @@ def test_an_unparseable_file_is_a_reason_not_an_error(tmp_path):
     path.write_text("{ this is not json")
     body = read_claude_pool(path, now=NOW)
     assert body["accounts"] == []
-    assert "JSON" in body["reason"]
+    assert body["reason"] == "malformed"
 
 
 def test_a_snapshot_without_a_write_time_is_not_trusted(tmp_path):
@@ -92,7 +92,7 @@ def test_a_snapshot_without_a_write_time_is_not_trusted(tmp_path):
     path.write_text(json.dumps({"accounts": [_row("primary", "available")]}))
     body = read_claude_pool(path, now=NOW)
     assert body["accounts"] == []
-    assert "写入时刻" in body["reason"]
+    assert body["reason"] == "malformed"
 
 
 def test_rows_that_are_not_rows_are_dropped(tmp_path):

@@ -457,7 +457,7 @@ def test_usage_carries_the_account_pool_beside_the_ledger(
     monkeypatch.setattr(settings, "subscription_usage_log", "")
     blind = _stats(client, as_admin, "usage", days=DAYS)["claude_accounts"]
     assert blind["accounts"] == []
-    assert blind["reason"]
+    assert blind["reason"] == "not-configured"
 
     ledger = tmp_path / "usage.jsonl"
     ledger.write_text("")

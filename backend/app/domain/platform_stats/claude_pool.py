@@ -7,7 +7,11 @@
 
 **读不到不是错误**：开发环境根本不跑订阅版代理，`SUBSCRIPTION_USAGE_LOG` 常常是空
 的；用量那块看板不能因为这一小块看不见就整个红掉。读不到时 `accounts` 留空，把原因
-写进 `reason`，界面照那一句话说明为什么这里什么都没有。
+写进 `reason`。
+
+`reason` 是**代号**不是一句话（`REASONS` 那四个）：看板是中英双语的，这里写中文等于
+英文界面里漏一句中文，写英文则反过来。代号由前端翻，认不出的代号给它自己的兜底句。
+这条和看板别处「后端给机器名、前端 `UNAVAILABLE_KEY` 翻」是同一套。
 
 **过期不等于没数据**：行上的 `until` 是绝对时刻，池子不变时它本来就不该变，所以
 超过 `STALE_AFTER_S` 只说明「代理最近没写」。行照常返回，另给 `stale` 让界面注明这
@@ -34,6 +38,13 @@ SNAPSHOT_NAME = "accounts.json"
 #: 还不认识的状态，那时既不能画成可用、也不该按「需人工重置」解释它。
 STATES = ("available", "cooling", "disabled", "unknown")
 
+#: 看不见的原因，**代号**（前端翻成人话，理由见模块 docstring）。
+#:   not-configured —— 这台部署没配 `SUBSCRIPTION_USAGE_LOG`，根本没有那个目录；
+#:   missing        —— 配了，但代理还没写下过这个文件；
+#:   unreadable     —— 文件在，读不动（权限、目录）；
+#:   malformed      —— 读到了，但不是我们认得的形状（含「没有写入时刻」）。
+REASONS = ("not-configured", "missing", "unreadable", "malformed")
+
 
 def snapshot_path(usage_log: str | None = None) -> Path | None:
     """快照文件在哪。`SUBSCRIPTION_USAGE_LOG` 没配就是没得看。"""
@@ -46,31 +57,31 @@ def snapshot_path(usage_log: str | None = None) -> Path | None:
 def read_claude_pool(path: Path | None, *, now: float | None = None) -> dict:
     """读一份池子快照，或者一个「为什么看不见」。
 
-    形状（钉死的，前端按它写）：`accounts` 是行列表，为空时 `reason` 是一句给界面用
-    的话；`stale` 说这份快照是不是已经旧了（旧了也照样给行）；`retry_after` 是**所有
-    冷却中的账号里最早的那个解冻时刻**，由行上的 `until` 现算，不取文件里那个同龄的
-    计数 —— 那个数写下的那一刻就开始变旧。
+    形状（钉死的，前端按它写）：`accounts` 是行列表，为空时 `reason` 是 `REASONS` 里
+    的一个代号；`stale` 说这份快照是不是已经旧了（旧了也照样给行）；`retry_after` 是
+    **所有冷却中的账号里最早的那个解冻时刻**，由行上的 `until` 现算，不取文件里那个
+    同龄的计数 —— 那个数写下的那一刻就开始变旧。
     """
     if now is None:
         now = time.time()
     if path is None:
-        return _nothing("这台部署没有配置订阅版计量代理，账号池不在它的视野里。")
+        return _nothing("not-configured")
     try:
         document = json.loads(path.read_text())
     except FileNotFoundError:
-        return _nothing("计量代理还没有写下账号池快照（代理可能没在跑）。")
-    except OSError as error:
-        return _nothing(f"读不到账号池快照：{error}")
+        return _nothing("missing")
+    except OSError:
+        return _nothing("unreadable")
     except (json.JSONDecodeError, ValueError):
-        return _nothing("账号池快照读不出内容（不是合法的 JSON）。")
+        return _nothing("malformed")
     if not isinstance(document, dict):
-        return _nothing("账号池快照的形状不对。")
+        return _nothing("malformed")
     written_at = document.get("written_at")
     if not isinstance(written_at, (int, float)) or isinstance(written_at, bool):
-        return _nothing("账号池快照没有写入时刻，判断不出它有多新。")
+        return _nothing("malformed")
     raw_rows = document.get("accounts")
     if not isinstance(raw_rows, list):
-        return _nothing("账号池快照的形状不对。")
+        return _nothing("malformed")
     rows = [row for row in (_row(raw, now) for raw in raw_rows) if row is not None]
     age = now - written_at
     return {
@@ -84,7 +95,7 @@ def read_claude_pool(path: Path | None, *, now: float | None = None) -> dict:
 
 
 def _nothing(reason: str) -> dict:
-    """看不见时的形状：空列表加一句话，别的字段留空。"""
+    """看不见时的形状：空列表加一个原因代号，别的字段留空。"""
     return {
         "accounts": [],
         "reason": reason,
