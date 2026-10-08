@@ -184,6 +184,7 @@ type Seed = {
   taskId: string;
   feedbackId: string;
   othersProjectId: string;
+  routineRoomId: string;
   routineIds: string[];
 };
 let seeded: Seed | null = null;
@@ -240,11 +241,37 @@ async function othersProject(page: Page): Promise<string> {
   return (await created.json()).data.id as string;
 }
 
+/** Use this worker's own room and a person-named teammate for the rules.
+ * Do not rename the demo project's shared default teammate: other tests use it.
+ * Default-name rendering on the routines page is a separate defect; this
+ * fixture covers trigger translation without changing that copy or the scan. */
+async function routineRoom(page: Page, projectId: string) {
+  const agents = (await api(page, "get", `/projects/${projectId}/agents`)) as {
+    data: { seat_handle: string; is_default: boolean }[];
+  };
+  const defaultSeat = agents.data.find((agent) => agent.is_default)!.seat_handle;
+  const teammate = (await api(page, "post", `/projects/${projectId}/agents`, {
+    display_name: "Nova",
+  })) as { seat_handle: string };
+  const room = (await api(page, "post", "/topics", {
+    project_id: projectId,
+    title: "Routine reports",
+  })) as { id: string };
+  await api(page, "post", `/topics/${room.id}/members`, { handle: teammate.seat_handle });
+  const token = await page.evaluate(() => localStorage.getItem("accessToken"));
+  const removed = await page.request.delete(`/api/topics/${room.id}/members/${defaultSeat}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!removed.ok())
+    throw new Error(`remove default teammate → ${removed.status()} ${await removed.text()}`);
+  return { roomId: room.id, agentSeat: teammate.seat_handle };
+}
+
 /** Draft through the isolated backend's agent entrance: a person's create
  * activates the rule and never publishes the configuration notice we check.
  * The signing secret follows the test backend's SANDBOX_TOKEN/JWT_SECRET env;
  * test-secret is the JWT_SECRET pinned by e2e.yml, not a deployment credential. */
-async function draftRoutines(page: Page, roomId: string): Promise<string[]> {
+async function draftRoutines(page: Page, roomId: string, agentSeat: string): Promise<string[]> {
   const agentToken = process.env.SANDBOX_TOKEN || createHash("sha256")
     .update(`cheesex:sandbox-signing-secret:v1:${process.env.JWT_SECRET || "test-secret"}`)
     .digest("hex");
@@ -272,8 +299,12 @@ async function draftRoutines(page: Page, roomId: string): Promise<string[]> {
     });
     if (!response.ok())
       throw new Error(`draft routine → ${response.status()} ${await response.text()}`);
-    const routine = (await response.json()).data as { id: string; state: string };
+    const routine = (await response.json()).data as {
+      id: string; state: string; agent_handle: string; proposed_by: string;
+    };
     expect(routine.state).toBe("draft");
+    expect(routine.agent_handle).toBe(agentSeat);
+    expect(routine.proposed_by).toBe(agentSeat);
     ids.push(routine.id);
   }
   return ids;
@@ -325,13 +356,15 @@ async function seed(page: Page): Promise<Seed> {
     title: "The board forgets its filter",
     problem: "Switching projects resets the board filter.",
   })) as { id: string };
+  const rules = await routineRoom(page, projectId);
   seeded = {
     projectId,
     roomId: room.id,
     taskId: task.id,
     feedbackId: feedback.id,
     othersProjectId: await othersProject(page),
-    routineIds: await draftRoutines(page, room.id),
+    routineRoomId: rules.roomId,
+    routineIds: await draftRoutines(page, rules.roomId, rules.agentSeat),
   };
   return seeded;
 }
@@ -343,7 +376,7 @@ test.beforeEach(async ({ page }) => {
 test("workspace: inbox, overview, tasks, room, accept card, library, project settings", async ({
   page,
 }) => {
-  const { projectId, roomId, taskId, routineIds } = await seed(page);
+  const { projectId, roomId, taskId, routineRoomId, routineIds } = await seed(page);
   const project = `/projects/${projectId}`;
   await check(page, [
     { name: "inbox", path: "/inbox" },
@@ -366,7 +399,7 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
     },
     {
       name: "routine configuration notices",
-      path: `${project}/topics/${roomId}`,
+      path: `${project}/topics/${routineRoomId}`,
       ready: visible('[data-testid="notice-confirm"]'),
       act: async (page) => {
         const notices = page.locator('details[data-testid="platform-notice"]')
