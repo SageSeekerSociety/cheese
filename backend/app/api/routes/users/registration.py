@@ -1,6 +1,6 @@
 """注册与注册邮箱验证码。"""
 
-from typing import TYPE_CHECKING
+import re
 
 from fastapi import (
     APIRouter,
@@ -8,15 +8,25 @@ from fastapi import (
     Request,
     Response,
 )
+from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
     get_user_auth_service,
 )
 from app.api.routes.legal import client_context
+from app.api.routes.users._common import (
+    RegisterUserRequest,
+    SendEmailCodeRequest,
+    _invite_code_error,
+    _normalize_registration_invite_code,
+    _signup_consent,
+    _too_many_from_client,
+)
 from app.api.routes.users_common import (
     issue_session,
 )
+from app.core.client_address import resolved_client_address
 from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
@@ -26,7 +36,9 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.identity.handles import is_reserved_username
+from app.domain.invite.services import InviteCodeService
 from app.domain.legal.services import ConsentService
+from app.domain.user.login_security import ClientFailureBudget
 from app.domain.user.passwords import require_new_password
 from app.domain.user.repositories import (
     UserRepository,
@@ -36,18 +48,7 @@ from app.domain.user.services import (
     is_valid_username,
     normalize_nickname,
 )
-
-if TYPE_CHECKING:
-    pass
-
-from app.api.routes.users._common import (
-    RegisterUserRequest,
-    SendEmailCodeRequest,
-    _invite_code_error,
-    _normalize_registration_invite_code,
-    _signup_consent,
-    _too_many_from_client,
-)
+from app.domain.user.verification_service import EmailVerificationService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -68,23 +69,12 @@ async def send_register_email_code(
     configured sender that fails is a 503 and leaves no code behind.
     Any valid email address is accepted.
     """
-    import re
-
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.client_address import resolved_client_address
-    from app.core.config import settings
-    from app.core.errors import ConflictError
-    from app.domain.user.verification_service import EmailVerificationService
-
     email = payload.email
     invite_code = _normalize_registration_invite_code(
         payload.invite_code, required=settings.require_invite_code
     )
 
     if invite_code:
-        from app.domain.invite.services import InviteCodeService
-
         try:
             await InviteCodeService(db).validate_code(invite_code)
         except ValueError as exc:
@@ -104,8 +94,6 @@ async def send_register_email_code(
         # it was free — so the question could be asked as fast as the socket
         # allowed. A probe that finds a registered address now spends a slot
         # and keeps it; a request that goes on to mail a code hands it back.
-        from app.domain.user.login_security import ClientFailureBudget
-
         budget = ClientFailureBudget(redis, "email_code")
         wait = await budget.spend(client)
         if wait:
@@ -136,8 +124,6 @@ async def send_register_email_code(
 )
 async def get_registration_config() -> dict:
     """Return public registration settings so the frontend can adapt its UI."""
-    from app.core.config import settings
-
     return {
         "code": 200,
         "message": "Success",
@@ -159,12 +145,6 @@ async def register_user(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Registration flow with email verification."""
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.client_address import resolved_client_address
-    from app.domain.user.login_security import ClientFailureBudget
-    from app.domain.user.verification_service import EmailVerificationService
-
     username = payload.username
     nickname = payload.nickname
     email = payload.email
@@ -182,8 +162,6 @@ async def register_user(
     assert payload.consent is not None
 
     if invite_code:
-        from app.domain.invite.services import InviteCodeService
-
         invite_service = InviteCodeService(session)
         try:
             await invite_service.validate_code(invite_code)
@@ -260,8 +238,6 @@ async def register_user(
 
     # Consume invite code after successful registration
     if invite_code:
-        from app.domain.invite.services import InviteCodeService
-
         invite_service = InviteCodeService(session)
         try:
             await invite_service.consume_code(invite_code)

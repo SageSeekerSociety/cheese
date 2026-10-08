@@ -86,6 +86,15 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files boundary-check
 
+      # Same shape for the deferred-import ratchet: first prove it still goes
+      # red on a planted tree, then run the developer's hook over the tree.
+      - name: Deferred-import check proves it still fires
+        run: uv run python scripts/check_deferred_imports.py --self-test
+
+      - name: Deferred imports only go down (annotated or frozen)
+        working-directory: ${{ github.workspace }}
+        run: uvx pre-commit run --all-files deferred-imports
+
       - name: Independently collect every required backend case
         run: >-
           uv run python -m pytest tests/ --collect-only -q

@@ -4,51 +4,55 @@
 // 个团队找不到自己的项目。
 //
 // 和 TransferProjectDialog 同一套语义：被拒不关窗，那句理由原样留在弹窗里；重开时
-// 清掉。归档成了就离开这个项目——它已经不在任何列表里了。
+// 清掉。
+//
+// 这一只是哑的：发请求、刷清单、离开项目都在 `composables/useProjectArchive.ts`，由
+// 设置页面接线（`src/components` 下的组件不许碰 API 层，见 guards 的
+// import-boundary）。它只收「正在归档」和「被拒的理由」，名字打对了就往外 emit
+// `archive`；一次归档结束（`archiving` 落回 false）而没有理由，就是成了，自己关窗。
 import { computed, ref, watch } from 'vue'
 
-import { useNavigation } from '@/composables/useNavigation'
-
-import { archiveProject } from '@/api'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
-import { useWorkspaceStore } from '@/stores/workspace'
 
-const props = defineProps<{ projectId: string; projectName: string }>()
+const props = withDefaults(defineProps<{ projectName: string; archiving?: boolean; error?: string }>(), {
+  archiving: false,
+  error: '',
+})
+const emit = defineEmits<{ (e: 'archive'): void }>()
 const open = defineModel<boolean>({ required: true })
 
-const store = useWorkspaceStore()
-const navigation = useNavigation()
-
 const typed = ref('')
-const archiving = ref(false)
-const error = ref<string | null>(null)
+// 弹窗里画的理由：跟着 props.error 走，但重开时清掉——上一次被拒的那句不该留到下一次。
+// 挂上时就照 props 取一次（immediate）：开着、带着理由挂起来的那一格（预览站）也画得出那句。
+const shownError = ref('')
 
 const confirmed = computed(() => typed.value.trim() === props.projectName.trim())
 
 watch(open, (v) => {
   if (!v) return
   typed.value = ''
-  error.value = null
+  shownError.value = ''
 })
 
-async function submit() {
-  if (!confirmed.value) return
-  archiving.value = true
-  error.value = null
-  try {
-    await archiveProject(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.archive.dialog.failed')
-    archiving.value = false
-    return
+watch(
+  () => props.error,
+  (e) => {
+    shownError.value = e
+  },
+  { immediate: true }
+)
+
+watch(
+  () => props.archiving,
+  (now, before) => {
+    if (before && !now && !props.error) open.value = false
   }
-  open.value = false
-  archiving.value = false
-  // 项目已经不在清单里了：清单刷一遍，人回到首页（落在另一个项目上，或者待办）。刷不成功不该把归档变成失败。
-  await Promise.allSettled([store.refreshProjects()])
-  // replace：归档完再按回退键，人不该又落回这个项目的设置页 —— 它已经不在清单里了。
-  navigation?.navigate('/', { replace: true })
+)
+
+function submit() {
+  if (!confirmed.value || props.archiving) return
+  emit('archive')
 }
 </script>
 
@@ -76,8 +80,8 @@ async function submit() {
       :label="t('work.projectSettings.archive.dialog.confirmLabel', { name: projectName })"
       @keydown.enter.prevent="submit"
     />
-    <v-alert v-if="error" type="error" density="comfortable" class="mt-4">
-      {{ error }}
+    <v-alert v-if="shownError" type="error" density="comfortable" class="mt-4">
+      {{ shownError }}
     </v-alert>
   </AdaptiveDialog>
 </template>

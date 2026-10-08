@@ -117,7 +117,7 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # suite -> pre-commit hook IDs, static layer only. The commands behind these
 # IDs live in .pre-commit-config.yaml; this map is selection, not definition.
 FAST_HOOKS = {
-    "backend": ["ruff", "ruff-format", "boundary-check", "migration-fork"],
+    "backend": ["ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"],
     "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet",
                  "catalog-ratchet"],
     "guards": ["repo-rules", "action-pins", "manual-anchors", "file-size"],

@@ -244,7 +244,7 @@
     </AdaptiveDialog>
 
     <!-- 内测: running-build badge, self-hides unless the box opted in. -->
-    <VersionBadge />
+    <VersionBadge :version="appVersion" />
 
     <!-- 离线指示: shows only while offline, auto-hides when the network returns. -->
     <OfflineBanner />
@@ -304,7 +304,7 @@ import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
-import { createProject, listProjects } from '@/api'
+import { type AppVersion, createProject, getAppVersion, listProjects } from '@/api'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
@@ -513,6 +513,16 @@ function skipToContent(): void {
   el.focus()
   el.scrollIntoView({ block: 'start', behavior: scrollBehavior() })
 }
+
+// 内测版本徽标要画的那个构建。壳来问，徽标只画：取不到（接口不通、后端太旧）就不画。
+const appVersion = ref<AppVersion | null>(null)
+onMounted(async () => {
+  try {
+    appVersion.value = await getAppVersion()
+  } catch {
+    // Best-effort: no badge if the endpoint is unreachable or old.
+  }
+})
 
 onMounted(async () => {
   await router.isReady().catch(() => {})

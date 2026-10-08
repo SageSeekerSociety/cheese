@@ -5,6 +5,7 @@ import { useDisplay } from 'vuetify'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
 import { useProjectAddress } from '@/composables/useProjectAddress'
+import { useProjectArchive } from '@/composables/useProjectArchive'
 import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
@@ -146,6 +147,17 @@ watch(
 )
 const { mdAndUp } = useDisplay()
 const router = useRouter()
+
+// 归档成了：项目已经不在清单里，清单刷一遍（刷不成功不该把归档变成失败），人回到
+// 首页。replace：再按回退键不该又落回这个项目的设置页。
+const { archiving, archiveError, archiveProject } = useProjectArchive(
+  () => props.projectId,
+  async () => {
+    await Promise.allSettled([workspace.refreshProjects()])
+    void router.replace('/')
+  }
+)
+
 const address = useProjectAddress(() => props.projectId)
 
 /** 九栏；归档只有所有者看得到。 */
@@ -405,8 +417,10 @@ function close() {
         <!-- 归档只给所有者：归档是他一个人的决定（后端也只认他）。 -->
         <ArchiveProjectSection
           v-else-if="section === 'archive' && ownsProject"
-          :project-id="projectId"
           :project-name="projectName"
+          :archiving="archiving"
+          :error="archiveError"
+          @archive="archiveProject"
         />
       </div>
     </div>

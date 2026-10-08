@@ -61,12 +61,14 @@ import {
   WANG_LINES,
 } from './catalogFixtures'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
+import { MARKET_ENTRIES } from './catalogMarket'
 import { MODELS_ENTRIES } from './catalogModels'
 import { PANEL_ENTRIES } from './catalogPanels'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SETTINGS_ENTRIES } from './catalogSettings'
+import { SHELL_ENTRIES } from './catalogShell'
 import { TASK_FORM_ENTRIES } from './catalogTaskForm'
 import { USAGE_ENTRIES } from './catalogUsage'
 
@@ -708,6 +710,9 @@ export const CATALOG: CatalogEntry[] = [
   // 项目设置那一组（从 1041 行的 ProjectSettingsView 拆出来的六块）在自己的文件里：
   // `catalogSettings.ts`（数据在 `catalogSettingsFixtures.ts`）。
   ...SETTINGS_ENTRIES,
+  // 市场页和节点看板、外壳上的版本徽标与首页外框：`catalogMarket.ts`、`catalogShell.ts`。
+  ...MARKET_ENTRIES,
+  ...SHELL_ENTRIES,
   {
     id: 'legal-links',
     title: 'LegalLinks',
