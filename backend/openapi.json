@@ -3384,7 +3384,7 @@
           "admin"
         ],
         "summary": "Usage Stats",
-        "description": "用量那一块：窗口内的总量、按天序列、top-N 项目、以及**额度燃尽**。\n\n`top_projects` 每一项都带 `project_id` 和名字 —— 柱子要能点进去，只给名字的\n柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。\n`credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者\n不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。",
+        "description": "用量那一块：窗口内的总量、按天序列、top-N 项目、以及**额度燃尽**。\n\n`top_projects` 每一项都带 `project_id` 和名字 —— 柱子要能点进去，只给名字的\n柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。\n`credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者\n不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。\n\n`claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里\n唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，\n理由见那个模块的 docstring）。",
         "operationId": "usage_stats_admin_stats_usage_get",
         "parameters": [
           {
@@ -3891,9 +3891,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response List Agent Types Agent Types Get"
+                  "$ref": "#/components/schemas/Envelope_Page_AgentTypeOut__"
                 }
               }
             }
@@ -3907,7 +3905,7 @@
           "alerts"
         ],
         "summary": "List Notifications",
-        "description": "这个调用者在这个项目里的信。",
+        "description": "这个调用者在这个项目里的信，新的在前，一页一页地给。\n\n这条读以前没有上界：一个项目跑久了，整个历史上的信会一次全拉回来。现在默认\n一页最多 ``page_size`` 条（上限 100），`has_more` 说还有没有，`next_start` 说\n下一页从哪一行开始 —— 把它原样当成下一次的 `page_start` 就能一路读到底，一行\n不漏（键集游标：收件箱的头一直在长，offset 会在翻页时漏行重行）。\n\n`total` 是真总数，不是这一页的条数。分页之前它是 `page(len(items))`，也就是\n「这一页有几条」，一加上限这两个数就分家了。\n\n写法照本仓的分页协议（`design/common/parameters.yaml` 的 ``page_start`` /\n``page_size``，`design/common/responses.yaml` 的 ``Page``），和相邻的\n``GET /topics/{id}/blocks`` 同一套：游标是行号、`has_more` 平铺在 ``data`` 里。",
         "operationId": "list_notifications_projects__project_id__alerts_get",
         "parameters": [
           {
@@ -3944,6 +3942,34 @@
               "type": "boolean",
               "default": false,
               "title": "Unread Only"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Page Size"
+            }
+          },
+          {
+            "name": "page_start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page Start"
             }
           }
         ],
@@ -15848,7 +15874,7 @@
           "library"
         ],
         "summary": "List Library",
-        "description": "资料库：用户给这个项目的文件，按原名，每个房间都引用得到。\n\nProject-level on purpose — 「上周那份预算表」is a sentence someone says in a\nroom that has never seen that file.",
+        "description": "资料库：用户给这个项目的文件，按原名，每个房间都引用得到。一页一页地给。\n\n不给 `flat` / `q` / `kind` 时是 `dir` 那一层：文件夹在前，然后是文件；给了就是\n整个资料库里对得上的文件（只给 `flat` 是全部）。`next` 是下一页的游标，\n没有下一页时为 null。\n\nProject-level on purpose — 「上周那份预算表」is a sentence someone says in a\nroom that has never seen that file.",
         "operationId": "list_library_projects__project_id__library_get",
         "parameters": [
           {
@@ -15859,6 +15885,80 @@
               "type": "string",
               "format": "uuid",
               "title": "Project Id"
+            }
+          },
+          {
+            "name": "dir",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Dir"
+            }
+          },
+          {
+            "name": "flat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Flat"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
             }
           }
         ],
@@ -15955,7 +16055,7 @@
           "library"
         ],
         "summary": "Upload Library File",
-        "description": "在资料库页上直接放进一份文件。撞名不覆盖：拿下一个 `(n)`。",
+        "description": "在资料库页上直接放进一份文件，`folder` 给了就放进那个文件夹（没有就新建）。\n撞名不覆盖：拿下一个 `(n)`。",
         "operationId": "upload_library_file_projects__project_id__library_post",
         "parameters": [
           {
@@ -16009,7 +16109,7 @@
           "library"
         ],
         "summary": "Delete Library File",
-        "description": "扔掉一份资料。\n\n读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据在 `authorize_project`\n那里只读得进来，所以 芝士 连同它自己正在读的那一份都删不掉。",
+        "description": "扔掉一份资料，或者一个文件夹连同它里面的一切。\n\n读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据在 `authorize_project`\n那里只读得进来，所以 芝士 连同它自己正在读的那一份都删不掉。",
         "operationId": "delete_library_file_projects__project_id__library_delete",
         "parameters": [
           {
@@ -16041,6 +16141,157 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Delete Library File Projects  Project Id  Library Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/library/file": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Library File",
+        "description": "一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。",
+        "operationId": "library_file_projects__project_id__library_file_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryFileOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/library/folders": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Library Folders",
+        "description": "资料库里的每一个文件夹（整条路径），给「移动到」挑。",
+        "operationId": "library_folders_projects__project_id__library_folders_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryFoldersOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/library/move": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Move Library File",
+        "description": "把一份资料或一个文件夹改名、挪到别的文件夹：`to` 是它的新名字。\n\n字节不动；引用旧名字的消息跟着改过去。新名字被占了就拒绝，不替人编号——挪动\n是人有意给它起的名字，悄悄变成 `(2)` 就不是那个名字了。",
+        "operationId": "move_library_file_projects__project_id__library_move_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_move_library_file_projects__project_id__library_move_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryMovedEnvelope"
                 }
               }
             }
@@ -16790,7 +17041,7 @@
           "documents"
         ],
         "summary": "Project Documents",
-        "description": "The project's own documents, the latest changed first. A room's living\ndocument is the room's and is not listed.",
+        "description": "The project's own documents, the latest changed first, a page at a time\n(`next` is the cursor of the following page, null at the end). A room's\nliving document is the room's and is not listed. The order is the one\n`app.core.rank` writes down, so the library page can merge these with the\nlibrary's own pages into one list.",
         "operationId": "project_documents_projects__project_id__documents_get",
         "parameters": [
           {
@@ -16801,6 +17052,34 @@
               "type": "string",
               "format": "uuid",
               "title": "Project Id"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
             }
           }
         ],
@@ -21279,7 +21558,7 @@
           "projects"
         ],
         "summary": "List Project Tasks",
-        "description": "Every thread in the project, each with the card it currently rides on.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.",
+        "description": "Every thread in the project, each with the card it currently rides on.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
         "operationId": "list_project_tasks_projects__project_id__tasks_get",
         "parameters": [
           {
@@ -21291,6 +21570,22 @@
               "format": "uuid",
               "title": "Project Id"
             }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
           }
         ],
         "responses": {
@@ -21298,11 +21593,7 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Project Tasks Projects  Project Id  Tasks Get"
-                }
+                "schema": {}
               }
             }
           },
@@ -40632,7 +40923,7 @@
           "topics"
         ],
         "summary": "Summon Agent",
-        "description": "叫芝士读一遍还没交到它手上的消息 —— 忘了 @ 的那一条的补救。\n\n没 @ 的消息从来不会丢：它在待读窗口里等着下一轮把它捎上（没 @ 不等于没说）。\n但「等下一轮」在一个安静的房间里等于永远，而房间安静恰恰是忘了 @ 之后的常态。\n这个接口只做一件事：现在就开那一轮。它**不再发一条消息**，因为那条消息已经\n在时间线上了——补发一条一模一样的，读的人要自己分辨哪条是真的。\n\n两种情况下它什么都不做，并如实说明是哪一种：房间已经在干活（正在跑的那一轮\n会自己把没 @ 的消息接过去），或者根本没有待读的东西（有人先 @ 过了）。两种\n都不是错误，只是这一下不需要花钱。",
+        "description": "叫芝士读一遍还没交到它手上的消息 —— 忘了 @ 的那一条的补救。\n\n没 @ 的消息从来不会丢：它在待读窗口里等着下一轮把它捎上（没 @ 不等于没说）。\n但「等下一轮」在一个安静的房间里等于永远，而房间安静恰恰是忘了 @ 之后的常态。\n这个接口只做一件事：现在就开那一轮。它**不再发一条消息**，因为那条消息已经\n在时间线上了——补发一条一模一样的，读的人要自己分辨哪条是真的。\n\n两种情况下它什么都不做，并如实说明是哪一种：房间已经在干活（正在跑的那一轮\n会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种\n都不是错误，只是这一下不需要花钱。",
         "operationId": "summon_agent_topics__topic_id__summon_post",
         "parameters": [
           {
@@ -43126,7 +43417,7 @@
           "topics"
         ],
         "summary": "List Room Tasks",
-        "description": "This room's threads — every piece of work in it, each with its own\nconversation.\n\nThe room's own line is `/blocks` beside this; nothing appears in both, and\ntogether they are everything said in the room. That separation is the whole\nreason a task no longer needs a room of its own: the thread is a key on the\nblock, not a second row in `topics`.\n\nAuthorized exactly like `/blocks`, and for the same reason — this carries\nconversation, so holding a topic id must not be enough to read it.\n\n`limit` caps EACH thread at its newest N blocks; with none, every thread\ncomes back whole (agents read this to review history, and a silent default\nwindow would truncate them with no way to notice).\n\nThat default is inherited from `/blocks`, and it costs more here: this fans\nout over a room's whole history of work, and a long-lived room already\nholds close to two hundred of them. No cap is imposed because an invented\nnumber truncates silently — the exact failure the neighbouring default\nexists to avoid — but a caller rendering a room should be passing `limit`,\nand whoever builds that view should decide what it is.",
+        "description": "This room's threads — every piece of work in it, each with its own\nconversation.\n\nThe room's own line is `/blocks` beside this; nothing appears in both, and\ntogether they are everything said in the room. That separation is the whole\nreason a task no longer needs a room of its own: the thread is a key on the\nblock, not a second row in `topics`.\n\nAuthorized exactly like `/blocks`, and for the same reason — this carries\nconversation, so holding a topic id must not be enough to read it.\n\n`limit` caps EACH thread at its newest N blocks; with none, every thread\ncomes back whole (agents read this to review history, and a silent default\nwindow would truncate them with no way to notice).\n\nThat default is inherited from `/blocks`, and it costs more here: this fans\nout over a room's whole history of work, and a long-lived room already\nholds close to two hundred of them. No cap is imposed because an invented\nnumber truncates silently — the exact failure the neighbouring default\nexists to avoid — but a caller rendering a room should be passing `limit`,\nand whoever builds that view should decide what it is.\n\n`limit=0` is the roster shape: every thread, none of their conversation. A\nclient drawing a rail or an overview wants the threads themselves and never\nreads a block; asking for `limit=1` made it download one message per thread\nto throw away. 0 is spelled rather than inferred from a separate flag\nbecause it is the same knob — \"newest zero blocks each\" — and it skips the\nblock query entirely instead of filtering its result.\n\n条件请求：侧栏画一次 rail 就要整份清单，而一个房间这里有 ~1317 条活、`limit=0`\n也有 1 MB 上下。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回\n304、空 body —— 切页面时「没有新东西」不再重传这一份。",
         "operationId": "list_room_tasks_topics__topic_id__tasks_get",
         "parameters": [
           {
@@ -43148,13 +43439,29 @@
                 {
                   "type": "integer",
                   "maximum": 500,
-                  "minimum": 1
+                  "minimum": 0
                 },
                 {
                   "type": "null"
                 }
               ],
               "title": "Limit"
+            }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
             }
           }
         ],
@@ -43163,11 +43470,7 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Room Tasks Topics  Topic Id  Tasks Get"
-                }
+                "schema": {}
               }
             }
           },
@@ -49647,101 +49950,6 @@
         }
       }
     },
-    "/projects/{project_id}/git/log": {
-      "get": {
-        "tags": [
-          "workspace"
-        ],
-        "summary": "Git Log",
-        "operationId": "git_log_projects__project_id__git_log_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "topic",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Topic"
-            }
-          },
-          {
-            "name": "task",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Task"
-            }
-          },
-          {
-            "name": "X-Cheese-Token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Cheese-Token"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Git Log Projects  Project Id  Git Log Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/projects/{project_id}/git/diff": {
       "get": {
         "tags": [
@@ -50052,9 +50260,9 @@
             ],
             "title": "Reviewer Handle"
           },
-          "routing_reason": {
+          "focus": {
             "type": "string",
-            "title": "Routing Reason",
+            "title": "Focus",
             "default": ""
           },
           "change_subject": {
@@ -50506,6 +50714,99 @@
         "title": "AgentInstanceUpdate",
         "description": "Edit the name or saved configuration of one agent."
       },
+      "AgentTypeOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "skills": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "mcp_servers": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Mcp Servers"
+          },
+          "builtin": {
+            "type": "boolean",
+            "title": "Builtin"
+          },
+          "space_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Space Id"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "title",
+          "description",
+          "body",
+          "builtin"
+        ],
+        "title": "AgentTypeOut",
+        "description": "One built-in starting configuration."
+      },
       "AiMode": {
         "type": "string",
         "enum": [
@@ -50823,6 +51124,24 @@
         ],
         "title": "Body_create_avatar_avatars_post"
       },
+      "Body_move_library_file_projects__project_id__library_move_post": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "to": {
+            "type": "string",
+            "title": "To"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "to"
+        ],
+        "title": "Body_move_library_file_projects__project_id__library_move_post"
+      },
       "Body_oauth_bind_user_users_oauth_bind_post": {
         "properties": {
           "stateToken": {
@@ -51059,6 +51378,17 @@
             "type": "string",
             "contentMediaType": "application/octet-stream",
             "title": "File"
+          },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
           }
         },
         "type": "object",
@@ -51383,20 +51713,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/CommentLikeOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "CommentLikeOutEnvelope"
@@ -51510,20 +51854,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/CommentOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "CommentOutEnvelope"
@@ -51560,20 +51918,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/CommentPageOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "CommentPageOutEnvelope"
@@ -52314,20 +52686,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/Deleted"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "DeletedEnvelope"
@@ -52388,20 +52774,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/Dismissed"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "DismissedEnvelope"
@@ -52585,6 +52985,42 @@
         ],
         "title": "EmailMode"
       },
+      "Envelope_Page_AgentTypeOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Page_AgentTypeOut_"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[Page[AgentTypeOut]]"
+      },
       "EnvironmentConfig": {
         "properties": {
           "setup_script": {
@@ -52707,20 +53143,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/FeedbackAdminListOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackAdminListOutEnvelope"
@@ -52908,20 +53358,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/FeedbackCounts"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackCountsEnvelope"
@@ -53394,20 +53858,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/FeedbackDetail"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackDetailEnvelope"
@@ -53450,20 +53928,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/FeedbackListOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackListOutEnvelope"
@@ -53562,20 +54054,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/FeedbackMeta"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackMetaEnvelope"
@@ -53615,20 +54121,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/FeedbackMineOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackMineOutEnvelope"
@@ -53866,11 +54386,13 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "items": {
@@ -53878,12 +54400,24 @@
             },
             "type": "array",
             "title": "Data"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackProposalOutListEnvelope"
@@ -53911,20 +54445,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/FeedbackProposalResult"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackProposalResultEnvelope"
@@ -53947,20 +54495,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/FeedbackReadOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "FeedbackReadOutEnvelope"
@@ -54694,6 +55256,240 @@
         },
         "type": "object",
         "title": "LearningOutlineRequest"
+      },
+      "LibraryFileOut": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "file",
+            "title": "Type"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          },
+          "modified": {
+            "type": "number",
+            "title": "Modified"
+          },
+          "added_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added By"
+          },
+          "added_at": {
+            "type": "string",
+            "title": "Added At"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LibraryRoom"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "replaced": {
+            "type": "integer",
+            "title": "Replaced"
+          },
+          "references": {
+            "type": "integer",
+            "title": "References"
+          },
+          "rank": {
+            "type": "string",
+            "title": "Rank"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "path",
+          "bytes",
+          "modified",
+          "added_by",
+          "added_at",
+          "room",
+          "replaced",
+          "references",
+          "rank"
+        ],
+        "title": "LibraryFileOut",
+        "description": "清单里的一份文件（`library_listing._describe` 写的那一行）。"
+      },
+      "LibraryFileOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LibraryFileOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "LibraryFileOutEnvelope"
+      },
+      "LibraryFoldersOut": {
+        "properties": {
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Folders"
+          }
+        },
+        "type": "object",
+        "required": [
+          "folders"
+        ],
+        "title": "LibraryFoldersOut",
+        "description": "资料库里的每一个文件夹（整条路径），给「移动到」挑。"
+      },
+      "LibraryFoldersOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LibraryFoldersOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "LibraryFoldersOutEnvelope"
+      },
+      "LibraryMoved": {
+        "properties": {
+          "moved": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Moved"
+          }
+        },
+        "type": "object",
+        "required": [
+          "moved"
+        ],
+        "title": "LibraryMoved",
+        "description": "每个旧名字变成了什么（`library_records.move`）；名字没变时是空的。"
+      },
+      "LibraryMovedEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LibraryMoved"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "LibraryMovedEnvelope"
+      },
+      "LibraryRoom": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "LibraryRoom",
+        "description": "一份资料是在哪个房间给出来的（`room_ref`）：房间的 id 和名字。"
       },
       "LockIn": {
         "properties": {
@@ -55562,6 +56358,27 @@
         ],
         "title": "PagePinQuoteIn",
         "description": "A point on a page: `x`/`y` are ratios of the page's width and height, not pixels.\n\nRatios because the page is redrawn to the panel width and readers zoom: a pixel\ncoordinate only holds for the revision it was taken on, a ratio points back to the\nsame spot on any of them."
+      },
+      "Page_AgentTypeOut_": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/AgentTypeOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total"
+        ],
+        "title": "Page[AgentTypeOut]"
       },
       "PassageEdit": {
         "properties": {
@@ -58510,20 +59327,34 @@
         "properties": {
           "code": {
             "type": "integer",
-            "title": "Code"
+            "title": "Code",
+            "default": 200
           },
           "message": {
             "type": "string",
-            "title": "Message"
+            "title": "Message",
+            "default": "ok"
           },
           "data": {
             "$ref": "#/components/schemas/SupportOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
           }
         },
         "type": "object",
         "required": [
-          "code",
-          "message",
           "data"
         ],
         "title": "SupportOutEnvelope"

@@ -1254,6 +1254,10 @@ export interface paths {
          *     柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。
          *     `credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者
          *     不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。
+         *
+         *     `claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里
+         *     唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，
+         *     理由见那个模块的 docstring）。
          */
         get: operations["usage_stats_admin_stats_usage_get"];
         put?: never;
@@ -1469,7 +1473,19 @@ export interface paths {
         };
         /**
          * List Notifications
-         * @description 这个调用者在这个项目里的信。
+         * @description 这个调用者在这个项目里的信，新的在前，一页一页地给。
+         *
+         *     这条读以前没有上界：一个项目跑久了，整个历史上的信会一次全拉回来。现在默认
+         *     一页最多 ``page_size`` 条（上限 100），`has_more` 说还有没有，`next_start` 说
+         *     下一页从哪一行开始 —— 把它原样当成下一次的 `page_start` 就能一路读到底，一行
+         *     不漏（键集游标：收件箱的头一直在长，offset 会在翻页时漏行重行）。
+         *
+         *     `total` 是真总数，不是这一页的条数。分页之前它是 `page(len(items))`，也就是
+         *     「这一页有几条」，一加上限这两个数就分家了。
+         *
+         *     写法照本仓的分页协议（`design/common/parameters.yaml` 的 ``page_start`` /
+         *     ``page_size``，`design/common/responses.yaml` 的 ``Page``），和相邻的
+         *     ``GET /topics/{id}/blocks`` 同一套：游标是行号、`has_more` 平铺在 ``data`` 里。
          */
         get: operations["list_notifications_projects__project_id__alerts_get"];
         put?: never;
@@ -4528,7 +4544,11 @@ export interface paths {
         };
         /**
          * List Library
-         * @description 资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
+         * @description 资料库：用户给这个项目的文件，按原名，每个房间都引用得到。一页一页地给。
+         *
+         *     不给 `flat` / `q` / `kind` 时是 `dir` 那一层：文件夹在前，然后是文件；给了就是
+         *     整个资料库里对得上的文件（只给 `flat` 是全部）。`next` 是下一页的游标，
+         *     没有下一页时为 null。
          *
          *     Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
          *     room that has never seen that file.
@@ -4541,17 +4561,81 @@ export interface paths {
         put: operations["replace_library_file_projects__project_id__library_put"];
         /**
          * Upload Library File
-         * @description 在资料库页上直接放进一份文件。撞名不覆盖：拿下一个 `(n)`。
+         * @description 在资料库页上直接放进一份文件，`folder` 给了就放进那个文件夹（没有就新建）。
+         *     撞名不覆盖：拿下一个 `(n)`。
          */
         post: operations["upload_library_file_projects__project_id__library_post"];
         /**
          * Delete Library File
-         * @description 扔掉一份资料。
+         * @description 扔掉一份资料，或者一个文件夹连同它里面的一切。
          *
          *     读资料库的是人和 芝士，扔掉它的只有人。一轮里铸出来的凭据在 `authorize_project`
          *     那里只读得进来，所以 芝士 连同它自己正在读的那一份都删不掉。
          */
         delete: operations["delete_library_file_projects__project_id__library_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/library/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library File
+         * @description 一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。
+         */
+        get: operations["library_file_projects__project_id__library_file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/library/folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library Folders
+         * @description 资料库里的每一个文件夹（整条路径），给「移动到」挑。
+         */
+        get: operations["library_folders_projects__project_id__library_folders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/library/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Library File
+         * @description 把一份资料或一个文件夹改名、挪到别的文件夹：`to` 是它的新名字。
+         *
+         *     字节不动；引用旧名字的消息跟着改过去。新名字被占了就拒绝，不替人编号——挪动
+         *     是人有意给它起的名字，悄悄变成 `(2)` 就不是那个名字了。
+         */
+        post: operations["move_library_file_projects__project_id__library_move_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4786,8 +4870,11 @@ export interface paths {
         };
         /**
          * Project Documents
-         * @description The project's own documents, the latest changed first. A room's living
-         *     document is the room's and is not listed.
+         * @description The project's own documents, the latest changed first, a page at a time
+         *     (`next` is the cursor of the following page, null at the end). A room's
+         *     living document is the room's and is not listed. The order is the one
+         *     `app.core.rank` writes down, so the library page can merge these with the
+         *     library's own pages into one list.
          */
         get: operations["project_documents_projects__project_id__documents_get"];
         put?: never;
@@ -5919,6 +6006,12 @@ export interface paths {
          *     and the one phrase to print on it — derived here rather than in the client,
          *     so every client gives the same answer (`room_task/presentation.py`). Two
          *     round trips still: it is computed from the two batches already fetched.
+         *
+         *     条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB
+         *     出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空
+         *     body —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的
+         *     状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，
+         *     翻的时候本来就该重画。
          */
         get: operations["list_project_tasks_projects__project_id__tasks_get"];
         put?: never;
@@ -9541,7 +9634,7 @@ export interface paths {
          *     在时间线上了——补发一条一模一样的，读的人要自己分辨哪条是真的。
          *
          *     两种情况下它什么都不做，并如实说明是哪一种：房间已经在干活（正在跑的那一轮
-         *     会自己把没 @ 的消息接过去），或者根本没有待读的东西（有人先 @ 过了）。两种
+         *     会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
          *     都不是错误，只是这一下不需要花钱。
          */
         post: operations["summon_agent_topics__topic_id__summon_post"];
@@ -10562,6 +10655,17 @@ export interface paths {
          *     number truncates silently — the exact failure the neighbouring default
          *     exists to avoid — but a caller rendering a room should be passing `limit`,
          *     and whoever builds that view should decide what it is.
+         *
+         *     `limit=0` is the roster shape: every thread, none of their conversation. A
+         *     client drawing a rail or an overview wants the threads themselves and never
+         *     reads a block; asking for `limit=1` made it download one message per thread
+         *     to throw away. 0 is spelled rather than inferred from a separate flag
+         *     because it is the same knob — "newest zero blocks each" — and it skips the
+         *     block query entirely instead of filtering its result.
+         *
+         *     条件请求：侧栏画一次 rail 就要整份清单，而一个房间这里有 ~1317 条活、`limit=0`
+         *     也有 1 MB 上下。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回
+         *     304、空 body —— 切页面时「没有新东西」不再重传这一份。
          */
         get: operations["list_room_tasks_topics__topic_id__tasks_get"];
         put?: never;
@@ -12176,23 +12280,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/projects/{project_id}/git/log": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Git Log */
-        get: operations["git_log_projects__project_id__git_log_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/projects/{project_id}/git/diff": {
         parameters: {
             query?: never;
@@ -12319,10 +12406,10 @@ export interface components {
             /** Reviewer Handle */
             reviewer_handle?: string | null;
             /**
-             * Routing Reason
+             * Focus
              * @default
              */
-            routing_reason: string;
+            focus: string;
             /** Change Subject */
             change_subject?: string | null;
             /** Change Body */
@@ -12486,6 +12573,36 @@ export interface components {
             configuration?: components["schemas"]["AgentConfiguration"] | null;
         };
         /**
+         * AgentTypeOut
+         * @description One built-in starting configuration.
+         */
+        AgentTypeOut: {
+            /** Name */
+            name: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description: string;
+            /** Body */
+            body: string;
+            /** Skills */
+            skills?: string[];
+            /** Mcp Servers */
+            mcp_servers?: (string | {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            })[];
+            /** Builtin */
+            builtin: boolean;
+            /** Space Id */
+            space_id?: number | null;
+            /** Created By */
+            created_by?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /**
          * AiMode
          * @enum {string}
          */
@@ -12590,6 +12707,13 @@ export interface components {
             /** Avatar */
             avatar: string;
         };
+        /** Body_move_library_file_projects__project_id__library_move_post */
+        Body_move_library_file_projects__project_id__library_move_post: {
+            /** Path */
+            path: string;
+            /** To */
+            to: string;
+        };
         /** Body_oauth_bind_user_users_oauth_bind_post */
         Body_oauth_bind_user_users_oauth_bind_post: {
             /** Statetoken */
@@ -12672,6 +12796,8 @@ export interface components {
         Body_upload_library_file_projects__project_id__library_post: {
             /** File */
             file: string;
+            /** Folder */
+            folder?: string | null;
         };
         /** Body_upload_material_materials_post */
         Body_upload_material_materials_post: {
@@ -12802,11 +12928,19 @@ export interface components {
         };
         /** CommentLikeOutEnvelope */
         CommentLikeOutEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["CommentLikeOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** CommentOut */
         CommentOut: {
@@ -12848,11 +12982,19 @@ export interface components {
         };
         /** CommentOutEnvelope */
         CommentOutEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["CommentOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** CommentPageOut */
         CommentPageOut: {
@@ -12863,11 +13005,19 @@ export interface components {
         };
         /** CommentPageOutEnvelope */
         CommentPageOutEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["CommentPageOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * ComputeChoice
@@ -13143,11 +13293,19 @@ export interface components {
         };
         /** DeletedEnvelope */
         DeletedEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["Deleted"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** DevicePollRequest */
         DevicePollRequest: {
@@ -13171,11 +13329,19 @@ export interface components {
         };
         /** DismissedEnvelope */
         DismissedEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["Dismissed"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** DocEditIn */
         DocEditIn: {
@@ -13238,6 +13404,22 @@ export interface components {
          * @enum {string}
          */
         EmailMode: "instant" | "digest" | "off";
+        /** Envelope[Page[AgentTypeOut]] */
+        Envelope_Page_AgentTypeOut__: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["Page_AgentTypeOut_"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** EnvironmentConfig */
         EnvironmentConfig: {
             /**
@@ -13306,11 +13488,19 @@ export interface components {
         };
         /** FeedbackAdminListOutEnvelope */
         FeedbackAdminListOutEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["FeedbackAdminListOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * FeedbackCard
@@ -13383,11 +13573,19 @@ export interface components {
         };
         /** FeedbackCountsEnvelope */
         FeedbackCountsEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["FeedbackCounts"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * FeedbackCreate
@@ -13538,11 +13736,19 @@ export interface components {
         };
         /** FeedbackDetailEnvelope */
         FeedbackDetailEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["FeedbackDetail"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * FeedbackKind
@@ -13559,11 +13765,19 @@ export interface components {
         };
         /** FeedbackListOutEnvelope */
         FeedbackListOutEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["FeedbackListOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * FeedbackMeta
@@ -13603,11 +13817,19 @@ export interface components {
         };
         /** FeedbackMetaEnvelope */
         FeedbackMetaEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["FeedbackMeta"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** FeedbackMineOut */
         FeedbackMineOut: {
@@ -13619,11 +13841,19 @@ export interface components {
         };
         /** FeedbackMineOutEnvelope */
         FeedbackMineOutEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["FeedbackMineOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * FeedbackPatch
@@ -13727,12 +13957,20 @@ export interface components {
         };
         /** FeedbackProposalOutListEnvelope */
         FeedbackProposalOutListEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             /** Data */
             data: components["schemas"]["FeedbackProposalOut"][];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** FeedbackProposalResult */
         FeedbackProposalResult: {
@@ -13746,11 +13984,19 @@ export interface components {
         };
         /** FeedbackProposalResultEnvelope */
         FeedbackProposalResultEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["FeedbackProposalResult"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** FeedbackReadOut */
         FeedbackReadOut: {
@@ -13762,11 +14008,19 @@ export interface components {
         };
         /** FeedbackReadOutEnvelope */
         FeedbackReadOutEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["FeedbackReadOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * FeedbackStatus
@@ -14062,6 +14316,110 @@ export interface components {
         LearningOutlineRequest: {
             /** Blockids */
             blockIds?: string[];
+        };
+        /**
+         * LibraryFileOut
+         * @description 清单里的一份文件（`library_listing._describe` 写的那一行）。
+         */
+        LibraryFileOut: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "file";
+            /** Path */
+            path: string;
+            /** Bytes */
+            bytes: number;
+            /** Modified */
+            modified: number;
+            /** Added By */
+            added_by: string | null;
+            /** Added At */
+            added_at: string;
+            room: components["schemas"]["LibraryRoom"] | null;
+            /** Replaced */
+            replaced: number;
+            /** References */
+            references: number;
+            /** Rank */
+            rank: string;
+        };
+        /** LibraryFileOutEnvelope */
+        LibraryFileOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["LibraryFileOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * LibraryFoldersOut
+         * @description 资料库里的每一个文件夹（整条路径），给「移动到」挑。
+         */
+        LibraryFoldersOut: {
+            /** Folders */
+            folders: string[];
+        };
+        /** LibraryFoldersOutEnvelope */
+        LibraryFoldersOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["LibraryFoldersOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * LibraryMoved
+         * @description 每个旧名字变成了什么（`library_records.move`）；名字没变时是空的。
+         */
+        LibraryMoved: {
+            /** Moved */
+            moved: {
+                [key: string]: string;
+            };
+        };
+        /** LibraryMovedEnvelope */
+        LibraryMovedEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["LibraryMoved"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * LibraryRoom
+         * @description 一份资料是在哪个房间给出来的（`room_ref`）：房间的 id 和名字。
+         */
+        LibraryRoom: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
         };
         /**
          * LockIn
@@ -14406,6 +14764,13 @@ export interface components {
             x: number;
             /** Y */
             y: number;
+        };
+        /** Page[AgentTypeOut] */
+        Page_AgentTypeOut_: {
+            /** Data */
+            data: components["schemas"]["AgentTypeOut"][];
+            /** Total */
+            total: number;
         };
         /** PassageEdit */
         PassageEdit: {
@@ -15391,11 +15756,19 @@ export interface components {
         };
         /** SupportOutEnvelope */
         SupportOutEnvelope: {
-            /** Code */
+            /**
+             * Code
+             * @default 200
+             */
             code: number;
-            /** Message */
+            /**
+             * Message
+             * @default ok
+             */
             message: string;
             data: components["schemas"]["SupportOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** TaskCreateIn */
         TaskCreateIn: {
@@ -18352,9 +18725,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Envelope_Page_AgentTypeOut__"];
                 };
             };
         };
@@ -18364,6 +18735,8 @@ export interface operations {
             query?: {
                 target_handle?: string | null;
                 unread_only?: boolean;
+                page_size?: number;
+                page_start?: number | null;
             };
             header?: never;
             path: {
@@ -24799,7 +25172,14 @@ export interface operations {
     };
     list_library_projects__project_id__library_get: {
         parameters: {
-            query?: never;
+            query?: {
+                dir?: string;
+                flat?: boolean;
+                q?: string;
+                kind?: string | null;
+                cursor?: string | null;
+                limit?: number;
+            };
             header?: never;
             path: {
                 project_id: string;
@@ -24928,6 +25308,105 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    library_file_projects__project_id__library_file_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryFileOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    library_folders_projects__project_id__library_folders_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryFoldersOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    move_library_file_projects__project_id__library_move_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Body_move_library_file_projects__project_id__library_move_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryMovedEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -25399,7 +25878,10 @@ export interface operations {
     };
     project_documents_projects__project_id__documents_get: {
         parameters: {
-            query?: never;
+            query?: {
+                cursor?: string | null;
+                limit?: number;
+            };
             header?: never;
             path: {
                 project_id: string;
@@ -27949,7 +28431,9 @@ export interface operations {
     list_project_tasks_projects__project_id__tasks_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "if-none-match"?: string | null;
+            };
             path: {
                 project_id: string;
             };
@@ -27963,9 +28447,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -38464,7 +38946,9 @@ export interface operations {
             query?: {
                 limit?: number | null;
             };
-            header?: never;
+            header?: {
+                "if-none-match"?: string | null;
+            };
             path: {
                 topic_id: string;
             };
@@ -38478,9 +38962,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -41780,44 +42262,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    git_log_projects__project_id__git_log_get: {
-        parameters: {
-            query?: {
-                topic?: string | null;
-                task?: string | null;
-            };
-            header?: {
-                "X-Cheese-Token"?: string | null;
-            };
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
                 };
             };
             /** @description Validation Error */
