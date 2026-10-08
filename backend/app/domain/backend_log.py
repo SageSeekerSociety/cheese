@@ -227,7 +227,9 @@ class BackendErrorIntake:
             return Verdict("summary", pending)
         return Verdict("detail", 1)
 
-    def sweep(self, now: float | None = None) -> list[ExpiredBurst]:
+    def sweep(
+        self, now: float | None = None, *, force: bool = False
+    ) -> list[ExpiredBurst]:
         """Close every expired window, whether or not its error ever came back.
 
         Without this, a burst's summary was emitted only by the NEXT occurrence
@@ -236,12 +238,15 @@ class BackendErrorIntake:
         detail line and silently lose the fact that it happened 500 times, which
         is usually the number that tells you how bad it was.
 
-        Reporting late is fine here; reporting never is not.
+        Reporting late is fine here; reporting never is not. ``force`` closes
+        every window this intake still holds, however young — for the caller
+        that is itself about to stop existing, and whose open windows would
+        otherwise go with it (``flush_all``).
         """
         now = time.time() if now is None else now
         bursts: list[ExpiredBurst] = []
         for key, window in list(self._windows.items()):
-            if now - window.opened_at < DEDUP_WINDOW_S:
+            if not force and now - window.opened_at < DEDUP_WINDOW_S:
                 continue
             del self._windows[key]
             if window.count <= 1:
@@ -456,13 +461,13 @@ async def record(
     return {"accepted": accepted, "dropped": len(errors) - accepted}
 
 
-async def flush_expired(now: float | None = None) -> int:
+async def flush_expired(now: float | None = None, *, force: bool = False) -> int:
     """Keep the summary record for every burst whose window has closed.
 
     Returns how many records were written. Reads the session factory off the
     module at call time so a test can point it at its own database.
     """
-    bursts = intake.sweep(now)
+    bursts = intake.sweep(now, force=force)
     if not bursts:
         return 0
     async with async_session_factory() as session:
@@ -479,6 +484,19 @@ async def flush_expired(now: float | None = None) -> int:
             )
         await session.commit()
     return len(bursts)
+
+
+async def flush_all() -> int:
+    """Keep the summary of EVERY window this process still holds, full or not.
+
+    For the one caller that is about to stop existing: a handover stops the
+    periodic job that would have flushed these windows (`backend error flush`)
+    and then this process goes, taking everything `intake` still had in memory
+    with it. The window being young is not a reason to drop it — nobody will
+    ever look at it again. Same bookkeeping as ``flush_expired``; the count of
+    occurrences is what makes the record worth keeping.
+    """
+    return await flush_expired(force=True)
 
 
 async def report_request_failure(

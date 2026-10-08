@@ -3,6 +3,7 @@ the merge state, the seen-head guard, credentials and task closing."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -313,16 +314,68 @@ async def refresh_stale_pr_snapshots(
     `Forge.refresh_snapshot`）。轮询器做的另外两件**不做** —— 不发事件、
     不合并 (那是它的职责，`advance_pr_card` 的 docstring)。任何失败都吞掉：
     读卡不能因为 GitHub 抖一下就 500，快照下一轮重试就是。
+
+    过期的几张卡并排重算，每张各用一个会话；同一张卡同一时刻只算一份，几个
+    读者一起等它。这次读最多等 `accept_pr_snapshot_read_wait_s`：没算完的接着
+    在后台算完、写回去，下一次读就是新的。一张接一张地等过 GitHub，一次读卡
+    曾经要 40 秒。
     """
-    for card in cards:
-        try:
-            await self._refresh_stale_pr_snapshot(card)
-        except Exception:  # noqa: BLE001 — a read never fails over a poll
-            logger.warning(
-                "card %s: refreshing a stale merge snapshot failed",
-                card.id,
-                exc_info=True,
-            )
+    stale = [card for card in cards if _snapshot_is_due(self, card)]
+    if not stale:
+        return
+    sessions = async_sessionmaker(self._session.bind, expire_on_commit=False)
+    running = {card.id: _refresh_once(sessions, card.id) for card in stale}
+    done, _ = await asyncio.wait(
+        running.values(), timeout=settings.accept_pr_snapshot_read_wait_s
+    )
+    for card in stale:
+        if running[card.id] in done:
+            await self._session.refresh(card)
+
+
+#: The refresh under way for each card. A room's card list is read by every
+#: open page of it every 15 s; they share one round of GitHub calls per card.
+_refreshing: dict[uuid.UUID, asyncio.Task[None]] = {}
+
+
+def _snapshot_is_due(self: pkg.AcceptService, card: AcceptCard) -> bool:
+    if card.status != AcceptStatus.pending or card.pr_number is None:
+        return False
+    age = self._merge_snapshot_age_s(card)
+    return age is None or age >= settings.accept_pr_snapshot_floor_s
+
+
+def _refresh_once(
+    sessions: async_sessionmaker, card_id: uuid.UUID
+) -> asyncio.Task[None]:
+    task = _refreshing.get(card_id)
+    if task is None:
+        task = asyncio.get_running_loop().create_task(
+            _refresh_in_own_session(sessions, card_id),
+            name=f"refresh merge snapshot {card_id}",
+        )
+        _refreshing[card_id] = task
+    return task
+
+
+async def _refresh_in_own_session(
+    sessions: async_sessionmaker, card_id: uuid.UUID
+) -> None:
+    """One card's refresh on a session of its own: the read that started it may
+    have answered and closed its own by the time GitHub does."""
+    try:
+        async with sessions() as session:
+            svc = pkg.AcceptService(session)
+            card = await svc._repo.get(card_id)
+            if card is not None:
+                await svc._refresh_stale_pr_snapshot(card)
+                await session.commit()
+    except Exception:  # noqa: BLE001 — a read never fails over a poll
+        logger.warning(
+            "card %s: refreshing a stale merge snapshot failed", card_id, exc_info=True
+        )
+    finally:
+        _refreshing.pop(card_id, None)
 
 
 def _merge_snapshot_age_s(self: pkg.AcceptService, card: AcceptCard) -> float | None:
@@ -341,10 +394,7 @@ def _merge_snapshot_age_s(self: pkg.AcceptService, card: AcceptCard) -> float | 
 
 
 async def _refresh_stale_pr_snapshot(self: pkg.AcceptService, card: AcceptCard) -> None:
-    if card.status != AcceptStatus.pending or card.pr_number is None:
-        return
-    age = self._merge_snapshot_age_s(card)
-    if age is not None and age < settings.accept_pr_snapshot_floor_s:
+    if not _snapshot_is_due(self, card):
         return
     topic = await self._topic_or_404(card.topic_id)
     if topic.status == TopicStatus.archived:

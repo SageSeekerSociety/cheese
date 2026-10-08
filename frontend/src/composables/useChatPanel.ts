@@ -195,6 +195,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // room/composables/useRoomSocket。它不认识帧的含义：帧交给下面的 handleFrame。
   const {
     connected,
+    linkDown,
     connectRefused,
     open: openSocket,
     close: closeSocket,
@@ -970,6 +971,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     // what the page above listens for
     errorMsg,
     connected,
+    linkDown,
     send,
     replyToQuestion,
     viewer,
