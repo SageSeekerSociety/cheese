@@ -56,8 +56,8 @@ from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
+from app.core import email as core_email
 from app.core.config import settings
-from app.core.email import get_email_sender
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
@@ -201,7 +201,7 @@ async def _notify_2fa_disabled(email: str | None, username: str) -> None:
         f"password immediately and turn it back on: {recover_url}\n"
     )
     try:
-        await get_email_sender().send(
+        await core_email.get_email_sender().send(
             to=email, subject=subject, body_html=body_html, body_text=body_text
         )
     except Exception:
