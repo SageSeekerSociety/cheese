@@ -243,10 +243,12 @@ def end_seatbelt(home):
 
 def process_identity(pid, *, reference=None):
     # Keep recognizing status files written by older helpers, including during
-    # reset. New Linux records avoid spawning ps on every readiness poll.
+    # reset. New Linux and macOS records read the process without ps.
     if sys.platform == "win32":
         return portable()["identity"](pid)
-    if sys.platform == "darwin":
+    if sys.platform == "darwin" and (
+        reference is None or reference.startswith("darwin:")
+    ):
         return darwin_identity(pid)
     if sys.platform == "linux" and (
         reference is None or reference.startswith("linux:")
