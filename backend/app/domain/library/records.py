@@ -14,11 +14,11 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 
-from sqlalchemy import delete, func, literal, or_, select, update
+from sqlalchemy import delete, func, literal, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, UnprocessableEntityError
+from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_rooms
@@ -231,14 +231,29 @@ async def replace(
     """把这个名字下的那一份换成新的字节。旧的那一份留着，不是删掉。
 
     引用这个名字的旧消息从此读到的是新的一份——这正是「替换」的意思：人明确说了这
-    是同一份文件的新版本。"""
+    是同一份文件的新版本。
+
+    「现在这一份」是**读出来再写回去**的一对动作（`superseded_at` 为空的那一行只有
+    一行，见 `uq_library_files_current`），两个人同时替换同一份时，两边都会读到自己
+    是唯一的那一版。所以先按 project:name 取一把锁，把这个名字上的替换排成队。
+    `restore`（把旧的一版复制回来）走的也是这里，一并排上。"""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"library-file:{project_id}:{name}"},
+    )
     current = await _current_or_404(session, project_id, name)
     current.blob_key = blob_key(current)
-    current.superseded_at = datetime.now(UTC)
-    await session.flush()
-    row = _new_row(project_id, name, data, added_by=by, room_id=None)
-    session.add(row)
-    await session.flush()
+    try:
+        current.superseded_at = datetime.now(UTC)
+        await session.flush()
+        row = _new_row(project_id, name, data, added_by=by, room_id=None)
+        session.add(row)
+        await session.flush()
+    except IntegrityError:
+        # 锁只管走这条路的替换；不走这条路的写入（比如同时放进一份新资料）仍然能撞
+        # 上「一个名字只有一份是现在这一份」。撞上就是并发冲突，不是故障：这一次没
+        # 换成就直说，别把 500 摆给人看。事务到这里就作废了，由 `get_db` 回滚。
+        raise ConflictError(say("libraryFileBeingReplaced", name=name)) from None
     await _put(row, data)
 
 

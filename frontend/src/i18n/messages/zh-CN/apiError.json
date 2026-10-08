@@ -156,6 +156,7 @@
   "libraryFileGone": "这份资料已经不在资料库里",
   "tooManySameNameFiles": "同名文件太多：{name}",
   "libraryFileNotFound": "资料库里没有这份文件",
+  "libraryFileBeingReplaced": "「{name}」正在被另一个人替换，稍后重试",
   "artifactVersionNoFile": "这一版没有留存文件",
   "revisionListStale": "文件已被修改，这份清单基于旧内容，刷新后重试",
   "consentRequired": "请阅读并同意《用户协议》和《隐私政策》",

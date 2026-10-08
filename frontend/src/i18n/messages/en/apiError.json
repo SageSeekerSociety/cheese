@@ -156,6 +156,7 @@
   "libraryFileGone": "This file is no longer in the library",
   "tooManySameNameFiles": "Too many files with the same name: {name}",
   "libraryFileNotFound": "This file isn't in the library",
+  "libraryFileBeingReplaced": "Someone else is replacing {name} right now. Try again",
   "artifactVersionNoFile": "No file was kept for this version",
   "revisionListStale": "The file has changed and this list is based on the old content. Refresh and try again",
   "consentRequired": "Please read and agree to the Terms of Service and the Privacy Policy",
