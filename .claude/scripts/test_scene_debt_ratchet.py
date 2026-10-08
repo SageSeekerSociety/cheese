@@ -140,6 +140,27 @@ request()
         )
         self.run_gate()
 
+    def test_empty_vue_expressions_in_non_route_components_are_legal(self) -> None:
+        for template in ("<div>{{ }}</div>", '<component :is=""/>', '<div v-show=""/>'):
+            self.write("src/components/Empty.vue", f"<template>{template}</template>")
+            self.run_gate()
+
+    def test_dynamic_template_locals_are_not_imported_child_edges(self) -> None:
+        self.page("<div/>")
+        self.run_gate("--update")
+        before = self.baseline.read_bytes()
+        for template in (
+            '<component v-for="Child in items" :is="Child"/>',
+            '<my-list v-slot="Child"><component :is="Child"/></my-list>',
+            '<my-list v-slot="{value: Child}"><component :is="Child"/></my-list>',
+        ):
+            self.page(template)
+            self.run_gate()
+            self.assertEqual(debt.collect(self.root)["children"], set())
+        self.page('<component :is="Child"/>')
+        self.run_gate("--update", rc=1)
+        self.assertEqual(before, self.baseline.read_bytes())
+
     def test_failed_update_preserves_baseline_and_reports_cannot_judge(self) -> None:
         self.page("<div/>")
         before = self.baseline.read_bytes()

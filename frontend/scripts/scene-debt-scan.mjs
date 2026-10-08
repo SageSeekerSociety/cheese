@@ -38,17 +38,17 @@ function member(node) {
 }
 
 function templates(blocks) {
-  const dynamic = []
+  const dynamic = new Set()
   const expressions = []
   function scoped(expression, bindings) {
     return bindings.reduceRight((body, binding) => `;(${binding} => { ${body} });`, expression)
   }
   function visit(node, bindings = []) {
-    if (node.type === 5) expressions.push(scoped(`(${node.content.content});`, bindings))
+    if (node.type === 5 && node.content.content.trim()) expressions.push(scoped(`(${node.content.content});`, bindings))
     if (node.type === 1) {
       bindings = [...bindings]
       for (const prop of node.props) {
-        if (prop.type !== 7 || !prop.exp) continue
+        if (prop.type !== 7 || !prop.exp?.content.trim()) continue
         if (prop.name === 'for') {
           const loop = prop.exp.content.match(/^(.*?)\s+(?:in|of)\s+([\s\S]*)$/)
           if (!loop) throw new Error('cannot parse template loop')
@@ -57,11 +57,11 @@ function templates(blocks) {
         } else if (prop.name === 'slot') bindings.push(`(${prop.exp.content})`)
       }
       for (const prop of node.props) {
-        if (prop.type !== 7 || !prop.exp || prop.name === 'for' || prop.name === 'slot') continue
-        expressions.push(scoped(prop.name === 'on' ? prop.exp.content : `(${prop.exp.content});`, bindings))
+        if (prop.type !== 7 || !prop.exp?.content.trim() || prop.name === 'for' || prop.name === 'slot') continue
         if (node.tag.toLowerCase() === 'component' && prop.name === 'bind' && prop.arg?.content === 'is') {
-          dynamic.push(prop.exp.content)
+          dynamic.add(expressions.length)
         }
+        expressions.push(scoped(prop.name === 'on' ? prop.exp.content : `(${prop.exp.content});`, bindings))
       }
     }
     for (const child of node.children ?? []) visit(child, bindings)
@@ -78,10 +78,14 @@ function templates(blocks) {
 // parameters. Vue parses SFC boundaries and template expressions first.
 export function scanScript(file, code, blocks = []) {
   const template = templates(blocks)
-  const source = syntax(
-    file,
-    `${code}\n${template.expressions.map((expression) => `;(() => { ${expression} })();`).join('\n')}`
-  )
+  let combined = `${code}\n`
+  const dynamic = []
+  for (const [index, expression] of template.expressions.entries()) {
+    const start = combined.length
+    combined += `;(() => { ${expression} })();\n`
+    if (template.dynamic.has(index)) dynamic.push([start, combined.length])
+  }
+  const source = syntax(file, combined)
   const host = {
     getSourceFile: (name) => (name === file ? source : undefined),
     getDefaultLibFileName: () => '',
@@ -105,11 +109,14 @@ export function scanScript(file, code, blocks = []) {
   const vueNamespaces = new Set()
   const specs = new Set()
   const declarations = new Map()
+  const scriptBindings = new Map()
   for (const node of source.statements) {
     if (ts.isVariableStatement(node)) {
       for (const declaration of node.declarationList.declarations) {
-        if (ts.isIdentifier(declaration.name) && declaration.initializer)
+        if (ts.isIdentifier(declaration.name) && declaration.initializer) {
           declarations.set(declaration.name.text, declaration.initializer)
+          scriptBindings.set(declaration.name.text, checker.getSymbolAtLocation(declaration.name))
+        }
       }
     }
     if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)) continue
@@ -117,7 +124,10 @@ export function scanScript(file, code, blocks = []) {
     const clause = node.importClause
     specs.add(spec) // Types still prolong the old network API.
     if (!clause || clause.isTypeOnly) continue
-    if (clause.name) imports[clause.name.text] = spec
+    if (clause.name) {
+      imports[clause.name.text] = spec
+      scriptBindings.set(clause.name.text, checker.getSymbolAtLocation(clause.name))
+    }
     const bindings = clause.namedBindings
     if (bindings && ts.isNamedImports(bindings)) {
       for (const element of bindings.elements) {
@@ -125,6 +135,7 @@ export function scanScript(file, code, blocks = []) {
         imports[element.name.text] = spec
         const imported = (element.propertyName ?? element.name).text
         const symbol = checker.getSymbolAtLocation(element.name)
+        scriptBindings.set(element.name.text, symbol)
         if (spec === 'vue-router' && imported === 'useRoute') routes.add(symbol)
         if (spec === 'vue' && imported === 'defineAsyncComponent') asyncHelpers.add(symbol)
       }
@@ -166,6 +177,7 @@ export function scanScript(file, code, blocks = []) {
   function references(node, seen = new Set()) {
     if (ts.isIdentifier(node)) {
       const local = node.text
+      if (checker.getSymbolAtLocation(node) !== scriptBindings.get(local)) return
       if (Object.hasOwn(components, local)) {
         rendered.add(local)
         return
@@ -179,9 +191,10 @@ export function scanScript(file, code, blocks = []) {
     else if (ts.isPropertyAssignment(node)) references(node.initializer, seen)
     else ts.forEachChild(node, (child) => references(child, seen))
   }
-  for (const expression of template.dynamic) {
-    const parsed = syntax('expression.ts', `const value = (${expression})`)
-    references(parsed.statements[0].declarationList.declarations[0].initializer)
+  // Keep dynamic selectors in the same bound template scope as route calls.
+  for (const statement of source.statements) {
+    if (dynamic.some(([start, end]) => statement.getStart(source) >= start && statement.end <= end))
+      references(statement)
   }
   let useRoute = false
   function visit(node) {

@@ -100,6 +100,35 @@ test('async bindings and dynamic expressions retain their component targets', ()
   )
 })
 
+test('empty Vue expressions do not execute calls or reference components', () => {
+  for (const template of ['<div>{{ }}</div>', '<component :is=""/>', '<div v-show=""/>', '<div @click=" "/>']) {
+    const result = scanFile(
+      'src/components/Empty.vue',
+      `<script setup>import Child from './Child.vue'; import {useRoute} from 'vue-router'</script><template>${template}</template>`
+    )
+    assert.deepEqual(result.rendered, [])
+    assert.equal(result.useRoute, false)
+    assert.equal(result.network, false)
+  }
+})
+
+test('dynamic selectors respect loop, slot and nested expression bindings', () => {
+  const code = "import Child from './Child.vue'; const selection = computed(() => Child)"
+  for (const template of [
+    '<component v-for="Child in items" :is="Child"/>',
+    '<my-list v-slot="Child"><component :is="Child"/></my-list>',
+    '<my-list v-slot="{value: Child}"><component :is="Child"/></my-list>',
+    '<component v-for="selection in items" :is="selection"/>',
+    '<component :is="items.map(Child => Child)"/>',
+  ])
+    assert.deepEqual(scanScript('P.ts', code, [template]).rendered, [], template)
+  assert.deepEqual(
+    scanScript('P.ts', code, ['<div v-for="Child in items"><component :is="selection"/></div>']).rendered,
+    ['Child']
+  )
+  assert.deepEqual(scanScript('P.ts', code, ['<component :is="Child"/>']).rendered, ['Child'])
+})
+
 test('unparseable code cannot produce a zero-debt answer', () => {
   assert.throws(() => scanScript('src/views/P.vue', 'const = ;'), /src\/views\/P.vue/)
 })
