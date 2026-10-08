@@ -14,6 +14,7 @@ import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
 import { replySnippet } from '@/lib/blockDisplay'
 import { columnDotStyle, phraseLabel } from '@/lib/board'
+import { RECENT_DONE } from '@/lib/channelTasks'
 import { relTime } from '@/lib/relTime'
 import { taskTitle } from '@/lib/topicState'
 
@@ -43,8 +44,6 @@ const emit = defineEmits<{
   (e: 'edit-overview', documentId: string): void
 }>()
 
-/** 最近完成列几件：其余在看板里。 */
-const RECENT_DONE = 3
 /** 进行中只列最近这么多天里有动静的，最多这么多件：其余在「全部任务」里。概览答的是
  *  「这个频道现在在忙什么」，一长串很久没人碰的任务会把真在动的淹掉。 */
 const LIVELY_DAYS = 7

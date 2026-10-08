@@ -5996,6 +5996,14 @@ export interface paths {
          *     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
          *     read.
          *
+         *     With `limit` (and a `status`) it is a page instead, of the threads that
+         *     most recently moved: the closed ones only grow, and the all-tasks page
+         *     scrolls through them rather than reading them whole. A page can be narrowed
+         *     to one `channel` and to `whose` the threads are to the reader (`mine`: they
+         *     own it; `helping`: they are among its contributors; `others`: neither).
+         *     `next` is the cursor to pass as `before` for the page after; `counts` says
+         *     how many there are in all and by whose, for the same status and channel.
+         *
          *     The rail draws rooms and the work inside them, so it needs both halves at
          *     once. Two round trips, not two per room and one per thread: a project here
          *     already holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)
@@ -9525,6 +9533,12 @@ export interface paths {
          *       what it keeps out of the room (an agent's steps, notices for an agent).
          *
          *     Cursors still name any block of the conversation, shown or not.
+         *
+         *     Each block carries what a reader draws with it, so the page is whole on its
+         *     own: `reactions`, the 支线 under a main-line message (`thread`), a routine's
+         *     run (`routine_run`), and `tasks` — the tasks made from a message, under it,
+         *     and the task a room-line row says began there (`room_task_rows`), as the
+         *     room's task list has them.
          */
         get: operations["list_topic_blocks_topics__topic_id__blocks_get"];
         put?: never;
@@ -10710,6 +10724,18 @@ export interface paths {
          * List Room Tasks
          * @description This room's threads — every piece of work in it, each with its own
          *     conversation.
+         *
+         *     Narrowed, a page reads only the tasks it draws instead of the whole room:
+         *
+         *     - `status=open|closed`;
+         *     - `ids`: these tasks (the ones a message names);
+         *     - `blocks`: the tasks these blocks carry — made from one of them, or named
+         *       by one of them as the task that began there (`task_created`, `split`);
+         *     - `branch=true`: tasks with a branch of their own;
+         *     - `latest=N`: the newest N, newest first — by when they closed with
+         *       `status=closed`, by when they were created otherwise.
+         *
+         *     `ids` and `blocks` together return a task matching either.
          *
          *     The room's own line is `/blocks` beside this; nothing appears in both, and
          *     together they are everything said in the room. That separation is the whole
@@ -28794,6 +28820,10 @@ export interface operations {
         parameters: {
             query?: {
                 status?: ("open" | "closed") | null;
+                channel?: string | null;
+                whose?: ("mine" | "helping" | "others") | null;
+                limit?: number | null;
+                before?: string | null;
             };
             header?: {
                 "if-none-match"?: string | null;
@@ -39477,6 +39507,11 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number | null;
+                status?: ("open" | "closed") | null;
+                ids?: string[] | null;
+                blocks?: string[] | null;
+                branch?: boolean;
+                latest?: number | null;
             };
             header?: {
                 "if-none-match"?: string | null;

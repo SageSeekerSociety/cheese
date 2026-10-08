@@ -31,9 +31,9 @@ export const MAX_WINDOW = 600
 // A slice of a topic's timeline, oldest-first, plus whether older blocks exist
 // above it. `hasMore` is about OLDER blocks only; whether a middle stretch has
 // newer blocks below it is the timeline's `hasNewer`, not part of a window.
-/** 频道翻页时另外挂在一块上的东西（支线那一行、例行任务那一行）。改字、加表情推来的
- *  那一块不带它们，更新那一块时没带就照旧留着。 */
-export const ATTACHED = ['thread', 'routine_run'] as const
+/** 频道翻页时另外挂在一块上的东西（支线那一行、例行任务那一行、它带着的任务）。改字、
+ *  加表情推来的那一块不带它们，更新那一块时没带就照旧留着。 */
+export const ATTACHED = ['thread', 'routine_run', 'tasks'] as const
 
 export interface BlockWindow {
   blocks: Block[]

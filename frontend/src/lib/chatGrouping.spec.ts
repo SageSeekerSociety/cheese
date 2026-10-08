@@ -147,21 +147,20 @@ describe('runEdgeBetween', () => {
 
 describe('outboxEdgeAfter', () => {
   it('starts when there is nothing above it', () => {
-    expect(outboxEdgeAfter(undefined, { mine: true, brokenAbove: false })).toBe('start')
+    expect(outboxEdgeAfter(undefined, { mine: true })).toBe('start')
   })
 
   it('starts under an event or under a broken run', () => {
-    expect(outboxEdgeAfter(block('a', { kind: 'event' }), { mine: true, brokenAbove: false })).toBe('start')
-    expect(outboxEdgeAfter(block('a'), { mine: true, brokenAbove: true })).toBe('start')
+    expect(outboxEdgeAfter(block('a', { kind: 'event' }), { mine: true })).toBe('start')
   })
 
   it('starts when the last message is somebody else s', () => {
-    expect(outboxEdgeAfter(block('a'), { mine: false, brokenAbove: false })).toBe('start')
+    expect(outboxEdgeAfter(block('a'), { mine: false })).toBe('start')
   })
 
   it('continues the run right after something just said', () => {
     const last = block('a', { created_at: new Date(Date.now() - 60_000).toISOString() })
-    expect(outboxEdgeAfter(last, { mine: true, brokenAbove: false })).toBe('cont')
+    expect(outboxEdgeAfter(last, { mine: true })).toBe('cont')
   })
 
   it('regroups when the last message is old, and starts on another day', () => {
@@ -173,10 +172,8 @@ describe('outboxEdgeAfter', () => {
       noon.setHours(12, 0, 0, 0)
       vi.setSystemTime(noon)
       const old = new Date(Date.now() - REGROUP_GAP_MS).toISOString()
-      expect(outboxEdgeAfter(block('a', { created_at: old }), { mine: true, brokenAbove: false })).toBe('regroup')
-      expect(outboxEdgeAfter(block('a', { created_at: atDaysAgo(1) }), { mine: true, brokenAbove: false })).toBe(
-        'start'
-      )
+      expect(outboxEdgeAfter(block('a', { created_at: old }), { mine: true })).toBe('regroup')
+      expect(outboxEdgeAfter(block('a', { created_at: atDaysAgo(1) }), { mine: true })).toBe('start')
     } finally {
       vi.useRealTimers()
     }
