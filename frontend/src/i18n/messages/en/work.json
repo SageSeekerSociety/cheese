@@ -1516,7 +1516,21 @@
       "roomDoc": "Doc of “{room}”",
       "keep": "Save as a doc"
     },
-    "newDocFailed": "Couldn't create the doc"
+    "newDocFailed": "Couldn't create the doc",
+    "newFolder": "New folder",
+    "newFolderConfirm": "Create",
+    "move": "Move or rename",
+    "moveTitle": "Move or rename",
+    "moveConfirm": "Move",
+    "moved": "Moved",
+    "moveFailed": "Move failed",
+    "folderField": "Folder",
+    "nameField": "Name",
+    "topLevel": "Top level of the library",
+    "folderMeta": "{n} files · {when}",
+    "folderEmpty": "No files yet",
+    "crumbsLabel": "Location",
+    "deleteFolderBody": "The {n} files in this folder are deleted with it. This cannot be undone, and messages that referenced them will no longer open these files"
   },
   "projectSettings": {
     "title": "Project settings",
