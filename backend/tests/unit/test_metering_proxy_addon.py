@@ -1478,6 +1478,69 @@ def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp
     assert mod.METER.used() == 100  # 10 input + 90 output
 
 
+def _usage_lines(tmp_path) -> list[dict]:
+    log = tmp_path / "usage.jsonl"
+    if not log.exists():
+        return []
+    return [json.loads(line) for line in log.read_text().splitlines() if line]
+
+
+def test_an_interrupted_stream_is_metered_exactly_once(monkeypatch, tmp_path):
+    """The end-of-stream sentinel only fires at ResponseEndOfMessage. A turn the
+    user aborts (Esc), a client disconnect, or the proxy being recreated under a
+    live stream never reaches it — and the input_tokens and cache_creation seen
+    at message_start are most of what the turn cost. error() must land them."""
+    mod = _load_addon(monkeypatch, tmp_path)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+
+    body = (
+        b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+        b'"usage":{"input_tokens":4000,"cache_creation_input_tokens":1000}}}'
+    )
+    assert flow.response.stream(body) == body
+    assert not _usage_lines(tmp_path), "still running: nothing metered yet"
+
+    flow.error = SimpleNamespace(msg="client disconnected")
+    mod.error(flow)
+    # A second error on the same flow (mitmproxy may deliver one after the
+    # response was already abandoned) must not meter the turn again.
+    mod.error(flow)
+
+    assert mod.METER.used() == 5000
+    [line] = _usage_lines(tmp_path)
+    assert line["input_tokens"] == 4000
+    assert line["cache_creation_input_tokens"] == 1000
+    assert (line["project_id"], line["topic_id"]) == ("proj-x", "topic-y")
+
+
+def test_a_clean_stream_is_metered_exactly_once(monkeypatch, tmp_path):
+    """The sentinel records; a later error on the same flow — mitmproxy does
+    call error() on some flows that finished responding — must not add a
+    second line for one turn."""
+    mod = _load_addon(monkeypatch, tmp_path)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+
+    body = (
+        b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+        b'"usage":{"input_tokens":4000,"cache_creation_input_tokens":1000}}}'
+    )
+    flow.response.stream(body)
+    flow.response.stream(b"")  # sentinel: the stream ended on its own
+    assert mod.METER.used() == 5000
+
+    flow.error = SimpleNamespace(msg="client disconnected")
+    mod.error(flow)
+
+    assert mod.METER.used() == 5000
+    assert len(_usage_lines(tmp_path)) == 1
+
+
 def test_a_compressed_streamed_message_is_metered(monkeypatch, tmp_path):
     """Anthropic gzips the SSE of a client that accepts it, as Claude Code does.
     The client still gets the compressed bytes untouched, and the turn still
@@ -1812,6 +1875,56 @@ async def test_client_disconnect_does_not_raise_a_model_failure(monkeypatch, tmp
     mod.responseheaders(flow)
     mod.error(flow)
     assert not mod._failure_reports
+
+
+def test_a_running_turn_holds_the_cap_against_one_admitted_beside_it(
+    monkeypatch, tmp_path
+):
+    """The cap is judged from turns that have ENDED, so on its own it admits
+    every turn that arrives while ``used() < cap`` — concurrent turns then
+    overshoot together, and the deployment is refused until the window rolls.
+    A running turn must hold its estimate."""
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    mod.TOKEN_CAP = 60_000
+    mod.CAP_RESERVE_TOKENS = 60_000  # this turn's estimate is the whole cap
+    token = _scoped_token(secret, project="p9")
+    mod.http_connect(_connect_flow_on("c1", _basic(token)))
+    _recording_admission(mod, monkeypatch)
+
+    first = _session_flow(conn="c1")
+    asyncio.run(mod.requestheaders(first))
+    assert first.response is None, "the first turn fits under the cap"
+    assert mod.METER.used() == 0, "it has not ended, so used() is still zero"
+
+    # Nothing has been recorded, yet the cap is already spoken for.
+    second = _session_flow(conn="c1")
+    asyncio.run(mod.requestheaders(second))
+    assert second.response is not None
+    assert second.response.status_code == 429
+    assert "cap reached" in second.response.content.decode()
+
+    # The first turn ends → its hold is dropped and the next turn fits again.
+    mod.error(first)
+    third = _session_flow(conn="c1")
+    asyncio.run(mod.requestheaders(third))
+    assert third.response is None
+
+
+def test_the_cap_off_takes_no_reservation(monkeypatch, tmp_path):
+    """cap=0 is the default deployment. Nothing may be held, so the code path
+    is exactly the one that shipped before reservations existed."""
+    secret = "s3cr3t"
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret=secret)
+    token = _scoped_token(secret, project="p9")
+    mod.http_connect(_connect_flow_on("c1", _basic(token)))
+    _recording_admission(mod, monkeypatch)
+
+    flow = _session_flow(conn="c1")
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None
+    assert "cheese_cap_reservation" not in flow.metadata
 
 
 def test_admission_timing_separates_executor_queue_from_check(
