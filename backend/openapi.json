@@ -26898,6 +26898,194 @@
         }
       }
     },
+    "/topics/{task_id}/review-comments": {
+      "get": {
+        "tags": [
+          "review-comments"
+        ],
+        "summary": "List Review Comments",
+        "operationId": "list_review_comments_topics__task_id__review_comments_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCommentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "review-comments"
+        ],
+        "summary": "Write Review Comment",
+        "operationId": "write_review_comment_topics__task_id__review_comments_post",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCommentIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCommentOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/review-comments/{comment_id}": {
+      "delete": {
+        "tags": [
+          "review-comments"
+        ],
+        "summary": "Delete Review Comment",
+        "operationId": "delete_review_comment_review_comments__comment_id__delete",
+        "parameters": [
+          {
+            "name": "comment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Comment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCommentDeletedEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "review-comments"
+        ],
+        "summary": "Edit Review Comment",
+        "operationId": "edit_review_comment_review_comments__comment_id__patch",
+        "parameters": [
+          {
+            "name": "comment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Comment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewCommentEdit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewCommentOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/topics/{topic_id}/files/raw": {
       "get": {
         "tags": [
@@ -49743,7 +49931,7 @@
           "workspace"
         ],
         "summary": "Write File",
-        "description": "Save an edited workspace file (人改文件即指令). Writes to the topic's\nworktree.\n\n`version` is the one the caller read. Sending it makes the write conditional:\nif 芝士 (or anyone else) wrote the file in between, the save is rejected with\n409 instead of silently erasing their work, and the panel shows the conflict.",
+        "description": "Save an edited workspace file (人改文件即指令). Writes to the topic's\nworktree.\n\n`version` is the one the caller read and `base` the text it read. If the\nfile moved on in between, the two sets of edits are merged against `base`:\na clean merge is saved, overlapping edits answer 409 with the regions to\npick from. A person's save is then said in the task, and the task's AI\nteammate is told before its next tool call to re-read the file.",
         "operationId": "write_file_projects__project_id__file_put",
         "parameters": [
           {
@@ -50101,7 +50289,7 @@
           "workspace"
         ],
         "summary": "Topic Work Summary",
-        "description": "What work this topic is holding — asked while the panels are CLOSED.\n\nThe 工作面板 offers a tab only where the thing it shows exists, and puts the\nchange count on 改动 without opening it. Both are facts about tabs nobody is\nlooking at, so both have to be answerable without fetching the thing itself:\npulling a whole diff to arrive at one integer is the shape that got the 资源\ndrawer's 20-second poll deleted.\n\n``has_run`` is the topic's captured session, not its message count: 现场\nshows what 芝士 did, and a room where only people talked has no 现场 to open.\n\n``changed_files`` combines the open tasks' changed paths for the room's\nbadge. The changes panel selects one task before showing its diff.",
+        "description": "What work this topic is holding — asked while the panels are CLOSED.\n\nThe 工作面板 offers a tab only where the thing it shows exists, and puts the\nchange count on 改动 without opening it. Both are facts about tabs nobody is\nlooking at, so both have to be answerable without fetching the thing itself:\npulling a whole diff to arrive at one integer is the shape that got the 资源\ndrawer's 20-second poll deleted.\n\n``has_run`` is the topic's captured session, not its message count: 现场\nshows what 芝士 did, and a room where only people talked has no 现场 to open.\n\n``changed_files`` is a task's own changed paths, for the badge on its 改动\ntab. A channel has no 改动 tab (changes belong to tasks and are read on the\ntask's page, #2422), so it answers none and compares no branch: comparing\nevery open task in a busy channel took past the timeout on every visit.",
         "operationId": "topic_work_summary_projects__project_id__topics__topic_id__work_summary_get",
         "parameters": [
           {
@@ -50369,6 +50557,14 @@
             "type": "boolean",
             "title": "Completes Task",
             "default": true
+          },
+          "comment_outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/CommentOutcome"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "title": "Comment Outcomes"
           }
         },
         "type": "object",
@@ -51905,6 +52101,31 @@
           "data"
         ],
         "title": "CommentOutEnvelope"
+      },
+      "CommentOutcome": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "handled": {
+            "type": "boolean",
+            "title": "Handled"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "handled"
+        ],
+        "title": "CommentOutcome"
       },
       "CommentPageOut": {
         "properties": {
@@ -58380,6 +58601,15 @@
             "type": "string",
             "title": "Note",
             "default": ""
+          },
+          "comment_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "title": "Comment Ids"
           }
         },
         "type": "object",
@@ -58543,6 +58773,374 @@
           "name"
         ],
         "title": "ResubmitSpaceRequest"
+      },
+      "ReviewCommentDeleted": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "ReviewCommentDeleted",
+        "description": "一条草稿被删掉，回的是它的 id。"
+      },
+      "ReviewCommentDeletedEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ReviewCommentDeleted"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ReviewCommentDeletedEnvelope"
+      },
+      "ReviewCommentEdit": {
+        "properties": {
+          "body": {
+            "type": "string",
+            "title": "Body",
+            "default": ""
+          },
+          "suggestion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestion"
+          }
+        },
+        "type": "object",
+        "title": "ReviewCommentEdit"
+      },
+      "ReviewCommentIn": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Path",
+            "default": ""
+          },
+          "line_start": {
+            "type": "integer",
+            "title": "Line Start",
+            "default": 0
+          },
+          "line_end": {
+            "type": "integer",
+            "title": "Line End",
+            "default": 0
+          },
+          "line_text": {
+            "type": "string",
+            "maxLength": 200000,
+            "title": "Line Text",
+            "default": ""
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body",
+            "default": ""
+          },
+          "suggestion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestion"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          }
+        },
+        "type": "object",
+        "title": "ReviewCommentIn",
+        "description": "A comment on lines of the version under review, or a reply (`parent_id`)."
+      },
+      "ReviewCommentOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "line_start": {
+            "type": "integer",
+            "title": "Line Start"
+          },
+          "line_end": {
+            "type": "integer",
+            "title": "Line End"
+          },
+          "line_text": {
+            "type": "string",
+            "title": "Line Text"
+          },
+          "current_line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Line"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "suggestion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestion"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Card Id"
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent At"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "outcome_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Note"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "author",
+          "path",
+          "line_start",
+          "line_end",
+          "line_text",
+          "current_line",
+          "body",
+          "suggestion",
+          "parent_id",
+          "state",
+          "card_id",
+          "sent_at",
+          "outcome",
+          "outcome_note",
+          "created_at"
+        ],
+        "title": "ReviewCommentOut",
+        "description": "一条批注，按 `改动` 面板读到的样子（`review.comments.describe`）。\n\n`current_line` 是它在当前这一版里的行号：草稿就是 `line_start`，已发出的\n跟着文本挪，文本没了就是 null。"
+      },
+      "ReviewCommentOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ReviewCommentOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ReviewCommentOutEnvelope"
+      },
+      "ReviewCommentsOut": {
+        "properties": {
+          "comments": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewCommentOut"
+            },
+            "type": "array",
+            "title": "Comments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "comments"
+        ],
+        "title": "ReviewCommentsOut",
+        "description": "一个任务的批注：已发出的，加上调用者自己的草稿。"
+      },
+      "ReviewCommentsOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ReviewCommentsOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ReviewCommentsOutEnvelope"
       },
       "ReviewSpaceRequest": {
         "properties": {

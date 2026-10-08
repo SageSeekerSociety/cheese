@@ -7188,6 +7188,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/topics/{task_id}/review-comments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Review Comments */
+        get: operations["list_review_comments_topics__task_id__review_comments_get"];
+        put?: never;
+        /** Write Review Comment */
+        post: operations["write_review_comment_topics__task_id__review_comments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/review-comments/{comment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Review Comment */
+        delete: operations["delete_review_comment_review_comments__comment_id__delete"];
+        options?: never;
+        head?: never;
+        /** Edit Review Comment */
+        patch: operations["edit_review_comment_review_comments__comment_id__patch"];
+        trace?: never;
+    };
     "/topics/{topic_id}/files/raw": {
         parameters: {
             query?: never;
@@ -12251,9 +12287,11 @@ export interface paths {
          * @description Save an edited workspace file (人改文件即指令). Writes to the topic's
          *     worktree.
          *
-         *     `version` is the one the caller read. Sending it makes the write conditional:
-         *     if 芝士 (or anyone else) wrote the file in between, the save is rejected with
-         *     409 instead of silently erasing their work, and the panel shows the conflict.
+         *     `version` is the one the caller read and `base` the text it read. If the
+         *     file moved on in between, the two sets of edits are merged against `base`:
+         *     a clean merge is saved, overlapping edits answer 409 with the regions to
+         *     pick from. A person's save is then said in the task, and the task's AI
+         *     teammate is told before its next tool call to re-read the file.
          */
         put: operations["write_file_projects__project_id__file_put"];
         post?: never;
@@ -12321,8 +12359,10 @@ export interface paths {
          *     ``has_run`` is the topic's captured session, not its message count: 现场
          *     shows what 芝士 did, and a room where only people talked has no 现场 to open.
          *
-         *     ``changed_files`` combines the open tasks' changed paths for the room's
-         *     badge. The changes panel selects one task before showing its diff.
+         *     ``changed_files`` is a task's own changed paths, for the badge on its 改动
+         *     tab. A channel has no 改动 tab (changes belong to tasks and are read on the
+         *     task's page, #2422), so it answers none and compares no branch: comparing
+         *     every open task in a busy channel took past the timeout on every visit.
          */
         get: operations["topic_work_summary_projects__project_id__topics__topic_id__work_summary_get"];
         put?: never;
@@ -12433,6 +12473,8 @@ export interface components {
              * @default true
              */
             completes_task: boolean;
+            /** Comment Outcomes */
+            comment_outcomes?: components["schemas"]["CommentOutcome"][];
         };
         /**
          * AcceptCardDescribe
@@ -12999,6 +13041,21 @@ export interface components {
             data: components["schemas"]["CommentOut"];
             /** Warnings */
             warnings?: string[] | null;
+        };
+        /** CommentOutcome */
+        CommentOutcome: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Handled */
+            handled: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** CommentPageOut */
         CommentPageOut: {
@@ -15364,6 +15421,8 @@ export interface components {
              * @default
              */
             note: string;
+            /** Comment Ids */
+            comment_ids?: string[];
         };
         /** RenameDeviceRequest */
         RenameDeviceRequest: {
@@ -15429,6 +15488,158 @@ export interface components {
             intro: string;
             /** Avatarid */
             avatarId?: number | null;
+        };
+        /**
+         * ReviewCommentDeleted
+         * @description 一条草稿被删掉，回的是它的 id。
+         */
+        ReviewCommentDeleted: {
+            /** Id */
+            id: string;
+        };
+        /** ReviewCommentDeletedEnvelope */
+        ReviewCommentDeletedEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ReviewCommentDeleted"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** ReviewCommentEdit */
+        ReviewCommentEdit: {
+            /**
+             * Body
+             * @default
+             */
+            body: string;
+            /** Suggestion */
+            suggestion?: string | null;
+        };
+        /**
+         * ReviewCommentIn
+         * @description A comment on lines of the version under review, or a reply (`parent_id`).
+         */
+        ReviewCommentIn: {
+            /**
+             * Path
+             * @default
+             */
+            path: string;
+            /**
+             * Line Start
+             * @default 0
+             */
+            line_start: number;
+            /**
+             * Line End
+             * @default 0
+             */
+            line_end: number;
+            /**
+             * Line Text
+             * @default
+             */
+            line_text: string;
+            /** Commit Sha */
+            commit_sha?: string | null;
+            /**
+             * Body
+             * @default
+             */
+            body: string;
+            /** Suggestion */
+            suggestion?: string | null;
+            /** Parent Id */
+            parent_id?: string | null;
+        };
+        /**
+         * ReviewCommentOut
+         * @description 一条批注，按 `改动` 面板读到的样子（`review.comments.describe`）。
+         *
+         *     `current_line` 是它在当前这一版里的行号：草稿就是 `line_start`，已发出的
+         *     跟着文本挪，文本没了就是 null。
+         */
+        ReviewCommentOut: {
+            /** Id */
+            id: string;
+            /** Author */
+            author: string;
+            /** Path */
+            path: string;
+            /** Line Start */
+            line_start: number;
+            /** Line End */
+            line_end: number;
+            /** Line Text */
+            line_text: string;
+            /** Current Line */
+            current_line: number | null;
+            /** Body */
+            body: string;
+            /** Suggestion */
+            suggestion: string | null;
+            /** Parent Id */
+            parent_id: string | null;
+            /** State */
+            state: string;
+            /** Card Id */
+            card_id: string | null;
+            /** Sent At */
+            sent_at: string | null;
+            /** Outcome */
+            outcome: string | null;
+            /** Outcome Note */
+            outcome_note: string | null;
+            /** Created At */
+            created_at: string;
+        };
+        /** ReviewCommentOutEnvelope */
+        ReviewCommentOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ReviewCommentOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * ReviewCommentsOut
+         * @description 一个任务的批注：已发出的，加上调用者自己的草稿。
+         */
+        ReviewCommentsOut: {
+            /** Comments */
+            comments: components["schemas"]["ReviewCommentOut"][];
+        };
+        /** ReviewCommentsOutEnvelope */
+        ReviewCommentsOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ReviewCommentsOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** ReviewSpaceRequest */
         ReviewSpaceRequest: {
@@ -31325,6 +31536,138 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_review_comments_topics__task_id__review_comments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCommentsOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    write_review_comment_topics__task_id__review_comments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCommentIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCommentOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_review_comment_review_comments__comment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCommentDeletedEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_review_comment_review_comments__comment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                comment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewCommentEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewCommentOutEnvelope"];
                 };
             };
             /** @description Validation Error */
