@@ -94,7 +94,8 @@ _EXT_IMAGE_MIME = {
     ".gif": "image/gif",
     ".webp": "image/webp",
 }
-MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+#: 贴进对话的一份附件多大为止；数与落地那一层同一个（`library.MAX_FILE_BYTES`）。
+MAX_ATTACHMENT_BYTES = library.MAX_FILE_BYTES
 
 #: What a rendered page may do. It is a document, not an app, and it arrives
 #: carrying inline styles and a little inline script of officecli's own: without

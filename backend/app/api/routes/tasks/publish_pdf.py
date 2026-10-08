@@ -45,6 +45,9 @@ from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 
 router = APIRouter(prefix="/tasks")
 
+#: 拟稿用的 PDF 多大为止。比附件那一档（10MB）宽，因为一份卷子本来就比一张截图大。
+MAX_PDF_BYTES = 15 * 1024 * 1024
+
 
 @router.post(
     "/publish/from-pdf/preview",
@@ -68,12 +71,6 @@ async def preview_task_from_pdf(
     if max_tasks < 1 or max_tasks > 20:
         raise BadRequestError("maxTasks must be between 1 and 20")
 
-    pdf_bytes = await pdf_file.read()
-    if not pdf_bytes:
-        raise BadRequestError("Uploaded PDF is empty")
-    if len(pdf_bytes) > 15 * 1024 * 1024:
-        raise BadRequestError("PDF file is too large (max 15MB)")
-
     space = await SpaceRepository(session=db).get_by_id(space_id)
     if space is None:
         raise NotFoundError("Space not found")
@@ -93,6 +90,14 @@ async def preview_task_from_pdf(
         session=db, space_id=space_id, user_id=auth_user.user_id
     ):
         raise ForbiddenError("Only a board manager can publish tasks here")
+
+    # 限读：多读一个字节就够判「超了」，读回来的长度也只到这里。超限由下面那句判，
+    # 不是由内存分配来判——从前的顺序是先整份读完再判，判的是已经花掉的内存。
+    pdf_bytes = await pdf_file.read(MAX_PDF_BYTES + 1)
+    if not pdf_bytes:
+        raise BadRequestError("Uploaded PDF is empty")
+    if len(pdf_bytes) > MAX_PDF_BYTES:
+        raise BadRequestError("PDF file is too large (max 15MB)")
 
     resolved_category_id = category_id
     if resolved_category_id is None:

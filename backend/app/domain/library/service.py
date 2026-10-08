@@ -26,7 +26,11 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import (
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.textfile import text_payload
 
@@ -52,9 +56,33 @@ def room_files_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
     return root.resolve()
 
 
+#: 一份文件落地时的字节上限。房间文件（:func:`write_room_file`）与资料库
+#: （:mod:`app.domain.library.records`）落的是同一批字节，用同一个数；路由那一层
+#: 的 ``MAX_ARTIFACT_BYTES`` / ``MAX_ATTACHMENT_BYTES`` /
+#: ``MAX_LIBRARY_UPLOAD_BYTES`` 都指回这里，别在别处再写一遍。
+#:
+#: 这道上限不是「上传那一层」的事：``client_max_body_size`` 只在网关后面那一条路
+#: 上（``frontend/nginx.conf``），而 ``main.py`` 的 OpenAPI ``servers`` 把「直连后
+#: 端端口、前面没有网关」列为合法入口 —— 那条路上没有这道门。
+MAX_FILE_BYTES = 10 * 1024 * 1024
+
+
+def refuse_oversize(data: bytes) -> None:
+    """超过 :data:`MAX_FILE_BYTES` 的字节不落地，报「超限」而不是别的。
+
+    房间文件和资料库的每一个字节都从这里过，所以上限只有一处、也只有一层：调用方
+    漏判也好、直连后端绕开网关也好，字节都写不进去。
+    """
+    if len(data) > MAX_FILE_BYTES:
+        raise UnprocessableEntityError(
+            say("fileTooLarge", mb=MAX_FILE_BYTES // (1024 * 1024))
+        )
+
+
 def write_room_file(
     project_id: uuid.UUID, room_id: uuid.UUID, path: str, data: bytes
 ) -> None:
+    refuse_oversize(data)
     if path.split("/")[0] == LIBRARY_PREFIX:
         # `library/…` 是资料库那一份的地址（见 `read_attachment`）。房间里再写一个
         # 同名的东西，读的人就会拿到房间那份、以为看的是资料库里的原件。

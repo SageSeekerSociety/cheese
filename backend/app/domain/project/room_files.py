@@ -399,10 +399,12 @@ _ARTIFACT_KIND_BY_SUFFIX = {
     ".webp": "webp",
 }
 
-#: Ceiling on a published artifact, matching the chat attachment limit below —
+#: Ceiling on a published artifact, matching the chat attachment limit —
 #: both are "a file a person will open in this room", and a report that is too
-#: big to send as an attachment is too big to publish as a deliverable.
-MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
+#: big to send as an attachment is too big to publish as a deliverable. The
+#: number itself lives with the layer that lands the bytes
+#: (``library.MAX_FILE_BYTES``), together with the attachment and library caps.
+MAX_ARTIFACT_BYTES = library.MAX_FILE_BYTES
 
 
 def artifact_kind_for(path: str) -> str:

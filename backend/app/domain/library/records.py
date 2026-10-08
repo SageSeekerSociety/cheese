@@ -52,6 +52,8 @@ def _new_row(
 
 
 async def _put(row: LibraryFileRecord, data: bytes) -> None:
+    # 资料库的字节都从这里落地，上限与房间文件是同一个（`service.MAX_FILE_BYTES`）。
+    service.refuse_oversize(data)
     await asyncio.to_thread(blobs.store(row.location).put, row.blob_key, data)
 
 
