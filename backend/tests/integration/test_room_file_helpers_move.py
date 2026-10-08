@@ -50,7 +50,6 @@ CARD_KEYS = {
     "reply_to",
     "conversation_id",
     "turn_id",
-    "upgraded_to_topic_id",
 }
 
 
