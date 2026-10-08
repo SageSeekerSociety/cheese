@@ -292,7 +292,9 @@ async def _put_settings_blob(project_id: str, blob: str) -> None:
     try:
         async with engine.begin() as conn:
             await conn.execute(
-                text("UPDATE projects SET settings = CAST(:blob AS json) WHERE id = :pid"),
+                text(
+                    "UPDATE projects SET settings = CAST(:blob AS json) WHERE id = :pid"
+                ),
                 {"pid": project_id, "blob": blob},
             )
     finally:
