@@ -9,6 +9,8 @@
 import type { AcceptCard, MergeReason, PrChecks, ProjectMemberRow } from '@/cx_types'
 import type { MergeBadge } from '@/lib/mergeState'
 
+import { computed } from 'vue'
+
 import AcceptNoteLine from './AcceptNoteLine.vue'
 import AcceptPrChecks from './AcceptPrChecks.vue'
 
@@ -18,7 +20,7 @@ import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
 import { columnDotStyle } from '@/lib/board'
 
-defineProps<{
+const props = defineProps<{
   card: AcceptCard
   /** 合并态那一行的词 + 圈；冲突卡没有（标题已经说了「芝士处理中」）。 */
   badge: MergeBadge | null
@@ -55,6 +57,13 @@ const emit = defineEmits<{
   (e: 'force-merge'): void
   (e: 'toggle-auto-merge', enabled: unknown): void
 }>()
+
+// 「这次交付」那一块只在有东西可写时出现：一次合并没有可拿走的文件或地址，没声明
+// 产物时就只剩一个空标题。
+const hasDeliverableToShow = computed(() => {
+  const d = props.card.deliverable
+  return (d?.kind === 'file' && !!d.filename) || (d?.kind === 'link' && !!d.url)
+})
 
 const showRejectInput = defineModel<boolean>('showRejectInput', { required: true })
 const rejectNote = defineModel<string>('rejectNote', { required: true })
@@ -146,7 +155,7 @@ const forceMergeReason = defineModel<string>('forceMergeReason', { required: tru
         版本号是后端按卡的状态算的，这里一个都不推。落地之前递的那些卡两样都没
         有，整块就不出现。
       -->
-      <div v-if="card.artifact || card.deliverable" class="mb-3">
+      <div v-if="card.artifact || hasDeliverableToShow" class="mb-3">
         <div class="text-caption text-medium-emphasis">{{ t('work.room.accept.delivery') }}</div>
         <div class="d-flex align-center flex-wrap ga-2">
           <span v-if="card.artifact" class="text-body-2">

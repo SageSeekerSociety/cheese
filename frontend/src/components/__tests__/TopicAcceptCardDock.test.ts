@@ -108,6 +108,50 @@ describe('贴底的时候', () => {
     expect(container.textContent).not.toContain('chore: do a thing')
   })
 
+  it('检查还在跑时不说在等人审阅：那时还没轮到人', async () => {
+    const { container } = await mountWith(
+      [
+        card({
+          reviewer_handle: 'bob',
+          pr_number: 12,
+          merge_state: {
+            state: 'blocked',
+            who: 'ci',
+            reasons: [{ kind: 'ci_running', checks: ['CI required'], detail: '检查进行中' }],
+            head_sha: 'abc',
+            checked_at: null,
+            since: null,
+          },
+        }),
+      ],
+      true
+    )
+    const bar = container.querySelector('.accept-bar')!.textContent
+    expect(bar).not.toContain('待 @bob 审阅')
+    expect(bar).toContain('等待检查')
+  })
+
+  it('可以合并时说在等谁审阅', async () => {
+    const { container } = await mountWith(
+      [
+        card({
+          reviewer_handle: 'bob',
+          pr_number: 12,
+          merge_state: {
+            state: 'clean',
+            who: 'human',
+            reasons: [{ kind: 'no_obstacle', checks: [], detail: '可以合并' }],
+            head_sha: 'abc',
+            checked_at: null,
+            since: null,
+          },
+        }),
+      ],
+      true
+    )
+    expect(container.querySelector('.accept-bar')!.textContent).toContain('待 @bob 审阅')
+  })
+
   it('等的那个人按显示名写，不按 handle', async () => {
     useWorkspaceStore().members = [{ user_handle: 'bob', role: 'member', name: 'Bob Chen' }] as never
     const { container } = await mountWith([card({ reviewer_handle: 'bob' })], true)
