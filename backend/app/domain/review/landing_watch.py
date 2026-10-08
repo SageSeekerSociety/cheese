@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
 
-from app.core.errors import GatewayUnavailableError
+from app.core.errors import UpstreamUnavailableError
 from app.core.live_frames import show_state_once_committed
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
@@ -108,7 +108,7 @@ async def _look(chat, landing_id: uuid.UUID) -> int:
             return 0
         try:
             reads = await landing_forge.reads_for(task.project_id, session)
-        except GatewayUnavailableError:
+        except UpstreamUnavailableError:
             # Its forge credentials are gone; they do not come back mid-watch.
             reads = None
         if reads is None:
