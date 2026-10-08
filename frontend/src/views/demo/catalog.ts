@@ -22,6 +22,7 @@ import type { Component } from 'vue'
 import { avatarColor } from '@/utils/avatar'
 
 import { ACCEPT_ENTRIES } from './catalogAccept'
+import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
@@ -65,6 +66,7 @@ import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { MODELS_ENTRIES } from './catalogModels'
 import { NOTIFICATION_ENTRIES } from './catalogNotifications'
 import { PANEL_ENTRIES } from './catalogPanels'
+import { PUBLIC_ENTRIES } from './catalogPublic'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { ROOM_ENTRIES } from './catalogRoom'
@@ -981,6 +983,11 @@ export const CATALOG: CatalogEntry[] = [
   ...FEEDBACK_ENTRIES,
   // 技能详情抽屉那一件在自己的文件里：`catalogSkills.ts`。
   ...SKILL_ENTRIES,
+  // 附件那两件（一条消息里的图、一份文档的第一页）在自己的文件里：`catalogAttachments.ts`。
+  ...ATTACHMENT_ENTRIES,
+  // 公共站那几页（三个公共页共用的外壳、首页、方案页，和首页里那段房间）在自己的文件
+  // 里：`catalogPublic.ts`。
+  ...PUBLIC_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */
