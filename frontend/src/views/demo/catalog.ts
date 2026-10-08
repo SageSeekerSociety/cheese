@@ -66,6 +66,7 @@ import { PANEL_ENTRIES } from './catalogPanels'
 import { PUBLIC_ENTRIES } from './catalogPublic'
 import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
+import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SETTINGS_ENTRIES } from './catalogSettings'
 import { SHARED_ENTRIES } from './catalogShared'
@@ -572,6 +573,7 @@ export const CATALOG: CatalogEntry[] = [
   // 验收卡那一组（从 1215 行的 TopicAcceptCard 拆出来的八件，数据在
   // `catalogFixtures.ts`）在自己的文件里：`catalogAccept.ts`。
   ...ACCEPT_ENTRIES,
+  ...REVIEW_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
   // 通知渲染那一组（十件「一条动态长什么样」，数据在 `catalogNotificationsFixtures.ts`）

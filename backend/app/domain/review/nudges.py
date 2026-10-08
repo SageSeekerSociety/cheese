@@ -160,6 +160,10 @@ async def _review_nudge(
         token=creds.read,
         with_comments=getattr(status, "review_comment_count", 0) > 0,
     )
+    # A 退回's comments, mirrored onto the PR, went to 芝士 with the 退回.
+    signals = [
+        s for s in signals if pr_signals.PLATFORM_REVIEW_MARK not in (s.body or "")
+    ]
     if not signals:
         return None
     ledger = pr_signals.NudgeLedger.load(card.nudge_state)

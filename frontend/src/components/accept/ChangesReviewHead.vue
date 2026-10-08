@@ -47,6 +47,8 @@ const props = defineProps<{
   agentHandle: string | null
   deliverableBusy: boolean
   deliverableError: string
+  /** 上一轮退回带走的批注，芝士这一次交上来时逐条说了处理没有。 */
+  round?: { id: string; text: string; where: string; outcome: 'handled' | 'not_handled' | null }[]
 }>()
 
 const emit = defineEmits<{
@@ -79,7 +81,7 @@ const focusItems = computed(() =>
     .filter(Boolean)
 )
 
-type SignalKey = 'checks' | 'merge' | 'approvals'
+type SignalKey = 'checks' | 'merge' | 'approvals' | 'comments'
 interface Signal {
   key: SignalKey
   label: string
@@ -143,6 +145,17 @@ const signals = computed<Signal[]>(() => {
       iconColor: clean ? 'var(--ok)' : undefined,
       dot: clean ? undefined : columnDotStyle(props.badge.column),
       more: props.reasons.length > 0 || !!props.forgeDeclaration,
+    })
+  }
+  const round = props.round ?? []
+  if (round.length) {
+    const done = round.filter((r) => r.outcome === 'handled').length
+    out.push({
+      key: 'comments',
+      label: t('work.room.review.roundHandled', { done, total: round.length }),
+      icon: 'mdi-comment-check-outline',
+      iconColor: done === round.length ? 'var(--ok)' : 'var(--faint)',
+      more: true,
     })
   }
   if (c.approvals_required > 1) {
@@ -343,6 +356,18 @@ const moreActions = computed<MenuAction[]>(() => {
       </div>
       <!-- 托管方自己的一句话（I23）：这次采纳会落到哪里、有没有外部检查。 -->
       <div v-if="forgeDeclaration" class="signal-detail__row c-muted">{{ forgeDeclaration }}</div>
+    </div>
+    <div v-else-if="openSignal === 'comments'" class="signal-detail">
+      <div v-for="r in round" :key="r.id" class="signal-detail__row">
+        <v-icon
+          size="14"
+          :style="{ color: r.outcome === 'handled' ? 'var(--ok)' : r.outcome ? 'var(--warn)' : 'var(--faint)' }"
+        >
+          {{ r.outcome === 'handled' ? 'mdi-check' : r.outcome ? 'mdi-close' : 'mdi-minus' }}
+        </v-icon>
+        <span class="signal-detail__name">{{ r.text }}</span>
+        <span class="c-faint">{{ r.where }}</span>
+      </div>
     </div>
     <div v-else-if="openSignal === 'approvals'" class="signal-detail">
       <div class="signal-detail__row">

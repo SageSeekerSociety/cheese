@@ -12,6 +12,7 @@
 // 这里，因为它们的判据（活还在不在跑、文件是不是只读）全是取数那一边的事实。
 import type { FileSource, RoomTask, WorkspaceFile } from '../cx_types'
 import type { FileDiff } from '../lib/diff'
+import type { MergeConflict } from '../types/reviewComment'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -179,6 +180,8 @@ export function usePanelChanges(props: PanelChangesProps) {
       fileSource.value === 'committed' ||
       !fileEditable.value ||
       currentTask.value?.status !== 'open' ||
+      // 待审阅时不直接改：审的这一版会在审的过程中变掉。想改的地方写成修改建议。
+      currentTask.value?.card?.status === 'pending' ||
       fileBinary.value ||
       fileTooLarge.value ||
       openIsImage.value
@@ -477,8 +480,12 @@ export function usePanelChanges(props: PanelChangesProps) {
     }
   }
 
-  // Every save carries the version on which the user's decision was based.
-  async function writeOpenFile(expected: string | null) {
+  // 存的时候和芝士这段时间的修改重叠了：三方的那几段，逐处选一个版本再存。
+  const fileMerge = ref<MergeConflict | null>(null)
+
+  // Every save carries the version on which the user's decision was based, and the
+  // text it named: the backend merges the two edits against it when the file moved on.
+  async function writeOpenFile(expected: string | null, base: string = fileSaved.value) {
     const pid = props.projectId
     const tid = props.topicId
     const task = selectedTask.value
@@ -490,17 +497,25 @@ export function usePanelChanges(props: PanelChangesProps) {
     fileSaving.value = true
     errorMsg.value = null
     try {
-      const res = await writeFile(pid, path, draft, tid ?? undefined, expected, task)
+      const res = await writeFile(pid, path, draft, tid ?? undefined, expected, task, base)
       if (drafts.get(key)?.content === draft) drafts.delete(key)
       // The answer is only about the file that was open in the topic that was
       // open — anything else finished after a switch and must be dropped.
       if (selectedTask.value !== task || openPath.value !== path || sourceEpoch !== epoch) return
-      fileSaved.value = draft
+      // 合并过的话，存下去的是两边改动合起来的那一份：编辑器里换成它。
+      const saved = res.merged && typeof res.content === 'string' ? res.content : draft
+      fileSaved.value = saved
+      if (saved !== draft) fileDraft.value = saved
       fileVersion.value = res.version
       fileConflict.value = false
+      fileMerge.value = null
     } catch (e) {
       if (selectedTask.value !== task || openPath.value !== path || sourceEpoch !== epoch) return
-      if (e instanceof ApiError && e.status === 409) {
+      const merge = e instanceof ApiError ? (e.data as MergeConflict | undefined) : undefined
+      if (e instanceof ApiError && e.status === 409 && merge?.regions) {
+        // Both edited the same lines: pick a version for each, then save over theirs.
+        fileMerge.value = merge
+      } else if (e instanceof ApiError && e.status === 409) {
         // 芝士 wrote this file since it was read. Neither side wins by default:
         // show the conflict and let the human reload or overwrite on purpose.
         fileConflict.value = true
@@ -514,6 +529,17 @@ export function usePanelChanges(props: PanelChangesProps) {
 
   function saveFile() {
     void writeOpenFile(fileVersion.value)
+  }
+
+  // 逐处选完：存的是选出来的那一份，基于芝士那一版。
+  function resolveMerge(content: string) {
+    const merge = fileMerge.value
+    if (!merge) return
+    fileDraft.value = content
+    void writeOpenFile(merge.version, merge.base)
+  }
+  function cancelMerge() {
+    fileMerge.value = null
   }
 
   // 冲突后的两条出路,都由人点：丢掉自己的改动看最新的，或者明知有冲突仍然覆盖。
@@ -721,6 +747,9 @@ export function usePanelChanges(props: PanelChangesProps) {
     downloadOpenFile,
     saveFile,
     overwriteFile,
+    fileMerge,
+    resolveMerge,
+    cancelMerge,
     reloadOpenFile,
     onRevisionDecided,
   }

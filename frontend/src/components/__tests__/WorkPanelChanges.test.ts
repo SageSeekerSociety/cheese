@@ -265,7 +265,15 @@ describe('文件面板', () => {
     await flush()
 
     expect(writeFile).toHaveBeenCalledTimes(1)
-    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '在 B 里改的\n', 'topic-B', 'vB', 'task-topic-B')
+    expect(writeFile).toHaveBeenCalledWith(
+      'p1',
+      'a.py',
+      '在 B 里改的\n',
+      'topic-B',
+      'vB',
+      'task-topic-B',
+      expect.any(String)
+    )
   })
 
   it('an unsaved edit is still there after going to another task and coming back', async () => {
@@ -298,7 +306,15 @@ describe('文件面板', () => {
     await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
 
-    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', 'v1', 'task-topic-A')
+    expect(writeFile).toHaveBeenCalledWith(
+      'p1',
+      'a.py',
+      '人改过的\n',
+      'topic-A',
+      'v1',
+      'task-topic-A',
+      expect.any(String)
+    )
   })
 
   it('任务关闭后刷新会保留文本，但禁止继续保存', async () => {
@@ -375,7 +391,8 @@ describe('文件面板', () => {
       '只修改第二条任务\n',
       'topic-A',
       'v-task-two',
-      'task-topic-A-two'
+      'task-topic-A-two',
+      expect.any(String)
     )
   })
 
@@ -438,7 +455,15 @@ describe('文件面板', () => {
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v3' })
     await fireEvent.click(overwrite!)
     await flush()
-    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', 'v2', 'task-topic-A')
+    expect(writeFile).toHaveBeenLastCalledWith(
+      'p1',
+      'a.py',
+      '人改过的\n',
+      'topic-A',
+      'v2',
+      'task-topic-A',
+      expect.any(String)
+    )
   })
 
   it('committed files are read-only and switching back retains the live draft', async () => {
@@ -464,7 +489,15 @@ describe('文件面板', () => {
     expect(editor(container)?.value).toBe('Unsaved human draft')
     await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
-    expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', 'Unsaved human draft', 'topic-A', 'v1', 'task-topic-A')
+    expect(writeFile).toHaveBeenLastCalledWith(
+      'p1',
+      'a.py',
+      'Unsaved human draft',
+      'topic-A',
+      'v1',
+      'task-topic-A',
+      expect.any(String)
+    )
   })
 
   it('an offline machine leaves committed files available through the version selector', async () => {
@@ -587,7 +620,15 @@ new file mode 100644
     await fireEvent.click(buttonByText(container, '保存')!)
     await flush()
 
-    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '改一行\n', 'topic-A', 'v1', 'task-topic-A')
+    expect(writeFile).toHaveBeenCalledWith(
+      'p1',
+      'a.py',
+      '改一行\n',
+      'topic-A',
+      'v1',
+      'task-topic-A',
+      expect.any(String)
+    )
   })
 
   it('没动过的文件没有两面可切，直接就是可编辑的全文', async () => {
@@ -667,7 +708,8 @@ describe('task file navigation', () => {
       'unsaved first task',
       'topic-A',
       'v:task-topic-A',
-      'task-topic-A'
+      'task-topic-A',
+      expect.any(String)
     )
   })
 

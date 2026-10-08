@@ -224,6 +224,9 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     downloadOpenFile: noopAsync,
     saveFile: noopAsync,
     overwriteFile: noopAsync,
+    fileMerge: ref(null),
+    resolveMerge: noop,
+    cancelMerge: noop,
     reloadOpenFile: noopAsync,
     onRevisionDecided: noopAsync,
   }

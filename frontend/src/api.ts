@@ -1384,24 +1384,22 @@ export function readFile(
   return request<FileContent>(`/projects/${encodeURIComponent(projectId)}/file?path=${encodeURIComponent(path)}${t}`)
 }
 
-// Save an edited workspace file (人改文件即指令). The agent reads the latest on
-// its next turn, like 改文档即指令.
-//
-// `version` is the one readFile returned. Sending it makes the write
-// conditional: if 芝士 wrote the same file in between, the backend answers 409
-// instead of letting this save erase their edits without a trace.
+// Save an edited workspace file (人改文件即指令). `version` and `base` are what readFile
+// returned: if the file changed in between, the backend merges both edits against `base`
+// (`merged`, with the saved `content`), or answers 409 with the regions to pick from.
 export function writeFile(
   projectId: string,
   path: string,
   content: string,
   topicId?: string | null,
   version?: string | null,
-  taskId?: string | null
-): Promise<{ path: string; version: string }> {
+  taskId?: string | null,
+  base?: string | null
+): Promise<{ path: string; version: string; merged?: boolean; content?: string }> {
   const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
   return request(`/projects/${encodeURIComponent(projectId)}/file${t}`, {
     method: 'PUT',
-    body: JSON.stringify({ path, content, version: version ?? null }),
+    body: JSON.stringify({ path, content, version: version ?? null, base: base ?? null }),
   })
 }
 
@@ -1473,10 +1471,10 @@ export function acceptCard(cardId: string, decidedBy: string, headSha: string | 
   })
 }
 
-export function rejectCard(cardId: string, decidedBy: string, note: string): Promise<AcceptCard> {
+export function rejectCard(cardId: string, decidedBy: string, note: string, commentIds: string[] = []) {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/reject`, {
     method: 'POST',
-    body: JSON.stringify({ decided_by: decidedBy, note }),
+    body: JSON.stringify({ decided_by: decidedBy, note, comment_ids: commentIds }),
   })
 }
 

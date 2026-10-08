@@ -24,6 +24,7 @@ auth_entries:
   library.keeper: "library._library_keeper: ProjectService.get_or_404, require_verified_caller(project_id), authorize_project. The index names implemented checks rather than granting a new human/agent category. Source: app/api/routes/library.py."
   review.task: "accept._task_actor: resolve using task room/project, authorize_topic, explicitly require authenticated actor and TaskService.require_in_room. AcceptService decides filing/readiness/reviewer admission for the operation. Source: app/api/routes/accept.py; domain/review/services.py."
   review.card: "accept._card_actor resolves the card actual room/project and calls authorize_topic; handlers explicitly reject unauthenticated callers. AcceptService owns reviewer/decision/revoke rules, including management operations. Source: app/api/routes/accept.py and domain/review/services.py."
+  review.comment: "review_comments: task_conversation (or, for /review-comments/{comment_id}, the comment's task place) resolves the actor in the task room and authorize_topic; _person rejects unauthenticated callers and agent credentials. ReviewCommentService decides who may write (task owner, reviewer, contributors, the pending card's reviewer) and that only the author edits or deletes a draft. Source: app/api/routes/review_comments.py and domain/review/comments.py."
   review.download: "accept.download_card_deliverable resolves the card project and authorize_project before artifact snapshot delivery. It is the project access path rather than _task_actor. Source: app/api/routes/accept.py."
   team.member.read: "authenticated(require_permission rejects guest, then checks Action.READ, Resource.TEAM_MEMBERSHIP, 'teamId'): the caller is a member of the team. Source: app/api/routes/credit_usage.py, app/auth/checker.py."
   user.session: "Depends(require_auth_user) rejects guest after numeric-account access-token verification (or X-User-Id only in non-compose development/test); this shared numeric seam does not itself consult sign-in session revocation. Domain service and cited handler retain ownership checks. get_auth_user alone is not used as a synonym. Source: app/auth/checker.py and app/common/auth.py."
@@ -376,6 +377,11 @@ routes:
   - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/merge-anyway", auth: "review.card", owner: "review"}
   - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/auto-merge", auth: "review.card", owner: "review"}
   - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/revoke", auth: "review.card", owner: "review"}
+  # app.api.routes.review_comments
+  - {protocol: "http", method: "GET", path: "/topics/{task_id}/review-comments", auth: "review.comment", owner: "review"}
+  - {protocol: "http", method: "POST", path: "/topics/{task_id}/review-comments", auth: "review.comment", owner: "review"}
+  - {protocol: "http", method: "PATCH", path: "/review-comments/{comment_id}", auth: "review.comment", owner: "review"}
+  - {protocol: "http", method: "DELETE", path: "/review-comments/{comment_id}", auth: "review.comment", owner: "review"}
   # app.api.routes.addresses
   - {protocol: "http", method: "GET", path: "/addresses/projects/{ref}", auth: "address.reader", owner: "project.address"}
   - {protocol: "http", method: "GET", path: "/addresses/projects/{ref}/{kind}/{number}", auth: "address.reader", owner: "project.address"}

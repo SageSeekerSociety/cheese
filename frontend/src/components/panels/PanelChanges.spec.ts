@@ -246,8 +246,66 @@ describe('这一支的活', () => {
     await fireEvent.click(await screen.findByText('改'))
     await fireEvent.click(screen.getByText('保存'))
     await waitFor(() =>
-      expect(writeFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'const a = 1\n// edit', 'room-1', 'v1', 't-1')
+      expect(writeFile).toHaveBeenCalledWith(
+        'p1',
+        'src/app.ts',
+        'const a = 1\n// edit',
+        'room-1',
+        'v1',
+        't-1',
+        'const a = 1\n'
+      )
     )
+  })
+
+  it('和芝士改到同一处：逐处选版本，存的是选出来的那一份，基于芝士那一版', async () => {
+    writeFile.mockRejectedValueOnce(
+      new ApiError(409, '重叠了', undefined, undefined, undefined, {
+        regions: [
+          { kind: 'same', text: 'const a = 1\n' },
+          { kind: 'conflict', base: '', mine: '// edit', theirs: '// 芝士的' },
+        ],
+        version: 'v9',
+        base: 'const a = 1\n// 芝士的',
+      })
+    )
+    writeFile.mockResolvedValueOnce({ path: 'src/app.ts', version: 'v10' })
+    mount()
+    await openSection('src/app.ts')
+    await waitFor(() => expect(readFile).toHaveBeenCalled())
+    await fireEvent.click(await screen.findByText('编辑'))
+    await fireEvent.click(await screen.findByText('改'))
+    await fireEvent.click(screen.getByText('保存'))
+    // 三栏里选芝士那一栏，再存。
+    const theirs = await waitFor(() => {
+      const cols = document.querySelectorAll('.merge-picker__col--pick')
+      expect(cols.length).toBe(2)
+      return cols[1] as HTMLElement
+    })
+    await fireEvent.click(theirs)
+    const save = Array.from(document.querySelectorAll('.merge-picker button')).find(
+      (b) => b.textContent?.trim() === '保存'
+    ) as HTMLElement
+    await fireEvent.click(save)
+    await waitFor(() =>
+      expect(writeFile).toHaveBeenLastCalledWith(
+        'p1',
+        'src/app.ts',
+        'const a = 1\n// 芝士的',
+        'room-1',
+        'v9',
+        't-1',
+        'const a = 1\n// 芝士的'
+      )
+    )
+  })
+
+  it('待审阅时不能直接改文件', async () => {
+    listRoomTasks.mockResolvedValue({ data: [{ ...openTask(), card: { id: 'c-1', status: 'pending' } }], total: 1 })
+    mount()
+    await openSection('src/app.ts')
+    await waitFor(() => expect(readFile).toHaveBeenCalled())
+    expect(screen.queryByText('编辑')).toBeNull()
   })
 
   it('保存撞上 409：说清冲突，两条出路都由人点', async () => {

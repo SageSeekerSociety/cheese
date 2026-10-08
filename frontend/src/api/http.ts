@@ -69,7 +69,9 @@ export class ApiError extends Error {
     message: string,
     readonly code?: string,
     readonly requestId?: string,
-    readonly retryable?: boolean
+    readonly retryable?: boolean,
+    /** What the refusal carries about itself (`error.data`), e.g. a save's merge regions. */
+    readonly data?: unknown
   ) {
     super(message)
     this.name = 'ApiError'
@@ -301,7 +303,10 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
       throw new ApiError(res.status, transportFailureMessage(method, res.status))
     }
     if (!res.ok) {
-      const details = body as { message?: string; error?: { name?: string; message?: string; retryable?: boolean } }
+      const details = body as {
+        message?: string
+        error?: { name?: string; message?: string; retryable?: boolean; data?: unknown }
+      }
       if (
         details.error?.retryable !== false &&
         attempt < GET_RETRY_DELAYS_MS.length &&
@@ -320,7 +325,8 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
         serverSaid || t('global.request.failed', { status: res.status }),
         details.error?.name,
         res.headers?.get('X-Request-ID') ?? undefined,
-        details.error?.retryable
+        details.error?.retryable,
+        details.error?.data
       )
     }
     const envelope = body as ApiEnvelope<T>
