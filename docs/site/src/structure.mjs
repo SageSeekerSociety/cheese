@@ -33,7 +33,7 @@ export const DEV = [
   ['协作', ['teams', 'spaces', 'notifications', 'feedback', 'routine', 'integrations']],
   ['平台与安全', ['auth', 'seats', 'admins', 'run-records', 'backend-app', 'frontend', 'arch-metrics', 'scenes', 'feature-stats']],
   ['部署与运维', ['topology', 'data', 'ci', 'docs-site', 'deploy-scripts']],
-  ['参考（自动生成）', ['ref-cli', 'ref-env', 'ref-ci']],
+  ['参考（自动生成）', ['ref-cli', 'ref-env', 'ref-ci', 'ref-components']],
   ['索引（自动生成）', ['by-path']],
 ]
 
