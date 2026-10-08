@@ -176,7 +176,14 @@ async def create_card(
     comparison = await ProjectFiles(
         self._session, task.project_id, task.id
     ).comparison()
-    if not comparison or not comparison.get("total_commits"):
+    # A commit that changes no file delivers nothing either: accepting it would
+    # merge an empty commit into the base and call that a delivery. Work whose
+    # result does not land on the base ends by closing the task instead.
+    if (
+        not comparison
+        or not comparison.get("total_commits")
+        or comparison.get("files") == []
+    ):
         raise ValidationError(
             say("taskBranchNothingToDeliver", branch=task.branch_name)
         )
