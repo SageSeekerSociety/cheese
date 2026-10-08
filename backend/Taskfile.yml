@@ -79,10 +79,11 @@ tasks:
       - uv run alembic revision --autogenerate -m "{{.MSG}}"
     requires:
       vars: [MSG]
-  db:downgrade:
-    desc: Downgrade one migration step
-    cmds:
-      - uv run alembic downgrade -1
+  # There is deliberately no `db:downgrade` task: a release is not rolled
+  # forward and backward through the schema. Rolling back rolls the image
+  # (docs/manual/dev/deploy-scripts.md, "回滚"): it restores the previous
+  # image, not the data — a migration that ran stays run. Going back on a
+  # schema means restoring a database dump, not `alembic downgrade`.
   deps:sync:
     desc: Sync Python dependencies
     cmds:

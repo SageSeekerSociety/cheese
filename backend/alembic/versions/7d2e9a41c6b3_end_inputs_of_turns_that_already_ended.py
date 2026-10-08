@@ -49,6 +49,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Which rows this wrote is not recorded apart from the sweep's own; an
-    # ended input stays ended.
+    """Which rows this wrote is not recorded apart from the sweep's own; an
+    ended input stays ended."""
     pass
