@@ -949,6 +949,11 @@ class Settings(BaseSettings):
     # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是
     # 必须的：读卡是热点，不能每个读者都替全平台去问一次 GitHub。
     accept_pr_snapshot_floor_s: int = 60
+    # How long one card read waits for those refreshes. They run side by side,
+    # one per card however many readers ask, and finish in the background past
+    # this; the next read gets what they wrote. Each is a few GitHub calls, and
+    # in sequence they once held `GET /topics/{id}/accept-card` for 40 s.
+    accept_pr_snapshot_read_wait_s: float = 2.0
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.

@@ -2084,6 +2084,9 @@
   },
   "task": {
     "agent": "AI 队友",
+    "agentEdit": "改",
+    "agentHeading": "这件事由哪位 AI 队友来做",
+    "agentHint": "选中的那位从下一轮开始接手",
     "machine": "环境",
     "followsRoom": "跟随频道",
     "details": "任务信息",

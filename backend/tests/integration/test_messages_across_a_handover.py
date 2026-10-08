@@ -276,8 +276,10 @@ def test_a_message_whose_wake_up_was_missed_starts_on_the_next_sweep(
     ]
 
     class Runs:
-        async def record(self, name, at):
-            pass
+        """This process takes every tick; the lease row is not what's under test."""
+
+        async def claim(self, name, *, interval_s, who, now):
+            return True
 
     begun = time.monotonic()
     client.portal.call(sweep.start, Runs())

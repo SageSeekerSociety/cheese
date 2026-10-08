@@ -54,6 +54,7 @@ import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/top
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
 
+import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
@@ -95,8 +96,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
   // 房间名册和项目名册是两份，因为 AI 队友的座位只在前者上。
   const {
-    agentSeat,
-    agentName,
+    agentSeat: rosterSeat,
     mentionPool,
     memberByHandle,
     seatByHandle,
@@ -115,29 +115,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
     },
   })
 
-  // 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
-  // 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
-  // 是一次「我试了但做不了」，而人只会记得是它没做成。
-  const composerHint = computed(() =>
-    alwaysSummon()
-      ? t('work.room.composer.placeholderDm', { name: agentName.value })
-      : t('work.room.composer.placeholder', { name: agentName.value })
-  )
-
-  // Keep the module-level handle→name map in sync with the roster, so
-  // <@handle> tokens render with the member's display name.
-  watch(
-    mentionPool,
-    (pool) => {
-      for (const k of Object.keys(mentionNames)) delete mentionNames[k]
-      for (const row of pool) mentionNames[row.handle] = row.label
-      // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
-      // not the raw literal — they are reserved handles, not roster members.
-      mentionNames.all = t('work.room.mention.all')
-      mentionNames.here = t('work.room.mention.here')
-    },
-    { immediate: true, deep: true }
-  )
+  // 谁在这间房说话、界面上怎么称呼它、@ 渲染成谁的名字 —— 见 useAgentNaming。
+  const { agentSeat, agentName, composerHint } = useAgentNaming({
+    roomSeat: rosterSeat,
+    pool: mentionPool,
+    nameOf: agentNameOf,
+    names: mentionNames,
+    taskAgentHandle: opts.taskAgentHandle,
+    alwaysSummon,
+  })
 
   // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
   const timeline = useTimeline({ renders: rendersInRoom })
@@ -209,6 +195,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // room/composables/useRoomSocket。它不认识帧的含义：帧交给下面的 handleFrame。
   const {
     connected,
+    linkDown,
     connectRefused,
     open: openSocket,
     close: closeSocket,
@@ -984,6 +971,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     // what the page above listens for
     errorMsg,
     connected,
+    linkDown,
     send,
     replyToQuestion,
     viewer,

@@ -173,7 +173,12 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
         return "a" * 40
 
     async def _comparison(_project_id, _session, _path, **_):
-        return {"total_commits": 1, "files": [], "commits": []}
+        # One commit that changes one file: a branch with something to deliver.
+        return {
+            "total_commits": 1,
+            "files": [{"filename": "README.md", "status": "modified"}],
+            "commits": [],
+        }
 
     async def _fake_user_token(_session, handle: str) -> str | None:
         return connected.get(handle)

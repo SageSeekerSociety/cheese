@@ -436,32 +436,36 @@ async def _gateway_project_env(
                 if s.get(_GW_BUDGET) == target:
                     return {"ANTHROPIC_AUTH_TOKEN": key}
 
-        # Write path: something must be minted or re-priced. Serialised, and
-        # the settings row is re-read here so a mint that landed while this
-        # call waited on the lock is the one that gets used.
+        # Write path: something must be minted or re-priced. Serialised, and the
+        # settings are read under the row lock here so a mint that landed while
+        # this call waited on the lock is the one that gets used.
         async with gateway_lock:
             async with sessions() as session:
-                project = await ProjectRepository(session).get(project_id)
+                repo = ProjectRepository(session)
+                project = await repo.get(project_id)
                 if project is None or gateway is None:
                     return None
-                s = dict(project.settings or {})
+                await repo.lock_settings(project)
+                s = project.settings or {}
                 key = s.get(_GW_KEY)
+                patch: dict[str, object] = {}
+                remove: tuple[str, ...] = ()
                 if not isinstance(key, str) or not key:
                     key = await gateway.mint_project_key(project_id)
                     if not key:
                         return None
-                    s[_GW_KEY] = key
+                    patch[_GW_KEY] = key
                 target = await service._gateway_budget_target(session, project_id)
                 # No target clears the brake: a budget left on the key from
                 # before would refuse calls the platform now admits.
                 if s.get(_GW_BUDGET) != target:
                     if await gateway.set_key_budget(key, target):
                         if target is None:
-                            s.pop(_GW_BUDGET, None)
+                            remove = (_GW_BUDGET,)
                         else:
-                            s[_GW_BUDGET] = target
-                if s != (project.settings or {}):
-                    project.settings = s
+                            patch[_GW_BUDGET] = target
+                if patch or remove:
+                    await repo.merge_settings(project, patch, remove=remove)
                     await session.commit()
         return {"ANTHROPIC_AUTH_TOKEN": key}
     except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
@@ -486,17 +490,17 @@ async def _gateway_platform_env(
                 return {"ANTHROPIC_AUTH_TOKEN": key}
         async with gateway_lock:
             async with sessions() as session:
-                project = await ProjectRepository(session).get(project_id)
+                repo = ProjectRepository(session)
+                project = await repo.get(project_id)
                 if project is None:
                     return None
-                s = dict(project.settings or {})
-                key = s.get(_GW_PLATFORM_KEY)
+                await repo.lock_settings(project)
+                key = (project.settings or {}).get(_GW_PLATFORM_KEY)
                 if not isinstance(key, str) or not key:
                     key = await gateway.mint_project_key(project_id, platform=True)
                     if not key:
                         return None
-                    s[_GW_PLATFORM_KEY] = key
-                    project.settings = s
+                    await repo.merge_settings(project, {_GW_PLATFORM_KEY: key})
                     await session.commit()
         return {"ANTHROPIC_AUTH_TOKEN": key}
     except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
@@ -537,9 +541,10 @@ class ProjectGatewayKey:
         return key, ckpt if isinstance(ckpt, dict) else None
 
     async def advance(self, session: AsyncSession, checkpoint: dict) -> None:
-        project = await ProjectRepository(session).get(self.project_id)
+        repo = ProjectRepository(session)
+        project = await repo.get(self.project_id)
         assert project is not None
-        project.settings = {**(project.settings or {}), self._fields[1]: checkpoint}
+        await repo.merge_settings(project, {self._fields[1]: checkpoint})
 
     async def payer(self, session: AsyncSession) -> Payer | None:
         if self.platform:

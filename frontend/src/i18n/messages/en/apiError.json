@@ -594,7 +594,7 @@
   "deliverableTooLarge": "{path} is {size}MB, over the {max}MB limit for one deliverable. When what you hand over is an address, record it with deliver_url.",
   "topicArchivedNoReview": "The channel is archived, so nothing more can be submitted for review",
   "taskEndedOrNoBranch": "This task has ended or has no working branch",
-  "taskBranchNothingToDeliver": "The task branch {branch} has no commits to deliver",
+  "taskBranchNothingToDeliver": "The task branch {branch} has no changes to deliver",
   "reviewCheckOnlyWhenWaiting": "Only a review waiting on checks can record check results",
   "topicArchivedCannotReview": "The channel is archived, so it can't be submitted for review",
   "reviewNoPendingCard": "This channel has no pending review, so there's no description to change",

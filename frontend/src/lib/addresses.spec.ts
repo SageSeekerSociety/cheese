@@ -93,6 +93,16 @@ describe('落地时换成短地址', () => {
   })
 })
 
+describe('认得的项目不再问一次', () => {
+  it('地址里写的是 UUID 也一样', async () => {
+    await landsOn(`/projects/${PROJECT}/channels/${ROOM}`)
+    api.resolveProject.mockClear()
+
+    expect(await landsOn(`/projects/${PROJECT}/tasks/${TASK}`)).toBe('/projects/helper/tasks/318')
+    expect(api.resolveProject).not.toHaveBeenCalled()
+  })
+})
+
 describe('页面拿到的是 UUID', () => {
   it('任务页拿到任务和它所在的频道', async () => {
     const path = '/projects/helper/tasks/318'

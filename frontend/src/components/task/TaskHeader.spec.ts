@@ -1,4 +1,4 @@
-/** 任务页头：只有负责人能开始、能换做它的电脑；别人看得到它在哪台电脑上做。做这件事的人都能改名。 */
+/** 任务页头：只有负责人能开始、能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { TopicComputeProfile } from '@/types/compute'
@@ -57,6 +57,13 @@ const MACHINE = {
 
 const PEOPLE = ['alice', 'bob', 'carol'].map((member_handle) => ({ member_handle, agent: false }))
 
+/** 这间房名册上的 AI 队友：负责人能从这里面挑一位做这件事。 */
+const AGENTS = [
+  { member_handle: 'cheese-01', agent: true },
+  { member_handle: 'cheese-02', agent: true },
+]
+const AGENT_NAMES = { 'cheese-01': '小苔', 'cheese-02': '无言' }
+
 /** 名册这一行带着每个人**自己挑过的**头像：alice 挑了一张，bob 从来没挑过（null）。 */
 const PICKED = [
   { member_handle: 'alice', agent: false, avatar_id: 7 },
@@ -64,19 +71,21 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
-function mount(over: Partial<RoomTask> = {}, people = PEOPLE) {
+function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
+  const setAgent = vi.fn(async () => true)
   const rename = vi.fn(async () => true)
   const reopen = vi.fn(async () => true)
   const view = render(TaskHeader as Component, {
     props: {
       room: ROOM,
       task: task(over),
-      memberNames: {},
+      memberNames: AGENT_NAMES,
       agentName: '芝士',
       people,
+      agents,
       machine: MACHINE,
       machineError: false,
       starting: false,
@@ -88,11 +97,12 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE) {
       handOver: async () => true,
       rename,
       setCollaborators,
+      setAgent,
       loadMachine,
     },
     global: { plugins: [vuetify] },
   })
-  return { ...view, start, loadMachine, setCollaborators, rename, reopen }
+  return { ...view, start, loadMachine, setCollaborators, setAgent, rename, reopen }
 }
 
 function stubViewport() {
@@ -112,6 +122,23 @@ async function openDetails(container: Element) {
   stubViewport()
   await fireEvent.click(container.querySelector('[data-testid="task-details"]')!)
   await waitFor(() => expect(document.body.textContent).toContain('王宁的笔记本'))
+}
+
+async function openAgentMenu(container: Element) {
+  await openDetails(container)
+  await fireEvent.click(document.querySelector('[data-testid="task-agent-edit"]')!)
+  await waitFor(() => expect(document.querySelector('[data-testid="task-agent-menu"]')).not.toBeNull())
+}
+
+/** 换队友那张菜单里的每一行，从上到下：先是「跟随频道」，再是能挑的队友。 */
+function agentRows(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('.task-agent-menu__row')]
+}
+
+/** 菜单开着没有。收起的菜单连同它的卡片留在 DOM 里（Vuetify 只把它藏起来），
+ * 所以看那颗「改」上的 aria-expanded，而不是看卡片在不在。 */
+function agentMenuOpen(): boolean {
+  return document.querySelector('[data-testid="task-agent-edit"]')?.getAttribute('aria-expanded') === 'true'
 }
 
 beforeEach(() => {
@@ -154,6 +181,76 @@ describe('任务页头', () => {
     const row = document.querySelector('[data-testid="task-machine"]')!
     expect(row.textContent).toContain('王宁的笔记本')
     expect(row.querySelector('button')).toBeNull()
+  })
+
+  it('负责人能换做这件事的队友，换完菜单就收', async () => {
+    const { container, setAgent } = mount()
+    await openAgentMenu(container)
+    // 第一行是跟着房间的那位；能挑的是这间房名册上的队友，别人不在里面。
+    expect(agentRows().map((r) => r.textContent?.trim())).toEqual(['跟随频道', '小苔', '无言'])
+    await fireEvent.click(agentRows()[2])
+    expect(setAgent).toHaveBeenCalledWith('cheese-02')
+    await waitFor(() => expect(agentMenuOpen()).toBe(false))
+  })
+
+  it('换回「跟随频道」就是不给这件事单独指定队友', async () => {
+    const { container, setAgent } = mount({ agent_handle: 'cheese-02' })
+    await openAgentMenu(container)
+    // 单独指定过的那一位排在「跟随频道」后面，是当前选中的那一行。
+    expect(agentRows()[1].textContent?.trim()).toBe('无言')
+    expect(agentRows()[0].querySelector('.mdi-radiobox-marked')).toBeNull()
+    expect(agentRows()[1].querySelector('.mdi-radiobox-marked')).not.toBeNull()
+    await fireEvent.click(agentRows()[0])
+    expect(setAgent).toHaveBeenCalledWith(null)
+  })
+
+  it('没单独指定时，负责人看到的是房间的那位，也写明跟着频道', async () => {
+    const { container } = mount()
+    await openDetails(container)
+    const row = document.querySelector('[data-testid="task-agent"]')!
+    expect(row.textContent).toContain('芝士')
+    expect(row.textContent).toContain('跟随频道')
+    expect(row.querySelector('[data-testid="task-agent-edit"]')).not.toBeNull()
+  })
+
+  it('不是负责人：没单独指定时，写明这位是跟着频道的', async () => {
+    me = 'bob'
+    const { container } = mount()
+    await openDetails(container)
+    const row = document.querySelector('[data-testid="task-agent"]')!
+    expect(row.textContent).toContain('芝士')
+    expect(row.textContent).toContain('跟随频道')
+    expect(row.querySelector('button')).toBeNull()
+  })
+
+  it('不是负责人：看得到这件事交给了哪位队友，不能换', async () => {
+    me = 'bob'
+    const { container } = mount({ agent_handle: 'cheese-01' })
+    await openDetails(container)
+    const row = document.querySelector('[data-testid="task-agent"]')!
+    expect(row.textContent).toContain('小苔')
+    expect(row.querySelector('button')).toBeNull()
+  })
+
+  it('关了的任务换不了队友', async () => {
+    const { container } = mount({ status: 'closed' })
+    await openDetails(container)
+    expect(document.querySelector('[data-testid="task-agent-edit"]')).toBeNull()
+  })
+
+  it('名册上没有别的队友可挑，就不给这颗「改」', async () => {
+    const { container } = mount({}, PEOPLE, [])
+    await openDetails(container)
+    expect(document.querySelector('[data-testid="task-agent-edit"]')).toBeNull()
+  })
+
+  it('后端拒了这次更换，菜单留着让他再挑一次', async () => {
+    const { container, setAgent } = mount({ agent_handle: 'cheese-01' })
+    setAgent.mockResolvedValue(false)
+    await openAgentMenu(container)
+    await fireEvent.click(agentRows()[2])
+    await waitFor(() => expect(setAgent).toHaveBeenCalledWith('cheese-02'))
+    expect(agentMenuOpen()).toBe(true)
   })
 
   it('负责人把名册上的人加为协作者', async () => {

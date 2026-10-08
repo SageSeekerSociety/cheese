@@ -328,7 +328,7 @@ function reloadAccept() {
   void accept.reload()
 }
 const chatColumn = ref<{
-  connected: boolean
+  linkDown: boolean
   reloadFeedback: () => void
   reloadSkills: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
@@ -337,7 +337,7 @@ const chatColumn = ref<{
 
 // The chat column's own composer is the one this topic uses; TopicView only
 // needs a handle on the panel it lives in for the connection dot in the header.
-const composerReady = computed(() => !!chatColumn.value?.connected)
+const linkDown = computed(() => !!chatColumn.value?.linkDown)
 
 // 预览里指出的一处位置，作为一条普通消息进这个房间的对话。没有新接口，也没有
 // 长期锚点：它只在下一轮被读一次。
@@ -384,11 +384,12 @@ function openDiscussion(conversationId: string) {
 }
 
 // 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
-// `composerReady` 是 socket 的那一帧，而 socket 会在连接打嗝时闪断：那一瞬它说
-// 未连接，可这一轮还在跑（工作条写着「正在工作 · 重试中」，因为重试就是靠它自己
-// 接着干）。一轮没跑完，这个房间就是连着的 —— 断了它没法把这一轮干完。所以两个
-// 一起看：只要工作条在说「正在工作」，页头就不能同时说「未连接」。
-const roomConnected = computed(() => composerReady.value || working.value)
+// `linkDown` 已经不算刚进房间时的握手和一下就重连上的闪断（`useRoomSocket`），
+// 可 socket 断得再久一点时，这一轮可能还在跑（工作条写着「正在工作 · 重试中」，
+// 因为重试就是靠它自己接着干）。一轮没跑完，这个房间就是连着的 —— 断了它没法
+// 把这一轮干完。所以两个一起看：只要工作条在说「正在工作」，页头就不能同时说
+// 「未连接」。
+const roomConnected = computed(() => !linkDown.value || working.value)
 // 此刻谁在这个房间里忙，对话栏从 socket 上学来：现场那一格画其中在干活的队友。
 const activity = ref<MemberActivityLine[]>([])
 // 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
@@ -519,6 +520,9 @@ const unreadOnOpen = store.unreadMap[props.topicId]?.messages ?? 0
 // 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
 const roomMembers = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
+// 任务那一栏「做这件事的队友」能挑的几位：这间房名册上的 AI 队友。换的时候后端也只认
+// 名册上那个座位，所以给的就是名册。
+const roomAgents = computed<TopicMemberRow[]>(() => roomMembers.value.filter((m) => m.agent))
 const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
@@ -600,6 +604,7 @@ void openPlace()
         :member-names="memberNames"
         :agent-name="store.agentName"
         :people="taskPeople"
+        :agents="roomAgents"
         :machine="taskMachine"
         :machine-error="taskMachineError"
         :starting="taskStarting"
@@ -612,6 +617,7 @@ void openPlace()
         :hand-over="taskPage.handOver"
         :rename="taskPage.rename"
         :set-collaborators="taskPage.setCollaborators"
+        :set-agent="taskPage.setAgent"
         :load-machine="taskPage.loadMachine"
         :panel-open="panelOpen"
         @open-room="backToRoom"
@@ -677,6 +683,7 @@ void openPlace()
             :unread-on-open="unreadOnOpen"
             :focus-block="focusBlock"
             :task-id="taskId ?? null"
+            :task-agent-handle="currentTask?.agent_handle ?? null"
             :composer-closed="composerClosed"
             :accept-elsewhere="focusMode"
             v-on="chatEvents"
@@ -844,6 +851,7 @@ void openPlace()
                 :unread-on-open="unreadOnOpen"
                 :focus-block="focusBlock"
                 :task-id="taskId ?? null"
+                :task-agent-handle="currentTask?.agent_handle ?? null"
                 :composer-closed="composerClosed"
                 accept-review-button
                 v-on="chatEvents"

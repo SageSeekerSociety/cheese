@@ -262,7 +262,7 @@ CREATE INDEX ON session_work_leases (claim_until) WHERE claim IS NOT NULL;
 
 ### 周期任务：每个任务每一拍一个租约 {#periodic-leases}
 
-给 `periodic_job_runs`（今天只有 `name` 和 `last_run_at`，`core/job_runs.py:19`）加 `run_by` 和 `run_until`，变成每个任务、每一拍一个租约：`UPDATE ... WHERE name = :n AND last_run_at <= now() - 间隔 AND (run_until IS NULL OR run_until < now())`，有返回行才跑这一拍。迁出全局锁的任务在每个进程上都被调度，每一拍只有一个进程真跑。Hatchet 的维护任务也是按种类各自租，不靠一个全局 leader。
+`periodic_job_runs`（`core/job_runs.py`）有 `name`、`last_run_at`、`run_by`、`run_until`，每个任务、每一拍一个租约：`INSERT ... ON CONFLICT (name) DO UPDATE ... WHERE last_run_at <= now() - 间隔 AND (run_until IS NULL OR run_until <= now()) RETURNING name`，有返回行才跑这一拍，`run_by` 记主机和进程、`run_until` 记到下一拍。租约读不到时照跑这一拍并记 ERROR，宁可重跑也不让调度全停。任务默认还是「只在持锁进程跑」，第 3e 步逐个迁出；迁出后每个进程都调度它，每一拍只有一个进程真跑。Hatchet 的维护任务也是按种类各自租，不靠一个全局 leader。
 
 29 个周期任务按能不能迁分四类：
 
@@ -270,7 +270,7 @@ CREATE INDEX ON session_work_leases (claim_until) WHERE claim IS NOT NULL;
 |---|---|---|
 | A. 已经能并发跑 | routines、timed deliveries、通知邮件和推送、通知摘要、PR 轮询两项、云计算计量、云预热池 | 第一批迁出。routines 和 timed deliveries 会起轮次，先确认不持锁的进程能起轮次 |
 | B. 只做保留期清理或幂等同步 | 托管凭据缓存清理、运行记录过期、文档问答保留、棘轮快照采集、托管事件订阅对账 | 第二批迁出，每个先用两个进程跑一遍集成测试 |
-| C. 读请求路径写进本进程内存的东西 | backend error flush：`backend_log.py` 的 `intake` 在每个进程的请求路径上写入，由持锁进程的周期任务刷出，只刷满 300 秒（`DEDUP_WINDOW_S`）的窗口。部署是单实例蓝绿双槽，后起的进程拿到锁后会刷自己攒的窗口，不会丢。会丢的是出局的进程：`main.py` 的 `hand_over()` 先停掉所有周期任务、再放锁，它最后不足 300 秒的窗口随退出丢掉 | 在 `hand_over()` 停周期任务之前强制刷一次，不论 300 秒到没到。和是否持锁无关，迁出锁的第一步就做 |
+| C. 读请求路径写进本进程内存的东西 | backend error flush：`backend_log.py` 的 `intake` 在每个进程的请求路径上写入，由持锁进程的周期任务刷出，只刷满 300 秒（`DEDUP_WINDOW_S`）的窗口。部署是单实例蓝绿双槽，后起的进程拿到锁后会刷自己攒的窗口，不会丢。出局的进程原本会丢最后不足 300 秒的窗口：`main.py` 的 `hand_over()` 先停掉周期任务、再放锁 | 第 2e 步已做：`hand_over()` 停周期任务之前强制刷一次，不论 300 秒到没到；进程退出前再刷一次，兜住交接期间新开的窗口。和是否持锁无关，是迁出锁的第一步 |
 | D. 靠本进程内存判断「谁在跑」 | 孤儿轮次清扫、排队消息清扫、进度提醒、启动恢复、托管事件监听 | 留在锁里，等[全局锁退役](#ownership-retire)那一步 |
 | 待逐个读代码 | 记忆整理、任务截止、安静任务提醒、超时投递告警、托管孤儿账号清理、云主机池、云沙箱生命周期、订阅用量导入 | 能用领取列改造的归 A，否则归 D |
 
