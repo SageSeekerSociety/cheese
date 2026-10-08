@@ -296,6 +296,10 @@ async def _enrich_task_models(
     access_group_ids = await SpaceDomainGroupDomainRepository(
         session=db
     ).list_group_ids_by_task_ids(space_id=space_id, task_ids=access_control_task_ids)
+    # 传入的 dict 不能预置非空的 accessDomainGroupIds：这里只在命中组时覆盖，没有
+    # 命中组就是「保持 setdefault 的空列表」——调用方预置了值、这道题又存了域但在本
+    # 板里没有命中组时，那个预置值会留下来（旧的逐题写法会覆盖成空）。现有调用点都用
+    # _task_to_api_model 构造 dict，不带这个键。
     for task_model in task_models:
         task_model.setdefault("accessDomainGroupIds", [])
         model_id = task_model.get("id")
