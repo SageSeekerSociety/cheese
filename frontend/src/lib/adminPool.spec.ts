@@ -1,10 +1,17 @@
 import type { StatsClaudeAccount, StatsClaudePool } from '@/api'
+import type { Trans } from './adminStats'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { poolView } from './adminPool'
 
 import { setLocale, t } from '@/i18n'
+
+/** `@/i18n` 导出的那个全局 `t` 与 `Trans` 是同一个函数的两个泛型实例化：全局那个的消息
+ *  表和语言是具体的（`'zh-CN' | 'en'`），而 `Trans` 用的是 `Composer` 的默认泛型，收不下
+ *  它。运行时是同一个函数，类型上收一次就够了 —— 别为了测试把 `Trans` 放宽，组件里的
+ *  `useI18n()` 用的就是收紧的那一组。 */
+const trans = t as unknown as Trans
 
 // 这一段的规则钉在中文上（英文只在形状不同的地方各来一条）。
 beforeEach(() => setLocale('zh-CN'))
@@ -31,7 +38,7 @@ function pool(over: Partial<StatsClaudePool> = {}): StatsClaudePool {
   }
 }
 
-const view = (over: Partial<StatsClaudePool> = {}) => poolView(pool(over), t, 'zh-CN', NOW)
+const view = (over: Partial<StatsClaudePool> = {}) => poolView(pool(over), trans, 'zh-CN', NOW)
 
 describe('账号池那一段', () => {
   it('可用 / 冷却 / 已停用各一行，冷却那行带解冻时刻', () => {
@@ -133,7 +140,7 @@ describe('账号池那一段', () => {
   })
 
   it('旧后端没有这一块（`null`）时整段不画', () => {
-    const body = poolView(null, t, 'zh-CN', NOW)
+    const body = poolView(null, trans, 'zh-CN', NOW)
     expect(body).toEqual({ rows: [], summary: '', stale: '', empty: true })
   })
 
@@ -146,7 +153,7 @@ describe('账号池那一段', () => {
           account({ name: 'b', state: 'disabled', failures: 1 }),
         ],
       }),
-      t,
+      trans,
       'en',
       NOW
     )
