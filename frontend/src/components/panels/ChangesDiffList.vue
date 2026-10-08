@@ -13,6 +13,7 @@ import type { FileDiff } from '../../lib/diff'
 import { computed, ref } from 'vue'
 
 import { numberDiffLines, parseDiffLines } from '../../lib/diff'
+import { placeLabel } from '../../lib/reviewPlace'
 import ReviewCommentBox from '../review/ReviewCommentBox.vue'
 import ReviewCommentCard from '../review/ReviewCommentCard.vue'
 
@@ -75,10 +76,7 @@ function atHead(path: string) {
   })
 }
 function where(c: ReviewComment) {
-  if (c.state === 'sent' && c.current_line === null) return t('work.room.review.gone')
-  const start = c.state === 'draft' ? c.line_start : (c.current_line as number)
-  const end = start + (c.line_end - c.line_start)
-  return t('work.room.review.lines', { lines: start === end ? `${start}` : `${start}–${end}` })
+  return placeLabel(c)
 }
 function onPick(path: string, start: number, end: number, text: string) {
   composing.value = { path, start, end, text }

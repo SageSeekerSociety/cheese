@@ -12,7 +12,7 @@
 // 这里，因为它们的判据（活还在不在跑、文件是不是只读）全是取数那一边的事实。
 import type { FileSource, RoomTask, WorkspaceFile } from '../cx_types'
 import type { FileDiff } from '../lib/diff'
-import type { MergeConflict } from '../types/reviewComment'
+import type { MergeConflict, OfficeComparison } from '../types/reviewComment'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -26,10 +26,12 @@ import {
   workspaceFileRawUrl,
   writeFile,
 } from '../api'
+import { reviewComparison } from '../api/reviewComments'
 import { phraseLabel } from '../lib/board'
 import { parseDiffLines, splitDiffByFile } from '../lib/diff'
 import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
+import { placeKind } from '../lib/reviewPlace'
 import { fetchRoomTasks } from '../lib/topicPanelCache'
 
 import { useDocumentRevisions } from './useDocumentRevisions'
@@ -318,10 +320,45 @@ export function usePanelChanges(props: PanelChangesProps) {
       version: () => fileVersion.value,
       task: () => selectedTask.value,
       source: () => fileSource.value,
-      readOnly: () => props.readOnly === true || currentTask.value?.status !== 'open',
+      // 待审阅时修订只看不改：接受或拒绝会改动审的这一版。哪一处不要，写一条批注。
+      readOnly: () =>
+        props.readOnly === true ||
+        currentTask.value?.status !== 'open' ||
+        currentTask.value?.card?.status === 'pending',
     },
     { onDecided: () => void onRevisionDecided() }
   )
+
+  // 任务里的 Word、表格、幻灯片能和上一版比：第一次交付比任务开始时的版本，被退回
+  // 过的比退回时那一版（`backend/app/domain/review/document_compare.py`）。
+  const canCompare = computed(() => !!selectedTask.value && !!openPath.value && placeKind(openPath.value) !== 'line')
+  const comparing = ref(false)
+  const comparison = ref<OfficeComparison | null>(null)
+  const comparisonLoading = ref(false)
+  const comparisonError = ref('')
+  let comparisonSeq = 0
+  watch(openPath, () => {
+    comparing.value = false
+    comparison.value = null
+  })
+  async function toggleCompare() {
+    comparing.value = !comparing.value
+    const task = selectedTask.value
+    const path = openPath.value
+    if (!comparing.value || !task || !path) return
+    const mine = ++comparisonSeq
+    comparisonLoading.value = true
+    comparisonError.value = ''
+    try {
+      const res = await reviewComparison(task, path)
+      if (mine === comparisonSeq) comparison.value = res.comparison
+    } catch (e) {
+      if (mine === comparisonSeq)
+        comparisonError.value = e instanceof Error ? e.message : t('work.room.review.compareUnavailable')
+    } finally {
+      if (mine === comparisonSeq) comparisonLoading.value = false
+    }
+  }
 
   // Raw bytes of the open file: what <img> renders for an image, and what the
   // download button hands over for anything else that can't be shown as text.
@@ -737,6 +774,12 @@ export function usePanelChanges(props: PanelChangesProps) {
     docRendererMissing,
     // 这一份 .docx 的修订（`useDocumentRevisions.ts`）
     revs,
+    canCompare,
+    comparing,
+    comparison,
+    comparisonLoading,
+    comparisonError,
+    toggleCompare,
     // 动作
     loadAll,
     selectFile,
