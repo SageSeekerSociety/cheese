@@ -29,7 +29,6 @@ from app.core.sentences import say
 from app.domain.agent import death_evidence, own_calls, own_limit
 from app.domain.agent.announce import answer_questions
 from app.domain.agent.ask import publish_answered
-from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.compute import ComputePool
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
@@ -184,6 +183,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
+from app.domain.agent.turn.intake.assistant import AssistantMessages
 from app.domain.agent.turn.intake.events import (
     _persist_change_summary,
     _persist_room_event,
@@ -242,7 +242,6 @@ from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import Topic, TopicStatus
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 
 CHEESE_AUTHOR = "cheese"
@@ -355,6 +354,12 @@ class ChatService(SessionRecovery, RoomTurns):
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
         self._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
+
+    @property
+    def messages(self) -> AssistantMessages:
+        # Composition only: this stateless writer uses the service's real state
+        # and transactions; it owns no copied live work or compatibility entry.
+        return AssistantMessages(self._sessions, self.live, room_roster)
 
     @property
     def session_factory(self) -> async_sessionmaker:
@@ -2019,226 +2024,6 @@ class ChatService(SessionRecovery, RoomTurns):
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         return await _agent_handle(session, topic_id)
-
-    async def _persist_assistant_message(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        text: str,
-        turn_id: uuid.UUID | None,
-        reply_to: uuid.UUID | None,
-        roster: list[dict] | None,
-        topic_refs: list[dict],
-        eid: str | None = None,
-        eids: tuple[str, ...] = (),
-        platform_unsolicited: bool = False,
-        continuation_id: uuid.UUID | None = None,
-        at: datetime | None = None,
-        inner_id: uuid.UUID | None = None,
-        publish: bool = False,
-        author: str | None = None,
-        publication_id: str | None = None,
-        own_output: bool = False,
-        extra_meta: dict | None = None,
-        closing: bool = False,
-    ) -> dict | None:
-        """Persist output immediately; only explicit publications enter chat.
-
-        Terminal output remains in activity without notifying mentioned members.
-        ``eid`` (the harness's own id for the event) is stamped into meta so a
-        record read twice lands once; ``eids`` carries every id a message was
-        delivered under, and any one of them matching an existing block means
-        this message already landed.
-
-        Returns None when ``continuation_id`` says this exact message already
-        landed in an earlier attempt at the same work (④ 重发): the re-sent
-        turn re-narrating "我先看一下 X" must not post a second copy of it. The
-        caller treats None as "nothing to broadcast".
-
-        ``own_output`` 告诉轮次输入账目：这一条是作者自己跑出来的产出，不是谁对
-        房间说的一句待读的话。默认不必填 —— 「署名是 agent 且落在某一轮里」已经
-        答得出这件事。填它的是那种平台填不出轮次号的写入端（远程控制里芝士问出
-        口的那句话）。
-
-        ``closing`` 说这一条是轮次收尾的结果文本。它照例就是这一轮最后说过的那
-        段话，已经作为一条消息落过了；和那段一字不差时不再落第二遍。比对的是库
-        里这一轮最后一段，不是内存账目——发版交接后接手的后端没有账目。"""
-        # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
-        # 当成助手输出印了出来。拦在这里而不是调用方:每一条写入路都经过这个方法,
-        # 拦在门口才不会有一条漏网。
-        as_progress = not publish
-        as_notice = None if publish else cli_notice(text)
-        if as_notice is not None:
-            line, notice_meta = as_notice
-            return await self._persist_room_event(
-                project_id=project_id,
-                topic_id=topic_id,
-                content=line,
-                meta=notice_meta,
-                turn_id=turn_id,
-                eid=eid,
-                platform_unsolicited=platform_unsolicited,
-                in_room=True,
-                author_type=AuthorType.platform,
-                inner_id=inner_id,
-            )
-        meta: dict | None = (
-            {"in_room": False, "progress": True} if as_progress else None
-        )
-        if eid:
-            meta = {**(meta or {}), "eid": eid}
-        if len(eids) > 1:
-            meta = {**(meta or {}), "eids": list(eids)}
-        if platform_unsolicited:
-            meta = {**(meta or {}), "platform_unsolicited": True}
-        if extra_meta:
-            meta = {**(meta or {}), **extra_meta}
-        known_ids = [e for e in dict.fromkeys((eid, *eids)) if e]
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            publication_key = None
-            publication_input = {
-                "text": text,
-                "reply_to": str(reply_to) if reply_to else None,
-            }
-            if publication_id is not None:
-                publication_key = action_key(
-                    topic_id, "chat-publish", author or "", publication_id
-                )
-                if not await idem.claim(
-                    session,
-                    publication_key,
-                    action="chat-publish",
-                    scope_id=str(topic_id),
-                ):
-                    previous = await idem.stored_result(session, publication_key)
-                    if previous is None or previous["input"] != publication_input:
-                        from app.core.errors import ConflictError
-
-                        raise ConflictError("request_id was used for another message")
-                    return previous["block"]
-            if known_ids and await blocks.has_any_eid(topic_id, known_ids):
-                return None
-            # `has_any_eid` alone is a SELECT followed by an INSERT, and the same
-            # hook event reaches this method from two places at once — the turn's
-            # own attribution and the platform-unsolicited path. Both read "not
-            # there", both write, and the room gets the message twice ~15ms
-            # apart, the two rows carrying the SAME eid (measured across the
-            # dev database: every duplicated 芝士 message has this shape).
-            # ON CONFLICT DO NOTHING is what actually decides; the read above
-            # stays because it also catches a copy landed by an earlier turn,
-            # which no claim of ours would.
-            if known_ids and not await idem.claim(
-                session,
-                action_key(topic_id, "block-eid", *sorted(known_ids)),
-                action="message",
-                scope_id=str(topic_id),
-            ):
-                return None
-            # Claim BEFORE writing, in the SAME session: the key and the block
-            # commit together, so "key present" and "message posted" cannot
-            # disagree no matter where the process dies.
-            if continuation_id is not None and not await idem.claim(
-                session,
-                action_key(
-                    continuation_id, "progress" if as_progress else "message", text
-                ),
-                action="message",
-                scope_id=str(topic_id),
-            ):
-                return None
-            topic = await TopicRepository(session).get(topic_id)
-            if roster is None:
-                # The reconcile/backfill caller holds no roster. Load it here
-                # instead of passing []: [] means 私聊 (no member list at all),
-                # and conflating the two flagged every @ in a recovered message
-                # as a non-member while silently dropping its notification.
-                roster = await room_roster(session, project_id, topic)
-            text = _expand_mention_names(text, roster, topic_refs)
-            if (
-                closing
-                and turn_id is not None
-                and await blocks.last_said_in_turn(topic_id, turn_id) == text
-            ):
-                return None
-            author = author or await self._agent_handle(session, topic_id)
-            # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
-            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
-            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
-            landed = landing(
-                EventAbout.task if inner_id is not None else EventAbout.room,
-                project_id=project_id,
-                room_id=topic_id,
-                task_id=inner_id,
-            )
-            block = await blocks.add(
-                project_id=landed.project_id,
-                conversation_id=landed.conversation_id,
-                author=author,
-                author_type=AuthorType.participant,
-                content=text,
-                kind=BlockKind.event if as_progress else BlockKind.message,
-                reply_to=reply_to,
-                turn_id=turn_id,
-                meta=meta,
-                created_at=at,
-                own_output=own_output,
-            )
-            # <@handle> mentions in 芝士's message → strong notify (the token is
-            # the single source of truth: what's shown = who's notified).
-            # Hallucinated handles get flagged in 现场, never silently no-op.
-            if topic is not None and not as_progress:
-                await announce_mentions(
-                    session, topic, block, author, roster, flag_unresolved=True
-                )
-            payload = _block_payload(BlockOut.model_validate(block))
-            if publication_key is not None:
-                await idem.record_result(
-                    session,
-                    publication_key,
-                    {"input": publication_input, "block": payload},
-                )
-            await session.commit()
-        if publish:
-            # The caller attributes the publication to a turn when it can; an
-            # agent running off this process (a remote executor) publishes over
-            # HTTP, where the runner knows no live work and hands in None. Its
-            # turn still exists here, so fall back — but carefully, because a
-            # room seats several agents: crediting agent A's publication to
-            # agent B's turn would silence B's reminder while A's room stays
-            # dark.
-            # So: the publisher's own live turn first; an unambiguous single
-            # live turn next (covers tokens that don't name an agent seat);
-            # nothing when two agents' turns are live and neither is the
-            # publisher's. Without a fallback at all, every remote publication
-            # missed `last_chat_at` and the sweep kept "reminding" a turn that
-            # had just spoken, counting the silence from turn start.
-            conversation_id = inner_id or topic_id
-            work_id = turn_id or self._attributed_work_id(conversation_id, author)
-            state = (
-                self.live.hook_work.get((conversation_id, work_id))
-                if work_id is not None
-                else None
-            )
-            if state is not None:
-                state.last_chat_at = datetime.now(UTC)
-                state.last_progress_reminder_at = None
-        return payload
-
-    def _attributed_work_id(self, topic_id: uuid.UUID, author: str) -> uuid.UUID | None:
-        """Which live hook work a room publication with no turn id belongs to."""
-        live = [s for (t, _), s in self.live.hook_work.items() if t == topic_id]
-        own = [s for s in live if s.acting_agent == author]
-        if len(own) == 1:
-            return own[0].work_id
-        if len(own) > 1:
-            active = self.live.active_turn_ids.get(topic_id, ())
-            hits = [s.work_id for s in own if s.work_id in active]
-            return hits[0] if len(hits) == 1 else None
-        if len(live) == 1:
-            return live[0].work_id
-        return None
 
     async def _persist_tool_event(
         self,

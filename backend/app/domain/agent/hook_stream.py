@@ -70,6 +70,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.step_output import without_output
+from app.domain.agent.turn.intake.assistant import AssistantMessages
 from app.domain.agent.turn.intake.events import (
     _persist_subagent_result,
     _persist_tool_event,
@@ -117,29 +118,8 @@ class _HookStream(Protocol):
         harness: str | None = None,
     ) -> None: ...
 
-    async def _persist_assistant_message(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        text: str,
-        turn_id: uuid.UUID | None,
-        reply_to: uuid.UUID | None,
-        roster: list[dict] | None,
-        topic_refs: list[dict],
-        eid: str | None = None,
-        eids: tuple[str, ...] = (),
-        platform_unsolicited: bool = False,
-        continuation_id: uuid.UUID | None = None,
-        at: datetime | None = None,
-        inner_id: uuid.UUID | None = None,
-        publish: bool = False,
-        author: str | None = None,
-        publication_id: str | None = None,
-        own_output: bool = False,
-        extra_meta: dict | None = None,
-        closing: bool = False,
-    ) -> dict | None: ...
+    @property
+    def messages(self) -> AssistantMessages: ...
 
     async def _announce_action(self, state: HookWorkState, resource: str) -> None: ...
 
@@ -500,7 +480,7 @@ async def _consume_hook_event(
             event=event,
         )
     elif isinstance(event, AgentMessage):
-        payload = await service._persist_assistant_message(
+        payload = await service.messages.persist_assistant_message(
             project_id=project_id,
             topic_id=room_id,
             text=event.text,
@@ -676,7 +656,7 @@ async def _consume_hook_event(
             # Terminal output, the final response included, stays in
             # activity: a reply reaches the room only through chat_send,
             # in a private chat exactly as in any other room.
-            payload = await service._persist_assistant_message(
+            payload = await service.messages.persist_assistant_message(
                 project_id=project_id,
                 topic_id=room_id,
                 text=event.text,

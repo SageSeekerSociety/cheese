@@ -988,7 +988,7 @@ async def write_topic_progress(
             checklist=checklist,
         )
         return ok({"items": items, "message_id": message["id"], "posted": False})
-    message = await chat._persist_assistant_message(
+    message = await chat.messages.persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
         inner_id=place.thread_id,
