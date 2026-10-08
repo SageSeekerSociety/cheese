@@ -15,7 +15,9 @@ class AcceptCardCreate(BaseModel):
     # default is a sentence telling them how to fix it, not pydantic's
     # `Field required`.
     reviewer_handle: str | None = Field(default=None, max_length=64)
-    routing_reason: str = ""
+    # 审阅重点，长度在 review/services 里把关：超了要回一句教人怎么写的话，
+    # 不是 pydantic 的 `String should have at most N characters`。
+    focus: str = ""
     # What the change IS, as one commit title line — becomes the PR title
     # and the squash commit subject. REQUIRED since 2026-08-17, but enforced in
     # review/services.py rather than here: a Pydantic-required field answers
@@ -121,7 +123,7 @@ class AcceptCardOut(BaseModel):
     topic_id: uuid.UUID
     task_id: uuid.UUID | None = None
     reviewer_handle: str
-    routing_reason: str
+    focus: str
     # The commit this card will become, as filed — so the reviewer can see the
     # subject that is about to enter the project's history BEFORE accepting,
     # which is the last moment anyone can object to it.

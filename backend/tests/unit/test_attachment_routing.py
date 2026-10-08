@@ -7,6 +7,7 @@ import pytest
 
 from app.domain.agent.harness.prompt import attachment_prompt_line
 from app.domain.agent.prompt import offered_attachments
+from app.domain.agent.session_host.contract import Image
 from app.domain.block.models import BlockKind
 
 
@@ -25,10 +26,19 @@ from app.domain.block.models import BlockKind
         (None, False),
     ],
 )
-def test_payload_and_prompt_agree_on_attachment_type(monkeypatch, mime, inline):
-    # The library check is substituted here; HTTP/WS integration covers real files.
+async def test_payload_and_prompt_agree_on_attachment_type(monkeypatch, mime, inline):
+    # The library is substituted here; HTTP/WS integration covers real files.
+    async def present(*args):
+        return True
+
+    async def fixture_bytes(*args):
+        return b"fixture"
+
     monkeypatch.setattr(
-        "app.domain.agent.prompt.library.attachment_exists", lambda *args: True
+        "app.domain.agent.prompt.library_records.attachment_exists", present
+    )
+    monkeypatch.setattr(
+        "app.domain.agent.prompt.library_records.read_attachment", fixture_bytes
     )
     block = SimpleNamespace(
         id=uuid.uuid4(),
@@ -36,9 +46,9 @@ def test_payload_and_prompt_agree_on_attachment_type(monkeypatch, mime, inline):
         content="library/input",
         mime_type=mime,
     )
-    images, gone = offered_attachments([block], uuid.uuid4(), uuid.uuid4())
+    images, gone = await offered_attachments(None, [block], uuid.uuid4(), uuid.uuid4())
     assert gone == set()
-    assert images == ([{"path": block.content, "media_type": mime}] if inline else [])
+    assert images == ([Image(mime, b"fixture")] if inline else [])
     line = attachment_prompt_line(
         "user", block.content, embeds_images=True, mime=mime or ""
     )

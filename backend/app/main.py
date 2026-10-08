@@ -224,8 +224,8 @@ async def lifespan(application: FastAPI):
         # so a redeploy kills every check in flight and nobody ever calls
         # finish_gate — the card sits in `pending_gate` forever AND blocks its topic
         # from ever filing another card (create_card's mutex). This runs BEFORE the
-        # periodic loop starts, and does the whole point of the startup path: right
-        # now `gate.in_flight_card_ids()` is empty, so everything past the deadline
+        # periodic loop starts, and does the whole point of the startup path: no
+        # gate can be running in this process yet, so everything past the deadline
         # is provably abandoned by the process that died, not by this one.
         try:
             swept = await background.sweep_abandoned_gates(get_chat_service())

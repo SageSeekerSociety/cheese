@@ -139,7 +139,6 @@
     "app/domain/repository/identity.py": 6,
     "app/domain/repository/service.py": 8,
     "app/domain/review/forge.py": 2,
-    "app/domain/review/gate_sweep.py": 1,
     "app/domain/review/live.py": 2,
     "app/domain/review/pr_poll.py": 15,
     "app/domain/review/pr_publish.py": 38,

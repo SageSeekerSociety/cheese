@@ -9,7 +9,7 @@ import type { LibraryVersion } from '@/lib/libraryApi'
 
 import { ref, watch } from 'vue'
 
-import { downloadFile, libraryFileRawUrl } from '@/api'
+import { downloadFile } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -63,11 +63,7 @@ async function download(version: LibraryVersion) {
   if (!props.path) return
   actionError.value = ''
   try {
-    // 记录表之前就在的那一份没有 id：它就是现在这一份。
-    const url = version.id
-      ? libraryVersionRawUrl(props.projectId, props.path, version.id)
-      : libraryFileRawUrl(props.projectId, props.path)
-    await downloadFile(url, fileName())
+    await downloadFile(libraryVersionRawUrl(props.projectId, props.path, version.id), fileName())
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
   }
@@ -104,7 +100,7 @@ async function restore() {
     <p v-else-if="loading" class="lv__loading t-meta">{{ t('work.library.versionsLoading') }}</p>
     <BaseEmptyState v-else-if="!versions.length" size="inline" :title="t('work.library.versionsEmpty')" />
     <ol v-else class="lv__list" :aria-label="t('work.library.versionsTitle', { name: path ?? '' })">
-      <li v-for="v in versions" :key="v.id ?? v.version" class="lv__row">
+      <li v-for="v in versions" :key="v.id" class="lv__row">
         <div class="lv__main">
           <span class="lv__num">
             {{ t('work.library.versionNumber', { n: v.version }) }}
@@ -124,7 +120,7 @@ async function restore() {
         </div>
         <BaseButton size="sm" @click="download(v)">{{ t('work.library.download') }}</BaseButton>
         <BaseButton
-          v-if="canRestore && !v.current && v.id"
+          v-if="canRestore && !v.current"
           size="sm"
           kind="secondary"
           :loading="restoring === v.id"

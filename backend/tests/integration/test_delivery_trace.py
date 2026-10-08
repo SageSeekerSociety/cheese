@@ -89,7 +89,7 @@ def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = Non
             "change_subject": subject,
             "change_body": "Who wrote this, on the record.",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
 
@@ -300,7 +300,7 @@ def test_work_from_another_room_cannot_be_signed_onto_this_change(client):
         json={
             "change_subject": "feat: claim someone else's work",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     assert r.status_code == 403, r.text

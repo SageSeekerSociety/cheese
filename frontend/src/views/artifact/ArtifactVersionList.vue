@@ -58,7 +58,7 @@ function previous(version: ArtifactVersion): ArtifactVersion | undefined {
             <template v-if="version.delivered_at">{{ relTime(version.delivered_at) }}</template>
             <template v-if="version.decided_by">
               ·
-              <i18n-t keypath="tasks.artifact.acceptedBy" tag="span">
+              <i18n-t scope="global" keypath="tasks.artifact.acceptedBy" tag="span">
                 <template #who><UserRef :handle="version.decided_by" /></template>
               </i18n-t>
             </template>

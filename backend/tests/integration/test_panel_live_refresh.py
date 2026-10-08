@@ -79,6 +79,15 @@ def _stale(frames: list[tuple[str, dict]], room: str) -> list[str]:
     ]
 
 
+def _stale_frames(frames: list[tuple[str, dict]], room: str) -> list[dict]:
+    """The whole state frames on ``room``, not just their resources."""
+    return [
+        frame
+        for channel, frame in frames
+        if channel == room and frame.get("type") == "state"
+    ]
+
+
 def test_writing_the_doc_refreshes_the_doc_panel(client, frames):
     pid, rid = _room(client)
     task = open_task(client, rid, start=False)["id"]
@@ -96,6 +105,25 @@ def test_opening_a_piece_of_work_refreshes_the_rooms_work_list(client, frames):
     _pid, rid = _room(client)
     open_task(client, rid, "一件活", start=False)
     assert _stale(frames, rid) == ["topics"]
+    # The frame names the changed row (the room) so the sidebar reads that one
+    # row back instead of the whole list — the point of the id.
+    assert _stale_frames(frames, rid) == [
+        {"type": "state", "resource": "topics", "id": rid}
+    ]
+
+
+def test_renaming_a_channel_names_that_channel(client, frames):
+    pid, rid = _room(client)
+    frames.clear()
+    r = client.post(
+        f"/topics/{rid}/title",
+        json={"title": "改名了"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert _stale_frames(frames, rid) == [
+        {"type": "state", "resource": "topics", "id": rid}
+    ]
 
 
 def test_a_notification_about_a_room_refreshes_that_room(client, frames):
@@ -124,7 +152,7 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
         headers=_agent(pid, str(task)),
     )

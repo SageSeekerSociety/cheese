@@ -113,7 +113,6 @@ async def reassign(
     *,
     card_id: uuid.UUID,
     reviewer_handle: str | None = None,
-    reason: str = "",
     admits_reviewer: ReviewerAdmission,
 ) -> AcceptCard:
     """改验收人 (spec §4.4): anyone can re-route a pending accept card to a
@@ -128,8 +127,6 @@ async def reassign(
     )
     await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
     card.reviewer_handle = reviewer
-    if reason:
-        card.routing_reason = reason
     await self._session.flush()
     await self._session.refresh(card)
     return card

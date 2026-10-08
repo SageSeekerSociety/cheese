@@ -134,9 +134,9 @@ app/domain/<包>/
 
 终点是：每次写入在同一个事务里记一行「什么对象变成了什么样」，提交后分到一个单调的序号，按订阅范围推给在线连接；浏览器带着游标重连，缺的从库里补，补不齐就让前端把在看的数据全部重取。
 
-今天在写入之后手工调 `announce_stale(room_id, 资源名)`（`backend/app/domain/agent/runtime.py:425`，29 处），发一帧 `{"type":"state","resource":...}`，前端整类重取。缺口有四个：漏调就不刷新，没有检查；只按房间推，侧栏和任务列表靠前端 30 秒轮询；断线重放只缓存在跑轮次的帧（`runtime.py:159` 的 `_buffer`，每频道 512 帧，轮次结束即清）；帧里没有序号，前端不知道自己缺了什么。
+今天在写入之后手工调 `announce_stale(room_id, 资源名)`（`backend/app/domain/agent/staleness.py:18`，29 处），发一帧 `{"type":"state","resource":...}`，前端整类重取；`topics` 的调用点另外带上变的那一行的 `id`，前端就只重读那一行。缺口有四个：漏调就不刷新，没有检查；只按房间推，侧栏和任务列表靠前端 30 秒轮询；断线重放只缓存在跑轮次的帧（`runtime.py:159` 的 `_buffer`，每频道 512 帧，轮次结束即清）；帧里没有序号，前端不知道自己缺了什么。
 
-两块现成的样板：`review/live.py` 用 SQLAlchemy 的 after_commit 自动发采纳卡更新；`/notifications/live`（`backend/app/api/routes/notifications_live.py:84`）是「客户端报游标、服务端从库补发、25 秒心跳」。后者的游标是通知行的 `id`，有下面说的缺号问题，扩成变更流时要换成 `seq`，并兼容旧客户端手里的游标。
+两块现成的样板：`review/live.py` 用 SQLAlchemy 的 after_commit 自动发采纳卡更新；`/notifications/live`（`backend/app/api/routes/notifications_live.py:100`）是「客户端报游标、服务端从库补发、25 秒心跳」，那一拍心跳还会拿游标和库里最新的通知比一次，补上发版期另一个后端槽位提交、本进程没被唤醒的那条。后者的游标是通知行的 `id`，有下面说的缺号问题，扩成变更流时要换成 `seq`，并兼容旧客户端手里的游标。
 
 ### 变更日志 {#change-log}
 
@@ -185,7 +185,7 @@ change_log
 - **GET 带 `X-Change-Seq`**：读之前的最大 `seq`。前端丢掉不大于快照号的帧，不需要「先暂存、后重放」的队列。
 - **写请求的响应也带 `X-Change-Seq`**：前端乐观更新后，等流追上这个号再结束等待，不再补一次 GET。
 - **用户级连接**：把 `/notifications/live` 扩成用户的变更流，按「这个人能看见的项目和话题」过滤，取代侧栏和任务列表的 30 秒轮询。
-- **旧帧**：`{"type":"state","resource":R}` 在迁移期间照发，前端当成对一组查询的 `invalidate`。
+- **旧帧**：`{"type":"state","resource":R}` 在迁移期间照发，前端当成对一组查询的 `invalidate`；带 `id` 时那个 `id` 是 R 里的一行，只重读它。
 - **运行中**：频道列表的「运行中」由 `running_topic_ids()`（`runtime.py:724`）读本进程内存。终点是轮次状态在库里，「运行中」是一个查询，它的变化也是一条变更。
 - **流式帧不走变更日志**：一轮正在输出的文字量大、只对在看的人有用，不落库。今天 `InProcessBroker` 只在本进程扇出（`runtime.py:148`）；轮次可以在任意副本跑之后，它需要一条跨副本的扇出（Redis pub/sub，或 `NOTIFY` 带轮次号），这是[全局锁退役](#ownership-retire)的前提之一。
 
@@ -271,12 +271,12 @@ CREATE INDEX ON session_work_leases (claim_until) WHERE claim IS NOT NULL;
 | A. 已经能并发跑 | routines、timed deliveries、通知邮件和推送、通知摘要、PR 轮询两项、云计算计量、云预热池 | 第一批迁出。routines 和 timed deliveries 会起轮次，先确认不持锁的进程能起轮次 |
 | B. 只做保留期清理或幂等同步 | 托管凭据缓存清理、运行记录过期、文档问答保留、棘轮快照采集、托管事件订阅对账 | 第二批迁出，每个先用两个进程跑一遍集成测试 |
 | C. 读请求路径写进本进程内存的东西 | backend error flush：`backend_log.py` 的 `intake` 在每个进程的请求路径上写入，由持锁进程的周期任务刷出，只刷满 300 秒（`DEDUP_WINDOW_S`）的窗口。部署是单实例蓝绿双槽，后起的进程拿到锁后会刷自己攒的窗口，不会丢。会丢的是出局的进程：`main.py` 的 `hand_over()` 先停掉所有周期任务、再放锁，它最后不足 300 秒的窗口随退出丢掉 | 在 `hand_over()` 停周期任务之前强制刷一次，不论 300 秒到没到。和是否持锁无关，迁出锁的第一步就做 |
-| D. 靠本进程内存判断「谁在跑」 | 孤儿轮次清扫、排队消息清扫、进度提醒、闸门清扫（`gate.in_flight_card_ids()`）、启动恢复、托管事件监听 | 留在锁里，等[全局锁退役](#ownership-retire)那一步 |
+| D. 靠本进程内存判断「谁在跑」 | 孤儿轮次清扫、排队消息清扫、进度提醒、启动恢复、托管事件监听 | 留在锁里，等[全局锁退役](#ownership-retire)那一步 |
 | 待逐个读代码 | 记忆整理、任务截止、安静任务提醒、超时投递告警、托管孤儿账号清理、云主机池、云沙箱生命周期、订阅用量导入 | 能用领取列改造的归 A，否则归 D |
 
 ### 全局锁退役 {#ownership-retire}
 
-全局锁（`backend/app/core/ownership.py`，一条会话级 advisory lock）今天保护的 D 类，都在用本进程内存回答「谁在跑」：只有持锁进程起轮次（`main.py:173` 的 `hold_turns`），闸门清扫看本进程有没有在跑的闸门（`main.py:233`），会话订阅和托管事件监听只在它身上（`main.py:272`）。退役的条件：
+全局锁（`backend/app/core/ownership.py`，一条会话级 advisory lock）今天保护的 D 类，都在用本进程内存回答「谁在跑」：只有持锁进程起轮次（`main.py:173` 的 `hold_turns`），会话订阅和托管事件监听只在它身上（`main.py:272`）。退役的条件：
 
 1. 轮次状态进库：一轮在跑，库里有一行带持有者和心跳，「运行中」和孤儿判断都查它（multica 用 runtime 级心跳判 running 任务死活）。
 2. 每个会话一张订阅租约，谁拿着谁监听、谁起这个会话的轮次；托管事件监听一张租约。

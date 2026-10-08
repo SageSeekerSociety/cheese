@@ -13,4 +13,6 @@
 .merge-box {
   position: relative;
   background: transparent;
+  /* 卡上的字有一半是芝士写的（理由、提交标题、检查名），长串没有断点也要折行。 */
+  overflow-wrap: anywhere;
 }

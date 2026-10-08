@@ -643,7 +643,7 @@ def _room_with_card(client, *, decided_at: datetime) -> None:
                 AcceptCard(
                     topic_id=room.id,
                     reviewer_handle=REPORTER,
-                    routing_reason="最懂",
+                    focus="最懂",
                     status=AcceptStatus.accepted,
                     decided_at=decided_at,
                     created_at=decided_at,

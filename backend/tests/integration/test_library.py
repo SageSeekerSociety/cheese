@@ -439,39 +439,6 @@ def test_replacing_a_file_is_what_every_reference_now_reads(client):
     assert row["replaced"] == 0
 
 
-def test_a_file_from_before_the_records_takes_its_source_from_the_message(client):
-    """记录表之前就在资料库里的文件：谁、在哪给的，看第一条带上它的消息。"""
-    import asyncio
-    import uuid
-
-    from app.domain.block.models import AuthorType, Block, BlockKind
-    from app.domain.library import service as library
-
-    project_id = _project(client)
-    topic_id = _topic(client, project_id, "需求讨论")
-    library.write_library_file(uuid.UUID(project_id), "旧合同.docx", b"PK")
-
-    async def sent():
-        async with client.test_factory() as session:
-            session.add(
-                Block(
-                    project_id=uuid.UUID(project_id),
-                    conversation_id=uuid.UUID(topic_id),
-                    kind=BlockKind.attachment,
-                    author_type=AuthorType.participant,
-                    author="user-1",
-                    content="library/旧合同.docx",
-                )
-            )
-            await session.commit()
-
-    asyncio.run(sent())
-    [row] = _library(client, project_id)
-    assert row["added_by"] == "user-1"
-    assert row["room"] == {"id": topic_id, "title": "需求讨论"}
-    assert row["references"] == 1
-
-
 def test_the_agent_cannot_put_in_or_replace_a_file(client):
     project_id = _project(client)
     topic_id = _topic(client, project_id, "房间一")
@@ -491,3 +458,9 @@ def test_the_agent_cannot_put_in_or_replace_a_file(client):
         headers=agent,
     )
     assert replace.status_code == 403
+    move = client.post(
+        f"/projects/{project_id}/library/move",
+        json={"path": "预算表.xlsx", "to": "旧/预算表.xlsx"},
+        headers=agent,
+    )
+    assert move.status_code == 403

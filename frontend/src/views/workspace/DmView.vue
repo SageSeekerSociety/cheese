@@ -102,8 +102,12 @@ function handleTurnDone() {
   void store.refreshUnread()
 }
 
-function handleStateChanged(resource: string) {
-  if (resource === 'topics') void store.refreshTopics()
+function handleStateChanged(resource: string, id?: string) {
+  // 指名了那一行（房间 id）就只重取它，否则退回整份重取 —— 和 TopicView 同一条路。
+  if (resource === 'topics') {
+    if (id) void store.refreshTopicRow(id)
+    else void store.refreshTopics()
+  }
 }
 
 // 私聊是从名册点进来的，所以 ← 回名册。手机上顶栏那颗 ← 走的是路由 meta 的

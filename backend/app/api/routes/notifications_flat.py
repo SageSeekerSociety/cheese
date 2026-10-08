@@ -183,7 +183,11 @@ async def list_notifications(
         user.user_id, type_=notification_type, read=read
     )
 
-    notifications = [await _dump(service, n) for n in content]
+    # 整页一次解析实体：逐条 _dump 会让每条通知各发一轮解析查询（一屏最多 100
+    # 条就是 100 倍往返），而它们手上的外键本来就可以合并成每类实体一次查。
+    notifications = [
+        _asdict(dto) for dto in await service.build_notification_dtos(content)
+    ]
     page = {
         "pageStart": _encode_cursor(content[0].created_at, content[0].id)
         if content
