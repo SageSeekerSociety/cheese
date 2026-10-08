@@ -1247,7 +1247,6 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/file", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/file/raw", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/file", auth: "workspace.access", owner: "repository.transport"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/log", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/diff", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/topics/{topic_id}/work-summary", auth: "workspace.access", owner: "repository.transport"}
   # app.main

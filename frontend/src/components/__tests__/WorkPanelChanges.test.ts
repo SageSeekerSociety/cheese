@@ -91,7 +91,6 @@ vi.mock('../../api', async () => {
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
-    getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getForgeConnection: vi.fn().mockResolvedValue({ kind: 'forgejo', connected: true, repo: 'o/r', url: null }),
     getGitDiff: (...a: unknown[]) => getGitDiff(...a),
     getPreview: vi.fn().mockResolvedValue(null),
@@ -167,14 +166,27 @@ function editor(container: Element): HTMLTextAreaElement | null {
   return container.querySelector('.stub-editor')
 }
 
-/** Select the 改动 tab, then widen its tree to the whole worktree — these cases
- * are about editing a file, including ones this topic never changed. */
-async function openFilesTool(container: Element) {
+/** Select the 改动 tab, then open a file through 打开其他文件 — these cases are
+ * about editing a file, including ones this topic never changed. */
+async function openFilesTool(container: Element, path = 'a.py') {
   const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
   expect(tab, '找不到 改动 tab').toBeTruthy()
   await fireEvent.click(tab!)
   await flush()
-  await fromMenu(container, '全部文件')
+  await openOther(container, path)
+}
+/** 「打开其他文件」：在这个任务的版本里挑一份打开。 */
+async function openOther(container: Element, path: string) {
+  const other = buttonByText(container, '打开其他文件')
+  expect(other, '找不到「打开其他文件」').toBeTruthy()
+  await fireEvent.click(other!)
+  await flush()
+  const item = Array.from(document.querySelectorAll('.open-file__list .v-list-item')).find(
+    (n) => n.textContent?.trim() === path
+  )
+  expect(item, `「打开其他文件」里应该有 ${path}`).toBeTruthy()
+  await fireEvent.click(item!)
+  await flush()
 }
 
 beforeAll(() => {
@@ -464,10 +476,13 @@ describe('文件面板', () => {
     readFile.mockResolvedValue({ ...textFile('a.py', 'Committed content'), source: 'committed', editable: false })
     const { container } = mountPanel('topic-A')
     await flush()
-    await openFilesTool(container)
+    const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
+    await fireEvent.click(tab!)
+    await flush()
     expect(container.textContent).toContain('任务机器尚未连接')
     await fireEvent.click(buttonByText(container, '切换到已提交版本')!)
     await flush()
+    await openOther(container, 'a.py')
     expect(editor(container)?.value).toBe('Committed content')
     expect(editor(container)?.readOnly).toBe(true)
     expect(writeFile).not.toHaveBeenCalled()
@@ -536,9 +551,17 @@ new file mode 100644
     expect(marks).toContain('新增')
   })
 
+  async function openSection(container: Element, path: string) {
+    const section = container.querySelector(`.diff-file[data-path="${path}"]`)
+    expect(section, `改动里应该有 ${path} 这一段`).toBeTruthy()
+    await fireEvent.click(buttonByText(section!, '打开')!)
+    await flush()
+  }
+
   it('点开一个文件看到的是它自己的 diff，不是整块', async () => {
     const { container } = mountPanel('topic-A')
     await openChanges(container)
+    await openSection(container, 'a.py')
 
     const view = container.querySelector('.diff-view')
     expect(view, '没有渲染逐文件 diff').toBeTruthy()
@@ -553,6 +576,7 @@ new file mode 100644
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v2' })
     const { container } = mountPanel('topic-A')
     await openChanges(container)
+    await openSection(container, 'a.py')
 
     await fireEvent.click(buttonByText(container, '编辑')!)
     await flush()
@@ -569,15 +593,9 @@ new file mode 100644
   it('没动过的文件没有两面可切，直接就是可编辑的全文', async () => {
     const { container } = mountPanel('topic-A')
     await openChanges(container)
-    await fromMenu(container, '全部文件')
-    await flush()
 
     readFile.mockResolvedValue(textFile('untouched.txt', 'x\n'))
-    const row = Array.from(container.querySelectorAll('.file-item')).find((b) =>
-      b.textContent?.includes('untouched.txt')
-    )
-    await fireEvent.click(row!)
-    await flush()
+    await openOther(container, 'untouched.txt')
 
     expect(buttonByText(container, '差异'), '没改过的文件不该给「差异」这一面').toBeUndefined()
     expect(editor(container)).toBeTruthy()

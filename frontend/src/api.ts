@@ -31,7 +31,6 @@ import type {
   FileSource,
   ForgeAttribution,
   ForgeConnection,
-  GitCommit,
   GithubConnection,
   InboxItem,
   ListPayload,
@@ -1329,15 +1328,6 @@ export type { AgentControlResult, AgentControlState } from './api/agentControl'
 export { getAgentControl, sendAgentControl } from './api/agentControl'
 export { requestPreviewSession } from './api/preview'
 export type { PreviewSelection, PreviewSession } from './types/preview'
-
-export function getGitLog(
-  projectId: string,
-  topicId?: string | null,
-  taskId?: string | null
-): Promise<ListPayload<GitCommit>> {
-  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
-  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
-}
 
 export function getGitDiff(
   projectId: string,

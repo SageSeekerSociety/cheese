@@ -10,7 +10,7 @@
 //
 // 组件那一半拿到的每一样东西都是这里算好的：连「来源标题写什么字」这类字符串也在
 // 这里，因为它们的判据（活还在不在跑、文件是不是只读）全是取数那一边的事实。
-import type { FileSource, GitCommit, RoomTask, WorkspaceFile } from '../cx_types'
+import type { FileSource, RoomTask, WorkspaceFile } from '../cx_types'
 import type { FileDiff } from '../lib/diff'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -20,7 +20,6 @@ import {
   downloadFile,
   getForgeConnection,
   getGitDiff,
-  getGitLog,
   listFiles,
   readFile,
   workspaceFileRawUrl,
@@ -92,9 +91,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     }
   }
 
-  // 树的范围: 默认只看这个话题改过的文件——验收要看的就是这些。展开成全部文件是
-  // 为了「看一眼旁边那个文件原来长什么样」，那是次要动作。
-  const showAll = ref(false)
   // 打开的文件看哪一面：它的 diff，还是可编辑的全文。
   type FileView = 'diff' | 'edit'
   const fileView = ref<FileView>('diff')
@@ -117,8 +113,8 @@ export function usePanelChanges(props: PanelChangesProps) {
     }
   }
 
-  // ---- Git: commit log + working-tree diff ----
-  const gitCommits = ref<GitCommit[]>([])
+  // ---- Git: the working-tree diff ----
+  // 提交记录不在这里读：审阅看的是改了什么，提交是过程记录。
   const gitDiff = ref<string>('')
 
   async function loadGit(opts: { silent?: boolean } = {}) {
@@ -131,15 +127,9 @@ export function usePanelChanges(props: PanelChangesProps) {
     else loading.value = true
     errorMsg.value = null
     try {
-      // A fresh repo with no commits makes git log fail (422); tolerate it so the
-      // diff still renders instead of the whole panel showing an error.
-      const [log, diff] = await Promise.all([
-        getGitLog(pid, tid, task).catch(() => ({ data: [] as GitCommit[], total: 0 })),
-        getGitDiff(pid, tid, task, fileSource.value),
-      ])
+      const diff = await getGitDiff(pid, tid, task, fileSource.value)
       // Guard against a source switch mid-flight.
       if (selectedTask.value !== task || sourceEpoch !== epoch) return
-      gitCommits.value = log.data
       gitDiff.value = diff.diff
     } catch (e) {
       if (sourceEpoch === epoch) errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
@@ -226,45 +216,40 @@ export function usePanelChanges(props: PanelChangesProps) {
 
   // 文件树: 「这一支碰过哪些文件、工作区里现在还有哪些」在这里定，折成一层层文件夹
   // 那件事在 lib/changesTree.ts（纯函数，没有组件）。
-  const expandedDirs = ref(new Set<string>())
+  // 改动清单是一份要逐个看完的清单，文件夹默认都开着；收起的那几个记在这里。
+  const collapsedDirs = ref(new Set<string>())
   function toggleDir(path: string) {
-    const next = new Set(expandedDirs.value)
+    const next = new Set(collapsedDirs.value)
     if (next.has(path)) next.delete(path)
     else next.add(path)
-    expandedDirs.value = next
+    collapsedDirs.value = next
   }
   // 定位: when a file is opened by path (e.g. clicking a <&path> chip in chat or
-  // the doc), expand every ancestor folder so the tree shows where it lives. 树
+  // the doc), reopen every ancestor folder so the tree shows where it lives. 树
   // 自己负责把那一行滚进视野——那是画的事，它听 revealTick。
   const revealTick = ref(0)
   function revealInTree(path: string) {
     const parts = path.split('/')
     if (parts.length > 1) {
-      const next = new Set(expandedDirs.value)
+      const next = new Set(collapsedDirs.value)
       let prefix = ''
       for (const part of parts.slice(0, -1)) {
         prefix = prefix ? `${prefix}/${part}` : part
-        next.add(prefix)
+        next.delete(prefix)
       }
-      expandedDirs.value = next
+      collapsedDirs.value = next
     }
     revealTick.value += 1
   }
-  // 改动清单里可能有工作区已经没有的文件（这一支删掉了它）——那也是要验收的一条，
-  // 不能因为树是按工作区建的就漏掉。
-  const treeFiles = computed<WorkspaceFile[]>(() => {
-    if (!showAll.value) {
-      return fileDiffs.value.map((d) => ({
+  // 树上列的是这一支改到的文件。改动清单里可能有工作区已经没有的文件（这一支删掉了
+  // 它）——那也是要审阅的一条，所以清单按 diff 列，不按工作区。
+  const treeFiles = computed<WorkspaceFile[]>(
+    () =>
+      fileDiffs.value.map((d) => ({
         path: d.path,
         bytes: files.value.find((f) => f.path === d.path)?.bytes ?? 0,
       })) as WorkspaceFile[]
-    }
-    const known = new Set(files.value.map((f) => f.path))
-    const gone = fileDiffs.value
-      .filter((d) => !known.has(d.path))
-      .map((d) => ({ path: d.path, bytes: 0 }) as WorkspaceFile)
-    return [...files.value, ...gone]
-  })
+  )
 
   /** The open file's own diff, or null when this topic did not touch it. */
   const openDiff = computed<FileDiff | null>(() =>
@@ -356,7 +341,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     fileBytes.value = 0
     fileEditable.value = false
     fileConflict.value = false
-    expandedDirs.value = new Set()
+    collapsedDirs.value = new Set()
   }
 
   // A directed open asked for by a <&path> chip. Whoever reaches loadFiles first
@@ -407,21 +392,23 @@ export function usePanelChanges(props: PanelChangesProps) {
         if (sourceEpoch === epoch) pendingOpen = null
         return
       }
-      // Keep the open file if it still exists; otherwise open the first one in
-      // scope — which is the first CHANGED file by default, i.e. the top of the
-      // review list rather than whatever sorts first in the repo.
-      if (missing.value) return
-      if (!openPath.value || !treeFiles.value.some((f) => f.path === openPath.value)) {
-        openPath.value = null
-        const first = treeFiles.value[0]?.path
-        if (first) await selectFile(first)
-      }
+      // 打开的那一份不在这个来源里了：回到全部改动那一面，而不是对着一份读不到的文件。
+      if (openPath.value && !listed.some((f) => f.path === openPath.value)) openPath.value = null
     } catch (e) {
       if (sourceEpoch !== epoch) return
       errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
       if (selectedTask.value === task && sourceEpoch === epoch) loading.value = false
     }
+  }
+
+  // 回到全部改动那一面。没保存的修改照常暂存，回到这个文件还在。
+  function closeFile() {
+    keepDraft()
+    fileRequest += 1
+    openPath.value = null
+    fileConflict.value = false
+    missing.value = null
   }
 
   async function selectFile(path: string) {
@@ -628,7 +615,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     pendingOpen = null
     fileSaving.value = false
     loading.value = false
-    gitCommits.value = []
     gitDiff.value = ''
     errorMsg.value = null
     missing.value = null
@@ -641,7 +627,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     keepDraft()
     clearSource()
     requestedSource.value = source
-    showAll.value = true
     pendingOpen = path ?? lastFiles.get(sourceKey()) ?? null
     await Promise.all([loadGit(), loadFiles()])
   }
@@ -654,39 +639,17 @@ export function usePanelChanges(props: PanelChangesProps) {
       clearSource()
       taskRow.value = undefined
       tasksLoaded.value = false
-      showAll.value = false
       if (props.active) void loadAll()
     }
   )
 
-  // Widening (or narrowing) the scope with nothing open should land on the first
-  // thing in the new scope — otherwise switching to 全部文件 on a topic with no
-  // changes shows a tree and an empty right half.
-  // Land on the first file in scope whenever the scope gains one and nothing is
-  // open. It has to be the scope rather than the listing: the diff and the file
-  // list are two requests fired together, and when the listing wins the race the
-  // changed-files scope is still empty, so the panel would sit on an empty right
-  // half until the reader clicked something.
-  //
-  // Never over a directed open: `openFile` widens the scope on its way to a
-  // specific file, and selecting here would steal the one that was asked for —
-  // the same race the in-flight guard on the listing exists for.
-  watch(treeFiles, (rows) => {
-    if (errorMsg.value || openPath.value || pendingOpen || !rows.length) return
-    // 读者点的是某一份文件，而它不在这个来源里。这时打开别的文件，等于把「你要的
-    // 那份不在这儿」换成「这是另一份文件」，两句话里只有前一句是他问的。
-    if (missing.value) return
-    void selectFile(rows[0].path)
-  })
-
   // A <&path> chip (chat or doc) opens that file here. WorkPanel switches to this
-  // tab first, then calls in. The file may be one this task never touched, so the
-  // tree widens to every file.
+  // tab first, then calls in. The file may be one this task never touched; it opens
+  // all the same (the tree keeps listing what this task changed).
   async function openFile(path: string) {
     if (!tasksLoaded.value) await loadTasks()
     keepDraft()
     clearSource()
-    showAll.value = true
     pendingOpen = path
     await Promise.all([loadGit(), loadFiles()])
   }
@@ -697,7 +660,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     currentTask,
     sourceStatus,
     sourceUnavailable,
-    showAll,
     fileSource,
     fileToolReady,
     loading,
@@ -705,10 +667,11 @@ export function usePanelChanges(props: PanelChangesProps) {
     errorMsg,
     noRepo,
     missing,
-    gitCommits,
     fileDiffs,
     diffByPath,
     treeFiles,
+    // 「打开其他文件」从这里挑：这个来源里的全部文件。
+    allFiles: files,
     openPath,
     fileDraft,
     fileSaved,
@@ -729,7 +692,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     openDocumentType,
     revisionPath,
     openRawUrl,
-    expandedDirs,
+    collapsedDirs,
     revealTick,
     draftCount: computed(() => drafts.size),
     docBytes,
@@ -741,6 +704,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     // 动作
     loadAll,
     selectFile,
+    closeFile,
     selectVersion,
     openFile,
     toggleDir,
