@@ -22,7 +22,7 @@ from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
-from app.domain.usage.models import ResourceUsage
+from app.domain.usage.models import IngestCheckpoint, ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
 from app.domain.usage.subscription_ingest import ingest_once
@@ -127,8 +127,9 @@ async def test_a_row_records_all_four_buckets_and_a_cost_once(
     assert first == {"landed": 1, "skipped": 0}
     assert again == {"landed": 0, "skipped": 0}  # checkpoint: exactly-once
     [row] = await _rows(business_db_factory, pid)
-    # No split on the line: its writes are priced at the 1-hour rate.
-    cost = 100 * OPUS[0] + 50 * OPUS[1] + 9850 * OPUS[2] + 40 * OPUS[4]
+    # No split on the line: it does not say which cache lifetime its writes
+    # went to, so they are priced as five-minute writes, the cheaper end.
+    cost = 100 * OPUS[0] + 50 * OPUS[1] + 9850 * OPUS[2] + 40 * OPUS[3]
     assert row.route == "subscription"
     # Input counts every prompt token; the cache shares are kept beside it.
     assert (row.input_tokens, row.output_tokens) == (9990, 50)
@@ -180,7 +181,15 @@ async def test_cache_writes_are_charged_by_their_lifetime(
     hour, both, unsplit = await _rows(business_db_factory, pid)
     assert hour.cost_usd == pytest.approx(1000 * OPUS[4])
     assert both.cost_usd == pytest.approx(1500 * OPUS[3] + 500 * OPUS[4])
-    assert unsplit.cost_usd == pytest.approx(3000 * OPUS[4])
+    # No lifetime on the line: priced as all five-minute, never as all 1-hour.
+    # The direction matters — a guess must not over-charge an unknown (#2427
+    # chose the 1-hour end; this side takes the under-priced end instead).
+    assert unsplit.cost_usd == pytest.approx(3000 * OPUS[3])
+    assert unsplit.cache_write_1h_tokens == 0
+    # Both sides are the same exact float arithmetic here, so this needs no
+    # tolerance; ``pytest.approx`` is not orderable and cannot be used with
+    # ``<`` at all.
+    assert unsplit.cost_usd < 3000 * OPUS[4]
     assert (both.cache_write_tokens, both.cache_write_1h_tokens) == (2000, 500)
 
 
@@ -321,6 +330,9 @@ async def test_rotated_file_is_a_new_generation(business_db_factory, tmp_path):
 async def test_unattributable_rows_are_skipped_not_wedged_on(
     business_db_factory, tmp_path
 ):
+    # Both rows here are hopeless: one carries no project at all, the other a
+    # project that has been absent long enough to age out of the grace window
+    # (its timestamp is old). Neither may hold up the good row behind them.
     pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     orphan = json.dumps({"project_id": None, "total_tokens": 5}) + "\n"
@@ -333,6 +345,65 @@ async def test_unattributable_rows_are_skipped_not_wedged_on(
     async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
     assert agg["turns"] == 1
+
+
+@pytest.mark.anyio
+async def test_a_row_for_a_missing_project_holds_the_log_until_it_appears(
+    business_db_factory, tmp_path
+):
+    """The project may be committed in another transaction moments after the
+    proxy wrote the row. Hold the checkpoint before it and retry later, rather
+    than consume the row — and everything behind it — as skipped."""
+    pid, tid = await _seed(business_db_factory)
+    late = uuid.uuid4()
+    log = tmp_path / "usage.jsonl"
+    log.write_text(
+        _row(late, tid, inp=9, out=0, ts=datetime.now(UTC).timestamp())
+        + _row(pid, tid, inp=11, out=0)
+    )
+
+    held = await ingest_once(business_db_factory, log)
+
+    # Nothing consumed: not the late row, and not the row behind it.
+    assert held == {"landed": 0, "skipped": 0}
+    assert await _rows(business_db_factory, pid) == []
+    async with business_db_factory() as session:
+        ckpt = await session.get(IngestCheckpoint, "subscription-proxy")
+        assert ckpt is not None and ckpt.byte_offset == 0
+
+    # The project lands → the next pass picks both rows up, once each.
+    async with business_db_factory() as session:
+        await ProjectService(session).create(
+            name="late", owner_handle="u", project_id=late
+        )
+        await Ledger(session).grant_earmark(
+            project_id=late, source_task_id=None, credits_total=100.0
+        )
+        await session.commit()
+
+    second = await ingest_once(business_db_factory, log)
+
+    assert second == {"landed": 2, "skipped": 0}
+    assert await ingest_once(business_db_factory, log) == {"landed": 0, "skipped": 0}
+
+
+@pytest.mark.anyio
+async def test_a_row_for_a_missing_project_is_given_up_once_it_ages_out(
+    business_db_factory, tmp_path
+):
+    """A project that never arrives must not stall the log: past the grace
+    window the row is consumed, and the rows behind it land."""
+    pid, tid = await _seed(business_db_factory)
+    log = tmp_path / "usage.jsonl"
+    old = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    log.write_text(
+        _row(uuid.uuid4(), tid, inp=9, out=0, ts=old) + _row(pid, tid, inp=11, out=0)
+    )
+
+    assert await ingest_once(business_db_factory, log) == {"landed": 1, "skipped": 1}
+    assert await ingest_once(business_db_factory, log) == {"landed": 0, "skipped": 0}
+    rows = await _rows(business_db_factory, pid)
+    assert [row.input_tokens for row in rows] == [11]
 
 
 @pytest.mark.anyio
