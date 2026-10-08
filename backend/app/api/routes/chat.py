@@ -16,8 +16,8 @@ Protocol:
            assistant_block / live / activity / activity_snapshot / error / done
 (Typing is the one thing a client says on this socket, and it is not written:
 it is member activity — who is busy in this room right now, a person composing
-or an agent with a turn running (`agent/activity.py`) — and it lives only in the
-broker. The member is the socket's credential, never a field of the frame.)
+or an agent with a turn running (`agent/realtime/activity.py`) — and it lives
+only in the broker. The member is the socket's credential, never a frame field.)
 (`sync` asks for the room's live state as one frame, empty or not: the turns
 running here and who is busy. The opening `turn_active` / `activity_snapshot`
 are sent only when something is going on, so a client cannot tell "nobody is

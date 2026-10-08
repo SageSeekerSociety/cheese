@@ -111,7 +111,7 @@ app/domain/<包>/
 | `forge`、`notices` | 见上面的搬家表 | 3、4 |
 | `chat`（新，不并进 `conversation`） | `chat.py` 的消息收发、`mentions`、`turn_inputs`、`turn_speakers`、`prompt`、`pending_messages` | 5 |
 | `turns` | `runtime.py` 的 `AgentWorkRunner`、`recovery`、`liveness`、`turn_*`、`turn_adoption` | 5 |
-| `live` | `runtime.py` 的 broker、`live_frames`、`live_notices`、`room_events` | 5 |
+| `live` | `agent/realtime/` 的 broker、`live_frames`、`live_notices`、`room_events` | 5 |
 | `device`（并入现有包） | `device_hub*`、`device_link`、`device_provider`、`device_storage`、`machine_*`、`executor_transport` | 5 |
 | `harness` | `agent/harness/` | 5 |
 | `gateway` | `gateway*` | 5 |
@@ -186,7 +186,7 @@ change_log
 - **写请求的响应也带 `X-Change-Seq`**：前端乐观更新后，等流追上这个号再结束等待，不再补一次 GET。
 - **用户级连接**：把 `/notifications/live` 扩成用户的变更流，按「这个人能看见的项目和话题」过滤，取代侧栏和任务列表的 30 秒轮询。
 - **旧帧**：`{"type":"state","resource":R}` 在迁移期间照发，前端当成对一组查询的 `invalidate`；带 `id` 时那个 `id` 是 R 里的一行，只重读它。
-- **运行中**：频道列表的「运行中」由 `running_topic_ids()`（`runtime.py:724`）读本进程内存。终点是轮次状态在库里，「运行中」是一个查询，它的变化也是一条变更。
+- **运行中**：频道列表的「运行中」由 `runtime.AgentWorkRunner.running_topic_ids()`读本进程内存。终点是轮次状态在库里，「运行中」是一个查询，它的变化也是一条变更。
 - **流式帧不走变更日志**：一轮正在输出的文字量大、只对在看的人有用，不落库。今天 `InProcessBroker` 只在本进程扇出（`agent/realtime/broker.py`）；轮次可以在任意副本跑之后，它需要一条跨副本的扇出（Redis pub/sub，或 `NOTIFY` 带轮次号），这是[全局锁退役](#ownership-retire)的前提之一。
 
 | 方案 | 结论 |
