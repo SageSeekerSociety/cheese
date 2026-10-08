@@ -18,8 +18,8 @@ from app.domain.agent.harness import SessionRef
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
-    from app.domain.agent.live_work import HookWorkState, LiveWork
     from app.domain.agent.prewarm import SeatPrewarm
+    from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 
 logger = logging.getLogger(__name__)
 

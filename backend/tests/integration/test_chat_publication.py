@@ -474,7 +474,7 @@ def test_publication_attribution_never_guesses_between_agents():
     from types import SimpleNamespace
 
     from app.domain.agent.chat import ChatService
-    from app.domain.agent.live_work import LiveWork
+    from app.domain.agent.turn.state.live import LiveWork
 
     topic = uuid.uuid4()
     a, b = uuid.uuid4(), uuid.uuid4()
@@ -512,7 +512,7 @@ def test_consuming_work_id_only_delivers_when_unambiguous():
     """
     from types import SimpleNamespace
 
-    from app.domain.agent.live_work import LiveWork
+    from app.domain.agent.turn.state.live import LiveWork
 
     topic = uuid.uuid4()
     a, b = uuid.uuid4(), uuid.uuid4()

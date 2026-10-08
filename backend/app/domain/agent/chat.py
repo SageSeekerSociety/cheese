@@ -90,11 +90,6 @@ from app.domain.agent.hook_stream import (
     _with_log,  # noqa: F401
 )
 
-# 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
-# 几张 note 表……）收在 `live_work.py` 那片叶子里，`ChatService.live` 是它唯一
-# 持有者。状态与处理器之间只有「处理器读状态」一个方向。
-from app.domain.agent.live_work import HookWorkState, LiveWork
-
 # 兼容门面：记忆的对账与整理（连同它们按房间记的四份状态）搬去了
 # `memory_ledger.py`（那里有整簇的文档）。`ChatService` 上留
 # `sweep_memory_dreams` / `run_memory_dream` 两行委托，调用点一格没动；
@@ -196,6 +191,11 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
+
+# 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
+# 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
+# 持有者。状态与处理器之间只有「处理器读状态」一个方向。
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn_usage import record_turn_usage, reported_usage
 from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import (
@@ -314,7 +314,7 @@ class ChatService(SessionRecovery, RoomTurns):
         self._work_runner = work_runner
         # 这一进程正在跑的活：按房间/按轮次键住的进程内状态（`hook_work`、
         # `active_turn_ids`、座位锁与房间锁、几张 note 表、`dead_sessions`……）
-        # 全在 `live_work.py` 那片叶子里。本对象唯一持有它，处理器按一个方向读
+        # 全在 `turn/state/live.py` 那片叶子里。本对象唯一持有它，处理器按一个方向读
         # 它——见那里的文档；不是服务依赖（`_compute`/`_sessions` 那种），而是
         # 这台进程此刻手上正接着什么。
         self.live = LiveWork()

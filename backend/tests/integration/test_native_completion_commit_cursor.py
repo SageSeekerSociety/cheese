@@ -24,7 +24,7 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.runner import Runner
 from app.domain.agent.harness.claude_code.subscription import Subscription
-from app.domain.agent.live_work import LiveWork
+from app.domain.agent.turn.state.live import LiveWork
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.input_identity import InputEffects
 from app.domain.delivery.models import NativeInput

@@ -21,9 +21,9 @@ from sqlalchemy import select
 from app.domain.agent.chat import ChatService
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.harness.claude_code.events import Assembler
-from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.service import AgentResult
 from app.domain.agent.supply import SUBSCRIPTION
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block
 from app.domain.delivery.models import TimedDelivery

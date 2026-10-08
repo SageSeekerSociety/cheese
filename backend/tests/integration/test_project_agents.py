@@ -19,11 +19,8 @@ from sqlalchemy import select
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
-from app.domain.memory.models import (
-    MemoryEntry,
-    MemoryScope,
-    agent_project_scope_id,
-)
+from app.domain.memory.models import MemoryEntry, agent_project_scope_id
+from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import (

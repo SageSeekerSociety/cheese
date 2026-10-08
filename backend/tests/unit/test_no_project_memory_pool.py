@@ -7,7 +7,7 @@ tests must use the remaining instance-owned pools.
 import ast
 import pathlib
 
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.scopes import MemoryScope
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 

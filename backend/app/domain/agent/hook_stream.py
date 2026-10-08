@@ -10,7 +10,7 @@
 
 - ``self._sessions`` → ``sessions``：一个 sessionmaker，事务边界逐字不变；这一轮
   的进程内状态（现场状态表、几张 note 表、房间坐席表）→ ``live``，见
-  ``app.domain.agent.live_work``：状态与处理器之间只有「处理器读状态」一个方向，
+  ``app.domain.agent.turn.state.live``：状态与处理器之间只有「处理器读状态」一个方向，
   本模块不再接散装的那几张 dict；
 - 留在 ``ChatService`` 上、这条路回头要问的那些事（开一轮、落一条助手消息、关
   一轮的书、谁在做哪条活……）→ ``service``，见 ``_HookStream``：它是这条路的
@@ -31,7 +31,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.sentences import NoticeText, error_frame, say
 from app.domain.agent import attachments, turn_inputs
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
-from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.nonce import nonce_in
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
@@ -77,6 +76,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.step_output import without_output
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.room_task.place import PlaceResolver

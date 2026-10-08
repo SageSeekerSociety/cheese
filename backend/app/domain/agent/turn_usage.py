@@ -19,7 +19,7 @@ from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project
 
 if TYPE_CHECKING:
-    from app.domain.agent.live_work import HookWorkState
+    from app.domain.agent.turn.state.live import HookWorkState
 
 
 def reported_usage(route: str, result: AgentResult) -> AgentUsage | None:

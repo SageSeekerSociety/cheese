@@ -30,7 +30,6 @@ from app.domain.agent.harness.prompt import (
     prompt_line,
     publication_prompt,
 )
-from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.mcp_notice import unconnected_mcp
 from app.domain.agent.platform_notices import (
     EVENT_PROMPT_REPLAYED,
@@ -65,6 +64,7 @@ from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.service import AgentResult
 from app.domain.agent.session_host.contract import Image
 from app.domain.agent.session_host.host import keeps_memory
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.agent_instance.own import owned_instance
@@ -80,7 +80,7 @@ from app.domain.delivery.receipts import held_blocks
 from app.domain.identity.actor import Actor
 from app.domain.membership.roster import roster_rows
 from app.domain.memory.files_store import MemoryIndex, memory_index
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.scopes import MemoryScope
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.overview import project_brief, render_overview

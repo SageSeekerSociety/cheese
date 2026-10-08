@@ -37,7 +37,6 @@ from app.domain.agent.event_lines import (
     _subagent_result_meta,
     _tool_event_meta,
 )
-from app.domain.agent.live_work import LiveWork
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import RUN_RECORD_EVENTS
 from app.domain.agent.queries import _agent_handle, _block_payload
@@ -46,6 +45,7 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.step_output import output_tail
 from app.domain.agent.tool_preview import tool_detail, tool_preview, work_subpath
+from app.domain.agent.turn.state.live import LiveWork
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository

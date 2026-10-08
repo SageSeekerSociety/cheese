@@ -15,11 +15,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
-from app.domain.memory.models import (
-    MemoryEntry,
-    MemoryScope,
-    agent_project_scope_id,
-)
+from app.domain.memory.models import MemoryEntry, agent_project_scope_id
+from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL

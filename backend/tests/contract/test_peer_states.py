@@ -431,7 +431,7 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
     import uuid
 
     from app.domain.agent.chat import REPLAYS_AT_ONCE, ChatService
-    from app.domain.agent.live_work import LiveWork
+    from app.domain.agent.turn.state.live import LiveWork
 
     replayed = []
     sessions = [

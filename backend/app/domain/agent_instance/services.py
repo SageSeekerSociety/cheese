@@ -19,7 +19,8 @@ from app.domain.identity.handles import (
     UNRESOLVED_AGENT_HANDLE,
     agent_instance_handle,
 )
-from app.domain.memory.models import MemoryScope, agent_project_scope_id
+from app.domain.memory.models import agent_project_scope_id
+from app.domain.memory.scopes import MemoryScope
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.events import Assembler
-from app.domain.agent.live_work import HookWorkState, LiveWork
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputReceipt

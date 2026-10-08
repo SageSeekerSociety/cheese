@@ -9,7 +9,7 @@ import uuid
 
 from sqlalchemy import select
 
-from app.domain.agent.live_work import LiveWork
+from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent_session.models import AgentSession
 
 

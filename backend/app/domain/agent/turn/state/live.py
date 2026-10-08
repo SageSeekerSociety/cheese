@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.scopes import MemoryScope
 
 #: 现场状态查表的键：一间房 + 这一轮。
 TurnKey = tuple[uuid.UUID, uuid.UUID]

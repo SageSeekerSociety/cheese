@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.core.errors import ValidationError
 from app.domain.agent.input_registration import input_registrar
-from app.domain.agent.live_work import LiveWork
+from app.domain.agent.turn.state.live import LiveWork
 from app.domain.delivery import agent
 from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.models import Delivery, NativeInput

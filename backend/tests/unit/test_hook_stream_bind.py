@@ -9,8 +9,8 @@ from datetime import UTC, datetime
 import pytest
 
 from app.domain.agent.hook_stream import _bind_user_entry
-from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.service import AgentUserEntry
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn_inputs import (
     bind,
     record_input,

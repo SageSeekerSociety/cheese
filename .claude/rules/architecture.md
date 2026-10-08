@@ -37,7 +37,7 @@ measures, how to read it, and today's numbers: `docs/manual/dev/arch-metrics.md`
 
 ## Backend: the import graph is checked, not assumed
 
-`backend/.importlinter` declares three contracts (import-linter, AST-based, so
+`backend/.importlinter` declares seven contracts (import-linter, AST-based, so
 an import inside a function counts too — of the 30 import statements behind the
 27 frozen layer violations, one is at module level under
 `if TYPE_CHECKING:`, and the other 29 are inside functions, which is how an import
@@ -54,6 +54,25 @@ that "would never happen" happens):
 - **Sibling domains under `app.domain` are acyclic.** `project` and `agent`
   may depend on each other only through a declared seam; a cycle means neither
   can be understood or tested alone.
+
+The four additional turn contracts carry **no frozen exceptions**:
+
+- **T1 `turn-layers`: intake → steps → store → state.** The layer declaration is
+  exhaustive: a new module directly under `agent.turn` cannot evade a layer.
+- **T2 `turn-no-composition-imports`: no direct turn → chat/runtime/API imports.**
+  This deliberately does not forbid indirect intake reachability through the
+  cross-domain services that prepare a turn.
+- **T3 `realtime-no-turn`: realtime cannot reach turn/chat/runtime/API**, even
+  indirectly. Broker plumbing is not execution orchestration.
+- **T4 `turn-storage-purity`: store/state cannot reach intake/steps/realtime or
+  chat/runtime/API**, even through another repository or service module.
+
+`check_boundaries.py --self-test` plants direct, transitive and exhaustive
+violations, checks the exact broken contract IDs in real subprocess JSON, and
+requires removal of each of the seven declarations to produce exit 2. Adding
+these guards does not mean all extraction work is complete: the first migration
+places process-local facts in `turn.state.live`; the other layers are still
+populated by subsequent recoverable changes.
 
 Boundaries follow **real dependencies, not a directory table**: the contracts
 name packages the code actually imports, and the frozen list is generated from
