@@ -2104,8 +2104,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         layer = _layer_of(item)
         item.add_marker(layer)
         if item.nodeid in quarantine:
-            # The prefix is how scripts/assert_suite_ran.py tells this xfail
-            # from a skip, which it refuses.
+            # The gate accepts this xfail only when its nodeid and issue
+            # match the same quarantine list; other skips still fail.
             item.add_marker(
                 pytest.mark.xfail(
                     strict=False, reason=f"quarantined: {quarantine[item.nodeid]}"
