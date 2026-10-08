@@ -208,10 +208,9 @@ defineExpose({ reload: card.reload })
 }
 /* 贴着输入框的那一块：一条边框把它和对话分开，底色和对话栏一样。展开的历史卡有上
    限，再长就在里面滚：它不能把对话整个盖住。 */
-/* 左右缩进和输入框里那一圈内边距（RoomComposer 的 12px）对齐；外层自己已经缩进的
-   地方（演示页）把它设成 0。 */
+/* 左右缩进和输入框里那一圈内边距（RoomComposer 的 12px）对齐。 */
 .accept-dock {
-  margin: 0 var(--accept-dock-inset, 12px) 8px;
+  margin: 0 12px 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface);

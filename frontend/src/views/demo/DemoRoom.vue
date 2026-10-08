@@ -522,8 +522,12 @@ function splitTask(split: SplitLine): TaskLine {
 }
 
 .demo-card {
-  --accept-dock-inset: 0px;
   margin: 8px 16px 0;
+  border-radius: var(--radius-lg);
+}
+/* 演示页的输入框是一个假的、没有内边距，横条直接和它对齐；描边的那一圈也就贴着横条。 */
+.demo-card :deep(.accept-dock) {
+  margin: 0;
 }
 
 .demo-composer {
@@ -569,7 +573,9 @@ function splitTask(split: SplitLine): TaskLine {
 
 /* 这一步该看哪一块：描一圈边。 */
 [data-region] {
-  transition: box-shadow var(--dur-base) var(--ease-standard);
+  transition:
+    box-shadow var(--dur-base) var(--ease-standard),
+    outline-color var(--dur-base) var(--ease-standard);
 }
 
 .demo-room[data-focus='machine'] [data-region='machine'],
@@ -578,9 +584,13 @@ function splitTask(split: SplitLine): TaskLine {
 .demo-room[data-focus='site'] [data-region='panel'],
 .demo-room[data-focus='tabs'] [data-region='tabs'],
 .demo-room[data-focus='title'] [data-region='title'],
-.demo-room[data-focus='backstage'] [data-region='backstage'],
-.demo-room[data-focus='card'] [data-region='card'] {
+.demo-room[data-focus='backstage'] [data-region='backstage'] {
   box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* 横条自己有白底和圆角，描在里面会被它盖住、角也对不上：描在外面，跟着它的圆角。 */
+.demo-room[data-focus='card'] [data-region='card'] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .demo-callout {
