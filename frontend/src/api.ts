@@ -31,7 +31,6 @@ import type {
   FileSource,
   ForgeAttribution,
   ForgeConnection,
-  GitCommit,
   GithubConnection,
   InboxItem,
   ListPayload,
@@ -846,10 +845,6 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
 import type { LibraryFile } from './lib/libraryApi'
 export type { LibraryFile }
 
-export function listProjectLibrary(projectId: string): Promise<ListPayload<LibraryFile>> {
-  return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)
-}
-
 /** 一份资料的字节。这条端点一律按下载发，所以 `downloadFile` 补在末尾的
  *  `download=true` 在这里没有对应的参数，后端不看它。 */
 export function libraryFileRawUrl(projectId: string, path: string): string {
@@ -1333,15 +1328,6 @@ export type { AgentControlResult, AgentControlState } from './api/agentControl'
 export { getAgentControl, sendAgentControl } from './api/agentControl'
 export { requestPreviewSession } from './api/preview'
 export type { PreviewSelection, PreviewSession } from './types/preview'
-
-export function getGitLog(
-  projectId: string,
-  topicId?: string | null,
-  taskId?: string | null
-): Promise<ListPayload<GitCommit>> {
-  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
-  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
-}
 
 export function getGitDiff(
   projectId: string,

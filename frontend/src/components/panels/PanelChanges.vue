@@ -37,7 +37,6 @@ const {
   currentTask,
   sourceStatus,
   sourceUnavailable,
-  showAll,
   fileSource,
   fileToolReady,
   loading,
@@ -45,10 +44,10 @@ const {
   errorMsg,
   noRepo,
   missing,
-  gitCommits,
   fileDiffs,
   diffByPath,
   treeFiles,
+  allFiles,
   openPath,
   fileDraft,
   fileSaving,
@@ -68,7 +67,7 @@ const {
   openDocumentType,
   revisionPath,
   openRawUrl,
-  expandedDirs,
+  collapsedDirs,
   revealTick,
   draftCount,
   docBytes,
@@ -79,6 +78,7 @@ const {
   // 动作
   loadAll,
   selectFile,
+  closeFile,
   selectVersion,
   openFile,
   toggleDir,
@@ -88,11 +88,8 @@ const {
   reloadOpenFile,
 } = props.changes
 
-// 展示组件往上发的三件事是「换了个值」，不是「做了个动作」：这里落回取数那一层那
-// 几个 ref 上。写成三个函数而不是模板里的行内赋值，是为了让类型检查看得见。
-function setScope(v: boolean) {
-  showAll.value = v
-}
+// 展示组件往上发的两件事是「换了个值」，不是「做了个动作」：这里落回取数那一层那
+// 几个 ref 上。写成函数而不是模板里的行内赋值，是为了让类型检查看得见。
 function setView(v: 'diff' | 'edit') {
   fileView.value = v
 }
@@ -128,7 +125,6 @@ defineExpose({ openFile })
     :current-task="currentTask"
     :source-status="sourceStatus"
     :source-unavailable="sourceUnavailable"
-    :show-all="showAll"
     :file-source="fileSource"
     :file-tool-ready="fileToolReady"
     :loading="loading"
@@ -136,10 +132,10 @@ defineExpose({ openFile })
     :error-msg="errorMsg"
     :no-repo="noRepo"
     :missing="missing"
-    :git-commits="gitCommits"
     :file-diffs="fileDiffs"
     :diff-by-path="diffByPath"
     :tree-files="treeFiles"
+    :all-files="allFiles"
     :open-path="openPath"
     :file-draft="fileDraft"
     :file-saving="fileSaving"
@@ -160,7 +156,7 @@ defineExpose({ openFile })
     :revision-path="revisionPath"
     :revs="revs"
     :open-raw-url="openRawUrl"
-    :expanded-dirs="expandedDirs"
+    :collapsed-dirs="collapsedDirs"
     :reveal-tick="revealTick"
     :draft-count="draftCount"
     :doc-bytes="docBytes"
@@ -168,6 +164,7 @@ defineExpose({ openFile })
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"
     @select-file="onSelectFile"
+    @close-file="closeFile"
     @select-version="onSelectVersion"
     @toggle-dir="toggleDir"
     @refresh="refresh"
@@ -175,8 +172,10 @@ defineExpose({ openFile })
     @save="saveFile"
     @overwrite="overwriteFile"
     @reload="reloadOpenFile"
-    @scope-changed="setScope"
     @view-changed="setView"
     @draft-changed="setDraft"
-  />
+  >
+    <!-- 这次交付的情况，宿主塞进来（这一格是场景，自己不读采纳卡）。 -->
+    <template #head><slot name="head" /></template>
+  </PanelChangesView>
 </template>

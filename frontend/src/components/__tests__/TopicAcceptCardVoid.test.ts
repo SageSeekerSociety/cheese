@@ -1,8 +1,8 @@
 /** 作废是一张未决卡在界面上的出口。
  *
  * 卡停在一个没人能推进的地方时（这里用 GitHub 拒绝合并那一种），人要能把这次审阅
- * 结束掉。这里断言这个动作真的点得到：展开、写理由、确认之后打的是作废端点，卡随之
- * 离开待处理。
+ * 结束掉。这里断言这个动作真的点得到：从「更多操作」打开、写理由、确认之后打的是作废
+ * 端点，卡随之离开待处理。
  */
 import type { AcceptCard } from '../../cx_types'
 
@@ -11,7 +11,7 @@ import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAcceptCards = vi.fn()
 const voidCard = vi.fn()
@@ -29,7 +29,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import TopicAcceptCard from '../TopicAcceptCard.vue'
+import { AcceptPage, chooseMore, dialogButton, stubOverlayGlobals } from './acceptHarness'
 
 import i18n, { setLocale } from '@/i18n'
 
@@ -84,13 +84,18 @@ async function flush() {
 async function mountWith(cards: AcceptCard[]) {
   getAcceptCards.mockResolvedValue({ data: cards, has_more: false })
   const vuetify = createVuetify({ components, directives })
-  const utils = render(TopicAcceptCard, {
+  const utils = render(AcceptPage, {
     props: { topicId: 't1', topicStatus: 'active' },
     global: { plugins: [vuetify, i18n] },
   })
   await flush()
   return utils
 }
+
+beforeAll(() => stubOverlayGlobals(vi))
+afterAll(() => vi.unstubAllGlobals())
+
+const voidReason = () => document.querySelector<HTMLInputElement>('.v-overlay .confirm-dialog input')!
 
 beforeEach(() => {
   // These assertions read the Chinese copy.
@@ -104,37 +109,37 @@ beforeEach(() => {
 describe('作废一张停住的卡', () => {
   it('作废点得到，确认后卡离开待处理', async () => {
     const card = stuckCard()
-    const { container, getByRole, getByPlaceholderText } = await mountWith([card])
+    const { container } = await mountWith([card])
     expect(container.textContent).toContain(STUCK_NOTE)
 
-    await fireEvent.click(getByRole('button', { name: '作废' }))
-    await fireEvent.update(getByPlaceholderText('作废理由（可选）'), '换到另一个房间做了')
+    await chooseMore(container, '作废')
+    await fireEvent.update(voidReason(), '换到另一个房间做了')
 
     const voided = { ...card, status: 'revoked', note_level: 'info' } as AcceptCard
     voidCard.mockResolvedValue(voided)
     getAcceptCards.mockResolvedValue({ data: [voided], has_more: false })
-    await fireEvent.click(getByRole('button', { name: '确认作废' }))
+    await fireEvent.click(dialogButton('作废')!)
     await flush()
 
     expect(voidCard).toHaveBeenCalledWith(card.id, '换到另一个房间做了')
     expect(rejectCard).not.toHaveBeenCalled()
-    expect(container.textContent).not.toContain('确认作废')
     expect(container.textContent).not.toContain(STUCK_NOTE)
   })
 
   it('只点开不确认，什么都不发', async () => {
-    const { getByRole } = await mountWith([stuckCard()])
-    await fireEvent.click(getByRole('button', { name: '作废' }))
+    const { container } = await mountWith([stuckCard()])
+    await chooseMore(container, '作废')
+    await fireEvent.click(dialogButton('取消')!)
     await flush()
     expect(voidCard).not.toHaveBeenCalled()
   })
 
   it('没有权限作废时，服务端的拒绝报给人，卡仍在待处理', async () => {
     const card = stuckCard()
-    const { container, getByRole } = await mountWith([card])
+    const { container } = await mountWith([card])
     voidCard.mockRejectedValue({ message: '只有被指定审阅的人、项目所有者或团队管理员能作废' })
-    await fireEvent.click(getByRole('button', { name: '作废' }))
-    await fireEvent.click(getByRole('button', { name: '确认作废' }))
+    await chooseMore(container, '作废')
+    await fireEvent.click(dialogButton('作废')!)
     await flush()
     expect(voidCard).toHaveBeenCalledOnce()
     expect(container.textContent).toContain(STUCK_NOTE)

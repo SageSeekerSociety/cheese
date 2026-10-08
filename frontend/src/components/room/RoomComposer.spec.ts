@@ -20,11 +20,14 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('../../lib/libraryApi', async () => {
+  const actual = await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')
+  return { ...actual, listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }) }
+})
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 待发条上的图片先取字节再画：这个地址在测试里给不出东西，返回空串就够了，
     // 这一份问的不是它画成什么样。
     attachmentImageUrl: vi.fn().mockResolvedValue(''),
@@ -32,7 +35,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import { listProjectLibrary } from '../../api'
+import { listProjectLibrary } from '../../lib/libraryApi'
 
 import RoomComposer from './RoomComposer.vue'
 
@@ -58,7 +61,17 @@ function topic(id = 't1'): Topic {
 }
 
 function file(path: string) {
-  return { path, bytes: 1, modified: 0, added_by: null, added_at: null, room: null, replaced: 0, references: 0 }
+  return {
+    type: 'file',
+    path,
+    bytes: 1,
+    modified: 0,
+    added_by: null,
+    added_at: null,
+    room: null,
+    replaced: 0,
+    references: 0,
+  }
 }
 
 interface Options {

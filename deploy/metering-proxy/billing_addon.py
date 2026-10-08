@@ -10,9 +10,16 @@ That placement makes this the only point that can:
   - meter a subscription turn's real cost (the subscription path deliberately
     skips LiteLLM — no per-call key to meter, and re-originating from our own
     client would change what the provider sees),
-  - enforce a cap BEFORE forwarding, so an exhausted budget cannot overspend:
-    per-project via the backend's /llm/admission (#218), plus the rolling
-    token window as the deployment-wide backstop,
+  - enforce the per-project budget BEFORE forwarding via the backend's
+    /llm/admission (#218), and hold the rolling token window as the
+    deployment-wide backstop: it refuses a turn once the window's COMPLETED
+    turns plus an estimate of the turns now in flight reach the cap, so
+    concurrent turns cannot all pass on a stale `used() < cap`. It is a
+    backstop, not an exact ceiling: a turn already past admission runs to its
+    end, so the window can overshoot by the difference between a turn's
+    reserved estimate and what it really cost. Projects the backend routes to
+    the API-key pool are not under this window at all — the gateway meters
+    them,
   - send a project that admission places on the API-key pool to LiteLLM
     instead, with the project's virtual key; the platform's credential must
     never reach the gateway.
@@ -45,6 +52,7 @@ sent to ChatGPT is not env: it is a file beside the ChatGPT accounts
 """
 
 import asyncio
+import fcntl
 import hmac
 import json
 import logging
@@ -100,6 +108,11 @@ USAGE_LOG = Path(os.environ.get("CHEESE_USAGE_LOG", "/var/log/cheese/usage.jsonl
 # 0 disables the backstop cap. Set per deployment from the subscription's ceiling.
 TOKEN_CAP = int(os.environ.get("CHEESE_TOKEN_CAP", "0"))
 CAP_WINDOW_S = int(os.environ.get("CHEESE_CAP_WINDOW_S", str(5 * 3600)))
+# Tokens to hold against the cap while a turn runs: its real cost is unknown
+# until it ends, so without this the window misses every in-flight turn and
+# concurrent turns overshoot together. 0 = derive one per request (see
+# `_reserve_estimate`).
+CAP_RESERVE_TOKENS = int(os.environ.get("CHEESE_CAP_RESERVE_TOKENS", "0"))
 # Shared with the backend (SANDBOX_TOKEN): verifies the caller's scoped token,
 # and is the proxy's own credential towards the backend.
 SCOPED_SECRET = os.environ.get("CHEESE_SCOPED_SECRET", "")
@@ -119,7 +132,52 @@ ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 # silently served from the subscription it did not ask for.
 GATEWAY_BASE = os.environ.get("CHEESE_GATEWAY_BASE", "")  # "http://host:port"
 
+# fds of the single-writer lock, held open for the process's life so the flock
+# survives until the process exits (the OS then releases it).
+_LOCKS: list[int] = []
+
+
+def _take_single_writer_lock(log: Path) -> None:
+    """Make the one-writer-per-usage-log invariant explicit (README).
+
+    Two proxies sharing a USAGE_LOG_DIR window their totals separately and can
+    reach about N×cap, and neither notices. Compose's fixed container_name
+    pins this in practice; this turns a hand-started second instance from a
+    silent doubling into a logged error. It does not exit: a stale or
+    misread lock must not leave the platform metering nothing."""
+    lock = log.with_name(log.name + ".lock")
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        logger.warning("cannot open the usage-log lock %s: %s", lock, exc)
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            held = lock.read_text().strip()
+        except OSError:
+            held = ""
+        logger.error(
+            "another metering proxy already writes %s (pid %s); this instance "
+            "shares its log and the two rolling windows will diverge — one "
+            "writer per usage log, see deploy/metering-proxy/README.md",
+            log,
+            held or "unknown",
+        )
+        os.close(fd)
+        return
+    try:
+        os.truncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode())
+    except OSError:
+        pass
+    _LOCKS.append(fd)
+
+
 METER = Meter(USAGE_LOG, CAP_WINDOW_S)
+_take_single_writer_lock(USAGE_LOG)
 # The platform's Claude credential: the one thing that authenticates a
 # subscription request. Sessions never hold it. See PlatformCredential.
 CREDENTIAL = PlatformCredential(
@@ -1381,6 +1439,13 @@ def _route(
                 f"in the last {CAP_WINDOW_S // 3600}h",
             )
             return
+        if TOKEN_CAP > 0:
+            # Hold an estimate of this turn's cost while it runs, so turns
+            # admitted together cannot all pass on the same used()<cap and
+            # overshoot it together. Released in response()/error().
+            flow.metadata["cheese_cap_reservation"] = METER.reserve(
+                _reserve_estimate(flow, TOKEN_CAP)
+            )
         if verdict is not None:
             # The subscription pool serves the haiku family itself, so the
             # CLI's own background requests stay on it.
@@ -1432,6 +1497,77 @@ class GatewayStream(StreamingUsageExtractor):
             )
 
 
+# Bytes per token the reserve estimate assumes when it reads a buffered body.
+_BYTES_PER_TOKEN = 4
+
+
+def _reserve_estimate(flow: http.HTTPFlow, cap: int) -> int:
+    """What to hold against the cap while this turn runs.
+
+    Not the turn's cost — that is unknown until it ends — but a bound the
+    deployment can live with: the request body's own tokens when the body was
+    buffered, otherwise a sixteenth of the cap. Clamped to the cap so a single
+    turn never reserves the whole window and wedges everyone behind it."""
+    if CAP_RESERVE_TOKENS > 0:
+        return max(1, min(cap, CAP_RESERVE_TOKENS))
+    body = _buffered_body(flow)
+    estimate = len(body) // _BYTES_PER_TOKEN if body else cap // 16
+    return max(1, min(cap, estimate))
+
+
+def _buffered_body(flow: http.HTTPFlow) -> bytes:
+    """The request body only if it is already in memory, else b"".
+
+    A message request's body is streamed (see ``requestheaders``): reading a
+    streamed message's content here would pull the whole grown conversation
+    back into RAM, which is exactly what streaming it avoids."""
+    try:
+        return flow.request.raw_content or b""
+    except (AttributeError, ValueError):
+        return b""
+
+
+def _meter_subscription_stream(
+    flow: http.HTTPFlow, *, interrupted: bool = False
+) -> None:
+    """Land a subscription SSE turn on the meter exactly once.
+
+    mitmproxy drives the response stream's end-of-stream sentinel only on
+    ResponseEndOfMessage (proxy/layers/http, ``state_stream_response_body``).
+    A turn interrupted before that — the user aborts, the client disconnects,
+    an upstream drop, a release that recreates the proxy — never reaches the
+    sentinel, and its already-seen input_tokens and cache_creation (the bulk of
+    a turn's cost) would vanish silently. ``error()`` reaches here for exactly
+    those turns; ``extractor.recorded`` keeps a clean sentinel and a later
+    error on the same flow from metering twice.
+
+    Records through ``_record_usage``, not ``METER.record`` directly: the
+    account pool's snapshot is published on every recorded turn, and a turn
+    metered here is still a turn served."""
+    extractor = flow.metadata.get("cheese_sub_stream")
+    if extractor is None or extractor.recorded:
+        return
+    extractor.recorded = True
+    extractor.close()
+    project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
+    if extractor.usage:
+        _record_usage(project_id, topic_id, extractor.usage, extractor.model)
+        if interrupted:
+            logger.warning(
+                "subscription turn's stream was interrupted before its end; "
+                "metered the usage seen so far: %s",
+                extractor.usage,
+            )
+    else:
+        # A turn that ran and cost nothing on the meter is the cap silently
+        # switched off; say so rather than skip it.
+        logger.warning(
+            "no usage found in a subscription message response "
+            "(content-encoding %r); the turn is not metered",
+            flow.metadata.get("cheese_sub_encoding", ""),
+        )
+
+
 def responseheaders(flow: http.HTTPFlow) -> None:
     """Stream the response body through instead of buffering it whole. A turn's
     SSE response is otherwise held in RAM for the ENTIRE turn while it buffers,
@@ -1442,7 +1578,11 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     the SSE incrementally by a StreamingUsageExtractor as chunks pass through, so
     no full body is ever materialised. A non-streaming JSON message (small, and
     not held for the turn's duration) is left buffered so response() can meter it
-    the simple way. Everything else just streams straight through."""
+    the simple way. Everything else just streams straight through.
+
+    The extractor is left on the flow: a stream that is interrupted never
+    reaches this tee's end-of-stream sentinel, so error() has to land its
+    usage instead (see `_meter_subscription_stream`)."""
     resp = flow.response
     if resp is None:
         return
@@ -1496,27 +1636,18 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         return
     is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
     if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
-        project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
         encoding = resp.headers.get("content-encoding", "")
         extractor = StreamingUsageExtractor(encoding)
+        # Kept on the flow so error() can land an interrupted turn's usage too,
+        # and so the encoding survives into the "not metered" warning.
+        flow.metadata["cheese_sub_stream"] = extractor
+        flow.metadata["cheese_sub_encoding"] = encoding
 
         def tee(chunk: bytes) -> bytes:
             if chunk:
                 extractor.feed(chunk)
             else:  # end-of-stream sentinel
-                extractor.close()
-                if extractor.usage:
-                    _record_usage(
-                        project_id, topic_id, extractor.usage, extractor.model
-                    )
-                else:
-                    # A turn that ran and cost nothing on the meter is the cap
-                    # silently switched off; say so rather than skip it.
-                    logger.warning(
-                        "no usage found in a subscription message response "
-                        "(content-encoding %r); the turn is not metered",
-                        encoding,
-                    )
+                _meter_subscription_stream(flow)
             return chunk
 
         resp.stream = tee
@@ -1750,8 +1881,16 @@ def error(flow: http.HTTPFlow) -> None:
     if attempt:
         CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
         attempt.close()
+    # This flow is over, whichever way it ended: drop its cap reservation. The
+    # SSE path released its own reservation in response(); a turn that errored
+    # before ever responding has one to drop here.
+    METER.release(flow.metadata.pop("cheese_cap_reservation", None))
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
+    else:
+        # A subscription stream interrupted before its end never reached the
+        # tee's sentinel; meter whatever it did produce.
+        _meter_subscription_stream(flow, interrupted=True)
     chatgpt_account = flow.metadata.get("cheese_chatgpt_account")
     via = getattr(flow.server_conn, "via", None)
     if chatgpt_account and via:
@@ -1781,6 +1920,10 @@ def response(flow: http.HTTPFlow) -> None:
     if attempt:
         CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
         attempt.close()
+    # The turn is over: whatever it reserved against the cap is no longer in
+    # flight. (An SSE turn metered itself at its sentinel; a non-streaming JSON
+    # message is metered further down this function.)
+    METER.release(flow.metadata.pop("cheese_cap_reservation", None))
     if _answer_a_missed_binding(flow):
         return
     if flow.metadata.get("cheese_chatgpt_turn") and flow.response is not None:

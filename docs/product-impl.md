@@ -128,7 +128,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.5 验收 / 采纳（状态机）  ✅
 
-- **行为**：成果做完 → 把**验收卡递给一个具体的人**（非广播）→ 对方在"成果待采纳"框点**采纳并归档**（话题归档=PR Merged）或**退回**；可**改验收人**；采纳后可**撤回**（话题回 active）。卡面在按钮上方写明这次交付定的是什么：哪一项产物的第几版（版号由后端按卡的状态算，还没采纳的那一张算的是它采纳之后的号），以及交出去的那一份——文件当场下载得到（快照在递卡那一刻就落好，所以不必等采纳），地址当场打开，交出去的是一次合并时没有可拿的东西。
+- **行为**：成果做完 → 把**验收卡递给一个具体的人**（非广播）→ 对方在"成果待采纳"框点**采纳并归档**（话题归档=PR Merged）或**退回**；可**改验收人**；采纳后可**撤回**（话题回 active）。「改动」页顶部写明这次交付定的是什么：哪一项产物的第几版（版号由后端按卡的状态算，还没采纳的那一张算的是它采纳之后的号），以及交出去的那一份——文件当场下载得到（快照在递卡那一刻就落好，所以不必等采纳），地址当场打开，交出去的是一次合并时没有可拿的东西。
 - **铁律**：协作模式下 AI 不能验收自己的活（必须人来）；同话题**只允许一张待处理卡**；归档话题不能重复采纳；撤销需身份（原采纳人、项目所有者或团队的所有者、管理员）；空 `required_topic` 协议条件不再误判全员须外部成员验收。
 - **采纳 = git merge**：采纳时把话题分支合并回 base（best-effort，冲突不阻断归档）。
 - **实现**：`AcceptService`（`backend/app/domain/review/services.py`）；接口 `POST /api/topics/{id}/accept-card`、`/api/accept-cards/{id}/{accept|reject|reassign|revoke}`；前端 `WorkspaceView` 合并框。
@@ -160,7 +160,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **VCS = git**：每个项目一个主仓，每话题一个 `git worktree`，检出在这棵树自己的分支上。芝士在容器里那次 `git commit` 直接就把分支往前挪了——没有导出、没有代推、也没有一步会失败的中转；平台只读分支（采纳/diff/PR）。`backend/app/domain/repository/service.py`。
 - **沙箱执行**：每**房间**一个常驻 Docker 容器（§3.2），`--memory/--cpus/--pids-limit` 是一份**房间**预算（`SANDBOX_MEMORY_GB`/`SANDBOX_CPUS`/`SANDBOX_PIDS_LIMIT`）；房间里每个话题占一个 tmux 会话，各自的话题 id、回调令牌、`CLAUDE_CONFIG_DIR`、工作目录、预览端口都写在会话环境里（`tmux new-session -e`），互不串。agent 的原生 Bash 在容器里跑，碰不到宿主机。`exec_in_sandbox` 另提供 `--network none` 的一次性执行（强隔离场景）。
 - **文件面板（重点：看代码 / 轻量改代码）**：用户很看重**在平台里直接看代码、并能少量改代码**——文档面板的「文件」标签列出**当前话题工作区**的文件树，点开看内容(代码高亮)，可就地小改。所以：文件接口必须带 `?topic=`(读话题 worktree,不是空的 base 仓);芝士产物必须写进工作区(`./`)而非 `/tmp`,否则文件面板看不到、也不进版本库。`GET /api/projects/{id}/{files|file}?topic=` · `DocPanel` 文件标签。
-- **实现**：接口 `GET /api/projects/{id}/{files|file|git/log|git/diff}`（`files|file|git/diff` 带 `?topic=` 看话题工作区/分支；`git/diff` 拒 ref 选项注入）。
+- **实现**：接口 `GET /api/projects/{id}/{files|file|git/diff}`（`files|file|git/diff` 带 `?topic=` 看话题工作区/分支；`git/diff` 拒 ref 选项注入）。
 
 ### 3.11 Space / Task Template / Task  ✅ 协议侧 / 🟡 资源侧
 
@@ -219,7 +219,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 成员   GET/POST /api/projects/{id}/members · PUT/DELETE .../{handle} · DELETE .../membership（自己退出） · GET .../{handle}/summary
 机构   POST/GET /api/spaces · GET /spaces/{id}/dashboard · POST/GET /api/spaces/{id}/templates
 任务   POST/GET /api/templates/{id}/tasks · POST/GET/DELETE /api/projects/{id}/tasks[/{task_id}]
-工作区 GET /api/projects/{id}/{files,file,git/log,git/diff}
+工作区 GET /api/projects/{id}/{files,file,git/diff}
 个人   GET /api/users/{handle}/{profile,topics} · DELETE /api/users/me/understanding/{id} · GET/PUT /api/users/{handle}
 反馈   GET/POST /api/feedback · GET /api/feedback/{meta,counts,mine,{id},{id}/comments} · POST /api/feedback/{read,{id}/comments,{id}/supports}
        管理端 GET/PATCH /api/admin/feedback[/{id}] · POST /api/admin/feedback/{id}/{status,notes}
