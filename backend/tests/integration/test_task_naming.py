@@ -718,10 +718,12 @@ def test_a_rename_is_heard_on_the_tasks_own_page_and_in_its_channel(
     pages on the channel's: a new title reaches both without a reload."""
     import app.domain.agent.runtime as runtime
 
-    heard: list[tuple[str, str]] = []
+    heard: list[tuple[str, str, str | None]] = []
 
-    async def announce(conversation_id, resource):
-        heard.append((str(conversation_id), resource))
+    async def announce(conversation_id, resource, *, id=None):
+        heard.append(
+            (str(conversation_id), resource, str(id) if id is not None else None)
+        )
 
     monkeypatch.setattr(runtime, "announce_stale", announce)
     project = _project(client, alice)
@@ -730,4 +732,10 @@ def test_a_rename_is_heard_on_the_tasks_own_page_and_in_its_channel(
     _say(client, tid, "帮我排查一下 dev 机器从外网访问很慢的问题")
     gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
     assert _run(client, tid, "message") is not None
-    assert (tid, "topics") in heard and (room, "topics") in heard
+    assert (tid, "topics") in [(c, r) for c, r, _ in heard]
+    assert (room, "topics") in [(c, r) for c, r, _ in heard]
+    # Both frames name the ROOM's row: the sidebar holds rooms, and a task id is
+    # not an address (`GET /topics/{task}` is a 404), so a page listening on the
+    # task's own conversation must not be told to refetch by the task's id.
+    assert (tid, "topics", room) in heard
+    assert (room, "topics", room) in heard

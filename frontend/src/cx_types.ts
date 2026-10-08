@@ -323,7 +323,11 @@ export type WsServerFrame =
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   // A 分身's checklist, on its card's channel (the room's own list is a message).
   | { type: 'todo'; items: TodoItem[] }
-  | { type: 'state'; resource: string; project_ids?: string[] }
+  // `id`: the one row that changed, when the panel can read just that row back
+  // instead of the whole list (the sidebar's `topics` rows are rooms). Absent
+  // on an older backend and on frames whose publisher has no single row to
+  // name — the client then reloads the whole panel, as it always did.
+  | { type: 'state'; resource: string; id?: string; project_ids?: string[] }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event

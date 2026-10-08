@@ -58,7 +58,8 @@ const emit = defineEmits<{
   (e: 'site-turns', turns: Record<string, number>): void
   // 谁在这个房间里忙：现场那一格画同一份。
   (e: 'activity', lines: MemberActivityLine[]): void
-  (e: 'state-changed', payload: unknown): void
+  // `id` 是后端指名的那一行（topics 帧上是房间 id）；两个都要转，漏掉的话刷新又退回整份重下。
+  (e: 'state-changed', resource: string, id?: string): void
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
@@ -153,7 +154,7 @@ defineExpose({
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
       @activity="emit('activity', $event)"
-      @state-changed="emit('state-changed', $event)"
+      @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path) => emit('open-file', path)"

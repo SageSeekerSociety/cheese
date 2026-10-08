@@ -465,10 +465,13 @@ function handleTurnDone() {
 
 // A platform resource in this room changed (the API handler that changed it
 // sent the frame) — refresh the affected panel live (§3.1.1).
-function handleStateChanged(resource: string) {
+function handleStateChanged(resource: string, id?: string) {
   // 「topics」也说任务清单变了（建、改名、关），任务页自己的页头和侧栏都要跟着变。
   if (resource === 'topics') {
-    void store.refreshTopics()
+    // 后端指名了变的是哪一行（房间 id）就只重取那一行 —— 改一个房间名不再重下整份
+    // 清单（400 多个话题近 300KB）。没指名（老后端、或没带 id 的调用点）退回整块重取。
+    if (id) void store.refreshTopicRow(id)
+    else void store.refreshTopics()
     store.noteTasksChanged()
     if (props.taskId) void taskPage.load(true)
     else void channelOverview.loadTasks()

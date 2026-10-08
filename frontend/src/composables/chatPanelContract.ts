@@ -17,8 +17,10 @@ export interface ChatPanelEmit {
   // 标题左边那颗 ← 被按了。去哪儿由拥有这个地址的人决定，不是这里。
   (e: 'back'): void
   // A cheese command changed a platform resource (doc/topics/...) —
-  // the parent refreshes that panel live, mid-turn.
-  (e: 'state-changed', resource: string): void
+  // the parent refreshes that panel live, mid-turn. `id` is the single row
+  // that changed when the backend named one (the `topics` frame's room id);
+  // the parent then reads that row back instead of the whole panel.
+  (e: 'state-changed', resource: string, id?: string): void
   // 芝士摆出来一份东西（`cheese show` / `cheese serve`）：房间里多了一块 kind=artifact
   // 的卡，当前预览跟着它换。对话栏是这条 socket 的家，面板自己听不到，所以往上报一
   // 声，面板据此立刻去问一次指针——而不是等下一次轮询（那要十几秒）。

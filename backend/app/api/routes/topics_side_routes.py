@@ -221,6 +221,6 @@ async def upgrade_block(
         opening=True,
     )
     await db.commit()
-    await announce_stale(room.id, "topics")
+    await announce_stale(room.id, "topics", id=room.id)
     await dispatch(chat)
     return ok(out)

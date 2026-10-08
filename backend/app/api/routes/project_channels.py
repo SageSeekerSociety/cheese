@@ -71,7 +71,7 @@ async def step_into_channel(
             content=say("channelSteppedIn", actor=f"<@{actor.handle}>"),
         )
     await db.commit()
-    await announce_stale(topic.id, "topics")
+    await announce_stale(topic.id, "topics", id=topic.id)
     return ok({"topic_id": str(topic.id), "joined": True})
 
 
@@ -101,5 +101,5 @@ async def hand_over_channel(
             ),
         )
     await db.commit()
-    await announce_stale(topic.id, "topics")
+    await announce_stale(topic.id, "topics", id=topic.id)
     return ok({"topic_id": str(topic.id), "manager": body.handle})
