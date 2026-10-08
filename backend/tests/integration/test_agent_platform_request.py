@@ -192,7 +192,7 @@ def test_acceptance_stays_with_people(client, room):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": seat,
-            "routing_reason": "自己验",
+            "focus": "自己验",
         },
     )
     assert card.status_code == 200, card.text

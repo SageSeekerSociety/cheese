@@ -79,7 +79,7 @@ def _room_with_cards(client, *cards: dict) -> dict:
                     AcceptCard(
                         topic_id=room.id,
                         reviewer_handle=REVIEWER,
-                        routing_reason="最懂",
+                        focus="最懂",
                         created_at=spec.get("created_at", _days_ago(1)),
                         **{k: v for k, v in spec.items() if k not in {"created_at"}},
                     )

@@ -124,7 +124,7 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
         headers=_agent(pid, str(task)),
     )

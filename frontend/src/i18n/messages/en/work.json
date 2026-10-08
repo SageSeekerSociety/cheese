@@ -379,7 +379,7 @@
       "reassign": "Change",
       "reassignTitle": "Who should review instead",
       "noMembers": "No members to choose from",
-      "routingReason": "Why them: {reason}",
+      "focus": "Review focus",
       "delivery": "This delivery",
       "download": "Download",
       "changeSubject": "Commit subject after the merge",

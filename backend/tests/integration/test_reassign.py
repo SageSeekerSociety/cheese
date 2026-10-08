@@ -32,12 +32,23 @@ def test_reassign_changes_reviewer(client):
     card_id = _topic_and_card(client)
     r = client.post(
         f"/accept-cards/{card_id}/reassign",
-        json={"reviewer_handle": "mentor-1", "routing_reason": "导师更合适"},
+        json={"reviewer_handle": "mentor-1", "focus": "导师更合适"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["reviewer_handle"] == "mentor-1"
-    assert r.json()["data"]["routing_reason"] == "导师更合适"
+
+
+def test_reassigning_keeps_what_the_deliverer_asked_to_check(client):
+    """审阅重点是交付的人写给审阅的人的，换一个人来看，要看的还是那几件事。"""
+    card_id = _topic_and_card(client)
+    r = client.post(
+        f"/accept-cards/{card_id}/reassign",
+        json={"reviewer_handle": "mentor-1", "focus": "导师更合适"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["focus"] == "最懂"
 
 
 def test_cannot_reassign_decided_card(client):

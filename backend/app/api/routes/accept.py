@@ -135,7 +135,7 @@ async def create_accept_card(
         admits_reviewer=_reviewer_admission(actor, resolver),
         topic_id=topic_id,
         reviewer_handle=body.reviewer_handle,
-        routing_reason=body.routing_reason,
+        focus=body.focus,
         change_subject=body.change_subject,
         change_body=body.change_body,
         artifact=body.artifact,
@@ -391,7 +391,6 @@ async def reassign_card(
         admits_reviewer=_reviewer_admission(actor, resolver),
         card_id=card_id,
         reviewer_handle=body.reviewer_handle,
-        reason=body.routing_reason,
     )
     return ok(await svc.describe(card))
 
