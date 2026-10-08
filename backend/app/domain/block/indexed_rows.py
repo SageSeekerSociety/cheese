@@ -36,6 +36,23 @@ MACHINE_EVENTS = ("environment_repaired",)
 #: warnings — the platform carries on by itself — and do not count.
 FAILED_TURN_EVENTS = ("turn_failed", "platform_error")
 
+#: Platform events that hand work to an agent: review comments on a PR, a red
+#: check, a merge that will not go in, a rejected card. Each says the agent is
+#: to fix it (`platform_notices`).
+CHECKS_FOR_THE_AGENT = (
+    "pr_review",
+    "pr_conflict",
+    "ci_failed",
+    "gate_failed",
+    "gate_blocked",
+    "gate_abandoned",
+    "merge_refused",
+    "accept_conflict",
+    "upstream_conflict",
+    "migration_collision",
+    "card_rejected",
+)
+
 
 def _one_of(values: tuple[str, ...]) -> str:
     return ", ".join(f"'{value}'" for value in values)
@@ -52,6 +69,10 @@ FAILED_TURN_ROWS = text(
     f"(meta ->> 'event_type') IN ({_one_of(FAILED_TURN_EVENTS)})"
     " AND (meta ->> 'severity') = 'error'"
 )
+
+#: A platform event handing work to an agent. The room-waits scan
+#: (`waits._stuck_cards`) reads the newest one in each room whose card is stuck.
+AGENT_CHECK_ROWS = text(f"(meta ->> 'event_type') IN ({_one_of(CHECKS_FOR_THE_AGENT)})")
 
 #: A message that named an agent and has not had its turn: never read into a
 #: prompt, never answered or refused another way. The rows the pending-message

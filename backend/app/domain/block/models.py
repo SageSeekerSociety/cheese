@@ -25,6 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.block.indexed_rows import (
+    AGENT_CHECK_ROWS,
     COALESCED_ROWS,
     EID,
     FAILED_TURN_ROWS,
@@ -215,6 +216,14 @@ class Block(UuidPk, Timestamps, Base):
             "created_at",
             postgresql_where=FAILED_TURN_ROWS,
         ),
+        # The events that hand a stuck card to an agent, read for the rooms
+        # whose card is stuck on every `GET /topics`.
+        Index(
+            "ix_blocks_agent_checks",
+            "conversation_id",
+            "created_at",
+            postgresql_where=AGENT_CHECK_ROWS,
+        ),
         # 房间里「谁在等人」的那两条扫描（`waits`）：谁最后说过话、谁被点名还没
         # 回答。两边都是每个项目一把，读各自房间里最近七天的消息，在 `/topics`
         # 里各占约 200 ms（2026-10-08）。谓词与查询逐字相同（`indexed_rows`）
@@ -249,6 +258,14 @@ class Block(UuidPk, Timestamps, Base):
             "ix_blocks_coalesced",
             "conversation_id",
             postgresql_where=COALESCED_ROWS,
+        ),
+        # Deleting a room sets `upgraded_to_topic_id` to NULL on the blocks
+        # that link to it, and finding them read the whole table without this.
+        # A handful of blocks ever carry one, hence partial.
+        Index(
+            "ix_blocks_upgraded_to_topic_id",
+            "upgraded_to_topic_id",
+            postgresql_where=text("upgraded_to_topic_id IS NOT NULL"),
         ),
     )
 

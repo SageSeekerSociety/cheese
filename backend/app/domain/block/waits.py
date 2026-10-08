@@ -19,12 +19,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import String, Uuid, any_, bindparam, or_, select
+from sqlalchemy import String, Uuid, any_, bindparam, or_, select, true
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.indexed_rows import (
+    AGENT_CHECK_ROWS,
     FAILED_TURN_ROWS,
     LAST_SAID_ROWS,
     MACHINE_EVENT_ROWS,
@@ -36,7 +37,11 @@ from app.domain.block.models import (
     Block,
     BlockKind,
 )
-from app.domain.conversation.services import of_rooms, room_column
+from app.domain.conversation.services import (
+    conversations_of,
+    of_rooms,
+    room_column,
+)
 from app.domain.identity.handles import agent_handle_column, recipient_seat
 from app.domain.run_record.models import RunRecord
 
@@ -44,23 +49,6 @@ from app.domain.run_record.models import RunRecord
 #: answered a week ago is not that any more, and without a bound these queries
 #: scan every message the project ever had.
 REPLY_LOOKBACK = timedelta(days=7)
-
-#: Platform events that hand work to an agent: review comments on a PR, a red
-#: check, a merge that will not go in, a rejected card. Each says the agent is
-#: to fix it (`platform_notices`).
-CHECKS_FOR_THE_AGENT = (
-    "pr_review",
-    "pr_conflict",
-    "ci_failed",
-    "gate_failed",
-    "gate_blocked",
-    "gate_abandoned",
-    "merge_refused",
-    "accept_conflict",
-    "upstream_conflict",
-    "migration_collision",
-    "card_rejected",
-)
 
 #: The reason a failed turn is reported under.
 FAILED = "failed"
@@ -233,31 +221,43 @@ class MemberWaits:
         """
         if not topic_ids:
             return []
-        under_room = (
-            of_rooms(Block.conversation_id, topic_ids),
-            Block.created_at >= since,
-        )
         room = room_column(Block.conversation_id).label("room")
         events = (
             select(room, Block.created_at)
             .where(
-                *under_room,
+                of_rooms(Block.conversation_id, topic_ids),
+                Block.created_at >= since,
                 ~participant_blocks(),
-                Block.meta["event_type"].as_string().in_(CHECKS_FOR_THE_AGENT),
+                AGENT_CHECK_ROWS,
             )
             .order_by(room, Block.created_at.desc())
             .distinct(room)
         )
-        touched = (
-            select(room, Block.author, Block.created_at)
-            .where(*under_room, participant_blocks(), agent_handle_column(Block.author))
-            .order_by(room, Block.created_at.desc())
-            .distinct(room)
+        # The newest agent line in each conversation, read from the end of its
+        # run in `ix_blocks_conversation_created_at`, and the newest of those per
+        # room picked here. An agent at work writes most of a busy room's week,
+        # so reading all of it to keep one row per room read most of the table.
+        conversations = conversations_of(topic_ids)
+        newest = (
+            select(Block.author, Block.created_at)
+            .where(
+                Block.conversation_id == conversations.c.id,
+                Block.created_at >= since,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .order_by(Block.created_at.desc())
+            .limit(1)
+            .lateral()
         )
-        last_touch = {
-            room: (author, at)
-            for room, author, at in (await self._session.execute(touched)).all()
-        }
+        touched = select(
+            conversations.c.room_id, newest.c.author, newest.c.created_at
+        ).join(newest, true())
+        last_touch: dict[uuid.UUID, tuple[str, datetime]] = {}
+        for at_room, author, at in (await self._session.execute(touched)).all():
+            held = last_touch.get(at_room)
+            if held is None or at > held[1]:
+                last_touch[at_room] = (author, at)
         found = []
         for room, at in (await self._session.execute(events)).all():
             member, touch = last_touch.get(room, (None, None))
