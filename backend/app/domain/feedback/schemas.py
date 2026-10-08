@@ -57,6 +57,10 @@ def display_id(row: Feedback) -> str:
 #: default is in every response all the same. This makes the OpenAPI schema say
 #: so; without it the generated frontend types read ``reply_count?: number`` for
 #: a number that is never missing. Schema only — validation is unchanged.
+#:
+#: Not spreadable: a ``ConfigDict``-typed value may carry any key, so pyright
+#: reads ``ConfigDict(from_attributes=True, **OUTPUT)`` as that keyword twice.
+#: ``TimelineOut`` writes its one extra flag out instead.
 OUTPUT = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
@@ -187,7 +191,11 @@ class TimelineOut(BaseModel):
     handle→avatar pass over the detail page for a picture no view renders.
     """
 
-    model_config = ConfigDict(from_attributes=True, **OUTPUT)
+    # OUTPUT plus `from_attributes`: these come from rows. Spelled out, not
+    # spread — see the note on OUTPUT.
+    model_config = ConfigDict(
+        from_attributes=True, json_schema_serialization_defaults_required=True
+    )
 
     status: FeedbackStatus
     by_handle: str | None
