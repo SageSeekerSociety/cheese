@@ -21,6 +21,19 @@ GUARD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(GUARD)
 
 
+class Clock:
+    """Stands in for the time module: sleeping advances it instantly."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
 class ReleaseOrdering(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -53,11 +66,16 @@ class ReleaseOrdering(unittest.TestCase):
 
     def setUp(self):
         self.images = {}
-        self.api_failed = False
         self.health = {}
-        self.environment = patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "PROJECT": "cheese"})
+        self.compare_errors = []
+        self.reads = []
+        self.environment = patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "PROJECT": "cheese",
+                                                   "GH_TOKEN": "test-token"})
         self.environment.start()
         self.addCleanup(self.environment.stop)
+        self.clock = patch.object(GUARD, "time", Clock())
+        self.clock.start()
+        self.addCleanup(self.clock.stop)
 
     def command(self, *args):
         if args[:3] == ("docker", "ps", "-q"):
@@ -72,19 +90,25 @@ class ReleaseOrdering(unittest.TestCase):
                 return self.health.get(args[-1], "healthy")
             # Retagging an unchanged image leaves this old OCI revision intact.
             return self.base
-        if args[:2] == ("gh", "api"):
-            if self.api_failed:
-                raise subprocess.CalledProcessError(1, args)
-            base, head = args[2].rsplit("/", 1)[-1].split("...")
-            base, head = self.git("rev-parse", base), self.git("rev-parse", head)
-            if base == head:
-                return "identical"
-            ancestor = self.git("merge-base", base, head)
-            return "ahead" if ancestor == base else "behind" if ancestor == head else "diverged"
         raise AssertionError(args)
 
+    def compare(self, request, timeout):
+        """GitHub's compare endpoint, answered from the real commit graph."""
+        self.reads.append(request.full_url)
+        if self.compare_errors:
+            raise self.compare_errors.pop(0)
+        base, head = request.full_url.rsplit("/", 1)[-1].split("...")
+        base, head = self.git("rev-parse", base), self.git("rev-parse", head)
+        if base == head:
+            status = "identical"
+        else:
+            ancestor = self.git("merge-base", base, head)
+            status = "ahead" if ancestor == base else "behind" if ancestor == head else "diverged"
+        return io.BytesIO(json.dumps({"status": status}).encode())
+
     def check(self, candidate, rebuilt=False):
-        with patch.object(GUARD, "command", side_effect=self.command):
+        with patch.object(GUARD, "command", side_effect=self.command), \
+                patch.object(GUARD, "urlopen", side_effect=self.compare):
             return GUARD.should_skip(candidate, rebuilt=rebuilt)
 
     def test_a_rebuild_of_the_running_release_is_released_again(self):
@@ -150,8 +174,10 @@ class ReleaseOrdering(unittest.TestCase):
                 self.assertEqual(step["if"], "steps.release.outputs.skip != 'true'")
 
     def test_first_deployment_needs_no_previous_release(self):
-        self.api_failed = True
+        # With no running containers there is nothing to compare against, so a
+        # bootstrap asks GitHub nothing.
         self.assertFalse(self.check(self.newest))
+        self.assertEqual(self.reads, [])
 
     def test_unrelated_candidate_fails_closed(self):
         self.images = {"backend": f"registry/backend:{self.newest[:7]}"}
@@ -163,11 +189,21 @@ class ReleaseOrdering(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "image tag"):
             self.check(self.newest)
 
-    def test_api_failure_does_not_allow_a_release(self):
-        self.images = {"backend": f"registry/backend:{self.middle[:7]}"}
-        self.api_failed = True
-        with self.assertRaises(subprocess.CalledProcessError):
-            self.check(self.newest)
+    def test_a_dropped_compare_read_is_read_again(self):
+        # Deploy run 37710891132: the comparison against the running release
+        # dropped its connection once and the whole job failed.
+        self.compare_errors = [GUARD.URLError(ssl.SSLEOFError(8, "[SSL: UNEXPECTED_EOF_WHILE_READING]"))]
+        self.images = {"backend": f"registry/backend:{self.base[:7]}"}
+        self.assertFalse(self.check(self.middle))
+        self.assertEqual(len(self.reads), 2)
+        self.assertEqual(self.reads[0], self.reads[1])
+
+    def test_a_compare_that_keeps_dropping_still_stops_the_release(self):
+        self.compare_errors = [ConnectionResetError("reset by peer")] * 3
+        self.images = {"backend": f"registry/backend:{self.base[:7]}"}
+        with self.assertRaises(ConnectionResetError):
+            self.check(self.middle)
+        self.assertEqual(len(self.reads), 3)
 
     def test_manual_rollback_bypasses_policy_even_without_its_script(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
@@ -199,19 +235,6 @@ class ReleaseOrdering(unittest.TestCase):
         checkout = next(step for step in workflow["jobs"]["deploy"]["steps"]
                         if step.get("name", "").startswith("Check out the built commit"))
         self.assertEqual(checkout["if"], "steps.release.outputs.skip != 'true'")
-
-
-class Clock:
-    """Stands in for the time module: sleeping advances it instantly."""
-
-    def __init__(self):
-        self.now = 0.0
-
-    def monotonic(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.now += seconds
 
 
 class CandidateCI(unittest.TestCase):

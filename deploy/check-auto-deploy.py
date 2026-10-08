@@ -175,9 +175,12 @@ def should_skip(candidate: str, rebuilt: bool = False) -> bool:
         print("No running application containers; allowing bootstrap.")
     all_identical = bool(versions)
     for version in sorted(versions):
-        status = command(
-            "gh", "api", f"repos/{repository}/compare/{version}...{candidate}", "--jq", ".status",
-        )
+        # Read with the same second chance as every other GitHub read here: one
+        # dropped TLS read on this comparison failed a whole deploy job (run
+        # 37710891132) after the app tier had already been released.
+        status = github_json(
+            f"https://api.github.com/repos/{repository}/compare/{version}...{candidate}"
+        )["status"]
         if status == "behind":
             print(f"Skipping automatic release {candidate}: running release {version} is newer.")
             return True
