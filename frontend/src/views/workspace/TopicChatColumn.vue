@@ -87,7 +87,7 @@ const emit = defineEmits<{
 }>()
 
 const chatRef = ref<{
-  connected: boolean
+  linkDown: boolean
   send: (content: string, summon: boolean, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
@@ -127,11 +127,11 @@ async function join() {
   }
 }
 
-const connected = computed(() => !!chatRef.value?.connected)
+const linkDown = computed(() => !!chatRef.value?.linkDown)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
 defineExpose({
-  connected,
+  linkDown,
   reloadFeedback: () => feedbackRef.value?.reload(),
   reloadSkills: () => skills.load(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
