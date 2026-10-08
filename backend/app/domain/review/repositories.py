@@ -3,7 +3,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import Uuid, and_, any_, bindparam, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import (
@@ -66,6 +67,25 @@ class AcceptCardRepository:
             .order_by(AcceptApproval.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def approver_handles_by_card(
+        self, card_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[str]]:
+        """`list_approver_handles` for several cards in one read."""
+        found: dict[uuid.UUID, list[str]] = {}
+        if not card_ids:
+            return found
+        rows = await self._session.execute(
+            select(AcceptApproval.card_id, AcceptApproval.approver_handle)
+            .where(
+                AcceptApproval.card_id
+                == any_(bindparam(None, card_ids, type_=ARRAY(Uuid)))
+            )
+            .order_by(AcceptApproval.created_at)
+        )
+        for card_id, handle in rows:
+            found.setdefault(card_id, []).append(handle)
+        return found
 
     async def add_approval(self, card_id: uuid.UUID, approver_handle: str) -> None:
         """Record a vote; idempotent — (card, approver) is unique by design."""
