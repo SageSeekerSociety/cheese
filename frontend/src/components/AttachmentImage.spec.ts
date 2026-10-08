@@ -5,10 +5,10 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-import { ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
-import { setLocale } from '@/i18n'
-
 import AttachmentImage from './AttachmentImage.vue'
+
+import { setLocale } from '@/i18n'
+import { ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
 
 const attachmentImageUrl = vi.fn()
 
@@ -22,12 +22,12 @@ const SOURCE = {
 
 /** 包一层只为注入：参数挂在一个 reactive 上，改它就是改参数（换一张图那一条要用）。 */
 const Host = defineComponent({
+  components: { AttachmentImage },
   props: { state: { type: Object, required: true } },
   setup() {
     provide(ATTACHMENT_SOURCE, SOURCE)
   },
   template: '<AttachmentImage v-bind="state" />',
-  components: { AttachmentImage },
 })
 
 let created: string[] = []

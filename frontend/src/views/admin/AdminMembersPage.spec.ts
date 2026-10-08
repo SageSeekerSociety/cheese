@@ -67,12 +67,12 @@ vi.mock('@/api', async () => {
   }
 })
 
+import { provideUserRefDirectory } from '@/composables/useUserRefDirectory'
+
 import AdminMembersPage from './AdminMembersPage.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import { relTime } from '@/lib/relTime'
-
-import { provideUserRefDirectory } from '@/composables/useUserRefDirectory'
 
 const ANDY_REGISTERED = '2025-11-03T08:12:44Z'
 const PENG_REGISTERED = '2026-01-04T10:00:00Z'

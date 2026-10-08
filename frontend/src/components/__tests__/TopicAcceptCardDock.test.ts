@@ -4,9 +4,8 @@
  * 这是什么、等谁、「审阅」；整张卡点开才有。这一份钉的就是这三件事，以及任务卡
  * 详情里（不贴底）整张卡照旧摊开。
  */
-import type { AcceptCard } from '../../cx_types'
-
 import type { Plugin } from 'vue'
+import type { AcceptCard } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
