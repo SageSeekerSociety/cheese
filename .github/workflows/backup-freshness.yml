@@ -1,38 +1,65 @@
 name: DB backup freshness check
 
-# Daily guard that the scheduled DB backups (systemd timer on the dev box) are
-# actually running. Runs on the on-box self-hosted runner and reads the marker
-# db-backup.sh writes on each success; a stale marker fails the job, and GitHub
-# emails repo admins. Note: this can't detect a fully-down box (the runner would
-# be down too) — that needs an external uptime check.
-
+# The dev runner checks local success markers and reads the other boxes' R2
+# objects. A fully-down runner still needs the separate box uptime check.
 on:
   schedule:
     - cron: '0 9 * * *' # 09:00 UTC daily
   workflow_dispatch: {}
 
-# Least privilege: none of these jobs write anything back to GitHub, so the
-# token they run with should not be able to. Jobs that DO need more (the
-# `scope` gh-api jobs) declare it at job level, which overrides this.
 permissions:
   contents: read
 
 jobs:
   check:
     runs-on: [self-hosted, cheese-dev]
-    timeout-minutes: 5
+    timeout-minutes: 10
+    env:
+      CHEESE_R2_ENV: /home/nictheboy/ops/r2.env
+      CHEESE_BACKUP_DIR: /home/nictheboy/backups
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prove stale off-site and uploads markers fail the check
+        run: python3 deploy/tests/test_r2_backups.py
       - name: Fail if the latest DB backup is stale (> 26h)
+        if: ${{ !cancelled() }}
         run: |
           MARK=/home/nictheboy/backups/.last-success
           if [ ! -f "$MARK" ]; then
             echo "::error::no backup success marker ($MARK) — has a backup ever run?"
             exit 1
           fi
-          last="$(cat "$MARK")"; now="$(date +%s)"; age_h=$(( (now - last) / 3600 ))
-          echo "last successful DB backup: ${age_h}h ago"
-          if [ "$age_h" -gt 26 ]; then
-            echo "::error::DB backup is stale (${age_h}h > 26h) — check the cheese-db-backup.timer"
+          last="$(cat "$MARK")"; now="$(date +%s)"
+          case "$last" in ''|*[!0-9]*) echo "::error::invalid DB backup marker"; exit 1 ;; esac
+          age_s=$(( now - last ))
+          echo "last successful DB backup: ${age_s}s ago"
+          if [ "$age_s" -lt 0 ] || [ "$age_s" -gt $((26 * 3600)) ]; then
+            echo "::error::DB backup is stale or future-dated — check the cheese-db-backup.timer"
             exit 1
           fi
-          echo "DB backup is fresh (${age_h}h)"
+          echo "DB backup is fresh"
+      - name: Detect R2 configuration (absent is an explicit skip)
+        id: r2
+        if: ${{ !cancelled() }}
+        run: |
+          if python3 deploy/r2-check.py configured; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            [ "$status" = 3 ] || exit "$status"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Fail if off-site DB or uploads mirror success is missing or older than 6h
+        if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+        run: python3 deploy/r2-check.py local --max-age-hours 6
+      - name: Prepare read-only R2 check dependencies
+        if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/r2-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          "$RUNNER_TEMP/r2-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/pip" install --disable-pip-version-check boto3==1.40.61
+      - name: Fail if dev, prod, or either etrip DB or etrip uploads tar is stale (> 6h)
+        if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+        run: '"$RUNNER_TEMP/r2-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python" deploy/r2-check.py remote --max-age-hours 6'
+      - name: Remove R2 check environment
+        if: ${{ always() }}
+        run: rm -rf -- "$RUNNER_TEMP/r2-check-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
