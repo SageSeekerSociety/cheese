@@ -89,7 +89,7 @@ repos:
 
       # The migrations this branch adds must be safe while the previous
       # release keeps serving (.claude/rules/migrations.md). CI runs the same
-      # script in test.yml's migration-heads job.
+      # script in test.yml's static job.
       - id: migration-safety
         name: added migrations are safe under the running release
         entry: python3 .claude/scripts/check-migration-safety.py

@@ -39,6 +39,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool, QueuePool
 
+from scripts.assert_suite_ran import SuiteDidNotRun, read_quarantine
+
 # Strip inherited git env. When the suite runs from the pre-commit HOOK it executes
 # DURING `git commit`, which exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE for
 # the hook. The workspace tests (and the app's git ops) spawn `git` subprocesses;
@@ -2034,27 +2036,14 @@ def _slow_baseline() -> frozenset[str]:
 # Intermittent failures set aside while an issue tracks each fix; the format
 # and the rules are in the file's own header.
 _QUARANTINE = Path(__file__).with_name("quarantine.txt")
-_ISSUE_LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/issues/\d+")
 
 
 def _quarantine() -> dict[str, str]:
     """Each quarantined node id and the issue that owns its fix."""
-    entries, unowned = {}, []
-    for line in _QUARANTINE.read_text().splitlines():
-        if not line.strip() or line.startswith("#"):
-            continue
-        nodeid, _, note = line.partition("#")
-        issue = _ISSUE_LINK.search(note)
-        if issue is None:
-            unowned.append(f"  {line}")
-            continue
-        entries[nodeid.strip()] = issue.group()
-    if unowned:
-        raise pytest.UsageError(
-            "tests/quarantine.txt lines need `# <GitHub issue link>`:\n"
-            + "\n".join(unowned)
-        )
-    return entries
+    try:
+        return read_quarantine(_QUARANTINE)
+    except SuiteDidNotRun as exc:
+        raise pytest.UsageError(str(exc)) from exc
 
 
 def _layer_of(item: pytest.Item) -> str:

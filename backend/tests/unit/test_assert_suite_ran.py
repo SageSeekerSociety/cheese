@@ -238,11 +238,45 @@ def test_a_failed_retry_does_not_explain_a_placeholder(tmp_path: Path) -> None:
         )
 
 
-def test_a_quarantined_case_ran_and_is_named(tmp_path: Path) -> None:
-    results = report(tmp_path, PASSED + QUARANTINED)
+def test_a_quarantined_case_ran_and_is_named(tmp_path: Path, monkeypatch) -> None:
+    nodeid = "tests/unit/test_a.py::test_five"
+    listing = tmp_path / "quarantine.txt"
+    listing.write_text(f"{nodeid} # https://github.com/o/r/issues/1\n")
+    monkeypatch.setattr("scripts.assert_suite_ran._QUARANTINE", listing)
+    case = QUARANTINED.replace(
+        "<skipped",
+        '<properties><property name="cheese_nodeid" '
+        f'value="{nodeid}"/></properties><skipped',
+    )
+    results = report(tmp_path, PASSED + case)
     assert assert_suite_ran(results, at_least=2) == 2
     [line] = not_clean(results, None)
     assert "test_five is quarantined" in line
+
+
+@pytest.mark.parametrize(
+    "identity", ["unlisted", "wrong_issue", "missing", "duplicate"]
+)
+def test_a_quarantine_reason_alone_does_not_authorize_a_skip(
+    tmp_path: Path, identity: str, monkeypatch
+) -> None:
+    nodeid = "tests/unit/test_a.py::test_five"
+    listing = tmp_path / "quarantine.txt"
+    issue = (
+        "https://github.com/o/r/issues/2"
+        if identity == "wrong_issue"
+        else "https://github.com/o/r/issues/1"
+    )
+    listing.write_text("" if identity == "unlisted" else f"{nodeid} # {issue}\n")
+    monkeypatch.setattr("scripts.assert_suite_ran._QUARANTINE", listing)
+    case = QUARANTINED
+    if identity != "missing":
+        prop = f'<property name="cheese_nodeid" value="{nodeid}"/>'
+        props = prop * (2 if identity == "duplicate" else 1)
+        case = case.replace("<skipped", f"<properties>{props}</properties><skipped")
+    results = report(tmp_path, PASSED + case)
+    with pytest.raises(SuiteDidNotRun, match="skipped"):
+        assert_suite_ran(results, at_least=2)
 
 
 def test_an_ordinary_xfail_is_still_a_skip(tmp_path: Path) -> None:

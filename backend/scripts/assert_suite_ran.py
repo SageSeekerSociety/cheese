@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -34,6 +35,33 @@ class SuiteDidNotRun(Exception):
 
 # The reason tests/conftest.py gives a quarantined case's xfail marker.
 QUARANTINED = "quarantined:"
+_QUARANTINE = Path(__file__).resolve().parents[1] / "tests/quarantine.txt"
+_ISSUE_LINK = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/issues/\d+")
+
+
+def read_quarantine(path: Path = _QUARANTINE) -> dict[str, str]:
+    """The auditable list used both at collection and when verifying results."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as exc:
+        raise SuiteDidNotRun(
+            f"{path} is not a readable quarantine list: {exc}"
+        ) from exc
+    entries, unowned = {}, []
+    for line in lines:
+        if not line.strip() or line.startswith("#"):
+            continue
+        nodeid, _, note = line.partition("#")
+        issue = _ISSUE_LINK.search(note)
+        if not nodeid.strip() or issue is None:
+            unowned.append(f"  {line}")
+            continue
+        entries[nodeid.strip()] = issue.group()
+    if unowned:
+        raise SuiteDidNotRun(
+            f"{path} lines need `# <GitHub issue link>`:\n" + "\n".join(unowned)
+        )
+    return entries
 
 
 def read_reruns(path: Path | None) -> list[dict]:
@@ -89,10 +117,15 @@ def _final_attempts(root: ET.Element, reruns: list[dict]) -> list[ET.Element]:
     return list(reversed(final))
 
 
-def _is_quarantined(skip: ET.Element) -> bool:
-    return skip.get("type") == "pytest.xfail" and (
-        skip.get("message") or ""
-    ).startswith(QUARANTINED)
+def _is_quarantined(case: ET.Element, quarantine: dict[str, str]) -> bool:
+    skip = case.find("skipped")
+    issue = quarantine.get(_nodeid_of(case) or "")
+    return (
+        issue is not None
+        and skip is not None
+        and skip.get("type") == "pytest.xfail"
+        and skip.get("message") == f"{QUARANTINED} {issue}"
+    )
 
 
 def read_selection(selection_dir: Path) -> tuple[int, list[str], list[str]]:
@@ -191,6 +224,7 @@ def assert_suite_ran(
     crashes = sum(1 for rerun in recorded_reruns if rerun.get("crashed"))
     placeholders = 0
     cases = _final_attempts(tree.getroot(), recorded_reruns)
+    quarantine = read_quarantine(_QUARANTINE)
     ran, skipped, errored, executed_nodeids = 0, [], [], []
     for case in cases:
         if _is_crash_placeholder(case):
@@ -198,7 +232,7 @@ def assert_suite_ran(
             continue
         name = f"{case.get('classname', '')}::{case.get('name', '')}"
         skip = case.find("skipped")
-        if skip is not None and _is_quarantined(skip):
+        if skip is not None and _is_quarantined(case, quarantine):
             ran += 1
         elif skip is not None:
             why = skip.get("message") or skip.text or "no reason"
@@ -277,6 +311,7 @@ def not_clean(junit_xml: Path, reruns: Path | None) -> list[str]:
         root = ET.parse(junit_xml).getroot()
     except ET.ParseError:
         return []
+    quarantine = read_quarantine(_QUARANTINE)
     final: dict[str, str] = {}
     lines = []
     for case in _final_attempts(root, read_reruns(reruns)):
@@ -284,7 +319,7 @@ def not_clean(junit_xml: Path, reruns: Path | None) -> list[str]:
             _nodeid_of(case) or f"{case.get('classname', '')}::{case.get('name', '')}"
         )
         skip = case.find("skipped")
-        if skip is not None and _is_quarantined(skip):
+        if skip is not None and _is_quarantined(case, quarantine):
             lines.append(f"{nodeid} is quarantined ({skip.get('message')})")
         failed = case.find("failure") is not None or case.find("error") is not None
         final[nodeid] = "failed" if failed else "passed"
