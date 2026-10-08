@@ -61,7 +61,7 @@ async def set_own_agents(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    project.settings = {**(project.settings or {}), SETTING: body.allowed}
-    await db.flush()
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
+    await service.merge_settings(project, {SETTING: body.allowed})
     return await get_own_agents(project_id, db, resolver)
