@@ -16,6 +16,12 @@
 # one case it deliberately does NOT retry is a FAILED build — that is real
 # breakage needing eyes, and auto-retrying it would just loop; the run stays
 # red and GitHub emails the repo's watchers, same as before.
+#
+# Which commit the deploy leg fires is not always main: a release of main
+# refuses while the `-b` slots serve if main's tree no longer has the two slots,
+# so re-firing it hourly would loop red with nothing changing.
+# `deploy/converge-deploy-drift.sh` makes that choice and fails loudly when no
+# re-dispatch can converge (#2770).
 name: Deploy drift and gateway health
 
 on:
@@ -75,9 +81,12 @@ jobs:
           fi
           if [ "${built_ok}" -gt 0 ]; then
             # Images exist; the deploy leg was the lost edge (cancelled, or the
-            # box was unreachable when it ran). Re-fire deploy only.
-            echo "images for ${main_sha} exist but the box runs something else — re-dispatching deploy-dev"
-            gh workflow run deploy-dev.yml --ref main
+            # box was unreachable when it ran). Re-fire deploy only — but not
+            # always for main: a release of main refuses while the `-b` slots
+            # serve if main's tree no longer has the slots, and re-firing that
+            # hourly is a red loop that changes nothing. The script makes that
+            # choice (and says so) and fails instead of re-dispatching blind.
+            bash deploy/converge-deploy-drift.sh
             exit 0
           fi
           if [ "${built_failed}" -gt 0 ]; then
