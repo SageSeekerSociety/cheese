@@ -14,9 +14,13 @@
 
 import uuid
 
+from sqlalchemy import select
+
 from app.domain.agent.announce import notify_question
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
+from app.domain.delivery.models import ChannelDelivery
+from app.domain.notification.letter import letter_for
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -424,3 +428,45 @@ def test_someone_else_typing_does_not_answer_for_the_person_asked(client):
     (row,) = _questions(client, bob)
     assert row["read"] is False
     assert "answered" not in row["contextMetadata"]
+
+
+def test_the_mail_about_a_question_names_the_teammate_that_asked(
+    client, stub_hooks, monkeypatch
+):
+    """The mail a question sends says who is asking by the teammate's own name;
+    one renamed Nova is not 「芝士」 in the subject."""
+    seed_user(client, "alice")
+    pid, room = _room(client)
+    seat = room_agent_seat(client, room)
+    alice = session_auth_headers("alice")
+    agent = next(
+        a
+        for a in client.get(f"/projects/{pid}/agents", headers=alice).json()["data"][
+            "data"
+        ]
+        if a["seat_handle"] == seat
+    )
+    renamed = client.put(
+        f"/projects/{pid}/agents/{agent['id']}",
+        json={"display_name": "Nova"},
+        headers=alice,
+    )
+    assert renamed.status_code == 200, renamed.text
+    thread = in_thread(client, room, "alice")
+
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
+
+    async def mails() -> list[dict]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(ChannelDelivery).where(
+                    ChannelDelivery.channel.in_(("email", "digest"))
+                )
+            )
+            return [r.payload for r in rows if r.payload["type"] == "CHEESE_QUESTION"]
+
+    [mail, *_] = client.portal.call(mails)
+    letter = letter_for(mail)
+    assert letter.subject.startswith("Nova 问你："), letter.subject
+    assert "芝士" not in letter.subject + letter.eyebrow

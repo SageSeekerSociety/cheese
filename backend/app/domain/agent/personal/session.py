@@ -50,6 +50,10 @@ MAX_TOKENS = 1500
 CONTEXT_TOKENS = 32_000
 RESERVE_TOKENS = 16_000
 KEEP_TOKENS = 6_000
+#: How long pi waits before retrying a failed model call, doubling for each of
+#: its three retries: pi's own default, written here so that a test can make a
+#: failing gateway fail at once.
+RETRY_BASE_DELAY_MS = 2000
 
 #: What a person's 芝士 may do (`sandbox/cheese`): read their own tasks and the
 #: platform's documentation.
@@ -82,6 +86,7 @@ def session(
             context_tokens=CONTEXT_TOKENS,
             reserve_tokens=RESERVE_TOKENS,
             keep_tokens=KEEP_TOKENS,
+            retry_base_delay_ms=RETRY_BASE_DELAY_MS,
         ),
         resume_token=str(conversation_id),
     )

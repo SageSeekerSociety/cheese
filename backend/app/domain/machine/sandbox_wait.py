@@ -1,8 +1,6 @@
 """What a tool call waiting on its session's cloud sandbox, or its whole cloud
 VM, watches, and what it is told meanwhile (``session_work._attempt``)."""
 
-from datetime import UTC, datetime
-
 from sqlalchemy import select
 
 from app.domain.machine.models import (
@@ -15,58 +13,30 @@ from app.domain.machine.models import (
 
 # What a tool waiting on its cloud sandbox is told.
 SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
-SANDBOX_WAKING = "沙箱正在唤醒；对话和平台工具仍可用。"
-SANDBOX_RESTORE_FAILED = "沙箱没能从归档恢复，稍后会再试；对话和平台工具仍可用。"
 EXECUTOR_SETUP_FAILED = "工作电脑上的执行器没能装好：{reason}；对话和平台工具仍可用。"
 VM_PREPARING = "云虚拟机正在准备；对话和平台工具仍可用。"
 VM_ERROR = "云虚拟机出错：供应方报告错误。对话和平台工具仍可用。"
-# What a session whose sandbox's host the pool gave up on is told, once, with
-# the first tool call that succeeds in its new sandbox (``HostPool._fail``
-# records it under ``LOST_KEY`` in the session's ``execution_request``).
+# What a session is told, once, with the first tool call that succeeds in a
+# new sandbox: its old one was destroyed when idle (``lifecycle``) or given up
+# with its host (``HostPool._fail``). Either records it under ``LOST_KEY`` in
+# the session's ``execution_request``.
 SANDBOX_LOST = (
-    "原来的沙箱所在机器失联，已换成一个新沙箱：工作区从 git 重新取出，"
-    "上次推送之后没推送的改动不在了。"
+    "沙箱环境已换成新的。每轮结束时的检查点存下的东西都还在：已推送的提交在任务"
+    "分支上，当时没提交的改动和未跟踪文件在平台快照里，用 "
+    'cd "$(cheese worktree <任务 id>)" 重新打开任务目录时自动放回，并说明放回了'
+    "什么。检查点之后才做的改动、依赖和缓存、生成目录、/tmp、正在运行的进程不在"
+    "了，需要的重新做、重新安装、重新启动。"
 )
 LOST_KEY = "sandbox_lost"
-# What a session whose sandbox's host the pool could not wake is told
-# (``host_wake.HostWake``): the host is kept with everything on it.
-SANDBOX_HOST_KEPT = (
-    "沙箱所在的机器没能唤醒，已报告平台维护人员；沙箱里的文件留在那台机器上，"
-    "没有删除。对话和平台工具仍可用。"
-)
 
 
-def waiting_on_host(host) -> str:
-    """What a tool waiting on its sandbox's host to come up is told: a host
-    the pool is waking, or kept once the wake failed, is not being prepared."""
-    if host.whole_machine:
-        return VM_PREPARING
-    if host.waking_since is not None or host.wake_failed_at is not None:
-        return SANDBOX_WAKING
-    return SANDBOX_PREPARING
-
-
-async def _home_settled(db, session_id) -> bool:
-    """Whatever was moving the session's home has finished, or given up."""
-    busy = await db.scalar(
-        select(CloudHostHome.busy_until).where(
-            CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
-        )
+async def _home_removed(db, session_id) -> bool:
+    """The sandbox being destroyed is gone, so the next attempt places the
+    session in a new one."""
+    stopped = await db.scalar(
+        select(CloudHostHome.stopped_at).where(CloudHostHome.session_id == session_id)
     )
-    return busy is None or busy <= datetime.now(UTC)
-
-
-async def _home_moved(db, session_id) -> bool:
-    """The sleeping home has left the host that had no slot for it, or was
-    woken there after all."""
-    home = (
-        await db.execute(
-            select(CloudHostHome.host_id, CloudHostHome.stopped_at).where(
-                CloudHostHome.session_id == session_id, CloudHostHome.left_at.is_(None)
-            )
-        )
-    ).one_or_none()
-    return home is None or home.host_id is None or home.stopped_at is None
+    return stopped is None
 
 
 async def _cloud_progress(db, hub, host_id) -> str | bool:
@@ -79,16 +49,12 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
                 CloudHost.enroll_attempts,
                 CloudHost.released_at,
                 CloudHost.whole_machine,
-                CloudHost.wake_failed_at,
             ).where(CloudHost.id == host_id)
         )
     ).one_or_none()
     if host is None or host.released_at:
         # The pool let go of it; the next attempt places the session again.
         return True
-    if host.wake_failed_at is not None:
-        # Kept for a person; waiting on it here would end in nothing.
-        return SANDBOX_HOST_KEPT
     if host.device_id is None:
         if host.status == MachineStatus.error or (
             (host.enroll_attempts or 0) >= MAX_ENROLL_ATTEMPTS

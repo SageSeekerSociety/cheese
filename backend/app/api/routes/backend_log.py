@@ -9,7 +9,7 @@ Authenticated, unlike `/api/frontend-errors`: a browser cannot hold a secret,
 but a reporting backend runs in a container that already carries one. A scoped
 `X-Cheese-Token` also *names* the room, so the reporter never has to know (or be
 trusted about) which project it is writing into. The path carries no project or
-topic id, so `cheese_token_gate` cannot scope this route — it does its own check,
+topic id, so a write-access declaration cannot scope this route — it does its own check,
 like the /sandbox endpoints.
 """
 

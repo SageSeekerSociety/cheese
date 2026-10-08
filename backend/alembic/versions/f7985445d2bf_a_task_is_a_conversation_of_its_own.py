@@ -39,7 +39,7 @@ continues from the task branch on the forge.
 
 The backend this deploy replaces is still serving while this runs. Every table
 this migration changes or adds a foreign key to is locked up front, all at once
-or not at all (`_lock_all`).
+or not at all (`with_lock_retries(..., nowait=True)`).
 
 Revision ID: f7985445d2bf
 Revises: 6d0ce0a4287b
@@ -49,6 +49,7 @@ Create Date: 2026-10-05
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -73,30 +74,6 @@ def _text_fields(texts: Sequence[str], keywords: Sequence[str]) -> str:
     for column in keywords:
         fields.append(f'"{column}": {{"tokenizer": {{"type": "keyword"}}}}')
     return "{" + ", ".join(fields) + "}"
-
-
-def _lock_all(tables: str) -> None:
-    """As in 4383bf20b465: every table at once without waiting, or none, and
-    try again shortly — never holding some while waiting on the rest."""
-    op.execute(f"""
-        DO $$
-        DECLARE attempts integer := 0;
-        BEGIN
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE NOWAIT;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 1200 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.05);
-                END;
-            END LOOP;
-        END
-        $$
-    """)
 
 
 # Moves each task in `task_new_ids` to its new id. Every foreign key to `tasks`
@@ -165,7 +142,10 @@ $$
 
 
 def upgrade() -> None:
-    _lock_all("topics, projects, tasks, agent_sessions, documents, document_versions")
+    with_lock_retries(
+        "topics, projects, tasks, agent_sessions, documents, document_versions",
+        nowait=True,
+    )
 
     op.create_table(
         "conversations",

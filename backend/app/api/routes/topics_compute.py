@@ -311,12 +311,12 @@ async def set_topic_compute_profile(
 ) -> dict:
     """A conversation's work computer: a room's, or a task's.
 
-    Every session working on the choice moves with it, each pushing its work
-    first (``machine/session_work.request_choice``): for the room, its own
-    sessions and those of tasks that follow it; for a task, the task's. Only
-    the task's owner, a project manager or the owner of a device the task
-    holds changes a task's, or the task's own session. A person's own computer
-    works only that person's tasks.
+    Every session working on the choice moves with it, each after one
+    best-effort checkpoint (``machine/session_work.request_choice``): for the
+    room, its own sessions and those of tasks that follow it; for a task, the
+    task's. Only the task's owner, a project manager or the owner of a device
+    the task holds changes a task's, or the task's own session. A person's own
+    computer works only that person's tasks.
     """
     from pydantic import ValidationError as SchemaError
 
@@ -478,23 +478,20 @@ async def set_topic_compute_profile(
     await HostPool(db).admit_choice(topic.project_id, actor, choice)
 
     # 房间这一项写下去的同时，房间里的每一条会话都跟着搬：这就是「一个话题一个容
-    # 器」落地的地方。写和搬都在 `request_choice` 里，且只有每一条都搬成了才写——
-    # 一条推不上去就是整个房间留在原地（它抛出去，路由把它变成一次可见的失败）。
-    moved = await work_lease.request_choice(
+    # 器」落地的地方。写和搬都在 `request_choice` 里：每条会话离开前尽力推送一次，
+    # 推没推上去都照常搬。
+    await work_lease.request_choice(
         db,
         topic_id=topic_id,
         actor=actor,
         choice=choice,
         task=the_task,
-        # 人的那一次可以在原来那台够不着时决定不推送——成员名册和设备页的批量切换
-        # 用的就是这个开关。会话凭据自己来改时它不成立（`_move_session`）。
-        abandon_unpushed=body.get("abandon_unpushed") is True,
         # 设备页的批量切换跳过正在跑任务的房间，而不是把它手上的机器抽走。
         if_idle=body.get("if_idle") is True,
     )
     # The room's pin is the choice itself, before the first turn and after it:
     # 一个话题一个容器（2026-09-28，推翻结论 60），换机器是整个房间搬过去，钉子跟
-    # 着搬——在每条会话都搬成之后才动，一条推不上去整个房间连钉子一起留在原地。
+    # 着搬——在每条会话都搬成之后才动。
     # Release then bind keeps bind_topic_device write-once: the bind never
     # overwrites, an explicit change removes the old pin first. Cloud or
     # 「系统挑一台」 leaves no pin; resolve_pinned_device freezes it next turn.
@@ -506,7 +503,6 @@ async def set_topic_compute_profile(
                 "choice": choice.model_dump(),
                 "device_id": device_id if name == COMPUTE_DEVICE else None,
                 "proposal": None,
-                "warnings": moved["warnings"],
             }
         )
     binding = await device_service.topic_binding(topic_id)
@@ -539,6 +535,5 @@ async def set_topic_compute_profile(
             "choice": choice.model_dump(),
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "proposal": None,
-            "warnings": moved["warnings"],
         }
     )

@@ -32,9 +32,10 @@ async def test_startup_waits_for_its_host_to_reconnect(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_startup_stops_when_the_pinned_host_stays_offline(monkeypatch):
-    monkeypatch.setattr(device_provider, "_SESSION_RECONNECT_GRACE_S", 0.02)
-    channel = DeviceChannel(hub=SimpleNamespace(is_online=lambda host: False))
+async def test_startup_stops_when_the_pinned_host_stays_offline():
+    channel = DeviceChannel(
+        hub=SimpleNamespace(is_online=lambda host: False), reconnect_grace_s=0.02
+    )
     with pytest.raises(ScreenSetupError, match="未连接"):
         await asyncio.wait_for(
             channel._wait_for_session_host(

@@ -761,8 +761,9 @@ export function changesPanelProps(over: Record<string, unknown> = {}): Record<st
   return { ...CHANGES_BASE, ...over }
 }
 
-/** 空的那一格：这一支活什么都没改，提交记录也没有。 */
-export const CHANGES_EMPTY = changesPanelProps({
+/** 手上什么都没有的那几样：没有 diff、没有树、没有提交，右边也没打开任何文件 —— 取数
+ *  那一层在那时真会是这些值（`openRawUrl` 没有路径时是空串，横条上文件那半不摆）。 */
+export const NOTHING_CHANGED = {
   fileDiffs: [],
   diffByPath: new Map<string, FileDiff>(),
   treeFiles: [],
@@ -770,8 +771,20 @@ export const CHANGES_EMPTY = changesPanelProps({
   openPath: null,
   openDiff: null,
   openDiffLines: [],
+  fileDraft: '',
+  fileVersion: null,
+  fileBytes: 0,
+  openRawUrl: '',
+  expandedDirs: new Set<string>(),
   fileToolReady: false,
-})
+}
+
+/** 空的那一格：这一支活什么都没改，提交记录也没有。 */
+export const CHANGES_EMPTY = changesPanelProps(NOTHING_CHANGED)
+
+/** 没绑仓库：取数那一层问到这一点就不再取树和提交（`loadAll` 在 `noRepo` 上返回），
+ *  `fileToolReady` 本身也看着 `noRepo`。 */
+export const NO_REPO = { ...NOTHING_CHANGED, noRepo: true }
 
 /** 预览那一格看的这一份：一篇 markdown，正文直接画出来。 */
 const PREVIEW_FILE: FileContent = {

@@ -139,7 +139,8 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: into it (「「…」完成了」 with its 「结果」 stays on old rooms).
 #: A document edit names an AI teammate by its handle, as it does a person, so
 #: the reader sees the teammate's own name (「芝士」 as the editor of every
-#: teammate's edit stays on old rooms).
+#: teammate's edit stays on old rooms). A drafted mail names whoever drafted it
+#: the same way (「芝士在…里写好了一封草稿」 stays on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
         "actorCheese",
@@ -156,6 +157,7 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "blockUpgradedToRoom",
         "blockUpgradedRoomId",
         "labelUpgradedTo",
+        "mailDrafted",
         "labelResult",
         "routineResult",
         "subagentStart",

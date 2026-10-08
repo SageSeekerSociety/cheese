@@ -2649,3 +2649,162 @@ def test_chatgpt_responses_stream_through_unmetered(monkeypatch, tmp_path):
 
     assert flow.response.stream is True
     assert not (tmp_path / "usage.jsonl").exists()
+
+
+# --- a ChatGPT account that has spent its usage limit ----------------------
+
+
+def _chatgpt_answer(mod, flow, status, body=b""):
+    from mitmproxy import http
+
+    flow.response = http.Response.make(
+        status_code=status, content=body, headers={"content-type": "application/json"}
+    )
+    mod.responseheaders(flow)
+    mod.response(flow)
+
+
+def _usage_limit_answer(seconds=86400) -> bytes:
+    return json.dumps(
+        {"error": {"type": "usage_limit_reached", "resets_in_seconds": seconds}}
+    ).encode()
+
+
+def _turn(mod, name="work"):
+    flow = _gateway_request(f"/chatgpt/{name}/responses")
+    asyncio.run(mod.requestheaders(flow))
+    return flow
+
+
+def test_a_spent_chatgpt_account_is_answered_here_until_it_resets(
+    monkeypatch, tmp_path
+):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    first = _turn(mod)
+    assert first.response is None  # went to ChatGPT
+    _chatgpt_answer(mod, first, 429, _usage_limit_answer(3600))
+
+    second = _turn(mod)
+
+    _refused(second, 429, b"usage_limit_reached", b"'work'")
+    assert int(second.response.headers["Retry-After"]) > 3500
+
+
+def test_a_passing_rate_limit_does_not_hold_back_the_next_turn(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    first = _turn(mod)
+    _chatgpt_answer(
+        mod, first, 429, json.dumps({"error": {"type": "rate_limit_exceeded"}}).encode()
+    )
+
+    assert _turn(mod).response is None
+
+
+def test_a_spent_account_leaves_another_account_reachable(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path, "zhifei")
+    _chatgpt_account_on_disk(tmp_path, "fri")
+    _chatgpt_answer(mod, _turn(mod, "zhifei"), 429, _usage_limit_answer())
+
+    assert _turn(mod, "zhifei").response is not None
+    assert _turn(mod, "fri").response is None
+
+
+def _spend(mod, monkeypatch, name="work"):
+    clock = [1_000_000.0]
+    monkeypatch.setattr(mod.CHATGPT_LIMITS, "_now", lambda: clock[0])
+    _chatgpt_answer(mod, _turn(mod, name), 429, _usage_limit_answer(3 * 86400))
+    clock[0] += mod.CHATGPT_LIMITS.probe_s
+    return clock
+
+
+def test_a_spent_account_is_checked_without_sending_a_user_request(
+    monkeypatch, tmp_path
+):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    started = []
+    monkeypatch.setattr(mod, "_start_usage_check", started.append)
+    _spend(mod, monkeypatch)
+
+    turn = _turn(mod)
+
+    _refused(turn, 429, b"usage_limit_reached")
+    assert started == ["work"]
+
+
+def test_usage_that_shows_capacity_brings_the_account_back(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    monkeypatch.setattr(mod, "_start_usage_check", lambda name: None)
+    asked = []
+
+    def usage(token, account_id, version, timeout_s, *, egress=None):
+        asked.append((token, account_id))
+        return 200, {"rate_limit": {"allowed": True, "limit_reached": False}}
+
+    monkeypatch.setattr(mod, "fetch_chatgpt_usage", usage)
+    _spend(mod, monkeypatch)
+    assert _turn(mod).response is not None
+
+    asyncio.run(mod._check_usage("work"))
+
+    assert asked == [("chatgpt-at-work", "acct-work")]
+    assert _turn(mod).response is None
+
+
+def test_usage_that_shows_the_account_still_spent_keeps_answering_here(
+    monkeypatch, tmp_path
+):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    monkeypatch.setattr(mod, "_start_usage_check", lambda name: None)
+    spent = {
+        "rate_limit": {
+            "allowed": False,
+            "limit_reached": True,
+            "primary_window": {"used_percent": 100, "reset_at": 2_000_000},
+        }
+    }
+    monkeypatch.setattr(mod, "fetch_chatgpt_usage", lambda *a, **k: (200, spent))
+    _spend(mod, monkeypatch)
+    _turn(mod)
+
+    asyncio.run(mod._check_usage("work"))
+
+    _refused(_turn(mod), 429, b"usage_limit_reached")
+
+
+def test_unreadable_usage_sends_one_real_request_next_time(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    monkeypatch.setattr(mod, "_start_usage_check", lambda name: None)
+
+    def broken(*a, **k):
+        raise OSError("egress refused")
+
+    monkeypatch.setattr(mod, "fetch_chatgpt_usage", broken)
+    clock = _spend(mod, monkeypatch)
+    _turn(mod)
+    asyncio.run(mod._check_usage("work"))
+    assert _turn(mod).response is not None
+
+    clock[0] += mod.CHATGPT_LIMITS.probe_s
+    probe = _turn(mod)
+    assert probe.response is None  # the fallback goes to ChatGPT
+    _chatgpt_answer(mod, probe, 200)
+
+    assert _turn(mod).response is None
+
+
+def test_the_model_list_is_not_held_back_by_a_spent_account(monkeypatch, tmp_path):
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _chatgpt_account_on_disk(tmp_path)
+    _chatgpt_answer(mod, _turn(mod), 429, _usage_limit_answer())
+
+    flow = _gateway_request("/chatgpt/work/models", method="GET")
+    asyncio.run(mod.requestheaders(flow))
+
+    assert flow.response is None

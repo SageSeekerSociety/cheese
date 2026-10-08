@@ -2339,9 +2339,9 @@ def test_the_public_route_still_forgives_an_unknown_sort(client, as_admin):
 def test_a_screen_credential_on_the_admin_list_is_refused(client, monkeypatch):
     """§4.3's second gate, and why it has to be in the route body.
 
-    `/admin/*` is not in `_CHEESE_WRITE_PATHS`, and that table is a whitelist —
-    nothing in the middleware looks at this prefix, so the refusal has to be
-    written here or it does not exist. The handle below is **on the platform
+    The write-access declarations (`app/api/write_access.py`) only ever admit
+    芝士 exclusively, never keep it out, so the refusal has to be written here
+    or it does not exist. The handle below is **on the platform
     admin list**, so the allow-list is not what refuses it.
 
     What refuses it here is the credential. The same handle arrives twice: once

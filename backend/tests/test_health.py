@@ -27,6 +27,43 @@ async def test_version_endpoint_reports_the_build() -> None:
     assert isinstance(data["badge"], bool)
 
 
+async def _version(
+    monkeypatch: pytest.MonkeyPatch, *, build: str, release: str
+) -> dict:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "app_version", build)
+    monkeypatch.setattr(settings, "app_release", release)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/version")
+    assert response.status_code == 200
+    return response.json()["data"]
+
+
+@pytest.mark.anyio
+async def test_version_names_the_released_commit_when_the_image_is_older(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A merge that changes no image is released on the previous image under
+    the new commit's tag. "Is commit X live" has to be answered by the release,
+    not by the commit baked into the reused image."""
+    build, release = "a" * 40, "b" * 40
+    data = await _version(monkeypatch, build=build, release=release)
+    assert (data["sha"], data["short"], data["build"]) == (release, "bbbbbbb", build)
+
+
+@pytest.mark.anyio
+async def test_version_without_a_deploy_names_the_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build = "c" * 40
+    data = await _version(monkeypatch, build=build, release="")
+    assert (data["sha"], data["short"], data["build"]) == (build, "ccccccc", build)
+    local = await _version(monkeypatch, build="dev", release="")
+    assert (local["sha"], local["short"]) == ("dev", "dev")
+
+
 @pytest.mark.anyio
 async def test_health_carries_version() -> None:
     transport = ASGITransport(app=app)

@@ -25,6 +25,7 @@ from tests.integration.conftest import (
     chat_ws_url,
     in_thread,
     join_project_team,
+    open_task,
     post_message,
     post_project,
     session_auth_headers,
@@ -209,6 +210,41 @@ def test_an_unanswered_decision_request_awaits_you_until_you_decide(client):
     assert r.status_code == 200, r.text
     after = _seen_by(client, pid, "bob")["T"]
     assert after["awaits_me"] is False
+
+
+def test_a_decision_asked_on_a_card_awaits_on_its_channel(client):
+    """A decision asked inside a task is still that channel waiting on you.
+
+    A channel is the sum of its conversations, and the alert names the task's
+    one — the sidebar dot has to light on the channel all the same, and
+    clearing the decision has to clear the channel."""
+    pid = _project(client)
+    tid = _topic(client, pid, "T", created_by="alice")
+    card = open_task(client, tid, "报名表单字段精简", owner="alice")
+    r = client.post(
+        f"/projects/{pid}/alerts",
+        json={
+            "level": "strong",
+            "kind": "decision_request",
+            "title": "这个字段删不删",
+            "target_handle": "bob",
+            "topic_id": card["id"],
+            "payload": {"options": ["删", "留"]},
+        },
+    )
+    assert r.status_code == 200, r.text
+    decision = r.json()["data"]["data"][0]
+    assert decision["topic_id"] == card["id"]
+
+    assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is True
+
+    r = client.post(
+        f"/alerts/{decision['id']}/resolve",
+        json={"chosen": "删"},
+        headers=session_auth_headers("bob"),
+    )
+    assert r.status_code == 200, r.text
+    assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is False
 
 
 def _set_card(client, card_id: str, **fields) -> None:
