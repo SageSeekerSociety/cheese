@@ -30,7 +30,6 @@ from app.domain.task.models import (
     TaskSubmissionSchemaEntry,
 )
 from app.domain.task.repositories import (
-    TaskAccessDomainRepository,
     TaskMembershipRepository,
     TaskSubmissionRepository,
     TaskSubmissionSchemaRepository,
@@ -285,19 +284,23 @@ async def _enrich_task_models(
         }
         task_model["categoryId"] = category_id
 
-    # Resolve accessDomainGroupIds from stored TaskAccessDomain rows.
-    access_domain_repo = TaskAccessDomainRepository(session=db)
-    domain_group_domain_repo = SpaceDomainGroupDomainRepository(session=db)
+    # Resolve accessDomainGroupIds from stored TaskAccessDomain rows. 整页一次取回，
+    # 不按题各发两条 —— 一屏 20 道题就是 40 条查询。只有开了访问控制的题要问，
+    # 答案按题归属（见仓储方法的注释）。
+    access_control_task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+        and task_model.get("accessControlEnabled")
+    ]
+    access_group_ids = await SpaceDomainGroupDomainRepository(
+        session=db
+    ).list_group_ids_by_task_ids(space_id=space_id, task_ids=access_control_task_ids)
     for task_model in task_models:
         task_model.setdefault("accessDomainGroupIds", [])
-        if not task_model.get("accessControlEnabled"):
-            continue
-        domains = await access_domain_repo.list_by_task_id(task_model["id"])
-        if domains:
-            group_ids = await domain_group_domain_repo.list_group_ids_by_domains(
-                space_id=space_id, domains=domains
-            )
-            task_model["accessDomainGroupIds"] = sorted(group_ids)
+        model_id = task_model.get("id")
+        if isinstance(model_id, int) and access_group_ids.get(model_id):
+            task_model["accessDomainGroupIds"] = sorted(access_group_ids[model_id])
 
     return task_models
 
