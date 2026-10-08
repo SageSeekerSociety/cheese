@@ -76,7 +76,6 @@ from app.domain.agent.compute_configs import (
     project_configs,
     validate_choice,
 )
-from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_TIERS,
@@ -191,6 +190,8 @@ async def save_default_model(
 async def get_compute_configs(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
+    # deferred-import: tests replace this name on app.domain.agent.device_hub
+    from app.domain.agent.device_hub import device_hub
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)

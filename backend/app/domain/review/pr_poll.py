@@ -27,7 +27,6 @@ from app.domain.delivery.agent import dispatch_pending
 from app.domain.project.models import ProjectForge
 from app.domain.review import pr_publish
 from app.domain.review.models import AcceptCard
-from app.domain.review.pr_publish import sweep_draft_prs
 from app.domain.review.task_landing import delivery_landed
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
@@ -307,5 +306,5 @@ async def forge_repository_changed(
         projects = list(await session.scalars(query))
     for changed_project_id in projects:
         await poll_open_prs(chat, changed_project_id)
-        await sweep_draft_prs(sessions, changed_project_id)
+        await pr_publish.sweep_draft_prs(sessions, changed_project_id)
     await deliver_dependency_notices(chat)
