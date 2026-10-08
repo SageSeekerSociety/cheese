@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from app.domain.agent.device_hub import (
+from app.domain.agent.device_contract import (
     EXEC_REPLY_SLACK_S,
     RECONNECT_GRACE_S,
     DeviceCallError,
