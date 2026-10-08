@@ -11,12 +11,19 @@ Protocol:
   connect → /api/topics/{id}/chat?token=<session token>   (required)
   client → {"type":"ping"}  →  server → {"type":"pong"}
   client → {"type":"typing"} / {"type":"typing","active":false}
+  client → {"type":"sync"}  →  server → {"type":"room_state", ...}
   server → user_block / reaction / tool / todo / state / event_block /
            assistant_block / live / activity / activity_snapshot / error / done
 (Typing is the one thing a client says on this socket, and it is not written:
 it is member activity — who is busy in this room right now, a person composing
 or an agent with a turn running (`agent/activity.py`) — and it lives only in the
 broker. The member is the socket's credential, never a field of the frame.)
+(`sync` asks for the room's live state as one frame, empty or not: the turns
+running here and who is busy. The opening `turn_active` / `activity_snapshot`
+are sent only when something is going on, so a client cannot tell "nobody is
+busy" from "not told yet" by them. A client that reconnects keeps what it was
+showing and asks; the answer is what it reconciles against, dropping turns
+and activity that ended while it was away instead of blanking the room first.)
 (The ping is the browser's liveness probe. A socket can sit OPEN for minutes
 after its path stopped carrying frames — the browser only learns when TCP
 gives up — so the client asks every few seconds and replaces the socket when
@@ -187,6 +194,17 @@ async def chat(
                 payload = await websocket.receive_json()
                 if payload.get("type") == "ping":
                     await send({"type": "pong"})
+                    continue
+                if payload.get("type") == "sync":
+                    await send(
+                        {
+                            "type": "room_state",
+                            "turn_ids": broker.active_turn_ids(channel),
+                            "since": broker.active_turns_since(channel),
+                            "agents": broker.activity.turn_agents(channel),
+                            "members": broker.activity.snapshot(channel),
+                        }
+                    )
                     continue
                 if payload.get("type") == "typing":
                     typing = payload.get("active") is not False

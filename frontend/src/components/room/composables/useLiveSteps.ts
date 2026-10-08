@@ -9,7 +9,7 @@
 // 所以「很久没有新帧」= 很久没有新输出 —— 那一行据此说「已 N 无新输出」。这一次
 // 只是记账，不做任何事：谁都不因为这一步慢而被拦下。
 //
-// `reset()` 换房间时由房间壳调。
+// `reset()` 换房间时由房间壳调；重连时房间壳调 `keepOnly`，只撤掉已经不在干活的队友。
 
 import type { WsServerFrame } from '../../../cx_types'
 
@@ -37,10 +37,16 @@ export function useLiveSteps() {
     states.value = { ...states.value, [agent]: { step: parsed ? stepText(parsed) : null, at: Date.now() } }
   }
 
-  /** 换了房间，或断了线：上一位队友的那一步和这里无关了。 */
+  /** 换了房间：上一位队友的那一步和这里无关了。 */
   function reset() {
     states.value = {}
   }
 
-  return { states, follow, reset }
+  /** 重连后：只留下此刻还有轮次在跑的那几位，其余的那一步已经过去了。 */
+  function keepOnly(agents: Set<string>) {
+    const kept = Object.fromEntries(Object.entries(states.value).filter(([agent]) => agents.has(agent)))
+    if (Object.keys(kept).length !== Object.keys(states.value).length) states.value = kept
+  }
+
+  return { states, follow, reset, keepOnly }
 }

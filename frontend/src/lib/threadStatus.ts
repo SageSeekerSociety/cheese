@@ -6,7 +6,7 @@ import type { Block } from '../cx_types'
 
 import { t } from '@/i18n'
 
-/** 这几种记录说得出队友在等什么；别的（记忆改了、环境休眠了）不改那一行。 */
+/** 这几种记录说得出队友在等什么；别的（记忆改了、环境空闲释放了）不改那一行。 */
 export const WAITS = new Set(['turn_queued', 'api_retry', 'context_compact', 'device_waiting'])
 
 function eventType(record: Block): string {

@@ -212,10 +212,15 @@ if [ "${1:-}" = "compose" ]; then
       if [ "${2:-}" = -q ] && [ "${3:-}" = frontend-b ] && [ -n "${APP_TIER_FRONTEND_B_CONTAINER:-}" ]; then
         printf '%s\n' "$APP_TIER_FRONTEND_B_CONTAINER"
       fi
+      # APP_TIER_SERVING_SLOT=b: the previous release's backend serves from the
+      # second slot, `backend-b`, as every other release's does. The frontend
+      # stays in `frontend` on a box that does not roll it.
       if [ "${2:-}" = -q ] && [ "$scenario" = rollback ]; then
-        case "${3:-}" in
-          backend) printf 'backend-container\n' ;;
-          frontend) printf 'frontend-container\n' ;;
+        case "${APP_TIER_SERVING_SLOT:-}:${3:-}" in
+          :backend) printf 'backend-container\n' ;;
+          :frontend) printf 'frontend-container\n' ;;
+          b:backend-b) printf 'backend-b-container\n' ;;
+          b:frontend) printf 'frontend-container\n' ;;
         esac
       fi
       ;;
@@ -274,11 +279,10 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
   case "${3:-}" in
     *Config.Image*)
       case "${4:-}" in
-        backend-container) printf 'repo/backend:oldsha\n' ;;
+        backend-container|backend-b-container) printf 'repo/backend:oldsha\n' ;;
         frontend-container) printf 'repo/frontend:oldsha\n' ;;
       esac
       ;;
-    *com.cheese.image_tag*) printf 'oldsha\n' ;;
     # The running backend's environment; APP_TIER_PREVIOUS_RELEASE is the
     # release it was started as, unset for one started before releases were passed.
     *Config.Env*)

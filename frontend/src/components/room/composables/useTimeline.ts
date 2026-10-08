@@ -18,15 +18,12 @@ import type { BlockWindow } from '../../../lib/blockPaging'
 
 import { ref } from 'vue'
 
-import { capWindow, joinNewest, placeBlock, prependOlder } from '../../../lib/blockPaging'
+import { ATTACHED, capWindow, joinNewest, placeBlock, prependOlder } from '../../../lib/blockPaging'
 
 /**
  * 新来的一块落在哪：显示出来了、收在背后的最新一段里、本来就有，还是比这一段更早、
  * 留给往上翻的那一页带回来（见 placeBlock）。
  */
-/** 频道翻页时另外挂在一块上的东西，更新那一块时没带就照旧留着。 */
-const ATTACHED = ['thread', 'routine_run'] as const
-
 export type Landing = 'shown' | 'held' | 'known' | 'above'
 
 /**
@@ -58,9 +55,26 @@ export function useTimeline(options: TimelineOptions = {}) {
    * 游标认的是「读到哪了」，和「画得出来什么」是两件事，所以单独记。
    */
   let oldestId: string | null = null
+  /**
+   * 最新那一段读到过的最新一块（原始的，不露面的也算）是什么时刻的。和 `oldestId` 一个
+   * 道理：最新那一带常常整页不露面，窗口里最新的那条说不出「读到哪了」。重连时拿它判断
+   * 读回来的一页和屏幕上这段接不接得上（lib/tailResync）。
+   */
+  let newestSeen: string | null = null
+
+  function seen(block: Block | undefined) {
+    if (block && (!newestSeen || Date.parse(block.created_at) > Date.parse(newestSeen))) newestSeen = block.created_at
+  }
 
   /** 整个换成这一段最新的。 */
   function show(window: BlockWindow) {
+    newestSeen = null
+    replaceWith(window)
+    seen(window.blocks.at(-1))
+  }
+
+  /** 换成这一段，「读到过哪」不变：换上来的是早就读过的（背后那段、接上的两段）。 */
+  function replaceWith(window: BlockWindow) {
     newestHeld = null
     hasNewer.value = false
     messages.value = window.blocks.filter(renders)
@@ -84,6 +98,7 @@ export function useTimeline(options: TimelineOptions = {}) {
 
   /** 新来的一块按时间落进最新一段。停在中间时它收在背后，不显示。 */
   function append(block: Block): Landing {
+    seen(block)
     if (!renders(block)) return 'known'
     if (newestHeld) {
       if (newestHeld.blocks.some((m) => m.id === block.id)) return 'known'
@@ -190,7 +205,7 @@ export function useTimeline(options: TimelineOptions = {}) {
     const held = newest()
     const joined = joinNewest(fresh, held, reachedNewest)
     if (joined) {
-      show(joined)
+      replaceWith(joined)
       return
     }
     newestHeld = held
@@ -209,13 +224,13 @@ export function useTimeline(options: TimelineOptions = {}) {
       hasMore: hasMore.value,
     }
     const joined = joinNewest(grown, newestHeld, reachedNewest)
-    if (joined) show(joined)
+    if (joined) replaceWith(joined)
     else messages.value = grown.blocks
   }
 
   /** 回到最新：背后那段直接换上来，不用再取。 */
   function backToNewest() {
-    if (newestHeld) show(newestHeld)
+    if (newestHeld) replaceWith(newestHeld)
   }
 
   /** 窗口读到哪了：往上翻时拿它当 `before` 游标（原始的，不是画得出来的最老那条）。 */
@@ -223,11 +238,17 @@ export function useTimeline(options: TimelineOptions = {}) {
     return oldestId
   }
 
+  /** 最新那一段读到过的最新一块的时刻（原始的）。 */
+  function newestSeenAt(): string | null {
+    return newestSeen
+  }
+
   return {
     messages,
     hasMore,
     hasNewer,
     oldestLoaded,
+    newestSeenAt,
     show,
     current,
     newest,

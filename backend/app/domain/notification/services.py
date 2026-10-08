@@ -19,6 +19,7 @@ from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import room_of
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.notification.dto import NotificationDTO, ResolvedEntityInfoDTO
 from app.domain.notification.entity_resolvers import EntityInfoResolver
@@ -259,10 +260,13 @@ class ProjectNotificationService:
         title: str,
         body: str = "",
         target_handle: str | None = None,
-        topic_id: uuid.UUID | None = None,
+        conversation_id: uuid.UUID | None = None,
         payload: dict | None = None,
     ) -> list[Notification]:
         """写进收件箱，一个收件人一行。
+
+        `conversation_id` 是这条通知关于的那条对话（一个频道自己那条线、它的一条
+        任务、或一条支线）；广播到的是那条对话所在频道的人。
 
         `target_handle` 为空是**广播**：在这里就展开成一人一行，而不是留一行
         `target_handle IS NULL` 让每一处读都自己想起来「还有谁都看得见的那一档」。
@@ -272,7 +276,7 @@ class ProjectNotificationService:
         recipients = (
             [target_handle]
             if target_handle is not None
-            else await self._broadcast_roster(project_id, topic_id)
+            else await self._broadcast_roster(project_id, conversation_id)
         )
         if not recipients:
             # 名册上一个人都不剩（只坐着 agent，或者项目既没成员也没主人）。并表
@@ -299,23 +303,29 @@ class ProjectNotificationService:
                     type_=kind,
                     title=title,
                     body=body,
-                    topic_id=topic_id,
+                    conversation_id=conversation_id,
                     payload=payload,
                 )
             )
         return rows
 
     async def _broadcast_roster(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID | None
+        self, project_id: uuid.UUID, conversation_id: uuid.UUID | None
     ) -> list[str]:
-        """一条广播到得了谁手上 —— 这个频道里的人，没说频道就是整个项目的人。
+        """一条广播到得了谁手上 —— 这条对话所在频道里的人，不说对话就是整个项目
+        的人。
+
+        名册和机器是频道的（`Place`）：一条在任务或支线里的通知，到得了的是那个
+        频道的人，不是那条任务自己的（它没有自己的名册）。
 
         agent 不在里面：它在自己房间的时间线上读到这件事，往它的收件箱里塞一行写
         的是一条谁都不会打开的记录（`identity/arrival.py`）。
         """
         service = TopicMemberService(self._session)
-        if topic_id is not None:
-            handles = await service.people_of(topic_id)
+        if conversation_id is not None:
+            handles = await service.people_of(
+                await room_of(self._session, conversation_id)
+            )
         else:
             handles = await service.project_people(project_id)
         return [
@@ -353,7 +363,8 @@ class ProjectNotificationService:
     async def decision_topic_ids(
         self, topic_ids: list[uuid.UUID], target_handle: str
     ) -> dict[uuid.UUID, bool]:
-        """{topic_id: 这里向他要的决策还有没有没拍板的}。"""
+        """{频道: 这里向他要的决策还有没有没拍板的} —— 频道自己的线和它的任务、
+        支线一起算。"""
         return await self._repo.decision_topic_ids(topic_ids, target_handle)
 
     async def mark_all_read(self, project_id: uuid.UUID, *, target_handle: str) -> int:
@@ -383,8 +394,8 @@ class ProjectNotificationService:
     async def resolve(
         self, notification_id: int, *, chosen: str, decided_by: str
     ) -> Notification:
-        """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回房间，芝士下一轮
-        读得到。"""
+        """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
+        对话，芝士下一轮读得到。"""
         row = await self.get_or_404(notification_id)
         if row.type != NotificationType.DECISION_REQUEST:
             raise ValidationError(say("notificationOnlyDecisions"))
@@ -400,10 +411,10 @@ class ProjectNotificationService:
         payload["resolved_choice"] = chosen
         row.metadata_payload = payload
         block = None
-        if row.topic_id is not None and row.project_id is not None:
+        if row.conversation_id is not None and row.project_id is not None:
             block = await BlockRepository(self._session).add(
                 project_id=row.project_id,
-                conversation_id=row.topic_id,
+                conversation_id=row.conversation_id,
                 author=decided_by,
                 author_type=AuthorType.participant,
                 content=f"【决策】关于「{row.title}」：选择「{chosen}」。",

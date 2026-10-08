@@ -17,7 +17,7 @@ SKILL="<这个技能的目录>"   # 加载 documents 技能时给出的那个目
 
 uv run --with lxml python3 "$SKILL/scripts/office.py" text 报告.docx
 uv run --with lxml python3 "$SKILL/scripts/office.py" edit 报告.docx -o 改后.docx \
-    --replace "旧的整句=新的整句" --author 芝士
+    --replace "旧的整句=新的整句" --author "<你的名字>"
 uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --base 报告.docx
 ```
 

@@ -142,11 +142,14 @@ def rooms(tmp_path, monkeypatch, capsys):
         room.teardown()
 
 
+# The sandbox's firewall drops what it refuses rather than rejecting it, so each
+# dial expected to be unreachable lasts its whole timeout. What a dial expects to
+# reach is a service on this machine's loopback, which answers in milliseconds.
 DIAL = """
 import socket, urllib.request
 def dial(host, port):
     try:
-        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=3) as r:
+        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=1) as r:
             return r.read().decode()
     except Exception as error:
         return "unreachable"

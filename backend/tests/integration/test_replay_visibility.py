@@ -18,6 +18,7 @@ from sqlalchemy import select
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.session_host import claude_code
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.models import NativeInput
 from app.main import app
@@ -29,6 +30,13 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+
+
+@pytest.fixture(autouse=True)
+def _dead_starts_read_soon(monkeypatch):
+    """A session that dies on start is read as ended at once, not after the
+    production second between a failed ping and reading the runner's log."""
+    monkeypatch.setattr(claude_code, "STARTUP_POLL_S", 0.05)
 
 
 class SilentScreen(StubChannel):
@@ -373,9 +381,12 @@ class DiesOnceScreen(SilentScreen):
             StubChannel.emit_turn(self, topic_id, prompt, reply)
 
 
-def test_a_failed_batch_is_not_swallowed_by_a_later_clean_stop(client):
-    """送达不等于读过：那一轮是死掉的，它的消息必须留给下一轮重发。之后会话自己
-    起的一轮干干净净地停下，也不能顺手把这批消息标成已读 —— 否则就是丢消息。"""
+def test_a_batch_a_dead_session_never_started_on_is_sent_again(client):
+    """会话死着的时候发来的一批消息，会话没起来就没听到：它必须留给下一轮重发。
+    之后会话自己启动的一轮干干净净地停下，也不能顺手把这批消息标成已读。
+
+    这一条走的是会话起不来的那条路，这批消息从没写进过会话。写进去了、会话没
+    回显就出错结束的那一轮（`forget_prompted_turn` 管的那条路）不在这里。"""
     project_id = post_project(client, json={"name": "Dies"}, owner="user-1").json()[
         "data"
     ]["id"]

@@ -79,6 +79,7 @@ from app.api.routes.topics import (
     DbSession,
     _actor_in_place,
 )
+from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -290,7 +291,7 @@ async def _summon_the_named(
         await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
 
 
-@router.post("/{topic_id}/note")
+@router.post("/{topic_id}/note", dependencies=[CHEESE_ONLY_IN_ROOM])
 async def leave_a_note(
     topic_id: uuid.UUID,
     body: dict,

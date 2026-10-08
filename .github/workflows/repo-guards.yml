@@ -57,6 +57,7 @@ jobs:
           bash .claude/scripts/check-repo-rules.sh --self-test
           bash .claude/scripts/check-action-pins.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
+          python3 .claude/scripts/check-migration-safety.py --self-test
           python3 .claude/scripts/check-file-sizes.py --self-test
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/catalog-ratchet.py --self-test

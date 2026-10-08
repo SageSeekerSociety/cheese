@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.conversation.services import of_rooms, room_column
 from app.domain.notification.models import (
     Notification,
     NotificationLevel,
@@ -238,13 +239,13 @@ class NotificationRepository:
         type_: NotificationType,
         title: str,
         body: str = "",
-        topic_id: uuid.UUID | None = None,
+        conversation_id: uuid.UUID | None = None,
         payload: dict | None = None,
     ) -> Notification:
         now = datetime.now(UTC)
         row = Notification(
             project_id=project_id,
-            topic_id=topic_id,
+            conversation_id=conversation_id,
             recipient_handle=recipient_handle,
             receiver_id=receiver_id,
             level=level.value,
@@ -400,7 +401,11 @@ class NotificationRepository:
     async def decision_topic_ids(
         self, topic_ids: list[uuid.UUID], recipient_handle: str
     ) -> dict[uuid.UUID, bool]:
-        """{topic_id: 这里向他要的决策还有没有没拍板的} —— 一次查完。
+        """{频道: 这里向他要的决策还有没有没拍板的} —— 一次查完。
+
+        一个频道那一格认的是它全部的对话：它自己那条线、它的任务和它的支线。一条
+        在任务里问的决策请求照样在它所在频道的角标上亮着（那条会话是频道的事），
+        只是回执落在任务里而不是频道主线上。
 
         和验收卡同一个形状：**在不在 key 里**是「这房间找他拍过板」（拍完也还是
         他的事），**value** 是「现在就等他」。没拍板的判据和收件箱同一条：
@@ -408,18 +413,19 @@ class NotificationRepository:
         """
         if not topic_ids:
             return {}
+        room = room_column(Notification.conversation_id).label("room")
         stmt = (
             select(
-                Notification.topic_id,
+                room,
                 func.bool_or(Notification.resolved_at.is_(None)),
             )
             .where(
-                Notification.topic_id.in_(topic_ids),
+                of_rooms(Notification.conversation_id, topic_ids),
                 Notification.type == NotificationType.DECISION_REQUEST.value,
                 Notification.recipient_handle == recipient_handle,
                 Notification.deleted_at.is_(None),
             )
-            .group_by(Notification.topic_id)
+            .group_by(room)
         )
         rows = (await self._session.execute(stmt)).all()
         return {topic_id: bool(open_) for topic_id, open_ in rows if topic_id}
