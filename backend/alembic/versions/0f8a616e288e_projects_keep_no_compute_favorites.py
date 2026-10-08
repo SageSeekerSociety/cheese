@@ -39,5 +39,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Nothing to put back: the previous code reads a missing list as empty.
+    """Nothing to put back: the previous code reads a missing list as empty."""
     pass

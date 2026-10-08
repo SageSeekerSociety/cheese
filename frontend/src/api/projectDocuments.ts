@@ -1,6 +1,5 @@
 // 项目自己的文档：资料库里那些能一起改的文档。对话自带的那一份不在列表里，
 // 但资料库的搜索找得到它，可以另存一份进来。
-import type { ListPayload } from '../cx_types'
 import type { DocumentSearch, ProjectDocument } from '../lib/projectDocument'
 
 import { rememberNumbered } from '../lib/addresses'
@@ -12,8 +11,18 @@ export type { DocumentHit, DocumentSearch, ProjectDocument } from '../lib/projec
 const base = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/documents`
 const one = (documentId: string) => `/documents/${encodeURIComponent(documentId)}`
 
-export function listProjectDocuments(projectId: string): Promise<ListPayload<ProjectDocument>> {
-  return request<ListPayload<ProjectDocument>>(base(projectId)).then((page) => {
+/** 列表里的一份文档，带着它在资料库页那张混排的表里的位置（后端 `app/core/rank.py`）。 */
+export type ListedDocument = ProjectDocument & { rank: string }
+
+/** 项目自己的文档，一页一页地给，最近改过的在前；`next` 是下一页的游标。 */
+export function listProjectDocuments(
+  projectId: string,
+  cursor: string | null = null,
+  limit = 50
+): Promise<{ data: ListedDocument[]; next: string | null }> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (cursor) params.set('cursor', cursor)
+  return request<{ data: ListedDocument[]; next: string | null }>(`${base(projectId)}?${params}`).then((page) => {
     rememberNumbered('docs', page.data)
     return page
   })

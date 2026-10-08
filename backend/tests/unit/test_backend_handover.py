@@ -30,11 +30,8 @@ from app.domain.agent import attachments
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.service import AgentResult
 from tests.conftest import stub_compute
 from tests.support.room_reader import room_reader

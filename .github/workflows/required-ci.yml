@@ -29,6 +29,7 @@ jobs:
       deploy: ${{ steps.scope.outputs.deploy }}
       harness: ${{ steps.scope.outputs.harness }}
       mcp: ${{ steps.scope.outputs.mcp }}
+      equivalence: ${{ steps.scope.outputs.equivalence }}
       remote: ${{ steps.scope.outputs.remote }}
       cifast: ${{ steps.scope.outputs.cifast }}
     steps:
@@ -99,6 +100,11 @@ jobs:
     if: needs.scope.outputs.mcp == 'true'
     uses: ./.github/workflows/mcp-contract.yml
 
+  equivalence:
+    needs: scope
+    if: needs.scope.outputs.equivalence == 'true'
+    uses: ./.github/workflows/mcp-equivalence.yml
+
   required:
     name: CI required
     if: ${{ !cancelled() }}
@@ -106,7 +112,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, cifast]
+    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -18,7 +18,8 @@ from alembic.operations import Operations
 from sqlalchemy import select, update
 
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.conversation.models import Conversation
 from app.domain.delivery.input_holds import seat_has_unfinished_input

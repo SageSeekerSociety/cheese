@@ -72,7 +72,7 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
     assert after._session_for(topic) is runner
     assert runner.session_id == native
     assert len(runner.written) == initial_writes
-    assert (topic, work) in recovered._hook_work
+    assert (topic, work) in recovered.live.hook_work
 
     async def continue_and_verify():
         factory = client.test_request_factory

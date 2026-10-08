@@ -39,10 +39,15 @@ const props = defineProps<{
   /** 这一栏是房间里一个任务的对话：每句话都说给做它的 AI 队友，采纳卡是这个任务的，
    *  房间才有的提议卡（技能、任务、反馈）不在这里。 */
   taskId?: string | null
+  /** 这件事单独指定了队友时，那位的 handle（任务信息卡那行「AI 队友」挑的）。
+   *  发送框那个 @ 跟着它走，而不是跟着房间名册上那位。 */
+  taskAgentHandle?: string | null
   /** 这里此刻不能说话的原因，见 ChatPanel。 */
   composerClosed?: string | null
   /** 采纳那一条此刻挂在别处（专注模式里它在面板底部），这里不再放一份。 */
   acceptElsewhere?: boolean
+  /** 手机上：采纳那一条只放「审阅」，决定在「改动」页底部。 */
+  acceptReviewButton?: boolean
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
@@ -86,8 +91,9 @@ const chatRef = ref<{
   send: (content: string, summon: boolean, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
-const acceptRef = ref<{ reload: () => Promise<void> } | null>(null)
 const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
+// 正在写退回理由：输入框让给退回那一块（AcceptRejectForm），写到一半的消息留在原处。
+const rejecting = ref(false)
 
 const router = useRouter()
 // 卡片属于提出它的那段对话：在任务里就是这个任务，否则是房间本身。三种卡都按它
@@ -126,7 +132,6 @@ const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submit
 
 defineExpose({
   connected,
-  reloadAccept: () => acceptRef.value?.reload(),
   reloadFeedback: () => feedbackRef.value?.reload(),
   reloadSkills: () => skills.load(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
@@ -142,10 +147,11 @@ defineExpose({
       ref="chatRef"
       :topic="topic"
       :conversation-id="taskId"
+      :task-agent-handle="taskAgentHandle ?? null"
       :composer-closed="composerClosed"
       :always-summon="!!taskId"
       hide-header
-      show-composer
+      :show-composer="!rejecting"
       :members="members"
       :topic-list="topicList"
       :unread-on-open="unreadOnOpen"
@@ -174,14 +180,14 @@ defineExpose({
       <template #above-composer>
         <TopicAcceptCard
           v-if="!acceptElsewhere"
-          ref="acceptRef"
           class="chat-dock"
-          docked
           :topic-id="topic.id"
           :task-id="taskId ?? undefined"
           :topic-status="topic.status"
+          :review-button="acceptReviewButton"
           @phase="emit('phase', $event)"
           @review="emit('review')"
+          @rejecting="rejecting = $event"
         />
       </template>
       <template #timeline-end>

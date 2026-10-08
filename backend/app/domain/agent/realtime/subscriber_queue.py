@@ -1,11 +1,4 @@
-"""One subscriber's queue of frames, and how far behind it is allowed to fall.
-
-The broker in `runtime` publishes into these; the websocket route drains them.
-They live apart from the broker because `runtime.py` is past its size cap
-(`.claude/rules/architecture.md`), and what is here is what that cap made room
-for: the queue, the budget in bytes it is held to, and `cut_off`, the policy
-for one that ran past it.
-"""
+"""One realtime subscriber's frame queue and bounded backlog policy."""
 
 import asyncio
 import json

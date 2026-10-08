@@ -118,31 +118,41 @@ async def live(websocket: WebSocket, chat: ChatDep) -> None:
 
         # The app sends nothing more; reading is only how a close is noticed.
         hung_up = asyncio.create_task(_until_closed(websocket))
+        # The beat is a clock of its own, not the wait's timeout. As a timeout
+        # it was restarted by every notice that arrived, so the connection that
+        # heard the most — an active room, a running task, a second device —
+        # was the one never checked, and a session that had ended kept its
+        # connection for as long as traffic lasted. The tick is made once a
+        # period and is not remade when a wake comes in, so a busy connection
+        # is checked as often as a quiet one.
+        beat = asyncio.create_task(asyncio.sleep(BEAT_SECONDS))
         try:
             while True:
                 wake = asyncio.create_task(woken.wait())
                 done, _ = await asyncio.wait(
-                    {wake, hung_up},
-                    timeout=BEAT_SECONDS,
-                    return_when=asyncio.FIRST_COMPLETED,
+                    {wake, hung_up, beat}, return_when=asyncio.FIRST_COMPLETED
                 )
                 if hung_up in done:
                     wake.cancel()
                     return
-                if wake in done:
-                    woken.clear()
-                else:
-                    # The beat's errand. A notice committed by the other backend
-                    # slot during a deploy wakes nobody in this process: read
-                    # where "now" is, and catch up rather than stay quiet until
-                    # the app gives up and reconnects.
+                if beat in done:
+                    beat = asyncio.create_task(asyncio.sleep(BEAT_SECONDS))
+                    # A wake that arrives in the same round is not lost: the
+                    # catch-up below reads by cursor, not by wake.
                     wake.cancel()
                     if await _signed_in(chat, user_id, sid) is None:
                         await websocket.close(code=4401)
                         return
+                    # The beat's other errand. A notice committed by the other
+                    # backend slot during a deploy wakes nobody in this process:
+                    # read where "now" is, and catch up rather than stay quiet
+                    # until the app gives up and reconnects.
                     if not await _behind(chat, user_id, cursor):
                         await websocket.send_json({"kind": "beat"})
                         continue
+                elif wake in done:
+                    woken.clear()
+
                 frame = await _notices_after(chat, user_id, cursor)
                 cursor = frame["latest"] or cursor
                 if frame["items"]:
@@ -150,6 +160,7 @@ async def live(websocket: WebSocket, chat: ChatDep) -> None:
                 await websocket.send_json(await _waiting(chat, user_id, handle))
         finally:
             hung_up.cancel()
+            beat.cancel()
 
 
 async def _until_closed(websocket: WebSocket) -> None:

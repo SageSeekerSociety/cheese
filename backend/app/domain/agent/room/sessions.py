@@ -63,6 +63,7 @@ from app.domain.agent.reads import (
     Working,
     Writing,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.room.stopwatch import Stopwatch, timed
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.agent.session_host.contract import (
@@ -1157,7 +1158,6 @@ class RoomSessions:
 
     async def announce(self, topic: uuid.UUID) -> None:
         """Tell the room its session's controls moved."""
-        from app.domain.agent.runtime import get_broker
 
         await get_broker().publish(
             str(topic),

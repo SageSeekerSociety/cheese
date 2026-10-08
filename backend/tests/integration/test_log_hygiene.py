@@ -274,6 +274,25 @@ def test_an_anonymous_request_line_has_no_user_field(client, caplog):
     assert "user" not in line
 
 
+def test_a_healthcheck_knock_leaves_no_request_line(client, caplog):
+    """`/readyz` is asked every 15 seconds by the container and `/healthz` by
+    the rollout — 240 lines an hour that each say nothing happened. `/health`
+    was already skipped for the same reason."""
+    with caplog.at_level(logging.INFO, logger="http"):
+        assert client.get("/healthz").status_code == 200
+        assert client.get("/readyz").status_code in (200, 503)
+        client.get("/version")
+
+    paths = [
+        rec.msg.get("path")
+        for rec in caplog.records
+        if isinstance(rec.msg, dict) and rec.msg.get("event") == "req"
+    ]
+    assert "/version" in paths
+    assert "/readyz" not in paths
+    assert "/healthz" not in paths
+
+
 def test_a_refused_handshake_names_the_path(client, caplog):
     """A path that matches no route must say so, with the path attached."""
     with caplog.at_level(logging.WARNING, logger="app.ws"):

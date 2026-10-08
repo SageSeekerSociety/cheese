@@ -48,7 +48,7 @@ async def admitted_initial(
         recipient_instance_id=instance_id,
         recipient_handle=recipient_handle,
     )
-    async with seat_admission(chat._seat_lock_for(topic_id, seat)):
+    async with seat_admission(chat.live.seat_lock_for(topic_id, seat)):
         from app.domain.agent.queries import conversation_seat
         from app.domain.room_task.place import PlaceResolver
 

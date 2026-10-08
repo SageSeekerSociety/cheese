@@ -206,20 +206,6 @@ async def write_file(
     return ok({"path": path, "version": saved["version"], "source": "live"})
 
 
-@router.get("/{project_id}/git/log", dependencies=[Depends(require_project_access)])
-async def git_log(
-    project_id: uuid.UUID,
-    db: DbSession,
-    topic: uuid.UUID | None = None,
-    task: uuid.UUID | None = None,
-) -> dict:
-    await ProjectService(db).get_or_404(project_id)
-    # A topic asks about ITS commits (its branch minus the base), never the
-    # project's — the project log is other topics' work.
-    rows = await ProjectFiles(db, project_id, task, release_session=True).history()
-    return ok(page(rows, len(rows)))
-
-
 @router.get("/{project_id}/git/diff", dependencies=[Depends(require_project_access)])
 async def git_diff(
     project_id: uuid.UUID,

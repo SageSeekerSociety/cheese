@@ -99,9 +99,7 @@ def test_the_projects_own_setting_outranks_the_whole_protocol(client):
             repo = ProjectRepository(session)
             row = await repo.get(pid)
             assert row is not None
-            await repo.set_settings(
-                row, {**(row.settings or {}), "shell": "course-teacher"}
-            )
+            await repo.merge_settings(row, {"shell": "course-teacher"})
             await session.commit()
 
     asyncio.run(_set())

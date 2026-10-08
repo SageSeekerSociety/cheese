@@ -19,10 +19,11 @@ reminder collapsed with 收起 comes straight back on the next inbox read.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.deps import get_broker
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
 from app.core.db import get_db
@@ -142,15 +143,40 @@ async def list_notifications(
     resolver: ActorResolverDep,
     target_handle: str | None = None,
     unread_only: bool = False,
+    page_size: int = Query(default=50, ge=1, le=100),
+    page_start: int | None = None,
 ) -> dict:
-    """这个调用者在这个项目里的信。"""
+    """这个调用者在这个项目里的信，新的在前，一页一页地给。
+
+    这条读以前没有上界：一个项目跑久了，整个历史上的信会一次全拉回来。现在默认
+    一页最多 ``page_size`` 条（上限 100），`has_more` 说还有没有，`next_start` 说
+    下一页从哪一行开始 —— 把它原样当成下一次的 `page_start` 就能一路读到底，一行
+    不漏（键集游标：收件箱的头一直在长，offset 会在翻页时漏行重行）。
+
+    `total` 是真总数，不是这一页的条数。分页之前它是 `page(len(items))`，也就是
+    「这一页有几条」，一加上限这两个数就分家了。
+
+    写法照本仓的分页协议（`design/common/parameters.yaml` 的 ``page_start`` /
+    ``page_size``，`design/common/responses.yaml` 的 ``Page``），和相邻的
+    ``GET /topics/{id}/blocks`` 同一套：游标是行号、`has_more` 平铺在 ``data`` 里。
+    """
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id
     )
-    items, total = await ProjectNotificationService(db).list_for_project(
-        project_id, target_handle=handle, unread_only=unread_only
+    items, total, next_start = await ProjectNotificationService(db).list_for_project(
+        project_id,
+        target_handle=handle,
+        unread_only=unread_only,
+        page_size=page_size,
+        page_start=page_start,
     )
-    return ok(page([_dump(n) for n in items], total))
+    return ok(
+        {
+            **page([_dump(n) for n in items], total),
+            "has_more": next_start is not None,
+            "next_start": next_start,
+        }
+    )
 
 
 @router.get("/projects/{project_id}/inbox")
@@ -234,7 +260,10 @@ async def resolve_notification(
     row = await service.get_or_404(notification_id)
     handle = await _acting_recipient(resolver, row)
     resolved = await service.resolve(
-        notification_id, chosen=body.chosen, decided_by=handle
+        notification_id,
+        chosen=body.chosen,
+        decided_by=handle,
+        publish=get_broker().publish,
     )
     await db.commit()
     return ok(_dump(resolved))

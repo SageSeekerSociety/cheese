@@ -89,7 +89,7 @@ export interface Topic {
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
-  // 状态，有的是成员在做什么（backend `agent/activity.py`）。只有 list/get 话题时才带。
+  // 状态，有的是成员在做什么（backend `agent/realtime/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
   // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
   joined?: boolean
@@ -606,13 +606,6 @@ export interface ProfileTopic {
 }
 
 // ---- 执行面板 (Phase 4 tool drawers) ----
-
-// One git commit row (GET /projects/{id}/git/log).
-export interface GitCommit {
-  hash: string
-  author: string
-  message: string
-}
 
 // A file in the project workspace (GET /projects/{id}/files).
 export interface WorkspaceFile {

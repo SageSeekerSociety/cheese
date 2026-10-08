@@ -1,7 +1,7 @@
 """The 领取 and 提交 tables: the indexes their readers ask for
 
 Revision ID: d3f6a2c85b71
-Revises: 9f2b7c14a8e3
+Revises: 9e1b64d280dd
 Create Date: 2026-10-07
 
 ``task_membership``, ``task_submission``, ``task_submission_entry`` and
@@ -58,10 +58,10 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d3f6a2c85b71"
-# 接在 main 当下的链尾后面：本文件写下时那个头是 9f2b7c14a8e3，合入 main 后换成了
-# 那里新落的 0c800ff1db2f。main 每加一条迁移，这个值都要往后挪一次，同时改
-# alembic/HEAD。
-down_revision: str | Sequence[str] | None = "0c800ff1db2f"
+# 接在 main 当下的链尾后面：本文件写下时那个头是 9f2b7c14a8e3，之后跟着 main 换过
+# 两次——先 0c800ff1db2f，再是 blocks 那批索引（e5b1c7d29f04、9e1b64d280dd）之后的
+# 9e1b64d280dd。main 每加一条迁移，这个值都要往后挪一次，同时改 alembic/HEAD。
+down_revision: str | Sequence[str] | None = "9e1b64d280dd"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

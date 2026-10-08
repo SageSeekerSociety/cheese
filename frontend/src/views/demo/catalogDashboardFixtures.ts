@@ -274,6 +274,10 @@ export const DASH_PENDING: PendingRow[] = [
   },
 ]
 
+/** 账号池快照写下的时刻。**算出来而不是写死**：这是一份静态素材，写死的时刻过几天
+ *  就变成一个过去的钟点，预览里那一句「最早 X 恢复」跟着变成一句假话。 */
+const POOL_AT = Math.floor(Date.now() / 1000)
+
 export const DASH_USAGE: StatsUsage = {
   days: 30,
   totals: { tokens: 921100, calls: 277, cost_usd: 2.6583, unpriced_tokens: 35000 },
@@ -324,6 +328,20 @@ export const DASH_USAGE: StatsUsage = {
       method: 'derived_from_resource_usage',
     },
   },
+  // Claude 账号池：三张账号各一种状态 —— 这一块要一眼看得出「一行一张账号」在画什么，
+  // 所以可用 / 冷却 / 已停用各来一张，冷却那张还带着它自己的失败次数。
+  claude_accounts: {
+    accounts: [
+      { name: 'primary', state: 'available', until: null, failures: 0 },
+      { name: 'claude-2', state: 'cooling', until: POOL_AT + 900, failures: 2 },
+      { name: 'claude-3', state: 'disabled', until: null, failures: 6 },
+    ],
+    reason: null,
+    written_at: POOL_AT,
+    age_seconds: 0,
+    stale: false,
+    retry_after: 900,
+  },
 }
 
 export const DASH_PLATFORM: StatsPlatform = {
@@ -351,6 +369,7 @@ export const DASH_PLATFORM: StatsPlatform = {
       redis: { status: 'up' },
       event_loop: { status: 'up', detail: 3.4 },
       routes: { status: 'up' },
+      alerting: { status: 'up' },
     },
   },
   extras: {

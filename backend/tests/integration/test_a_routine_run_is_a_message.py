@@ -134,7 +134,7 @@ def test_a_settled_run_says_how_it_went_at_the_bottom_of_the_main_line(
     client, monkeypatch
 ):
     room, _routine, run, _conversation, _submitted = _fired(client)
-    from app.domain.agent.runtime import get_broker
+    from app.domain.agent.realtime.broker import get_broker
 
     broker = get_broker()
     original = broker.publish

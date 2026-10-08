@@ -12,6 +12,7 @@ import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+import { poolView } from '@/lib/adminPool'
 import { dayLabel, deltaOf, num } from '@/lib/adminStats'
 import { fmtCost, fmtNum } from '@/lib/usageFormat'
 
@@ -29,7 +30,7 @@ const props = defineProps<{
   loading: boolean
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const usage = computed(() => props.data)
 
@@ -170,6 +171,13 @@ const creditMeters = computed(() => {
 /** 「额度燃尽」标题旁的口径 tip：那句互斥集合的说明。 */
 const creditsNote = computed(() => t('feedback.dashboard.credits.note'))
 
+/** 订阅通路身后的 Claude 账号池。**这一块的读数不在数据库里**：计量代理把池子写在
+ *  用量账本旁边的一份快照里（后端读它，见 `claude_pool.py`），所以「看不见」是常态
+ *  而不是故障 —— 那一行画的是原因，不是空白。读法在 `lib/adminPool.ts`。 */
+const pool = computed(() => poolView(usage.value?.claude_accounts, t, locale.value))
+
+const poolNote = computed(() => t('feedback.dashboard.pool.note'))
+
 /** 日期轴的标签：这一屏的 series。 */
 const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel(row.date)))
 </script>
@@ -244,6 +252,22 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
       {{ t('feedback.dashboard.credits.burn') }} {{ credits.burn.credits_per_day.toFixed(1) }}/d ·
       {{ t('feedback.dashboard.credits.eta') }} —
     </p>
+  </section>
+
+  <!-- Claude 账号池：订阅通路身后那几张账号，写在计量代理那台机器上。**全部冷却时
+       这一块是唯一说得清的话** —— 那会儿 token 曲线只会显示「今天用量下降」，读起来
+       像好消息。它也可能是「看不见」（这台部署没跑订阅版代理），那时画的是原因；
+       `summary` 为空只在旧后端没这一块时出现，那块整段不画。 -->
+  <section v-if="pool.summary" class="ad__pool">
+    <h2 class="ad__block-title">{{ t('feedback.dashboard.pool.title') }}<AdminNoteTip :text="poolNote" /></h2>
+    <ul v-if="pool.rows.length" class="ad__pool-list">
+      <li v-for="row in pool.rows" :key="row.name" class="ad__pool-row">
+        <span class="ad__pool-name">{{ row.name }}</span>
+        <span class="ad__pool-state">{{ row.state }}</span>
+      </li>
+    </ul>
+    <p class="ad__block-note t-meta-read">{{ pool.summary }}</p>
+    <p v-if="pool.stale" class="ad__block-note t-meta-read">{{ pool.stale }}</p>
   </section>
 </template>
 
@@ -385,5 +409,40 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
 
 .ad__block-note {
   margin: 12px 0 0;
+}
+
+/* Claude 账号池。两列：账号名在左、状态在右 —— 这一块读的是「哪张账号现在什么状态」，
+   竖排成「名字 / 状态 / 名字 / 状态」会让状态那一列对不齐（平台屏那四行机器同一条）。
+
+   状态**不上色**：全页的状态色只留给平台屏的健康四格，这里的状态名（可用 / 冷却中 /
+   已停用）自己说得清，再加一层颜色只是多一个要维护的说法。 */
+
+.ad__pool {
+  margin-top: 16px;
+}
+
+.ad__pool-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ad__pool-row {
+  display: contents;
+}
+
+.ad__pool-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__pool-state {
+  color: var(--ink);
 }
 </style>

@@ -23,6 +23,6 @@ describe('哪条路由算在项目框里', () => {
   })
 
   it('框外的层不属于任何项目', () => {
-    expect(projectFrameOf(at('TeamsDetail', { params: { handle: 'zhishi' } }))).toBeNull()
+    expect(projectFrameOf(at('TeamsDetailDefault', { params: { handle: 'zhishi' } }))).toBeNull()
   })
 })

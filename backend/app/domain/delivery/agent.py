@@ -247,6 +247,65 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
     return len(claimed)
 
 
+#: The states of an input the session was never reached for: `claimed` is
+#: between taking the row and fencing the send, `pending` is where an attempt
+#: that never began the send puts it back. `sending` — and `uncertain` after it
+#: — mean the session may have been reached, and the module's own rule holds:
+#: never permission to inject the instruction a second time.
+_NEVER_SENT = ("pending", "claimed")
+
+
+async def redispatch_undelivered(
+    sessions, *, conversation_id: uuid.UUID, chat, runner
+) -> int:
+    """Send this conversation, now, the inputs the platform still owes it.
+
+    A delivery whose turn died before the session was reached goes back to
+    ``pending`` with a backoff (``run_attempt``), and it waits for the next
+    dispatch anyone happens to make in this project to pick it up — there is no
+    such next dispatch in a room nobody else is doing anything in. A task told
+    to start is the shape this has: the room shows that its session did not
+    start, the card offers a retry, and the instruction sits on the ledger
+    because the only way to send it again later is for something unrelated to
+    happen first.
+
+    Someone asking for that retry is asking for the turn now, which is what
+    this does. Only rows the session was never reached for are taken, and only
+    this conversation's: an interrupted sending attempt stays withheld
+    (module docstring). How long an instruction given up on waits before its
+    own sweep fails it is untouched (`GIVE_UP_AFTER`) — this moves the wait
+    that a person asked to skip, not that one.
+    """
+    stamp = now()
+    async with sessions() as session:
+        owed = list(
+            (
+                await session.scalars(
+                    select(Delivery.id).where(
+                        Delivery.conversation_id == conversation_id,
+                        Delivery.agent_instance_id.is_not(None),
+                        Delivery.state.in_(_NEVER_SENT),
+                        Delivery.sent_at.is_(None),
+                        Delivery.attempts > 0,
+                        or_(
+                            Delivery.lease_until.is_(None),
+                            Delivery.lease_until <= stamp,
+                        ),
+                    )
+                )
+            ).all()
+        )
+        if not owed:
+            return 0
+        # The backoff is the only thing holding these back, and it is a wait no
+        # person asked for.
+        await session.execute(
+            update(Delivery).where(Delivery.id.in_(owed)).values(retry_at=None)
+        )
+        await session.commit()
+    return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
+
+
 async def run_attempt(sessions, delivery_id, attempt_id, work):
     """Renew admission ownership while queued; settle only this claimed attempt."""
 

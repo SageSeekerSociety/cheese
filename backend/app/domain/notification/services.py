@@ -6,7 +6,7 @@
 """
 
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -412,11 +411,36 @@ class ProjectNotificationService:
         *,
         target_handle: str,
         unread_only: bool = False,
-    ) -> tuple[list[Notification], int]:
-        items = await self._repo.list_for_project(
+        page_size: int,
+        page_start: int | None = None,
+    ) -> tuple[list[Notification], int, int | None]:
+        """这个项目收件箱的一页：这一页的信、真总数、下一页从哪一行开始。
+
+        末尾那个数是给调用方原样喂回来的 `page_start`，而且是**含**那一行的：下一
+        次读带着它，它就是那一页的头一条。多取一行才判得出还有没有下一页 —— 它不
+        进 `data`，只借它的行号。
+
+        总数走单独一条 `count(*)`，不是这一页的条数：分页之前的写法是
+        `page(items, len(items))`，一加上限它就说谎了。
+
+        `page_start` 指的 id 不存在时从头开始，不报错 —— 和 `/notifications` 的游
+        标同一条政策（那边把解不出来的游标当「从头来」）。于是过期的游标最多让人
+        重看一遍第一页，不会是 500。
+        """
+        cursor = await self._repo.get(page_start) if page_start is not None else None
+        rows = await self._repo.list_for_project(
+            project_id,
+            recipient_handle=target_handle,
+            unread_only=unread_only,
+            limit=page_size + 1,
+            at_or_before=cursor,
+        )
+        total = await self._repo.count_for_project(
             project_id, recipient_handle=target_handle, unread_only=unread_only
         )
-        return items, len(items)
+        if len(rows) > page_size:
+            return rows[:page_size], total, rows[page_size].id
+        return rows, total, None
 
     async def inbox(
         self,
@@ -464,7 +488,12 @@ class ProjectNotificationService:
         return await self._repo.save(row)
 
     async def resolve(
-        self, notification_id: int, *, chosen: str, decided_by: str
+        self,
+        notification_id: int,
+        *,
+        chosen: str,
+        decided_by: str,
+        publish: Callable[[str, dict], Awaitable[None]],
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
         对话，芝士下一轮读得到。"""
@@ -496,7 +525,7 @@ class ProjectNotificationService:
         if block is not None:
             block_payload = BlockOut.model_validate(block).model_dump(mode="json")
             await self._session.commit()
-            await get_broker().publish(
+            await publish(
                 str(block.conversation_id),
                 {"type": "event_block", "block": block_payload},
             )

@@ -18,10 +18,6 @@ isolated there, as any move does. A room whose latest lease is on a Cloud
 machine, or whose own choice is now Cloud, is not bound, since a binding to an
 enrolled machine would point its environment status at the wrong machine; and
 a room already bound keeps its binding.
-
-The downgrade leaves the rows: the code before this treated every binding to
-an enrolled machine as `host` whatever it said, so they change nothing there.
-
 Revision ID: d72d0f566149
 Revises: 4383bf20b465
 Create Date: 2026-10-04
@@ -57,4 +53,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """The downgrade leaves the rows: the code before this treated every binding to
+    an enrolled machine as `host` whatever it said, so they change nothing there."""
     pass

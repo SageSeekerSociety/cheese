@@ -8,11 +8,12 @@
 //
 // 画法在 `components/accept/*.vue`，接线在 `components/TopicAcceptCard.vue`。
 // 拆自那个 1215 行的组件（#2143），注释跟着它解释的那段代码走了一遍。
+import type { InjectionKey } from 'vue'
 import type { AcceptCard, MergeReason, PrChecks } from '@/cx_types'
 import type { MergeBadge } from '@/lib/mergeState'
 import type { CardPhase } from '@/lib/topicState'
 
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onUnmounted, provide, ref, watch } from 'vue'
 
 import { useUserRef } from '@/composables/useUserRef'
 
@@ -37,12 +38,11 @@ import { reconcile } from '@/lib/reconcile'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-/** 这个框从宿主那里知道的全部：是哪个话题的卡、看的是哪一条活的卡、贴不贴底。 */
+/** 这个框从宿主那里知道的全部：是哪个话题的卡、看的是哪一条活的卡。 */
 export interface AcceptCardHost {
   topicId: string
   topicStatus: string
   taskId?: string | null
-  docked?: boolean
 }
 
 export function useAcceptCard(props: AcceptCardHost) {
@@ -159,9 +159,9 @@ export function useAcceptCard(props: AcceptCardHost) {
   })
   const showGateOutput = ref(false)
 
-  // 横条展开没有。默认收着：一行已经说清「有一个决定在等谁」，整张卡要的时候再看。
+  // 历史卡（闸门那两张、交付中那张）的横条展开没有。待审阅的卡没有展开：它的详情在
+  // 「改动」页顶部，横条上只有状态和两颗决定按钮。
   const expanded = ref(false)
-  const showDetail = computed(() => !props.docked || expanded.value)
 
   // The bar line is a plain string and cannot hold a UserRef, so the person is named
   // here with the same display name a UserRef would draw (#2764); a handle the roster
@@ -169,53 +169,76 @@ export function useAcceptCard(props: AcceptCardHost) {
   const reviewerName = useUserRef(() => pendingCard.value?.reviewer_handle).label
   const deciderName = useUserRef(() => acceptedCard.value?.decided_by).label
 
-  // 横条上那一行说什么。顺序和下面卡片的 v-if 链一致：同一时刻只有一张卡在台面上。
-  const bar = computed<{ icon: string; color: string; title: string; sub: string }>(() => {
+  // 横条上那一行说什么。顺序和 TopicAcceptCard 里的 v-if 链一致：同一时刻只有一张卡在
+  // 台面上。待审阅的卡只说状态：交的是什么、检查怎样都在「改动」页顶部，对话栏窄的时候
+  // 一句标题会被截得只剩几个字。
+  const bar = computed<{ icon: string; color: string; title: string }>(() => {
     const gate = gateCard.value
     if (gate?.status === 'gate_failed')
-      return { icon: 'mdi-close-octagon-outline', color: 'error', title: t('work.room.accept.gateFailed'), sub: '' }
+      return { icon: 'mdi-close-octagon-outline', color: 'error', title: t('work.room.accept.gateFailed') }
     if (gate?.status === 'gate_blocked')
-      return { icon: 'mdi-help-circle-outline', color: 'warning', title: t('work.room.accept.gateBlocked'), sub: '' }
+      return { icon: 'mdi-help-circle-outline', color: 'warning', title: t('work.room.accept.gateBlocked') }
     const pending = pendingCard.value
     if (pending?.status === 'conflict')
       return {
         icon: 'mdi-source-merge',
         color: 'warning',
         title: t('work.room.accept.conflict', { agent: store.agentName }),
-        sub: '',
       }
     if (pending)
       return {
         icon: 'mdi-source-merge',
         color: 'success',
-        // 被审阅的东西按它实际是什么说。交一次合并时，产物是整个代码仓库，每张卡都是
-        // 「《同一个名字》第 N 版」，一行里说不出这次改了什么 —— 那就用这次改动自己的
-        // 标题；产物和第几版在展开的「这次交付」里。交文件、交地址时，产物的名字和第几版
-        // 就是这次交的东西。
-        title:
-          pending.deliverable?.kind === 'merge' && pending.change_subject
-            ? pending.change_subject
-            : pending.artifact
-              ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
-              : t('work.room.accept.change'),
         // 「待某人审阅」只在球真的在人手上（后端算的 who 是 human）时说：检查还在跑、
-        // 芝士在修、平台在更新分支时，这一行说的是合并态那个词，和卡里的状态行同一个结论。
-        sub:
+        // 芝士在修、平台在更新分支时，说的是合并态那个词。
+        title:
           mergeBadge.value && pending.merge_state.who !== 'human'
             ? mergeBadge.value.label
             : pending.reviewer_handle === AUTHOR
               ? t('work.room.accept.waitingOnYou')
               : t('work.room.accept.waitingOn', { name: reviewerName.value }),
       }
-    if (deliveringCard.value)
-      return { icon: 'mdi-history', color: 'warning', title: t('work.room.accept.delivering'), sub: '' }
+    if (deliveringCard.value) return { icon: 'mdi-history', color: 'warning', title: t('work.room.accept.delivering') }
     const accepted = acceptedCard.value
     return {
       icon: 'mdi-check-circle-outline',
       color: 'success',
       title: accepted ? t('work.room.accept.decidedBy', { name: deciderName.value }) : t('work.room.accept.accepted'),
-      sub: '',
     }
+  })
+
+  // 横条上那个圈：和看板「该谁动」同一套点（lib/board.ts）。
+  const barColumn = computed(() => {
+    const pending = pendingCard.value
+    if (!pending) return null
+    if (pending.status === 'conflict') return 'building' as const
+    if (pending.merge_state.who === 'human') return 'needs_you' as const
+    return mergeBadge.value?.column ?? 'needs_you'
+  })
+
+  // 横条上放不放「退回 / 采纳」：轮到人做决定、或者现在点采纳就能合进去时放。检查
+  // 还在跑、芝士在修的时候按钮点了也合不进去，那一刻要人做的事是等，不是决定；真要
+  // 在这时强行采纳，入口在「改动」页顶部的「更多操作」里。冲突卡留着「重新采纳」，
+  // 平台托管的仓库没有检查可等，采纳纯是人的判断。
+  const decisionOpen = computed(() => {
+    const card = pendingCard.value
+    if (!card) return false
+    if (card.status === 'conflict' || platformLane.value || needsPr.value) return true
+    return card.merge_state.who === 'human' || !acceptBlockedTitle.value
+  })
+  // 采纳按钮上的字。
+  const acceptLabel = computed(() => {
+    const card = pendingCard.value
+    if (needsPr.value) return t('work.room.accept.createPr')
+    if (card?.status === 'conflict') return t('work.room.accept.retryAccept')
+    if (card?.completes_task === false) return t('work.room.accept.acceptAction')
+    return t('work.room.accept.acceptAndComplete')
+  })
+  // 「仍要采纳」：明知合并态不是 clean 仍合并。只在按钮灰着、而挡住它的不是另一个
+  // 还没合的任务时有。
+  const forceMergeVisible = computed(() => {
+    const card = pendingCard.value
+    return !!card?.pr_number && !!acceptBlockedTitle.value && !mergeReasons.value.some((r) => r.kind === 'dependency')
   })
 
   // Nothing to show at all — the host still renders the slot wrapper, so this
@@ -511,9 +534,12 @@ export function useAcceptCard(props: AcceptCardHost) {
     // 宿主用得到的
     acceptBusy,
     expanded,
-    showDetail,
     hasBox,
     bar,
+    barColumn,
+    decisionOpen,
+    acceptLabel,
+    forceMergeVisible,
     phase,
     loaded,
     // 台面上的那几张卡
@@ -527,6 +553,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     forgeDeclaration,
     needsPr,
     acceptBlockedTitle,
+    platformLane,
     autoMergeVisible,
     autoMergeArmedBy,
     pendingNote,
@@ -561,4 +588,22 @@ export function useAcceptCard(props: AcceptCardHost) {
     agentName: computed(() => store.agentName),
     agentHandle: computed(() => store.agentHandle),
   }
+}
+
+export type AcceptCardState = ReturnType<typeof useAcceptCard>
+
+const ACCEPT_CARD: InjectionKey<AcceptCardState> = Symbol('acceptCard')
+
+// 一个页面上同一张卡有好几处要读：对话栏的横条、「改动」页顶部，以及专注模式里面板
+// 底部那一条。各自取一份的话，在一处点了采纳，另一处还停在点之前的样子，两份轮询
+// 也各打一遍。所以页面取一份、往下发，几处读的是同一份。
+export function provideAcceptCard(host: AcceptCardHost): AcceptCardState {
+  const state = useAcceptCard(host)
+  provide(ACCEPT_CARD, state)
+  return state
+}
+
+/** 上面那一份；不在这样的页面里（预览站、单独渲染时）是 null，调用方自己取。 */
+export function injectAcceptCard(): AcceptCardState | null {
+  return inject(ACCEPT_CARD, null)
 }

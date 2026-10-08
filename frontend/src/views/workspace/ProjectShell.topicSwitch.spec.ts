@@ -63,6 +63,8 @@ vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   // The roster's work computers: a neighbour of what this test is about.
   getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
+  // 页面取一份采纳卡（对话栏那一条和「改动」页顶部共用）：这里没有卡。
+  getAcceptCards: vi.fn(async () => ({ data: [], has_more: false })),
   // 频道概览里的任务：这里没有。
   listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
   listTopicMembers: vi.fn((topicId: string) =>

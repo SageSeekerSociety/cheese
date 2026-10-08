@@ -211,6 +211,7 @@ const HEALTH_KEY: Record<string, string> = {
   redis: 'feedback.dashboard.health.redis',
   event_loop: 'feedback.dashboard.health.event_loop',
   routes: 'feedback.dashboard.health.routes',
+  alerting: 'feedback.dashboard.health.alerting',
 }
 
 const healthRows = computed(() => {

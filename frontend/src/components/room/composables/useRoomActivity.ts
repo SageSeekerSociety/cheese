@@ -14,7 +14,7 @@ import type { MemberActivity } from '../../../lib/memberActivity'
 
 import { computed, onScopeDispose, ref } from 'vue'
 
-/** 我在打字时，多久提醒房间一次。后端那边一下管五秒（`agent/activity.py`）。 */
+/** 我在打字时，多久提醒房间一次。后端那边一下管五秒（`agent/realtime/activity.py`）。 */
 export const TYPING_PING_MS = 3_000
 
 export function useRoomActivity(options: {

@@ -31,7 +31,6 @@ import type {
   FileSource,
   ForgeAttribution,
   ForgeConnection,
-  GitCommit,
   GithubConnection,
   InboxItem,
   ListPayload,
@@ -67,6 +66,7 @@ import type { AgentFieldChoice } from './lib/modelChoices'
 import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from './types/compute'
 import type { DocumentTemplate, RoomOutput } from './types/roomOutput'
 import type { SitePage } from './types/site'
+import type { StatsUsage } from './types/statsUsage'
 
 import { connectorRequest } from './api/connector'
 import { ApiError, authHeaders, authToken, BASE, refusalError, request, requestConditional, roomRead } from './api/http'
@@ -97,6 +97,7 @@ export {
   RequestTimeoutError,
   tokenExpiresWithin,
 } from './api/http'
+export type { StatsClaudeAccount, StatsClaudePool, StatsUsage } from './types/statsUsage'
 
 // Mirrors `request`'s envelope unwrap and auth header, minus the GET retry.
 //
@@ -432,24 +433,9 @@ export async function listTopicNames(): Promise<TopicName[]> {
   return (await request<{ topics: TopicName[] }>('/topics/names')).topics
 }
 
-// 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
-// → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
-export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
-  return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`)
-}
-
-/** Tasks in this room, each with its own branch and delivery. */
-export function listRoomTasks(
-  roomId: string,
-  // 每条支线最多带回多少块对话。标记只要支线本身，所以取 1 —— 不传的话后端会把
-  // 房间里每条支线的全部历史都吐回来（它自己的 docstring 说明了为什么没有默认上限）。
-  opts?: { limit?: number }
-): Promise<ListPayload<RoomTask & { blocks: Block[] }>> {
-  const q = new URLSearchParams()
-  if (opts?.limit != null) q.set('limit', String(opts.limit))
-  const query = q.toString() ? `?${q.toString()}` : ''
-  return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
-}
+// 两份任务清单的读法（带条件请求、304 交回同一份对象）在 `api/tasks.ts`；这里只转出去，
+// 调用方照旧 `import { listRoomTasks } from '@/api'`。
+export { listProjectTasks, listRoomTasks } from './api/tasks'
 
 export function createTopic(pid: string, title: string, description?: string, membersOnly = false): Promise<Topic> {
   const body: Record<string, string | boolean> = { project_id: pid, title, members_only: membersOnly }
@@ -858,10 +844,6 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
 // 那一份——「上周那份预算表」这句话正是在这种地方说的。
 import type { LibraryFile } from './lib/libraryApi'
 export type { LibraryFile }
-
-export function listProjectLibrary(projectId: string): Promise<ListPayload<LibraryFile>> {
-  return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)
-}
 
 /** 一份资料的字节。这条端点一律按下载发，所以 `downloadFile` 补在末尾的
  *  `download=true` 在这里没有对应的参数，后端不看它。 */
@@ -1346,15 +1328,6 @@ export type { AgentControlResult, AgentControlState } from './api/agentControl'
 export { getAgentControl, sendAgentControl } from './api/agentControl'
 export { requestPreviewSession } from './api/preview'
 export type { PreviewSelection, PreviewSession } from './types/preview'
-
-export function getGitLog(
-  projectId: string,
-  topicId?: string | null,
-  taskId?: string | null
-): Promise<ListPayload<GitCommit>> {
-  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
-  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
-}
 
 export function getGitDiff(
   projectId: string,
@@ -1912,65 +1885,6 @@ export interface StatsFeedback {
   /** 上一等长窗口（`[since-days, since)`）的同口径合计 —— KPI 卡的环比差从这里出。
    *  可选：旧后端还没有它，前端按「键在才画 delta」接线。 */
   prev?: { created: number; resolved: number }
-}
-
-/** 用量那一块。`unpriced_tokens` 与 `cost_usd` **一起读才对**：前者是「这些 token
- *  算不出价钱」（模型没有单价，行上的 0 是「没有价」不是「免费」），少了它，几百万
- *  token 上印一个 `$0.0000` 读起来像「这个月没花钱」。 */
-export interface StatsUsage {
-  days: number
-  totals: { tokens: number; calls: number; cost_usd: number; unpriced_tokens: number }
-  series: { date: string; tokens: number; calls: number; cost_usd: number }[]
-  /** 柱状图的每一根都带 id 和名字。**今天柱子不点得开**（看板上那一张只报数），
-   *  `project_id` 是给以后的钻取和「同名项目」留的**身份** —— 名字在平台上不唯一，
-   *  只按名字连线，两个同名项目会合成一根柱子。 */
-  top_projects: { project_id: string; name: string; tokens: number; cost_usd: number }[]
-  /** 按模型拆。和 `by_route` 是两个正交的切口：「贵的是模型还是计费方式」要两个一起看。 */
-  by_model: {
-    model: string
-    tokens: number
-    calls: number
-    cost_usd: number
-    /** 同一行上的「算不出价钱」的那部分。0 是「没有价」不是「免费」。 */
-    unpriced_tokens: number
-  }[]
-  /** 按供给通路拆：gateway（网关）/ subscription（订阅）/ native（自带凭据）/ ''（旧数据）。 */
-  by_route: {
-    route: string
-    tokens: number
-    calls: number
-    cost_usd: number
-    unpriced_tokens: number
-  }[]
-  /** 额度燃尽。已耗尽 / 快烧完 / 不限量是**三个互斥集合** —— unlimited 是没有 grant。 */
-  credits: {
-    exhausted: {
-      project_id: string | null
-      name: string
-      credits_total: number
-      credits_used: number
-      credits_remaining: number
-      ratio: number
-    }[]
-    low: {
-      project_id: string | null
-      name: string
-      credits_total: number
-      credits_used: number
-      credits_remaining: number
-      ratio: number
-    }[]
-    unlimited_project_ids: string[]
-    unlimited_count: number
-    burn: {
-      credits_in_window: number
-      credits_per_day: number
-      method: string
-    }
-  }
-  /** 上一等长窗口的同口径合计（环比用），形状与 token / 调用 / 成本三张卡一一对应。
-   *  可选：旧后端还没有它，前端按「键在才画 delta」接线。 */
-  prev?: { tokens: number; calls: number; cost_usd: number }
 }
 
 /** 平台那一块。`machines` 是四张台账的**存量**，不是在线数 —— 在线状态住在进程内存
