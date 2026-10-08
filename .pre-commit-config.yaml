@@ -170,15 +170,8 @@ repos:
         pass_filenames: false
         files: ^(frontend/(src/(views|router|components/panels)/|scene-baseline\.json|package\.json)|\.claude/scripts/(frontend_grade|scene-ratchet|ratchet_report)\.py)$
 
-      # Every .vue under frontend/src (the preview site's own excluded) that
-      # grades A is in the /demo/catalog preview site or on the pending list in
-      # frontend/catalog-baseline.json, and that list may only shrink. Any src
-      # file is in `files:` because a grade moves with the import chain, and an
-      # entry in views/demo/catalog.ts — or in a catalog*.ts volume it imports
-      # and spreads (*Fixtures.ts not read; comments stripped) — is what takes
-      # a component off the list. Same grader
-      # as scene-ratchet. The writer is `pnpm run lint:catalog:update`, which
-      # only ever removes.
+      # Exact rendered child edges, useRoute callers and legacy importers can
+      # only disappear. This parser needs frontend dependencies and origin/main.
       - id: scene-debt-ratchet
         name: scene dependencies and legacy imports only go down
         entry: python3 .claude/scripts/scene-debt-ratchet.py --base origin/main
@@ -186,6 +179,9 @@ repos:
         pass_filenames: false
         files: ^(frontend/.*|\.claude/scripts/(frontend_grade|scene-ratchet|scene-debt-ratchet|test_scene_debt_ratchet|ratchet_report)\.py)$
 
+      # Every grade-A SFC is registered in /demo/catalog or frozen as pending.
+      # The pending list can only shrink; imports determine the grade.
+      # `pnpm run lint:catalog:update` removes paid-down entries.
       - id: catalog-ratchet
         name: grade-A components are in the catalog (python ratchet)
         entry: python3 .claude/scripts/catalog-ratchet.py

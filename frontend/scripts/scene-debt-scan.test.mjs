@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { scanScript } from './scene-debt-scan.mjs'
+import { scanFile, scanScript } from './scene-debt-scan.mjs'
 
 test('route calls include renamed and namespace imports, not quoted examples', () => {
   assert.equal(
@@ -49,6 +49,54 @@ test('value imports expose the local binding, and types are never rendered child
   assert.deepEqual(
     scanScript('src/views/P.vue', "import Renamed from './Child.vue'; import type T from './T.vue'").imports,
     { Renamed: './Child.vue' }
+  )
+})
+
+test('parenthesized, indexed and template route calls count, but shadowing does not', () => {
+  for (const code of [
+    "import {useRoute} from 'vue-router'; (useRoute)()",
+    "import * as router from 'vue-router'; router['useRoute']()",
+  ])
+    assert.equal(scanScript('P.ts', code).useRoute, true)
+  assert.equal(
+    scanScript(
+      'P.ts',
+      "import {useRoute as address} from 'vue-router'; const run = (address: () => number) => address()"
+    ).useRoute,
+    false
+  )
+  assert.equal(
+    scanFile(
+      'P.vue',
+      "<script setup>import {useRoute} from 'vue-router'</script><template><div>{{ useRoute().params.id }}</div></template>"
+    ).useRoute,
+    true
+  )
+  assert.equal(
+    scanFile('P.vue', '<template><div title="useRoute()"><!-- {{ useRoute() }} --></div></template>').useRoute,
+    false
+  )
+})
+
+test('Vue SFC boundaries exclude commented scripts and preserve TSX', () => {
+  assert.equal(
+    scanFile('src/views/P.vue', "<!-- <script>import '@/network'</script> --><template><div/></template>").network,
+    false
+  )
+  assert.equal(scanFile('src/views/P.vue', '<script lang="tsx">export default () => <div/></script>').network, false)
+})
+
+test('async bindings and dynamic expressions retain their component targets', () => {
+  const code =
+    "import {defineAsyncComponent as async} from 'vue'; import Other from './Other.vue'; const Child = async(() => import('./Child.vue')); const selection = computed(() => ready ? Child : Other)"
+  const result = scanScript('P.ts', code, ['<component :is="selection"/>'])
+  assert.deepEqual(result.components.Child, ['./Child.vue'])
+  assert.deepEqual(new Set(result.rendered), new Set(['Child', 'Other']))
+  assert.deepEqual(
+    scanScript('P.ts', code, [
+      '<div title="<component :is=&quot;Child&quot;/>"><!-- <component :is="Child"/> --></div>',
+    ]).rendered,
+    []
   )
 })
 

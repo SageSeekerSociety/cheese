@@ -100,15 +100,11 @@ tasks:
       - task: be:check
       - task: fe:check
 
-  # The boundary checks and the size cap, in one command: the import graph
-  # (be:boundaries), component imports (fe:lint:boundary), whether a scene
-  # still renders standalone (fe:lint:scenes), whether every grade-A component
-  # is in the /demo/catalog preview site (fe:lint:catalog), and the file-size
-  # ratchet —
-  # which needs a remote-tracking origin/main, so it is the one that says
-  # "git fetch origin main" when it has never been run in a checkout.
+  # Architecture gates: import boundaries, standalone scenes, shrinking scene
+  # debt, catalog coverage and file sizes. Scene debt and file sizes require
+  # an up-to-date origin/main; frontend checks require installed dependencies.
   boundaries:
-    desc: Module boundaries + scene + catalog + file-size caps (the CI arch checks)
+    desc: Boundaries + scenes + scene debt + catalog + file-size caps
     cmds:
       - task: be:boundaries
       - task: fe:lint:boundary

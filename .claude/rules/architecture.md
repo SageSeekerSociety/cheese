@@ -6,11 +6,11 @@ paths:
 
 # Module boundaries, and which of them a machine actually checks
 
-Five checks run on every commit and in CI. Everything below says *why* each
+Seven checks run on matching commits and in CI. Everything below says *why* each
 rule exists and what enforces it, so that a rule nobody checks is not mistaken
 for one that is. Rules marked **建议** are conventions: no tool will stop you.
 
-One command runs all five: `task boundaries`. Individually:
+One command runs all seven: `task boundaries`. Individually:
 
 | Check | Command |
 |---|---|
@@ -22,11 +22,13 @@ One command runs all five: `task boundaries`. Individually:
 | Scene child/route debt and old network importers only shrink | `pnpm --dir frontend run lint:scene-debt` |
 | Grade-A components are in the catalog | `pnpm --dir frontend run lint:catalog` |
 
-All five print their baseline and their refresh command when they fail, and each
-has tests of its own that CI runs — a check nobody has watched fail is not a
-check: four carry `--self-test` (boundaries in test.yml, file sizes, scenes and
-catalog in repo-guards.yml), and the component-import ratchet is covered by
-`frontend/scripts/import-boundary-ratchet.test.mjs` under `pnpm run test:ratchet`.
+Each has tests of its own that CI runs: five carry `--self-test`
+(boundaries in test.yml; file sizes, scenes and catalog in repo-guards.yml;
+scene debt in frontend.yml). The component-import ratchet is covered by
+`frontend/scripts/import-boundary-ratchet.test.mjs` under `pnpm run test:ratchet`,
+and deferred imports have tests in the backend suite.
+Scene-debt updates refuse additions, including manual baseline expansion against
+`origin/main`; its parser requires the installed frontend dependencies.
 
 What they cannot say is whether the tree is getting *better*: each one is a
 ratchet against a frozen baseline, and a ratchet that holds still reports success

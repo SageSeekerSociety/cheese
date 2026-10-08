@@ -47,7 +47,9 @@
     "src/views/spaces/detail/analytics/Publishers.vue -> src/views/spaces/detail/analytics/components/AnalyticsExportButton.vue",
     "src/views/spaces/detail/analytics/Tasks.vue -> src/views/spaces/detail/analytics/components/AnalyticsExportButton.vue",
     "src/views/spaces/detail/analytics/Tasks.vue -> src/views/spaces/detail/analytics/components/AnalyticsPublisherSelect.vue",
+    "src/views/tasks/Detail.vue -> src/components/tasks/TaskSubmissionHistory.vue",
     "src/views/tasks/Detail.vue -> src/views/tasks/components/TaskSide.vue",
+    "src/views/tasks/detail/Submissions.vue -> src/components/tasks/TaskSubmissionHistory.vue",
     "src/views/teams/detail/Members.vue -> src/views/teams/detail/TeamJoinLinkCard.vue",
     "src/views/workspace/DmView.vue -> src/components/ChatPanel.vue",
     "src/views/workspace/ProjectMembersView.vue -> src/components/LeaveProjectDialog.vue",
@@ -60,6 +62,7 @@
     "src/views/workspace/TopicView.vue -> src/components/WorkPanel.vue",
     "src/views/workspace/TopicView.vue -> src/components/task/TaskHeader.vue",
     "src/views/workspace/TopicView.vue -> src/components/task/TaskOverview.vue",
+    "src/views/workspace/TopicView.vue -> src/views/workspace/ThreadPane.vue",
     "src/views/workspace/TopicView.vue -> src/views/workspace/TopicChatColumn.vue",
     "src/views/workspace/WorkspaceEntry.vue -> src/views/workspace/ProjectSidebar.vue"
   ],

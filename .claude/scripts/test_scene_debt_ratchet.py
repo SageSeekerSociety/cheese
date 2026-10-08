@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import resource
+import signal
 import subprocess
 import sys
 import tempfile
@@ -85,6 +87,84 @@ request()
         self.run_gate(rc=1)
         self.run_gate("--update", rc=1)
         self.assertEqual(before, self.baseline.read_bytes())
+
+    def test_dynamic_and_async_children_cannot_disappear_from_the_freeze(self) -> None:
+        self.page('<component :is="Child"/>')
+        self.run_gate("--update")
+        self.assertEqual(
+            debt.parse_baseline(self.baseline.read_text())["children"],
+            {"src/views/P.vue -> src/components/Child.vue"},
+        )
+        self.write(
+            "src/components/Other.vue",
+            "<script setup>fetch('/api')</script><template><div/></template>",
+        )
+        before = self.baseline.read_bytes()
+        self.page(
+            '<component :is="AsyncChild"/>',
+            "import {defineAsyncComponent} from 'vue'; const AsyncChild = defineAsyncComponent(() => import('../components/Other.vue'))",
+        )
+        self.run_gate("--update", rc=1)
+        self.assertEqual(before, self.baseline.read_bytes())
+        self.page(
+            "<AsyncChild/>",
+            "import {defineAsyncComponent as async} from 'vue'; const AsyncChild = async(() => import('../components/Other.vue'))",
+        )
+        self.run_gate(rc=1)
+
+    def test_template_route_calls_count_and_shadowed_calls_do_not(self) -> None:
+        for template, script in (
+            (
+                "<div>{{ address().params.id }}</div>",
+                "import {useRoute as address} from 'vue-router'",
+            ),
+            ("<Child/>", "import {useRoute} from 'vue-router'; (useRoute)()"),
+            ("<Child/>", "import * as router from 'vue-router'; router['useRoute']()"),
+        ):
+            self.page(template, script)
+            self.run_gate(rc=1)
+        self.page(
+            "<Child/>",
+            "import {useRoute as address} from 'vue-router'; const run = (address: () => number) => address()",
+        )
+        self.run_gate()
+
+    def test_commented_scripts_and_supported_tsx_are_not_false_debt(self) -> None:
+        self.write(
+            "src/views/Example.vue",
+            "<!-- <script>import '@/network'</script> --><template><div/></template>",
+        )
+        self.write(
+            "src/components/Render.vue",
+            '<script lang="tsx">export default () => <div/></script>',
+        )
+        self.run_gate()
+
+    def test_failed_update_preserves_baseline_and_reports_cannot_judge(self) -> None:
+        self.page("<div/>")
+        before = self.baseline.read_bytes()
+
+        def limit():
+            resource.setrlimit(resource.RLIMIT_FSIZE, (40, 40))
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(self.root),
+                "--update",
+                "--json",
+            ],
+            text=True,
+            capture_output=True,
+            preexec_fn=limit,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["status"], "cannot_judge")
+        self.assertEqual(before, self.baseline.read_bytes())
+        self.assertEqual(list(self.baseline.parent.glob("tmp*")), [])
 
     def test_ready_and_verified_container_pages_are_not_debt_routes(self) -> None:
         self.write("src/views/PView.vue", "<template><div/></template>")

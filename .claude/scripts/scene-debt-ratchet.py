@@ -24,8 +24,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +95,23 @@ def baseline_text(sets: dict[str, set[str]]) -> str:
     )
 
 
+def write_baseline(path: Path, sets: dict[str, set[str]]) -> None:
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(baseline_text(sets))
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.chmod(path.stat().st_mode)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def scan_scripts(root: Path, grade: Any) -> dict[str, Any]:
     src = grade.repo_src(root)
     files = []
@@ -112,12 +131,7 @@ def scan_scripts(root: Path, grade: Any) -> dict[str, Any]:
         ):
             continue
         text = file.read_text(encoding="utf-8")
-        code = (
-            "\n".join(grade.SCRIPT_BLOCK.findall(text))
-            if file.suffix == ".vue"
-            else text
-        )
-        files.append((file.relative_to(root / "frontend").as_posix(), code))
+        files.append((file.relative_to(root / "frontend").as_posix(), text))
     scanner = ROOT / "frontend/scripts/scene-debt-scan.mjs"
     run = subprocess.run(
         ["node", str(scanner)],
@@ -147,6 +161,7 @@ def collect(root: Path) -> dict[str, set[str]]:
     for key, scan in scripts.items():
         if scan["network"]:
             actual["network"].add(key)
+    child_grades = {}
     for page in sorted(pages):
         if grades[page].standalone or scene.container_view(page, grades, pairs):
             continue
@@ -155,15 +170,22 @@ def collect(root: Path) -> dict[str, set[str]]:
         if scan["useRoute"]:
             actual["routes"].add(key)
         text = (root / page).read_text(encoding="utf-8")
-        for tag in scene.template_tags(grade, text):
+        rendered = scene.template_tags(grade, text) | set(scan["rendered"])
+        for tag in rendered:
             for local in scene.resolve_names(tag):
-                if local not in scan["imports"]:
+                if local not in scan["components"]:
                     continue
-                target = grade.resolve_spec(
-                    scan["imports"][local], root / page, root / "frontend/src"
-                )
-                if target is not None and target.suffix == ".vue":
-                    if not grade.grade_component(root, target, reach).standalone:
+                for spec in scan["components"][local]:
+                    target = grade.resolve_spec(
+                        spec, root / page, root / "frontend/src"
+                    )
+                    if target is None or target.suffix != ".vue":
+                        continue
+                    if target not in child_grades:
+                        child_grades[target] = grade.grade_component(
+                            root, target, reach
+                        )
+                    if not child_grades[target].standalone:
                         actual["children"].add(
                             f"{key} -> {scene.key_of(target.relative_to(root).as_posix())}"
                         )
@@ -252,7 +274,11 @@ def main() -> int:
             kinds = list(KINDS)
             ok = False
         else:
-            path.write_text(baseline_text(actual), encoding="utf-8")
+            try:
+                write_baseline(path, actual)
+            except OSError as exc:
+                print(f"cannot update baseline: {exc}", file=sys.stderr)
+                cannot_judge(check_id, str(exc))
     if as_json():
         selected = kinds[0] if len(kinds) == 1 else None
         emit(
