@@ -198,10 +198,14 @@ export function useAcceptCard(props: AcceptCardHost) {
             : pending.artifact
               ? t('work.room.accept.artifact', { name: pending.artifact.name, version: pending.artifact.version })
               : t('work.room.accept.change'),
+        // 「待某人审阅」只在球真的在人手上（后端算的 who 是 human）时说：检查还在跑、
+        // 芝士在修、平台在更新分支时，这一行说的是合并态那个词，和卡里的状态行同一个结论。
         sub:
-          pending.reviewer_handle === AUTHOR
-            ? t('work.room.accept.waitingOnYou')
-            : t('work.room.accept.waitingOn', { name: reviewerName.value }),
+          mergeBadge.value && pending.merge_state.who !== 'human'
+            ? mergeBadge.value.label
+            : pending.reviewer_handle === AUTHOR
+              ? t('work.room.accept.waitingOnYou')
+              : t('work.room.accept.waitingOn', { name: reviewerName.value }),
       }
     if (deliveringCard.value)
       return { icon: 'mdi-history', color: 'warning', title: t('work.room.accept.delivering'), sub: '' }

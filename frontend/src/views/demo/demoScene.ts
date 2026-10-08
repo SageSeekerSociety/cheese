@@ -279,7 +279,7 @@ function fullCard(card: Partial<AcceptCard>, created_at: string): AcceptCard {
     task_id: 'demo-task',
     topic_id: 'demo',
     reviewer_handle: 'wang',
-    routing_reason: '',
+    focus: '',
     change_subject: null,
     change_body: null,
     status: 'pending',

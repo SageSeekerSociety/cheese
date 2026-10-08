@@ -58,9 +58,10 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "d3f6a2c85b71"
-# 接在 main 当下的链尾后面：本文件写下时那个头是 9f2b7c14a8e3。main 每加一条迁移，
-# 这个值都要往后挪一次，同时改 alembic/HEAD。
-down_revision: str | Sequence[str] | None = "9f2b7c14a8e3"
+# 接在 main 当下的链尾后面：本文件写下时那个头是 9f2b7c14a8e3，合入 main 后换成了
+# 那里新落的 0c800ff1db2f。main 每加一条迁移，这个值都要往后挪一次，同时改
+# alembic/HEAD。
+down_revision: str | Sequence[str] | None = "0c800ff1db2f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

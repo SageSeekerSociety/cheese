@@ -43,7 +43,7 @@ def _make_card(client, topic_id: str, **extra) -> str:
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
             **extra,
         },
     )

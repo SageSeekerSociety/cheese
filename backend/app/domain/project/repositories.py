@@ -1,6 +1,7 @@
 """Project data access."""
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +53,19 @@ class ProjectRepository:
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
         return await self._session.get(Project, project_id)
+
+    async def get_by_ids(
+        self, project_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, Project]:
+        """Several projects at once, keyed by id.
+
+        整页一次取回，不按 id 各发一条 —— 调用方（通知列表的实体解析）手上是
+        一整页的外键，逐条 ``get`` 就是一屏 N 次往返。
+        """
+        if not project_ids:
+            return {}
+        stmt = select(Project).where(Project.id.in_(list(project_ids)))
+        return {project.id: project for project in (await self._session.scalars(stmt))}
 
     async def team_for_project(self, project_id: uuid.UUID) -> int | None:
         """The project's team; None only when there is no such project."""

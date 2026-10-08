@@ -187,7 +187,7 @@ async def upload_attachment(
     if library_path is not None:
         name = clean_artifact_path(library_path)
         # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
-        data = library.read_library_file(topic.project_id, name)
+        data = await library_records.read(db, topic.project_id, name)
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         mime = _EXT_IMAGE_MIME.get(suffix, "application/octet-stream")
         return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})

@@ -71,9 +71,9 @@ function profile(machineAccess: boolean): TopicComputeProfile {
 }
 
 // 专注模式只在面板和对话并排开着时成立；默认按并排开着来挂。
-function mountHeader(focus = false, over: Partial<Topic> = {}, canFocus = true) {
+function mountHeader(over: Partial<Topic> = {}) {
   return render(Header, {
-    props: { topic: { ...topic, ...over }, members: [], me: 'me', connected: true, focus, canFocus },
+    props: { topic: { ...topic, ...over }, members: [], me: 'me', connected: true },
     global: {
       plugins: [
         createVuetify({ components, directives }),
@@ -137,38 +137,9 @@ describe('话题头', () => {
     mountHeader()
 
     await fireEvent.click(screen.getByRole('button', { name: '更多' }))
-    await screen.findByRole('button', { name: '专注模式' })
+    await waitFor(() => expect(document.querySelector('.room-menu')).toBeTruthy())
     expect(document.body.textContent).not.toContain('这个频道的环境')
     expect(bar().textContent).not.toContain('云端环境')
-  })
-
-  it('专注模式从 ⋯ 里进', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile(false))
-    const { emitted } = mountHeader(false)
-
-    expect(bar().querySelector('[aria-label="退出专注模式"]')).toBeNull()
-    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
-    await fireEvent.click(await screen.findByRole('button', { name: '专注模式' }))
-
-    expect(emitted()['toggle-focus']).toHaveLength(1)
-  })
-
-  it('面板没并排开着时，⋯ 里没有专注模式', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile(false))
-    mountHeader(false, {}, false)
-
-    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
-    await waitFor(() => expect(document.querySelector('.room-menu')).toBeTruthy())
-    expect(screen.queryByRole('button', { name: '专注模式' })).toBeNull()
-  })
-
-  it('在专注模式里，出口摆在这一行上', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile(false))
-    const { emitted } = mountHeader(true)
-
-    await fireEvent.click(bar().querySelector('[aria-label="退出专注模式"]') as HTMLElement)
-
-    expect(emitted()['toggle-focus']).toHaveLength(1)
   })
 })
 
@@ -195,7 +166,7 @@ describe('手机上话题头的 ⋯', () => {
   }
 
   it('改名：填上新名字保存，改的就是这个话题', async () => {
-    const { emitted } = mountHeader(false, { can_manage: true })
+    const { emitted } = mountHeader({ can_manage: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
@@ -207,7 +178,7 @@ describe('手机上话题头的 ⋯', () => {
   })
 
   it('名字没改就保存，不算改名', async () => {
-    const { emitted } = mountHeader(false, { can_manage: true })
+    const { emitted } = mountHeader({ can_manage: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
@@ -218,7 +189,7 @@ describe('手机上话题头的 ⋯', () => {
   })
 
   it('能归档的人可以从这里归档', async () => {
-    mountHeader(false, { can_manage: true })
+    mountHeader({ can_manage: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }))
@@ -227,7 +198,7 @@ describe('手机上话题头的 ⋯', () => {
   })
 
   it('不管这个频道的人既不能改名也不能归档', async () => {
-    mountHeader(false, { can_manage: false })
+    mountHeader({ can_manage: false })
 
     await openMore()
     await screen.findByRole('menuitem', { name: '复制链接' })
@@ -236,7 +207,7 @@ describe('手机上话题头的 ⋯', () => {
   })
 
   it('已归档的话题只能取消归档', async () => {
-    mountHeader(false, { status: 'archived', can_manage: true })
+    mountHeader({ status: 'archived', can_manage: true })
 
     await openMore()
     await fireEvent.click(await screen.findByRole('menuitem', { name: '取消归档' }))

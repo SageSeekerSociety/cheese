@@ -29,7 +29,7 @@ from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
-from app.domain.library import service as library
+from app.domain.library import records as library_records
 from app.domain.living_doc import search as doc_search
 from app.domain.living_doc.schemas import document_row
 from app.domain.membership.roster import roster
@@ -111,10 +111,12 @@ def _tasks_matching(
     )
 
 
-def _library_matching(project_id: uuid.UUID, q: str) -> list[dict]:
+async def _library_matching(
+    db: AsyncSession, project_id: uuid.UUID, q: str
+) -> list[dict]:
     return [
-        {"path": f["path"], "bytes": f["bytes"], "modified": f["modified"]}
-        for f in library.list_library_files(project_id)
+        f
+        for f in await library_records.listing(db, project_id)
         if q.lower() in f["path"].lower()
     ]
 
@@ -265,7 +267,9 @@ async def _page(
         )
         hits["tasks"] = [_task(t, readable, terms) for t in tasks]
     if "library" in groups:
-        hits["library"] = _library_matching(project_id, q)[offset : offset + limit]
+        hits["library"] = (await _library_matching(db, project_id, q))[
+            offset : offset + limit
+        ]
     return hits
 
 
@@ -303,7 +307,7 @@ async def _counts(
             )
             or 0
         )
-    counts["library"] = len(_library_matching(project_id, q))
+    counts["library"] = len(await _library_matching(db, project_id, q))
     return counts
 
 
@@ -458,7 +462,7 @@ async def search_everything(
         )
         hits["tasks"] = [_task(t, readable, terms) for t in tasks]
 
-    hits["library"] = _library_matching(project_id, q)[:limit]
+    hits["library"] = (await _library_matching(db, project_id, q))[:limit]
     artifacts = await db.scalars(
         select(ProjectArtifact)
         .where(

@@ -62,6 +62,7 @@ from app.domain.agent.room.system_prompt import session_system_prompt
 from app.domain.agent.room.thread_context import thread_context as _thread_context
 from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.service import AgentResult
+from app.domain.agent.session_host.contract import Image
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent.work_policy import resolve_compute_id
@@ -218,7 +219,7 @@ class _TurnContext:
     # not be read again — but kept separate up to that point, because every
     # other question asked of `pending_ids` is about who spoke.
     notice_ids: list[uuid.UUID]
-    turn_images: list[dict]
+    turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
 
@@ -613,8 +614,8 @@ class RoomTurns:
             # reaches the model as a native block depends on `embeds_images`, so
             # the prompt is built below, after the provider is picked. A file
             # that is gone is not offered (`offered_attachments`).
-            turn_images, gone_files = await asyncio.to_thread(
-                offered_attachments, pending, topic.project_id, place.room_id
+            turn_images, gone_files = await offered_attachments(
+                session, pending, topic.project_id, place.room_id
             )
 
             # 私聊是名册两席的房间（结论 19）。这一轮凡是「私聊要不一样」的地
