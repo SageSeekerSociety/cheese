@@ -134,7 +134,8 @@ def test_work_summary_lists_the_same_range_the_diff_renders(client):
     _turn(client, pid, tid, "src/a.py", "print(1)\n", "加了 a.py")
     _turn(client, pid, tid, "src/b.py", "print(2)\n", "加了 b.py")
 
-    assert sorted(_summary(client, pid, tid)["changed_files"]) == [
+    task = delivery_task_id(client, tid)
+    assert sorted(_summary(client, pid, task)["changed_files"]) == [
         "src/a.py",
         "src/b.py",
     ]
@@ -149,7 +150,9 @@ def test_work_summary_excludes_other_topics_work(client):
     assert git_store.merge_task(pid, delivery_task_id(client, theirs), message=_MSG)
     _turn(client, pid, mine, "mine.py", "y = 2\n", "我的提交")
 
-    assert _summary(client, pid, mine)["changed_files"] == ["mine.py"]
+    assert _summary(client, pid, delivery_task_id(client, mine))["changed_files"] == [
+        "mine.py"
+    ]
 
 
 def test_work_summary_empty_for_a_topic_that_never_wrote(client):

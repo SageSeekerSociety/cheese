@@ -243,29 +243,24 @@ async def topic_work_summary(
     ``has_run`` is the topic's captured session, not its message count: 现场
     shows what 芝士 did, and a room where only people talked has no 现场 to open.
 
-    ``changed_files`` combines the open tasks' changed paths for the room's
-    badge. The changes panel selects one task before showing its diff.
+    ``changed_files`` is a task's own changed paths, for the badge on its 改动
+    tab. A channel has no 改动 tab (changes belong to tasks and are read on the
+    task's page, #2422), so it answers none and compares no branch: comparing
+    every open task in a busy channel took past the timeout on every visit.
     """
     await ProjectService(db).get_or_404(project_id)
     place = await TopicService(db).place_or_404(topic_id)
-    # A task's page asks about that task alone; a room's about its open tasks.
-    if place.task_id is not None:
-        one = await TaskService(db).get(place.task_id)
-        tasks = [one] if one is not None else []
-    else:
-        tasks = await TaskService(db).list_in_room(place.room_id)
+    one = (
+        await TaskService(db).get(place.task_id) if place.task_id is not None else None
+    )
     has_run = await AgentSessionService(db).has_run(place.conversation_id)
-    paths = set()
-    try:
-        # Bound the whole summary, including all task comparisons.
-        async with asyncio.timeout(15):
-            for work in tasks:
-                if work.branch_name and work.status == "open":
-                    paths.update(
-                        await ProjectFiles(
-                            db, project_id, work.id, release_session=True
-                        ).changed_files()
-                    )
-    except TimeoutError as exc:
-        raise GatewayUnavailableError(say("changeSummaryTimeout")) from exc
+    paths: list[str] = []
+    if one is not None and one.branch_name and one.status == "open":
+        try:
+            async with asyncio.timeout(15):
+                paths = await ProjectFiles(
+                    db, project_id, one.id, release_session=True
+                ).changed_files()
+        except TimeoutError as exc:
+            raise GatewayUnavailableError(say("changeSummaryTimeout")) from exc
     return ok({"changed_files": sorted(paths), "has_run": has_run})
