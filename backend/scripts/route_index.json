@@ -755,9 +755,8 @@
 {"index": 753, "protocol": "http", "path": "/projects/{project_id}/file", "methods": ["GET"], "endpoint": "app.api.routes.workspace.read_file", "name": "read_file"}
 {"index": 754, "protocol": "http", "path": "/projects/{project_id}/file/raw", "methods": ["GET"], "endpoint": "app.api.routes.workspace.read_file_raw", "name": "read_file_raw"}
 {"index": 755, "protocol": "http", "path": "/projects/{project_id}/file", "methods": ["PUT"], "endpoint": "app.api.routes.workspace.write_file", "name": "write_file"}
-{"index": 756, "protocol": "http", "path": "/projects/{project_id}/git/log", "methods": ["GET"], "endpoint": "app.api.routes.workspace.git_log", "name": "git_log"}
-{"index": 757, "protocol": "http", "path": "/projects/{project_id}/git/diff", "methods": ["GET"], "endpoint": "app.api.routes.workspace.git_diff", "name": "git_diff"}
-{"index": 758, "protocol": "http", "path": "/projects/{project_id}/topics/{topic_id}/work-summary", "methods": ["GET"], "endpoint": "app.api.routes.workspace.topic_work_summary", "name": "topic_work_summary"}
-{"index": 759, "protocol": "http", "path": "/debug/turns", "methods": ["GET"], "endpoint": "app.main.debug_turns", "name": "debug_turns"}
-{"index": 760, "protocol": "http", "path": "/health", "methods": ["GET"], "endpoint": "app.main.health", "name": "health"}
-{"index": 761, "protocol": "http", "path": "/version", "methods": ["GET"], "endpoint": "app.main.app_version", "name": "app_version"}
+{"index": 756, "protocol": "http", "path": "/projects/{project_id}/git/diff", "methods": ["GET"], "endpoint": "app.api.routes.workspace.git_diff", "name": "git_diff"}
+{"index": 757, "protocol": "http", "path": "/projects/{project_id}/topics/{topic_id}/work-summary", "methods": ["GET"], "endpoint": "app.api.routes.workspace.topic_work_summary", "name": "topic_work_summary"}
+{"index": 758, "protocol": "http", "path": "/debug/turns", "methods": ["GET"], "endpoint": "app.main.debug_turns", "name": "debug_turns"}
+{"index": 759, "protocol": "http", "path": "/health", "methods": ["GET"], "endpoint": "app.main.health", "name": "health"}
+{"index": 760, "protocol": "http", "path": "/version", "methods": ["GET"], "endpoint": "app.main.app_version", "name": "app_version"}

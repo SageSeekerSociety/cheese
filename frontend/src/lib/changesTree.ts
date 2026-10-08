@@ -29,16 +29,15 @@ export interface FileRowsInput {
   files: WorkspaceFile[]
   /** 路径 → 它自己的那一段 diff。改过的文件才在里面。 */
   diffByPath: Map<string, FileDiff>
-  /** 全部文件时，文件夹默认收着；只看改动时，那是一份清单，一律摊开。 */
-  showAll: boolean
-  expandedDirs: Set<string>
+  /** 改动清单默认一律摊开；人收起的那几个文件夹。 */
+  collapsedDirs: Set<string>
 }
 
 /**
  * 折成树再摊成行：文件夹在前、每层按名字排，只有展开的文件夹贡献它的子树。
  * 全展开的顺序 = 读者的阅读顺序，所以这里不是排序问题而是形状问题。
  */
-export function buildFileRows({ files, diffByPath, showAll, expandedDirs }: FileRowsInput): FileRow[] {
+export function buildFileRows({ files, diffByPath, collapsedDirs }: FileRowsInput): FileRow[] {
   interface DirNode {
     dirs: Map<string, DirNode>
     files: WorkspaceFile[]
@@ -62,9 +61,8 @@ export function buildFileRows({ files, diffByPath, showAll, expandedDirs }: File
     for (const name of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
       const path = prefix ? `${prefix}/${name}` : name
       rows.push({ type: 'dir', path, name, depth, size: '' })
-      // A changed-files list is a checklist, so it is always open; the full tree
-      // stays collapsed by default (open exactly what you need).
-      if (!showAll || expandedDirs.has(path)) {
+      // A changed-files list is a checklist, so it is open unless folded by hand.
+      if (!collapsedDirs.has(path)) {
         walk(node.dirs.get(name)!, path, depth + 1)
       }
     }

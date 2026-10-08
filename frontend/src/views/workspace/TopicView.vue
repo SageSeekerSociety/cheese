@@ -9,6 +9,7 @@ import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, 
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { provideAcceptCard } from '@/composables/useAcceptCard'
 import { useChannelThreads } from '@/composables/useChannelThreads'
 import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { usePageTitle } from '@/composables/usePageTitle'
@@ -310,14 +311,24 @@ const panelRef = ref<{
   // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
   activeTab: () => string
 } | null>(null)
-const panelAcceptRef = ref<{ reload: () => Promise<void> } | null>(null)
+// 这个话题（任务）的采纳卡，整页一份：对话栏的那一条、「改动」页顶部、专注模式和手机
+// 上面板底部那一条读的都是它（见 provideAcceptCard）。
+const accept = provideAcceptCard({
+  get topicId() {
+    return props.topicId
+  },
+  get topicStatus() {
+    return selectedTopic.value?.status ?? ''
+  },
+  get taskId() {
+    return props.taskId ?? null
+  },
+})
 function reloadAccept() {
-  chatColumn.value?.reloadAccept()
-  void panelAcceptRef.value?.reload()
+  void accept.reload()
 }
 const chatColumn = ref<{
   connected: boolean
-  reloadAccept: () => void
   reloadFeedback: () => void
   reloadSkills: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
@@ -354,7 +365,6 @@ const chatEvents = {
   'open-thread': onOpenThread,
   'open-topic': openTopic,
   'open-card': onOpenCard,
-  phase: (p: CardPhase) => (cardPhase.value = p),
   review: onReview,
 }
 
@@ -393,6 +403,13 @@ const siteTurns = ref<Record<string, number>>({})
 // get to pick a tab on an answer nobody has yet. The room header does not show
 // it: a card's stage is the card's, shown on the card and on the board.
 const cardPhase = ref<CardPhase | undefined>(undefined)
+watch(
+  [accept.loaded, accept.phase],
+  () => {
+    if (accept.loaded.value) cardPhase.value = accept.phase.value
+  },
+  { immediate: true }
+)
 
 // 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
 // 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到它第
@@ -828,20 +845,20 @@ void openPlace()
                 :focus-block="focusBlock"
                 :task-id="taskId ?? null"
                 :composer-closed="composerClosed"
+                accept-review-button
                 v-on="chatEvents"
                 @open-room="backToRoom"
               />
             </template>
           </WorkPanel>
-          <!-- 专注模式里对话让开了，采纳那一条跟着到面板底部：要做的决定不能跟着消失。 -->
+          <!-- 专注模式里对话让开了，采纳那一条跟着到面板底部：要做的决定不能跟着消失。
+               手机上对话和「改动」是两个页签，在「改动」页签里决定，这一条也在底部。 -->
           <TopicAcceptCard
-            v-if="mdAndUp && focusMode && selectedTopic"
-            ref="panelAcceptRef"
-            docked
+            v-if="selectedTopic && ((mdAndUp && focusMode) || (!mdAndUp && panelTab === 'changes'))"
+            class="panel-accept"
             :topic-id="selectedTopic.id"
             :task-id="taskId ?? undefined"
             :topic-status="selectedTopic.status"
-            @phase="(p: CardPhase) => (cardPhase = p)"
             @review="onReview"
           />
         </div>
