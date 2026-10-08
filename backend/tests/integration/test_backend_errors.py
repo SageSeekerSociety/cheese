@@ -310,6 +310,31 @@ def test_a_flood_that_stopped_gets_its_count_when_the_window_closes(
     assert "\n" not in summary["content"]
 
 
+def test_a_window_too_young_to_expire_is_kept_when_the_process_goes(in_process_db):
+    """`flush_all` is for the caller that stops existing (迁移顺序 2e).
+
+    `flush_expired` is a clock and keeps nothing until 300 s have filled the
+    window. A process handing over is not on that clock: whatever it collected
+    in its last minutes is nobody else's — the next process holds its own
+    windows, never this one's — so it is kept full window or not.
+    """
+    client = in_process_db
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    token = mint_scoped_token(project_id=pid, topic_id=tid)
+    _post(client, [{"message": "nope", "exc_type": "ValueError"}] * 5, token=token)
+
+    assert client.portal.call(backend_log.flush_expired) == 0
+    assert len(_backend_events(client, tid)) == 1  # only the first report
+
+    assert client.portal.call(backend_log.flush_all) == 1
+    events = _backend_events(client, tid)
+    assert len(events) == 2
+    summary = next(e for e in events if (e["meta"] or {}).get("summary"))
+    assert summary["meta"]["count"] == 5
+    assert "5" in summary["content"]
+
+
 def test_flushing_with_nothing_expired_writes_nothing(in_process_db):
     client = in_process_db
     pid = _make_project(client)
