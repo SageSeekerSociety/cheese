@@ -18,6 +18,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.core.rank import Rank
 from app.core.sentences import say
 from app.domain.living_doc.doc_tree import markdown_to_nodes
 from app.domain.living_doc.models import (
@@ -49,9 +50,12 @@ class Documents:
     async def get(self, document_id: uuid.UUID) -> Document | None:
         return await self._repo.get(document_id)
 
-    async def of_project(self, project_id: uuid.UUID) -> list[Document]:
-        """The project's own documents, the latest changed first."""
-        return await self._repo.of_project(project_id)
+    async def of_project(
+        self, project_id: uuid.UUID, *, after: Rank | None, limit: int
+    ) -> list[Document]:
+        """The project's own documents, the latest changed first, a page at a
+        time."""
+        return await self._repo.of_project(project_id, after=after, limit=limit)
 
     async def create(
         self,

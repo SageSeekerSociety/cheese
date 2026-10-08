@@ -24,7 +24,12 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.authorship import participant_blocks
-from app.domain.block.indexed_rows import FAILED_TURN_ROWS, MACHINE_EVENT_ROWS
+from app.domain.block.indexed_rows import (
+    FAILED_TURN_ROWS,
+    LAST_SAID_ROWS,
+    MACHINE_EVENT_ROWS,
+    UNANSWERED_ROWS,
+)
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     PROMPTED_TURN_META_KEY,
@@ -159,14 +164,15 @@ class MemberWaits:
         self, topic_ids: list[uuid.UUID], since: datetime
     ) -> dict[tuple[uuid.UUID, str], datetime]:
         """{(room, agent): when it last said something on the room's own line}."""
+        # 筛选条件用字面量（`indexed_rows.LAST_SAID_ROWS`），和部分索引的谓词逐字
+        # 相同 —— ORM 那版把 `kind`、`author_type`、署名前缀都绑成参数，缓存下来的
+        # 通用计划看不见它们，就证不出这条查询蕴含索引的 WHERE，索引被绕过（实测）。
         stmt = (
             select(Block.conversation_id, Block.author, Block.created_at)
             .where(
                 _among(Block.conversation_id, topic_ids, Uuid),
-                Block.kind == BlockKind.message,
                 Block.created_at >= since,
-                participant_blocks(),
-                agent_handle_column(Block.author),
+                LAST_SAID_ROWS,
             )
             .order_by(Block.conversation_id, Block.author, Block.created_at.desc())
             .distinct(Block.conversation_id, Block.author)
@@ -198,14 +204,12 @@ class MemberWaits:
         a stuck one is not swallowed. A platform notice is not the agent
         answering, and people talking to each other wake nobody.
         """
+        # 同上：条件是字面量（`indexed_rows.UNANSWERED_ROWS`），`CAST(...)` 的形状也是
+        # 索引谓词的那一份。
         stmt = select(Block.conversation_id, Block.created_at, Block.meta).where(
             _among(Block.conversation_id, topic_ids, Uuid),
-            Block.kind == BlockKind.message,
             Block.created_at >= since,
-            participant_blocks(),
-            ~agent_handle_column(Block.author),
-            Block.meta["agent_recipient"]["mentioned"].as_boolean(),
-            Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
+            UNANSWERED_ROWS,
         )
         found = []
         for room, at, meta in (await self._session.execute(stmt)).all():

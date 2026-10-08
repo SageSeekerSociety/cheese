@@ -38,12 +38,15 @@ const attachments: Plugin = {
 // 发出去的消息走 POST（`postChatMessage`），这里把每一次的请求体记下来。
 const sent = vi.hoisted(() => [] as { payload: string }[])
 
+vi.mock('../../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     // 项目本体上那张「开始清单」的仓库判据。
     getForgeConnection: vi.fn().mockResolvedValue({
       kind: 'forgejo',

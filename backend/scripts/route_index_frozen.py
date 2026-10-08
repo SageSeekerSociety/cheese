@@ -28,8 +28,8 @@ class FrozenPair:
 #: No new exemption: the same documented pair, now machine-validated.
 FROZEN: tuple[FrozenPair, ...] = (
     FrozenPair(
-        earlier_index=692,
-        later_index=716,
+        earlier_index=694,
+        later_index=718,
         protocol="http",
         method="GET",
         earlier_path="/users/{userId}",
@@ -40,7 +40,7 @@ FROZEN: tuple[FrozenPair, ...] = (
         why=(
             "Documented known debt (users/invite_codes.py): invite-codes registered "
             "after {userId} and lands on its int parse. Frozen citing "
-            "registration records #692/#716; the fix is a reorder in its own "
+            "registration records #694/#718; the fix is a reorder in its own "
             "slice, not this guard's."
         ),
     ),

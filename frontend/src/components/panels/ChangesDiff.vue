@@ -8,13 +8,17 @@ import type { DiffLine } from '../../lib/diff'
 
 import { computed, ref, watch } from 'vue'
 
-import { DIFF_WINDOW, numberDiffLines } from '../../lib/diff'
+import { DIFF_WINDOW, hunkLabel, numberDiffLines } from '../../lib/diff'
 import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../../lib/virtualList'
 import VirtualList from '../common/VirtualList.vue'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{ lines: DiffLine[] }>()
+const props = defineProps<{
+  lines: DiffLine[]
+  /** 排在一串文件里时：不自己滚、不窗口化，跟着外面那一列往下走。 */
+  inline?: boolean
+}>()
 
 const expanded = ref(false)
 
@@ -30,7 +34,13 @@ function diffRowKey(_row: unknown, index: number): number {
 
 // 一份 diff 最多铺 DIFF_WINDOW 行，超出的先收着给一个按钮。整份铺出来正是这一格
 // 卡死的原因，而验收要看的是「改了什么」，不是「一滴不漏地读完几万行」。
-const rows = computed(() => numberDiffLines(props.lines))
+// git 的头信息（`diff --git`、`index`、`---`/`+++`、模式和改名）是给机器看的：编号要
+// 走过它们才算得对，画的时候不要。`@@` 那一行换成人读得懂的「行号区间 · 所在代码」。
+const rows = computed(() =>
+  numberDiffLines(props.lines)
+    .filter((r) => r.kind !== 'meta')
+    .map((r) => (r.kind === 'hunk' ? { ...r, text: hunkLabel(r.text) } : r))
+)
 const visible = computed(() => (expanded.value ? rows.value : rows.value.slice(0, DIFF_WINDOW)))
 const hiddenCount = computed(() => rows.value.length - visible.value.length)
 
@@ -56,7 +66,13 @@ watch(
 </script>
 
 <template>
-  <div ref="viewport" class="diff-view" :style="{ '--diff-gutter': `${gutterCh}ch` }">
+  <div
+    ref="viewport"
+    class="diff-view"
+    :class="{ 'diff-view--inline': inline }"
+    :style="{ '--diff-gutter': `${gutterCh}ch` }"
+  >
+    <div v-if="!rows.length" class="diff-empty">{{ t('work.room.changes.noTextDiff') }}</div>
     <!-- Wrapped lines make row heights variable, so this goes through VirtualList's
          measuring (virtua `Virtualizer`) mode, not a fixed height. The switch is the
          row count: a normal-sized diff (the folded DIFF_WINDOW slice, a small file)
@@ -67,7 +83,7 @@ watch(
       :items="visible"
       :item-key="diffRowKey"
       :scroll-parent="viewport"
-      :threshold="VIRTUAL_LIST_CONTENT_THRESHOLD"
+      :threshold="inline ? Infinity : VIRTUAL_LIST_CONTENT_THRESHOLD"
       :estimated-size="19"
     >
       <template #item="{ item }">
@@ -100,6 +116,15 @@ watch(
 }
 /* 行号两列定宽、正文占剩下的：长行折行时行号留在第一行、正文继续往下走，而底色是
    整行的，所以一条长行折成几行之后，增减底色仍然是连续的一条。 */
+.diff-view--inline {
+  flex: none;
+  overflow: visible;
+}
+.diff-empty {
+  padding: 4px 12px;
+  color: var(--faint);
+  font-family: var(--font-sans);
+}
 .diff-line {
   display: flex;
   align-items: flex-start;

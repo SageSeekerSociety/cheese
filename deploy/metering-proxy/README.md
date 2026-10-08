@@ -78,6 +78,22 @@ the same base the machine reaches the backend at, and the tunnel connects to
   cap stays as the deployment-wide backstop. A session the backend answered for
   within the last hour keeps that answer's pool, key and model while it is
   unreachable; only a session with no answer on record goes to the subscription.
+- **The token cap is a backstop, not a budget**: `CHEESE_TOKEN_CAP` (0 = off,
+  the default) counts the rolling window's completed turns plus the turns now
+  running, and refuses a `/v1/messages` turn before forwarding once that total
+  reaches the cap. In-flight turns are held at an estimate, so concurrent turns
+  are refused together instead of each passing on the same stale total — but a
+  turn already admitted runs to its end, so the window can overshoot by the
+  difference between an estimate and the real cost. It is deployment-wide and
+  per-project-agnostic: one project's concurrency spends another's headroom,
+  and when the window fills the whole deployment's subscription traffic is
+  refused until it rolls. Per-project budgets are admission's job. The gateway
+  pool is not under this window at all — LiteLLM meters it.
+- **One writer per usage log**: every proxy on a `USAGE_LOG_DIR` windows its
+  own totals and appends to the same file, so two instances sharing one log
+  reach roughly N×cap and neither notices. Compose's fixed `container_name`
+  pins this in practice; a second instance on the same log logs an error at
+  startup rather than starting silently. Run one proxy per log directory.
 
 ## Release on the dev box
 

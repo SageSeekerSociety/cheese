@@ -17,14 +17,17 @@ def test_reads_complete_lines_and_advances_offset(tmp_path):
     b = json.dumps({"project_id": "q", "total_tokens": 2}).encode()
     _write(log, a + b"\n" + b + b"\n")
 
-    rows, offset = read_new_lines(log, 0)
+    rows, row_ends, offset = read_new_lines(log, 0)
 
     assert [r["total_tokens"] for r in rows] == [1, 2]
+    # One end offset per row, each just past its newline: a caller that must
+    # hold a row can restart before it without re-reading the rows it kept.
+    assert row_ends == [len(a) + 1, len(a) + 1 + len(b) + 1]
     assert offset == log.stat().st_size
 
     # Nothing new → nothing read, offset unchanged.
-    rows, offset2 = read_new_lines(log, offset)
-    assert rows == [] and offset2 == offset
+    rows, row_ends, offset2 = read_new_lines(log, offset)
+    assert rows == [] and row_ends == [] and offset2 == offset
 
 
 def test_torn_tail_line_is_left_for_the_next_pass(tmp_path):
@@ -33,14 +36,16 @@ def test_torn_tail_line_is_left_for_the_next_pass(tmp_path):
     torn = b'{"total_tokens": 2'  # no newline: mid-append
     _write(log, full + torn)
 
-    rows, offset = read_new_lines(log, 0)
+    rows, row_ends, offset = read_new_lines(log, 0)
     assert len(rows) == 1
+    assert row_ends == [len(full)]
     assert offset == len(full)
 
     # The append completes → the same line is read whole, exactly once.
     _write(log, full + torn + b"}\n")
-    rows, offset = read_new_lines(log, offset)
+    rows, row_ends, offset = read_new_lines(log, offset)
     assert [r["total_tokens"] for r in rows] == [2]
+    assert row_ends == [log.stat().st_size]
     assert offset == log.stat().st_size
 
 
@@ -49,9 +54,12 @@ def test_garbage_line_is_consumed_not_wedged_on(tmp_path):
     good = json.dumps({"total_tokens": 3}).encode() + b"\n"
     _write(log, b"not json at all\n" + good)
 
-    rows, offset = read_new_lines(log, 0)
+    rows, row_ends, offset = read_new_lines(log, 0)
 
     assert [r["total_tokens"] for r in rows] == [3]
+    # The dropped garbage line still moves the end offset with it — it is
+    # consumed, not retried.
+    assert row_ends == [log.stat().st_size]
     assert offset == log.stat().st_size
 
 

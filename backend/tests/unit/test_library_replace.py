@@ -66,7 +66,7 @@ def _current_row(project: uuid.UUID, name: str) -> LibraryFileRecord:
         bytes=2,
         sha256="0" * 64,
         location=blobs.LOCAL,
-        blob_key=None,
+        blob_key=f".library/{project}/{name}",
     )
 
 

@@ -43,6 +43,8 @@ INDEXES = {
     "ix_blocks_queued_messages",
     "ix_blocks_conversation_eid",
     "ix_blocks_coalesced",
+    "ix_blocks_last_said",
+    "ix_blocks_unanswered",
 }
 
 
@@ -80,8 +82,17 @@ async def test_the_migrated_indexes_are_the_ones_the_code_declares(db_factory):
 
 
 async def _seed(session) -> dict[str, object]:
-    """Rooms and tasks with one of each case, over a few thousand older blocks
-    so the planner has a real table to choose a path through."""
+    """Rooms and tasks with one of each case, over a few thousand blocks.
+
+    The bulk sits inside the seven days the wait reads look back over, and
+    behind the blocks the cases are built from. Inside the window, or the sort
+    those reads do is free, the partial index is dearer than the index already
+    there, and the plan says which path is cheapest instead of whether the
+    index can be used at all — the two things these assertions exist to tell
+    apart. Behind the cases, because the bulk is signed by the agent handle: a
+    bulk block newer than a question in the same conversation reads as the asker
+    speaking again, which `_awaiting_an_answer` takes for the question
+    withdrawn."""
     now = datetime.now(UTC)
     project = Project(team_id=await a_team(session), name="P", owner_handle="o")
     session.add(project)
@@ -166,7 +177,7 @@ async def _seed(session) -> dict[str, object]:
             "(ARRAY[CAST(:a AS uuid),CAST(:b AS uuid),CAST(:c AS uuid)])[g%3+1] END,"
             "CASE WHEN g%2=0 THEN 'message' ELSE 'event' END,'participant','cheese',"
             "'x','[]',json_build_object('tool','Bash'),gen_random_uuid(),"
-            "now()-interval '30 days'-(g||' minutes')::interval,now() "
+            "now()-interval '2 hours'-(g||' minutes')::interval,now() "
             "FROM generate_series(1,4000) g"
         ),
         {
@@ -193,14 +204,29 @@ def _literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-async def _generic_plan(conn, name: str, sql: str, params) -> str:
-    """The plan PostgreSQL gives `sql` when it plans it without its values."""
-    await conn.exec_driver_sql(f"PREPARE {name} AS {sql}")
-    await conn.exec_driver_sql("SET LOCAL plan_cache_mode = force_generic_plan")
-    args = ", ".join(_literal(value) for value in params)
-    rows = (await conn.exec_driver_sql(f"EXPLAIN EXECUTE {name}({args})")).all()
-    await conn.exec_driver_sql(f"DEALLOCATE {name}")
-    return "\n".join(row[0] for row in rows)
+async def _generic_plan(
+    conn, name: str, sql: str, params, *, ordered: bool = False
+) -> str:
+    """The plan PostgreSQL gives `sql` when it plans it without its values.
+
+    `ordered` also takes the sort away, for a probe whose index earns its keep by
+    the order the scan comes back in rather than by holding few rows. Without the
+    sort the ordered scan is the only path left to that query, which is what
+    "usable at all" means for that read. The other probes keep theirs: those
+    indexes are selective, and the planner reaches for them on cost alone.
+    """
+    if ordered:
+        await conn.exec_driver_sql("SET LOCAL enable_sort = off")
+    try:
+        await conn.exec_driver_sql(f"PREPARE {name} AS {sql}")
+        await conn.exec_driver_sql("SET LOCAL plan_cache_mode = force_generic_plan")
+        args = ", ".join(_literal(value) for value in params)
+        rows = (await conn.exec_driver_sql(f"EXPLAIN EXECUTE {name}({args})")).all()
+        await conn.exec_driver_sql(f"DEALLOCATE {name}")
+        return "\n".join(row[0] for row in rows)
+    finally:
+        if ordered:
+            await conn.exec_driver_sql("SET LOCAL enable_sort = on")
 
 
 @contextmanager
@@ -248,6 +274,13 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             ),
             "ix_blocks_machine_events": lambda sql: "'environment_repaired'" in sql,
             "ix_blocks_failed_turns": lambda sql: "'severity') = 'error'" in sql,
+            # 「谁最后说过话」和「谁被点名还没回答」这两条，谓词是字面量，所以它们在
+            # sql 里看得见条件本身 —— 反过来，一条退回绑定参数的查询既不该被这个
+            # 挑选器选中，也证不出索引。
+            "ix_blocks_last_said": lambda sql: (
+                "DISTINCT ON (blocks.conversation_id, blocks.author)" in sql
+            ),
+            "ix_blocks_unanswered": lambda sql: "'mentioned'" in sql,
         }
         conn = await session.connection()
         for index, picks in expected.items():
@@ -256,7 +289,20 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             found = [(sql, params) for sql, params in seen if picks(f"{sql} {params}")]
             assert len(found) == 1, f"expected one query for {index}, got {found}"
             sql, params = found[0]
-            plan = await _generic_plan(conn, f"probe_{index}", sql, params)
+            plan = await _generic_plan(
+                conn,
+                f"probe_{index}",
+                sql,
+                params,
+                # Most of the table is agent-signed messages, so this index is
+                # not selective: what it buys is the order the scan comes back
+                # in, and at fixture size the sort it saves is cheap — the
+                # planner takes the index it already has and sorts, which says
+                # which path is cheapest today and not whether this one can be
+                # used at all. Taking the sort away leaves the ordered scan as
+                # the only path to this query.
+                ordered=index == "ix_blocks_last_said",
+            )
             assert index in plan, f"{index} is not used:\n{sql}\n{plan}"
 
         with statements(session) as seen:

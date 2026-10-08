@@ -81,15 +81,19 @@ def head_fingerprint(path: Path, length: int) -> str:
 
 def read_new_lines(
     path: Path, byte_offset: int, max_lines: int = _BATCH_LINES
-) -> tuple[list[dict], int]:
-    """Complete JSON lines after ``byte_offset``, and the offset consumed to.
+) -> tuple[list[dict], list[int], int]:
+    """Complete JSON lines after ``byte_offset``, where each ends, and the
+    offset consumed to.
 
-    Only lines terminated by a newline are consumed — the proxy appends a full
-    line at a time, but a read can still race the write mid-line, and a torn
-    line must be left for the next pass rather than half-parsed. Unparseable
-    complete lines are consumed and dropped (logged): stopping on them would
-    wedge ingestion forever on one bad byte."""
+    ``row_ends[i]`` is the offset just after ``rows[i]``, so a caller that
+    cannot process a row can hold the checkpoint before it and leave the rest of
+    the log for the next pass. Only lines terminated by a newline are consumed —
+    the proxy appends a full line at a time, but a read can still race the write
+    mid-line, and a torn line must be left for the next pass rather than
+    half-parsed. Unparseable complete lines are consumed and dropped (logged):
+    stopping on them would wedge ingestion forever on one bad byte."""
     rows: list[dict] = []
+    row_ends: list[int] = []
     consumed = byte_offset
     with path.open("rb") as fh:
         fh.seek(byte_offset)
@@ -107,7 +111,8 @@ def read_new_lines(
                 continue
             if isinstance(parsed, dict):
                 rows.append(parsed)
-    return rows, consumed
+                row_ends.append(consumed)
+    return rows, row_ends, consumed
 
 
 def _count(value: object) -> int:
@@ -198,21 +203,41 @@ class WorkIndex:
         return [(started, work_id) for work_id, started in rows if work_id and started]
 
 
+# A row naming a project the database does not have is held for a later pass —
+# the project may still be landing in another transaction — rather than consumed.
+# Past this age it never will, and holding on would wedge every row behind it.
+_UNKNOWN_PROJECT_GRACE_S = 900
+
+# Why a row did or did not become a usage row.
+LANDED = "landed"
+UNATTRIBUTABLE = "unattributable"  # no project on the line: no books to bill
+UNKNOWN_PROJECT = "unknown-project"  # names a project the database does not have
+NOTHING_TO_BILL = "nothing-to-bill"  # parsed, but every bucket is zero
+
+
 async def _land_row(
     session: AsyncSession,
     row: dict,
     work_index: WorkIndex,
     table: Mapping[str, tuple],
     unpriced: Counter[str],
-) -> bool:
-    """One proxy record → one usage row + credit deduction. False = skipped
-    (unattributable or unknown project) — the numbers still exist in the log,
-    but nothing here can say whose books they belong in."""
+    unsplit: Counter[str],
+) -> str:
+    """One proxy record → one usage row + credit deduction, or a reason it did
+    not become one (the constants above). The numbers still exist in the log,
+    but a row nothing can attribute has no books to land in — say so rather
+    than drop it silently."""
     project_id = _uuid_or_none(row.get("project_id"))
     if project_id is None:
-        return False
+        logger.warning(
+            "usage row (topic=%r ts=%r) carries no usable project id; it "
+            "cannot be billed and is consumed",
+            row.get("topic_id"),
+            row.get("ts"),
+        )
+        return UNATTRIBUTABLE
     if await ProjectRepository(session).get(project_id) is None:
-        return False
+        return UNKNOWN_PROJECT
     # The proxy's ``topic_id`` names the conversation the seat runs in: a room,
     # or a task or thread inside one. The usage row's own reference is to the
     # conversation, so that is where it is looked up.
@@ -239,15 +264,22 @@ async def _land_row(
     if "cache_creation_1h_input_tokens" in row:
         cache_write_1h = min(cache_write, _count(row["cache_creation_1h_input_tokens"]))
     else:
-        # A line that does not split its writes by lifetime (written before the
-        # proxy logged the split) is priced as all one-hour writes: Claude Code
-        # caches for an hour, and over-charging a guess is safer than
-        # under-charging it.
-        cache_write_1h = cache_write
+        # No lifetime split on the line (written before the proxy logged one):
+        # it does not say how much went to the 1-hour cache, which is billed at
+        # twice the input price against 1.25x for the 5-minute one. Price it as
+        # all five-minute. #2427 chose all one-hour ("Claude Code caches for an
+        # hour; over-charging the guess is safer"); that only ever over-charged
+        # — a pure 1-hour row priced exactly, every other row too high, and the
+        # user sees it as extra credits. Undercounting an unknown is the
+        # direction this side of the ledger takes; the pass logs how many rows
+        # it did so, so the guess is not silent.
+        cache_write_1h = 0
+        if cache_write:
+            unsplit[str(row.get("model") or "")] += 1
     output_tokens = _count(row.get("output_tokens"))
     input_tokens = fresh + cache_read + cache_write
     if input_tokens + output_tokens <= 0:
-        return False
+        return NOTHING_TO_BILL
     model = str(row.get("model") or "")
     rates = rates_for(model, table)
     cost = 0.0
@@ -273,13 +305,29 @@ async def _land_row(
         # /v1/messages calls. Use the nearest block-carried id by timestamp.
         turn_id=await work_index.work_at(session, topic_id, row.get("ts")),
     )
-    return True
+    return LANDED
+
+
+def _row_age_s(ts: object) -> float | None:
+    """How long ago the logged turn ran, or None when the line does not say."""
+    try:
+        moment = datetime.fromtimestamp(float(ts), UTC)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+    return (datetime.now(UTC) - moment).total_seconds()
 
 
 async def ingest_once(
     session_factory: SessionFactory, path: Path, source: str = SOURCE
 ) -> dict[str, int]:
-    """One ingestion pass. Returns counters (for logs and tests)."""
+    """One ingestion pass. Returns counters (for logs and tests).
+
+    A row naming a project the database does not have holds the checkpoint just
+    before it and is retried next pass — it may be a race with the project
+    landing. A row with no project id at all, or one whose project has been
+    missing for ``_UNKNOWN_PROJECT_GRACE_S``, is consumed and logged: neither
+    will ever become billable, and leaving it would stall the whole log behind
+    it. Both kinds leave a warning rather than dropping silently."""
     if not path.is_file():
         return {"landed": 0, "skipped": 0}
     table = await pricing.model_rates()
@@ -292,6 +340,7 @@ async def ingest_once(
         table = {}
     size = path.stat().st_size
     landed = skipped = 0
+    held = 0
     async with session_factory() as session:
         ckpt = await session.get(IngestCheckpoint, source)
         offset = ckpt.byte_offset if ckpt else 0
@@ -303,14 +352,35 @@ async def ingest_once(
         if offset > size:
             # Same head but shorter than we consumed: truncated in place.
             offset = 0
-        rows, new_offset = read_new_lines(path, offset)
+        rows, row_ends, consumed = read_new_lines(path, offset)
+        new_offset = consumed
         work_index = WorkIndex()
         unpriced: Counter[str] = Counter()
-        for row in rows:
-            if await _land_row(session, row, work_index, table, unpriced):
+        unsplit: Counter[str] = Counter()
+        for index, row in enumerate(rows):
+            outcome = await _land_row(
+                session, row, work_index, table, unpriced, unsplit
+            )
+            if outcome == LANDED:
                 landed += 1
-            else:
-                skipped += 1
+                continue
+            if outcome == UNKNOWN_PROJECT:
+                age = _row_age_s(row.get("ts"))
+                if age is None or age <= _UNKNOWN_PROJECT_GRACE_S:
+                    # Recent enough that the project may still be arriving:
+                    # hold the checkpoint before this row and retry next pass.
+                    new_offset = row_ends[index - 1] if index else offset
+                    held += 1
+                    break
+                logger.warning(
+                    "usage row names project %s, absent for %.0fs; giving up "
+                    "on a row that can never be billed",
+                    row.get("project_id"),
+                    age,
+                )
+            # UNATTRIBUTABLE, NOTHING_TO_BILL and an aged-out UNKNOWN_PROJECT
+            # are all consumed: none of them can become billable later.
+            skipped += 1
         if ckpt is None:
             ckpt = IngestCheckpoint(source=source)
             session.add(ckpt)
@@ -321,6 +391,18 @@ async def ingest_once(
         logger.warning(
             "subscription usage recorded without a price, nothing charged: %s",
             ", ".join(f"{m or '(no model)'} x{n}" for m, n in unpriced.most_common()),
+        )
+    if unsplit:
+        logger.warning(
+            "subscription usage whose cache-write lifetime was not on the line "
+            "was priced as all five-minute writes: %s",
+            ", ".join(f"{m or '(no model)'} x{n}" for m, n in unsplit.most_common()),
+        )
+    if held:
+        logger.warning(
+            "holding the checkpoint before a row naming a project not in the "
+            "database: %d row(s) retried next pass",
+            held,
         )
     if landed or skipped:
         logger.info(
