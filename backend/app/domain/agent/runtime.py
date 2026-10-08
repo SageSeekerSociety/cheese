@@ -13,13 +13,12 @@ the durable lease is the documented multi-instance upgrade.
 
 import asyncio
 import contextlib
-import json
 import logging
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime
 from functools import lru_cache
 
 from app.core.background import hold
@@ -32,7 +31,6 @@ from app.domain.agent.activity import LIVE_ONLY, RoomActivity
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
-    Pool,
     Slot,
     enter,
     queued,
@@ -62,7 +60,24 @@ from app.domain.agent.platform_notices import (
     delivery_fallback_notice,
     notice,
 )
-from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
+
+# Re-exported for `app.domain.delivery.agent`: its seam may not import the
+# repository module itself (it would close a C3 domain cycle).
+from app.domain.agent.repositories import AgentTurnRepository, TurnRecord  # noqa: F401
+from app.domain.agent.subscriber_queue import (
+    MAX_SUBSCRIBER_BYTES,
+    Frame,
+    SubscriberQueue,
+    cut_off,
+)
+from app.domain.agent.turn_ledger import (
+    close_turns,
+    fire_on_done,
+    open_turn,
+    project_pool,
+    stamp_delivery,
+    utcnow,
+)
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
@@ -95,167 +110,9 @@ def addressed_to_agent(handle: str | None) -> Addressed:
     return address(Event(asked=handle), Hand.participant) if handle else NOBODY
 
 
-def _fire_on_done(callback: Callable[[], None]) -> None:
-    """Run a `submit(on_done=...)` hook without letting it escape into the loop.
-
-    A done-callback that raises does not fail the turn (that already finished) —
-    it lands in the loop's exception handler as an unattributed error. Swallow
-    and log instead, so a bookkeeping bug in a caller stays a bookkeeping bug.
-    """
-    try:
-        callback()
-    except Exception:  # noqa: BLE001 — a hook must never break the runner
-        logger.exception("submit on_done hook failed")
-
-
-async def _open_turn(session_factory, **fields) -> None:
-    async with session_factory() as session:
-        await AgentTurnRepository(session).open(**fields)
-        await session.commit()
-
-
-async def _stamp_delivery(session_factory, turn_id: uuid.UUID) -> None:
-    """Record that the transport accepted this turn's prompt (the ledger's own
-    helper; mid-turn bookkeeping that must never kill a working turn)."""
-    await turn_inputs.stamp_delivery_fact(
-        session_factory, turn_id=turn_id, at=_utcnow()
-    )
-
-
-async def _close_turns(session_factory, turn_ids) -> None:
-    async with session_factory() as session:
-        await AgentTurnRepository(session).close(turn_ids, _utcnow())
-        await session.commit()
-
-
 # What the room is told while a message waits for its turn. Neither is the
 # turn's outcome, so neither means the turn happened.
 _WAITING = frozenset({EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK})
-
-
-def _project_pool(project_id: uuid.UUID | str, limit: int) -> Pool:
-    """A project's turns: at most ``max_concurrent_turns`` run at once."""
-    return Pool(f"project-turns:{project_id}", limit)
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
-# Channel = the topic id (str). Frames are the same dicts converse yields.
-Frame = dict
-
-# How far behind one connection may fall, in bytes of published frames. Without
-# a bound, a subscriber that reads slower than a turn publishes grows its queue
-# forever — those frames are held by the process, not by the socket, and
-# uvicorn's ping/pong cannot see it: a consumer answering pings at a trickle
-# stays perfectly alive while the backlog climbs. Past the budget the
-# connection is cut off and told to come back, the same answer
-# `preview_hub.MAX_QUEUED_BYTES` gives a preview stream. That costs the client
-# a reconnect — it refetches history and the broker replays the turn — instead
-# of costing the process its memory.
-MAX_SUBSCRIBER_BYTES = 1024 * 1024
-
-
-class SubscriberOverflow:
-    """The last item a cut-off subscriber queue holds.
-
-    A sentinel rather than a frame: the route must close the socket, not
-    forward it. It reaches the consumer through the queue because the
-    publisher is a background turn with no socket to close — the relay is the
-    one that can hang up. Only `SubscriberQueue` ever queues it.
-    """
-
-
-OVERFLOW = SubscriberOverflow()
-
-
-def _frame_bytes(frame: Frame) -> int:
-    """What one frame costs the consumer that holds it: its serialised size.
-
-    A frame count cannot stand in for it — one `live` frame carries a whole
-    draft, one tool frame a whole result. This is the same JSON `send_json`
-    builds per connection, so it adds no work the route would not do anyway.
-    `default=str` keeps a frame no socket could carry failing at the socket,
-    where it fails today, instead of taking its publisher down over a length.
-    """
-    return len(
-        json.dumps(
-            frame, ensure_ascii=False, separators=(",", ":"), default=str
-        ).encode()
-    )
-
-
-class SubscriberQueue(asyncio.Queue[Frame | SubscriberOverflow]):
-    """One connection's queue, with a byte budget instead of no bound at all.
-
-    Publishing must never block — one slow consumer may not stall the turn
-    publishing to everyone else — so the budget is enforced on the way in: past
-    it this queue takes nothing more and is dropped from its channel. It stays
-    an `asyncio.Queue` (`get`, `get_nowait`, `qsize`), because that is how the
-    route and the tests read a subscriber.
-    """
-
-    def __init__(self, max_bytes: int = MAX_SUBSCRIBER_BYTES) -> None:
-        super().__init__()
-        self.max_bytes = max_bytes
-        self.queued_bytes = 0
-        self.overflowed = False
-        # The sizes of the frames still queued, oldest first, so `_get` can
-        # give the budget back. asyncio.Queue's own `_get` is the documented
-        # seam for a subclass that must see every item.
-        self._sizes: deque[int] = deque()
-
-    def offer(self, frame: Frame, size: int) -> bool:
-        """Queue one frame if the backlog can still afford it.
-
-        One frame always fits an empty queue: the budget bounds a backlog, and
-        refusing a frame that is already in memory would cut off a connection
-        that is keeping up because the room happened to publish one large
-        block. Returns False once this queue is out of the running.
-        """
-        if self.overflowed:
-            return False
-        if not self.empty() and self.queued_bytes + size > self.max_bytes:
-            self.overflowed = True
-            self.put_nowait(OVERFLOW)
-            return False
-        self._take(frame, size)
-        return True
-
-    def prefill(self, frames: Iterable[Frame]) -> int:
-        """Seed a new subscriber with the replay buffer's catch-up frames.
-
-        Trimmed from the OLDEST end when they do not all fit — the newest
-        frames are the ones a mid-turn reconnect is missing — and never a
-        reason to cut the connection off: the buffer is already bounded, and a
-        client refused on every connect would reconnect forever. Returns how
-        many frames it had to drop.
-        """
-        sized = [(frame, _frame_bytes(frame)) for frame in frames]
-        used = 0
-        kept: list[tuple[Frame, int]] = []
-        for frame, size in reversed(sized):
-            if kept and used + size > self.max_bytes:
-                break
-            used += size
-            kept.append((frame, size))
-        for frame, size in reversed(kept):
-            self._take(frame, size)
-        return len(sized) - len(kept)
-
-    def _take(self, frame: Frame, size: int) -> None:
-        self.queued_bytes += size
-        self._sizes.append(size)
-        self.put_nowait(frame)
-
-    def _get(self) -> Frame | SubscriberOverflow:
-        item = super()._get()
-        # The sentinel is a terminator, not a frame: it never carried bytes,
-        # and it is always the last item in the queue.
-        if not isinstance(item, SubscriberOverflow):
-            self.queued_bytes -= self._sizes.popleft()
-        return item
 
 
 class InProcessBroker:
@@ -466,34 +323,10 @@ class InProcessBroker:
             self._fan_out(to, extra)
 
     def _fan_out(self, channel: str, frame: Frame) -> None:
-        subs = self._subs.get(channel)
-        if not subs:
-            return
-        size = _frame_bytes(frame)
-        for q in list(subs):
-            if not q.offer(frame, size):
-                self._cut_off(channel, q)
-
-    def _cut_off(self, channel: str, q: SubscriberQueue) -> None:
-        """Stop feeding a connection that ran past its budget, and say so.
-
-        Dropped from the channel here rather than when its route notices: the
-        relay can be parked in a socket write for as long as the client is
-        slow, and every frame published meanwhile is exactly the memory this
-        bound exists for. Its queue is left holding the `OVERFLOW` sentinel for
-        the relay to close on.
-        """
-        subs = self._subs.get(channel)
-        if subs is not None:
-            subs.discard(q)
-            if not subs:
-                self._subs.pop(channel, None)
-        logger.warning(
-            "broker_subscriber_overflow channel=%s queued_bytes=%d max_bytes=%d",
-            channel,
-            q.queued_bytes,
-            q.max_bytes,
-        )
+        if subs := self._subs.get(channel):
+            for q in list(subs):
+                if not q.offer(frame):
+                    cut_off(self._subs, channel, q)
 
     async def typing(self, channel: str, member: str, *, active: bool) -> None:
         """A person composing in this room's input (or stopping)."""
@@ -927,7 +760,7 @@ class AgentWorkRunner:
 
     async def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
         """Turns currently waiting for one of this project's slots."""
-        return await queued(get_redis_client(), _project_pool(project_id, 0))
+        return await queued(get_redis_client(), project_pool(project_id, 0))
 
     def submit(
         self,
@@ -1011,7 +844,7 @@ class AgentWorkRunner:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         if on_done is not None:
-            task.add_done_callback(lambda _task: _fire_on_done(on_done))
+            task.add_done_callback(lambda _task: fire_on_done(on_done))
         return turn_id
 
     def subscribe_messages(self) -> None:
@@ -1176,8 +1009,8 @@ class AgentWorkRunner:
         )
         self._last_frame_at[str(turn_id)] = time.monotonic()
         self._live_topics[str(turn_id)] = topic_id
-        now = _utcnow()
-        await _open_turn(
+        now = utcnow()
+        await open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
             conversation_id=topic_id,
@@ -1455,7 +1288,7 @@ class AgentWorkRunner:
             min_age_s = self.SWEEP_MIN_AGE_S
         if silence_s is None:
             silence_s = self.SILENT_TURN_S
-        now = _utcnow()
+        now = utcnow()
         old_enough = {
             tid: record
             for tid, record in open_turns.items()
@@ -1618,7 +1451,7 @@ class AgentWorkRunner:
 
         「悬着」在这里不带年龄条件，而这个判断的整个重量压在**送到这个函数的话题是
         哪一种**上：屏幕没了，或者那条消息根本没送到屏幕，而且那几轮已经被上面的
-        `_close_turns` 关掉了。所以一次还没写回来的调用，结果再也到不了 agent 面前，
+        `close_turns` 关掉了。所以一次还没写回来的调用，结果再也到不了 agent 面前，
         无论那台机器此刻怎么样（`dispatch_log` 开头第二节）。这里也没有「先放着、
         下一次扫底再说」这个选项：轮次的区间已经关了，下一次扫底不会再看见这个话题。
 
@@ -2017,7 +1850,7 @@ class AgentWorkRunner:
         slot = await enter(
             get_redis_client(),
             str(turn_id),
-            pool=_project_pool(policy["project_id"], policy["max_concurrent_turns"]),
+            pool=project_pool(policy["project_id"], policy["max_concurrent_turns"]),
             on_queued=tell_queued,
         )
         return "ok", slot
@@ -2394,7 +2227,7 @@ class AgentWorkRunner:
         # The durable interval: if the PROCESS dies (deploy past the drain
         # ceiling, crash), startup finds it still open — a killed turn must
         # never just vanish.
-        await _open_turn(
+        await open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
             conversation_id=topic_id,
@@ -2404,7 +2237,7 @@ class AgentWorkRunner:
             is_resume=is_resume,
             resendable=bool(content.strip())
             and (not is_resume or resume_reason == self.RESEND_REASON),
-            started_at=_utcnow(),
+            started_at=utcnow(),
         )
         logger.info(
             "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
@@ -2560,7 +2393,7 @@ class AgentWorkRunner:
                         # registry NOW: if this process dies a moment later, the
                         # sweep reads a fact instead of guessing from side
                         # effects that may not exist yet.
-                        await _stamp_delivery(chat_service.session_factory, turn_id)
+                        await stamp_delivery(chat_service.session_factory, turn_id)
                         self._delivered.add(str(turn_id))
                         # The turn starts HERE, so the ceiling does too. Both
                         # clocks finally have a real base, and whichever comes
@@ -2877,7 +2710,7 @@ class AgentWorkRunner:
         )
         if not session_owns_ending:
             try:
-                await _close_turns(chat_service.session_factory, [turn_id])
+                await close_turns(chat_service.session_factory, [turn_id])
             except Exception:  # noqa: BLE001 — the turn already finished
                 logger.exception("could not close the interval for turn %s", turn_id)
         clear_context("turn", "topic")

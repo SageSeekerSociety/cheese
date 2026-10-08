@@ -15,9 +15,9 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import (
     AgentWorkRunner,
     InProcessBroker,
-    SubscriberOverflow,
     addressed_to_agent,
 )
+from app.domain.agent.subscriber_queue import SubscriberOverflow
 from app.domain.identity.actor import Actor
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat

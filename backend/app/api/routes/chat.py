@@ -63,11 +63,8 @@ from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sentences import error_frame
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import (
-    InProcessBroker,
-    SubscriberOverflow,
-    SubscriberQueue,
-)
+from app.domain.agent.runtime import InProcessBroker
+from app.domain.agent.subscriber_queue import SubscriberOverflow, SubscriberQueue
 from app.domain.agent.turn_adoption import adopt, open_turns_on
 from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.room_task.services import TaskService
