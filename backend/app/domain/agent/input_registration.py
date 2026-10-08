@@ -4,6 +4,7 @@ import time
 import uuid
 
 from app.core.errors import ValidationError
+from app.domain.agent.live_work import LiveWork
 from app.domain.block.queries import reaction_summaries_for_blocks
 from app.domain.delivery.agent import DeliveryTargetChanged, fence_send
 from app.domain.delivery.input_identity import (
@@ -21,23 +22,19 @@ from app.domain.delivery.receipts import (
 def input_registrar(
     session_factory,
     effects: InputEffects,
-    unread_inputs,
+    live: LiveWork,
     *,
     probe_unread: bool = False,
     fence_delivery: bool = False,
 ) -> InputRegistrar:
-    return _Registration(
-        session_factory, effects, unread_inputs, probe_unread, fence_delivery
-    )
+    return _Registration(session_factory, effects, live, probe_unread, fence_delivery)
 
 
 class _Registration:
-    def __init__(
-        self, session_factory, effects, unread_inputs, probe_unread, fence_delivery
-    ):
+    def __init__(self, session_factory, effects, live, probe_unread, fence_delivery):
         self.session_factory = session_factory
         self.effects = effects
-        self.unread_inputs = unread_inputs
+        self.live = live
         self.probe_unread = probe_unread
         self.fence_delivery = fence_delivery
 
@@ -56,7 +53,7 @@ class _Registration:
         if rejected is not None:
             raise rejected
         if self.probe_unread:
-            self.unread_inputs.setdefault(identity.conversation_id, {}).setdefault(
+            self.live.unread_inputs.setdefault(identity.conversation_id, {}).setdefault(
                 identity.input_id, time.monotonic()
             )
 
@@ -64,13 +61,13 @@ class _Registration:
         async with self.session_factory() as session:
             await withdraw_input(session, identity, self.effects)
             await session.commit()
-        pending = self.unread_inputs.get(identity.conversation_id)
+        pending = self.live.unread_inputs.get(identity.conversation_id)
         if pending is not None:
             pending.pop(identity.input_id, None)
 
 
-async def confirm_receipt(chat, receipt) -> None:
-    async with chat._sessions() as session:
+async def confirm_receipt(sessions, live: LiveWork, receipt) -> None:
+    async with sessions() as session:
         row = await record_receipt(session, receipt)
         if row is None:
             # Unknown evidence cannot settle another input. Keep it replayable
@@ -85,7 +82,7 @@ async def confirm_receipt(chat, receipt) -> None:
         await session.commit()
     if receipt.evidence != "native_echo":
         return
-    pending = chat._unread_inputs.get(receipt.identity.conversation_id)
+    pending = live.unread_inputs.get(receipt.identity.conversation_id)
     if pending is not None:
         pending.pop(receipt.identity.input_id, None)
     from app.domain.agent.runtime import get_broker

@@ -9,6 +9,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.domain.agent.live_work import LiveWork
 from app.domain.agent_session.models import AgentSession
 
 
@@ -27,7 +28,7 @@ def unknown_row(chat_service, record) -> bool:
     return not row_dead(record.topic_id, record.agent_handle, record.session_id)
 
 
-async def refresh(session, compute, dead_sessions: set) -> None:
+async def refresh(session, compute, live: LiveWork) -> None:
     """Fold one recover round's per-conversation evidence into the durable
     set. A conversation that answered the round's ping is alive — and any
     older death record for exactly it is revoked, or the rows it starts next
@@ -55,16 +56,20 @@ async def refresh(session, compute, dead_sessions: set) -> None:
         if pointer.resume_token in compute.found_conversations(
             pointer.conversation_id, pointer.agent_handle
         ):
-            dead_sessions.discard(key)
+            live.dead_sessions.discard(key)
             continue
         if pointer.resume_token in compute.terminal_conversations(
             pointer.conversation_id, pointer.agent_handle
         ):
-            dead_sessions.add(key)
+            live.dead_sessions.add(key)
 
 
 def row_is_dead(
-    chat, topic_id: uuid.UUID, agent_handle: str, session_id: str | None
+    live: LiveWork,
+    compute,
+    topic_id: uuid.UUID,
+    agent_handle: str,
+    session_id: str | None,
 ) -> bool:
     """Is THIS row's conversation known dead? Matched by the row's own
     session id only — a row without one is not attributed by anything else,
@@ -72,13 +77,13 @@ def row_is_dead(
     """
     if session_id is None:
         return False
-    if (topic_id, agent_handle, session_id) in chat._dead_sessions:
+    if (topic_id, agent_handle, session_id) in live.dead_sessions:
         return True
-    return session_id in chat._compute.dead_conversations(topic_id, agent_handle)
+    return session_id in compute.dead_conversations(topic_id, agent_handle)
 
 
-def seat_state(chat, topic_id: uuid.UUID, agent_handle: str) -> str:
+def seat_state(live: LiveWork, compute, topic_id: uuid.UUID, agent_handle: str) -> str:
     """One of "live" / "dead" / "unknown" for the seat: a session nobody has
     seen die and nobody holds is not a dead one.
     """
-    return chat._compute.seat_state(topic_id, agent_handle)
+    return compute.seat_state(topic_id, agent_handle)

@@ -149,7 +149,7 @@ def _running_turn(client, topic_id: str) -> _Screen:
     )
     work_id = uuid.uuid4()
     screen = _Screen(session, work_id, service.confirm_prompt_receipt)
-    service._active_turn_ids[uuid.UUID(topic_id)] = {work_id}
+    service.live.active_turn_ids[uuid.UUID(topic_id)] = {work_id}
     service._compute.steer = screen.steer  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen
@@ -395,7 +395,7 @@ async def test_a_notice_that_names_no_block_is_never_replayed(client):
     _, tid = _project_topic(client)
     screen = _running_turn(client, tid)
     service = app.dependency_overrides[get_chat_service]()
-    service._active_turn_ids.clear()
+    service.live.active_turn_ids.clear()
 
     assert (
         client.portal.call(

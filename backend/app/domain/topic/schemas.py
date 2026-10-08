@@ -21,6 +21,13 @@ class TopicCreate(BaseModel):
 
 
 class MemberActivityOut(BaseModel):
+    """One member's activity, shaped like the room socket's ``activity`` frame.
+
+    ``typing`` and ``expires_in`` stay declared here so this payload's shape does
+    not move (the frontend reads several fields off it), but ``GET /topics``
+    only ever emits ``working`` entries — see ``TopicOut.activity``.
+    """
+
     member: str
     kind: Literal["typing", "working"]
     # Epoch seconds, as on the socket frames.
@@ -60,9 +67,13 @@ class TopicOut(BaseModel):
     # Derived per query, so only the endpoints that ask for it
     # (list_topics/get_topic) fill it in; elsewhere it stays None.
     last_activity_at: datetime | None = None
-    # 成员动态：此刻谁在这个房间里忙——在输入框里打字的人、有一轮在跑的 AI 队友
-    # （`agent/activity.py`）。房间自己没有状态，有的是成员在做什么。和房间
-    # socket 上 `activity_snapshot` 同一份条目。只有 list/get 话题时填。
+    # 成员动态：此刻谁在这个房间里忙——有一轮在跑的 AI 队友（`agent/activity.py`）。
+    # 房间自己没有状态，有的是成员在做什么。只有 list/get 话题时填。
+    #
+    # 不带打字的人。侧栏不画他们（`useTopicRail`），而打字条目的 `expires_in` 是「还
+    # 差几秒过期」、每次请求现算，所以进了这份 body 就会把它的 ETag 打穿：只要有人在
+    # 打字，几百 KB 的清单每 30 秒都命中不了 304、原样重传一遍（`routes/topics.py`）。
+    # 房间 socket 上那份 `activity_snapshot` 仍是完整的（含打字）—— 那是房内实时显示。
     activity: list[MemberActivityOut] = Field(default_factory=list)
     # 这个房间在等哪位成员、从什么时候开始、为什么（`block/waits.py`）：它那一轮
     # 报错了、有人点了它的名还没回、卡停在要它修的地方。多久算太久在前端按当下的

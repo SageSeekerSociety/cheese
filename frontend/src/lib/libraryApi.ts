@@ -21,7 +21,7 @@ export interface LibraryFile {
   modified: number
   /** 谁放进来的（handle）；查不到时为 null。 */
   added_by: string | null
-  added_at: string | null
+  added_at: string
   /** 在哪个房间给的；从资料库页直接上传的、或读不了那个房间时为 null。 */
   room: { id: string; title: string } | null
   /** 被替换过几次。 */
@@ -33,10 +33,12 @@ export interface LibraryFile {
 async function libraryUpload(
   projectId: string,
   file: File,
-  replacing?: string
+  replacing?: string,
+  folder?: string
 ): Promise<{ path: string; bytes: number }> {
   const form = new FormData()
   form.append('file', file)
+  if (folder) form.append('folder', folder)
   const query = replacing ? `?path=${encodeURIComponent(replacing)}` : ''
   const res = await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/library${query}`, {
     method: replacing ? 'PUT' : 'POST',
@@ -50,9 +52,21 @@ async function libraryUpload(
   return envelope.data
 }
 
-/** 在资料库页上直接放进一份文件。撞名不覆盖，返回它最后叫什么。 */
-export function uploadLibraryFile(projectId: string, file: File): Promise<{ path: string; bytes: number }> {
-  return libraryUpload(projectId, file)
+/** 在资料库页上直接放进一份文件，`folder` 给了就放进那个文件夹。撞名不覆盖，返回它最后叫什么。 */
+export function uploadLibraryFile(
+  projectId: string,
+  file: File,
+  folder?: string
+): Promise<{ path: string; bytes: number }> {
+  return libraryUpload(projectId, file, undefined, folder)
+}
+
+/** 把一份资料或一个文件夹改名、挪到别处：`to` 是它的新名字。引用旧名字的消息跟着改。 */
+export function moveLibraryFile(projectId: string, path: string, to: string): Promise<unknown> {
+  return request(`/projects/${encodeURIComponent(projectId)}/library/move`, {
+    method: 'POST',
+    body: JSON.stringify({ path, to }),
+  })
 }
 
 /** 把一份资料换成新版本：名字不变，旧的那一份留着。 */
@@ -81,8 +95,8 @@ export async function libraryFileBytes(projectId: string, path: string, asPdf = 
 
 /** 一份资料的一版（版本列表里的一行）。 */
 export interface LibraryVersion {
-  /** 记录 id；记录表之前就在、从没被替换过的那一份没有 id。 */
-  id: string | null
+  /** 记录 id。 */
+  id: string
   /** 按放进来的先后从 1 数。 */
   version: number
   bytes: number

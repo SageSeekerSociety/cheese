@@ -88,14 +88,20 @@ def _keeps_transcripts(entry: dict) -> bool:
 
 
 async def _destroyed(session, entry: dict) -> bool:
-    """A session's sandbox on one of the pool's cloud hosts that the pool has
-    destroyed since the inventory named it (``machine/lifecycle.py``), or gave
-    up with its host. Nothing of it is left there to stop, check or remove,
-    and its host may be gone: asking a host that will never answer again
-    would keep the cleanup failing "device … is offline" on every sweep."""
-    return entry["kind"] == "device" and await HostPool(session).destroyed(
-        entry["device_id"], entry["resource_id"]
-    )
+    """A device the inventory named that holds nothing of the room any more:
+    a machine whose record has since been removed (a pool host the pool
+    released takes its device record with it, so nothing can connect as it
+    again), or a session's sandbox on one of the pool's cloud hosts that the
+    pool has destroyed (``machine/lifecycle.py``) or gave up with its host.
+    Nothing of it is left there to stop, check or remove, and asking a host
+    that will never answer again kept the cleanup failing "device … is
+    offline" on every sweep. A machine that still has its record may come
+    back, and is waited for."""
+    if entry["kind"] != "device":
+        return False
+    if await sql_device_service(session).get_device(entry["device_id"]) is None:
+        return True
+    return await HostPool(session).destroyed(entry["device_id"], entry["resource_id"])
 
 
 async def _device_action(

@@ -60,9 +60,11 @@ const owningTeam = computed(() => {
   // 项目在某人名下时，「所属团队」就是只有他自己的那一个，地址是他的用户名，也只有他
   // 本人打得开：对他是「你名下的项目」，对被邀请进来的人没有这一层。
   if (handle === project.owner_handle) {
-    return handle === myHandle() ? { name: 'TeamsDetail', params: { handle }, label: t('navigation.backTo.own') } : null
+    return handle === myHandle()
+      ? { name: 'TeamsDetailDefault', params: { handle }, label: t('navigation.backTo.own') }
+      : null
   }
-  return { name: 'TeamsDetail', params: { handle }, label: t('navigation.teams') }
+  return { name: 'TeamsDetailDefault', params: { handle }, label: t('navigation.teams') }
 })
 
 /** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）。 */

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.conditional import etag_for_json, if_none_match_hits
+from app.api.conditional import LIST_CACHE_CONTROL, etag_for_json, if_none_match_hits
 from app.api.deps import (
     get_broker,
     get_chat_service,
@@ -249,7 +249,16 @@ def _topic_out(
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
-    out.activity = [MemberActivityOut(**entry) for entry in activity or []]
+    # 只在干活的队友，不要打字的人：这份列表的读者是侧栏，而侧栏只画在干活的队友，
+    # 打字的人不画（`useTopicRail`）—— 这份列表三十秒才读一次，打字五秒就过去了，
+    # 画出来多半已经不是真的。打字条目还带一个每次都变的 `expires_in`（还差几秒过期，
+    # 每次请求现算），只要它在 body 里，只要有人在打字，整份清单就再也命中不了 ETag、
+    # 每三十秒原样重传一遍（`list_topics` 的条件请求）。
+    out.activity = [
+        MemberActivityOut(**entry)
+        for entry in activity or []
+        if entry["kind"] == WORKING
+    ]
     # A member working here right now is not one the room is waiting on: it is
     # the one handling it.
     working = {a.member for a in out.activity if a.kind == WORKING}
@@ -277,11 +286,8 @@ def _topic_out(
     return data
 
 
-#: 侧栏每 30 秒轮询一次整份话题清单。它是**登录用户**的私有视图（每一行都带「与我的
-#: 相关性」），所以只能是 `private`；`no-cache` 要求每次带 `If-None-Match` 回来问一句，
-#: 命中 ETag 就回 304、空 body —— 没有变化的那些轮询不再把一个几百 KB 的清单重传一遍。
-#: 和 `admin_members` 那份名单同一个形状。
-TOPICS_LIST_CACHE_CONTROL = "private, no-cache"
+#: 侧栏每 30 秒轮询一次整份话题清单，和另外两份清单共用同一套条件请求指令。
+TOPICS_LIST_CACHE_CONTROL = LIST_CACHE_CONTROL
 
 
 @router.get("", response_model=None)

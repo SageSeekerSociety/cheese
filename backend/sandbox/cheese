@@ -514,7 +514,11 @@ PLATFORM_TOOLS = ToolTable(
                     "末尾的 (#N) 平台会加，不要写"
                 ),
                 "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
-                "reason": _text("验收证据和要对方检查的内容"),
+                "focus": _text(
+                    "审阅重点：请审阅的人确认的事，最多 3 条，每条一句，合计 300 字以内，"
+                    "一行一条。只写需要人判断的地方（取舍、可能出乎意料的行为），"
+                    "测试结果和验证过程写进 body，不在这里重复"
+                ),
                 "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用英文"),
                 "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
                 "new_artifact": _text("清单上还没有的东西的真名"),
@@ -1274,7 +1278,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": here + "/accept-card",
             "body": {
-                "routing_reason": args.get("reason") or "",
+                "focus": args.get("focus") or "",
                 "change_subject": args["subject"],
                 **_given(
                     args,

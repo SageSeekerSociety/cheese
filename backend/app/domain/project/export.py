@@ -9,25 +9,27 @@ import subprocess
 import tarfile
 import tempfile
 import uuid
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 from anyio.to_thread import run_sync
 from sqlalchemy import Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolver
-from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.errors import (
-    AuthenticationRequiredError,
-    ForbiddenError,
     GatewayUnavailableError,
+    NotFoundError,
+    UpstreamUnavailableError,
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_rooms, room_column
-from app.domain.identity.services import IdentityService
+from app.domain.identity.actor import Actor
+from app.domain.library import blobs
+from app.domain.library import records as library_records
 from app.domain.library.service import artifact_snapshot_path
 from app.domain.living_doc.services import Documents
 from app.domain.project import artifacts, forge
@@ -179,18 +181,29 @@ def _finish(output: Path, archive: Path, manifest: dict) -> None:
                 )
 
 
+class TopicReadability(Protocol):
+    """Which of these rooms the caller may read.
+
+    The one thing this module needs from the request's credential, named here
+    rather than imported: ``app.api.auth`` builds the resolver, so a domain
+    importing it would reach up into the layer above (``.importlinter``, C1).
+    The route resolves the credential, decides what it may read, and passes
+    itself in for this last question — the room list is already in hand here.
+    """
+
+    async def readable_topic_ids(
+        self, actor: Actor, *, project_id: uuid.UUID, topics: Sequence[Topic]
+    ) -> set[uuid.UUID]: ...
+
+
 async def create_archive(
-    project_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
+    project_id: uuid.UUID,
+    db: AsyncSession,
+    actor: Actor,
+    readability: TopicReadability,
 ) -> tuple[Path, Path]:
-    actor = await resolver.resolve(project_id=project_id)
-    if actor.via != "token" or actor.user_id is None:
-        raise AuthenticationRequiredError("Project export requires a human login")
-    if await IdentityService(db).is_agent(actor.handle) or not await may_read_project(
-        db, project_id=project_id, handle=actor.handle
-    ):
-        raise ForbiddenError("Project export requires project access")
     topics = list(await db.scalars(select(Topic).where(Topic.project_id == project_id)))
-    readable = await resolver.readable_topic_ids(
+    readable = await readability.readable_topic_ids(
         actor, project_id=project_id, topics=topics
     )
     visible = [topic.id for topic in topics if topic.id in readable]
@@ -306,6 +319,7 @@ async def create_archive(
             else:
                 version["offline_bytes"] = False
         catalog.append(row)
+    library_files = await library_records.stored(db, project_id)
     # All database reads end before credential renewal or Git I/O.
     await db.commit()
     workspace = Path(settings.workspace_root)
@@ -342,11 +356,19 @@ async def create_archive(
             )
         else:
             manifest["repository"] = {"status": "not_configured"}
-        library = workspace / ".library" / str(project_id)
-        manifest["library"] = {
-            "status": "directory_present" if library.is_dir() else "directory_absent"
-        }
-        await run_sync(_copy_tree, library, output / "library")
+        manifest["library"] = {"files": len(library_files)}
+        for name, location, key in library_files:
+            try:
+                data = await run_sync(blobs.store(location).get, key)
+            except NotFoundError as exc:
+                raise UpstreamUnavailableError(
+                    "A library file is missing; no archive was returned"
+                ) from exc
+            target = output / "library" / name
+            if not target.resolve().is_relative_to((output / "library").resolve()):
+                raise UpstreamUnavailableError("Export path escaped its storage root")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            await run_sync(target.write_bytes, data)
         for topic_id in visible:
             await run_sync(
                 _copy_tree,

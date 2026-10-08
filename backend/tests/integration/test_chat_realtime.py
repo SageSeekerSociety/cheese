@@ -707,12 +707,28 @@ class RacingSeat(ChatService):
             self.in_flight -= 1
 
 
-class SeatLockRemoved(RacingSeat):
-    """The same service with the lock taken away — a fresh lock per call is no
-    lock at all. It exists to show the test below is not vacuous."""
+class _SeatLocksNeverTaken:
+    """Wraps the service's `live` state, handing out a fresh seat lock every
+    call — a fresh lock per call is no lock at all. Every other read/write of
+    the live state passes straight through to the real ``LiveWork``."""
 
-    def _seat_lock_for(self, topic_id, agent_handle):
+    def __init__(self, live) -> None:
+        self._live = live
+
+    def seat_lock_for(self, topic_id, agent_handle):
         return asyncio.Lock()
+
+    def __getattr__(self, name):
+        return getattr(self._live, name)
+
+
+class SeatLockRemoved(RacingSeat):
+    """The same service with the lock taken away. It exists to show the test
+    below is not vacuous."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.live = _SeatLocksNeverTaken(self.live)
 
 
 async def _a_topic(factory) -> uuid.UUID:
@@ -1588,7 +1604,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
         return True
 
     monkeypatch.setattr(svc._compute, "steer", slow_deliver)
-    svc._active_turn_ids[topic_id] = {uuid.uuid4()}
+    svc.live.active_turn_ids[topic_id] = {uuid.uuid4()}
     merge = asyncio.create_task(
         svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
     )
@@ -1670,7 +1686,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
 
     monkeypatch.setattr(svc._compute, "steer", fake_deliver)
     turn_id = uuid.uuid4()
-    svc._active_turn_ids[topic_id] = {turn_id}
+    svc.live.active_turn_ids[topic_id] = {turn_id}
 
     assert (
         await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")

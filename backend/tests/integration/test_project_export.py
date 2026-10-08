@@ -14,7 +14,8 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.domain.library.service import artifact_snapshot_path, write_library_file
+from app.domain.library import records as library_records
+from app.domain.library.service import artifact_snapshot_path
 from app.domain.living_doc.models import Document
 from app.domain.project.models import ProjectArtifact, ProjectForge
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
@@ -112,6 +113,9 @@ def exported_project(client, monkeypatch, tmp_path):
                 deliverable_name="report.txt",
             )
             db.add(card)
+            await library_records.add(
+                db, pid, "资料/source data.csv", b"a,b\n1,2\n", "export-owner", None
+            )
             await db.commit()
             snapshot = artifact_snapshot_path(pid, card.id, "report.txt")
             snapshot.parent.mkdir(parents=True)
@@ -119,7 +123,6 @@ def exported_project(client, monkeypatch, tmp_path):
             return room.id, private.id, doc.id, snapshot
 
     room, private, doc, snapshot = asyncio.run(seed())
-    write_library_file(pid, "source data.csv", b"a,b\n1,2\n")
     # Memory stays outside the exported classes even though it shares the workspace.
     (workspace / "private-memory-marker").write_text("MEMORY-SECRET")
     return dict(
@@ -155,7 +158,7 @@ def test_http_export_is_offline_readable_and_checksums_match(
     shutil.rmtree(data["workspace"])
     manifest = json.loads((offline / "manifest.json").read_text())
     assert manifest["repository"]["head"] == data["head"]
-    assert manifest["library"]["status"] == "directory_present"
+    assert manifest["library"] == {"files": 1}
     for row in manifest["files"]:
         content = (offline / row["path"]).read_bytes()
         assert len(content) == row["size"]
@@ -168,7 +171,8 @@ def test_http_export_is_offline_readable_and_checksums_match(
     assert (
         offline / "documents" / f"{data['doc']}.md"
     ).read_text() == "# Offline document\n"
-    assert (offline / "library" / "source data.csv").read_bytes() == b"a,b\n1,2\n"
+    library = offline / "library" / "资料" / "source data.csv"
+    assert library.read_bytes() == b"a,b\n1,2\n"
     # Agent session transcripts are not part of a project export.
     assert not (offline / "transcripts").exists()
     assert not (offline / "transcripts.json").exists()
@@ -227,15 +231,15 @@ def test_incomplete_source_never_returns_an_archive(client, exported_project, fa
     assert not list((data["workspace"] / ".exports").iterdir())
 
 
-def test_absent_library_is_explicit_in_manifest(client, exported_project):
+def test_a_library_file_whose_bytes_are_gone_returns_no_archive(
+    client, exported_project
+):
+    """清单上有、字节却没了：不交一份缺了东西的导出包。"""
     data = exported_project
-    shutil.rmtree(data["workspace"] / ".library")
+    shutil.rmtree(data["workspace"] / ".library-blobs")
     response = client.get(f"/projects/{data['pid']}/export", headers=data["headers"])
-    assert response.status_code == 200
-    with tarfile.open(fileobj=io.BytesIO(response.content)) as archive:
-        entry = archive.extractfile("manifest.json")
-        assert entry is not None
-        assert json.load(entry)["library"]["status"] == "directory_absent"
+    assert response.status_code == 503, response.text
+    assert not list((data["workspace"] / ".exports").iterdir())
 
 
 @pytest.mark.anyio

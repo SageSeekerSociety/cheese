@@ -447,6 +447,43 @@ class TestListGroupIdsByDomains:
 
 
 # ---------------------------------------------------------------------------
+# SpaceDomainGroupDomainRepository.list_group_ids_by_task_ids
+# ---------------------------------------------------------------------------
+
+
+class TestListGroupIdsByTaskIds:
+    @pytest.mark.anyio
+    async def test_groups_by_task_and_keeps_attribution(self):
+        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = [(41, 1), (43, 2), (43, 3), (43, 2)]
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        repo = SpaceDomainGroupDomainRepository(session=mock_session)
+        result = await repo.list_group_ids_by_task_ids(
+            space_id=100, task_ids=[41, 42, 43]
+        )
+
+        # 43 的两个组不落到 41/42 头上；没有组的题不在结果里。
+        assert result == {41: {1}, 43: {2, 3}}
+        # 整页一次，不按题各发一条。
+        mock_session.execute.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_skips_query_for_empty_page(self):
+        from app.domain.space.repositories import SpaceDomainGroupDomainRepository
+
+        mock_session = AsyncMock()
+        repo = SpaceDomainGroupDomainRepository(session=mock_session)
+        result = await repo.list_group_ids_by_task_ids(space_id=100, task_ids=[])
+
+        assert result == {}
+        mock_session.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # _enrich_task_models — accessDomainGroupIds enrichment
 # ---------------------------------------------------------------------------
 
@@ -467,21 +504,17 @@ class TestEnrichTaskModelsAccessDomainGroups:
         }
 
         # Mock the domain resolution
-        async def _list_by_task_id(task_id):
-            return ["cs.edu.cn", "math.edu.cn"]
+        calls: list[dict] = []
 
-        async def _list_group_ids_by_domains(*, space_id, domains):
-            return {1, 3}
+        async def _list_group_ids_by_task_ids(*, space_id, task_ids):
+            calls.append({"space_id": space_id, "task_ids": list(task_ids)})
+            return {42: {1, 3}}
 
         with (
             patch(
-                "app.api.task_serialization.TaskAccessDomainRepository",
-                return_value=SimpleNamespace(list_by_task_id=_list_by_task_id),
-            ),
-            patch(
                 "app.api.task_serialization.SpaceDomainGroupDomainRepository",
                 return_value=SimpleNamespace(
-                    list_group_ids_by_domains=_list_group_ids_by_domains
+                    list_group_ids_by_task_ids=_list_group_ids_by_task_ids,
                 ),
             ),
             patch(
@@ -524,6 +557,85 @@ class TestEnrichTaskModelsAccessDomainGroups:
 
         assert len(result) == 1
         assert result[0]["accessDomainGroupIds"] == [1, 3]
+        assert calls == [{"space_id": 100, "task_ids": [42]}]
+
+    @pytest.mark.anyio
+    async def test_asks_for_the_whole_page_in_one_call(self):
+        """整页一次：一屏 N 道开了访问控制的题只让仓储问一次，不问 N 次。"""
+        from app.api.task_serialization import _enrich_task_models
+
+        mock_db = AsyncMock()
+        task_models = [
+            {
+                "id": task_id,
+                "name": f"Test {task_id}",
+                "accessControlEnabled": True,
+                "space": {"id": 100},
+                "categoryId": 5,
+                "creator": {"id": 10},
+            }
+            for task_id in (41, 42, 43, 44, 45)
+        ]
+
+        calls: list[dict] = []
+
+        async def _list_group_ids_by_task_ids(*, space_id, task_ids):
+            calls.append({"space_id": space_id, "task_ids": list(task_ids)})
+            return {41: {1}, 43: {2, 3}}
+
+        with (
+            patch(
+                "app.api.task_serialization.SpaceDomainGroupDomainRepository",
+                return_value=SimpleNamespace(
+                    list_group_ids_by_task_ids=_list_group_ids_by_task_ids,
+                ),
+            ),
+            patch(
+                "app.api.task_serialization.SpaceCategoryRepository",
+                return_value=SimpleNamespace(
+                    list_categories_for_space=AsyncMock(return_value=[]),
+                ),
+            ),
+            patch(
+                "app.api.task_serialization.SpaceAdminRelationRepository",
+                return_value=SimpleNamespace(list_admins=AsyncMock(return_value=[])),
+            ),
+            patch(
+                "app.api.task_serialization.SpaceRepository",
+                return_value=SimpleNamespace(
+                    get_by_id=AsyncMock(return_value=SimpleNamespace(name="Space")),
+                ),
+            ),
+            patch(
+                "app.api.task_serialization.UserRepository",
+                return_value=SimpleNamespace(get_by_ids=AsyncMock(return_value={})),
+            ),
+            patch(
+                "app.api.task_serialization.UserProfileRepository",
+                return_value=SimpleNamespace(
+                    get_profiles_by_user_ids=AsyncMock(return_value={}),
+                    chosen_avatar_ids=AsyncMock(return_value={}),
+                ),
+            ),
+            patch(
+                "app.api.task_serialization.TaskMembershipRepository",
+                return_value=SimpleNamespace(
+                    list_memberships_for_space=AsyncMock(return_value=[]),
+                ),
+            ),
+        ):
+            result = await _enrich_task_models(mock_db, task_models, space_id=100)
+
+        assert len(calls) == 1, calls
+        assert calls[0] == {"space_id": 100, "task_ids": [41, 42, 43, 44, 45]}
+        # 组按题归属，不串台。
+        assert [model["accessDomainGroupIds"] for model in result] == [
+            [1],
+            [],
+            [2, 3],
+            [],
+            [],
+        ]
 
     @pytest.mark.anyio
     async def test_skips_enrichment_when_access_control_disabled(self):
@@ -539,22 +651,17 @@ class TestEnrichTaskModelsAccessDomainGroups:
             "creator": {"id": 10},
         }
 
-        access_domain_called = False
+        asked_task_ids: list[list[int]] = []
 
-        async def _list_by_task_id(task_id):
-            nonlocal access_domain_called
-            access_domain_called = True
-            return []
+        async def _list_group_ids_by_task_ids(*, space_id, task_ids):
+            asked_task_ids.append(list(task_ids))
+            return {}
 
         with (
             patch(
-                "app.api.task_serialization.TaskAccessDomainRepository",
-                return_value=SimpleNamespace(list_by_task_id=_list_by_task_id),
-            ),
-            patch(
                 "app.api.task_serialization.SpaceDomainGroupDomainRepository",
                 return_value=SimpleNamespace(
-                    list_group_ids_by_domains=AsyncMock(return_value=set()),
+                    list_group_ids_by_task_ids=_list_group_ids_by_task_ids,
                 ),
             ),
             patch(
@@ -595,7 +702,8 @@ class TestEnrichTaskModelsAccessDomainGroups:
         ):
             result = await _enrich_task_models(mock_db, [task_model], space_id=100)
 
-        assert not access_domain_called
+        # 没开访问控制的题不进这次批量问的名单。
+        assert asked_task_ids == [[]]
         assert result[0].get("accessDomainGroupIds") == []
 
     @pytest.mark.anyio
@@ -612,18 +720,14 @@ class TestEnrichTaskModelsAccessDomainGroups:
             "creator": {"id": 10},
         }
 
-        async def _list_by_task_id(task_id):
-            return []
+        async def _list_group_ids_by_task_ids(*, space_id, task_ids):
+            return {}
 
         with (
             patch(
-                "app.api.task_serialization.TaskAccessDomainRepository",
-                return_value=SimpleNamespace(list_by_task_id=_list_by_task_id),
-            ),
-            patch(
                 "app.api.task_serialization.SpaceDomainGroupDomainRepository",
                 return_value=SimpleNamespace(
-                    list_group_ids_by_domains=AsyncMock(return_value=set()),
+                    list_group_ids_by_task_ids=_list_group_ids_by_task_ids,
                 ),
             ),
             patch(

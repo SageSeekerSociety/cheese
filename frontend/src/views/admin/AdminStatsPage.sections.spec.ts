@@ -157,7 +157,7 @@ describe('统计页 · 集成健康那一屏', () => {
 })
 
 describe('统计页 · 用量那一屏', () => {
-  it('四张 KPI、额度燃尽的三个名单与燃烧速率、两张拆分表', async () => {
+  it('四张 KPI、额度燃尽的三个名单与燃烧速率、两张拆分表、账号池那一段', async () => {
     const { container } = await openTab('用量')
 
     expect(kpiLabels(container)).toEqual(['窗口内 token', '窗口内调用', '成本', '未定价 token'])
@@ -179,6 +179,21 @@ describe('统计页 · 用量那一屏', () => {
     // 最花 token 的项目是一张排行。
     expect(container.querySelectorAll('.abr')).toHaveLength(1)
     expect(container.textContent).toContain('知是平台后端')
+
+    // Claude 账号池：三张账号各一种状态，底下一句总述。这一块的读法在
+    // `lib/adminPool.spec.ts`，这里钉的是它确实挂上了这一屏（预置了一个冷却中的账号，
+    // 所以总述里那句最早恢复时刻也在）。
+    const pool = Array.from(container.querySelectorAll('.ad__pool-row')).map((row) => row.textContent ?? '')
+    expect(pool).toHaveLength(3)
+    expect(pool[0]).toContain('primary')
+    expect(pool[0]).toContain('可用')
+    // 冷却那张带着它的解冻时刻（素材里是「一刻钟以后」，所以这里只认「恢复」两个字，
+    // 具体钟点跟着跑的这一刻变）与失败次数。
+    expect(pool[1]).toContain('恢复 · 连续失败 2 次')
+    expect(pool[2]).toContain('已停用')
+    expect(pool[2]).toContain('连续失败 6 次')
+    expect(container.textContent).toContain('3 张账号：1 张冷却中、1 张已停用')
+    expect(container.textContent).toContain('最早')
   })
 })
 

@@ -129,11 +129,31 @@ CREDENTIAL = PlatformCredential(
         )
     )
 )
-CLAUDE_ACCOUNTS = ClaudeAccounts(CREDENTIAL)
+# The pool is published beside the ledger — the one directory the backend can
+# read (mounted read-only for usage ingest). Nothing else carries it: the
+# accounts exist only on this box. See ClaudeAccounts.snapshot.
+CLAUDE_ACCOUNTS = ClaudeAccounts(
+    CREDENTIAL, snapshot_path=USAGE_LOG.parent / "accounts.json"
+)
 
 
 def load(loader):
     install_retry()
+    # Publish once at start, so the board sees the pool from the moment the
+    # proxy is up rather than from the first model call after a restart.
+    CLAUDE_ACCOUNTS.snapshot()
+
+
+def _record_usage(project_id, topic_id, usage, model):
+    """Meter a turn, then refresh the pool the board reads.
+
+    The two belong together: the snapshot's `retry_after` is a countdown, so it
+    is only as fresh as the last write, and metering is the one thing that
+    happens on every served turn. Cooldown changes publish on their own (every
+    state change writes through `ClaudeAccounts._save`).
+    """
+    METER.record(project_id, topic_id, usage, model)
+    CLAUDE_ACCOUNTS.snapshot()
 
 
 # The proxy's own credential rides every admission call: only a caller holding
@@ -1486,7 +1506,9 @@ def responseheaders(flow: http.HTTPFlow) -> None:
             else:  # end-of-stream sentinel
                 extractor.close()
                 if extractor.usage:
-                    METER.record(project_id, topic_id, extractor.usage, extractor.model)
+                    _record_usage(
+                        project_id, topic_id, extractor.usage, extractor.model
+                    )
                 else:
                     # A turn that ran and cost nothing on the meter is the cap
                     # silently switched off; say so rather than skip it.
@@ -1786,4 +1808,4 @@ def response(flow: http.HTTPFlow) -> None:
         return
     usage, model = payload.get("usage", {}), payload.get("model", "")
     if usage:
-        METER.record(project_id, topic_id, usage, model)
+        _record_usage(project_id, topic_id, usage, model)

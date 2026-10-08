@@ -143,7 +143,7 @@ async def run(descriptor):
         busy = descriptor["mode"].endswith("busy")
         if busy:
             assert status["working"] and status["work_id"] == str(work)
-            assert (topic, work) in chat._hook_work
+            assert (topic, work) in chat.live.hook_work
             assert await chat.notify_running_turn(
                 topic,
                 "原答者已提交回答",
@@ -151,7 +151,7 @@ async def run(descriptor):
             )
             Path(descriptor["gate"]).touch()
         else:
-            assert not status["working"] and not chat._hook_work
+            assert not status["working"] and not chat.live.hook_work
             from app.api.deps import get_work_runner
             from app.domain.delivery.addressing import Addressed, Recipient
 
@@ -181,7 +181,7 @@ async def run(descriptor):
                 if (
                     status["working"]
                     or status["tasks"]
-                    or chat._hook_work
+                    or chat.live.hook_work
                     or follow_up_owed(descriptor["state"])
                 ):
                     quiet_since = None

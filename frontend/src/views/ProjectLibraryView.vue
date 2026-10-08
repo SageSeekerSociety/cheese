@@ -9,8 +9,12 @@
 // 同名不覆盖，所以列表里会出现 `预算表(2).xlsx`：两次上传就是两份。人明确说「这是
 // 同一份的新版本」才替换，旧的那一份留着。
 //
+// 名字里的 `/` 是文件夹。不搜也不筛时一层一层地看（在哪一层记在 `?dir=` 上）；一搜
+// 或一筛就是整个资料库里对得上的那些，带着完整的路径。
+//
 // 看哪一份记在地址上（`?file=`）：刷新、把链接发给别人都回到这一份。手机上它是整一
 // 页，← 回到列表。
+import type { LocationQueryRaw } from 'vue-router'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { LibraryFile } from '../api'
 import type { ProjectDocument } from '../api/projectDocuments'
@@ -26,9 +30,12 @@ import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary 
 import LibraryDocumentHits from '../components/library/LibraryDocumentHits.vue'
 import LibraryDocumentPage from '../components/library/LibraryDocumentPage.vue'
 import { useLibraryDocuments } from '../composables/useLibraryDocuments'
+import { useLibraryNaming } from '../composables/useLibraryNaming'
 import { useOpenLibraryDocument } from '../composables/useOpenLibraryDocument'
 import { isAgentHandle } from '../lib/authorship'
 import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
+import { folderListing, leafOf, type LibraryFolder } from '../lib/libraryFolders'
+import { type Kind, KIND_ICONS, kindLabel, kindOf, KINDS } from '../lib/libraryKinds'
 import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
 
 import { useCommands } from '@/commands'
@@ -38,16 +45,18 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
-import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import VirtualList from '@/components/common/VirtualList.vue'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
 import { closeOverlay } from '@/lib/backOut'
+import { fmtBytes } from '@/lib/changesTree'
 import { relTime } from '@/lib/relTime'
-import { topicTitle } from '@/lib/topicState'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
+import LibraryCrumbs from '@/views/library/LibraryCrumbs.vue'
+import LibraryFileDetail from '@/views/library/LibraryFileDetail.vue'
+import LibraryNameDialog from '@/views/library/LibraryNameDialog.vue'
 import LibraryVersionsDialog from '@/views/library/LibraryVersionsDialog.vue'
 
 // `docId`：从 `/docs/<编号>` 进来时，整页打开的那一份文档。
@@ -67,7 +76,8 @@ const loadReason = ref('')
 const actionError = ref('')
 const busy = ref('')
 const uploading = ref(false)
-const confirming = ref<LibraryFile | null>(null)
+// 要删的那一份或那个文件夹（文件夹连同里面的一切）。
+const confirming = ref<LibraryFile | LibraryFolder | null>(null)
 const replacing = ref<{ target: LibraryFile; file: File } | null>(null)
 // 同一个名字被替换以后，预览要重新读：换一次，这个数加一。
 const revision = ref(0)
@@ -108,41 +118,6 @@ watch(
 
 // ---- 找：按名字、按类型 -------------------------------------------------------
 
-type Kind = 'all' | 'doc' | 'sheet' | 'pdf' | 'image' | 'other'
-const KIND_SUFFIXES: Record<Exclude<Kind, 'all' | 'other'>, string[]> = {
-  doc: ['doc', 'docx', 'odt', 'rtf', 'md', 'markdown', 'txt', 'ppt', 'pptx', 'odp', 'pages', 'key'],
-  sheet: ['xls', 'xlsx', 'csv', 'ods', 'numbers'],
-  pdf: ['pdf'],
-  image: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'heic'],
-}
-const KINDS: Kind[] = ['all', 'doc', 'sheet', 'pdf', 'image', 'other']
-const KIND_ICONS: Record<Exclude<Kind, 'all'>, string> = {
-  doc: 'mdi-file-document-outline',
-  sheet: 'mdi-file-table-outline',
-  pdf: 'mdi-file-pdf-box',
-  image: 'mdi-file-image-outline',
-  other: 'mdi-file-outline',
-}
-
-function kindOf(path: string): Exclude<Kind, 'all'> {
-  const suffix = path.includes('.') ? path.split('.').pop()!.toLowerCase() : ''
-  for (const [kind, suffixes] of Object.entries(KIND_SUFFIXES)) {
-    if (suffixes.includes(suffix)) return kind as Exclude<Kind, 'all'>
-  }
-  return 'other'
-}
-
-function kindLabel(kind: Kind): string {
-  return {
-    all: t('work.library.kinds.all'),
-    doc: t('work.library.kinds.doc'),
-    sheet: t('work.library.kinds.sheet'),
-    pdf: t('work.library.kinds.pdf'),
-    image: t('work.library.kinds.image'),
-    other: t('work.library.kinds.other'),
-  }[kind]
-}
-
 const query = ref('')
 const kind = ref<Kind>('all')
 // 「筛选空」那句下面的一键清除：清掉搜索框和类型筛选，列表自己回来（§8.1）。
@@ -164,16 +139,44 @@ const docs = useLibraryDocuments(
   () => query.value
 )
 const workspace = useWorkspaceStore()
-type Entry = { key: string; at: number } & ({ doc: ProjectDocument; file?: never } | { file: LibraryFile; doc?: never })
+type Entry = { key: string; at: number } & (
+  | { doc: ProjectDocument; file?: never; folder?: never }
+  | { file: LibraryFile; doc?: never; folder?: never }
+  | { folder: LibraryFolder; doc?: never; file?: never }
+)
 const searching = computed(() => !!query.value.trim())
+// 一层一层地看：不搜也不筛的时候。
+const browsing = computed(() => !searching.value && kind.value === 'all')
+const dir = computed(() => (typeof route.query.dir === 'string' ? route.query.dir : ''))
 const entries = computed<Entry[]>(() => {
-  // 找的时候文档按正文找，结果在上面那两组里；这张表只剩文件名对得上的文件。
-  const withDocs = !searching.value && (kind.value === 'all' || kind.value === 'doc')
-  const rows: Entry[] = shown.value.map((file) => ({ key: `file:${file.path}`, at: file.modified * 1000, file }))
-  if (withDocs)
+  const fileRow = (file: LibraryFile): Entry => ({ key: `file:${file.path}`, at: file.modified * 1000, file })
+  if (!browsing.value) {
+    // 找的时候文档按正文找，结果在上面那两组里；这张表只剩文件名对得上的文件。
+    const rows = shown.value.map(fileRow)
+    if (!searching.value && kind.value === 'doc')
+      rows.push(...docs.documents.value.map((doc) => ({ key: `doc:${doc.id}`, at: Date.parse(doc.updated_at), doc })))
+    return rows.sort((a, b) => b.at - a.at)
+  }
+  const here = folderListing(files.value, dir.value)
+  const rows = here.files.map(fileRow)
+  // 文档没有文件夹，摆在最上层。
+  if (!dir.value)
     rows.push(...docs.documents.value.map((doc) => ({ key: `doc:${doc.id}`, at: Date.parse(doc.updated_at), doc })))
-  return rows.sort((a, b) => b.at - a.at)
+  const folders = here.folders.map((folder) => ({ key: `dir:${folder.path}`, at: folder.modified * 1000, folder }))
+  return [...folders, ...rows.sort((a, b) => b.at - a.at)]
 })
+const inFolder = computed(() => browsing.value && !!dir.value)
+
+function goTo(path: string) {
+  const next: LocationQueryRaw = { ...route.query, dir: path || undefined }
+  delete next.file
+  void router.push({ query: next })
+}
+
+// 这一行写什么名字：一层一层看时写最后一层，搜出来的写完整路径。
+function fileName(file: LibraryFile): string {
+  return browsing.value ? leafOf(file.path) : file.path
+}
 const anything = computed(() => files.value.length > 0 || docs.documents.value.length > 0)
 
 function docName(doc: { title: string | null }): string {
@@ -282,7 +285,7 @@ async function upload(list: File[]) {
   let done = 0
   try {
     for (const file of list) {
-      await uploadLibraryFile(props.projectId, file)
+      await uploadLibraryFile(props.projectId, file, dir.value)
       done++
     }
   } catch (e) {
@@ -359,19 +362,51 @@ function confirmRemove() {
   if (file) void remove(file)
 }
 
-async function remove(file: LibraryFile) {
+async function remove(target: LibraryFile | LibraryFolder) {
   confirming.value = null
-  busy.value = file.path
+  busy.value = target.path
   actionError.value = ''
+  const gone = (path: string) => path === target.path || path.startsWith(`${target.path}/`)
   try {
-    await deleteLibraryFile(props.projectId, file.path)
-    files.value = files.value.filter((f) => f.path !== file.path)
-    if (selectedPath.value === file.path) close()
+    await deleteLibraryFile(props.projectId, target.path)
+    files.value = files.value.filter((f) => !gone(f.path))
+    if (gone(selectedPath.value)) close()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.deleteFailed')
   } finally {
     busy.value = ''
   }
+}
+
+// ---- 文件夹：挪动、改名、新建 ---------------------------------------------------
+
+const naming = useLibraryNaming({
+  projectId: () => props.projectId,
+  dir: () => dir.value,
+  files: () => files.value,
+  goTo,
+  opened: () => selectedPath.value,
+  reopen: (path) => void router.replace({ query: { ...route.query, file: path } }),
+  reload: load,
+})
+
+function folderActions(folder: LibraryFolder): MenuAction[] {
+  return [
+    {
+      key: 'move',
+      label: t('work.library.move'),
+      icon: 'mdi-folder-move-outline',
+      onSelect: () => naming.start({ path: folder.path }),
+    },
+    {
+      key: 'delete',
+      label: t('work.library.delete'),
+      icon: 'mdi-delete-outline',
+      danger: true,
+      loading: busy.value === folder.path,
+      onSelect: () => (confirming.value = folder),
+    },
+  ]
 }
 
 function fileActions(file: LibraryFile): MenuAction[] {
@@ -387,6 +422,12 @@ function fileActions(file: LibraryFile): MenuAction[] {
       label: t('work.library.replace'),
       icon: 'mdi-file-replace-outline',
       onSelect: () => pickReplacement(file),
+    },
+    {
+      key: 'move',
+      label: t('work.library.move'),
+      icon: 'mdi-folder-move-outline',
+      onSelect: () => naming.start({ path: file.path }),
     },
     {
       key: 'versions',
@@ -441,6 +482,14 @@ useCommands(() => {
   if (selectedDocId.value) return []
   return [
     {
+      id: 'library.newFolder',
+      title: t('work.library.newFolder'),
+      icon: 'mdi-folder-plus-outline',
+      palette: false as const,
+      header: {},
+      run: () => naming.start({ newFolder: true }),
+    },
+    {
       id: 'library.upload',
       title: t('work.library.upload'),
       icon: 'mdi-upload',
@@ -463,18 +512,15 @@ useCommands(() => {
 
 // ---- 摆出来 ------------------------------------------------------------------
 
-function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function when(file: LibraryFile): string {
-  return relTime(file.added_at ?? new Date(file.modified * 1000).toISOString())
-}
-
 function rowMeta(file: LibraryFile): string {
-  return [file.added_by ?? t('work.library.unknownSource'), when(file), fmtBytes(file.bytes)].join(' · ')
+  return [file.added_by ?? t('work.library.unknownSource'), relTime(file.added_at), fmtBytes(file.bytes)].join(' · ')
+}
+
+function folderMeta(folder: LibraryFolder): string {
+  return t('work.library.folderMeta', {
+    n: folder.count,
+    when: relTime(new Date(folder.modified * 1000).toISOString()),
+  })
 }
 
 // 行的身份（和 v-for 的 key 同义）：路径。同名不覆盖，所以路径唯一。写成具名函数而
@@ -554,6 +600,8 @@ function read(file: LibraryFile) {
           </div>
         </div>
 
+        <LibraryCrumbs v-if="inFolder" :dir="dir" :root="t('navigation.project.library')" @go="goTo" />
+
         <div v-if="loading && !anything" class="py-8 text-center" role="status" :aria-label="t('work.library.loading')">
           <v-progress-circular indeterminate size="28" color="primary" />
         </div>
@@ -586,7 +634,32 @@ function read(file: LibraryFile) {
             item-role="listitem"
           >
             <template #item="{ item }">
-              <div v-if="item.doc" class="library-row" @contextmenu="rowMenu.open(item.key, $event)">
+              <div v-if="item.folder" class="library-row" @contextmenu="rowMenu.open(item.key, $event)">
+                <button type="button" class="library-row__open" @click="goTo(item.folder.path)">
+                  <v-icon icon="mdi-folder-outline" size="20" class="library-row__icon" />
+                  <span class="library-row__id">
+                    <span class="library-row__name t-body">{{ item.folder.name }}</span>
+                    <span class="t-meta c-faint">{{ folderMeta(item.folder) }}</span>
+                  </span>
+                </button>
+                <AdaptiveMenu
+                  v-bind="rowMenu.bind(item.key)"
+                  :actions="folderActions(item.folder)"
+                  :title="item.folder.name"
+                >
+                  <template #activator="{ props: menuProps }">
+                    <BaseButton
+                      v-bind="menuProps"
+                      icon="mdi-dots-horizontal"
+                      size="sm"
+                      class="tap-target"
+                      :loading="busy === item.folder.path"
+                      :aria-label="t('work.library.actionsOf', { name: item.folder.name })"
+                    />
+                  </template>
+                </AdaptiveMenu>
+              </div>
+              <div v-else-if="item.doc" class="library-row" @contextmenu="rowMenu.open(item.key, $event)">
                 <button type="button" class="library-row__open" @click="openDoc(item.doc.id)">
                   <v-icon icon="mdi-file-document-edit-outline" size="20" class="library-row__icon" />
                   <span class="library-row__id">
@@ -619,11 +692,15 @@ function read(file: LibraryFile) {
                 <button type="button" class="library-row__open" @click="open(item.file)">
                   <v-icon :icon="KIND_ICONS[kindOf(item.file.path)]" size="20" class="library-row__icon" />
                   <span class="library-row__id">
-                    <span class="library-row__name t-body">{{ item.file.path }}</span>
+                    <span class="library-row__name t-body">{{ fileName(item.file) }}</span>
                     <span class="t-meta c-faint">{{ rowMeta(item.file) }}</span>
                   </span>
                 </button>
-                <AdaptiveMenu v-bind="rowMenu.bind(item.key)" :actions="fileActions(item.file)" :title="item.file.path">
+                <AdaptiveMenu
+                  v-bind="rowMenu.bind(item.key)"
+                  :actions="fileActions(item.file)"
+                  :title="fileName(item.file)"
+                >
                   <template #activator="{ props: menuProps }">
                     <BaseButton
                       v-bind="menuProps"
@@ -631,7 +708,7 @@ function read(file: LibraryFile) {
                       size="sm"
                       class="tap-target"
                       :loading="busy === item.file.path"
-                      :aria-label="t('work.library.actionsOf', { name: item.file.path })"
+                      :aria-label="t('work.library.actionsOf', { name: fileName(item.file) })"
                     />
                   </template>
                 </AdaptiveMenu>
@@ -640,6 +717,13 @@ function read(file: LibraryFile) {
           </VirtualList>
         </ul>
 
+        <BaseEmptyState
+          v-else-if="inFolder && !loading"
+          size="inline"
+          align="center"
+          class="library__empty"
+          :title="t('work.library.folderEmpty')"
+        />
         <!-- Files exist but the search/type filter hid them: say "filtered out",
              distinct from "no files yet", and offer one-click clear (§8.1). -->
         <BaseEmptyState
@@ -665,53 +749,18 @@ function read(file: LibraryFile) {
       </section>
 
       <!-- 这一份：桌面上在右边一栏，手机上是整一页。 -->
-      <section v-if="selected" class="library__detail" :class="{ 'library__detail--phone': !mdAndUp }">
-        <header class="library__detail-head">
-          <h2 v-if="mdAndUp" class="t-title library__detail-name">{{ selected.path }}</h2>
-          <p class="t-meta c-faint library__detail-meta">
-            {{ selected.added_by ?? t('work.library.unknownSource') }} · {{ when(selected) }} ·
-            {{ fmtBytes(selected.bytes) }}
-            <template v-if="selected.room">
-              · {{ t('work.library.from') }}
-              <router-link :to="{ name: 'workspace-topic', params: { projectId, topicId: selected.room.id } }">{{
-                t('work.topic.quoted', { title: topicTitle(selected.room) })
-              }}</router-link>
-            </template>
-          </p>
-          <p v-if="selected.references || selected.replaced" class="t-meta c-faint library__detail-meta">
-            <template v-if="selected.references">{{
-              t('work.library.references', { n: selected.references })
-            }}</template>
-            <template v-if="selected.references && selected.replaced"> · </template>
-            <template v-if="selected.replaced">{{
-              t('work.library.replacedCount', { n: selected.replaced })
-            }}</template>
-          </p>
-          <div v-if="mdAndUp" class="library__detail-actions">
-            <BaseButton kind="primary" size="sm" prepend-icon="mdi-download-outline" @click="download(selected)">
-              {{ t('work.library.download') }}
-            </BaseButton>
-            <BaseButton
-              kind="secondary"
-              size="sm"
-              prepend-icon="mdi-file-replace-outline"
-              :loading="busy === selected.path"
-              @click="pickReplacement(selected)"
-            >
-              {{ t('work.library.replace') }}
-            </BaseButton>
-            <BaseButton size="sm" prepend-icon="mdi-close" :aria-label="t('work.library.close')" @click="close">
-              {{ t('work.library.close') }}
-            </BaseButton>
-          </div>
-        </header>
-        <div class="library__preview">
-          <FileBytesPreview :filename="selected.path" :source="`${selected.path}#${revision}`" :read="read(selected)" />
-        </div>
-        <div v-if="!mdAndUp" class="library__bar">
-          <BaseButton kind="primary" block @click="download(selected)">{{ t('work.library.download') }}</BaseButton>
-        </div>
-      </section>
+      <LibraryFileDetail
+        v-if="selected"
+        :project-id="projectId"
+        :file="selected"
+        :wide="mdAndUp"
+        :revision="revision"
+        :busy="busy === selected.path"
+        :read="read(selected)"
+        @download="download(selected)"
+        @replace="pickReplacement(selected)"
+        @close="close"
+      />
     </div>
 
     <LibraryVersionsDialog
@@ -738,14 +787,27 @@ function read(file: LibraryFile) {
          messages: those references will stop opening, so ask before it happens. -->
     <ConfirmDialog
       :model-value="!!confirming"
-      :title="t('work.library.deleteTitle', { name: confirming?.path ?? '' })"
+      :title="t('work.library.deleteTitle', { name: confirming ? leafOf(confirming.path) : '' })"
       :confirm-label="t('work.library.delete')"
       danger
       @update:model-value="confirming = null"
       @confirm="confirmRemove"
     >
-      {{ t('work.library.deleteBody') }}
+      {{
+        confirming && 'count' in confirming
+          ? t('work.library.deleteFolderBody', { n: confirming.count })
+          : t('work.library.deleteBody')
+      }}
     </ConfirmDialog>
+
+    <LibraryNameDialog
+      :model-value="!!naming.pending.value"
+      v-bind="naming.dialog.value"
+      :loading="naming.moving.value"
+      :error="naming.error.value"
+      @update:model-value="naming.pending.value = null"
+      @submit="naming.submit"
+    />
   </AppPage>
   <ConfirmDialog
     :model-value="!!confirmingDoc"
@@ -898,70 +960,6 @@ function read(file: LibraryFile) {
 .library__empty {
   padding: 32px 0;
   text-align: center;
-}
-
-.library__detail {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  width: 480px;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--line);
-}
-
-.library__detail--phone {
-  flex: 1 1 auto;
-  width: auto;
-  border-left: 0;
-}
-
-.library__detail-head {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 4px;
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.library__detail--phone .library__detail-head {
-  padding: 10px 16px;
-}
-
-.library__detail-name {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.library__detail-meta {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.library__detail-meta a {
-  color: var(--accent-ink);
-  text-decoration: none;
-}
-
-.library__detail-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 4px 0 0 -8px;
-}
-
-.library__preview {
-  flex: 1 1 auto;
-  min-height: 0;
-  background: var(--canvas);
-}
-
-.library__bar {
-  flex: none;
-  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
-  background: var(--surface);
 }
 
 /* 手指点得中（设计系统 §10.1）。筛选是一排 28px 的小药丸、搜索框只有 40px 高，

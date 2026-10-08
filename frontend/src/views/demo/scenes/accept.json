@@ -39,7 +39,7 @@
           "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "你提的需求，由你验收",
+            "focus": "手机上改成了单列，宽屏仍是两列",
             "change_subject": "feat(signup): new sign-up page",
             "pr_number": 214,
             "pr_url": "#",
@@ -113,7 +113,7 @@
           "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "你提的需求，由你验收",
+            "focus": "手机上改成了单列，宽屏仍是两列",
             "change_subject": "feat(signup): new sign-up page",
             "pr_number": 214,
             "pr_url": "#",
@@ -240,7 +240,7 @@
           "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "你提的需求，由你验收",
+            "focus": "手机上改成了单列，宽屏仍是两列",
             "change_subject": "feat(signup): new sign-up page",
             "pr_number": 214,
             "pr_url": "#",
@@ -309,7 +309,7 @@
           "open": true,
           "card": {
             "reviewer_handle": "王长鑫",
-            "routing_reason": "改了登录流程，按项目规则需要两人批准",
+            "focus": "登录流程改了，确认旧账号还能正常登录",
             "change_subject": "fix(auth): keep session after password reset",
             "pr_number": 219,
             "pr_url": "#",

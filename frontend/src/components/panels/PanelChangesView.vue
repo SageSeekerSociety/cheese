@@ -145,6 +145,47 @@ const moreActions = computed<MenuAction[]>(() => {
 // the ☰ toggle hides the list for a wider editor. 手机上一屏只放得下一样东西：列表默认
 // 收着，打开时盖满这一格，点一份文件就收起来露出它。
 const fileListOpen = ref(mdAndUp.value)
+
+// 文件树那一列的宽度：拖它和编辑区之间那条线来改，记在这个浏览器里。路径长的仓库
+// 一列 150px 只剩「old…」「wee…」，认不出是哪个文件。
+const TREE_WIDTH_KEY = 'cheesex.changesTreeWidth'
+const TREE_WIDTH = { min: 140, max: 520, initial: 220 }
+function clampTreeWidth(px: number): number {
+  return Math.round(Math.min(TREE_WIDTH.max, Math.max(TREE_WIDTH.min, px)))
+}
+function readTreeWidth(): number {
+  try {
+    const stored = Number(localStorage.getItem(TREE_WIDTH_KEY))
+    return stored ? clampTreeWidth(stored) : TREE_WIDTH.initial
+  } catch {
+    return TREE_WIDTH.initial
+  }
+}
+const treeWidth = ref(readTreeWidth())
+function setTreeWidth(px: number) {
+  treeWidth.value = clampTreeWidth(px)
+  try {
+    localStorage.setItem(TREE_WIDTH_KEY, String(treeWidth.value))
+  } catch {
+    // 存不下只是下次回到默认宽度。
+  }
+}
+function startTreeDrag(e: MouseEvent) {
+  const body = (e.currentTarget as HTMLElement).parentElement
+  if (!body) return
+  const left = body.getBoundingClientRect().left
+  const move = (ev: MouseEvent) => setTreeWidth(ev.clientX - left)
+  const stop = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', stop)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', stop)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
 function pickFile(path: string) {
   if (!mdAndUp.value) fileListOpen.value = false
   emit('select-file', path)
@@ -347,9 +388,17 @@ const fileRows = computed(() =>
             :active-path="props.openPath"
             :reveal-tick="props.revealTick"
             :cover="!mdAndUp"
+            :width="treeWidth"
             :empty-label="props.showAll ? t('work.room.changes.noFiles') : t('work.room.changes.noChanges')"
             @select="pickFile"
             @toggle-dir="emit('toggle-dir', $event)"
+          />
+          <div
+            v-if="fileListOpen && mdAndUp"
+            class="tree-resizer"
+            :title="t('work.topic.resize')"
+            @mousedown.prevent="startTreeDrag"
+            @dblclick="setTreeWidth(TREE_WIDTH.initial)"
           />
           <div class="file-editor">
             <!-- 文档：画出这一版，再把它自己带的修订列在旁边。排在差异前面，因为
@@ -650,6 +699,25 @@ const fileRows = computed(() =>
 .changes-bar--phone .seg__btn {
   padding: 2px 8px;
   white-space: nowrap;
+}
+/* 文件树和编辑区之间那条线：看得见的 1px，能抓的左右各多 4px（和对话、面板之间那条
+   同一种画法）。 */
+.tree-resizer {
+  position: relative;
+  z-index: var(--z-raised);
+  flex: 0 0 1px;
+  margin-left: -1px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.tree-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+}
+.tree-resizer:hover {
+  background: var(--faint);
 }
 .file-editor {
   flex: 1 1 auto;
