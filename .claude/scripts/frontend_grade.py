@@ -54,6 +54,10 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     reaches the API through a chain the regex misses is graded one letter too
     high; a `reach` computed over `.ts` and `.vue` only has the same blind
     spot. `@/` is resolved against `frontend/src`, matching `vite.config.ts`.
+    Both spellings of an edge are read — `import` and `export … from` — and
+    both are regexes over the whole file, so a specifier-shaped string in a
+    comment, a template or a string literal counts as an edge too. An edge
+    that is really spelled some third way is still missed.
   - A store is recognised by the `useXStore` naming convention. One spelled
     another way is invisible here.
   - Comments are stripped before the router test: a file that mentions
@@ -79,6 +83,15 @@ from typing import Any
 STANDALONE = "A"
 
 VUE_IMPORT = re.compile(r"""import\s+(type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]""", re.S)
+#: `export … from '…'`, the other spelling of an edge. The clause between
+#: `export` and `from` is captured whole because a braces list decides its own
+#: type-onlyness specifier by specifier.
+VUE_EXPORT_FROM = re.compile(
+    r"""export\s+(type\s+)?(\*|\*\s+as\s+[\w$]+|\{[^}]*\})\s*from\s*['"]([^'"]+)['"]""",
+    re.S,
+)
+#: One entry of an `export { … } from` list, if it is the type-only kind.
+_TYPE_SPECIFIER = re.compile(r"\s*type\s+\S")
 VUE_DYN_IMPORT = re.compile(r"""import\(\s*['"]([^'"]+)['"]\s*\)""")
 SCRIPT_BLOCK = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -153,19 +166,48 @@ def resolve_spec(spec: str, importer: Path, src: Path) -> Path | None:
 
 
 def specifiers(text: str) -> list[tuple[bool, str]]:
-    """Every import specifier in `text`, as `(is_type_only, specifier)`."""
+    """Every edge in `text`, as `(is_type_only, specifier)`.
+
+    Imports and re-exports both: `export { x } from './x'` and `export * from
+    './x'` pull the target into the module's runtime graph exactly as an import
+    does, which is how an index barrel carries a chain. Reading only `import`
+    made the barrel's edge invisible, and a file that fetched through one was
+    graded A — the same shape of miss as the router test's substring match.
+    """
     out = [(bool(kind), spec) for kind, spec in VUE_IMPORT.findall(text)]
+    out += [
+        (_export_is_type_only(kind, clause), spec)
+        for kind, clause, spec in VUE_EXPORT_FROM.findall(text)
+    ]
     out += [(False, spec) for spec in VUE_DYN_IMPORT.findall(text)]
     return out
+
+
+def _export_is_type_only(leading_type: str | None, clause: str) -> bool:
+    """Is this `export … from` erased at build time?
+
+    `export type { A } from`, `export { type A } from` and `export type * from`
+    are. `export *` and `export * as ns` are not — a module namespace is a
+    runtime value — and a mixed list is not either: it is a runtime edge
+    through the specifiers that are not marked `type`.
+    """
+    if leading_type:
+        return True
+    if not clause.startswith("{"):
+        return False
+    listed = [part for part in clause[1:-1].split(",") if part.strip()]
+    return bool(listed) and all(_TYPE_SPECIFIER.match(part) for part in listed)
 
 
 def api_reach(root: Path) -> set[Path]:
     """Modules under `frontend/src` whose import graph reaches an API root.
 
     Direct reach is a value import of an API root or a bare `fetch`/`axios`;
-    the rest is closed transitively over `.ts` and `.vue` edges. A type-only
-    import is not an edge: it is erased at build time, so a module that only
-    declares a type from the API layer is not a module that reaches it.
+    the rest is closed transitively over `.ts` and `.vue` edges. An import and
+    a re-export (`export { … } from`, `export * from`) are both edges — an
+    index barrel that re-exports a module which fetches is how a chain gets
+    past it — but a type-only one is not: it is erased at build time, so a
+    module that only declares a type from the API layer does not reach it.
 
     `root` is resolved first. Every edge is a `resolve_spec` result, which is
     absolute, and an absolute path is never `relative_to` a relative root: with

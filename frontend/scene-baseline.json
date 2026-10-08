@@ -89,7 +89,6 @@
     "src/views/spaces/detail/settings/IndexView.vue",
     "src/views/spaces/detail/settings/SpaceGuidanceView.vue",
     "src/views/spaces/detail/settings/SpaceMaterialsView.vue",
-    "src/views/tasks/detail/Brief.vue",
     "src/views/tasks/detail/BriefView.vue",
     "src/views/tasks/detail/InsightsView.vue",
     "src/views/tasks/detail/RosterView.vue",

@@ -246,7 +246,6 @@
     "src/views/tasks/components/TaskEligibilityAlerts.vue",
     "src/views/tasks/components/TaskInheritance.vue",
     "src/views/tasks/components/TeamSelectionDialog.vue",
-    "src/views/tasks/detail/Brief.vue",
     "src/views/tasks/detail/BriefView.vue",
     "src/views/tasks/detail/InsightsView.vue",
     "src/views/tasks/detail/RosterView.vue",

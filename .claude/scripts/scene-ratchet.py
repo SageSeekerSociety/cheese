@@ -1654,10 +1654,53 @@ def self_test() -> int:
         check("a comment that names vue-router is not a dependency",
               run_cli(root, baseline_path).returncode, 0)
 
+        # -- 15. an edge spelled `export … from` ------------------------------
+        #    An index barrel carries the chain: `index.ts` re-exports the
+        #    composable that fetches and the page imports the barrel. Reading
+        #    only `import` left that edge out, so such a page was accepted as
+        #    "new and standalone-ready" — the one verdict that lets a fetching
+        #    file into the frozen set. `views/tasks/composables/index.ts` is
+        #    the real one, and `views/tasks/detail/Brief.vue` the real page.
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/SettleView.vue": "",
+            "frontend/src/views/pages/composables/index.ts":
+                "export { useThing } from './useThing'\n",
+            "frontend/src/views/pages/composables/useThing.ts":
+                "import { api } from '@/api'\nexport const useThing = () => api.get()\n",
+            "frontend/src/views/Settle.vue": (
+                '<script setup lang="ts">\n'
+                "import { useThing } from '@/views/pages/composables'\n"
+                "useThing()\n</script>\n<template><div /></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a page that fetches through a re-export barrel is not ready",
+              result.returncode, 1)
+        check("and it is named", "src/views/Settle.vue: C" in result.stdout, True)
+
+        # the control: the same barrel re-exporting only a type is erased, so
+        # the page that names the type is still standalone-ready
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/pages/composables/index.ts":
+                "export type { Thing } from './useThing'\n",
+            "frontend/src/views/Settle.vue": (
+                '<script setup lang="ts">\n'
+                "import type { Thing } from '@/views/pages/composables'\n"
+                "defineProps<{ thing: Thing | null }>()\n</script>\n"
+                "<template><div /></template>\n"
+            ),
+        })
+        check("a barrel that re-exports only a type is not an edge",
+              run_cli(root, baseline_path).returncode, 0)
+
         for rel in (
             "frontend/src/views/Settle.vue",
             "frontend/src/views/SettleView.vue",
             "frontend/src/components/ChildFetch.vue",
+            "frontend/src/views/pages/composables/index.ts",
+            "frontend/src/views/pages/composables/useThing.ts",
         ):
             (root / rel).unlink(missing_ok=True)
         _fixture(root)
@@ -1770,7 +1813,8 @@ def self_test() -> int:
         "V-name the import map lacks — and two more — a trusted name claimed by "
         "a local binding, a view mentioned only inside an attribute value — "
         "and two the router decides — a link the template draws against a "
-        "comment that only names the package — "
+        "comment that only names the package — and two the barrel decides — a "
+        "re-export that carries the chain against one that carries only a type — "
         "with the controls that stay green, "
         "debt that is grandfathered, debt paid down, a type-only import that "
         "is not reach, --update refusing both edits, and four ways of not being able "

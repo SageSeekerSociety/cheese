@@ -64,7 +64,7 @@ covers:
 
 今天就能单独跑的那 2 页：`views/404.vue`、`views/user/settings/General.vue`。
 
-2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**。
+2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**；2026-10-08 起是 **101 个**（`views/tasks/detail/Brief.vue` 经 barrel 够到 API，改成 container，冻结转到 `BriefView.vue`，见[这份清单怎么来的](#how)）。
 
 ## 从今天起它是一条闸门 {#ratchet}
 
@@ -316,9 +316,10 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 数字不是手数的：`.claude/scripts/frontend_grade.py` 里的 `grade_frontend` 逐文件跑一遍，取它的等级和理由；页面清单取自 `src/router/` 的 import 图（`scene-ratchet.py --list` 能把两者一起打出来——这一页的两张表就是它生成的）。看板上的 A/B/C/D 是**全部 435 个 `.vue`** 的口径，这里只切出「场景」这一层（路由页 + 面板），所以和看板对不上是正常的。
 
-两个已知偏差写在这里，免得被当成事实用：
+三个已知偏差写在这里，免得被当成事实用：
 
 - **`import type` 那条边已经修掉（2026-09-30）。** 规约说 `import type` 不算（构建时就被抹掉，见[架构指标](/dev/arch-metrics#metrics)）；但 `lib/previewSession.ts` 整个文件只有一句 `import type { PreviewSession } from '../api'`，它到 `api.ts` 的那条边一度仍然进了传递闭包，于是 `PanelPreviewView` 被判成 C——它自己一行取数代码都没有。现在这条边不进图了。但同一次里还查出一处**过宽**：传递依赖只跟 `.ts`，`.vue` 子组件那条链被漏掉，于是「自己干净、子组件取数」的十页被判成 A 并冻进基线。两处都在 2026-09-30 修掉，基线和这一页的数字按修完的结果重算（能单独跑 20 → 10）。
+- **`export … from` 那条边已经修掉（2026-10-08）。** 依赖原来只认字面量 `import`，经 index barrel 再导出的文件就少一条边。实例是 `views/tasks/detail/Brief.vue`：它经 `views/tasks/composables/index.ts` 够到 `useTaskAttachments.ts` 里的 `@/api`，却被判成 A、冻在 `ready` 里。现在 `export { … } from` / `export * from` 和 `import` 一样算一条边（`export type` 不算），它落进 container，冻结转到同目录的 `BriefView.vue`。同一版里还修了模板那半边：画 `<router-view>` / `<router-link>` 算 D，注释里提到 `vue-router` 不算依赖。
 - **正则不是编译器。** 解析不出来的模块说明符当成外部依赖，不当成一条边，所以真隔着一条解析不出来的链在取数的组件会被判高一档（A 或 B）。
 
 ## 下一步 {#next}
