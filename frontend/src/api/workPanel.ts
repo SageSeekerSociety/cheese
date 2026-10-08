@@ -1,7 +1,6 @@
 import type {
   FileContent,
   FileSource,
-  GitCommit,
   ListPayload,
   PreviewInfo,
   TopicWorkSummary,
@@ -41,15 +40,6 @@ export function getStepOutput(topicId: string, blockId: string): Promise<{ outpu
   return request<{ output: string; bytes: number }>(
     `/topics/${encodeURIComponent(topicId)}/transcript/${encodeURIComponent(blockId)}/output`
   )
-}
-
-export function getGitLog(
-  projectId: string,
-  topicId?: string | null,
-  taskId?: string | null
-): Promise<ListPayload<GitCommit>> {
-  const t = `?${new URLSearchParams({ ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
-  return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
 }
 
 export function getGitDiff(

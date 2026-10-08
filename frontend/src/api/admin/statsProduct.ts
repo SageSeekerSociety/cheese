@@ -1,4 +1,4 @@
-import type { StatsUsage } from '../types/statsUsage'
+import type { StatsUsage } from '../../types/statsUsage'
 import type { StatsFeedback, StatsPerformance, StatsPlatform } from './stats'
 
 import { request } from '../http'
