@@ -394,6 +394,36 @@
       "eta": "预计用尽",
       "note": "「已耗尽 / 快烧完 / 不限量」是三个互斥集合 —— unlimited 是**没有 grant**，不是额度用完了。燃烧速率从 resource_usage 推（compute_grants 没有扣减账本），不是余额差分。预计用尽是线性外推，unlimited 与零燃烧都画破折号。"
     },
+    "pool": {
+      "title": "Claude 账号池",
+      "note": "读的是计量代理写在用量账本旁边的一份快照（accounts.json），不是数据库 —— 订阅通路身后的账号只活在跑代理的那台机器上。状态是代理自己的判定：冷却中是等得到解冻时刻的限流，已停用等不来、要人工重置。快照会旧，所以旧了会注明它写于何时。",
+      "state": {
+        "available": "可用",
+        "cooling": "冷却中",
+        "disabled": "已停用",
+        "unknown": "状态未知"
+      },
+      "coolingUntil": "冷却中，{time} 恢复",
+      "failures": "连续失败 {n} 次",
+      "allAvailable": "{n} 张账号都可用",
+      "allCooling": "{n} 张账号全部冷却中",
+      "counts": "{n} 张账号：{parts}",
+      "coolingCount": "{n} 张冷却中",
+      "disabledCount": "{n} 张已停用",
+      "unknownCount": "{n} 张状态未知",
+      "earliest": "最早 {time} 恢复",
+      "needsReset": "已停用的要人工重置",
+      "separator": "、",
+      "tailSeparator": "，",
+      "stale": "这份快照写于 {age}",
+      "reason": {
+        "notConfigured": "这台部署没接订阅版计量代理，账号池不在看板上",
+        "missing": "计量代理还没写下账号池快照（可能没在跑）",
+        "unreadable": "账号池快照读不出来",
+        "malformed": "账号池快照的内容不是能读的形状",
+        "unknown": "账号池快照读不出来"
+      }
+    },
     "extras": {
       "title": "配额与缺口",
       "warmStates": "常驻机器按状态",
