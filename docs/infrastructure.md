@@ -292,20 +292,24 @@ healthy but wrong is rolled back by nothing — it keeps serving until someone
 releases a commit they name:
 
 ```bash
-gh workflow run deploy-dev.yml --ref main -f ref=<sha>
+gh workflow run deploy-dev.yml --ref main -f ref=<full sha>
 ```
 
-`--ref main` takes the workflow from `main`; `ref` is the commit to release. The
-SHA never has to exist as a ref of its own — `gh workflow run --ref <sha>`
-answers "No ref found", which is why the commit is named here rather than passed
-as the ref. Name any commit whose images are in ghcr. A main commit whose build
-went through has a full set — the images whose sources did not change are copied
-forward from the previous tag — so the merge before the bad one works.
+`--ref main` takes the workflow from `main`; `ref` is the commit to release, in
+full, so the SHA never has to exist as a ref of its own — `gh workflow run --ref
+<sha>` answers "No ref found", which is why the commit is named here rather than
+passed as the ref.
 
-A dispatch that leaves `rebuilt` empty is a manual release: it takes the
+Name a commit whose images are in ghcr and whose CI is still green. A main
+commit whose build went through has a full image set, since the images whose
+sources did not change are copied forward from the previous tag. The dispatch
+does not go through the eligibility job's image and CI gate, and it takes the
 skip=false path, so the "keep automatic deployments from going backwards" guard
-does not apply, and the commit's CI is not re-checked. The run is named
-`Deploy <sha>`.
+does not apply. That gate is not skipped altogether, though: after the app
+release, the metering-proxy step runs `check-auto-deploy.py --require-ci` on the
+same commit, and a commit whose CI has stopped being successful fails there. The
+app is already back on the named commit at that point, so this is loud rather
+than silent. The run is named `Deploy <sha>`.
 
 To see what dev runs now, on the box:
 
@@ -662,12 +666,11 @@ Changing backend env (e.g. enabling an OAuth provider):
 3. **The pull will be denied** — the box holds no ghcr login outside workflow
    runs (`deploy-dev.yml` logs in per-run and logs out after). The cheapest fix
    is not to run the script by hand at all: **dispatch `Deploy (dev/test box)`
-   manually** (Actions → that workflow → Run workflow → `main`). It logs into
-   ghcr, runs this same script on the self-hosted runner that lives ON the box,
-   and reads the very `.env` you just edited. Check first that `main`'s HEAD is
-   the sha you want redeployed, since a dispatch deploys the ref's HEAD rather
-   than what is currently running, and that HEAD is not a docs-only commit (the
-   `Skip docs-only commits` step would no-op the deploy).
+   manually** (Actions → that workflow → Run workflow → `main`), naming `$SHA`
+   from step 2 in `ref`. It logs into ghcr, runs this same script on the
+   self-hosted runner that lives ON the box, and reads the very `.env` you just
+   edited. Leaving `ref` empty would deploy `main`'s HEAD instead — only what you
+   want if that is the sha you are re-deploying.
 
    To stay on the command line, log in and re-run step 2 unchanged:
 
