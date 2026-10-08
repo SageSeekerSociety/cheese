@@ -846,10 +846,6 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
 import type { LibraryFile } from './lib/libraryApi'
 export type { LibraryFile }
 
-export function listProjectLibrary(projectId: string): Promise<ListPayload<LibraryFile>> {
-  return request<ListPayload<LibraryFile>>(`/projects/${encodeURIComponent(projectId)}/library`)
-}
-
 /** 一份资料的字节。这条端点一律按下载发，所以 `downloadFile` 补在末尾的
  *  `download=true` 在这里没有对应的参数，后端不看它。 */
 export function libraryFileRawUrl(projectId: string, path: string): string {

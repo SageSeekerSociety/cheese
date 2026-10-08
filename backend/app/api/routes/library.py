@@ -123,6 +123,7 @@ async def list_library(
     db: DbSession,
     resolver: ActorResolverDep,
     dir: str = "",
+    flat: bool = False,
     q: str = "",
     kind: str | None = None,
     cursor: str | None = None,
@@ -130,8 +131,9 @@ async def list_library(
 ) -> dict:
     """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。一页一页地给。
 
-    不给 `q` / `kind` 时是 `dir` 那一层：文件夹在前，然后是文件；给了就是整个资料
-    库里对得上的文件。`next` 是下一页的游标，没有下一页时为 null。
+    不给 `flat` / `q` / `kind` 时是 `dir` 那一层：文件夹在前，然后是文件；给了就是
+    整个资料库里对得上的文件（只给 `flat` 是全部）。`next` 是下一页的游标，
+    没有下一页时为 null。
 
     Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
     room that has never seen that file."""
@@ -142,6 +144,7 @@ async def list_library(
         project_id,
         rooms,
         dir=dir.strip("/"),
+        flat=flat,
         q=q.strip(),
         kind=kind,
         after=cursor,

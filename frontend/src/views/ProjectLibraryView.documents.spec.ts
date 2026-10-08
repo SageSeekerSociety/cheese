@@ -15,18 +15,21 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 import { setLocale } from '../i18n'
 
+import { libraryFile, servesDocuments, servesLibrary } from '../test/fakeLibrary'
 import ProjectLibraryView from './ProjectLibraryView.vue'
 
 vi.mock('../api', () => ({
-  listProjectLibrary: vi.fn(),
   deleteLibraryFile: vi.fn(),
   downloadFile: vi.fn(),
   libraryFileRawUrl: () => '',
 }))
 vi.mock('../lib/libraryApi', () => ({
+  listProjectLibrary: vi.fn(),
   uploadLibraryFile: vi.fn(),
   replaceLibraryFile: vi.fn(),
   libraryFileBytes: vi.fn(),
+  getLibraryFile: vi.fn(),
+  listLibraryFolders: vi.fn(async () => []),
 }))
 vi.mock('../api/projectDocuments', () => ({
   listProjectDocuments: vi.fn(),
@@ -53,7 +56,7 @@ vi.mock('../components/work/PanelDocHost.vue', async () => {
   }
 })
 
-const { listProjectLibrary } = await import('../api')
+const { listProjectLibrary } = await import('../lib/libraryApi')
 const { createProjectDocument, deleteDocument, getDocumentAbout, listProjectDocuments, searchProjectDocuments } =
   await import('../api/projectDocuments')
 
@@ -95,25 +98,14 @@ function doc(id: string, title: string, updated: string, extra: Partial<ProjectD
 beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
-  vi.mocked(listProjectLibrary).mockResolvedValue({
-    data: [
-      {
-        path: '预算表.xlsx',
-        bytes: 120,
-        modified: Date.parse('2026-09-20T10:00:00Z') / 1000,
-        added_by: 'alice',
-        added_at: '2026-09-20T10:00:00Z',
-        room: null,
-        replaced: 0,
-        references: 0,
-      },
-    ],
-    total: 1,
-  })
-  vi.mocked(listProjectDocuments).mockResolvedValue({
-    data: [doc('d1', '竞品定价对比', '2026-09-21T10:00:00Z'), doc('d0', '旧方案', '2026-09-19T10:00:00Z')],
-    total: 2,
-  })
+  const files = [libraryFile('预算表.xlsx', { bytes: 120, modified: Date.parse('2026-09-20T10:00:00Z') / 1000 })]
+  vi.mocked(listProjectLibrary).mockImplementation(servesLibrary(() => files))
+  vi.mocked(listProjectDocuments).mockImplementation(
+    servesDocuments(() => [
+      doc('d1', '竞品定价对比', '2026-09-21T10:00:00Z'),
+      doc('d0', '旧方案', '2026-09-19T10:00:00Z'),
+    ])
+  )
   vi.mocked(searchProjectDocuments).mockImplementation(async (_, query) => ({ query, library: [], rooms: [] }))
   vi.mocked(deleteDocument).mockResolvedValue({})
   vi.mocked(getDocumentAbout).mockImplementation(async (id) => doc(id, '', '2026-09-22T10:00:00Z'))

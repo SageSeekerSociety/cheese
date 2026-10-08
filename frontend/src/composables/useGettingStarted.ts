@@ -11,7 +11,8 @@ import type { ProjectMemberRow } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { getForgeConnection, listProjectLibrary } from '../api'
+import { getForgeConnection } from '../api'
+import { listProjectLibrary } from '../lib/libraryApi'
 import { myHandle } from '../me'
 
 export type GettingStartedStepKey = 'talk' | 'materials' | 'repo' | 'people'
@@ -105,7 +106,7 @@ export function useGettingStarted(opts: GettingStartedOptions) {
     const pid = projectId.value
     if (!pid) return
     try {
-      const page = await listProjectLibrary(pid)
+      const page = await listProjectLibrary(pid, { flat: true, limit: 1 })
       if (projectId.value === pid) libraryCount.value = page.data.length
     } catch {
       // 问不到就照「还没有」算：这一步显示成没做，人去资料库看一眼也不吃亏，

@@ -100,6 +100,13 @@ def test_searching_and_filtering_cover_the_whole_library(client):
     ]
     sheets = _pages(client, url, kind="sheet")
     assert [row["path"] for page in sheets for row in page] == ["合同/2026/报价.xlsx"]
+    everything = _pages(client, url, flat="true", limit=3)
+    assert [row["path"] for page in everything for row in page] == [
+        "README",
+        "照片.png",
+        "合同/报价说明.md",
+        "合同/2026/报价.xlsx",
+    ]
     other = _pages(client, url, kind="other")
     assert [row["path"] for page in other for row in page] == ["README"]
     assert client.get(url, params={"kind": "video"}).status_code == 422

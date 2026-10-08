@@ -45,7 +45,7 @@ vi.mock('virtua/vue', async () => {
 })
 
 vi.mock('../api/projectDocuments', () => ({
-  listProjectDocuments: vi.fn(async () => ({ data: [] })),
+  listProjectDocuments: vi.fn(async () => ({ data: [], next: null })),
   searchProjectDocuments: vi.fn(async (_: string, query: string) => ({ query, library: [], rooms: [] })),
   createProjectDocument: vi.fn(),
   deleteDocument: vi.fn(),
@@ -53,19 +53,23 @@ vi.mock('../api/projectDocuments', () => ({
 }))
 
 vi.mock('../api', () => ({
-  listProjectLibrary: vi.fn(),
   deleteLibraryFile: vi.fn(),
   downloadFile: vi.fn(),
   libraryFileRawUrl: (projectId: string, path: string) => `/api/projects/${projectId}/library/raw?path=${path}`,
 }))
 
 vi.mock('../lib/libraryApi', () => ({
+  listProjectLibrary: vi.fn(),
   uploadLibraryFile: vi.fn(),
   replaceLibraryFile: vi.fn(),
   libraryFileBytes: vi.fn(),
+  getLibraryFile: vi.fn(),
+  listLibraryFolders: vi.fn(async () => []),
 }))
 
-const { listProjectLibrary } = await import('../api')
+const { listProjectLibrary } = await import('../lib/libraryApi')
+
+import { libraryFile, servesLibrary } from '../test/fakeLibrary'
 
 import ProjectLibraryView from './ProjectLibraryView.vue'
 
@@ -92,22 +96,13 @@ beforeAll(() => {
 })
 
 function makeFiles(n: number): LibraryFile[] {
-  return Array.from({ length: n }, (_, i) => ({
-    path: `报告-${i}.docx`,
-    bytes: 2048,
-    modified: 1758000000,
-    added_by: 'alice',
-    added_at: '2026-09-20T10:00:00Z',
-    room: null,
-    replaced: 0,
-    references: 0,
-  }))
+  return Array.from({ length: n }, (_, i) => libraryFile(`报告-${i}.docx`, { modified: 1758000000 - i }))
 }
 
 const Blank = defineComponent({ render: () => h('div') })
 
 async function mount(files: LibraryFile[]) {
-  vi.mocked(listProjectLibrary).mockResolvedValue({ data: files, total: files.length })
+  vi.mocked(listProjectLibrary).mockImplementation(servesLibrary(() => files))
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -136,7 +131,10 @@ beforeEach(() => {
 describe('文件不到门槛', () => {
   it('整列画出来，一份不少，也不碰 virtua', async () => {
     const { container } = await mount(makeFiles(VIRTUAL_LIST_CONTENT_THRESHOLD - 1))
-    expect(container.querySelectorAll('.library-row')).toHaveLength(VIRTUAL_LIST_CONTENT_THRESHOLD - 1)
+    // 一页一页地取：滚动容器还没被填满，取到底为止。
+    await waitFor(() =>
+      expect(container.querySelectorAll('.library-row')).toHaveLength(VIRTUAL_LIST_CONTENT_THRESHOLD - 1)
+    )
     expect(virtua.seen).toHaveLength(0)
   })
 })
@@ -145,8 +143,7 @@ describe('文件过了门槛', () => {
   it('整列交给 virtua（数据原样递过去），每一行仍是一个 li，操作按钮还在', async () => {
     const { container } = await mount(makeFiles(VIRTUAL_LIST_CONTENT_THRESHOLD + 50))
     // 滚动容器是模板 ref，挂完那一帧才落地（见 VirtualList 文件头），所以等它一拍。
-    await waitFor(() => expect(virtua.seen).not.toHaveLength(0))
-    expect(dataOf(0)).toHaveLength(VIRTUAL_LIST_CONTENT_THRESHOLD + 50)
+    await waitFor(() => expect(dataOf(-1)).toHaveLength(VIRTUAL_LIST_CONTENT_THRESHOLD + 50))
     // 外壳还是 li：虚拟化只省屏幕外的节点，不从无障碍树上切掉列表语义。
     expect(virtua.seen[0]!.item).toBe('li')
     // 行本身没变：打开按钮和 ⋯ 操作都在。

@@ -4,7 +4,8 @@
 
 - 一层一层地看（`dir`）：这一层直接装着的文件夹在前，然后是文件。文件夹是名字里
   `/` 前面那一段，按前缀从记录表里聚出来，带着里面有几份、最近一份什么时候放进来。
-- 平铺地找（`q` / `kind`）：整个资料库里名字对得上、类型对得上的文件。
+- 平铺地找（`flat`、`q` / `kind`）：整个资料库里名字对得上、类型对得上的文件，
+  不给条件就是全部，新放进来的在前。
 
 每一行带一个位置（`app.core.rank`），下一页从上一页最后一行的位置之后接着取。文档
 不在这里：它们在文档表里自己翻页，用的是同一种位置，资料库页把两串并成一张表。
@@ -168,6 +169,7 @@ async def page(
     rooms: dict[uuid.UUID, dict],
     *,
     dir: str = "",
+    flat: bool = False,
     q: str = "",
     kind: str | None = None,
     after: str | None = None,
@@ -175,11 +177,12 @@ async def page(
 ) -> tuple[list[dict], str | None]:
     """一页清单和下一页的游标（没有下一页时是 None）。
 
-    给了 `q` 或 `kind` 就是平铺地找，`dir` 不管；否则是 `dir` 这一层。"""
+    `flat`、或者给了 `q` / `kind`，就是整个资料库平铺地找，`dir` 不管；否则是
+    `dir` 这一层。"""
     if kind is not None and kind not in KINDS:
         raise UnprocessableEntityError(f"unknown kind: {kind}")
     cursor = rank.decode(after) if after else None
-    flat = bool(q) or kind is not None
+    flat = flat or bool(q) or kind is not None
     prefix = f"{dir}/" if dir and not flat else ""
     entries: list[dict] = []
     if not flat and (cursor is None or cursor.group == FOLDERS):
