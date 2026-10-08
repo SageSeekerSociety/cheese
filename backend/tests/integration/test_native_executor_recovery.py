@@ -121,7 +121,7 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
         assert runner.process is process
         assert runner.session_id == native and runner.work == str(work)
         assert operations.count("send") == sent
-        assert (topic, work) in recovered._hook_work
+        assert (topic, work) in recovered.live.hook_work
 
         async def continue_and_verify():
             factory = client.test_request_factory

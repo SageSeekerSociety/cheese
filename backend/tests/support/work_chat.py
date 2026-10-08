@@ -6,7 +6,6 @@ queries. Only the streaming turn is supplied by each test's double.
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import TYPE_CHECKING, cast
 
@@ -52,13 +51,12 @@ class WorkChat:
             recipient_handle=recipient_handle,
         )
 
-    def _seat_lock_for(self, topic_id: uuid.UUID, agent_handle: str) -> asyncio.Lock:
-        from app.domain.agent.chat import ChatService
+    @property
+    def live(self):
+        """The per-room/turn state the real service holds (`live_work.LiveWork`)."""
+        from app.domain.agent.live_work import LiveWork
 
-        self.__dict__.setdefault("_seat_locks", {})
-        return ChatService._seat_lock_for(
-            cast(ChatService, self), topic_id, agent_handle
-        )
+        return self.__dict__.setdefault("_live", LiveWork())
 
     async def _resolved_agent(
         self, session: AsyncSession, topic: Topic
@@ -77,7 +75,6 @@ class WorkChat:
     ) -> tuple[uuid.UUID, uuid.UUID | None]:
         from app.domain.agent.chat import ChatService
 
-        self.__dict__.setdefault("_conversation_rooms", {})
         return await ChatService._room_of_conversation(
             cast(ChatService, self), conversation_id
         )

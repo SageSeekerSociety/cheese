@@ -38,11 +38,12 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.subscription import Subscription
+from app.domain.agent.live_work import LiveWork
 async def run():
     engine = create_async_engine(sys.argv[1])
     chat = ChatService.__new__(ChatService)
     chat._sessions = async_sessionmaker(engine, expire_on_commit=False)
-    chat._unread_inputs = {}
+    chat.live = LiveWork()
     ref = SessionRef(uuid.UUID(sys.argv[4]), uuid.UUID(sys.argv[5]),
         sys.argv[6], harness=sys.argv[7])
     async def remote(method, params):
