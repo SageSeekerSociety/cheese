@@ -120,6 +120,9 @@ async function mount(files: LibraryFile[]) {
   return view
 }
 
+// 几页是一页接一页取的，整套测试一起跑时机器忙，默认的 1 秒等不完。
+const PAGES_TIMEOUT = { timeout: 10_000 }
+
 const dataOf = (at: number) => virtua.seen.at(at)?.data as unknown[] | undefined
 
 beforeEach(() => {
@@ -132,8 +135,9 @@ describe('文件不到门槛', () => {
   it('整列画出来，一份不少，也不碰 virtua', async () => {
     const { container } = await mount(makeFiles(VIRTUAL_LIST_CONTENT_THRESHOLD - 1))
     // 一页一页地取：滚动容器还没被填满，取到底为止。
-    await waitFor(() =>
-      expect(container.querySelectorAll('.library-row')).toHaveLength(VIRTUAL_LIST_CONTENT_THRESHOLD - 1)
+    await waitFor(
+      () => expect(container.querySelectorAll('.library-row')).toHaveLength(VIRTUAL_LIST_CONTENT_THRESHOLD - 1),
+      PAGES_TIMEOUT
     )
     expect(virtua.seen).toHaveLength(0)
   })
@@ -143,7 +147,7 @@ describe('文件过了门槛', () => {
   it('整列交给 virtua（数据原样递过去），每一行仍是一个 li，操作按钮还在', async () => {
     const { container } = await mount(makeFiles(VIRTUAL_LIST_CONTENT_THRESHOLD + 50))
     // 滚动容器是模板 ref，挂完那一帧才落地（见 VirtualList 文件头），所以等它一拍。
-    await waitFor(() => expect(dataOf(-1)).toHaveLength(VIRTUAL_LIST_CONTENT_THRESHOLD + 50))
+    await waitFor(() => expect(dataOf(-1)).toHaveLength(VIRTUAL_LIST_CONTENT_THRESHOLD + 50), PAGES_TIMEOUT)
     // 外壳还是 li：虚拟化只省屏幕外的节点，不从无障碍树上切掉列表语义。
     expect(virtua.seen[0]!.item).toBe('li')
     // 行本身没变：打开按钮和 ⋯ 操作都在。
