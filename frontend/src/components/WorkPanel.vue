@@ -796,7 +796,9 @@ defineExpose({
         @select="selectTab"
         @close-file="closeFile"
         @pin-file="pinFile"
-      />
+      >
+        <template v-if="$slots['tab-actions']" #actions><slot name="tab-actions" /></template>
+      </PanelTabs>
 
       <!-- Panel content (not the tab strip) gets its own boundary: a tab that
            throws shows the fallback here while the strip stays usable.

@@ -41,6 +41,8 @@ const props = defineProps<{
   taskId?: string | null
   /** 这里此刻不能说话的原因，见 ChatPanel。 */
   composerClosed?: string | null
+  /** 采纳那一条此刻挂在别处（专注模式里它在面板底部），这里不再放一份。 */
+  acceptElsewhere?: boolean
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
@@ -170,6 +172,7 @@ defineExpose({
            见，但平时只占一行，不把对话挤到只剩几行。 -->
       <template #above-composer>
         <TopicAcceptCard
+          v-if="!acceptElsewhere"
           ref="acceptRef"
           class="chat-dock"
           docked
