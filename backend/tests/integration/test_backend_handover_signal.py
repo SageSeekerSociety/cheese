@@ -23,8 +23,8 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.core.ownership import OWNER_LOCK, Ownership
-from app.core.sandbox_auth import mint_scoped_token
 from app.core.ws_handover import EndBusinessSocketsAtHandover
+from app.domain import backend_log
 from app.domain.run_record.models import RunRecord
 from app.main import app
 
@@ -49,11 +49,21 @@ async def _owner_lock_holders() -> int:
         await engine.dispose()
 
 
-def _report(headline: str, repeats: int) -> dict:
-    """One report of `repeats` identical failures: the window opens on the
-    first and the rest are counted, so what is left for the flush is a summary
-    carrying `repeats`."""
-    return {"errors": [{"message": headline, "exc_type": "ValueError"}] * repeats}
+@pytest.fixture(autouse=True)
+def _fresh_intake(monkeypatch):
+    """The intake singleton counts for the process's whole life, and these tests
+    are not the only ones in it: each keeps its own windows."""
+    monkeypatch.setattr(backend_log, "intake", backend_log.BackendErrorIntake())
+
+
+async def _burst(headline: str, repeats: int = 5) -> None:
+    """`repeats` identical failures into this process's intake, the way the
+    middleware does for a request that raised: the window opens on the first and
+    the rest are counted, so the flush has a summary carrying `repeats`."""
+    for _ in range(repeats):
+        await backend_log.report_request_failure(
+            RuntimeError(headline), method="GET", path="/api/healthz"
+        )
 
 
 async def _burst_summaries(headline: str) -> list[dict]:
@@ -138,30 +148,24 @@ async def test_a_backend_handing_over_keeps_the_errors_it_is_still_holding():
     A window younger than 300 s is one the `backend error flush` job would not
     have closed yet, and `hand_over()` stops that job on its way out. Nobody
     else has these failures: the next process starts with an intake of its own.
+
+    The headline is fresh per run, so a record an earlier run left in this
+    database is not mistaken for this one's.
     """
-    headline = "kaboom at the handover"
-    token = mint_scoped_token(project_id=str(uuid.uuid4()), topic_id=str(uuid.uuid4()))
+    headline = uuid.uuid4().hex
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://backend"
-        ) as client:
-            reported = await client.post(
-                "/backend-errors",
-                json=_report(headline, 5),
-                headers={"X-Cheese-Token": token},
+        await _burst(headline)
+        assert await _burst_summaries(headline) == []
+
+        assert signal.getsignal(signal.SIGUSR1) not in (signal.SIG_DFL, None)
+        os.kill(os.getpid(), signal.SIGUSR1)
+
+        deadline = asyncio.get_running_loop().time() + 30
+        while not await _burst_summaries(headline):
+            assert asyncio.get_running_loop().time() < deadline, (
+                "the handover never kept the window this process held"
             )
-            assert reported.status_code == 200
-            assert await _burst_summaries(headline) == []
-
-            assert signal.getsignal(signal.SIGUSR1) not in (signal.SIG_DFL, None)
-            os.kill(os.getpid(), signal.SIGUSR1)
-
-            deadline = asyncio.get_running_loop().time() + 30
-            while not await _burst_summaries(headline):
-                assert asyncio.get_running_loop().time() < deadline, (
-                    "the handover never kept the window this process held"
-                )
-                await asyncio.sleep(0.1)
+            await asyncio.sleep(0.1)
 
     [summary] = await _burst_summaries(headline)
     assert summary["meta"]["count"] == 5
@@ -172,24 +176,15 @@ async def test_a_backend_keeps_the_errors_it_collects_after_the_handover():
     """The drain after the handover keeps serving requests, so it can still open
     windows — and the job that would close them went with the lock. The last
     flush of this process's life is what keeps those (迁移顺序 2e)."""
-    headline = "kaboom during the drain"
-    token = mint_scoped_token(project_id=str(uuid.uuid4()), topic_id=str(uuid.uuid4()))
+    headline = uuid.uuid4().hex
     incoming = Ownership(settings.database_url)
     try:
         async with app.router.lifespan_context(app):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app), base_url="http://backend"
-            ) as client:
-                os.kill(os.getpid(), signal.SIGUSR1)
-                await asyncio.wait_for(incoming.acquire(), timeout=30)
+            os.kill(os.getpid(), signal.SIGUSR1)
+            await asyncio.wait_for(incoming.acquire(), timeout=30)
 
-                reported = await client.post(
-                    "/backend-errors",
-                    json=_report(headline, 5),
-                    headers={"X-Cheese-Token": token},
-                )
-                assert reported.status_code == 200
-                assert await _burst_summaries(headline) == []
+            await _burst(headline)
+            assert await _burst_summaries(headline) == []
         # This process is gone. Its windows could only have been kept by its own
         # last flush.
         [summary] = await _burst_summaries(headline)
