@@ -574,16 +574,23 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
 
     rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
     bind_context(req=rid)
+    # 也在 scope 上留一份：报错上报那一层在这个中间件**外面**，轮到它时这里的
+    # `clear_context("req")` 已经跑过了，contextvar 读不到；scope 上的 state 活得比
+    # 那次清理久（下面读 `auth_user_id` 用的是同一条路）。
+    request.state.request_id = rid
     t0 = time.perf_counter()
-    # **探针不算**。`/health` 与 `/metrics` 是基础设施在按固定间隔敲的门，不是用户
-    # 流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正的路由挤下去，而
-    # 「当前正在处理的请求数」也会恒 ≥1（读它的那一次自己就在里面）。这一条和上面
-    # 那条日志里的 `/health` 例外是同一个判断。
+    # **探针不算**。`/health`、`/metrics`、`/readyz`、`/healthz` 是基础设施在按固定
+    # 间隔敲的门，不是用户流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正
+    # 的路由挤下去，「当前正在处理的请求数」也会恒 ≥1（读它的那一次自己就在里面），
+    # 而容器的 healthcheck 每 15 秒一次的 `/readyz` 会稳坐榜首——真实端点一秒也没被叫
+    # 过，看板上却看着比谁都忙。这一条和下面日志里的探针例外是同一个判断。
     path_now = request.url.path
     probe = (
         path_now == "/metrics"
         or path_now == "/health"
         or path_now.startswith("/health/")
+        or path_now == "/readyz"
+        or path_now == "/healthz"
     )
     if not probe:
         # 正在处理的请求数。**必须在 `call_next` 外面一进一出**，而且走 `finally`
@@ -647,7 +654,9 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
         if cl_out and cl_out.isdigit():
             net_io.note_http_bytes(response_body=int(cl_out))
     # WS upgrades and health probes are logged by their own layers; skip noise.
-    if request.url.path != "/health":
+    # `/readyz` and `/healthz` are the same knock as `/health`, one healthcheck
+    # interval apart — a line every 15 seconds is the loudest thing in the log.
+    if request.url.path not in ("/health", "/readyz", "/healthz"):
         # Who and from where, when known. `auth_user_id` is set by
         # get_auth_user (request.state rides scope, so it survives the
         # middleware task boundary). `client` is the address uvicorn resolved
@@ -726,12 +735,23 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
     except Exception as exc:
         # A failure inside the intake endpoint itself must not report into the
         # same channel (a broken intake would amplify every other error).
-        if not request.url.path.startswith("/api/backend-errors"):
+        #
+        # The path compared here is the one THIS app was handed, not the one a
+        # caller typed: the gateway forwards the public origin's `/api/` with a
+        # trailing slash in nginx's `proxy_pass`, so `/api/backend-errors`
+        # arrives as `/backend-errors` — the stripping API_GATEWAY_MOUNT
+        # describes. Compared against the public spelling, this guard never
+        # matched a request at all, so an exception raised by the intake itself
+        # was reported straight back into the intake.
+        if request.url.path != "/backend-errors":
             await backend_log.report_request_failure(
                 exc,
                 method=request.method,
                 path=request.url.path,
-                request_id=request.headers.get("x-request-id"),
+                # 这个请求自己在 `request_context` 里认下的 id（那层把它放在 scope
+                # 上）。读入站头读到的是没人发过的值：浏览器不带 X-Request-ID，于是
+                # 每一条 5xx 都存成空 id —— 而这张表正是拿来对人的。
+                request_id=request.scope.get("state", {}).get("request_id"),
             )
         raise
 

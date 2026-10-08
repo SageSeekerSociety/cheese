@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.live_work import LiveWork
 from tests import conftest
 from tests.conftest import close_topic_subscriptions, drain_hooks, settle_turn
 
@@ -23,7 +24,7 @@ class Room:
         self.runtime = self.channel.runtime
         self.service = SimpleNamespace(
             _compute=SimpleNamespace(_runtimes=lambda: [self.runtime]),
-            _hook_work={},
+            live=LiveWork(),
         )
 
     async def open(self) -> uuid.UUID:
@@ -48,12 +49,12 @@ async def test_settle_turn_lands_what_the_session_said():
 async def test_settle_turn_waits_for_the_rooms_open_work():
     room = Room()
     topic = await room.open()
-    room.service._hook_work[(topic, uuid.uuid4())] = object()
+    room.service.live.hook_work[(topic, uuid.uuid4())] = object()
     settled = asyncio.create_task(settle_turn(room.service, topic))
     await asyncio.sleep(0.1)
     assert not settled.done()
 
-    room.service._hook_work.clear()
+    room.service.live.hook_work.clear()
     await asyncio.wait_for(settled, 5)
     await close_topic_subscriptions(room.service, topic)
 
@@ -62,7 +63,7 @@ async def test_settle_turn_does_not_wait_on_another_room():
     room = Room()
     topic = await room.open()
     other = await room.open()
-    room.service._hook_work[(other, uuid.uuid4())] = object()
+    room.service.live.hook_work[(other, uuid.uuid4())] = object()
 
     await asyncio.wait_for(settle_turn(room.service, topic), 5)
     await close_topic_subscriptions(room.service, topic)
@@ -72,7 +73,7 @@ async def test_settle_turn_does_not_wait_on_another_room():
 async def test_a_turn_that_never_closes_names_the_open_work():
     room = Room()
     topic = await room.open()
-    room.service._hook_work[(topic, uuid.uuid4())] = object()
+    room.service.live.hook_work[(topic, uuid.uuid4())] = object()
 
     with pytest.raises(AssertionError, match=f"turn on {topic} never closed"):
         await settle_turn(room.service, topic, tries=3)
@@ -82,7 +83,7 @@ async def test_a_turn_that_never_closes_names_the_open_work():
 async def test_drain_hooks_lands_what_was_said_without_waiting_for_an_ending():
     room = Room()
     topic = await room.open()
-    room.service._hook_work[(topic, uuid.uuid4())] = object()
+    room.service.live.hook_work[(topic, uuid.uuid4())] = object()
 
     await drain_hooks(room.channel, topic)
 

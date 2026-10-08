@@ -187,11 +187,31 @@ CREDENTIAL = PlatformCredential(
         )
     )
 )
-CLAUDE_ACCOUNTS = ClaudeAccounts(CREDENTIAL)
+# The pool is published beside the ledger — the one directory the backend can
+# read (mounted read-only for usage ingest). Nothing else carries it: the
+# accounts exist only on this box. See ClaudeAccounts.snapshot.
+CLAUDE_ACCOUNTS = ClaudeAccounts(
+    CREDENTIAL, snapshot_path=USAGE_LOG.parent / "accounts.json"
+)
 
 
 def load(loader):
     install_retry()
+    # Publish once at start, so the board sees the pool from the moment the
+    # proxy is up rather than from the first model call after a restart.
+    CLAUDE_ACCOUNTS.snapshot()
+
+
+def _record_usage(project_id, topic_id, usage, model):
+    """Meter a turn, then refresh the pool the board reads.
+
+    The two belong together: the snapshot's `retry_after` is a countdown, so it
+    is only as fresh as the last write, and metering is the one thing that
+    happens on every served turn. Cooldown changes publish on their own (every
+    state change writes through `ClaudeAccounts._save`).
+    """
+    METER.record(project_id, topic_id, usage, model)
+    CLAUDE_ACCOUNTS.snapshot()
 
 
 # The proxy's own credential rides every admission call: only a caller holding
@@ -1519,7 +1539,11 @@ def _meter_subscription_stream(
     sentinel, and its already-seen input_tokens and cache_creation (the bulk of
     a turn's cost) would vanish silently. ``error()`` reaches here for exactly
     those turns; ``extractor.recorded`` keeps a clean sentinel and a later
-    error on the same flow from metering twice."""
+    error on the same flow from metering twice.
+
+    Records through ``_record_usage``, not ``METER.record`` directly: the
+    account pool's snapshot is published on every recorded turn, and a turn
+    metered here is still a turn served."""
     extractor = flow.metadata.get("cheese_sub_stream")
     if extractor is None or extractor.recorded:
         return
@@ -1527,7 +1551,7 @@ def _meter_subscription_stream(
     extractor.close()
     project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
     if extractor.usage:
-        METER.record(project_id, topic_id, extractor.usage, extractor.model)
+        _record_usage(project_id, topic_id, extractor.usage, extractor.model)
         if interrupted:
             logger.warning(
                 "subscription turn's stream was interrupted before its end; "
@@ -1927,4 +1951,4 @@ def response(flow: http.HTTPFlow) -> None:
         return
     usage, model = payload.get("usage", {}), payload.get("model", "")
     if usage:
-        METER.record(project_id, topic_id, usage, model)
+        _record_usage(project_id, topic_id, usage, model)

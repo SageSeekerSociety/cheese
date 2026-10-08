@@ -3800,3 +3800,176 @@ class TestTaskAccessDomainGroupIntegration:
         assert domain_task is not None, "Task not found in list response"
         assert domain_task.get("accessControlEnabled") is True
         assert domain_task.get("accessDomainGroupIds") == [group_id]
+
+    def test_task_list_drops_deleted_domain_group(
+        self, api_client: TestClient, domain_task_setup: dict
+    ) -> None:
+        """删掉的域组不能再出现在列表的 accessDomainGroupIds 里。
+
+        删组只软删组和它的域绑定，题目里存的域还在；整页批量读必须和旧的逐题读一样
+        把这些组排除，否则列表会报出一个已经删掉的组 id。删一组不能波及同页的另一组。
+        """
+        creator = domain_task_setup["creator"]
+        space_id = domain_task_setup["space_id"]
+        category_id = domain_task_setup["category_id"]
+        group_id = domain_task_setup["group_id"]
+        suffix = domain_task_setup["suffix"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        # 同页并存的第二个组：删掉第一个组时它必须不受影响。
+        group2_resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={
+                "name": f"Kept Group ({suffix})",
+                "description": "Group that survives the other's deletion",
+                "domains": [f"kept-{suffix}.example.org"],
+            },
+            headers=headers,
+        )
+        assert group2_resp.status_code == 201, (
+            f"Failed to create 2nd domain group: {group2_resp.text}"
+        )
+        group2_id = group2_resp.json()["data"]["group"]["id"]
+
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
+
+        created: dict[str, int] = {}
+        for label, group_ids in (("Doomed", [group_id]), ("Kept", [group2_id])):
+            create_resp = api_client.post(
+                "/tasks",
+                json={
+                    "name": f"{label} Group Task ({suffix})",
+                    "intro": "Deleted domain group test",
+                    "description": '{"type":"doc","content":[]}',
+                    "space": space_id,
+                    "categoryId": category_id,
+                    "submitterType": "USER",
+                    "resubmittable": True,
+                    "editable": True,
+                    "defaultDeadline": 30,
+                    "deadline": deadline_ms,
+                    "accessControlEnabled": True,
+                    "accessDomainGroupIds": group_ids,
+                },
+                headers=headers,
+            )
+            assert create_resp.status_code == 200, (
+                f"Failed to create task: {create_resp.text}"
+            )
+            created[label] = create_resp.json()["data"]["task"]["id"]
+
+        delete_resp = api_client.delete(
+            f"/spaces/{space_id}/domain-groups/{group_id}", headers=headers
+        )
+        assert delete_resp.status_code == 204, (
+            f"Failed to delete domain group: {delete_resp.text}"
+        )
+
+        list_resp = api_client.get(f"/tasks?space={space_id}", headers=headers)
+        assert list_resp.status_code == 200, f"Failed to list tasks: {list_resp.text}"
+        tasks = {t["id"]: t for t in list_resp.json()["data"]["tasks"]}
+
+        doomed = tasks.get(created["Doomed"])
+        assert doomed is not None, "Task whose group was deleted is missing"
+        assert doomed.get("accessControlEnabled") is True
+        assert doomed.get("accessDomainGroupIds") == []
+
+        kept = tasks.get(created["Kept"])
+        assert kept is not None, "Task whose group was kept is missing"
+        assert kept.get("accessDomainGroupIds") == [group2_id]
+
+    def test_task_list_ignores_domain_groups_from_another_space(
+        self, api_client: TestClient, domain_task_setup: dict
+    ) -> None:
+        """按域查组时要限定在本题所在的空间，别家的同名域组不能串进来。
+
+        域是全局字符串，两个空间可以有覆盖同一个域的组。批量查询漏掉 space 过滤时，
+        A 空间的任务列表会把 B 空间那个组的 id 一起报出来。
+        """
+        creator = domain_task_setup["creator"]
+        space_id = domain_task_setup["space_id"]
+        category_id = domain_task_setup["category_id"]
+        suffix = domain_task_setup["suffix"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+
+        shared_domain = f"shared-{suffix}.example.org"
+
+        own_resp = api_client.post(
+            f"/spaces/{space_id}/domain-groups",
+            json={
+                "name": f"Own Group ({suffix})",
+                "description": "Group in the task's own space",
+                "domains": [shared_domain],
+            },
+            headers=headers,
+        )
+        assert own_resp.status_code == 201, (
+            f"Failed to create own domain group: {own_resp.text}"
+        )
+        own_group_id = own_resp.json()["data"]["group"]["id"]
+
+        other_space_resp = create_approved_space(
+            api_client,
+            json={
+                "name": f"Other Space ({suffix})",
+                "intro": "Another space",
+                "description": "Test description",
+                "avatarId": 1,
+                "taskTemplates": [],
+            },
+            headers=headers,
+        )
+        assert other_space_resp.status_code == 201, (
+            f"Failed to create other space: {other_space_resp.text}"
+        )
+        other_space_id = other_space_resp.json()["data"]["space"]["id"]
+
+        other_resp = api_client.post(
+            f"/spaces/{other_space_id}/domain-groups",
+            json={
+                "name": f"Other Group ({suffix})",
+                "description": "Group in another space",
+                "domains": [shared_domain],
+            },
+            headers=headers,
+        )
+        assert other_resp.status_code == 201, (
+            f"Failed to create other domain group: {other_resp.text}"
+        )
+        other_group_id = other_resp.json()["data"]["group"]["id"]
+
+        deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
+        create_resp = api_client.post(
+            "/tasks",
+            json={
+                "name": f"Space Scoped Task ({suffix})",
+                "intro": "Cross-space domain group test",
+                "description": '{"type":"doc","content":[]}',
+                "space": space_id,
+                "categoryId": category_id,
+                "submitterType": "USER",
+                "resubmittable": True,
+                "editable": True,
+                "defaultDeadline": 30,
+                "deadline": deadline_ms,
+                "accessControlEnabled": True,
+                "accessDomainGroupIds": [own_group_id],
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 200, (
+            f"Failed to create task: {create_resp.text}"
+        )
+        task_id = create_resp.json()["data"]["task"]["id"]
+
+        list_resp = api_client.get(f"/tasks?space={space_id}", headers=headers)
+        assert list_resp.status_code == 200, f"Failed to list tasks: {list_resp.text}"
+        task = next(
+            (t for t in list_resp.json()["data"]["tasks"] if t["id"] == task_id), None
+        )
+        assert task is not None, "Task not found in list response"
+        group_ids = task.get("accessDomainGroupIds", [])
+        assert other_group_id not in group_ids, (
+            "Another space's domain group leaked into the list"
+        )
+        assert group_ids == [own_group_id]

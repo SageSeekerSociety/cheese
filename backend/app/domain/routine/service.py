@@ -42,7 +42,7 @@ from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
 from app.domain.feedback import claims as feedback_claims
 from app.domain.feedback import triage as feedback_triage
-from app.domain.library import service as library
+from app.domain.library import records as library_records
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
@@ -726,7 +726,7 @@ async def _events_for(
     in_room = routine.spec.get("scope") == "room"
     found: list[tuple[str, str, datetime]] = []
     if trigger is RoutineTrigger.library_file_added:
-        for entry in library.list_library_files(routine.project_id):
+        for entry in await library_records.listing(session, routine.project_id):
             when = datetime.fromtimestamp(entry["modified"], UTC)
             if when >= since:
                 found.append(

@@ -54,5 +54,5 @@ def name_by_seat() -> None:
 
 
 def downgrade() -> None:
-    # The handles it replaced are not kept: a seat names the same teammate.
+    """The handles it replaced are not kept: a seat names the same teammate."""
     pass

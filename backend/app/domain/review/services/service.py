@@ -93,7 +93,7 @@ class AcceptService:
         topic_id: uuid.UUID,
         task_id: uuid.UUID,
         reviewer_handle: str | None = None,
-        routing_reason: str = "",
+        focus: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
         artifact: str | None = None,
@@ -109,7 +109,7 @@ class AcceptService:
             topic_id=topic_id,
             task_id=task_id,
             reviewer_handle=reviewer_handle,
-            routing_reason=routing_reason,
+            focus=focus,
             change_subject=change_subject,
             change_body=change_body,
             artifact=artifact,
@@ -187,14 +187,12 @@ class AcceptService:
         *,
         card_id: uuid.UUID,
         reviewer_handle: str | None = None,
-        reason: str = "",
         admits_reviewer: ReviewerAdmission,
     ) -> AcceptCard:
         return await reviewers.reassign(
             self,
             card_id=card_id,
             reviewer_handle=reviewer_handle,
-            reason=reason,
             admits_reviewer=admits_reviewer,
         )
 

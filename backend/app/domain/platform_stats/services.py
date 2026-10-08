@@ -17,6 +17,7 @@
 一起回答。pipeline 不配 prev —— 它以存量指标为主，没有可环比的流量合计。
 """
 
+import time
 from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.admin.services import AdminService
 from app.domain.feedback.models import FeedbackStatus
 from app.domain.feedback.services import FeedbackService
+from app.domain.platform_stats.claude_pool import read_claude_pool, snapshot_path
 from app.domain.platform_stats.gaps import GapRepository
 from app.domain.platform_stats.integrations import IntegrationsRepository
 from app.domain.platform_stats.pipeline import PipelineRepository
@@ -106,6 +108,10 @@ class PlatformStatsService:
         计费，行上的 `cost_usd = 0.0` 意思是**没有价**，不是免费），所以它和
         `totals.cost_usd` 一起给 —— 少了它，几百万 token 上印一个 `$0.0000` 读起来
         像「这个月没花钱」。
+
+        `claude_accounts` 是这一块里唯一不来自数据库的东西：它是计量代理写在账本旁边
+        的快照文件（见 `claude_pool`）。读不到时它自己带一句原因，不让这一小块把整条
+        路由带红 —— 开发环境根本没有订阅版代理。
         """
         since, until, buckets = utc_day_window(days)
         prev_since = since - timedelta(days=days)
@@ -144,6 +150,8 @@ class PlatformStatsService:
             # 看起来像好消息。`credits` 把「已耗尽 / 快烧完 / unlimited」三个互斥
             # 名单分开给 —— 理由见 `gaps.py` 模块 docstring 第 2 条。
             "credits": await self._gaps.credits_burnout(days=days),
+            # 订阅路身后的那个池子：一个文件读，不是一次查询。
+            "claude_accounts": read_claude_pool(snapshot_path(), now=time.time()),
         }
 
     async def platform(self, *, days: int) -> dict:

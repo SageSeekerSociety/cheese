@@ -292,12 +292,58 @@ class NotificationRepository:
         *,
         recipient_handle: str,
         unread_only: bool = False,
+        limit: int,
+        at_or_before: Notification | None = None,
     ) -> list[Notification]:
+        """这个项目的收件箱里我看得见的那几页信，新的在前。
+
+        `limit` 必填：这条读以前没有上界，一个项目跑久了它会一直长（一次把整个
+        历史拉回来）。分页是键集，不是 offset —— 收件箱的头一直在长，一边翻一边
+        有新信写进来，offset 会漏行也会重行。
+
+        `at_or_before` 是下一页从这里开始的那一行（含它自己）。键是
+        `(created_at, id)` 两列：`created_at` 会撞（同一秒写下的好几条，广播展开
+        出来的一批正是这样），单靠它分不干净，`id` 补上第二列就有了全序。
+        """
         stmt = self._mine_in(select(Notification), project_id, recipient_handle)
         if unread_only:
             stmt = stmt.where(Notification.read.is_(False))
-        stmt = stmt.order_by(Notification.created_at.desc())
+        if at_or_before is not None:
+            stmt = stmt.where(
+                or_(
+                    Notification.created_at < at_or_before.created_at,
+                    and_(
+                        Notification.created_at == at_or_before.created_at,
+                        Notification.id <= at_or_before.id,
+                    ),
+                )
+            )
+        stmt = stmt.order_by(
+            Notification.created_at.desc(), Notification.id.desc()
+        ).limit(limit)
         return list((await self._session.scalars(stmt)).all())
+
+    async def count_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        recipient_handle: str,
+        unread_only: bool = False,
+    ) -> int:
+        """上面那条读的总数，和它同一套过滤条件。
+
+        `list_for_project` 现在只回一页，所以 `total` 不能再拿这一页的条数充数 ——
+        那正是分页之前的写法（`page(items, len(items))`），一加上限它就开始说谎。
+        一条 `count(*)` 走的是同一个 `(project_id, recipient_handle)` 索引。
+        """
+        stmt = self._mine_in(
+            select(func.count()).select_from(Notification),
+            project_id,
+            recipient_handle,
+        )
+        if unread_only:
+            stmt = stmt.where(Notification.read.is_(False))
+        return int((await self._session.scalar(stmt)) or 0)
 
     async def list_inbox(
         self,

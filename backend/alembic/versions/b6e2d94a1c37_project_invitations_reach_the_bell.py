@@ -20,9 +20,6 @@ Only notices tied to a pending invitation are touched; answered ones were
 already resolved where they were. A notice whose invitee has no account is left
 alone: there is no mail to move it to. Running it again finds nothing left to
 convert, because a converted row is no longer a ``decision_request``.
-
-Downgrade puts nothing back: the old row was unreadable by the one person it
-was for.
 """
 
 import json
@@ -141,4 +138,6 @@ def convert(bind: sa.Connection) -> None:
 
 
 def downgrade() -> None:
+    """Downgrade puts nothing back: the old row was unreadable by the one person it
+    was for."""
     pass

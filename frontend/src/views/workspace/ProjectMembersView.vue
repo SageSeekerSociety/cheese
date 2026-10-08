@@ -378,7 +378,7 @@ useCommands(() => [
               <div class="t-meta c-muted">{{ m.user_handle }}</div>
               <router-link
                 v-if="s.key === 'team' && m.team_handle"
-                :to="{ name: 'TeamsDetail', params: { handle: m.team_handle } }"
+                :to="{ name: 'TeamsDetailDefault', params: { handle: m.team_handle } }"
                 class="t-meta-read member-team-link"
                 :data-user-content="m.team_name || undefined"
                 @click.stop

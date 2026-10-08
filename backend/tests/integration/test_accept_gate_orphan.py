@@ -73,7 +73,7 @@ def _seed_pending_gate_card(client, topic_id: str, reviewer: str = "alice") -> s
                 topic_id=uuid.UUID(topic_id),
                 task_id=task_id,
                 reviewer_handle=reviewer,
-                routing_reason="最懂",
+                focus="最懂",
                 status=AcceptStatus.pending_gate,
             )
             session.add(card)
@@ -111,7 +111,7 @@ def _file_card(client, topic_id: str, reviewer: str = "alice"):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
 
@@ -348,7 +348,7 @@ def test_void_rejects_a_card_that_is_already_settled(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     card = r.json()["data"]

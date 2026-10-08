@@ -602,7 +602,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
             ws,
             lambda f: f["type"] == "event_block" and "sleep 600" in str(f["block"]),
         )
-    (running,) = old._hook_work.values()
+    (running,) = old.live.hook_work.values()
     assert running.agent_instance_handle == "opus"
     client.portal.call(before.runtime.stop_listening)
 
@@ -616,7 +616,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
     app.dependency_overrides[get_chat_service] = lambda: replaced
     assert client.portal.call(replaced.recover_sessions) == 1
 
-    (recovered,) = replaced._hook_work.values()
+    (recovered,) = replaced.live.hook_work.values()
     assert recovered.agent_instance_handle == "opus"
 
     # A message to the teammate joins the recovered turn — it must not start

@@ -443,7 +443,7 @@ def test_review_actions_check_the_credentials_project_and_room(client):
         json={
             "change_subject": "test: scoped review",
             "reviewer_handle": "alice",
-            "routing_reason": "Review",
+            "focus": "Review",
         },
     ).json()["data"]
     for action, body in (

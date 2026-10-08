@@ -23,12 +23,16 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.domain.agent import machine_launcher
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
+from app.domain.agent.harness.claude_code.remote_execution import (
+    launch as executor_launch,
+)
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
-from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
+from app.domain.agent.harness.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.place import (
     CLAUDE_LOGIN_DIR,
     MODEL_SERVICE_FILE,
@@ -682,6 +686,43 @@ fi
 export CHEESE_OWN_LOGIN=1
 cheese_launch_phase credentials_selected
 """
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ClaudeLaunch:
+    """Claude Code as a ``LaunchPlan``: 跑什么，交给机器去说在哪。
+
+    The values a turn actually chooses, held until a channel says where its
+    machine keeps things — at which point ``on`` turns them into the launch.
+
+    It sits beside ``on_machine`` rather than with the settings it is launched
+    with (``session_launch``): ``on`` can only be answered here, and a
+    ``ClaudeLaunch`` that imported this module while this module imported the
+    settings would make the pair a cycle (``.importlinter``, C3). Now only one
+    direction is left — this file reads the settings, nothing reads back.
+    """
+
+    system_prompt: str
+    model: str | None = None
+    resume_session_id: str | None = None
+    # Names this start of the runner (``runner.LAUNCH``); new on every turn,
+    # so it is never part of what a live session is compared against.
+    launch_name: str = ""
+    harness: str = CLAUDE_CODE
+
+    @property
+    def execution(self) -> ExecutorLaunch:
+        return executor_launch
+
+    def on(self, place: MachinePlace) -> MachineLaunch:
+        return on_machine(
+            place,
+            system_prompt=self.system_prompt,
+            # A screen is retired and reopened for reasons that say nothing
+            # about the conversation, so every launch offers to continue it.
+            resume_session_id=self.resume_session_id,
+            launch_name=self.launch_name,
+        )
 
 
 def on_machine(

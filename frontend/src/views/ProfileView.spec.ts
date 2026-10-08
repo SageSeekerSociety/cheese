@@ -73,7 +73,7 @@ async function renderPage(handle: string) {
     routes: [
       { path: '/users/:handle', name: 'UserPage', component: stub },
       { path: '/users/settings/profile', name: 'UserSettingsProfile', component: stub },
-      { path: '/teams/:handle', name: 'TeamsDetail', component: stub },
+      { path: '/teams/:handle', name: 'TeamsDetailDefault', component: stub },
       { path: '/projects/:projectId', name: 'workspace-project', component: stub },
       { path: '/projects/:projectId/members', name: 'project-members', component: stub },
       { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: stub },

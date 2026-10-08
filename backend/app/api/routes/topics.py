@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.conditional import etag_for_json, if_none_match_hits
+from app.api.conditional import LIST_CACHE_CONTROL, etag_for_json, if_none_match_hits
 from app.api.deps import (
     get_broker,
     get_chat_service,
@@ -286,11 +286,8 @@ def _topic_out(
     return data
 
 
-#: 侧栏每 30 秒轮询一次整份话题清单。它是**登录用户**的私有视图（每一行都带「与我的
-#: 相关性」），所以只能是 `private`；`no-cache` 要求每次带 `If-None-Match` 回来问一句，
-#: 命中 ETag 就回 304、空 body —— 没有变化的那些轮询不再把一个几百 KB 的清单重传一遍。
-#: 和 `admin_members` 那份名单同一个形状。
-TOPICS_LIST_CACHE_CONTROL = "private, no-cache"
+#: 侧栏每 30 秒轮询一次整份话题清单，和另外两份清单共用同一套条件请求指令。
+TOPICS_LIST_CACHE_CONTROL = LIST_CACHE_CONTROL
 
 
 @router.get("", response_model=None)

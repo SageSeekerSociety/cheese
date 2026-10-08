@@ -110,6 +110,14 @@ covers:
 - 后端从 `SUBSCRIPTION_USAGE_LOG` 读同一本账（`backend/app/domain/usage/subscription_ingest.py`，`SOURCE="subscription-proxy"`）：4096 字节头部指纹认轮转，一批 2000 行，只吃完整行，同一事务里用 `IngestCheckpoint` 保证恰好一次，四个桶都计。`SUBSCRIPTION_USAGE_LOG` 不设就不进账。
 - `USAGE_LOG_DIR`（部署侧卷的挂载点）与 `SUBSCRIPTION_USAGE_LOG`（后端读的路径）是两处配置，平台里没有任何东西检查它们指的是同一本账。配错的表现是「代理在写、平台什么都没记」，这是一处只能靠人守的一致性。
 
+## 账号池快照 accounts.json {#pool-snapshot}
+
+- 池子（`ClaudeAccounts`）的状态原先只活在这台机器上。每次状态变化，它另写一份 `accounts.json`，放在**账本同一个目录**里（`USAGE_LOG.parent`）——那是后端唯一读得到的目录：`docker-compose.subscription.yml` 已经把它只读挂进后端，所以不需要新开一条后端到这台机器的通路。内容是 `written_at`、`retry_after` 和每张账号的 `{name, state, until, failures}`，**没有任何凭据内容**；账号名是管理员可见的标识。
+- 什么时候写：每次冷却状态变化（`_save`）、每个被计量的回合（`billing_addon._record_usage`）、以及 addon 起来时各一次——都搭现有的那两条路，没有新定时器。只挂在计费那一路会漏掉冷却开始的那一刻：把账号打成 429 的那次调用本身不产生用量行。
+- 写是原子的（同目录临时文件 + `os.replace`，0600），失败只记一条 warning：这一份是给人看的状态，写不下去不该影响转运。
+- 状态三个值：`available` 没有冷却记录、`cooling` 带解冻时刻 `until`（Unix 秒，**绝对**时刻）、`disabled` 是额度用尽且没有重置时刻、要人工重置。有哪几张账号由 `accounts()` 定：主凭据，加上 `accounts/*/credential` 每个子目录一张。
+- 后端读它的是 `backend/app/domain/platform_stats/claude_pool.py`，接在 `/admin/stats/usage` 的 `claude_accounts` 上，画法见[看板](/dev/boards#platform-stats)。读不到、读不懂时返回一个原因**代号**而不是报错（开发环境不跑订阅版代理是常态）；超过一小时没写入仍返回那些行，另标 `stale`——行上的时刻是绝对的，池子静止时文件本来就不该变。
+
 ## 非模型端点与网关路观测 {#control-answers}
 
 - `control_answers.json` 是一张「路径 + host → 固定回答」的表，代理本地答（`_answer_here`），不打给上游；host 先匹配，行里可以带 `{project}` / `{topic}` 占位。没有凭据的会话另有 `NO_LOGIN_ANSWERS`（bootstrap / penguin_mode / oauth validate），让 Claude Code 起得来。

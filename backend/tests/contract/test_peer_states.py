@@ -431,6 +431,7 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
     import uuid
 
     from app.domain.agent.chat import REPLAYS_AT_ONCE, ChatService
+    from app.domain.agent.live_work import LiveWork
 
     replayed = []
     sessions = [
@@ -452,7 +453,7 @@ async def test_one_session_in_a_peer_state_does_not_stop_the_others() -> None:
 
     chat = ChatService.__new__(ChatService)
     chat._compute = Compute()
-    chat._replays = {}
+    chat.live = LiveWork()
     chat._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
 
     assert await chat.recover_sessions(DEVICE) == 2

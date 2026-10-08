@@ -17,10 +17,12 @@ export default {
       // A team is addressed by its handle (`/teams/zhishi`); a personal team by
       // its owner's username.
       path: ':handle',
-      name: 'TeamsDetail',
+      // 这一层没有名字：带名字跳到父路由，vue-router 不画 path 为 '' 的那个子页，
+      // 落地就只剩页头。进团队页一律用 `TeamsDetailDefault`。浏览器标题里的团队名挂
+      // 在 `dynamicTitleKey` 上（Detail.vue 按这个键填）。
       component: () => import('@/views/teams/Detail.vue'),
       // 手机上团队的几页从底栏「首页」那一格的目录进来，← 回到那里。
-      meta: { titleKey: 'navigation.teams', isFullPage: true, backTo: 'HomeHub' },
+      meta: { titleKey: 'navigation.teams', dynamicTitleKey: 'TeamsDetail', isFullPage: true, backTo: 'HomeHub' },
       children: [
         {
           // 项目 is the team's default tab (项目归团队, v4). Channels/discussions

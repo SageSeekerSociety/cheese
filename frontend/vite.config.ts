@@ -2,14 +2,24 @@
 import os from 'node:os'
 import { fileURLToPath, URL } from 'node:url'
 
+import { aliases as mdiAliases } from 'vuetify/iconsets/mdi'
 import vue from '@vitejs/plugin-vue'
 import vueJsx from '@vitejs/plugin-vue-jsx'
+import subsetFont from 'subset-font'
 // Utilities
 import { defineConfig, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
+
+import {
+  findUnknownIcons,
+  keepUsedRules,
+  parseCodepoints,
+  replaceIconFontFace,
+  shippedNames,
+} from './scripts/mdi-icons.mjs'
 
 // fork 数取「核数 - 1」和「每 3 GB 内存一个」中较小的那个，封顶 16，VITEST_MAX_FORKS 可覆盖。
 // 一个 fork 的内存峰值实测约 1.7–2.1 GB（happy-dom 加上各自编一遍 Vuetify/SCSS）。
@@ -35,7 +45,7 @@ function demoPages(): Plugin {
   }
 }
 
-// MDI 图标字体（@mdi/font/css/materialdesignicons.css）的两处补丁：
+// MDI 图标字体（@mdi/font/css/materialdesignicons.css）的三处补丁：
 //
 // 1. 它的 @font-face 没写 font-display，默认等价于 block——浏览器判定「这段文字要
 //    用这个字体」之后最多 3 秒不画字（FOIT）。这里在它的 @font-face 里补一行
@@ -51,25 +61,100 @@ function demoPages(): Plugin {
 //    所以用 transformIndexHtml 往 <head> 里注入 preload。不在 main.ts 里 import
 //    '?url' 再运行时插：模块脚本要等 CSS 解析完才执行，那时字体请求早发出去了，
 //    预加载白做。dev（无产物）不注入。
+//
+// 3. 子集化（只在构建期）。字体里有 7448 个图标、403 KB（已压过，gzip 也压不动），
+//    整个应用只用得到 390 多个。构建期按用到的名字现裁一份 woff2（21 KB），并把那
+//    份 CSS 里用不上的 7000 多条规则一起丢掉（gzip 54 KB → 5 KB，进产物时再压缩）。
+//    名字从哪来、为什么要三路一起取，见 scripts/mdi-icons.mjs。
+//
+//    dev 上不裁：开发服务器是按需编译的，源码随时在改，一张启动时算出来的清单当场
+//    就会过期，新加的图标会变成一片空白。生产构建每次都是全量的，算一次就是全量。
+//
+//    裁在生成产物这一步做：@font-face 要指向带内容哈希的新文件名，那个名字只有在
+//    bundle 里才拿得到。同一步里把原来那四个字体文件（woff2/woff/ttf/eot）从产物
+//    里删掉——它们已经没有引用了，而 woff/ttf/eot 是给不支持 woff2 的引擎兜底的，
+//    这份 bundle 的目标浏览器（TARGET 那个清单）一个都用不到，PWA 那边早就只在
+//    precache 里留 woff2 了。留着等于每个镜像里白摆 3.2 MB。
 function mdiFont(): Plugin {
   let base = '/'
+  let building = false
+  // 上游那份 CSS 的原文。码位表（名字 → 字形）只能从它身上读，而它是不是真的被引
+  // 到了、引的是哪个版本，只有 transform 说得准。
+  let packageCss: string | null = null
+  let used: Set<string> | null = null
+
+  // 要发的字形清单：源码里的字面量 + 两个入口 HTML + Vuetify 组件内部用的别名。
+  // 构建期源码不再变，算一次就够。和单测共用 shippedNames，免得两边算得不一样。
+  const usedNames = (): Set<string> => {
+    if (!used) used = shippedNames(fileURLToPath(new URL('.', import.meta.url)), mdiAliases)
+    return used
+  }
+
   return {
     name: 'cheese-mdi-font',
     enforce: 'pre',
     configResolved(config) {
       base = config.base
+      building = config.command === 'build'
     },
     transform(code, id) {
       if (!id.includes('.css')) return
       if (!code.includes('@font-face') || !code.includes('Material Design Icons')) return
+      packageCss = code
       // 将来 @mdi 自己带上 font-display 就不再动它。
-      if (code.includes('font-display')) return
+      const displayed = code.includes('font-display')
+        ? code
+        : code.replace(/@font-face\s*\{[^}]*\}/g, (block) => block.replace(/\}\s*$/, '  font-display: swap;\n}'))
       // 字体 URL 原本带 `?v=7.x` 版本串，Vite 打包后会原样留着；下面 preload 的地址
       // 来自 bundle 的文件名、不带它，两边对不上浏览器就会把同一个字体下两遍。
       // 文件名里已经有内容哈希，版本串多余，这里一并去掉。
-      return code
-        .replace(/(materialdesignicons-webfont\.(?:woff2|woff|ttf))\?v=[^"')]*/g, '$1')
-        .replace(/@font-face\s*\{[^}]*\}/g, (block) => block.replace(/\}\s*$/, '  font-display: swap;\n}'))
+      const versionless = displayed.replace(/(materialdesignicons-webfont\.(?:woff2|woff|ttf))\?v=[^"')]*/g, '$1')
+      return building ? keepUsedRules(versionless, usedNames()) : versionless
+    },
+    async generateBundle(_options, bundle) {
+      const originals = Object.keys(bundle).filter((file) =>
+        /materialdesignicons-webfont[^/]*\.(?:woff2|woff|ttf|eot)$/.test(file)
+      )
+      const woff2 = originals.find((file) => file.endsWith('.woff2'))
+      if (!woff2 || !packageCss) return
+
+      const codepoints = parseCodepoints(packageCss)
+      const unknown = findUnknownIcons(usedNames(), codepoints)
+      if (unknown.length > 0) {
+        // 名字不存在就没有字形，界面上那个地方是空白。宁可现在红，也别发一份画不出
+        // 图标的包出去——这里报出来的名字要么是拼错了，要么该升 @mdi/font，要么只是
+        // 某句注释里提到了它（注释也扫，多算几个字形无害，写错名字才会红）。
+        this.error(`@mdi/font 里没有这些图标：${unknown.join('、')}。见 frontend/scripts/mdi-icons.mjs。`)
+      }
+
+      const glyphs = [...usedNames()].map((name) => codepoints.get(name))
+      const font = bundle[woff2]
+      const subset = await subsetFont(
+        Buffer.from(font.source as Uint8Array),
+        String.fromCodePoint(...(glyphs as number[])),
+        {
+          targetFormat: 'woff2',
+        }
+      )
+      const reference = this.emitFile({
+        type: 'asset',
+        name: 'materialdesignicons-webfont.woff2',
+        source: subset,
+      })
+      const href = (base.endsWith('/') ? base : `${base}/`) + this.getFileName(reference)
+
+      // 整块换掉：原来那几行 src 里有 eot/woff/ttf，指向的文件下面就被删了。
+      // 按块内容认，不按位置：这份 CSS 里还躺着 src/styles/fonts.css 那几条
+      // JetBrains Mono 的 @font-face，替换第一个会把它们顶掉、真正的图标字体反而
+      // 还指着已删的文件。
+      const face = `@font-face{font-family:"Material Design Icons";font-style:normal;font-weight:400;font-display:swap;src:url(${href}) format("woff2")}`
+      for (const output of Object.values(bundle)) {
+        if (output.type !== 'asset' || !output.fileName.endsWith('.css')) continue
+        const css = String(output.source)
+        if (!css.includes('Material Design Icons')) continue
+        output.source = replaceIconFontFace(css, face)
+      }
+      for (const file of originals) delete bundle[file]
     },
     transformIndexHtml: {
       order: 'post',
