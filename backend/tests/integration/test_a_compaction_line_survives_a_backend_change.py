@@ -14,6 +14,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block
@@ -100,6 +101,7 @@ def _room(client) -> tuple[str, uuid.UUID]:
 def _service(client):
     def build(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/compaction-across-backends-ws",

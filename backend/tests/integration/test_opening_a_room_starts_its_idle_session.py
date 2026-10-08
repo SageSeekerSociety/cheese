@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.domain.agent import prewarm
@@ -66,6 +67,7 @@ def _backend(client, hub, tmp_path):
     claude = sessions(central)
     claude.bind_owns_sessions(lambda: SimpleNamespace(owns_sessions=True))
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="System",
         workspace_root=str(tmp_path / "ws"),

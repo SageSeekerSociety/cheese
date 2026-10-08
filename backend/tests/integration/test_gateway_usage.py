@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.core.config import settings
 from app.core.errors import AppError
 from app.domain.agent import gateway as gw
@@ -132,6 +133,7 @@ class FailingMintGateway(FakeGateway):
 
 async def _mk_service(factory, tmp_path, fake, profiles=None, screen=None):
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(screen or QuietScreen()),
         base_system_prompt="你是芝士。",

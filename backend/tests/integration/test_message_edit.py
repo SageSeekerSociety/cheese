@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
@@ -308,6 +309,7 @@ def running_turn(client):
     def start(room: str) -> _Screen:
         screen = _Screen()
         service = ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/message-edit-ws",

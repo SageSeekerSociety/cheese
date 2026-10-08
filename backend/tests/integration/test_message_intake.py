@@ -35,8 +35,9 @@ async def _room(factory, *, in_thread=False):
     return conversation
 
 
-def _chat(factory, tmp_path, channel=None):
+def _chat(factory, tmp_path, runner, channel=None):
     return ChatService(
+        work_runner=runner,
         session_factory=factory,
         compute=stub_compute(channel or StubChannel()),
         base_system_prompt="You are Cheese.",
@@ -50,9 +51,9 @@ async def test_human_echo_is_already_readable_on_an_independent_connection(
 ):
     factory = business_db_factory
     topic = await _room(factory)
-    chat = _chat(factory, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
+    chat = _chat(factory, tmp_path, runner)
     release = asyncio.Event()
     publish = broker.publish
 
@@ -108,9 +109,9 @@ async def test_a_failed_message_commit_echoes_nothing_and_schedules_nothing(
             monkeypatch.setattr(session, "commit", refuse_commit)
             yield session
 
-    chat = _chat(failing_sessions, tmp_path)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
+    chat = _chat(failing_sessions, tmp_path, runner)
     scheduled = Mock()
     monkeypatch.setattr(runner, "_receive_message", scheduled)
     async with broker.subscribe(str(topic)) as browser:
@@ -150,9 +151,9 @@ async def test_disconnect_during_work_does_not_lose_output_or_leave_the_turn_ope
     factory = business_db_factory
     topic = await _room(factory, in_thread=True)
     screen = _HeldAnswer()
-    chat = _chat(factory, tmp_path, screen)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
+    chat = _chat(factory, tmp_path, runner, screen)
     try:
         async with broker.subscribe(str(topic)) as browser:
             await runner.receive_message(

@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
@@ -76,6 +77,7 @@ def test_new_full_service_process_reuses_original_native_executor(
 
     before = Channel()
     old = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(machine.workspace),

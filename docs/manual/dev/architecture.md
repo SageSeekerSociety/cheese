@@ -362,7 +362,7 @@ frontend/src/
 | 4c | 用户级变更流（`/notifications/live` 换成 `seq` 游标）；删掉两处 30 秒轮询 | 3b、4b |
 | 4d | 热点实体（房间任务、采纳卡、话题列表、成员）推和查看者无关的字段，前端就地合并 | 3b、3c |
 | 4e | 租约切写：领取、续约、完成、回收改用四条 SQL，JSON 只作镜像 | 3d |
-| 5a | 等异常基类任务进 main 后，拆 `chat.py` 和 `runtime.py` | 4a、4b |
+| 5a | 异常基类已合并；`room/turn.py` 接一轮的运行，`live_work.py` 持有现场状态；`session_turn_events.py` 声明由调用方等待的会话轮次事件接口，API 构造时显式注入同一运行器，`chat.py` 不再导入 `app.api.deps`。其余 `chat.py` / `runtime.py` 职责继续分段拆出 | 4a、4b |
 | 5b | 租约切读：11 处 JSON 路径查询改成联表，停写 JSON，最后删列 | 4e，且 4e 已发版 |
 | 6 | 全局锁退役：会话订阅租约、托管事件监听租约、闸门认领、流式帧跨副本扇出，D 类迁出，删 `core/ownership.py` | 4b、5b、3e |
 | 7 | 29 个 `announce_stale` 逐个换成写钩子映射；守卫变成「面板读到的模型都有映射」 | 3b |
@@ -390,5 +390,5 @@ frontend/src/
 ## 和其他工作的边界 {#boundaries}
 
 - 路由怎么声明写权限、怎么守，由「写权限闸门」那条任务定；本页的 `api` 层只要求路由调领域的公开面、声明响应模型。
-- `chat.py`、`runtime.py` 的拆分等「合并异常基类」进 main 之后再动。
+- `chat.py`、`runtime.py` 的拆分不改轮次顺序：自主开轮在原位等待持久化，输出先等待发布再记活性，收尾先等待关账及发布再清运行器记号。事件接收端是同进程的窄协议，不是 detached pubsub 或异步总线；没有默认空接收端，也不让 `get_work_runner()` 反向构造 `ChatService`。
 - 场景拆分里已经有人在做的三批（spaces、workspace、杂项，#2827、#2819、#2911），不在本页的迁移步骤里重复。

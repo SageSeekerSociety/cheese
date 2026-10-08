@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
@@ -427,6 +428,7 @@ def test_a_turn_survives_the_backend_being_replaced_under_it(client):
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",
@@ -482,6 +484,7 @@ def _picked_up_by_a_new_backend(client) -> tuple[uuid.UUID, str, StubChannel]:
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",
@@ -587,6 +590,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/claude-records-ws",

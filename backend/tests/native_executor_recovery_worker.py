@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
@@ -128,6 +129,7 @@ async def run(descriptor):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     channel = SocketChannel(descriptor)
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=descriptor["workspace"],

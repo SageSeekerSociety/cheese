@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
@@ -273,6 +274,7 @@ def test_an_answer_reaches_the_agent_after_the_conversation_that_asked_is_gone(
     question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
     after = StubChannel()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(after.root),

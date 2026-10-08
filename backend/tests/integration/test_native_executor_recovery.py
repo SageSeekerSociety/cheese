@@ -12,6 +12,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.claude_code.runner import Runner
@@ -73,6 +74,7 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
         from app.domain.agent.compute import ComputePool
 
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(machine.workspace),

@@ -1372,6 +1372,7 @@ def client(
                 raise
 
     chat_service = ChatService(
+        work_runner=get_work_runner(),
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -2451,6 +2452,7 @@ async def python_client(
                 raise
 
     chat_service = ChatService(
+        work_runner=get_work_runner(),
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),

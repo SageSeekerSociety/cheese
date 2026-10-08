@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 
+from app.api import deps as session_turn_deps
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import AuthorType
@@ -696,6 +697,7 @@ class _Screen(StubChannel):
 
 def _service(client, tmp_path, screen) -> ChatService:
     return ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",

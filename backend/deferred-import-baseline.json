@@ -51,7 +51,7 @@
     "app/domain/agent/admission.py": 2,
     "app/domain/agent/announce.py": 3,
     "app/domain/agent/ask.py": 2,
-    "app/domain/agent/chat.py": 24,
+    "app/domain/agent/chat.py": 20,
     "app/domain/agent/compute.py": 9,
     "app/domain/agent/compute_configs.py": 1,
     "app/domain/agent/credits_notice.py": 1,

@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.project.services import ProjectService
@@ -35,6 +36,7 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
     """跑一轮，交回会话开场时听到的全部（系统提示词和第一条消息）和席位数。"""
     screen = Screen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=ComputePool([screen.runtime], screen.name),
         base_system_prompt="You are Cheese.",

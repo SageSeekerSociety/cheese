@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.core import background
 from app.core.config import settings
@@ -37,6 +38,7 @@ def _room(client) -> tuple[str, StubChannel, ChatService]:
     room = project.json()["data"]["root_topic_id"]
     channel = StubChannel()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/handover-messages-ws",
@@ -210,6 +212,7 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
     channel = _SlowToSetUp()
     channel.slow = uuid.UUID(busy)
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/handover-messages-ws",
