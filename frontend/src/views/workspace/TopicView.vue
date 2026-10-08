@@ -211,7 +211,8 @@ let placeOpened = false
 watch(
   () => props.taskId,
   (taskId) => {
-    taskPage.reset()
+    const listed = taskId ? cachedTopicPanel('roomTasks', props.topicId)?.data : undefined
+    taskPage.reset(listed?.find((row) => row.id === taskId) ?? null)
     void taskPage.load()
     if (placeOpened) store.markRead(taskId ?? props.topicId)
   },

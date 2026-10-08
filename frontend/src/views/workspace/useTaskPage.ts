@@ -48,8 +48,10 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     }
   }
 
-  function reset() {
-    task.value = null
+  /** 换到另一件任务。`seed` 是别处已经读过的那一行（频道的任务清单）：先照着它画，
+   *  读回来再原地换——不先清空成一个转圈。 */
+  function reset(seed: RoomTask | null = null) {
+    task.value = seed
     loadError.value = null
     machine.value = null
     machineError.value = false
