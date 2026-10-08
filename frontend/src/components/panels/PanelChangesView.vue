@@ -321,22 +321,26 @@ const fileRows = computed(() =>
         @refresh="emit('refresh')"
       />
     </div>
-    <v-alert v-if="props.taskLoadError" type="error" density="compact" class="ma-4">{{ props.taskLoadError }}</v-alert>
-    <v-alert v-else-if="props.sourceUnavailable" type="warning" density="compact" class="ma-4">{{
-      t('work.room.changes.sourceUnavailable')
-    }}</v-alert>
-    <template v-else>
-      <!-- 转圈，不是骨架：这块地方长出来的是一套工具（150px 文件树 + 右边一格），
-         而右边那一格可能是差异、编辑器、一张图，也可能是「只读 / 二进制」提示——
-         等的是什么形状，这里并不知道。判据同 PanelPreview。 -->
-      <div v-if="props.noRepo" class="changes-scroll">
-        <slot name="head" />
-        <p class="source-note">{{ t('work.room.changes.noRepo') }}</p>
-      </div>
+    <!-- 这一格取不到东西（还在取、取失败、没有可看的版本、没有仓库）时，宿主塞进来的
+         那块交付情况照样在最上面：审阅和决定不该因为差异没取到就跟着不见。转圈，不是
+         骨架：这块地方长出来的是一套工具，等的是什么形状这里并不知道。判据同
+         PanelPreview。 -->
+    <div
+      v-if="props.taskLoadError || props.sourceUnavailable || props.noRepo || props.loading || props.errorMsg"
+      class="changes-scroll"
+    >
+      <slot v-if="!props.openPath" name="head" />
+      <v-alert v-if="props.taskLoadError" type="error" density="compact" class="ma-4">{{
+        props.taskLoadError
+      }}</v-alert>
+      <v-alert v-else-if="props.sourceUnavailable" type="warning" density="compact" class="ma-4">{{
+        t('work.room.changes.sourceUnavailable')
+      }}</v-alert>
+      <p v-else-if="props.noRepo" class="source-note">{{ t('work.room.changes.noRepo') }}</p>
       <div v-else-if="props.loading" class="d-flex justify-center py-8">
         <v-progress-circular indeterminate color="primary" size="28" />
       </div>
-      <v-alert v-else-if="props.errorMsg" type="error" density="compact" class="ma-4 file-load-error">
+      <v-alert v-else type="error" density="compact" class="ma-4 file-load-error">
         {{ props.errorMsg }}
         <BaseButton
           v-if="props.fileSource === 'live'"
@@ -346,220 +350,219 @@ const fileRows = computed(() =>
           >{{ t('work.room.changes.switchToCommitted') }}</BaseButton
         >
       </v-alert>
-
-      <div v-else class="file-tool">
-        <!-- chip 指来的文件不在这件任务里。列表照常显示：读者可以在树上挑别的文件。 -->
-        <v-alert
-          v-if="props.missing"
-          type="info"
-          variant="tonal"
-          density="compact"
-          class="ma-2"
-          data-testid="missing-file"
-        >
-          {{ t('work.room.changes.missingInTask', { path: props.missing }) }}
-        </v-alert>
-        <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
-           human choose — a silent winner is how edits vanished. -->
-        <div v-if="props.fileConflict" class="file-conflict">
-          <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
-          <span class="file-conflict__text"> {{ t('work.room.changes.conflict') }} </span>
-          <BaseButton kind="ghost" size="sm" @click="emit('reload')">{{
-            t('work.room.changes.reloadLatest')
-          }}</BaseButton>
-          <BaseButton kind="danger" size="sm" :loading="props.fileSaving" @click="emit('overwrite')">
-            {{ t('work.room.changes.saveAnyway') }}
-          </BaseButton>
-        </div>
-        <div class="file-body">
-          <ChangesFileTree
-            v-if="treeShown"
-            :rows="fileRows"
-            :collapsed-dirs="props.collapsedDirs"
-            :active-path="props.openPath"
-            :reveal-tick="props.revealTick"
-            :width="treeWidth"
-            :empty-label="t('work.room.changes.noChanges')"
-            @select="pickFile"
-            @toggle-dir="emit('toggle-dir', $event)"
-          />
-          <div
-            v-if="treeShown"
-            class="tree-resizer"
-            :title="t('work.topic.resize')"
-            @mousedown.prevent="startTreeDrag"
-            @dblclick="setTreeWidth(TREE_WIDTH.initial)"
-          />
-          <div class="file-editor">
-            <!-- 文档：画出这一版，再把它自己带的修订列在旁边。排在差异前面，因为
-               一份 .docx 的差异只有一句「二进制文件不同」。 -->
-            <div v-if="props.openPath && props.openIsDocument" class="doc-view">
-              <div v-if="props.docLoading && !props.docBytes" class="file-blob">
-                <v-progress-circular indeterminate color="primary" size="24" />
-              </div>
-              <div v-else-if="props.docRendererMissing && !props.docBytes" class="file-blob">
-                <v-icon size="30" class="c-faint mb-2">mdi-eye-off-outline</v-icon>
-                <div class="file-blob__title">{{ t('work.room.changes.docPreviewDisabled') }}</div>
-                <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
-                  <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
-                  {{ t('work.room.changes.downloadOriginal') }}
-                </BaseButton>
-              </div>
-              <div v-else-if="props.docError && !props.docBytes" class="file-blob">
-                <v-icon size="30" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-                <div class="file-blob__title">{{ t('work.room.changes.cantDisplay') }}</div>
-                <div class="file-blob__note">{{ props.docError }}</div>
-                <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
-                  <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
-                  {{ t('work.room.changes.downloadOriginal') }}
-                </BaseButton>
-              </div>
-              <div v-else class="doc-view__body">
-                <PreviewPages v-if="props.openDocumentType?.view === 'pages'" :data="props.docBytes" />
-                <PreviewSheet v-else :data="props.docBytes" :kind="props.openDocumentType?.sheet ?? 'workbook'" />
-                <RevisionList :revs="props.revs" :path="props.revisionPath" />
-              </div>
+    </div>
+    <div v-else class="file-tool">
+      <!-- chip 指来的文件不在这件任务里。列表照常显示：读者可以在树上挑别的文件。 -->
+      <v-alert
+        v-if="props.missing"
+        type="info"
+        variant="tonal"
+        density="compact"
+        class="ma-2"
+        data-testid="missing-file"
+      >
+        {{ t('work.room.changes.missingInTask', { path: props.missing }) }}
+      </v-alert>
+      <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
+         human choose — a silent winner is how edits vanished. -->
+      <div v-if="props.fileConflict" class="file-conflict">
+        <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
+        <span class="file-conflict__text"> {{ t('work.room.changes.conflict') }} </span>
+        <BaseButton kind="ghost" size="sm" @click="emit('reload')">{{
+          t('work.room.changes.reloadLatest')
+        }}</BaseButton>
+        <BaseButton kind="danger" size="sm" :loading="props.fileSaving" @click="emit('overwrite')">
+          {{ t('work.room.changes.saveAnyway') }}
+        </BaseButton>
+      </div>
+      <div class="file-body">
+        <ChangesFileTree
+          v-if="treeShown"
+          :rows="fileRows"
+          :collapsed-dirs="props.collapsedDirs"
+          :active-path="props.openPath"
+          :reveal-tick="props.revealTick"
+          :width="treeWidth"
+          :empty-label="t('work.room.changes.noChanges')"
+          @select="pickFile"
+          @toggle-dir="emit('toggle-dir', $event)"
+        />
+        <div
+          v-if="treeShown"
+          class="tree-resizer"
+          :title="t('work.topic.resize')"
+          @mousedown.prevent="startTreeDrag"
+          @dblclick="setTreeWidth(TREE_WIDTH.initial)"
+        />
+        <div class="file-editor">
+          <!-- 文档：画出这一版，再把它自己带的修订列在旁边。排在差异前面，因为
+             一份 .docx 的差异只有一句「二进制文件不同」。 -->
+          <div v-if="props.openPath && props.openIsDocument" class="doc-view">
+            <div v-if="props.docLoading && !props.docBytes" class="file-blob">
+              <v-progress-circular indeterminate color="primary" size="24" />
             </div>
-            <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法
-               定位到文件，所以验收动线以前根本立不起来。行号、折行、窗口化都在
-               ChangesDiff 里。 -->
-            <ChangesDiff v-else-if="props.openPath && props.effectiveView === 'diff'" :lines="props.openDiffLines" />
-            <div v-else-if="props.openPath && props.openIsImage" class="file-image-view">
-              <img :src="props.openRawUrl" :alt="props.openPath" />
-            </div>
-            <!-- Binary / oversized: no editor. Opening one in Monaco meant every
-               byte utf-8 could not decode came back as U+FFFD, and 保存 wrote
-               the damage to disk. -->
-            <div v-else-if="props.openPath && (props.fileBinary || props.fileTooLarge)" class="file-blob">
-              <v-icon size="30" class="c-faint mb-2">
-                {{ props.fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
-              </v-icon>
-              <div class="file-blob__title">
-                {{ props.fileTooLarge ? t('work.room.changes.tooLarge') : t('work.room.changes.binary') }}
-              </div>
-              <div class="file-blob__note">{{ props.openPath }} · {{ fmtBytes(props.fileBytes) }}</div>
+            <div v-else-if="props.docRendererMissing && !props.docBytes" class="file-blob">
+              <v-icon size="30" class="c-faint mb-2">mdi-eye-off-outline</v-icon>
+              <div class="file-blob__title">{{ t('work.room.changes.docPreviewDisabled') }}</div>
               <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
                 <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
                 {{ t('work.room.changes.downloadOriginal') }}
               </BaseButton>
             </div>
-            <!-- 手机上只读：软键盘配 Monaco 不是能救的组合，给一个明确的说法比给一个
-               难用的编辑器好。 -->
-            <CodeEditor
-              v-else-if="props.openPath"
-              :model-value="props.fileDraft"
-              :filename="props.openPath"
-              :readonly="!mdAndUp || props.fileReadOnly"
-              @update:model-value="emit('draft-changed', $event)"
-              @save="emit('save')"
-            />
-            <!-- 没打开文件时是全部改动那一面：这次交付的情况在最上面（宿主塞进来），下面
-                 每个改到的文件一段，连着往下排，一起滚。 -->
-            <div v-else class="changes-all">
-              <div
-                ref="scroller"
-                class="changes-scroll"
-                :style="{ '--diff-sticky-top': floatShown ? `${FLOAT_BAR_PX}px` : '0px' }"
-                :class="{ 'changes-scroll--bar': !hasHead && props.fileToolReady }"
-                @scroll.passive="onScroll"
-              >
-                <div ref="headBox"><slot name="head" /></div>
-                <!-- 改了哪些文件：一行总数，加上前几个文件（文件树常驻时它就是那棵树，这里
-                     只留总数那一行）。点一个就跳到它那一段。 -->
-                <div v-show="listDiffs.length" ref="summaryEl" class="changes-summary">
-                  <div class="changes-summary__row">
-                    <span class="changes-summary__total">
-                      {{
-                        t('work.room.changes.summary', {
-                          count: props.fileDiffs.length,
-                          added: totals.added,
-                          removed: totals.removed,
-                        })
-                      }}
-                    </span>
-                    <span v-if="props.currentTask && props.currentTask.status !== 'open'" class="c-faint">
-                      {{ props.sourceStatus }}
-                    </span>
-                    <!-- 顶部那块在的时候，细栏还没出来，打开其他文件和 ⋯ 先在这一行上。 -->
-                    <template v-if="hasHead">
-                      <v-spacer />
-                      <BaseButton
-                        v-if="props.fileToolReady"
-                        kind="ghost"
-                        size="sm"
-                        prepend-icon="mdi-file-search-outline"
-                        @click="pickerOpen = true"
-                      >
-                        {{ t('work.room.changes.openOther') }}
-                      </BaseButton>
-                      <ChangesMoreMenu
-                        :current-task="props.currentTask"
-                        :file-source="props.fileSource"
-                        :can-download="false"
-                        :refreshing="props.refreshing"
-                        @select-version="emit('select-version', $event)"
-                        @refresh="emit('refresh')"
-                      />
-                    </template>
-                  </div>
-                  <template v-if="!treeShown && listDiffs.length">
-                    <button
-                      v-for="d in summaryFiles"
-                      :key="d.path"
-                      type="button"
-                      class="changes-summary__file"
-                      :title="d.path"
-                      @click="pickFile(d.path)"
+            <div v-else-if="props.docError && !props.docBytes" class="file-blob">
+              <v-icon size="30" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+              <div class="file-blob__title">{{ t('work.room.changes.cantDisplay') }}</div>
+              <div class="file-blob__note">{{ props.docError }}</div>
+              <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
+                <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+                {{ t('work.room.changes.downloadOriginal') }}
+              </BaseButton>
+            </div>
+            <div v-else class="doc-view__body">
+              <PreviewPages v-if="props.openDocumentType?.view === 'pages'" :data="props.docBytes" />
+              <PreviewSheet v-else :data="props.docBytes" :kind="props.openDocumentType?.sheet ?? 'workbook'" />
+              <RevisionList :revs="props.revs" :path="props.revisionPath" />
+            </div>
+          </div>
+          <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法
+             定位到文件，所以验收动线以前根本立不起来。行号、折行、窗口化都在
+             ChangesDiff 里。 -->
+          <ChangesDiff v-else-if="props.openPath && props.effectiveView === 'diff'" :lines="props.openDiffLines" />
+          <div v-else-if="props.openPath && props.openIsImage" class="file-image-view">
+            <img :src="props.openRawUrl" :alt="props.openPath" />
+          </div>
+          <!-- Binary / oversized: no editor. Opening one in Monaco meant every
+             byte utf-8 could not decode came back as U+FFFD, and 保存 wrote
+             the damage to disk. -->
+          <div v-else-if="props.openPath && (props.fileBinary || props.fileTooLarge)" class="file-blob">
+            <v-icon size="30" class="c-faint mb-2">
+              {{ props.fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
+            </v-icon>
+            <div class="file-blob__title">
+              {{ props.fileTooLarge ? t('work.room.changes.tooLarge') : t('work.room.changes.binary') }}
+            </div>
+            <div class="file-blob__note">{{ props.openPath }} · {{ fmtBytes(props.fileBytes) }}</div>
+            <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
+              <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+              {{ t('work.room.changes.downloadOriginal') }}
+            </BaseButton>
+          </div>
+          <!-- 手机上只读：软键盘配 Monaco 不是能救的组合，给一个明确的说法比给一个
+             难用的编辑器好。 -->
+          <CodeEditor
+            v-else-if="props.openPath"
+            :model-value="props.fileDraft"
+            :filename="props.openPath"
+            :readonly="!mdAndUp || props.fileReadOnly"
+            @update:model-value="emit('draft-changed', $event)"
+            @save="emit('save')"
+          />
+          <!-- 没打开文件时是全部改动那一面：这次交付的情况在最上面（宿主塞进来），下面
+               每个改到的文件一段，连着往下排，一起滚。 -->
+          <div v-else class="changes-all">
+            <div
+              ref="scroller"
+              class="changes-scroll"
+              :style="{ '--diff-sticky-top': floatShown ? `${FLOAT_BAR_PX}px` : '0px' }"
+              :class="{ 'changes-scroll--bar': !hasHead && props.fileToolReady }"
+              @scroll.passive="onScroll"
+            >
+              <div ref="headBox"><slot name="head" /></div>
+              <!-- 改了哪些文件：一行总数，加上前几个文件（文件树常驻时它就是那棵树，这里
+                   只留总数那一行）。点一个就跳到它那一段。 -->
+              <div v-show="listDiffs.length" ref="summaryEl" class="changes-summary">
+                <div class="changes-summary__row">
+                  <span class="changes-summary__total">
+                    {{
+                      t('work.room.changes.summary', {
+                        count: props.fileDiffs.length,
+                        added: totals.added,
+                        removed: totals.removed,
+                      })
+                    }}
+                  </span>
+                  <span v-if="props.currentTask && props.currentTask.status !== 'open'" class="c-faint">
+                    {{ props.sourceStatus }}
+                  </span>
+                  <!-- 顶部那块在的时候，细栏还没出来，打开其他文件和 ⋯ 先在这一行上。 -->
+                  <template v-if="hasHead">
+                    <v-spacer />
+                    <BaseButton
+                      v-if="props.fileToolReady"
+                      kind="ghost"
+                      size="sm"
+                      prepend-icon="mdi-file-search-outline"
+                      @click="pickerOpen = true"
                     >
-                      <span class="changes-summary__path"
-                        ><span class="c-faint">{{ dirOf(d.path) }}</span
-                        ><b>{{ d.path.slice(dirOf(d.path).length) }}</b></span
-                      >
-                      <span class="changes-summary__add">+{{ d.added }}</span>
-                      <span class="changes-summary__del">−{{ d.removed }}</span>
-                    </button>
-                    <button
-                      v-if="listDiffs.length > SUMMARY_FIRST"
-                      type="button"
-                      class="changes-summary__more"
-                      @click="summaryAll = !summaryAll"
-                    >
-                      {{
-                        summaryAll
-                          ? t('work.room.changes.fewerFiles')
-                          : t('work.room.changes.moreFiles', { count: listDiffs.length - SUMMARY_FIRST })
-                      }}
-                    </button>
+                      {{ t('work.room.changes.openOther') }}
+                    </BaseButton>
+                    <ChangesMoreMenu
+                      :current-task="props.currentTask"
+                      :file-source="props.fileSource"
+                      :can-download="false"
+                      :refreshing="props.refreshing"
+                      @select-version="emit('select-version', $event)"
+                      @refresh="emit('refresh')"
+                    />
                   </template>
                 </div>
-                <ChangesDiffList ref="diffList" :diffs="listDiffs" @open="emit('select-file', $event)" />
+                <template v-if="!treeShown && listDiffs.length">
+                  <button
+                    v-for="d in summaryFiles"
+                    :key="d.path"
+                    type="button"
+                    class="changes-summary__file"
+                    :title="d.path"
+                    @click="pickFile(d.path)"
+                  >
+                    <span class="changes-summary__path"
+                      ><span class="c-faint">{{ dirOf(d.path) }}</span
+                      ><b>{{ d.path.slice(dirOf(d.path).length) }}</b></span
+                    >
+                    <span class="changes-summary__add">+{{ d.added }}</span>
+                    <span class="changes-summary__del">−{{ d.removed }}</span>
+                  </button>
+                  <button
+                    v-if="listDiffs.length > SUMMARY_FIRST"
+                    type="button"
+                    class="changes-summary__more"
+                    @click="summaryAll = !summaryAll"
+                  >
+                    {{
+                      summaryAll
+                        ? t('work.room.changes.fewerFiles')
+                        : t('work.room.changes.moreFiles', { count: listDiffs.length - SUMMARY_FIRST })
+                    }}
+                  </button>
+                </template>
               </div>
-              <!-- 滚过顶部之后的那条细栏：读到哪个文件、第几个。 -->
-              <div v-if="floatShown && props.fileToolReady" class="changes-float">
-                <span class="changes-float__path" :title="currentDiff?.path">{{
-                  currentDiff ? currentDiff.path.split('/').slice(-2).join('/') : ''
-                }}</span>
-                <span v-if="listDiffs.length" class="changes-float__count"
-                  >{{ currentIndex + 1 }} / {{ listDiffs.length }}</span
-                >
-                <v-spacer />
-                <BaseButton kind="ghost" size="sm" prepend-icon="mdi-magnify" @click="pickerOpen = true">
-                  {{ t('work.room.changes.openOther') }}
-                </BaseButton>
-                <ChangesMoreMenu
-                  :current-task="props.currentTask"
-                  :file-source="props.fileSource"
-                  :can-download="false"
-                  :refreshing="props.refreshing"
-                  @select-version="emit('select-version', $event)"
-                  @refresh="emit('refresh')"
-                />
-              </div>
+              <ChangesDiffList ref="diffList" :diffs="listDiffs" @open="emit('select-file', $event)" />
+            </div>
+            <!-- 滚过顶部之后的那条细栏：读到哪个文件、第几个。 -->
+            <div v-if="floatShown && props.fileToolReady" class="changes-float">
+              <span class="changes-float__path" :title="currentDiff?.path">{{
+                currentDiff ? currentDiff.path.split('/').slice(-2).join('/') : ''
+              }}</span>
+              <span v-if="listDiffs.length" class="changes-float__count"
+                >{{ currentIndex + 1 }} / {{ listDiffs.length }}</span
+              >
+              <v-spacer />
+              <BaseButton kind="ghost" size="sm" prepend-icon="mdi-magnify" @click="pickerOpen = true">
+                {{ t('work.room.changes.openOther') }}
+              </BaseButton>
+              <ChangesMoreMenu
+                :current-task="props.currentTask"
+                :file-source="props.fileSource"
+                :can-download="false"
+                :refreshing="props.refreshing"
+                @select-version="emit('select-version', $event)"
+                @refresh="emit('refresh')"
+              />
             </div>
           </div>
         </div>
       </div>
-    </template>
+    </div>
     <p v-if="props.draftCount" class="source-note source-drafts">
       {{ t('work.room.changes.draftsKept') }}
     </p>

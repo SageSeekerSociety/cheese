@@ -69,10 +69,14 @@ export function usePanelChanges(props: PanelChangesProps) {
       : status
   })
   const sourceUnavailable = computed(() => tasksLoaded.value && !currentTask.value)
-  const requestedSource = ref<FileSource>('live')
-  const fileSource = computed<FileSource>(() =>
-    currentTask.value?.status === 'open' ? requestedSource.value : 'committed'
-  )
+  // 没人挑过时按任务的状态定：待审阅时看交上来的那一版，审阅的就是它；现场的工作区
+  // 那时可能已经不在了（云沙箱空闲一会儿就收回）。其余还开着的任务看现场。
+  const requestedSource = ref<FileSource | null>(null)
+  const fileSource = computed<FileSource>(() => {
+    const task = currentTask.value
+    if (task?.status !== 'open') return 'committed'
+    return requestedSource.value ?? (task.card?.status === 'pending' ? 'committed' : 'live')
+  })
 
   async function loadTasks(opts: { fresh?: boolean } = {}) {
     const room = props.topicId
@@ -132,7 +136,10 @@ export function usePanelChanges(props: PanelChangesProps) {
       if (selectedTask.value !== task || sourceEpoch !== epoch) return
       gitDiff.value = diff.diff
     } catch (e) {
-      if (sourceEpoch === epoch) errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
+      // 后台那一下没取到，就留着上次取到的：下一次再取，不拿一句报错把整块顶掉。
+      if (sourceEpoch === epoch && !opts.silent) {
+        errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
+      }
     } finally {
       if (selectedTask.value === task && sourceEpoch === epoch) {
         loading.value = false
@@ -354,23 +361,25 @@ export function usePanelChanges(props: PanelChangesProps) {
   // both run raced: whichever finished second re-ran the "nothing is open, select
   // the first file" branch and stole the file the reader had actually clicked.
   let filesInFlight: Promise<void> | null = null
-  function loadFiles(): Promise<void> {
+  function loadFiles(opts: { silent?: boolean } = {}): Promise<void> {
     if (filesInFlight) return filesInFlight
-    const p = doLoadFiles().finally(() => {
+    const p = doLoadFiles(opts).finally(() => {
       if (filesInFlight === p) filesInFlight = null
     })
     filesInFlight = p
     return p
   }
 
-  async function doLoadFiles() {
+  async function doLoadFiles(opts: { silent?: boolean } = {}) {
     const tid = props.topicId
     const task = selectedTask.value
     const pid = props.projectId
     const epoch = sourceEpoch
     if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value) return
-    loading.value = true
-    errorMsg.value = null
+    if (!opts.silent) {
+      loading.value = true
+      errorMsg.value = null
+    }
     try {
       const listed = (await listFiles(pid, tid, task, fileSource.value)).data
       // Guard against a source switch mid-flight — without it the previous source's
@@ -395,7 +404,7 @@ export function usePanelChanges(props: PanelChangesProps) {
       // 打开的那一份不在这个来源里了：回到全部改动那一面，而不是对着一份读不到的文件。
       if (openPath.value && !listed.some((f) => f.path === openPath.value)) openPath.value = null
     } catch (e) {
-      if (sourceEpoch !== epoch) return
+      if (sourceEpoch !== epoch || opts.silent) return
       errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
       if (selectedTask.value === task && sourceEpoch === epoch) loading.value = false
@@ -543,7 +552,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     void checkRepo()
     if (noRepo.value) return
     void loadGit(opts)
-    void loadFiles()
+    void loadFiles(opts)
   }
 
   // 项目没接代码仓库时，文件和提交记录都拿不到，后端答的是一句「项目没有代码仓库」。
@@ -638,6 +647,7 @@ export function usePanelChanges(props: PanelChangesProps) {
       keepDraft()
       clearSource()
       taskRow.value = undefined
+      requestedSource.value = null
       tasksLoaded.value = false
       if (props.active) void loadAll()
     }
