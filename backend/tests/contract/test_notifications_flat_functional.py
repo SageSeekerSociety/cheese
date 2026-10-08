@@ -28,6 +28,7 @@ async def _seed(
     factory,
     *,
     read: bool = False,
+    finalized: bool = True,
     type_: NotificationType = NotificationType.MENTION,
     created_at: datetime | None = None,
     metadata: dict | None = None,
@@ -38,7 +39,7 @@ async def _seed(
             receiver_id=_AGENT_USER_ID,
             type=type_,
             read=read,
-            finalized=True,
+            finalized=finalized,
             metadata_payload=metadata or {},
             created_at=created_at or now,
             updated_at=now,
@@ -289,3 +290,28 @@ async def test_entities_resolved_from_metadata(authed_client: AsyncClient) -> No
     assert entities["actor"]["type"] == "user"
     assert entities["actor"]["id"] == str(actor_id)
     assert entities["actor"]["name"] == "Mochi"
+
+
+@pytest.mark.anyio
+async def test_an_unfinalized_row_never_lights_the_unread_count(
+    authed_client: AsyncClient,
+) -> None:
+    """小点上的数就是待办页列出来的行数 —— 数（`/notifications/unread-count`）和
+    名单（`/notifications`）过同一套判据。
+
+    还没落定的那一行不在列表里，所以也不能进未读数：那会让小点亮着、点进去一条未读
+    也读不到，而唯一能按灭它的「全部已读」按钮只在列表里真有未读行时才画出来 ——
+    那颗点谁都清不掉。
+    """
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    landed = await _seed(factory)
+    await _seed(factory, finalized=False)
+
+    listed = await authed_client.get(
+        "/notifications", params={"pageSize": 10, "read": False}
+    )
+    data = listed.json()["data"]
+    assert [n["id"] for n in data["notifications"]] == [landed]
+
+    unread = await authed_client.get("/notifications/unread-count")
+    assert unread.json()["data"]["count"] == len(data["notifications"])
