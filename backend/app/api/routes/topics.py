@@ -42,6 +42,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard
 from app.domain.conversation.services import room_of
+from app.domain.delivery.agent import redispatch_undelivered
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -1046,7 +1047,7 @@ async def summon_agent(
     在时间线上了——补发一条一模一样的，读的人要自己分辨哪条是真的。
 
     两种情况下它什么都不做，并如实说明是哪一种：房间已经在干活（正在跑的那一轮
-    会自己把没 @ 的消息接过去），或者根本没有待读的东西（有人先 @ 过了）。两种
+    会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
     place = await TopicService(db).place_or_404(topic_id)
@@ -1060,6 +1061,16 @@ async def summon_agent(
     if chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
     if not await chat.has_unread_input(place.conversation_id):
+        # 房间里没有待读的消息，不等于这一下没事可做：平台自己欠这个频道的输入
+        # （任务的开始指令那类）也在账本上等着，等的是退避时间。点「重试」的意思
+        # 就是「现在」—— 不然那句话只能等这个项目里碰巧发生的下一件事把它捎上。
+        if await redispatch_undelivered(
+            chat.session_factory,
+            conversation_id=place.conversation_id,
+            chat=chat,
+            runner=runner,
+        ):
+            return ok({"started": True})
         return ok({"started": False, "reason": "nothing_pending"})
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
