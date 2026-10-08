@@ -452,7 +452,11 @@ function handleStateChanged(resource: string, id?: string) {
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   // 技能的提议落下、被保存或被拒：那张卡跟着变。
   else if (resource === 'skills') chatColumn.value?.reloadSkills()
-  else if (resource === 'tasks' && props.taskId) void taskPage.load(true)
+  // 任务开始、交付、关闭：任务页跟着变，侧栏那几行也是。
+  else if (resource === 'tasks') {
+    store.noteTasksChanged()
+    if (props.taskId) void taskPage.load(true)
+  }
   // 频道里有支线长了一条：概览里「支线」那一格跟着变（主线上那一行对话栏自己换）。
   else if (resource === 'threads') void channelThreads.load()
   else activityTick.value += 1 // doc / notify → reload
