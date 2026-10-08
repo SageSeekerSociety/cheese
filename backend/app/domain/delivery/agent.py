@@ -16,11 +16,13 @@ from sqlalchemy import or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
+from app.core.live_frames import show_state_once_committed
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -355,6 +357,12 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                         "automatic replay is withheld"
                     )
                 row.lease_until = None
+                # The turn that writes a finished task up is over, however it
+                # went: the task closes now (`room_task.closing`).
+                if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
+                    closed = await close_after_summary(session, row.conversation_id)
+                    if closed is not None:
+                        show_state_once_committed(session, closed.room_id)
             await session.commit()
 
 
