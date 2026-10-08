@@ -19,12 +19,14 @@ import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevis
 import type { FileSource, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { DiffLine, FileDiff } from '../../lib/diff'
 import type { FileKind } from '../../lib/fileKind'
+import type { MergeConflict, ReviewBundle } from '../../types/reviewComment'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { buildFileRows, fmtBytes } from '../../lib/changesTree'
 import CodeEditor from '../CodeEditor.vue'
+import ReviewMergePicker from '../review/ReviewMergePicker.vue'
 
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
@@ -71,6 +73,9 @@ const props = defineProps<{
   fileBytes: number
   fileReadOnly: boolean
   fileConflict: boolean
+  /** 存的时候和别人的修改重叠了：逐处选一个版本。 */
+  fileMerge?: MergeConflict | null
+  agentName?: string
   openDiff: FileDiff | null
   openDiffLines: DiffLine[]
   effectiveView: 'diff' | 'edit'
@@ -90,6 +95,8 @@ const props = defineProps<{
   docRendererMissing: boolean
   /** 这一份 .docx 的修订：清单、只读、处理动作都在里面（`useDocumentRevisions.ts`）。 */
   revs: DocumentRevisionsBundle
+  /** 这件任务的批注；宿主不给就不画（`composables/useReviewComments.ts`）。 */
+  review?: ReviewBundle | null
 }>()
 
 const emit = defineEmits<{
@@ -102,6 +109,8 @@ const emit = defineEmits<{
   (e: 'download'): void
   (e: 'save'): void
   (e: 'overwrite'): void
+  (e: 'resolve-merge', content: string): void
+  (e: 'cancel-merge'): void
   (e: 'reload'): void
   (e: 'view-changed', view: 'diff' | 'edit'): void
   (e: 'draft-changed', content: string): void
@@ -365,7 +374,15 @@ const fileRows = computed(() =>
       </v-alert>
       <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
          human choose — a silent winner is how edits vanished. -->
-      <div v-if="props.fileConflict" class="file-conflict">
+      <ReviewMergePicker
+        v-if="props.fileMerge"
+        :regions="props.fileMerge.regions"
+        :agent-name="props.agentName ?? ''"
+        :busy="props.fileSaving"
+        @resolve="emit('resolve-merge', $event)"
+        @cancel="emit('cancel-merge')"
+      />
+      <div v-else-if="props.fileConflict" class="file-conflict">
         <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
         <span class="file-conflict__text"> {{ t('work.room.changes.conflict') }} </span>
         <BaseButton kind="ghost" size="sm" @click="emit('reload')">{{
@@ -536,7 +553,15 @@ const fileRows = computed(() =>
                   </button>
                 </template>
               </div>
-              <ChangesDiffList ref="diffList" :diffs="listDiffs" @open="emit('select-file', $event)" />
+              <ChangesDiffList
+                ref="diffList"
+                :diffs="listDiffs"
+                :review="props.review"
+                @open="emit('select-file', $event)"
+                @comment="(d) => void props.review?.add(d)"
+                @edit-comment="(id, b, s) => void props.review?.edit(id, b, s)"
+                @remove-comment="(id) => void props.review?.remove(id)"
+              />
             </div>
             <!-- 滚过顶部之后的那条细栏：读到哪个文件、第几个。 -->
             <div v-if="floatShown && props.fileToolReady" class="changes-float">

@@ -34,10 +34,10 @@ export function acceptCard(cardId: string, decidedBy: string, headSha: string | 
   })
 }
 
-export function rejectCard(cardId: string, decidedBy: string, note: string): Promise<AcceptCard> {
+export function rejectCard(cardId: string, decidedBy: string, note: string, commentIds: string[] = []) {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/reject`, {
     method: 'POST',
-    body: JSON.stringify({ decided_by: decidedBy, note }),
+    body: JSON.stringify({ decided_by: decidedBy, note, comment_ids: commentIds }),
   })
 }
 

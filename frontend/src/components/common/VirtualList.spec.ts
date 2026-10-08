@@ -7,7 +7,7 @@
 // props 记下来，槽里的行原样画出来，别的什么都不做。
 import type { Component } from 'vue'
 
-import { defineComponent, h, nextTick } from 'vue'
+import { defineComponent, h, nextTick, onMounted, ref } from 'vue'
 import { fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -88,6 +88,17 @@ function rowTexts(container: Element): (string | null)[] {
   return Array.from(container.querySelectorAll('.row'), (r) => r.textContent)
 }
 
+/**
+ * 等挂载后那一趟 flush 走完。
+ *
+ * 两趟：组件在 `onMounted` 里挂的那一下要等一趟 flush 才轮到它自己动手，它翻掉的那个
+ * 状态再排队重画一次。
+ */
+async function settled(): Promise<void> {
+  await nextTick()
+  await nextTick()
+}
+
 beforeEach(() => {
   virtua.seen.length = 0
   virtua.scrollToIndex.mockClear()
@@ -108,11 +119,49 @@ describe('门槛', () => {
     expect(virtua.seen[0].props.data).toHaveLength(150)
   })
 
-  it('超过门槛但没给滚动容器：照旧整列画 —— 不知道按谁的窗口算就不猜', () => {
+  it('超过门槛但一直没给滚动容器：一个 tick 之后照旧整列画 —— 不知道按谁的窗口算就不猜', async () => {
     // 猜一个（自己起个能滚的盒子）会把外面那层滚的东西挪走：话题列表的置顶行和组头
     // 就会钉在原地不动。宁可不虚拟化。
     const { container } = draw({ itemKey }, itemsOf(150))
+    // 挂载那一帧不下这个结论：宿主在这一帧之后才把滚动容器交上来是很常见的（容器是
+    // 别处的模板 ref，挂完才有值）。等过一个 tick 还没有，才当真没有。
+    expect(container.querySelectorAll('.row')).toHaveLength(0)
+    await settled()
     expect(virtua.seen).toHaveLength(0)
+    expect(container.querySelectorAll('.row')).toHaveLength(150)
+  })
+
+  it('容器第一帧还没到手：那一帧一行都不建，容器到了才交给 virtua', async () => {
+    // 话题栏那一列就是这样：容器是它外面那个盒子上的模板 ref，第一帧渲染时还是 null。
+    // 改之前这里是先把整列画出来、容器一到手再整列扔掉换成 virtua——2026-10-08 的报告
+    // 里量到的「li 删掉一批又插回来」就是这一下。这里钉的是：整列那一路一次都没走过。
+    const rowsAtMount: number[] = []
+    const Host = defineComponent({
+      name: 'LateScrollHost',
+      setup() {
+        const root = ref<HTMLElement | null>(null)
+        const scroller = ref<HTMLElement | null>(null)
+        // 挂载钩子里的 DOM 就是第一帧渲染出来的东西（子组件先挂完，父组件才挂）。
+        onMounted(() => rowsAtMount.push(root.value?.querySelectorAll('.row').length ?? -1))
+        return () =>
+          h('div', { ref: root }, [
+            h('div', { ref: scroller }, [
+              h(
+                VirtualList as Component,
+                { itemKey, items: itemsOf(150), scrollParent: scroller.value },
+                { item: ({ item }: { item: string }) => h('div', { class: 'row' }, item) }
+              ),
+            ]),
+          ])
+      },
+    })
+
+    const { container } = render(Host)
+
+    expect(rowsAtMount).toEqual([0])
+    expect(virtua.seen).toHaveLength(0)
+    await settled()
+    expect(virtua.seen.map((s) => s.which)).toEqual(['Virtualizer'])
     expect(container.querySelectorAll('.row')).toHaveLength(150)
   })
 })

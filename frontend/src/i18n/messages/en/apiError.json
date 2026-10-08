@@ -984,5 +984,18 @@
   "projectSlugFormat": "A short name uses lowercase letters, digits and hyphens, 3 to 32 characters, and does not start or end with a hyphen",
   "projectSlugReserved": "This short name is kept for a platform page. Choose another",
   "projectSlugTaken": "Another project has used this short name. Choose another",
-  "acceptFocusTooLong": "Review focus takes at most {items} items and {chars} characters in total, one sentence each, saying what the reviewer should check. Test results and how you verified the change go in body"
+  "acceptFocusTooLong": "Review focus takes at most {items} items and {chars} characters in total, one sentence each, saying what the reviewer should check. Test results and how you verified the change go in body",
+  "reviewCommentNotFound": "The comment doesn't exist",
+  "reviewCommentAlreadySent": "The comment has been sent and can no longer be changed",
+  "reviewCommentNotAwaitingReview": "Comments can only be written while the task awaits review",
+  "reviewCommentNotAllowed": "Only the task's owner, contributors and reviewer can comment",
+  "reviewCommentTooLong": "The comment is too long",
+  "reviewCommentEmpty": "The comment is empty",
+  "reviewCommentBadLines": "The comment's line numbers are invalid",
+  "reviewCommentNotSendable": "One of the comments to send can't be sent. Refresh and try again",
+  "reviewCommentOutcomeUnknown": "The last round of comments has no comment {id}",
+  "reviewCommentSignIn": "Sign in to comment",
+  "githubReviewPostFailed": "GitHub refused the review (HTTP {status}): {reply}",
+  "reviewCommentSuggestionOnly": "Suggested change",
+  "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each"
 }

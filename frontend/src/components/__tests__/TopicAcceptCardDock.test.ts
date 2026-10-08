@@ -258,7 +258,7 @@ describe('退回', () => {
     await fireEvent.click(buttonNamed(container.querySelector('.reject-form')!, '退回')!)
     await flush()
 
-    expect(rejectCard).toHaveBeenCalledWith(pending.id, 'alice', '待决提示的问题修复后再提交')
+    expect(rejectCard).toHaveBeenCalledWith(pending.id, 'alice', '待决提示的问题修复后再提交', [])
   })
 
   it('取消退回，什么都不发，横条回来', async () => {

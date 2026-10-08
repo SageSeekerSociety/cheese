@@ -293,6 +293,24 @@ def test_review_comments_reach_the_agent_with_their_text(client, app_world):
     assert "app/x.py:3" in text
 
 
+def test_the_platforms_own_copy_of_a_send_back_is_not_handed_back(client, app_world):
+    """A 退回's comments reach 芝士 with the 退回 and are copied onto the PR; the
+    poller reading that copy back must not tell 芝士 the same thing again."""
+    from app.domain.review.pr_signals import PLATFORM_REVIEW_MARK
+
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("pending", "等待中：Backend Test")
+    fake.reviews_by_number[number] = [
+        _comment(11, body=f"**alice**：归档的也要排除\n\n{PLATFORM_REVIEW_MARK}")
+    ]
+
+    _poll(client)
+    wait_work_idle()
+
+    assert _nudges(client, tid, "pr_review") == []
+
+
 def test_inline_comments_are_not_fetched_when_the_pr_says_it_has_none(
     client, app_world
 ):

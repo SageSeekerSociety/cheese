@@ -15,6 +15,7 @@ import type { CardPhase } from '@/lib/topicState'
 
 import { computed, inject, nextTick, onUnmounted, provide, ref, watch } from 'vue'
 
+import { useReviewComments } from '@/composables/useReviewComments'
 import { useUserRef } from '@/composables/useUserRef'
 
 import {
@@ -76,6 +77,8 @@ export function useAcceptCard(props: AcceptCardHost) {
   )
   // The accepted card on an archived topic — its presence lets us offer 撤回采纳.
   const acceptedCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'accepted') ?? null)
+  // 待审阅时写的批注，退回时随卡送出（composables/useReviewComments.ts）。
+  const comments = useReviewComments({ taskId: () => props.taskId, pendingCard: () => pendingCard.value })
 
   // 已采纳等合并 (`pr_open`, #718 退役): 历史状态。采纳现在当场合并，什么都不再
   // 写这个状态，存量卡也已迁回 pending —— 这张脸和闸门那两张一样，只为库里的
@@ -484,10 +487,16 @@ export function useAcceptCard(props: AcceptCardHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      await rejectCard(card.id, AUTHOR, rejectNote.value)
+      await rejectCard(
+        card.id,
+        AUTHOR,
+        rejectNote.value,
+        comments.toSend.value.map((c) => c.id)
+      )
       showRejectInput.value = false
       rejectNote.value = ''
       await loadAcceptCard(store.refreshTopicRow(props.topicId))
+      await comments.load()
     } catch (e) {
       store.reportError(e, t('topic.accept.returnFailed'))
     } finally {
@@ -572,6 +581,8 @@ export function useAcceptCard(props: AcceptCardHost) {
     forceMergeReason,
     deliverableBusy,
     deliverableError,
+    // 这件任务的批注
+    comments,
     // 动作
     reload: () => loadAcceptCard(),
     onDownloadDeliverable,

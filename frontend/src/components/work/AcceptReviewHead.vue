@@ -5,10 +5,28 @@
 //
 // 它站在 `components/panels/` 之外，理由同 `PanelChangesHost`：面板是场景，场景不读会
 // 取数的东西。
+import { computed } from 'vue'
+
 import { injectAcceptCard } from '../../composables/useAcceptCard'
 import ChangesReviewHead from '../accept/ChangesReviewHead.vue'
 
+import { t } from '@/i18n'
+
 const accept = injectAcceptCard()
+
+// 上一轮退回带走的批注，芝士重新交上来之后才谈得上处理了几条。
+const round = computed(() => {
+  const c = accept?.comments
+  if (!c || !c.roundAnswered.value) return []
+  return c.lastRound.value
+    .filter((r) => !r.parent_id)
+    .map((r) => ({
+      id: r.id,
+      text: r.body || t('work.room.review.suggestion'),
+      where: r.current_line === null ? t('work.room.review.gone') : `${r.path.split('/').pop()}:${r.current_line}`,
+      outcome: r.outcome,
+    }))
+})
 </script>
 
 <template>
@@ -34,6 +52,7 @@ const accept = injectAcceptCard()
     :agent-handle="accept.agentHandle.value"
     :deliverable-busy="accept.deliverableBusy.value"
     :deliverable-error="accept.deliverableError.value"
+    :round="round"
     @approve="accept.onApproveCard"
     @reassign="accept.onReassignCard"
     @download="accept.onDownloadDeliverable"

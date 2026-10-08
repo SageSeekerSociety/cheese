@@ -27,7 +27,10 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
-from app.domain.review import pr_publish
+from app.domain.review import comment_publish, pr_publish
+from app.domain.review.comments import ReviewCommentService
+from app.domain.review.comments import instruction as comment_instruction
+from app.domain.review.comments import summary as comment_summary
 from app.domain.review.github_pr import GitHubPRError
 from app.domain.review.models import DeliverableKind
 from app.domain.review.schemas import (
@@ -145,6 +148,10 @@ async def create_accept_card(
         deliver_url=body.deliver_url,
         completes_task=body.completes_task,
         task_id=task_id,
+    )
+    # What 芝士 did about the comments the last 退回 sent, for the next reviewer.
+    await ReviewCommentService(db).record_outcomes(
+        task_id, [o.model_dump() for o in body.comment_outcomes]
     )
     # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is the
     # platform's view of a PR, so filing it opens that PR right away with the
@@ -410,17 +417,20 @@ async def reject_card(
         raise AuthenticationRequiredError(say("returnSignIn"))
     svc = AcceptService(db)
     card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
+    sent = await ReviewCommentService(db).send(card, actor.handle, body.comment_ids)
     described = await svc.describe(card)
     topic_id = card.topic_id
     decided_by = card.decided_by or actor.handle
     reason = (card.note or "").strip()
     # 理由必须过去，否则芝士只知道"被退了"、不知道退在哪，只能猜着重做一遍。
     reason_line = f"他给的理由：{reason}" if reason else "他没写理由。"
+    if sent:
+        reason_line += "\n" + await comment_instruction(db, sent)
     task = await TaskService(db).get(card.task_id) if card.task_id else None
     actionable = task is not None and task.status == TaskStatus.open
     action = (
         f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
-        "照着这条理由改，改完重新递卡（驳回不阻塞重递）。"
+        "照着理由和批注改，改完重新递卡（驳回不阻塞重递）。"
         "理由看不懂或者你不同意，在对话里说清分歧，请人决定。"
         if actionable
         else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
@@ -443,11 +453,13 @@ async def reject_card(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,
             who=WHO_CHEESE,
-            detail=reason or None,
+            detail="\n\n".join(p for p in (reason, comment_summary(sent)) if p) or None,
             detail_label=say("labelRejectReason"),
         ),
     )
     await db.commit()
+    if sent:
+        comment_publish.dispatch(chat.session_factory, card_id=card.id, reason=reason)
     await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok(described)
 
