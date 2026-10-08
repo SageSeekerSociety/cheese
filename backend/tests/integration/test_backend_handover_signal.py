@@ -120,7 +120,7 @@ async def test_a_backend_told_to_hand_over_lets_the_next_take_the_work_and_serve
 
                 browser = asyncio.create_task(
                     EndBusinessSocketsAtHandover(room)(
-                        {"type": "websocket", "path": "/topics/abc/chat"},
+                        {"type": "websocket", "path": "/rooms/live"},
                         asyncio.Event().wait,
                         browser_send,
                     )

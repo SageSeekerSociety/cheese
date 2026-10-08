@@ -155,13 +155,16 @@ async def send() -> int:
 
     token = create_access_token(user_id, handle=handle)
     base = os.environ.get("WS_BASE", "ws://127.0.0.1:8000")
-    url = f"{base}/topics/{topic_id}/chat?token={token}"
+    url = f"{base}/rooms/live?token={token}"
     content = os.environ.get("CONTENT", "probe: 请回复 pong 并说明你运行在哪台机器上")
     summon = os.environ.get("SUMMON", "1") == "1"
     deadline = time.time() + float(os.environ.get("DEADLINE_S", "300"))
 
     _say(f"connecting as {handle} (uid={user_id}) to topic {topic_id}")
     async with websockets.connect(url, max_size=None) as ws:
+        await ws.send(
+            json.dumps({"type": "subscribe", "topic": topic_id, "token": token})
+        )
         _say("connected")
         await ws.send(
             json.dumps(
