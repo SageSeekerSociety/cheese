@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -80,7 +80,8 @@ class Backups(unittest.TestCase):
         patch.object(common, "client", return_value=self.store).start()
 
     def call(self, module, *args):
-        with patch.object(sys, "argv", [module.__file__, *args]):
+        # Expected negative cases must not create false Actions error annotations.
+        with patch.object(sys, "argv", [module.__file__, *args]), redirect_stderr(io.StringIO()):
             return module.main()
 
     def markers(self, age=0):
