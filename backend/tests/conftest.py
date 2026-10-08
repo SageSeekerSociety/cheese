@@ -1826,8 +1826,38 @@ def _ensure_template() -> bool:
         return False
 
 
-def _migrate_fresh_db(db_name: str, db_url: str) -> None:
-    """Drop + recreate a database and migrate it to head (alembic)."""
+def revision_template(revision: str) -> str | None:
+    """A template database at an older ``revision``, built once per machine per
+    migration history, or None if it could not be built.
+
+    A data-migration test replays its migration on the schema of the revision
+    before it, and walking a fresh database from nothing to that revision is
+    most of the test's time. Every test of one migration asks for the same
+    revision, so the walk is done once, under the same lock and build-then-
+    rename rule as the head template (``_ensure_template``), and each test
+    copies the result. The name carries the history's fingerprint, so a changed
+    migration never reuses an old copy, and the ``cheesex_tpl_`` prefix puts it
+    under the same stale-template cleanup.
+    """
+    import fcntl
+
+    template = f"{_TEMPLATE_DB}_{revision}"
+    lock_path = Path(tempfile.gettempdir()) / f"{template}.lock"
+    try:
+        with open(lock_path, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if not asyncio.run(_db_exists(template)):
+                building = f"{template}_building"
+                _migrate_fresh_db(building, f"{_PG_BASE}/{building}", revision)
+                asyncio.run(_rename_db(building, template))
+            _touch_template_use(template)
+            return template
+    except Exception:  # noqa: BLE001 — the caller migrates directly instead
+        return None
+
+
+def _migrate_fresh_db(db_name: str, db_url: str, revision: str = "head") -> None:
+    """Drop + recreate a database and migrate it to ``revision`` (alembic)."""
     import subprocess
     import sys
     from pathlib import Path
@@ -1838,7 +1868,7 @@ def _migrate_fresh_db(db_name: str, db_url: str) -> None:
     # `python -m alembic` works from any host (local venv or CI) without assuming
     # a `.venv/bin/alembic` path.
     result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", revision],
         cwd=backend_dir,
         env={**os.environ, "DATABASE_URL": db_url},
         capture_output=True,
@@ -1850,7 +1880,8 @@ def _migrate_fresh_db(db_name: str, db_url: str) -> None:
         # test in the session then errors with no way to tell a wedged Postgres
         # from a genuinely broken migration. Surface alembic's own words.
         raise RuntimeError(
-            f"alembic upgrade head failed for {db_name} (rc={result.returncode})\n"
+            f"alembic upgrade {revision} failed for {db_name}"
+            f" (rc={result.returncode})\n"
             f"--- stdout ---\n{result.stdout.strip()}\n"
             f"--- stderr ---\n{result.stderr.strip()}"
         )
