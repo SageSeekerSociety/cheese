@@ -29,6 +29,7 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableEntityError,
     ValidationError,
 )
 from app.core.sentences import exception_text, say
@@ -412,7 +413,7 @@ async def list_project_tasks(
     seen = await rooms_seen(db, resolver, actor, project_id)
     if limit is not None:
         if status is None:
-            raise ValidationError(say("taskPageNeedsStatus"))
+            raise UnprocessableEntityError(say("taskPageNeedsStatus"))
         page_rows, has_more = await TaskService(db).page_in_project(
             project_id,
             rooms=seen,
@@ -461,7 +462,7 @@ def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:
         moved, task_id = before.split("|", 1)
         return datetime.fromisoformat(moved), uuid.UUID(task_id)
     except ValueError as exc:
-        raise ValidationError(say("taskPageCursorInvalid")) from exc
+        raise UnprocessableEntityError(say("taskPageCursorInvalid")) from exc
 
 
 async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> list[dict]:
