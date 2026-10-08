@@ -20,7 +20,7 @@ import time
 import pytest
 
 from app.domain.agent import machine_launcher
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.harness.launch import MachinePlace
 from app.domain.project.environment import EnvironmentConfig
 
