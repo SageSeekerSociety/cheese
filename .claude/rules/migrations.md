@@ -10,7 +10,7 @@ forked it four times on 2026-08-09/10 alone; every fork kills `alembic upgrade
 head`, which reddens CI and aborts the dev deploy.
 
 - After creating or merging any migration, run `uv run alembic heads` — it must
-  print exactly one. CI enforces this (`migration-heads` job, ungated), but
+  print exactly one. CI enforces this (the backend `static` job's "Exactly one alembic head" step), but
   catch it locally first.
 - New migration: set `down_revision` to the CURRENT head, **and move the
   sentinel**: `echo <your-revision-id> > backend/alembic/HEAD`. That one-line
@@ -41,7 +41,7 @@ breaks every query on that table the moment the migration commits — #2914
 dropped `task.video_url` in the same PR that unmapped it (`694b0dbaf5eb`).
 
 `.claude/scripts/check-migration-safety.py` enforces the rules marked ✓ on
-every migration a PR **adds** (CI: `migration-heads` job; locally: the
+every migration a PR **adds** (CI: backend `static` job; locally: the
 `migration-safety` pre-commit hook). Migrations on main are not re-judged.
 
 1. **One transaction per migration.** `env.py` sets

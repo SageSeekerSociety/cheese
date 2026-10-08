@@ -1,6 +1,12 @@
 """第三方登录：授权跳转、回调、决策页建号 / 绑定、连接管理之外的 OAuth 邮箱验证。"""
 
-from typing import TYPE_CHECKING, Annotated
+import hmac
+import json
+import secrets
+import time
+import uuid
+from typing import Annotated
+from urllib.parse import urlencode, urlparse
 
 import jwt
 from fastapi import (
@@ -13,6 +19,7 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import RedirectResponse
+from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -20,34 +27,6 @@ from app.api.deps import (
     get_user_auth_service,
 )
 from app.api.routes.legal import client_context
-from app.api.routes.users_common import (
-    issue_session,
-)
-from app.core.config import settings
-from app.core.errors import (
-    AuthenticationRequiredError,
-    BadRequestError,
-    ConflictError,
-    NotFoundError,
-    UnprocessableEntityError,
-)
-from app.db.session import get_db
-from app.domain.identity.handles import is_reserved_username
-from app.domain.invite.services import InviteCodeService
-from app.domain.legal.services import ConsentService
-from app.domain.oauth.services import OAuthService
-from app.domain.user.passwords import require_new_password
-from app.domain.user.services import (
-    NICKNAME_MAX_LENGTH,
-    USERNAME_MAX_LENGTH,
-    UserAuthService,
-    is_valid_username,
-    normalize_nickname,
-)
-
-if TYPE_CHECKING:
-    pass
-
 from app.api.routes.users._common import (
     OAuthEmailCodeRequest,
     OAuthEmailVerifyRequest,
@@ -60,6 +39,33 @@ from app.api.routes.users._common import (
     _signup_consent,
     _trusted_device,
     logger,
+)
+from app.api.routes.users_common import (
+    issue_session,
+)
+from app.core import single_use_state
+from app.core.config import settings
+from app.core.errors import (
+    AuthenticationRequiredError,
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    UnprocessableEntityError,
+)
+from app.core.single_use_state import SingleUseUnavailableError
+from app.db.session import get_db
+from app.domain.identity.handles import is_reserved_username
+from app.domain.invite.services import InviteCodeService
+from app.domain.legal.services import ConsentService
+from app.domain.oauth.services import OAuthService
+from app.domain.user.login_security import LoginDelay, TOTPService
+from app.domain.user.passwords import require_new_password
+from app.domain.user.services import (
+    NICKNAME_MAX_LENGTH,
+    USERNAME_MAX_LENGTH,
+    UserAuthService,
+    is_valid_username,
+    normalize_nickname,
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -82,8 +88,6 @@ async def get_oauth_providers(
 
 def _oauth_frontend_url(path: str, **params: str | None) -> str:
     """Build a frontend landing URL (success/error) for the browser redirect."""
-    from urllib.parse import urlencode
-
     query = urlencode({k: v for k, v in params.items() if v is not None})
     return f"{settings.frontend_url}{path}" + (f"?{query}" if query else "")
 
@@ -110,11 +114,6 @@ async def _issue_oauth_state_token(provider_id: str, user_info: dict) -> str:
     Raises ``SingleUseUnavailableError`` when Redis is unreachable: a token we
     could not reserve would be refused by every endpoint that spends it.
     """
-    import time
-    import uuid
-
-    from app.core.single_use_state import reserve
-
     now = int(time.time())
     jti = uuid.uuid4().hex
     token = jwt.encode(
@@ -129,7 +128,7 @@ async def _issue_oauth_state_token(provider_id: str, user_info: dict) -> str:
         settings.jwt_secret,
         algorithm="HS256",
     )
-    await reserve(_OAUTH_STATE_SCOPE, jti, ttl_s=_OAUTH_STATE_TTL_S)
+    await single_use_state.reserve(_OAUTH_STATE_SCOPE, jti, ttl_s=_OAUTH_STATE_TTL_S)
     return token
 
 
@@ -157,10 +156,8 @@ def _reissue_oauth_state_token(token: str, **info: str) -> str:
 
 async def _redeem_oauth_state_token(jti: str) -> bool:
     """Spend a decoded stateToken. True exactly once; fails closed."""
-    from app.core.single_use_state import SingleUseUnavailableError, claim
-
     try:
-        return await claim(_OAUTH_STATE_SCOPE, jti)
+        return await single_use_state.claim(_OAUTH_STATE_SCOPE, jti)
     except SingleUseUnavailableError:
         logger.exception("oauth: cannot claim state token")
         return False
@@ -174,10 +171,6 @@ async def _spend_oauth_password_attempt(username: str) -> bool:
     The same count password login uses, so proving a password through an
     OAuth binding page cannot skip the wait.
     """
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.domain.user.login_security import LoginDelay
-
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         return (await LoginDelay(redis).admit(username)).admitted
@@ -186,10 +179,6 @@ async def _spend_oauth_password_attempt(username: str) -> bool:
 
 
 async def _clear_oauth_password_attempts(username: str) -> None:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.domain.user.login_security import LoginDelay
-
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         await LoginDelay(redis).clear(username)
@@ -214,10 +203,6 @@ def _oauth_user_info_dict(user_info) -> dict:
 
 
 async def _store_oauth_pending(session_id: str, data: dict) -> None:
-    import json
-
-    from redis.asyncio import Redis as AsyncRedis
-
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
     try:
         await redis.setex(
@@ -229,10 +214,6 @@ async def _store_oauth_pending(session_id: str, data: dict) -> None:
 
 async def _pop_oauth_pending(session_id: str) -> dict | None:
     """Fetch-and-delete (one-shot; replay protection)."""
-    import json
-
-    from redis.asyncio import Redis as AsyncRedis
-
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=True)
     try:
         key = f"{_OAUTH_PENDING_PREFIX}{session_id}"
@@ -251,9 +232,6 @@ async def _start_oauth_ownership(
     """Hand an identity whose email belongs to ``owner`` to the verify page,
     where the person proves they hold that account before it is linked —
     never linked on the email alone. Returns the verify page's query."""
-    import secrets
-    import time
-
     session_id = (
         f"oauth_password_{provider_id}_{user_info.get('id')}_"
         f"{int(time.time() * 1000)}_{secrets.token_hex(4)}"
@@ -274,8 +252,6 @@ async def _start_oauth_ownership(
 async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, str]:
     """(suggestedUsername, suggestedNickname), both passing the rules the
     create form is checked against, the username de-duplicated."""
-    import secrets as _secrets
-
     base_raw = (
         user_info.get("preferredUsername")
         or user_info.get("username")
@@ -298,7 +274,7 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
         or await auth_service.is_username_taken(username)
         or is_reserved_username(username)
     ):
-        username = f"{base}_{_secrets.token_hex(3)}"
+        username = f"{base}_{secrets.token_hex(3)}"
     raw_nickname = str(
         user_info.get("name") or user_info.get("preferredUsername") or username
     )
@@ -323,8 +299,6 @@ async def _oauth_login_redirect(
     as a password login would: the provider stands in for the password only,
     and a trusted browser skips the second step here as it does there.
     """
-    from app.domain.user.login_security import TOTPService
-
     trust = None
     if await TOTPService(session).is_2fa_enabled(user_id):
         trust = await _trusted_device(request, session, user_id)
@@ -395,16 +369,14 @@ async def _spend_oauth_login_state(
     provider_id: str, state: str | None, cookie_state: str | None
 ) -> bool:
     """True when ``state`` is the one this browser was issued and is unspent."""
-    import hmac
-
-    from app.core.single_use_state import SingleUseUnavailableError, claim
-
     if not state or not cookie_state:
         return False
     if not hmac.compare_digest(state.encode(), cookie_state.encode()):
         return False
     try:
-        return await claim(_oauth_login_state_scope(provider_id), state)
+        return await single_use_state.claim(
+            _oauth_login_state_scope(provider_id), state
+        )
     except SingleUseUnavailableError:
         logger.exception("OAuth callback: cannot claim login state for %s", provider_id)
         return False
@@ -429,11 +401,6 @@ async def get_oauth_login_url(
 ) -> RedirectResponse:
     # The frontend navigates the browser straight to this endpoint, so we
     # 302-redirect to the provider's authorization page.
-    import secrets
-    from urllib.parse import urlparse
-
-    from app.core.single_use_state import SingleUseUnavailableError, reserve
-
     state = secrets.token_urlsafe(32)
     try:
         provider = oauth_service.get_provider(provider_id)
@@ -444,7 +411,7 @@ async def get_oauth_login_url(
         ) from None
 
     try:
-        await reserve(
+        await single_use_state.reserve(
             _oauth_login_state_scope(provider_id),
             state,
             ttl_s=_OAUTH_LOGIN_STATE_TTL_S,

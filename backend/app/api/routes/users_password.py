@@ -35,11 +35,13 @@ APIRouter(prefix="/users", tags=["Users"]) is all it takes.
 """
 
 import logging
+import re
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
+from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
@@ -47,9 +49,14 @@ from app.api.routes.users_common import _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose, get_current_session_id
+from app.core import email as core_email
+from app.core.background import spawn
+from app.core.client_address import resolved_client_address
 from app.core.config import settings
 from app.core.errors import ForbiddenError, UnprocessableEntityError
 from app.db.session import get_db
+from app.domain.user.login_security import PasswordResetService
+from app.domain.user.mail_quota import MailQuota, give_back_site_mail, take_site_mail
 from app.domain.user.passwords import require_new_password
 from app.domain.user.services import UserAuthService
 from app.domain.user.sessions import RevokeReason, SessionService
@@ -95,12 +102,6 @@ async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
     allowance refuses, is only logged: the requester was already told the same
     thing either way, and can ask again after the cooldown.
     """
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.email import get_email_sender
-    from app.domain.user.login_security import PasswordResetService
-    from app.domain.user.mail_quota import give_back_site_mail, take_site_mail
-
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         if not await take_site_mail(redis):
@@ -126,7 +127,7 @@ async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
     </div>
     """
     body_text = f"Reset your password: {reset_url}\nThis link expires in 30 minutes."
-    sent = await get_email_sender().send(
+    sent = await core_email.get_email_sender().send(
         to=email, subject=subject, body_html=body_html, body_text=body_text
     )
     if not sent:
@@ -147,14 +148,6 @@ async def recover_password_request(
     request: Request,
     auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
-    import re
-
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.background import spawn
-    from app.core.client_address import resolved_client_address
-    from app.domain.user.mail_quota import MailQuota
-
     email = payload.email.strip()
 
     email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
@@ -192,11 +185,6 @@ async def recover_password_verify(
     auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import PasswordResetService
-
     token = payload.token
     new_password = payload.password
     require_new_password(new_password)

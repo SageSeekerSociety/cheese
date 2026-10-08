@@ -16,7 +16,10 @@
  * `scene-baseline.json` 的 debt 里 —— 「场景」指的是路由页和 `components/panels/**`，
  * `components/settings/**` 这几件不是场景，也不该往那张表里加。
  *
- * 末尾另收一件 `ComputeChoiceForm`（选工作电脑的表单，设置页的算力那一组用它），
+ * 末尾另收「归档项目」那一块（`ArchiveProjectSection`）和它的确认框（`ArchiveProjectDialog`）：
+ * 两件都是哑的，请求和状态在 `composables/useProjectArchive.ts`。
+ *
+ * 再收一件 `ComputeChoiceForm`（选工作电脑的表单，设置页的算力那一组用它），
  * 从 `catalog.ts` 搬来：那份文件到了一千行的上限。
  *
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `SETTINGS_ENTRIES` 这个
@@ -28,6 +31,8 @@ import { COMPUTE_DEVICES } from './catalogFixtures'
 import {
   accountConn,
   accountProps,
+  ARCHIVE_PROJECT,
+  ARCHIVE_REFUSED,
   ATTRIBUTION_ITEMS,
   bpProps,
   bpRules,
@@ -35,7 +40,9 @@ import {
   forgeConn,
 } from './catalogSettingsFixtures'
 
+import ArchiveProjectDialog from '@/components/ArchiveProjectDialog.vue'
 import ComputeChoiceForm from '@/components/ComputeChoiceForm.vue'
+import ArchiveProjectSection from '@/components/settings/ArchiveProjectSection.vue'
 import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
@@ -268,6 +275,52 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
         note: '默认选中云端沙箱，下面说明每个会话在自己的沙箱里工作；另有两台自有设备（一台离线）。',
         props: { devices: COMPUTE_DEVICES, cloudAvailable: true },
         expect: '每个会话在自己的云端环境里工作，首次运行时自动准备',
+      },
+    ],
+  },
+  {
+    id: 'settings-archive-project',
+    title: 'ArchiveProjectSection',
+    about: '项目设置最后一块：归档。一句说明、一颗按钮，点了打开把项目名打一遍的确认框。只有所有者看得到。',
+    file: 'src/components/settings/ArchiveProjectSection.vue',
+    component: ArchiveProjectSection,
+    needs: UI,
+    states: [
+      {
+        name: '所有者看到的那一行',
+        note: '说明和按钮一行，放不下时按钮换到下一行。确认框收着：开没开是这一块自己的事，props 只往它里面递「正在归档 / 被拒的理由」，所以这一块只有这一个样子。',
+        props: { projectName: ARCHIVE_PROJECT },
+        expect: '从所有成员的列表中移除并停止运行，内容全部保留',
+      },
+    ],
+  },
+  {
+    id: 'settings-archive-project-dialog',
+    title: 'ArchiveProjectDialog',
+    about: '「归档项目」的确认框：把项目名打一遍才放行；被拒不关窗，理由原样留在框里，重开时清掉。',
+    file: 'src/components/ArchiveProjectDialog.vue',
+    component: ArchiveProjectDialog,
+    needs: UI,
+    teleport: true,
+    args: { modelValue: true, projectName: ARCHIVE_PROJECT },
+    states: [
+      {
+        name: '刚打开，还没输入',
+        note: '「归档」是红色的危险主操作，名字没打对之前是灰的。输入框里打的字是框自己的状态，不从 props 来，所以「打对了名字」那一格要在框里自己打一遍。',
+        props: {},
+        expectSelector: '.v-btn--disabled',
+      },
+      {
+        name: '正在归档',
+        note: 'archiving 时主按钮转圈；一次归档结束（archiving 落回 false）而没有理由，框自己关上。',
+        props: { archiving: true },
+        expectSelector: '.v-btn--loading',
+      },
+      {
+        name: '被拒，带着理由',
+        note: '后端那句理由原样画在框里，框不关，可以改了再试。',
+        props: { error: ARCHIVE_REFUSED },
+        expect: ARCHIVE_REFUSED,
       },
     ],
   },

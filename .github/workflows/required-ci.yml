@@ -30,7 +30,6 @@ jobs:
       harness: ${{ steps.scope.outputs.harness }}
       mcp: ${{ steps.scope.outputs.mcp }}
       remote: ${{ steps.scope.outputs.remote }}
-      docs: ${{ steps.scope.outputs.docs }}
       cifast: ${{ steps.scope.outputs.cifast }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -100,11 +99,6 @@ jobs:
     if: needs.scope.outputs.mcp == 'true'
     uses: ./.github/workflows/mcp-contract.yml
 
-  docs:
-    needs: scope
-    if: needs.scope.outputs.docs == 'true'
-    uses: ./.github/workflows/docs.yml
-
   required:
     name: CI required
     if: ${{ !cancelled() }}
@@ -112,7 +106,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, docs, cifast]
+    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, cifast]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
