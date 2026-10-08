@@ -682,6 +682,7 @@ void openPlace()
             :unread-on-open="unreadOnOpen"
             :focus-block="focusBlock"
             :task-id="taskId ?? null"
+            :task-agent-handle="currentTask?.agent_handle ?? null"
             :composer-closed="composerClosed"
             :accept-elsewhere="focusMode"
             v-on="chatEvents"
@@ -849,6 +850,7 @@ void openPlace()
                 :unread-on-open="unreadOnOpen"
                 :focus-block="focusBlock"
                 :task-id="taskId ?? null"
+                :task-agent-handle="currentTask?.agent_handle ?? null"
                 :composer-closed="composerClosed"
                 accept-review-button
                 v-on="chatEvents"

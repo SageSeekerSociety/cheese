@@ -9,12 +9,34 @@ import type { Block, Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+
+// 发出去的消息走 POST，这里把每一次的正文记下来——「@ 的是谁」最终就落在正文里。
+const sent = vi.hoisted(() => [] as { content: string }[])
+vi.mock('../api/messages', async () => {
+  const actual = await vi.importActual<typeof import('../api/messages')>('../api/messages')
+  return {
+    ...actual,
+    postChatMessage: vi.fn(async (topicId: string, body: { content: string; request_id: string }) => {
+      sent.push({ content: body.content })
+      return {
+        id: body.request_id,
+        conversation_id: topicId,
+        kind: 'message',
+        author_type: 'participant',
+        author: 'me',
+        content: body.content,
+        meta: { client_id: body.request_id },
+        created_at: new Date().toISOString(),
+      }
+    }),
+  }
+})
 
 const Panel = ChatPanel as unknown as Component
 
@@ -242,5 +264,84 @@ describe('点消息上的头像和名字', () => {
     ;(container.querySelector('[data-mid="a"] .im-gutter button') as HTMLElement).click()
     ;(container.querySelector('[data-mid="a"] .im-name') as HTMLElement).click()
     expect(emitted()['mention-click']).toEqual([[SEAT], [SEAT]])
+  })
+})
+
+// 任务里负责人可以把这件事单独交给另一位队友（任务信息卡那行「AI 队友」的「改」）。
+// 换完之后发送框那个 @ 得跟着换：正文里写着「@芝士」而接手的是别人，读的人只会当成
+// 换人没生效——和气泡上署错名是同一个报障，只是换到了输入框这一头。
+describe('任务里单独指定了队友，发送框 @ 的是那一位', () => {
+  const OTHER = 'cheese-t2'
+
+  beforeEach(() => {
+    sent.length = 0
+    vi.stubGlobal('fetch', async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        const u = String(url)
+        if (u.includes('/members'))
+          return {
+            code: 200,
+            data: {
+              data: [
+                { id: '1', member_handle: 'me', name: '我', role: 'owner', agent: false },
+                { id: '2', member_handle: SEAT, name: '芝士', role: 'member', agent: true },
+                { id: '3', member_handle: OTHER, name: '无言', role: 'member', agent: true },
+              ],
+              total: 3,
+            },
+          }
+        if (u.includes('/progress')) return { code: 200, data: { items: [], updated_at: null } }
+        if (u.includes('/tasks')) return { code: 200, data: { data: [], total: 0 } }
+        return { code: 200, data: { data: history, total: history.length, has_more: false } }
+      },
+    }))
+  })
+
+  // 任务里每句话都说给做它的那位（线上 `always-summon` 就是这么传的）。
+  function renderTask(room: string, taskId: string, handle: string | null) {
+    return render(Panel, {
+      props: {
+        topic: topicOf(room),
+        conversationId: taskId,
+        taskAgentHandle: handle,
+        alwaysSummon: true,
+        showComposer: true,
+      },
+      global: { plugins: [vuetify, i18n] },
+    })
+  }
+
+  async function typeAndSummon(container: Element) {
+    const box = container.querySelector<HTMLTextAreaElement>('.composer textarea')
+    expect(box).toBeTruthy()
+    box!.focus()
+    await fireEvent.update(box!, '整理一下方案')
+    await fireEvent.keyDown(box!, { key: 'Enter', ctrlKey: true })
+    await settle()
+    return box!
+  }
+
+  it('Ctrl+Enter 写进正文的 @ 是这件事那位，不是房间那位', async () => {
+    history = []
+    const { container } = renderTask('t1', 'task-1', OTHER)
+    await settle()
+
+    const box = await typeAndSummon(container)
+    expect(box.placeholder, '「说给谁听」还得是房间那位——那正文里那个 @ 就白换了').toBe(
+      t('work.room.composer.placeholderDm', { name: '无言' })
+    )
+    expect(sent[0]?.content).toBe(`<@${OTHER}> 整理一下方案`)
+  })
+
+  it('这件事没单独指定，还是房间那位', async () => {
+    history = []
+    const { container } = renderTask('t2', 'task-2', null)
+    await settle()
+
+    const box = await typeAndSummon(container)
+    expect(box.placeholder).toBe(t('work.room.composer.placeholderDm', { name: '芝士' }))
+    expect(sent[0]?.content).toBe(`<@${SEAT}> 整理一下方案`)
   })
 })

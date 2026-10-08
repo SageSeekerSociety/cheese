@@ -39,6 +39,9 @@ const props = defineProps<{
   /** 这一栏是房间里一个任务的对话：每句话都说给做它的 AI 队友，采纳卡是这个任务的，
    *  房间才有的提议卡（技能、任务、反馈）不在这里。 */
   taskId?: string | null
+  /** 这件事单独指定了队友时，那位的 handle（任务信息卡那行「AI 队友」挑的）。
+   *  发送框那个 @ 跟着它走，而不是跟着房间名册上那位。 */
+  taskAgentHandle?: string | null
   /** 这里此刻不能说话的原因，见 ChatPanel。 */
   composerClosed?: string | null
   /** 采纳那一条此刻挂在别处（专注模式里它在面板底部），这里不再放一份。 */
@@ -144,6 +147,7 @@ defineExpose({
       ref="chatRef"
       :topic="topic"
       :conversation-id="taskId"
+      :task-agent-handle="taskAgentHandle ?? null"
       :composer-closed="composerClosed"
       :always-summon="!!taskId"
       hide-header

@@ -1,6 +1,6 @@
 // 任务页「AI 队友」那一行的效果图：拿 vite 起真前端，挂真组件，拍三张。
 //   owner      负责人，这件事还没单独指定队友（跟随频道）
-//   picked     负责人，从下拉里换成了「无言」
+//   picked     负责人点开「改」、从菜单里换成了「无言」
 //   readonly   协作者看同一行：看得见，换不了
 import { mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
@@ -16,7 +16,7 @@ await mkdir(OUT, { recursive: true })
 
 const SHOTS = [
   { name: '01-owner-follows-room', me: 'alice', pick: null },
-  { name: '02-owner-picked', me: 'alice', pick: 'cheese-5b7e0c31' },
+  { name: '02-owner-picked', me: 'alice', pick: '无言' },
   { name: '03-collaborator-readonly', me: 'chiruotong', pick: null },
 ]
 
@@ -95,7 +95,9 @@ try {
     await page.locator('[data-testid=task-details]').click()
     await page.locator('.task-details').waitFor({ timeout: 15000 })
     if (pick) {
-      await page.locator('[data-testid=task-agent-pick]').selectOption(pick)
+      // 那一行现在是「值 + 行尾一颗『改』+ 点开的菜单」，不再是下拉。
+      await page.locator('[data-testid=task-agent-edit]').click()
+      await page.locator('.task-agent-menu__row', { hasText: pick }).click()
       await page.waitForTimeout(300)
     }
     await page.waitForTimeout(300)
