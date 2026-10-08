@@ -126,7 +126,7 @@ const signals = computed<Signal[]>(() => {
       out.push({
         key: 'checks',
         label: t('work.room.review.checksPassed', { n }),
-        icon: 'mdi-check-circle',
+        icon: 'mdi-check-circle-outline',
         iconColor: 'var(--ok)',
         more: true,
       })
@@ -139,7 +139,7 @@ const signals = computed<Signal[]>(() => {
     out.push({
       key: 'merge',
       label: props.badge.label,
-      icon: clean ? 'mdi-check-circle' : undefined,
+      icon: clean ? 'mdi-source-merge' : undefined,
       iconColor: clean ? 'var(--ok)' : undefined,
       dot: clean ? undefined : columnDotStyle(props.badge.column),
       more: props.reasons.length > 0 || !!props.forgeDeclaration,
@@ -222,7 +222,7 @@ const moreActions = computed<MenuAction[]>(() => {
           v-if="card.pr_url"
           kind="ghost"
           size="sm"
-          prepend-icon="mdi-source-pull"
+          append-icon="mdi-open-in-new"
           :href="card.pr_url"
           target="_blank"
           rel="noopener"
@@ -534,6 +534,11 @@ const moreActions = computed<MenuAction[]>(() => {
 }
 .signal-detail__name {
   color: var(--text);
+}
+.review-head__focus {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--fill);
 }
 .review-head__focus ol {
   margin: 4px 0 0;

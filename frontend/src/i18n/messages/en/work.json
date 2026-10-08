@@ -534,7 +534,6 @@
       "download": "Download",
       "refresh": "Refresh",
       "readOnly": "Read-only",
-      "fileList": "File list",
       "unsaved": "Unsaved",
       "diffView": "Diff",
       "diffMore": "Show {count} more lines",
@@ -574,7 +573,9 @@
       "openOther": "Open another file",
       "backToAll": "Back to all changes",
       "summary": "{count} files · +{added} −{removed}",
-      "searchFiles": "Search files"
+      "searchFiles": "Search files",
+      "moreFiles": "{count} more files",
+      "fewerFiles": "Show fewer"
     },
     "tabs": {
       "pinHint": "{path} (double-click to keep this tab)",

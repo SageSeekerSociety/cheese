@@ -534,7 +534,6 @@
       "download": "下载",
       "refresh": "刷新",
       "readOnly": "只读",
-      "fileList": "文件列表",
       "unsaved": "未保存",
       "diffView": "差异",
       "diffMore": "显示剩余 {count} 行",
@@ -574,7 +573,9 @@
       "openOther": "打开其他文件",
       "backToAll": "返回全部改动",
       "summary": "{count} 个文件 · +{added} −{removed}",
-      "searchFiles": "搜索文件"
+      "searchFiles": "搜索文件",
+      "moreFiles": "另 {count} 个文件",
+      "fewerFiles": "收起"
     },
     "tabs": {
       "pinHint": "{path}（双击固定这个页签）",

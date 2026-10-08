@@ -17,11 +17,9 @@ const props = defineProps<{
   activePath: string | null
   /** 外面点了一枚 <&path> 芯片：把这一行滚进视野（每一跳都加一）。 */
   revealTick: number
-  /** 手机上列表盖满这一格。 */
-  cover: boolean
   /** 空的时候说哪句话。 */
   emptyLabel: string
-  /** 并排时这一列的宽度（px），由外面那条分隔线拖出来。盖满的时候不用它。 */
+  /** 这一列的宽度（px），由外面那条分隔线拖出来。 */
   width?: number
 }>()
 
@@ -45,12 +43,7 @@ watch(
 </script>
 
 <template>
-  <div
-    ref="listEl"
-    class="file-list"
-    :class="{ 'file-list--cover': props.cover }"
-    :style="props.width && !props.cover ? { flexBasis: `${props.width}px` } : undefined"
-  >
+  <div ref="listEl" class="file-list" :style="props.width ? { flexBasis: `${props.width}px` } : undefined">
     <div v-if="props.rows.length === 0" class="text-center c-faint py-6 t-body">{{ props.emptyLabel }}</div>
     <template v-for="row in props.rows" :key="`${row.type}:${row.path}`">
       <!-- folder row: click toggles expand/collapse -->
@@ -133,16 +126,6 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-/* 手机上文件列表盖满这一格：一份文件和一列文件名并排，两样都只剩半屏宽。 */
-.file-list--cover {
-  position: absolute;
-  inset: 0;
-  z-index: var(--z-raised);
-  border-right: 0;
-}
-.file-list--cover .file-item {
-  min-height: 44px;
 }
 .file-item--active :deep(.v-icon) {
   color: rgb(var(--v-theme-primary));

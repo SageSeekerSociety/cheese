@@ -93,12 +93,19 @@ function onStatus() {
       {{ t('work.room.accept.review') }}
     </BaseButton>
     <template v-else-if="decide">
-      <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('reject')">
+      <BaseButton kind="secondary" size="sm" prepend-icon="mdi-undo" :disabled="busy" @click="emit('reject')">
         {{ t('work.room.accept.sendBack') }}
       </BaseButton>
       <!-- 采纳 = 当场合并 (#718)：亮在后端会合的那两档，为什么灰写在 title 里。 -->
       <span :title="blockedTitle ?? undefined" class="accept-bar__accept">
-        <BaseButton kind="primary" size="sm" :loading="busy" :disabled="busy || !!blockedTitle" @click="emit('accept')">
+        <BaseButton
+          kind="primary"
+          size="sm"
+          prepend-icon="mdi-check"
+          :loading="busy"
+          :disabled="busy || !!blockedTitle"
+          @click="emit('accept')"
+        >
           {{ acceptLabel }}
         </BaseButton>
       </span>

@@ -19,14 +19,12 @@ import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevis
 import type { FileSource, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { DiffLine, FileDiff } from '../../lib/diff'
 import type { FileKind } from '../../lib/fileKind'
-import type { MenuAction } from '../common/menuAction'
 
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { buildFileRows, fmtBytes } from '../../lib/changesTree'
 import CodeEditor from '../CodeEditor.vue'
-import MobileActionSheet from '../common/MobileActionSheet.vue'
 
 import PreviewPages from './preview/PreviewPages.vue'
 import PreviewSheet from './preview/PreviewSheet.vue'
@@ -34,6 +32,7 @@ import RevisionList from './preview/RevisionList.vue'
 import ChangesDiff from './ChangesDiff.vue'
 import ChangesDiffList from './ChangesDiffList.vue'
 import ChangesFileTree from './ChangesFileTree.vue'
+import ChangesMoreMenu from './ChangesMoreMenu.vue'
 import ChangesOpenFile from './ChangesOpenFile.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -110,42 +109,22 @@ const emit = defineEmits<{
 
 const { mdAndUp } = useDisplay()
 
-// 手机上 ⋯ 是底部面板（同一组选项，桌面上仍是那个分了组的下拉菜单）。范围、版本
-// 各是二选一，选中的那一项画成实心的圆。
-const moreOpen = ref(false)
-const moreActions = computed<MenuAction[]>(() => {
-  const pick = (on: boolean) => (on ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank')
-  const item = (key: string, label: string, icon: string, onSelect: () => void): MenuAction => ({
-    key,
-    label,
-    icon,
-    onSelect,
+// 文件树只在这一格够宽时常驻（铺满、或者面板拉得很宽）：并排时一列文件树把差异挤到
+// 只剩半屏，那时文件清单在顶部那块下面，点一个就跳到它那一段。量不到宽度的时候（测试
+// 环境、第一帧）按宽的画。
+const WIDE_PX = 880
+const root = ref<HTMLElement | null>(null)
+const width = ref(0)
+let resizeObserver: ResizeObserver | null = null
+onMounted(() => {
+  if (!root.value || typeof ResizeObserver === 'undefined') return
+  resizeObserver = new ResizeObserver((entries) => {
+    width.value = entries[0]?.contentRect.width ?? 0
   })
-  const list: MenuAction[] = [
-    item('open-other', t('work.room.changes.openOther'), 'mdi-file-search-outline', () => (pickerOpen.value = true)),
-  ]
-  if (props.currentTask?.status === 'open') {
-    const live = props.fileSource === 'live'
-    list.push(
-      item('source-live', t('work.room.changes.liveFile'), pick(live), () => emit('select-version', 'live')),
-      item('source-committed', t('work.room.changes.committedVersion'), pick(!live), () =>
-        emit('select-version', 'committed')
-      )
-    )
-  }
-  if (props.fileToolReady && props.openPath) {
-    list.push(item('download', t('work.room.changes.download'), 'mdi-download-outline', () => emit('download')))
-  }
-  list.push({
-    ...item('refresh', t('work.room.changes.refresh'), 'mdi-refresh', () => emit('refresh')),
-    loading: props.refreshing,
-  })
-  return list
+  resizeObserver.observe(root.value)
 })
-
-// the ☰ toggle hides the list for a wider editor. 手机上一屏只放得下一样东西：列表默认
-// 收着，打开时盖满这一格，点一份文件就收起来露出它。
-const fileListOpen = ref(mdAndUp.value)
+onBeforeUnmount(() => resizeObserver?.disconnect())
+const treeShown = computed(() => mdAndUp.value && (width.value === 0 || width.value >= WIDE_PX))
 
 // 文件树那一列的宽度：拖它和编辑区之间那条线来改，记在这个浏览器里。路径长的仓库
 // 一列 150px 只剩「old…」「wee…」，认不出是哪个文件。
@@ -190,7 +169,6 @@ function startTreeDrag(e: MouseEvent) {
 // 树上点一个改过的文件：回到全部改动那一面，滚到它那一段。
 const diffList = ref<InstanceType<typeof ChangesDiffList> | null>(null)
 async function pickFile(path: string) {
-  if (!mdAndUp.value) fileListOpen.value = false
   if (!props.diffByPath.has(path)) {
     emit('select-file', path)
     return
@@ -214,7 +192,53 @@ const listDiffs = computed(() =>
     .filter((d): d is FileDiff => !!d)
 )
 
-// 全部改动那一面的横条上说一共改了多少。
+// 文件树不在的时候，顶部那块下面列前几个文件，其余收在「另 N 个文件」里。
+const SUMMARY_FIRST = 3
+const summaryAll = ref(false)
+const summaryFiles = computed(() => (summaryAll.value ? listDiffs.value : listDiffs.value.slice(0, SUMMARY_FIRST)))
+function dirOf(path: string): string {
+  const cut = path.lastIndexOf('/')
+  return cut < 0 ? '' : path.slice(0, cut + 1)
+}
+
+// 顶部那块和文件清单滚出去以后，这一列顶上留一条细栏：现在读到哪个文件、第几个，以及
+// 「打开其他文件」和 ⋯。没有顶部那块（没有待审阅的卡）时它一直在。
+const scroller = ref<HTMLElement | null>(null)
+const summaryEl = ref<HTMLElement | null>(null)
+const pastSummary = ref(false)
+const currentIndex = ref(0)
+const floatShown = computed(() => pastSummary.value || !hasHead.value)
+// 顶部那块在不在：宿主没有待审阅的卡时它什么都不画，插槽在、内容是空的，所以量高度。
+const headBox = ref<HTMLElement | null>(null)
+const headHeight = ref(0)
+const hasHead = computed(() => headHeight.value > 0)
+let headObserver: ResizeObserver | null = null
+watch(headBox, (el) => {
+  headObserver?.disconnect()
+  if (!el || typeof ResizeObserver === 'undefined') return
+  headObserver = new ResizeObserver((entries) => {
+    headHeight.value = entries[0]?.contentRect.height ?? 0
+  })
+  headObserver.observe(el)
+})
+onBeforeUnmount(() => headObserver?.disconnect())
+const FLOAT_BAR_PX = 36
+function onScroll() {
+  const box = scroller.value
+  const summary = summaryEl.value
+  if (!box || !summary) return
+  const top = box.scrollTop
+  pastSummary.value = top >= summary.offsetTop + summary.offsetHeight
+  const sections = Array.from(box.querySelectorAll<HTMLElement>('.diff-file'))
+  let at = 0
+  sections.forEach((el, i) => {
+    if (el.offsetTop <= top + FLOAT_BAR_PX + 1) at = i
+  })
+  currentIndex.value = at
+}
+const currentDiff = computed(() => listDiffs.value[currentIndex.value] ?? null)
+
+// 全部改动那一面说一共改了多少。
 const totals = computed(() =>
   props.fileDiffs.reduce((acc, d) => ({ added: acc.added + d.added, removed: acc.removed + d.removed }), {
     added: 0,
@@ -233,146 +257,69 @@ const fileRows = computed(() =>
 </script>
 
 <template>
-  <div class="panel-changes">
-    <!-- 这一条就是这一格全部的横条：左边是这件任务的状态和打开的文件，右边是对这份
-         文件做的事。偶尔才换的（范围、版本、下载、刷新）在 ⋯ 里。 -->
-    <div class="changes-bar" :class="{ 'changes-bar--phone': !mdAndUp }">
+  <div ref="root" class="panel-changes">
+    <!-- 单独打开一份文件时的横条：返回、这份文件、它的两面（差异 / 全文），以及对它做的
+         事。全部改动那一面没有这一条，顶部是这次交付的情况（宿主塞进来的 head）。 -->
+    <div v-if="props.openPath" class="changes-bar" :class="{ 'changes-bar--phone': !mdAndUp }">
       <span v-if="mdAndUp && props.sourceStatus" class="source-status">{{ props.sourceStatus }}</span>
-      <template v-if="props.fileToolReady">
-        <span v-if="mdAndUp" class="changes-bar__sep" aria-hidden="true" />
-        <BaseButton
-          kind="ghost"
-          icon="mdi-format-list-bulleted"
-          size="sm"
-          class="file-icon-btn"
-          :class="{ 'file-icon-btn--on': fileListOpen, 'tap-target': !mdAndUp }"
-          :title="t('work.room.changes.fileList')"
-          @click="fileListOpen = !fileListOpen"
-        />
-        <template v-if="props.openPath">
-          <BaseButton
-            kind="ghost"
-            icon="mdi-arrow-left"
-            size="sm"
-            :class="{ 'tap-target': !mdAndUp }"
-            :title="t('work.room.changes.backToAll')"
-            :aria-label="t('work.room.changes.backToAll')"
-            @click="emit('close-file')"
-          />
-          <span class="changes-bar__path" :title="props.openPath">
-            {{ mdAndUp ? props.openPath : props.openPath.split('/').pop() }}
-          </span>
-          <span v-if="props.fileDirty" class="changes-bar__dot" :title="t('work.room.changes.unsaved')" />
-        </template>
-        <span v-else class="changes-bar__summary">
-          {{
-            t('work.room.changes.summary', {
-              count: props.fileDiffs.length,
-              added: totals.added,
-              removed: totals.removed,
-            })
-          }}
-        </span>
-      </template>
-      <v-spacer v-if="mdAndUp || !props.fileToolReady" />
-      <template v-if="props.fileToolReady">
-        <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
-             这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
-        <div v-if="props.openDiff && !props.openIsDocument" class="seg seg--sm">
-          <button
-            type="button"
-            class="seg__btn"
-            :class="{ 'seg__btn--on': props.effectiveView === 'diff' }"
-            @click="emit('view-changed', 'diff')"
-          >
-            {{ t('work.room.changes.diffView') }}
-          </button>
-          <button
-            type="button"
-            class="seg__btn"
-            :class="{ 'seg__btn--on': props.effectiveView === 'edit' }"
-            @click="emit('view-changed', 'edit')"
-          >
-            {{ props.fileReadOnly || !mdAndUp ? t('work.room.changes.fullText') : t('work.room.changes.edit') }}
-          </button>
-        </div>
-        <!-- Read-only files (binary / oversized / images) get no 保存 button at
-           all: saving one is what corrupted them. 手机上文件只读（见 CodeEditor
-           那一处），也就没有保存；每份都是只读，不必每份再说一次。 -->
-        <span v-if="mdAndUp && props.fileReadOnly && props.openPath" class="changes-bar__ro">{{
-          t('work.room.changes.readOnly')
-        }}</span>
-        <BaseButton
-          v-else-if="mdAndUp && !props.fileReadOnly && props.effectiveView === 'edit'"
-          kind="primary"
-          size="sm"
-          :loading="props.fileSaving"
-          :disabled="!props.fileDirty"
-          @click="emit('save')"
+      <span v-if="mdAndUp && props.sourceStatus" class="changes-bar__sep" aria-hidden="true" />
+      <BaseButton
+        kind="ghost"
+        icon="mdi-arrow-left"
+        size="sm"
+        :class="{ 'tap-target': !mdAndUp }"
+        :title="t('work.room.changes.backToAll')"
+        :aria-label="t('work.room.changes.backToAll')"
+        @click="emit('close-file')"
+      />
+      <span class="changes-bar__path" :title="props.openPath">
+        {{ mdAndUp ? props.openPath : props.openPath.split('/').pop() }}
+      </span>
+      <span v-if="props.fileDirty" class="changes-bar__dot" :title="t('work.room.changes.unsaved')" />
+      <v-spacer v-if="mdAndUp" />
+      <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
+           这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
+      <div v-if="props.openDiff && !props.openIsDocument" class="seg seg--sm">
+        <button
+          type="button"
+          class="seg__btn"
+          :class="{ 'seg__btn--on': props.effectiveView === 'diff' }"
+          @click="emit('view-changed', 'diff')"
         >
-          {{ t('work.room.changes.save') }}
-        </BaseButton>
-        <BaseButton
-          v-if="mdAndUp && !props.openPath"
-          kind="ghost"
-          size="sm"
-          prepend-icon="mdi-file-search-outline"
-          @click="pickerOpen = true"
+          {{ t('work.room.changes.diffView') }}
+        </button>
+        <button
+          type="button"
+          class="seg__btn"
+          :class="{ 'seg__btn--on': props.effectiveView === 'edit' }"
+          @click="emit('view-changed', 'edit')"
         >
-          {{ t('work.room.changes.openOther') }}
-        </BaseButton>
-      </template>
-      <template v-if="!mdAndUp">
-        <BaseButton
-          kind="ghost"
-          icon="mdi-dots-horizontal"
-          size="sm"
-          class="tap-target"
-          :title="t('work.room.changes.more')"
-          :aria-label="t('work.room.changes.more')"
-          :loading="props.refreshing"
-          @click="moreOpen = true"
-        />
-        <MobileActionSheet v-model="moreOpen" :actions="moreActions" />
-      </template>
-      <v-menu v-else location="bottom end">
-        <template #activator="{ props: menuProps }">
-          <BaseButton
-            v-bind="menuProps"
-            kind="ghost"
-            icon="mdi-dots-horizontal"
-            size="sm"
-            :title="t('work.room.changes.more')"
-            :aria-label="t('work.room.changes.more')"
-            :loading="props.refreshing"
-          />
-        </template>
-        <v-list density="compact" :aria-label="t('work.room.changes.options')">
-          <template v-if="props.currentTask?.status === 'open'">
-            <v-list-subheader class="pt-0">{{ t('work.room.changes.version') }}</v-list-subheader>
-            <v-list-item
-              :title="t('work.room.changes.liveFile')"
-              :subtitle="t('work.room.changes.liveNote')"
-              :active="props.fileSource === 'live'"
-              @click="emit('select-version', 'live')"
-            />
-            <v-list-item
-              :title="t('work.room.changes.committedVersion')"
-              :subtitle="t('work.room.changes.committedNote')"
-              :active="props.fileSource === 'committed'"
-              @click="emit('select-version', 'committed')"
-            />
-          </template>
-          <v-divider class="my-1" />
-          <v-list-item
-            v-if="props.fileToolReady && props.openPath"
-            :title="t('work.room.changes.download')"
-            prepend-icon="mdi-download-outline"
-            @click="emit('download')"
-          />
-          <v-list-item :title="t('work.room.changes.refresh')" prepend-icon="mdi-refresh" @click="emit('refresh')" />
-        </v-list>
-      </v-menu>
+          {{ props.fileReadOnly || !mdAndUp ? t('work.room.changes.fullText') : t('work.room.changes.edit') }}
+        </button>
+      </div>
+      <!-- Read-only files (binary / oversized / images) get no 保存 button at
+         all: saving one is what corrupted them. 手机上文件只读（见 CodeEditor
+         那一处），也就没有保存；每份都是只读，不必每份再说一次。 -->
+      <span v-if="mdAndUp && props.fileReadOnly" class="changes-bar__ro">{{ t('work.room.changes.readOnly') }}</span>
+      <BaseButton
+        v-else-if="mdAndUp && props.effectiveView === 'edit'"
+        kind="primary"
+        size="sm"
+        :loading="props.fileSaving"
+        :disabled="!props.fileDirty"
+        @click="emit('save')"
+      >
+        {{ t('work.room.changes.save') }}
+      </BaseButton>
+      <ChangesMoreMenu
+        :current-task="props.currentTask"
+        :file-source="props.fileSource"
+        :can-download="props.fileToolReady"
+        :refreshing="props.refreshing"
+        @select-version="emit('select-version', $event)"
+        @download="emit('download')"
+        @refresh="emit('refresh')"
+      />
     </div>
     <v-alert v-if="props.taskLoadError" type="error" density="compact" class="ma-4">{{ props.taskLoadError }}</v-alert>
     <v-alert v-else-if="props.sourceUnavailable" type="warning" density="compact" class="ma-4">{{
@@ -424,21 +371,20 @@ const fileRows = computed(() =>
             {{ t('work.room.changes.saveAnyway') }}
           </BaseButton>
         </div>
-        <div class="file-body" :class="{ 'file-body--phone': !mdAndUp }">
+        <div class="file-body">
           <ChangesFileTree
-            v-if="fileListOpen"
+            v-if="treeShown"
             :rows="fileRows"
             :collapsed-dirs="props.collapsedDirs"
             :active-path="props.openPath"
             :reveal-tick="props.revealTick"
-            :cover="!mdAndUp"
             :width="treeWidth"
             :empty-label="t('work.room.changes.noChanges')"
             @select="pickFile"
             @toggle-dir="emit('toggle-dir', $event)"
           />
           <div
-            v-if="fileListOpen && mdAndUp"
+            v-if="treeShown"
             class="tree-resizer"
             :title="t('work.topic.resize')"
             @mousedown.prevent="startTreeDrag"
@@ -509,9 +455,106 @@ const fileRows = computed(() =>
             />
             <!-- 没打开文件时是全部改动那一面：这次交付的情况在最上面（宿主塞进来），下面
                  每个改到的文件一段，连着往下排，一起滚。 -->
-            <div v-else class="changes-scroll">
-              <slot name="head" />
-              <ChangesDiffList ref="diffList" :diffs="listDiffs" @open="emit('select-file', $event)" />
+            <div v-else class="changes-all">
+              <div
+                ref="scroller"
+                class="changes-scroll"
+                :style="{ '--diff-sticky-top': floatShown ? `${FLOAT_BAR_PX}px` : '0px' }"
+                :class="{ 'changes-scroll--bar': !hasHead && props.fileToolReady }"
+                @scroll.passive="onScroll"
+              >
+                <div ref="headBox"><slot name="head" /></div>
+                <!-- 改了哪些文件：一行总数，加上前几个文件（文件树常驻时它就是那棵树，这里
+                     只留总数那一行）。点一个就跳到它那一段。 -->
+                <div v-show="listDiffs.length" ref="summaryEl" class="changes-summary">
+                  <div class="changes-summary__row">
+                    <span class="changes-summary__total">
+                      {{
+                        t('work.room.changes.summary', {
+                          count: props.fileDiffs.length,
+                          added: totals.added,
+                          removed: totals.removed,
+                        })
+                      }}
+                    </span>
+                    <span v-if="props.currentTask && props.currentTask.status !== 'open'" class="c-faint">
+                      {{ props.sourceStatus }}
+                    </span>
+                    <!-- 顶部那块在的时候，细栏还没出来，打开其他文件和 ⋯ 先在这一行上。 -->
+                    <template v-if="hasHead">
+                      <v-spacer />
+                      <BaseButton
+                        v-if="props.fileToolReady"
+                        kind="ghost"
+                        size="sm"
+                        prepend-icon="mdi-file-search-outline"
+                        @click="pickerOpen = true"
+                      >
+                        {{ t('work.room.changes.openOther') }}
+                      </BaseButton>
+                      <ChangesMoreMenu
+                        :current-task="props.currentTask"
+                        :file-source="props.fileSource"
+                        :can-download="false"
+                        :refreshing="props.refreshing"
+                        @select-version="emit('select-version', $event)"
+                        @refresh="emit('refresh')"
+                      />
+                    </template>
+                  </div>
+                  <template v-if="!treeShown && listDiffs.length">
+                    <button
+                      v-for="d in summaryFiles"
+                      :key="d.path"
+                      type="button"
+                      class="changes-summary__file"
+                      :title="d.path"
+                      @click="pickFile(d.path)"
+                    >
+                      <span class="changes-summary__path"
+                        ><span class="c-faint">{{ dirOf(d.path) }}</span
+                        ><b>{{ d.path.slice(dirOf(d.path).length) }}</b></span
+                      >
+                      <span class="changes-summary__add">+{{ d.added }}</span>
+                      <span class="changes-summary__del">−{{ d.removed }}</span>
+                    </button>
+                    <button
+                      v-if="listDiffs.length > SUMMARY_FIRST"
+                      type="button"
+                      class="changes-summary__more"
+                      @click="summaryAll = !summaryAll"
+                    >
+                      {{
+                        summaryAll
+                          ? t('work.room.changes.fewerFiles')
+                          : t('work.room.changes.moreFiles', { count: listDiffs.length - SUMMARY_FIRST })
+                      }}
+                    </button>
+                  </template>
+                </div>
+                <ChangesDiffList ref="diffList" :diffs="listDiffs" @open="emit('select-file', $event)" />
+              </div>
+              <!-- 滚过顶部之后的那条细栏：读到哪个文件、第几个。 -->
+              <div v-if="floatShown && props.fileToolReady" class="changes-float">
+                <span class="changes-float__path" :title="currentDiff?.path">{{
+                  currentDiff ? currentDiff.path.split('/').slice(-2).join('/') : ''
+                }}</span>
+                <span v-if="listDiffs.length" class="changes-float__count"
+                  >{{ currentIndex + 1 }} / {{ listDiffs.length }}</span
+                >
+                <v-spacer />
+                <BaseButton kind="ghost" size="sm" prepend-icon="mdi-magnify" @click="pickerOpen = true">
+                  {{ t('work.room.changes.openOther') }}
+                </BaseButton>
+                <ChangesMoreMenu
+                  :current-task="props.currentTask"
+                  :file-source="props.fileSource"
+                  :can-download="false"
+                  :refreshing="props.refreshing"
+                  @select-version="emit('select-version', $event)"
+                  @refresh="emit('refresh')"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -623,21 +666,120 @@ const fileRows = computed(() =>
   color: var(--ink);
   font-weight: 600;
 }
-/* 没打开文件时右半边装的提交列表，也是这个 tab 唯一的另一个滚动层。 */
+/* 全部改动那一面的滚动层：顶部那块、文件清单、所有差异一起滚。 */
 .changes-scroll {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
 }
-.changes-bar__summary {
+.changes-all {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+}
+/* 没有顶部那块时细栏一直在，差异从它下面开始。 */
+.changes-scroll--bar {
+  padding-top: 36px;
+}
+.changes-summary {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.changes-summary__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+.changes-summary__total {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-13);
+}
+.changes-summary__file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 2px 0;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  text-align: left;
+  cursor: pointer;
+}
+.changes-summary__file:hover .changes-summary__path {
+  text-decoration: underline;
+}
+.changes-summary__path {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changes-summary__add,
+.changes-summary__del {
+  flex: none;
+  min-width: 32px;
+  text-align: right;
+}
+.changes-summary__add {
+  color: var(--ok-ink);
+}
+.changes-summary__del {
+  color: var(--danger-ink);
+}
+.changes-summary__more {
+  align-self: flex-start;
+  padding: 2px 0;
   color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
+  cursor: pointer;
+}
+.changes-summary__more:hover {
+  color: var(--ink);
+}
+/* 滚过顶部之后贴在这一列顶上的细栏。 */
+.changes-float {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.changes-float__path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: var(--lh-12);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.changes-float__count {
+  flex: none;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 树上的变更标记。增删各自用 wash 底 + ink 字：mark 色（--ok / --danger）当文字
@@ -713,11 +855,7 @@ const fileRows = computed(() =>
   flex: 1 1 auto;
   min-height: 0;
 }
-/* 手机上文件列表盖满这一格：一份文件和一列文件名并排，两样都只剩半屏宽。 */
-.file-body--phone {
-  position: relative;
-}
-/* 手机上 360px 宽也要放下：← 来源 ☰ 路径 差异|全文 ⋯。让位的只有路径，其余不缩。 */
+/* 手机上 360px 宽也要放下：← 路径 差异|全文 ⋯。让位的只有路径，其余不缩。 */
 .changes-bar--phone {
   gap: 4px;
 }
@@ -774,9 +912,6 @@ const fileRows = computed(() =>
   .doc-view__body {
     flex-direction: column;
   }
-}
-.file-icon-btn--on :deep(.v-icon) {
-  color: rgb(var(--v-theme-primary));
 }
 .file-image-view {
   display: flex;

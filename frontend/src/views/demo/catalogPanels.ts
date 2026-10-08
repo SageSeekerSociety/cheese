@@ -49,6 +49,7 @@ import { DEMO_PROJECT, DEMO_TOPIC } from './demoPanels'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import ChangesDiffList from '@/components/panels/ChangesDiffList.vue'
 import ChangesFileTree from '@/components/panels/ChangesFileTree.vue'
+import ChangesMoreMenu from '@/components/panels/ChangesMoreMenu.vue'
 import ChangesOpenFile from '@/components/panels/ChangesOpenFile.vue'
 import PanelChanges from '@/components/panels/PanelChanges.vue'
 import PanelDoc from '@/components/panels/PanelDoc.vue'
@@ -82,6 +83,23 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '空的时候说「暂无改动」。',
         props: { diffs: [] },
         expect: '暂无改动',
+      },
+    ],
+  },
+  {
+    id: 'changes-more-menu',
+    title: 'ChangesMoreMenu',
+    about:
+      '「改动」的 ⋯：看哪个版本、下载打开着的这份、刷新。文件清单那一行、滚动后的细栏、单独打开一份时的横条上都是它。',
+    file: 'src/components/panels/ChangesMoreMenu.vue',
+    component: ChangesMoreMenu,
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '收着',
+        note: '只有一颗 ⋯：版本和刷新偶尔才用，不占横条。',
+        props: { currentTask: CHANGES_TASK, fileSource: 'committed', canDownload: true, refreshing: false },
+        expectSelector: '[aria-label="更多"]',
       },
     ],
   },
@@ -147,7 +165,6 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       collapsedDirs: new Set<string>(),
       activePath: null,
       revealTick: 0,
-      cover: false,
       emptyLabel: '暂无改动',
     },
     states: [

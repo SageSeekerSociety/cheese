@@ -108,7 +108,7 @@ defineExpose({ scrollTo })
 /* 段头贴在这一列顶上：读到一个文件中间，仍然看得见这是哪个文件。 */
 .diff-file__head {
   position: sticky;
-  top: 0;
+  top: var(--diff-sticky-top, 0);
   z-index: 1;
   display: flex;
   align-items: center;
@@ -116,7 +116,7 @@ defineExpose({ scrollTo })
   min-height: 36px;
   padding: 2px 8px 2px 4px;
   border-bottom: 1px solid var(--line);
-  background: var(--surface);
+  background: var(--fill);
 }
 .diff-file__toggle {
   display: flex;
@@ -130,12 +130,13 @@ defineExpose({ scrollTo })
   cursor: pointer;
 }
 .diff-file__toggle:hover {
-  background: var(--fill);
+  background: var(--fill-2);
 }
 .diff-file__path {
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
+  font-weight: 600;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: var(--lh-12);
@@ -143,7 +144,7 @@ defineExpose({ scrollTo })
   white-space: nowrap;
 }
 .diff-file__dir {
-  color: var(--faint);
+  color: var(--muted);
 }
 .diff-file__status {
   flex: none;
@@ -155,7 +156,6 @@ defineExpose({ scrollTo })
   display: inline-flex;
   flex: none;
   gap: 6px;
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: var(--lh-12);

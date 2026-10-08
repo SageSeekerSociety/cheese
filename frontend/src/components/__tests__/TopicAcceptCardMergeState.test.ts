@@ -3,10 +3,10 @@
  * 状态词和「谁的活」都是后端算好随卡下发的（merge_state.state / who），这里断言
  * 的是屏幕上读得到的翻译不走样：
  *
- *   1. clean 画绿勾、采纳亮；没轮到人、点了也合不进去时（检查在跑、芝士在修）横条
+ *   1. clean 时采纳亮；没轮到人、点了也合不进去时（检查在跑、芝士在修）横条
  *      上不放采纳，红了哪个检查在「改动」页顶部的合并信号里看得见；
  *   2. 平台 lane（没绑 GitHub，who 恒 human）的卡直接是 CLEAN（#363 拍板：
- *      没有检查可读），画绿勾，采纳从不按状态灰——那里的采纳纯粹是人的判断；
+ *      没有检查可读），采纳从不按状态灰——那里的采纳纯粹是人的判断；
  *   3. 绿了自动合只在项目允许、且卡停在 blocked/behind 时出现在「更多操作」里，
  *      已布防的卡写明是谁开的，关掉它打的是 auto-merge 端点。
  */
@@ -219,7 +219,7 @@ describe('合的是人看到的那个 commit', () => {
 })
 
 describe('卡上的状态直接用合并态', () => {
-  it('clean：绿勾 + 可以合并，采纳亮', async () => {
+  it('clean：可以合并，采纳亮', async () => {
     const { container } = await mountWith([
       githubCard({
         merge_state: mergeState({
@@ -340,11 +340,12 @@ describe('卡上的状态直接用合并态', () => {
 })
 
 describe('平台 lane：采纳纯粹是人的判断', () => {
-  it('未绑项目的卡直接是 CLEAN：绿勾 + 可以合并，采纳亮（#363 拍板）', async () => {
+  it('未绑项目的卡直接是 CLEAN：可以合并，采纳亮（#363 拍板）', async () => {
     const { container } = await mountWith([card({})])
 
     expect(container.textContent).toContain('可以合并')
-    expect(container.querySelector('.mdi-check-circle')).toBeTruthy()
+    // 可以合并的那个信号画的是记号（合并图标），不是「该谁动」的圈。
+    expect(container.querySelector('.review-head .signal .mdi-source-merge')).toBeTruthy()
     expect(acceptButton(container).disabled).toBe(false)
     expect(container.textContent).not.toContain('状态更新中')
   })

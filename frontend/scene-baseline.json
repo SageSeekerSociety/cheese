@@ -4,6 +4,7 @@
     "src/components/panels/ChangesDiff.vue",
     "src/components/panels/ChangesDiffList.vue",
     "src/components/panels/ChangesFileTree.vue",
+    "src/components/panels/ChangesMoreMenu.vue",
     "src/components/panels/ChangesOpenFile.vue",
     "src/components/panels/PanelChanges.vue",
     "src/components/panels/PanelChangesView.vue",
