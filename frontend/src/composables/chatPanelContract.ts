@@ -74,6 +74,9 @@ export interface ChatPanelOptions {
   /** 读的是这个房间里的一段别的对话（一个任务）：消息、连接、发送都走它；名册、
    *  附件仍是房间的。没有就是房间自己。 */
   conversationId?: () => string | null
+  /** 读的是一个任务、而这件事单独指定了队友时，那位的 handle；空＝跟着房间那位。
+   *  发送框那个 @ 写谁、「这一栏此刻说给谁听」都按它算。 */
+  taskAgentHandle?: () => string | null
   alwaysSummon: () => boolean
   /** 这里是频道主线：叫芝士的消息在它底下的支线里回答，那一轮的开工、收工发给支线，
    *  这里听不到。没有就是在原处回答（任务、支线、私聊、已归档的频道）。 */
