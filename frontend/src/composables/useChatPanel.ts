@@ -54,6 +54,7 @@ import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/top
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
 
+import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
@@ -95,7 +96,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
   // 房间名册和项目名册是两份，因为 AI 队友的座位只在前者上。
   const {
-    agentSeat: roomAgentSeat,
+    agentSeat: rosterSeat,
     mentionPool,
     memberByHandle,
     seatByHandle,
@@ -114,47 +115,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
     },
   })
 
-  // 这一栏此刻说给谁听。
-  //
-  // 房间里是房间那位，任务里是**这件事**那位——负责人可以在任务信息卡那一行把这件事
-  // 单独交给另一位队友，那之后 @ 就得写它：正文里 @ 的是谁，读的人就以为叫的是谁，
-  // 而任务选的那位和房间那位常常不是同一个。挑的那位一定在这间房的名册上（后端换的
-  // 时候只认名册上那个座位），名字从名册上取。名册还没到、或者它已经不在名册上了，
-  // 就不猜，退回房间那位。
-  const agentSeat = computed(() => {
-    const handle = opts.taskAgentHandle?.() ?? null
-    if (handle) {
-      const label = agentNameOf(handle)
-      if (label) return { handle, label }
-    }
-    return roomAgentSeat.value
+  // 谁在这间房说话、界面上怎么称呼它、@ 渲染成谁的名字 —— 见 useAgentNaming。
+  const { agentSeat, agentName, composerHint } = useAgentNaming({
+    roomSeat: rosterSeat,
+    pool: mentionPool,
+    nameOf: agentNameOf,
+    names: mentionNames,
+    taskAgentHandle: opts.taskAgentHandle,
+    alwaysSummon,
   })
-  /** 界面上称呼它用的名字。名册没到时谁也不猜，就写「芝士」。 */
-  const agentName = computed(() => agentSeat.value?.label || t('work.room.defaultAgentName'))
-
-  // 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
-  // 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
-  // 是一次「我试了但做不了」，而人只会记得是它没做成。
-  const composerHint = computed(() =>
-    alwaysSummon()
-      ? t('work.room.composer.placeholderDm', { name: agentName.value })
-      : t('work.room.composer.placeholder', { name: agentName.value })
-  )
-
-  // Keep the module-level handle→name map in sync with the roster, so
-  // <@handle> tokens render with the member's display name.
-  watch(
-    mentionPool,
-    (pool) => {
-      for (const k of Object.keys(mentionNames)) delete mentionNames[k]
-      for (const row of pool) mentionNames[row.handle] = row.label
-      // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
-      // not the raw literal — they are reserved handles, not roster members.
-      mentionNames.all = t('work.room.mention.all')
-      mentionNames.here = t('work.room.mention.here')
-    },
-    { immediate: true, deep: true }
-  )
 
   // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
   const timeline = useTimeline({ renders: rendersInRoom })

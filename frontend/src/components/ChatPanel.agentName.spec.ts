@@ -9,7 +9,7 @@ import type { Block, Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
@@ -313,9 +313,12 @@ describe('任务里单独指定了队友，发送框 @ 的是那一位', () => {
     })
   }
 
-  async function typeAndSummon(container: Element) {
+  // 名册是**异步**取的，名字就位之前发送框不补 @（RoomComposer 也是先等 summonReady）。
+  // 先等提示语换成这件事那位再打字，否则测的是「名册还没到」那一刻，而不是换人有没有生效。
+  async function typeAndSummon(container: Element, name: string) {
     const box = container.querySelector<HTMLTextAreaElement>('.composer textarea')
     expect(box).toBeTruthy()
+    await waitFor(() => expect(box!.placeholder).toBe(t('work.room.composer.placeholderDm', { name })))
     box!.focus()
     await fireEvent.update(box!, '整理一下方案')
     await fireEvent.keyDown(box!, { key: 'Enter', ctrlKey: true })
@@ -328,10 +331,7 @@ describe('任务里单独指定了队友，发送框 @ 的是那一位', () => {
     const { container } = renderTask('t1', 'task-1', OTHER)
     await settle()
 
-    const box = await typeAndSummon(container)
-    expect(box.placeholder, '「说给谁听」还得是房间那位——那正文里那个 @ 就白换了').toBe(
-      t('work.room.composer.placeholderDm', { name: '无言' })
-    )
+    await typeAndSummon(container, '无言')
     expect(sent[0]?.content).toBe(`<@${OTHER}> 整理一下方案`)
   })
 
@@ -340,8 +340,7 @@ describe('任务里单独指定了队友，发送框 @ 的是那一位', () => {
     const { container } = renderTask('t2', 'task-2', null)
     await settle()
 
-    const box = await typeAndSummon(container)
-    expect(box.placeholder).toBe(t('work.room.composer.placeholderDm', { name: '芝士' }))
+    await typeAndSummon(container, '芝士')
     expect(sent[0]?.content).toBe(`<@${SEAT}> 整理一下方案`)
   })
 })
