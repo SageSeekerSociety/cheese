@@ -141,6 +141,8 @@ from app.domain.agent.prompt import (
     _pending_input_blocks,
     _progress_lines,  # noqa: F401
     _prompt_topic_refs,  # noqa: F401
+    live_inputs,
+    read_images,
 )
 
 # 兼容门面：不碰实例状态的问答（这一轮谁答、项目 key 带多少额度、这条记忆改动
@@ -742,22 +744,6 @@ class ChatService(SessionRecovery, RoomTurns):
             ):
                 yield frame
 
-    async def _live_inputs(
-        self, block_ids: list[uuid.UUID]
-    ) -> tuple[Block | None, Block | None]:
-        """Read the persisted authored message, quote and validated reply edge."""
-        stored = replied = None
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            for block_id in block_ids:
-                block = await blocks.get(block_id)
-                if block is not None:
-                    if block.kind == BlockKind.message:
-                        stored = block
-                    if block.reply_to is not None:
-                        replied = await blocks.get(block.reply_to)
-        return stored, replied
-
     async def merge_into_running_turn(
         self,
         topic_id: uuid.UUID,
@@ -799,7 +785,8 @@ class ChatService(SessionRecovery, RoomTurns):
         if consuming_turn_id is None:
             return None
         state = self._hook_work.get((topic_id, consuming_turn_id))
-        stored, replied = await self._live_inputs(user_block_ids)
+        async with self._sessions() as session:
+            stored, replied = await live_inputs(session, user_block_ids)
         lines, images = live_input_lines(
             author,
             content,
@@ -832,6 +819,9 @@ class ChatService(SessionRecovery, RoomTurns):
                     or place.room.status == TopicStatus.archived
                     or (place.task is not None and place.task.status != TaskStatus.open)
                 )
+                pictures = await read_images(
+                    session, place.room if place else None, images
+                )
             if archived:
                 delivered = False
             else:
@@ -845,7 +835,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 delivered = await self._compute.steer(
                     topic_id,
                     line,
-                    images=images or None,
+                    images=pictures or None,
                     register_input=registrar,
                     expected_work_id=consuming_turn_id,
                     agent_handle=seat_agent,
