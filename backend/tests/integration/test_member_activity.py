@@ -152,3 +152,27 @@ def test_an_agent_turn_is_that_agent_working_in_that_room_only(client, stub_hook
         ended = _until(ws, lambda f: _activity(f) and f["kind"] == "working")[-1]
     assert (ended["member"], ended["active"]) == (seat, False)
     assert _snapshot(client, thread, "bob") == []
+
+
+def test_sync_answers_with_the_rooms_live_state_even_when_nobody_is_busy(client):
+    """A reconnecting client keeps what it showed and reconciles against this
+    answer, so it has to come whether or not anything is going on."""
+    _, room, other = _two_rooms(client)
+    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+        bob.send_json({"type": "sync"})
+        idle = _until(bob, lambda f: f["type"] == "room_state")[-1]
+        assert idle["turn_ids"] == []
+        assert idle["members"] == []
+
+        with client.websocket_connect(chat_ws_url(room, "alice")) as alice:
+            alice.send_json({"type": "typing"})
+            _until(bob, _activity)
+            bob.send_json({"type": "sync"})
+            busy = _until(bob, lambda f: f["type"] == "room_state")[-1]
+            assert _who(busy["members"]) == [("alice", "typing")]
+
+            # The other room's answer says nothing about this one.
+            with client.websocket_connect(chat_ws_url(other, "bob")) as elsewhere:
+                elsewhere.send_json({"type": "sync"})
+                there = _until(elsewhere, lambda f: f["type"] == "room_state")[-1]
+                assert there["members"] == []

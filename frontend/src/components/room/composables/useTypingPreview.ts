@@ -13,7 +13,7 @@
  *   等不到（被拦下、调用失败）就撤；
  * - 那一轮结束，或这个房间已经没有在跑的轮次 → 撤；
  * - STALE_MS 没有新帧 → 撤（帧只在内容变化时才来，断了不会有人说）。
- * 换房间、重连由房间壳调 `clear()`。房间壳把它收到的每一帧在自己处理完之后交给
+ * 换房间由房间壳调 `clear()`；重连后房间壳调 `keepTurns`，只撤掉断线期间结束了的那几轮的。房间壳把它收到的每一帧在自己处理完之后交给
  * `follow`；`rows` 是时间线末尾要画的那几行。
  */
 
@@ -161,6 +161,11 @@ export function useTypingPreview(view: TypingView) {
     }
   }
 
+  /** 重连后：只留下此刻还在跑的那几轮正在写的消息。 */
+  function keepTurns(live: Set<string>) {
+    for (const p of [...previews.value]) if (!p.turn || !live.has(p.turn)) drop(p.agent)
+  }
+
   function clear() {
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
@@ -196,5 +201,5 @@ export function useTypingPreview(view: TypingView) {
 
   onScopeDispose(clear)
 
-  return { previews, rows, onLive, landed, turnEnded, follow, clear }
+  return { previews, rows, onLive, landed, turnEnded, follow, clear, keepTurns }
 }
