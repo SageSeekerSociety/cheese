@@ -84,7 +84,7 @@
     "editorjs-latex": "^1.0.5",
     "editorjs-parser": "^1.5.3",
     "exceljs": "4.4.0",
-    "i18next": "^23.16.8",
+    "i18next": "^26.4.2",
     "jwt-decode": "^4.0.0",
     "katex": "^0.16.22",
     "lodash-es": "^4.17.21",
