@@ -157,6 +157,8 @@
   "tooManySameNameFiles": "Too many files with the same name: {name}",
   "libraryFileNotFound": "This file isn't in the library",
   "libraryFileBeingReplaced": "Someone else is replacing {name} right now. Try again",
+  "listCursorUnreadable": "The cursor is invalid; start again from the first page",
+  "libraryKindUnknown": "There is no file type called \"{kind}\"",
   "artifactVersionNoFile": "No file was kept for this version",
   "revisionListStale": "The file has changed and this list is based on the old content. Refresh and try again",
   "consentRequired": "Please read and agree to the Terms of Service and the Privacy Policy",

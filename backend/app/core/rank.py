@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import UnprocessableEntityError
+from app.core.sentences import say
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _SPAN = 10**17
@@ -40,6 +41,6 @@ def decode(raw: str) -> Rank:
         group = int(raw[0])
         inverse = int(raw[1 : 1 + _WIDTH])
     except (IndexError, ValueError) as exc:
-        raise UnprocessableEntityError("malformed list cursor") from exc
+        raise UnprocessableEntityError(say("listCursorUnreadable")) from exc
     at = _EPOCH + timedelta(microseconds=_SPAN - inverse)
     return Rank(group, at, raw[1 + _WIDTH :])

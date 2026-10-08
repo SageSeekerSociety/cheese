@@ -180,7 +180,7 @@ async def page(
     `flat`、或者给了 `q` / `kind`，就是整个资料库平铺地找，`dir` 不管；否则是
     `dir` 这一层。"""
     if kind is not None and kind not in KINDS:
-        raise UnprocessableEntityError(f"unknown kind: {kind}")
+        raise UnprocessableEntityError(say("libraryKindUnknown", kind=kind))
     cursor = rank.decode(after) if after else None
     flat = flat or bool(q) or kind is not None
     prefix = f"{dir}/" if dir and not flat else ""
