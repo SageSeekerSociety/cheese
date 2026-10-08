@@ -71,7 +71,8 @@ const refuseWrite = () => Promise.reject(new Error('组件预览站不写任何�
 // ---- 改动那一支活 ----------------------------------------------------------
 
 const CHANGES = changesPanelProps()
-const FILE_DIFFS = CHANGES.fileDiffs as FileDiff[]
+/** 这一支活改到的每一份文件各自那一段（`ChangesDiffList` 吃的就是这个）。 */
+export const FILE_DIFFS = CHANGES.fileDiffs as FileDiff[]
 const DIFF_BY_PATH = CHANGES.diffByPath as Map<string, FileDiff>
 const TREE_FILES = CHANGES.treeFiles as WorkspaceFile[]
 /** 这一支活本身（「不在当前版本里」那一格列的就是它）。 */
@@ -106,8 +107,8 @@ export const LONG_DIFF_LINES: DiffLine[] = parseDiffLines(
 )
 
 /** 工作区里这时有的文件：这一支活碰过的那几份（删掉的那份已经不在了），加上它没碰的
- *  —— 「全部文件」比「只看改动」多出来的就是这几样。 */
-const WORKSPACE_FILES: WorkspaceFile[] = [
+ *  —— 「打开其他文件」从这里挑。 */
+export const WORKSPACE_FILES: WorkspaceFile[] = [
   ...TREE_FILES.filter((f) => DIFF_BY_PATH.get(f.path)?.status !== 'removed'),
   { path: 'syllabus.md', bytes: 1840 },
   { path: 'docs/week-2.md', bytes: 612 },
@@ -115,12 +116,10 @@ const WORKSPACE_FILES: WorkspaceFile[] = [
 ]
 
 /** 文件树那几行：和 `PanelChangesView` 一样交给 `buildFileRows` 折。树上的文件照
- *  `usePanelChanges` 的 `treeFiles` 取：只看改动是改过的那几份；全部文件是工作区那一份
- *  清单，再补上这一支删掉、工作区里已经没有的（那也是要验收的一条）。 */
-export function fileTreeRows(showAll: boolean, expanded: string[] = []) {
-  const known = new Set(WORKSPACE_FILES.map((f) => f.path))
-  const files = showAll ? [...WORKSPACE_FILES, ...TREE_FILES.filter((f) => !known.has(f.path))] : TREE_FILES
-  return buildFileRows({ files, diffByPath: DIFF_BY_PATH, showAll, expandedDirs: new Set(expanded) })
+ *  `usePanelChanges` 的 `treeFiles` 取：这一支改过的那几份（删掉的也在，那也是要审阅的
+ *  一条）。 */
+export function fileTreeRows(collapsed: string[] = []) {
+  return buildFileRows({ files: TREE_FILES, diffByPath: DIFF_BY_PATH, collapsedDirs: new Set(collapsed) })
 }
 
 /** `ProjectFileView` 的那十八样：默认是一份读得到的 markdown（这一支活里那份 week-1）。 */
@@ -176,7 +175,6 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     currentTask: computed(() => v.currentTask),
     sourceStatus: computed(() => v.sourceStatus),
     sourceUnavailable: computed(() => v.sourceUnavailable),
-    showAll: ref(v.showAll),
     fileSource: computed(() => v.fileSource),
     fileToolReady: computed(() => v.fileToolReady),
     loading: ref(v.loading),
@@ -184,10 +182,10 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     errorMsg: ref(v.errorMsg),
     noRepo: ref(v.noRepo),
     missing: ref(v.missing),
-    gitCommits: ref(v.gitCommits),
     fileDiffs: computed(() => v.fileDiffs),
     diffByPath: computed(() => v.diffByPath),
     treeFiles: computed(() => v.treeFiles),
+    allFiles: ref(v.allFiles),
     openPath: ref(v.openPath),
     fileDraft: ref(v.fileDraft),
     // 上一次读到或存下的正文；没改过就是手上这一份（`fileDirty` 在产品里就是两者不等）。
@@ -209,7 +207,7 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     openDocumentType: computed(() => v.openDocumentType),
     revisionPath: computed(() => v.revisionPath),
     openRawUrl: computed(() => v.openRawUrl),
-    expandedDirs: ref(v.expandedDirs),
+    collapsedDirs: ref(v.collapsedDirs),
     revealTick: ref(v.revealTick),
     draftCount: computed(() => v.draftCount),
     docBytes: computed(() => v.docBytes),
@@ -219,6 +217,7 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     revs: v.revs,
     loadAll: noopAsync,
     selectFile: noopAsync,
+    closeFile: noop,
     selectVersion: noopAsync,
     openFile: noopAsync,
     toggleDir: noop,

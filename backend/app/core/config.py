@@ -611,7 +611,12 @@ class Settings(BaseSettings):
     # this at it.
     subscription_ca_backend_path: str = ""
     # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
-    # Enforced BEFORE forwarding: a cap that only reports the overspend is not a cap.
+    # A deployment-wide backstop, not a per-project budget: a /v1/messages turn
+    # is refused before it is forwarded once the window's completed turns plus
+    # the turns now in flight reach the cap, so concurrent turns are refused
+    # together rather than each passing on the same stale total. A turn already
+    # admitted runs to its end, so the window can overshoot. The gateway pool is
+    # not covered (LiteLLM meters it). 0 = no cap, the default.
     subscription_token_cap: int = 0
     subscription_cap_window_s: int = 5 * 3600
     # The metering proxy's usage.jsonl as mounted in THIS container (issue #218):

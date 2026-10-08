@@ -215,6 +215,55 @@ def test_meter_records_and_caps_over_the_window(tmp_path):
     assert again.used() == 100
 
 
+def test_an_in_flight_turn_holds_its_estimate_against_the_cap(tmp_path):
+    """Admission alone only sees turns that have ENDED. Two turns admitted
+    together while ``used() < cap`` then run and overshoot together; a running
+    turn must hold its estimate so the second is refused."""
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.record("p1", "t1", {"input_tokens": 60_000}, "m")
+    assert not meter.would_exceed(100_000)
+
+    a = meter.reserve(30_000)
+    b = meter.reserve(30_000)  # a second turn, admitted while the first runs
+
+    # 60k spent + 60k in flight reaches the cap: the second cannot start.
+    assert meter.would_exceed(100_000)
+    assert meter.would_exceed(120_000)
+    assert not meter.would_exceed(120_001)
+
+    # A released turn stops holding; the hold is not a record of spend.
+    meter.release(a)
+    assert not meter.would_exceed(100_000)
+    assert meter.used() == 60_000
+    meter.release(b)
+    assert not meter.would_exceed(100_000)
+    meter.release(None)  # a flow that never reserved: nothing to drop
+
+
+def test_the_cap_off_holds_nothing(tmp_path):
+    """cap=0 is the default and the shape that shipped: no reservation exists,
+    so nothing may be counted or refused."""
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.reserve(10**9)
+
+    assert not meter.would_exceed(0)
+    assert meter.used() == 0
+
+
+def test_a_hold_that_never_released_expires_with_the_window(tmp_path, monkeypatch):
+    """A flow that ends without reaching release (nothing observed does, but a
+    crash between reserve and response would) must not shrink the deployment's
+    headroom forever."""
+    clock = [1_000_000.0]
+    monkeypatch.setattr(core.time, "time", lambda: clock[0])
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.reserve(100_000)
+    assert meter.would_exceed(100_000)
+
+    clock[0] += 3601  # no turn runs that long: the hold is stale
+    assert not meter.would_exceed(100_000)
+
+
 def test_the_log_keeps_cache_writes_split_by_lifetime(tmp_path):
     """One-hour cache writes cost more than five-minute ones, so the log line
     carries both counts beside the total the cap counts."""
