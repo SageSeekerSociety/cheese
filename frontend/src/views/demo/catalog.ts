@@ -27,6 +27,7 @@ import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import { DOC_BLOCK_ENTRIES } from './catalogDoc'
+import { FEEDBACK_ENTRIES } from './catalogFeedback'
 import {
   ACCEPT_CARD,
   ACCEPT_DONE,
@@ -69,6 +70,7 @@ import { RAIL_ENTRIES } from './catalogRail'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SETTINGS_ENTRIES } from './catalogSettings'
 import { SHARED_ENTRIES } from './catalogShared'
+import { SKILL_ENTRIES } from './catalogSkills'
 import { TASK_FORM_ENTRIES } from './catalogTaskForm'
 import { USAGE_ENTRIES } from './catalogUsage'
 import { VIEW_ENTRIES } from './catalogViews'
@@ -974,6 +976,11 @@ export const CATALOG: CatalogEntry[] = [
   ...SHARED_ENTRIES,
   // 整页那两件（一项产物的版本历史、小队的对外一面）在自己的文件里：`catalogViews.ts`。
   ...VIEW_ENTRIES,
+  // 反馈详情那一组（从详情页右栏拆出来的处理人、评论条、评论楼、进展时间线，数据在
+  // `catalogFeedbackFixtures.ts`）在自己的文件里：`catalogFeedback.ts`。
+  ...FEEDBACK_ENTRIES,
+  // 技能详情抽屉那一件在自己的文件里：`catalogSkills.ts`。
+  ...SKILL_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */
