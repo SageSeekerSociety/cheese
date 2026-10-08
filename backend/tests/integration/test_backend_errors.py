@@ -365,9 +365,7 @@ def test_a_crash_is_kept_with_the_request_id_the_caller_did_send(
     assert events[0]["meta"]["request_id"] == "rid-abc"
 
 
-def test_a_failure_inside_the_intake_is_not_reported_back_into_it(
-    client, monkeypatch
-):
+def test_a_failure_inside_the_intake_is_not_reported_back_into_it(client, monkeypatch):
     """The intake is the one route that must never report into itself: its own
     failure would be pushed straight back at the intake that just failed, on
     every retry, for as long as it stays broken.
