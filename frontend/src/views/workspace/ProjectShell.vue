@@ -80,16 +80,24 @@ function refreshVisible() {
 // 里的任务行，点下去就是它们。按页名热，因为框架这一层拿不到每一页的地址参数
 //（另一个话题、另一个任务），也不该为了预热编一份出来（见 routePrefetch 的 warmPage）。
 const IDLE_WARM_PAGES = ['workspace-overview', 'project-library', 'workspace-task', 'project-tasks']
+// 刚进页面这几秒先不热：人到了就是要动手的，四份代码包一起下会跟他第一下抢那条路
+//（实测把「总览切资料库」的列表推后了 ~600 ms，比不热还慢）。等页面静下来再热，热的
+// 还是这四页，受益的是后面的切换。按下和悬浮那两处预取不在这里，它们跟着指针走。
+const IDLE_WARM_DELAY_MS = 2500
+let startIdleWarm: number | undefined
 let stopIdleWarm: (() => void) | undefined
 
 onMounted(() => {
   pollTimer = window.setInterval(refreshVisible, 30_000)
   document.addEventListener('visibilitychange', refreshVisible)
-  stopIdleWarm = warmPagesWhenIdle(router, IDLE_WARM_PAGES)
+  startIdleWarm = window.setTimeout(() => {
+    stopIdleWarm = warmPagesWhenIdle(router, IDLE_WARM_PAGES)
+  }, IDLE_WARM_DELAY_MS)
 })
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', refreshVisible)
   if (pollTimer !== undefined) window.clearInterval(pollTimer)
+  if (startIdleWarm !== undefined) window.clearTimeout(startIdleWarm)
   stopIdleWarm?.()
 })
 
