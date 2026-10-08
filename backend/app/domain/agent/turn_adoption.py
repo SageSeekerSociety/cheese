@@ -136,10 +136,10 @@ async def reconcile(
 
     if ended_here or started_here:
         logger.info(
-            "turn_books_reconciled",
-            topic=channel,
-            ended=ended_here,
-            started=started_here,
+            "turn_books_reconciled topic=%s ended=%d started=%d",
+            channel,
+            ended_here,
+            started_here,
         )
 
 
