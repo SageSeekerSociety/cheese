@@ -67,6 +67,7 @@ PROTOCOL_VERSION = 1
 _OWN = (
     "runtime",
     "portable",
+    "darwin",
     "mcp_process",
     "machine_files",
     "machine_git",
@@ -128,8 +129,9 @@ def write_json(path, value):
 
 @functools.cache
 def beside(name):
-    """A module shipped beside this file (`RELEASE_FILES`): Windows primitives
-    (`portable`), the stdio MCP client, the files and git pi's tools take."""
+    """A module shipped beside this file (`RELEASE_FILES`): Windows and macOS
+    primitives (`portable`, `darwin`), the stdio MCP client, the files and git
+    pi's tools take."""
     return runpy.run_path(str(Path(__file__).with_name(name + ".py")))
 
 
@@ -783,14 +785,8 @@ class Executor:
                     (int(entry.name), int(stat[stat.rindex(")") + 2 :].split()[1]))
                 )
         else:
-            listing = subprocess.run(
-                ["ps", "-eo", "pid=,ppid="], capture_output=True, text=True
-            ).stdout
-            rows = [
-                (int(row[0]), int(row[1]))
-                for row in (line.split() for line in listing.splitlines())
-                if len(row) == 2
-            ]
+            # macOS, where not even `ps` runs in a room's sandbox.
+            rows = beside("darwin")["processes"]()
         children = {}
         for child, parent in rows:
             children.setdefault(parent, []).append(child)
