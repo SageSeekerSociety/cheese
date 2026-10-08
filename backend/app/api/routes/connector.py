@@ -39,11 +39,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
-from app.api.deps import get_chat_service, get_work_runner
 from app.common.auth import AccessClaims, verify_access_token
-from app.core.background import spawn
 from app.core.config import settings
-from app.core.db import async_session_factory, get_db
+from app.core.db import get_db
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -72,9 +70,7 @@ from app.domain.machine.session_work import (
     screen_agent_name,
 )
 from app.domain.project.services import ProjectService
-from app.domain.room_task.checkouts import remove_closed_checkouts
 from app.domain.team.repositories import TeamRepository
-from app.domain.topic.retire import sweep_retired_storage
 from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -108,6 +104,11 @@ _recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
 
 
 async def recover_business_state(device_id: str) -> None:
+    # deferred-import: tests patch this name on app.core.background
+    from app.core.background import spawn
+
+    # deferred-import: tests patch this name on app.core.db
+    from app.core.db import async_session_factory
 
     # The machine enforces its own copy of its directory grants, so it is sent
     # the current set as it connects, before anything else waits. It is not
@@ -129,6 +130,8 @@ async def recover_business_state(device_id: str) -> None:
 
 
 async def _recover_business_state(device_id: str) -> None:
+    # deferred-import: tests patch this name on app.api.deps
+    from app.api.deps import get_chat_service, get_work_runner
 
     # Every backend watches devices come and go, but only the one running the
     # work listens to their sessions: two listeners land one session's output
@@ -156,12 +159,22 @@ async def _recover_business_state(device_id: str) -> None:
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
     # Restore screen ownership before cleanup looks for sessions to close.
+    # deferred-import: tests patch this name on app.core.background
+    from app.core.background import spawn
+
+    # deferred-import: tests patch this name on app.core.db
+    from app.core.db import async_session_factory
+
+    # deferred-import: tests patch this name on app.domain.topic.retire
+    from app.domain.topic.retire import sweep_retired_storage
 
     spawn(
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
         name="cleanup device reconnect",
     )
     # A machine offline when a task of its rooms closed still has the checkout.
+    # deferred-import: tests patch this name on app.domain.room_task.checkouts
+    from app.domain.room_task.checkouts import remove_closed_checkouts
 
     spawn(
         remove_closed_checkouts(async_session_factory, device_id=device_id),

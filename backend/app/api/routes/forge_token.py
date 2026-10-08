@@ -42,7 +42,6 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
 from app.domain.agent.forgejo_tokens import ForgejoTokenError, open_forge_token
 from app.domain.agent.github_app import GitHubAppError
-from app.domain.project.forge import binding_for_project, tokens_for_project
 from app.domain.project.models import ForgeToken
 from app.domain.room_task.place import session_keeps_work
 
@@ -57,6 +56,8 @@ async def forge_tunnel(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Carry native GitHub HTTPS through the deployment without terminating TLS."""
+    # deferred-import: tests patch this name on app.domain.project.forge
+    from app.domain.project.forge import binding_for_project
 
     claims = scoped_token_claims(token)
     if not claims or claims.get("p") != str(project_id):
@@ -156,6 +157,8 @@ async def forge_transport(
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Relay native Git and API traffic using the caller's leased forge token."""
+    # deferred-import: tests patch this name on app.domain.project.forge
+    from app.domain.project.forge import binding_for_project, tokens_for_project
 
     authorization = request.headers.get("authorization", "")
     credential = _forge_credential(authorization)
@@ -323,6 +326,8 @@ def _caller_token(request: Request) -> str:
 async def sandbox_forge_token(
     request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ) -> dict:
+    # deferred-import: tests patch this name on app.domain.project.forge
+    from app.domain.project.forge import binding_for_project, tokens_for_project
 
     token = _caller_token(request)
     claims = scoped_token_claims(token) if token else None

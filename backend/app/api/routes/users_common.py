@@ -76,7 +76,6 @@ from app.core.client_address import resolved_client_address
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.errors import BadRequestError, InternalServerError, SudoRequiredError
 from app.core.sentences import say
-from app.core.single_use_state import SingleUseUnavailableError, claim
 from app.domain.user.sessions import SessionService
 from app.domain.user.trusted_devices import Granted, TrustedDeviceService
 
@@ -127,6 +126,8 @@ async def _spend_sudo_ticket(
     Fail-closed when Redis is unreachable: without the reservation there is no
     way to tell a first use from a replay, and "cannot tell" is not "allow".
     """
+    # deferred-import: tests patch this name on app.core.single_use_state
+    from app.core.single_use_state import SingleUseUnavailableError, claim
 
     claims = verify_sudo_ticket(ticket) if isinstance(ticket, str) and ticket else None
     if claims is None or claims.user_id != user_id or claims.purpose != purpose:

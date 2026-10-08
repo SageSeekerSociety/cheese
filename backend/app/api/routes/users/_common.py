@@ -33,7 +33,6 @@ from app.core.errors import (
     UnprocessableEntityError,
 )
 from app.core.sentences import say
-from app.core.single_use_state import SingleUseUnavailableError, reserve
 from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS
 from app.domain.user.login_security import ClientFailureBudget
@@ -170,6 +169,8 @@ async def _issue_2fa_pending_token(
     ``mint_2fa_pending_token``); the reservation is sized to match, so the
     key dies with the ticket rather than outliving it.
     """
+    # deferred-import: tests patch this name on app.core.single_use_state
+    from app.core.single_use_state import SingleUseUnavailableError, reserve
 
     if expires_at is None:
         ttl_s = PENDING_2FA_TTL_S

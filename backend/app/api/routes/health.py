@@ -12,7 +12,7 @@ from sqlalchemy import text
 from app.api.routes.admin_common import PlatformAdminDep
 from app.core import alerting
 from app.core.config import settings
-from app.core.db import PROBE_TIMEOUT_S, pool_status, probe_engine
+from app.core.db import PROBE_TIMEOUT_S
 from app.core.loop_lag import STALL_S, lag_status
 from app.core.metrics import registry
 
@@ -219,6 +219,8 @@ def _check_alerting() -> dict[str, Any]:
 
 
 async def _check_database() -> dict[str, Any]:
+    # deferred-import: tests patch probe_engine on app.core.db
+    from app.core.db import pool_status, probe_engine
 
     try:
         async with probe_engine.connect() as connection:

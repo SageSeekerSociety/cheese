@@ -23,7 +23,7 @@ from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
 )
-from app.domain.team.services import TeamService, check_team_locking_status
+from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -944,6 +944,9 @@ async def add_team_member_entry(
     team = await service.get_team(team_id)
     if team is None:
         raise NotFoundError("Team not found")
+
+    # deferred-import: tests patch this name on app.domain.team.services
+    from app.domain.team.services import check_team_locking_status
 
     await check_team_locking_status(db, team_id)
 

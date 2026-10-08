@@ -11,12 +11,9 @@ from pathlib import Path
 from fastapi import APIRouter, Header
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from app.core.background import spawn
-from app.core.db import async_session_factory
 from app.core.errors import UnauthorizedError
 from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
 from app.domain.machine.session_work import checkpoint_room
-from app.domain.topic.retire import sweep_retired_storage
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +22,14 @@ router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
 @router.post("/storage-sweep")
 async def trigger_storage_sweep(x_cheese_token: str = Header(default="")) -> dict:
+    # deferred-import: tests patch this name on app.core.background
+    from app.core.background import spawn
+
+    # deferred-import: tests patch this name on app.core.db
+    from app.core.db import async_session_factory
+
+    # deferred-import: tests patch this name on app.domain.topic.retire
+    from app.domain.topic.retire import sweep_retired_storage
 
     if not is_global_sandbox_token(x_cheese_token):
         raise UnauthorizedError("Cleanup trigger requires the server credential")

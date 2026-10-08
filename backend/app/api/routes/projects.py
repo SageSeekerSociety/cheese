@@ -44,7 +44,7 @@ from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
-from app.domain.project.forge import binding_for_project, follow_github_rename
+from app.domain.project.forge import follow_github_rename
 from app.domain.project.models import Project
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
@@ -569,6 +569,8 @@ async def get_private_chat(
 async def get_project_forge(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
+    # deferred-import: tests patch this name on app.domain.project.forge
+    from app.domain.project.forge import binding_for_project
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -995,6 +997,8 @@ async def set_project_upstream(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Select a GitHub repository before binding its installation."""
+    # deferred-import: tests patch this name on app.domain.project.forge
+    from app.domain.project.forge import binding_for_project
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)

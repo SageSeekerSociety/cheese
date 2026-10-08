@@ -98,7 +98,6 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
-from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 from app.domain.delivery.note import send_note
 from app.domain.room_task.services import TaskService
 from app.domain.thread.services import answered_in
@@ -244,6 +243,8 @@ async def _summon_the_named(
 
     消息先落库、先广播，再记投递：被点名的那位醒来时，房间里已经有它要读的那一行。
     """
+    # deferred-import: tests patch this name on app.domain.delivery.mention
+    from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 
     async with chat.session_factory() as session:
         block = await BlockRepository(session).get(uuid.UUID(payload["id"]))
