@@ -14,7 +14,10 @@ code + copy contract 同一条规矩：文案在外，判断在内，中间传�
 """
 
 import enum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Mapped
 
 #: `note` 列的上限。截断在写入口做一次，调用方不必自己切。
 NOTE_MAX = 2000
@@ -115,15 +118,23 @@ def note_level(code: NoteCode | None, note: str) -> NoteLevel | None:
 
 
 class NotedCard(Protocol):
-    """写入口真正会碰的那两列。
+    """写入口真正会碰的那两列，按它们在模型上的样子写。
 
     这里不具名 `AcceptCard`：`review.models` 反过来要这一片的 `NoteCode`，两边互相
     import 就是一个环（`.importlinter` 的 C3）。写入口要的从来只是「一张有 note 和
-    note_code 的卡」，那就只声明这两列；模型天然满足，环也就没了。
+    note_code 的卡」，那就只声明这两列——`AcceptCard` 天然满足，环也就没了。
+
+    声明成 `Mapped[...]` 而不是 `str` / `NoteCode | None`：那两列在模型上就是
+    `Mapped[...]`，而变量类型的协议成员是不变的，写成 `str` 时 pyright 会拒掉每一个
+    「拿 AcceptCard 来调」的地方（`Mapped[str]` 不是 `str`）。按原样写，读写都照旧
+    走 SQLAlchemy 的 `__get__` / `__set__`。
+
+    `Mapped` 只在类型期存在，所以两处都带引号：这是类体里的真注解，不加引号会在
+    导入时求值，而 `TYPE_CHECKING` 的 import 在运行时不在了。
     """
 
-    note: str
-    note_code: NoteCode | None
+    note: "Mapped[str]"
+    note_code: "Mapped[NoteCode | None]"
 
 
 def record(card: NotedCard, code: NoteCode | None, text: str) -> None:
