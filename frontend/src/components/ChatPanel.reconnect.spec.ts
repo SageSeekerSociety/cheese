@@ -155,6 +155,22 @@ describe('chat recovery after history errors', () => {
     expect(caught).toContainEqual(['topics', expect.any(String)])
   })
 
+  it('a task page that reconnects names its channel’s row, not the task', async () => {
+    const room = { id: crypto.randomUUID(), project_id: 'p', title: 'Recovery', kind: 'topic' } as Topic
+    const view = render(ChatPanel as unknown as Component, {
+      props: { topic: room, conversationId: 'task-1', showComposer: false },
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
+    })
+    await flushPromises()
+    sockets[0].onopen?.()
+    sockets[0].onclose?.()
+    await vi.advanceTimersByTimeAsync(1000)
+    sockets[1].onopen?.()
+    await flushPromises()
+
+    expect(view.emitted('state-changed')).toContainEqual(['topics', room.id])
+  })
+
   it('does not retry a forbidden history response', async () => {
     vi.mocked(listBlocks).mockRejectedValue(new ApiError(403, 'Forbidden'))
     mountPanel()

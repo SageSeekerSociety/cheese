@@ -221,7 +221,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // gone, so a re-connect (not the first open) treats each as changed once.
       if (reconnect) {
         for (const resource of ANNOUNCED) emit('state-changed', resource)
-        emit('state-changed', 'topics', place()?.id)
+        emit('state-changed', 'topics', topic()?.id)
         void reloadRoomTasks()
       }
       tail.subscribed(newest)
