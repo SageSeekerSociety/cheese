@@ -8,12 +8,14 @@ opens nothing else.
 """
 
 import asyncio
+import time
 import uuid
 
 import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app.api.routes import notifications_live
 from app.common.auth import create_access_token
 from app.core.sentences import notice_message, say, with_keys
 from app.domain.notification.handlers import (
@@ -211,6 +213,51 @@ def test_signing_out_ends_the_connection(client):
         ) as ws,
     ):
         ws.receive_json()
+
+
+def test_the_connection_ends_even_while_notices_keep_coming(client, monkeypatch):
+    """A notice arriving sooner than the beat must not put the check off: the
+    ended session is the connection's end whatever the traffic. The beat used
+    to be the wait's timeout and every notice restarted it, so the connection
+    with the most to say — an active room, a task running, a second device —
+    was the one never asked.
+
+    The beat is 25s in production; its length is not what this pins, so it is
+    shortened to keep the test quick."""
+    monkeypatch.setattr(notifications_live, "BEAT_SECONDS", 0.2)
+    user_id, sid, page = _signed_in(client, "fang")
+    notices = _notices_token(client, page)
+
+    def sign_out() -> None:
+        async def revoke() -> None:
+            async with client.test_factory() as db:  # type: ignore[attr-defined]
+                await SessionService(db).revoke(user_id, sid)
+                await db.commit()
+
+        asyncio.run(revoke())
+
+    with client.websocket_connect(
+        "/notifications/live", headers={"Authorization": f"Bearer {notices}"}
+    ) as ws:
+        ws.send_json({"after": None})
+        _next(ws, "notices")
+        _settled(ws)
+
+        sign_out()
+        ended = False
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            _deliver(
+                client, user_id, (NotificationType.ROOM_NOTICE, {"content": "还在来"})
+            )
+            try:
+                while ws.receive_json()["kind"] != "waiting":
+                    pass
+            except WebSocketDisconnect as closed:
+                assert closed.code == 4401
+                ended = True
+                break
+    assert ended, "the connection outlived the sign-in that opened it"
 
 
 def test_the_apps_credential_opens_nothing_else(client):
