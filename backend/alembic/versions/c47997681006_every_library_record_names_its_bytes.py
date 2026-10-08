@@ -37,4 +37,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    pass
+    """填上的键留着：它们就是旧代码按目录推出来的那一把，退回去的代码读到的位置不变。"""
