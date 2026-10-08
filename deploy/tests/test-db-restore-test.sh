@@ -17,7 +17,20 @@ cat > "$FAKE_BIN/docker" <<'FAKE_DOCKER'
 set -u
 
 case "${1:-}" in
+  compose)
+    printf '{"services":{"postgres":{"image":"%s"}}}\n' "$RESTORE_TEST_COMPOSE_IMAGE"
+    ;;
   run)
+    printf '%s\n' "$*" > "$RESTORE_TEST_RUN_LOG"
+    # Model a server that cannot load the required extension from vanilla PG.
+    case "$*" in
+      *postgres:17*|*shared_preload_libraries=pg_search*) ;;
+      *) echo 'missing pg_search preload' >&2; exit 96 ;;
+    esac
+    if [[ "$*" == *postgres:17* ]]; then
+      echo 'could not access file pg_search' >&2
+      exit 95
+    fi
     echo restore-test-container
     ;;
   cp|stop)
@@ -29,6 +42,10 @@ case "${1:-}" in
       pg_isready)
         ;;
       pg_restore)
+        if [[ "$*" == *--list* ]]; then
+          [ "${RESTORE_TEST_NO_EXTENSION:-0}" = 1 ] || echo '5; 3079 16385 EXTENSION - pg_search'
+          exit 0
+        fi
         if [ "${RESTORE_TEST_PG_RESTORE_STATUS:-0}" -ne 0 ]; then
           echo "simulated restore failure" >&2
           exit "$RESTORE_TEST_PG_RESTORE_STATUS"
@@ -40,6 +57,7 @@ case "${1:-}" in
           exit "$RESTORE_TEST_QUERY_STATUS"
         fi
         case "$*" in
+          *pg_extension*) echo 1 ;;
           *information_schema.tables*) echo 50 ;;
           *alembic_version*) echo 1 ;;
           *'from "user"'*|*'from projects'*|*'from topics'*|*'from blocks'*)
@@ -69,6 +87,8 @@ run_restore() {
   local query_status="${4:-0}"
   set +e
   PATH="$FAKE_BIN:$PATH" \
+    RESTORE_TEST_COMPOSE_IMAGE="${RESTORE_TEST_COMPOSE_IMAGE:-paradedb/paradedb:next-pg17}" \
+    RESTORE_TEST_RUN_LOG="$CASE_ROOT/run.log" \
     RESTORE_TEST_PG_RESTORE_STATUS="$restore_status" \
     RESTORE_TEST_BUSINESS_ROWS="$business_rows" \
     RESTORE_TEST_QUERY_STATUS="$query_status" \
@@ -134,9 +154,24 @@ test_query_failure() {
     echo "FAIL: failed verification query was reported as success" >&2
     return 1
   fi
-  grep -q "RESTORE-TEST FAIL: could not query public table count" "$OUTPUT"
+  grep -q "RESTORE-TEST FAIL: could not query pg_search extension" "$OUTPUT"
   grep -q "simulated query failure" "$OUTPUT"
   echo "PASS: failed verification query is observable"
+}
+
+test_extension_and_image() {
+  # A composition update must select the new image, not a second pinned copy.
+  RESTORE_TEST_COMPOSE_IMAGE=paradedb/paradedb:future-pg17 run_restore 0 7
+  [ "$RUN_STATUS" -eq 0 ] || { cat "$OUTPUT"; return 1; }
+  grep -q 'paradedb/paradedb:future-pg17' "$CASE_ROOT/run.log"
+  grep -q 'shared_preload_libraries=pg_search' "$CASE_ROOT/run.log"
+  RESTORE_TEST_NO_EXTENSION=1 run_restore 0 7
+  [ "$RUN_STATUS" -ne 0 ]
+  grep -q 'dump does not contain the pg_search extension' "$OUTPUT"
+  CHEESE_PG_IMAGE=postgres:17 run_restore 0 7
+  [ "$RUN_STATUS" -ne 0 ]
+  grep -q 'RESTORE-TEST FAIL' "$OUTPUT"
+  echo 'PASS: composition changes propagate, missing extension and wrong image fail'
 }
 
 case "${1:-all}" in
@@ -149,6 +184,7 @@ case "${1:-all}" in
     test_empty_restore_rejected
     test_empty_restore_allowed
     test_query_failure
+    test_extension_and_image
     ;;
   *)
     echo "unknown test case: $1" >&2

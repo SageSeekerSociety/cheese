@@ -11,11 +11,20 @@ set -uo pipefail
 
 BK="${CHEESE_BACKUP_DIR:-/home/nictheboy/backups}"
 DUMP="${1:-$(ls -t "$BK"/cheese-*.dump 2>/dev/null | head -1)}"
-PGIMG="${CHEESE_PG_IMAGE:-postgres:17}"
 MIN_TABLES="${CHEESE_RESTORE_MIN_TABLES:-40}"
 ALLOW_EMPTY="${CHEESE_RESTORE_ALLOW_EMPTY:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${CHEESE_RESTORE_LOG_DIR:-$SCRIPT_DIR/../.tmp/restore-tests}"
+TEST_DB="restore_$(printf '%s' "$SCRIPT_DIR" | cksum | cut -d' ' -f1)_$$"
+# Resolve the default from the same composition as dev, including future pins.
+if [ -n "${CHEESE_PG_IMAGE:-}" ]; then
+  PGIMG="$CHEESE_PG_IMAGE"
+elif ! PGIMG="$(docker compose -f "$SCRIPT_DIR/../docker-compose.yml" config \
+  --no-interpolate --format json | python3 -c \
+  'import json, sys; print(json.load(sys.stdin)["services"]["postgres"]["image"])')"; then
+  echo "RESTORE-TEST FAIL: could not resolve the database image from docker-compose.yml"
+  exit 1
+fi
 
 case "$MIN_TABLES" in
   ''|*[!0-9]*) echo "ERROR: CHEESE_RESTORE_MIN_TABLES must be a non-negative integer"; exit 1 ;;
@@ -30,7 +39,11 @@ mkdir -p "$LOG_DIR"
 RESTORE_LOG="$LOG_DIR/restore-$(date -u '+%Y%m%dT%H%M%SZ')-$$.log"
 echo "restore-testing $DUMP ($(du -h "$DUMP" | cut -f1)) into throwaway $PGIMG"
 
-CID="$(docker run -d --rm -e POSTGRES_PASSWORD=test -e POSTGRES_DB=restore_test "$PGIMG")"
+if ! CID="$(docker run -d --rm --network none -e POSTGRES_PASSWORD=test \
+  -e "POSTGRES_DB=$TEST_DB" "$PGIMG" -c shared_preload_libraries=pg_search)"; then
+  echo "RESTORE-TEST FAIL: could not start throwaway $PGIMG"
+  exit 1
+fi
 cleanup() { docker stop "$CID" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
@@ -42,12 +55,25 @@ for _ in $(seq 1 30); do
 done
 [ "$ready" = 1 ] || { echo "ERROR: throwaway postgres never became ready"; exit 1; }
 
-docker cp "$DUMP" "$CID":/tmp/restore.dump >/dev/null
+if ! docker cp "$DUMP" "$CID":/tmp/restore.dump >> "$RESTORE_LOG" 2>&1; then
+  echo "RESTORE-TEST FAIL: could not copy dump; log retained at $RESTORE_LOG"
+  exit 1
+fi
+# A fixture without the extension would let a wrong image pass unnoticed.
+if ! docker exec "$CID" pg_restore --list /tmp/restore.dump > "$RESTORE_LOG.toc" 2>> "$RESTORE_LOG"; then
+  echo "RESTORE-TEST FAIL: could not list dump; log retained at $RESTORE_LOG"
+  exit 1
+fi
+if ! grep -Eq ' EXTENSION - pg_search([[:space:]]|$)' "$RESTORE_LOG.toc"; then
+  echo "RESTORE-TEST FAIL: dump does not contain the pg_search extension"
+  exit 1
+fi
+echo "dump contains pg_search; restoring with preload enabled"
 # A partial restore can contain enough schema to fool every query below. The
 # restore process result is therefore authoritative; warnings remain in the log.
 restore_status=0
 docker exec "$CID" pg_restore --exit-on-error --no-owner --no-privileges \
-  -U postgres -d restore_test /tmp/restore.dump > "$RESTORE_LOG" 2>&1 \
+  -U postgres -d "$TEST_DB" /tmp/restore.dump > "$RESTORE_LOG" 2>&1 \
   || restore_status=$?
 if [ "$restore_status" -ne 0 ]; then
   echo "RESTORE-TEST FAIL: pg_restore exited $restore_status; log retained at $RESTORE_LOG"
@@ -56,7 +82,7 @@ if [ "$restore_status" -ne 0 ]; then
 fi
 
 q() {
-  docker exec "$CID" psql -U postgres -d restore_test -tAc "$1" \
+  docker exec "$CID" psql -U postgres -d "$TEST_DB" -tAc "$1" \
     2>> "$RESTORE_LOG" | tr -d '[:space:]'
 }
 query_failed() {
@@ -64,6 +90,15 @@ query_failed() {
   tail -20 "$RESTORE_LOG" 2>/dev/null
   exit 1
 }
+
+if ! extension="$(q "select count(*) from pg_extension where extname='pg_search'")"; then
+  query_failed "pg_search extension"
+fi
+if [ "$extension" != 1 ]; then
+  echo "RESTORE-TEST FAIL: pg_search was not restored"
+  exit 1
+fi
+echo "restored pg_search extension"
 
 if ! tables="$(q \
   "select count(*) from information_schema.tables where table_schema='public'")"; then
