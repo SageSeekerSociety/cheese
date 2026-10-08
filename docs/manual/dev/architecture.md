@@ -136,7 +136,7 @@ app/domain/<包>/
 
 今天在写入之后手工调 `announce_stale(room_id, 资源名)`（`backend/app/domain/agent/runtime.py:425`，29 处），发一帧 `{"type":"state","resource":...}`，前端整类重取。缺口有四个：漏调就不刷新，没有检查；只按房间推，侧栏和任务列表靠前端 30 秒轮询；断线重放只缓存在跑轮次的帧（`runtime.py:159` 的 `_buffer`，每频道 512 帧，轮次结束即清）；帧里没有序号，前端不知道自己缺了什么。
 
-两块现成的样板：`review/live.py` 用 SQLAlchemy 的 after_commit 自动发采纳卡更新；`/notifications/live`（`backend/app/api/routes/notifications_live.py:84`）是「客户端报游标、服务端从库补发、25 秒心跳」。后者的游标是通知行的 `id`，有下面说的缺号问题，扩成变更流时要换成 `seq`，并兼容旧客户端手里的游标。
+两块现成的样板：`review/live.py` 用 SQLAlchemy 的 after_commit 自动发采纳卡更新；`/notifications/live`（`backend/app/api/routes/notifications_live.py:100`）是「客户端报游标、服务端从库补发、25 秒心跳」，那一拍心跳还会拿游标和库里最新的通知比一次，补上发版期另一个后端槽位提交、本进程没被唤醒的那条。后者的游标是通知行的 `id`，有下面说的缺号问题，扩成变更流时要换成 `seq`，并兼容旧客户端手里的游标。
 
 ### 变更日志 {#change-log}
 
