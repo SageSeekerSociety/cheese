@@ -41,6 +41,7 @@
     "app/api/routes/users_passkey.py": 10,
     "app/api/task_instructions.py": 6,
     "app/api/task_serialization.py": 1,
+    "app/api/write_access.py": 1,
     "app/auth/checker.py": 2,
     "app/common/auth.py": 2,
     "app/core/background.py": 26,
@@ -174,6 +175,6 @@
     "app/domain/usage/plans.py": 11,
     "app/domain/user/repositories.py": 3,
     "app/domain/user/services.py": 2,
-    "app/main.py": 29
+    "app/main.py": 28
   }
 }
