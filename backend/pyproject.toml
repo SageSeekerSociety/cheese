@@ -42,7 +42,7 @@ dependencies = [
     "structlog>=26.1.0",
     "uvicorn[standard]>=0.53.0",
     "webauthn>=3.0.0",
-    "websockets>=16.0",
+    "websockets>=17.2",
     "fusepy>=3.0.1",
     "pywebpush>=2.5.0",
     # Not imported by anything: the profiler an operator runs inside the
