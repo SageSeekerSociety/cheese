@@ -522,6 +522,7 @@ function splitTask(split: SplitLine): TaskLine {
 }
 
 .demo-card {
+  --accept-dock-inset: 0px;
   margin: 8px 16px 0;
 }
 
