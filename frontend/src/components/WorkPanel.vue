@@ -411,6 +411,7 @@ watch(active, () => syncPreviewPoll())
 // 冒出来。指针真换了才 `refreshTick`：那一格全房间共用，总览会跟着重取房间产物，同一
 // 份东西被重复摆一次不该惊动它们。
 function previewShown() {
+  if (!props.taskId) return
   const before = previewSeen.value
   void pollPreviewPointer().then((id) => {
     if (id === undefined) return
@@ -585,9 +586,12 @@ const panelTabs = computed<PanelTab[]>(() =>
   // decided, so the phase does not get to.
   settled.value = !!asked
   markPreviewSeen(null)
-  if (id) {
-    // 这个房间的当前预览，路由守卫通常已经先问过了（lib/previewPointer.ts）：命中就
-    // 直接用——面板挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
+  // 预览和改动两格只有任务有（频道没有电脑在它名下干活，见 CHANNEL_TABS）：频道不去问
+  // 它们。频道「没有改动」是事实，不用等谁来答。
+  if (!props.taskId) summaryLoaded.value = true
+  if (id && props.taskId) {
+    // 这件任务的当前预览，之前问过的还在缓存里（lib/previewPointer.ts）：命中就直接
+    // 用——面板挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
     const warm = cachedPreviewPointer(id)
     if (warm !== undefined) {
       previewPath.value = warm?.path ?? null
@@ -602,8 +606,8 @@ const panelTabs = computed<PanelTab[]>(() =>
     whenIdle(() => {
       if (conversationId.value === openedId) void pollWorkSummary({ seen: true })
     })
-    void pollThreads()
   }
+  if (id) void pollThreads()
 }
 
 // Declared after the opening block on purpose: it fires immediately on mount and

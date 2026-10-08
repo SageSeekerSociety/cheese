@@ -339,6 +339,15 @@ describe('工作面板 · Tab 容器', () => {
     expect(tabLabels(container).map((label) => label.replace(/\s*\d+$/, ''))).toEqual(['概览', '支线', '定时与触发'])
   })
 
+  it('频道不去问预览和改动：那两格它没有', async () => {
+    mountChannel()
+    await flush()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(getPreview).not.toHaveBeenCalled()
+    expect(getTopicWorkSummary).not.toHaveBeenCalled()
+  })
+
   it('谁也没在里面干过活的任务：这几格都在，改动、现场、预览是浅的', async () => {
     getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: false })
     const { container } = mountPanel()
