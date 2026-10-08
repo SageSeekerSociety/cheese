@@ -1839,7 +1839,7 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
     for session_runner in after.sessions.values():
         session_runner.channel = after
     replaced = service(after)
-    runner.REPLAY_NOTICE_S = 0.2
+    runner._intake.REPLAY_NOTICE_S = 0.2
 
     # Taking the sessions over does not wait for the slow room's backlog.
     async with asyncio.timeout(HANG_S):

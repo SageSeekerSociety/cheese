@@ -101,15 +101,15 @@ async def finish_deferred_message(
         runner = get_work_runner()
         queued, released = asyncio.Event(), asyncio.Event()
         if mode == "ordinary-removed":
-            admit = runner._admit
+            admit = runner._intake._admit
 
-            async def paused_admit(service, room, turn):
+            async def paused_admit(service, room, turn, agent=None):
                 if turn == ordinary_id:
                     queued.set()
                     await released.wait()
-                return await admit(service, room, turn)
+                return await admit(service, room, turn, agent)
 
-            monkeypatch.setattr(runner, "_admit", paused_admit)
+            monkeypatch.setattr(runner._intake, "_admit", paused_admit)
         else:
             from app.domain.agent_instance.services import AgentInstanceService
 

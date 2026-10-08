@@ -1,6 +1,12 @@
 """Admit a turn's first input under its seat's lock, after project admission."""
 
+import asyncio
+import uuid
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from typing import Protocol
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
@@ -16,22 +22,47 @@ from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.models import Delivery
 
 
+class SeatResolver(Protocol):
+    async def __call__(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        user_block_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
+        recipient_handle: str | None = None,
+    ) -> str: ...
+
+
+class AdmissionEventWriter(Protocol):
+    async def __call__(
+        self,
+        topic_id: uuid.UUID,
+        content: str,
+        /,
+        *,
+        meta: dict | None = None,
+    ) -> dict | None: ...
+
+
 @asynccontextmanager
 async def admitted_initial(
-    chat,
-    topic_id,
-    delivery_id,
+    sessions: async_sessionmaker[AsyncSession],
+    seat_lock_for: Callable[[uuid.UUID, str], asyncio.Lock],
+    resolve_seat: SeatResolver,
+    post_event: AdmissionEventWriter,
+    topic_id: uuid.UUID,
+    delivery_id: uuid.UUID | None,
     *,
-    user_block_id=None,
-    recipient_instance_id=None,
-    recipient_handle=None,
-):
+    user_block_id: uuid.UUID | None = None,
+    recipient_instance_id: uuid.UUID | None = None,
+    recipient_handle: str | None = None,
+) -> AsyncIterator[bool]:
     """Every initial turn rechecks durable ownership after project admission.
 
     Yields True when the seat still holds an input whose outcome is not settled:
     the turn does not start, and a person's message waits for it instead.
     """
-    async with chat.session_factory() as session:
+    async with sessions() as session:
         delivery = (
             await session.get(Delivery, delivery_id)
             if delivery_id is not None
@@ -42,17 +73,17 @@ async def admitted_initial(
             if delivery is not None
             else recipient_instance_id
         )
-    seat = await chat._turn_seat_handle(
+    seat = await resolve_seat(
         topic_id,
         user_block_id=user_block_id,
         recipient_instance_id=instance_id,
         recipient_handle=recipient_handle,
     )
-    async with seat_admission(chat.live.seat_lock_for(topic_id, seat)):
+    async with seat_admission(seat_lock_for(topic_id, seat)):
         from app.domain.agent.queries import conversation_seat
         from app.domain.room_task.place import PlaceResolver
 
-        async with chat.session_factory() as session:
+        async with sessions() as session:
             place = await PlaceResolver(session).conversation(topic_id)
             # A room's addressed agent must still sit on its roster; a task's
             # agent is the task's own and sits on no roster.
@@ -88,7 +119,7 @@ async def admitted_initial(
                     told_away = await _tell_once(session, user_block_id)
             await session.commit()
         if told_away:
-            await chat.post_system_event(
+            await post_event(
                 topic_id,
                 say("ownerMachineAway"),
                 meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
