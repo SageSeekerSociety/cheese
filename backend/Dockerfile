@@ -184,6 +184,8 @@ COPY --chown=cheese:python scripts/forge_event_public_key.py ./scripts/
 COPY --chown=cheese:python scripts/ship_feedback.py ./scripts/
 # An operator moves one report by hand with this, from a shell on the box.
 COPY --chown=cheese:python scripts/feedback_status.py ./scripts/
+# An operator lists and fetches the files kept before deletion with this.
+COPY --chown=cheese:python scripts/retained_files.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

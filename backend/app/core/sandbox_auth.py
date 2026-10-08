@@ -2,7 +2,8 @@
 
 The sandbox container reaches the backend over the network (host.docker.internal),
 so the cheese write-endpoints must NOT be open like the browser-facing ones. Each
-`cheese` call carries X-Cheese-Token; the gate lives in app.main.cheese_token_gate.
+`cheese` call carries X-Cheese-Token; the routes only 芝士 may call declare the
+gate (CHEESE_ONLY_IN_ROOM / CHEESE_ONLY_IN_PROJECT in app/api/write_access.py).
 
 Three token kinds (review R5), and a fourth outside rooms altogether — the
 **personal credential** a person's 芝士 holds (below), which opens nothing the

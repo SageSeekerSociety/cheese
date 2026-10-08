@@ -334,8 +334,12 @@ class DeviceChannel(Channel):
         session_factory: async_sessionmaker | None = None,
         device_resolver: DeviceResolver | None = None,
         public_base: str | None = None,
+        reconnect_grace_s: float = _SESSION_RECONNECT_GRACE_S,
     ) -> None:
         self._hub = hub or device_hub
+        # How long a start waits for the session host to reconnect before it
+        # is refused as offline (``_wait_for_session_host``).
+        self._reconnect_grace_s = reconnect_grace_s
         self._session_factory = session_factory
         # A resolver may be injected (tests / future routing); otherwise the DB-backed
         # resolver is used lazily (keeps this module importable without a DB).
@@ -1327,7 +1331,7 @@ class DeviceChannel(Channel):
         logger.info(
             "session_host_reconnecting topic=%s host=%s", session.topic_id, host
         )
-        deadline = time.monotonic() + _SESSION_RECONNECT_GRACE_S
+        deadline = time.monotonic() + self._reconnect_grace_s
         while not self._hub.is_online(host):
             remaining = deadline - time.monotonic()
             if remaining <= 0:

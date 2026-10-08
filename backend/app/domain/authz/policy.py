@@ -96,9 +96,9 @@ async def refuse_management_action(
     It lives here rather than in the route because "what may this actor do" has
     one answer per question in this codebase, and this is a question — the route
     calls it. Where the refusal is *reached from* is a separate matter and does
-    stay in the route body: ``/admin/*`` is not in ``_CHEESE_WRITE_PATHS``, and
-    that table is a whitelist, so nothing in the middleware looks at that prefix
-    and a refusal written there would not exist.
+    stay in the route body: the write-access declarations
+    (``app/api/write_access.py``) only ever admit 芝士 *exclusively*, never keep
+    it out, so a refusal left to them would not exist.
     """
     if actor.via == "cheese":
         return "作用域凭证不能执行管理动作，请用本人会话"

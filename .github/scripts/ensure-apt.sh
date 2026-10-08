@@ -46,26 +46,56 @@ fi
 # an error within about a minute, Error-Mode=any makes `update` report a failed
 # index instead of exiting 0, and a download failure is retried a few times
 # before the step gives up.
+#
+# Those options do not bound everything apt does: on 2026-10-07 four hosted
+# integration shards sat in this step for 19 minutes, until the job timeout,
+# where it normally takes 19 seconds, again with nothing in the log. So each
+# apt command also runs under `timeout` (CHEESE_APT_STEP_SECONDS), a stall is
+# repeated once, and apt's output is printed as it comes, so the next stall
+# shows the line it stopped on. apt runs non-interactively: debconf and
+# needrestart otherwise wait for an answer nobody can give.
 apt_net=(-o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
   -o Acquire::Retries=3 -o APT::Update::Error-Mode=any)
+apt_env=(env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a)
 
 apt_waiting() {
-  local deadline=$((SECONDS + ${CHEESE_APT_WAIT_SECONDS:-600})) out fetches=0
-  until out="$(sudo apt-get "${apt_net[@]}" "$@" 2>&1)"; do
-    if grep -q 'Could not get lock' <<<"$out" && [ "$SECONDS" -lt "$deadline" ]; then
-      echo "ensure-apt: another apt holds its lock; waiting ($(grep -m1 'Could not get lock' <<<"$out"))"
+  local deadline=$((SECONDS + ${CHEESE_APT_WAIT_SECONDS:-600})) fetches=0 stalls=0 status log
+  log="$(mktemp "${TMPDIR:-/tmp}/ensure-apt.XXXXXX")"
+  while :; do
+    # Into a file, followed by `tail --pid`, not through a pipe: a pipe stays
+    # open while any child apt left behind still holds it, so a killed apt
+    # could keep this step waiting all the same.
+    : > "$log"
+    sudo "${apt_env[@]}" timeout --kill-after=10 "${CHEESE_APT_STEP_SECONDS:-180}" \
+      apt-get "${apt_net[@]}" "$@" > "$log" 2>&1 &
+    local pid=$!
+    tail -n +1 -f --pid="$pid" "$log"
+    status=0
+    wait "$pid" || status=$?
+    [ "$status" -eq 0 ] && break
+    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+      if [ "$stalls" -lt 1 ]; then
+        stalls=$((stalls + 1))
+        echo "ensure-apt: apt-get $1 made no progress in ${CHEESE_APT_STEP_SECONDS:-180}s; retrying once"
+        continue
+      fi
+      echo "ensure-apt: apt-get $1 stalled again; giving up" >&2
+    elif grep -q 'Could not get lock' "$log" && [ "$SECONDS" -lt "$deadline" ]; then
+      echo "ensure-apt: another apt holds its lock; waiting ($(grep -m1 'Could not get lock' "$log"))"
       sleep 5
-    elif grep -qE 'Failed to fetch|Could not connect|Connection timed out|Temporary failure resolving|Unable to connect' <<<"$out" \
+      continue
+    elif grep -qE 'Failed to fetch|Could not connect|Connection timed out|Temporary failure resolving|Unable to connect' "$log" \
         && [ "$fetches" -lt 3 ]; then
       fetches=$((fetches + 1))
-      echo "ensure-apt: download failed; retrying ($fetches/3): $(grep -m1 -E 'Failed to fetch|Could not connect|Connection timed out|Temporary failure resolving|Unable to connect' <<<"$out")"
+      echo "ensure-apt: download failed; retrying ($fetches/3): $(grep -m1 -E 'Failed to fetch|Could not connect|Connection timed out|Temporary failure resolving|Unable to connect' "$log")"
       sleep 15
-    else
-      printf '%s\n' "$out" >&2
-      return 1
+      continue
     fi
+    cat "$log" >&2
+    rm -f "$log"
+    return 1
   done
-  printf '%s\n' "$out"
+  rm -f "$log"
 }
 
 echo "ensure-apt: installing ${missing[*]}"
@@ -74,4 +104,4 @@ echo "ensure-apt: installing ${missing[*]}"
 exec 9>"${CHEESE_APT_LOCK:-/tmp/cheese-ci-apt.lock}"
 flock 9
 apt_waiting update -qq
-apt_waiting install -y -qq "${missing[@]}"
+apt_waiting install -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "${missing[@]}"

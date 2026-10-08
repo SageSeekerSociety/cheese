@@ -80,12 +80,10 @@ def test_the_inventory_lists_the_pools_live_hosts_and_ready_warm_machines(client
                     )
                 )
 
-            for name in ("live", "draining", "released", "broken", "public", "warm"):
+            for name in ("live", "released", "broken", "public", "warm"):
                 device(name, private=name != "public")
             await db.flush()
             host("live", "192.0.2.11", 11)
-            # Adopted from before the pool: it keeps its sessions, so its forward.
-            host("draining", "192.0.2.12", 12, draining=True)
             host("released", "192.0.2.13", 13, released_at=now)
             host("broken", "192.0.2.14", 14, status=MachineStatus.error)
             # Reached over its own public route, not through cloud control.
@@ -106,7 +104,7 @@ def test_the_inventory_lists_the_pools_live_hosts_and_ready_warm_machines(client
 
     listed = {row["device_id"]: row for row in _inventory()}
 
-    assert set(listed) == {"live", "draining", "warm"}
+    assert set(listed) == {"live", "warm"}
     assert listed["live"] == {
         "machine_id": 11,
         "device_id": "live",

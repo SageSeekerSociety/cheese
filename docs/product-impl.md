@@ -102,7 +102,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件由会话核心从 runner 的日志读回来（`backend/app/domain/agent/session_host/`，房间那一份在 `agent/room/sessions.py`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记记忆、创建任务、发通知/决策请求、递验收卡、关闭任务）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
-- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。
+- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），只收芝士凭据的写路由在路由上声明 `CHEESE_ONLY_IN_ROOM` / `CHEESE_ONLY_IN_PROJECT`（`backend/app/api/write_access.py`），前端只读这些路径、不受影响。
 - **记忆**：会话目录里一棵文件树（会话机上的 `~/.cheese/memory/`），数据库是真相、树是副本，输入前铺下去、一轮结束后收回来。每轮把 L1 索引（`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`）和一段说明书拼进 system prompt，正文让 agent 自己读；只对会把文件对账回平台的 harness 注入（注册表的 `Harness.keeps_memory`）。agent 自己用 Write/Edit 改这棵树，`cheese remember` 那个工具已经撤掉。详见 `docs/manual/dev/memory.md`；🟡 整理（dream）与旧表迁移未做。
 
 ### 3.3 任务  ✅
@@ -142,7 +142,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅
 
 - **行为**：通知分 `silent`/`light`/`strong` 三级；待办页的「动态」**不显示 silent**、不计未读，`strong` 琥珀强调 + @目标人。广播（无目标人）在写入时展开成名册上一人一行 —— 说了房间就是房间的名册，没说房间就是项目名册加项目主人，agent 不在里面；展开成零行（名册上只剩 agent）直接报错，不静默丢掉。
-- **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**回流进话题**（芝士下轮看到）。多条在等时摆成一叠：一次只摆最上面那一条（也只有它接得了点击），标题那一行写「第几条 / 一共几条」，「下一条」把这一条挪到队尾。这一叠的高度和条数无关——首页钉在视口上，板按剩下的高度分列，按条数长高会让问题的多少决定板能摆几张卡。
+- **决策请求拍板**：`decision_request` 带选项，项目首页「等你决定」把选项渲染成**一键按钮**，点一下即定 → 记 `resolved_at` + `payload.resolved_choice`，并把决策**写回问这件事的那条对话**（通知记着它是哪条：频道自己那条线、一条任务、或一条支线；芝士下轮看到）。多条在等时摆成一叠：一次只摆最上面那一条（也只有它接得了点击），标题那一行写「第几条 / 一共几条」，「下一条」把这一条挪到队尾。这一叠的高度和条数无关——首页钉在视口上，板按剩下的高度分列，按条数长高会让问题的多少决定板能摆几张卡。
 - **收件箱（等你处理的事）**：决策请求**拍板后**才移出（不是读了就移出）；验收卡进收件箱。
 - **分级限流**：今天没有分级限流在起作用，没有通知因为超额被丢掉。反馈提案卡有自己的配额（`settings.feedback_proposals_per_topic_per_day`）。
 - **实现**：`ProjectNotificationService`（`backend/app/domain/notification/`，与人对人的通知同住 `notification` 一张表）；接口 `GET /api/projects/{id}/alerts`、`/inbox`、`POST /api/alerts/{id}/{read|feedback|resolve}`，通知 id 是 bigint。前端 `components/NeedsYou.vue`。

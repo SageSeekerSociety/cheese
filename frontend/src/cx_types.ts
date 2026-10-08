@@ -351,6 +351,7 @@ export type WsServerFrame =
   // reported its model); the same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
   | import('./types/live').LiveFrame
+  | import('./types/roomSocket').RoomStateFrame
   | import('./types/threads').ThreadActivityFrame
 
 // An uploaded worktree file the message carries. `path` comes from
@@ -360,9 +361,7 @@ export interface ChatAttachment {
   mime: string
 }
 
-// The client sends only the liveness probe and `typing` (I am composing here;
-// `active: false` = stopped; who is the socket's credential) — a message is a POST.
-export type WsClientMessage = { type: 'ping' } | { type: 'typing'; active?: boolean }
+export type { WsClientMessage } from './types/roomSocket'
 
 // POST /topics/{id}/messages. 请求体上没有「叫不叫芝士」这一位：这条消息点了谁的名，
 // 由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要叫它，

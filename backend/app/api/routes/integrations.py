@@ -571,7 +571,9 @@ async def mail_draft(
         if draft.attachments
         else say("mailDraftSummary", to=", ".join(draft.to), subject=draft.subject)
     )
-    line = say("mailDrafted", account=row.label, owner=row.owner_handle)
+    line = say(
+        "mailDraftedBy", who=f"<@{speaker}>", account=row.label, owner=row.owner_handle
+    )
     block_id = uuid.uuid4()
     db.add(
         Block(
@@ -619,7 +621,7 @@ async def mail_draft(
         title=f"邮件草稿待你确认：{draft.subject}",
         body=summary + "\n在房间里的卡片上核对后点「确认发送」",
         target_handle=row.owner_handle,
-        topic_id=room,
+        conversation_id=room,
         payload={"mail_draft_id": str(draft.id), "block_id": str(block_id)},
     )
     await db.commit()

@@ -269,9 +269,27 @@ async def _tell_thread(
             title=f"{author} 在「{topic.title}」的支线里回复了",
             body=preview,
             target_handle=h,
-            topic_id=topic.id,
+            conversation_id=topic.id,
             payload={"thread_id": str(block.conversation_id)},
         )
+
+
+async def _name_of(
+    session: AsyncSession, topic: Topic, handle: str, roster: list[dict]
+) -> str:
+    """What a notification calls the author of a message: the name the room's
+    roster gives that handle, the one its chip shows. An AI teammate missing
+    from the roster is named by its instance; a person by their handle."""
+    for row in roster:
+        if row.get("handle") == handle and row.get("name"):
+            return row["name"]
+    if looks_like_agent_handle(handle):
+        for instance in await AgentInstanceService(session).list_for_project(
+            topic.project_id
+        ):
+            if agent_instance_handle(instance.id) == handle and instance.display_name:
+                return instance.display_name
+    return handle
 
 
 async def announce_mentions(
@@ -320,7 +338,7 @@ async def announce_mentions(
     if targets:
         notifs = ProjectNotificationService(session)
         preview = markdown_preview(text, 200)
-        who = "芝士" if looks_like_agent_handle(author) else author
+        who = await _name_of(session, topic, author, roster)
         for h in targets:
             await notifs.create(
                 project_id=topic.project_id,
@@ -329,7 +347,7 @@ async def announce_mentions(
                 title=f"{who} 在「{topic.title}」@了你",
                 body=preview,
                 target_handle=h,
-                topic_id=topic.id,
+                conversation_id=topic.id,
             )
     if not before:
         await _tell_thread(session, topic, block, author, told=set(targets))

@@ -27,6 +27,7 @@ room's otherwise.
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -51,39 +52,6 @@ _RENAMED = ("native_inputs", "timed_deliveries")
 SEARCHED_KINDS = ("message", "doc", "doc_node", "comment", "decision", "weekly")
 
 
-def _lock_all(tables: str) -> None:
-    """Every table, or none: wait in line for them a few seconds at a time,
-    and on a timeout or a deadlock let go of all of them and try again.
-
-    Waiting, unlike ``NOWAIT``, queues this lock ahead of requests that come
-    later, so a steady stream of short transactions on these tables (a live
-    backend reading sessions, rooms and tasks) drains in front of it instead of
-    never leaving every table free at the same instant."""
-    op.execute(f"""
-        DO $$
-        DECLARE
-            attempts integer := 0;
-            outer_timeout text := current_setting('lock_timeout');
-        BEGIN
-            PERFORM set_config('lock_timeout', '3s', true);
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 100 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.2);
-                END;
-            END LOOP;
-            PERFORM set_config('lock_timeout', outer_timeout, true);
-        END
-        $$
-    """)
-
-
 def _fold(table: str) -> None:
     op.add_column(table, sa.Column("conversation_id", sa.Uuid(), nullable=True))
     op.execute(
@@ -97,7 +65,7 @@ def upgrade() -> None:
     # Dropping ``topic_id`` and ``task_id`` drops their foreign keys, which
     # locks ``topics`` and ``tasks`` too: taken mid-way, behind a request that
     # holds one of them and wants a table locked here, it deadlocks.
-    _lock_all(
+    with_lock_retries(
         ", ".join(
             (
                 *(table for table, _ in _REGISTERED),

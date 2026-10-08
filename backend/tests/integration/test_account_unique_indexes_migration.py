@@ -26,6 +26,10 @@ from tests.conftest import (
 
 _REVISION = "514d7c9cb013"
 _PREVIOUS = "8c9ea105b7d2"
+#: The revision just before ``_REVISION``. Each migration commits on its own
+#: (``alembic/env.py``), so upgrading from ``_PREVIOUS`` applies this one and
+#: stops on the refusal: the database is left at this revision.
+_PARENT = "d4c1a7f83b96"
 _BACKEND = Path(__file__).resolve().parents[2]
 
 
@@ -126,5 +130,5 @@ def test_upgrade_stops_on_duplicates_and_changes_nothing(db_before_the_migration
     assert "'ruc:same-uid'" in report and "[9101, 9102]" in report, report
     rows, version, indexes = asyncio.run(_state(dsn))
     assert rows == before
-    assert version == _PREVIOUS
+    assert version == _PARENT
     assert indexes == 0

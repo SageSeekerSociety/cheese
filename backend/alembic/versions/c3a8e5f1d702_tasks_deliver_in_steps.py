@@ -21,6 +21,7 @@ the 「更新了这个频道的任务」 lines, which said nothing, go.
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -50,35 +51,8 @@ _NOT_A_THREAD_ROOT = (
 )
 
 
-def _lock(tables: str) -> None:
-    """As in b6fcc6362b79: queue for the table a few seconds at a time."""
-    op.execute(f"""
-        DO $$
-        DECLARE
-            attempts integer := 0;
-            outer_timeout text := current_setting('lock_timeout');
-        BEGIN
-            PERFORM set_config('lock_timeout', '3s', true);
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available OR deadlock_detected THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 100 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.2);
-                END;
-            END LOOP;
-            PERFORM set_config('lock_timeout', outer_timeout, true);
-        END
-        $$
-    """)
-
-
 def upgrade() -> None:
-    _lock("accept_cards")
+    with_lock_retries("accept_cards")
     op.add_column(
         "accept_cards",
         sa.Column(
