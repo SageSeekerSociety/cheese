@@ -50,7 +50,7 @@ trap cleanup EXIT
 # wait for the container's postgres to accept connections
 ready=0
 for _ in $(seq 1 30); do
-  if docker exec "$CID" pg_isready -U postgres >/dev/null 2>&1; then ready=1; break; fi
+  if docker exec "$CID" pg_isready -h 127.0.0.1 -U postgres -d "$TEST_DB" >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
 [ "$ready" = 1 ] || { echo "ERROR: throwaway postgres never became ready"; exit 1; }

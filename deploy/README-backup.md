@@ -121,10 +121,15 @@ must be nonempty and no older than 6h. Checks use exact seconds, not rounded
 hours. No R2 config is an explicit skip; partial config, missing markers,
 invalid timestamps, stale objects, wrong prefixes or failed R2 reads are red.
 
-The CI changes do **not** install scripts into any box's `~/ops`. The new
-mirror writer and `r2-common.py` must be deployed together in a separately
-authorized ops rollout for that box's uploads success marker to advance.
-Until then, a configured box with no uploads marker is deliberately red.
+The CI changes do **not** install scripts into any box's `~/ops`. For the
+unchanged dev writer, CI reads `cheese-uploads-mirror.service`'s last completed
+successful exit (`Result=success`, normal exit, status 0). It records the
+service's exit timestamp as the uploads marker, not the check's timestamp.
+Stopped, failed or never-run services cannot create a fresh receipt. This
+keeps the dev check usable without changing any deployed backup writer.
+
+The marker-enabled writer and `r2-common.py` would need a separately authorized
+ops rollout to be installed together on other boxes. This task does not do it.
 
 A deliberately empty fresh installation can exercise the schema-only path with
 `CHEESE_RESTORE_ALLOW_EMPTY=1 bash deploy/db-restore-test.sh <dump>`. The script

@@ -3,9 +3,11 @@
 
 import argparse
 import importlib
+import os
 import re
 import sys
 import time
+import subprocess
 from pathlib import Path
 
 common = importlib.import_module("r2-common")
@@ -23,9 +25,38 @@ def check_marker(path: Path, label: str, now: int, limit: int) -> None:
     print(f"{label}: fresh (age={age}s, limit={limit}s)")
 
 
+def observe_uploads_service(env: dict[str, str]) -> None:
+    # CI can observe the old dev writer without installing anything in ~/ops.
+    # A receipt uses its actual successful exit time, never the check's time.
+    result = subprocess.run([
+        "systemctl", "show", "cheese-uploads-mirror.service", "--no-pager",
+        "--property=Result,ExecMainStatus,ExecMainCode,ExecMainExitTimestamp",
+    ], capture_output=True, text=True, env={**os.environ, "LC_ALL": "C", "TZ": "UTC"})
+    if result.returncode:
+        print("uploads service observation unavailable; requiring its existing marker")
+        return
+    props = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if (props.get("Result"), props.get("ExecMainCode"), props.get("ExecMainStatus")) != ("success", "1", "0"):
+        print("uploads service has no completed successful exit; retaining the existing marker")
+        return
+    timestamp = props.get("ExecMainExitTimestamp", "")
+    if not timestamp or timestamp == "n/a":
+        return
+    parsed = subprocess.run(["date", "--date", timestamp, "+%s"], capture_output=True, text=True)
+    if parsed.returncode or not parsed.stdout.strip().isdecimal():
+        raise ValueError("could not parse uploads service success timestamp")
+    marker = common.uploads_marker(env)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    temporary = marker.with_name(f"{marker.name}.{os.getpid()}.tmp")
+    temporary.write_text(parsed.stdout.strip() + "\n")
+    temporary.replace(marker)
+    print("uploads marker records the dev service's successful exit timestamp")
+
+
 def check_remote(s3, bucket: str, prefix: str, pattern: str, label: str, now: int, limit: int) -> None:
+    start = prefix.strip("/") + "/" if prefix.strip("/") else ""
     candidates = [obj for obj in common.objects(s3, bucket, prefix)
-                  if re.fullmatch(pattern, obj["Key"].removeprefix(prefix.strip("/") + "/"))]
+                  if re.fullmatch(pattern, obj["Key"].removeprefix(start))]
     if not candidates:
         raise ValueError(f"{label}: no backup objects in {prefix}/")
     latest = max(candidates, key=lambda obj: obj["LastModified"])
@@ -37,7 +68,7 @@ def check_remote(s3, bucket: str, prefix: str, pattern: str, label: str, now: in
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("configured", "local", "remote"))
+    parser.add_argument("mode", choices=("configured", "mirror-receipt", "local", "remote"))
     parser.add_argument("--max-age-hours", type=int, default=6)
     args = parser.parse_args()
     if args.max_age_hours <= 0:
@@ -47,6 +78,11 @@ def main() -> int:
         return 3 if args.mode == "configured" else 0
     if args.mode == "configured":
         print("R2 is configured")
+        return 0
+    if args.mode == "mirror-receipt":
+        if env.get("UPLOADS_PREFIX", "prod-uploads").strip("/") != "prod-uploads":
+            raise ValueError("dev uploads service uses prod-uploads; cannot mark another prefix")
+        observe_uploads_service(env)
         return 0
     now = int(time.time())
     limit = args.max_age_hours * 3600

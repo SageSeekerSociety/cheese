@@ -43,10 +43,10 @@ def client(env: dict[str, str]):
     )
 
 
-def objects(s3, bucket: str, prefix: str):
+def objects(s3, bucket: str, prefix: str, *, uploads: bool = False):
     prefix = prefix.strip("/")
     for page in s3.get_paginator("list_objects_v2").paginate(
-        Bucket=bucket, Prefix=prefix + "/" if prefix else ""
+        Bucket=bucket, Prefix=prefix + "/" if prefix or uploads else ""
     ):
         yield from page.get("Contents", [])
 

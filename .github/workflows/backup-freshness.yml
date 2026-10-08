@@ -49,6 +49,9 @@ jobs:
             [ "$status" = 3 ] || exit "$status"
             echo "configured=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Record the dev uploads service's actual successful exit time
+        if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+        run: python3 deploy/r2-check.py mirror-receipt
       - name: Fail if off-site DB or uploads mirror success is missing or older than 6h
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
         run: python3 deploy/r2-check.py local --max-age-hours 6

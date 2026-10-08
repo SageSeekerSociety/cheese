@@ -8,6 +8,7 @@ on:
   workflow_dispatch: {}
   pull_request:
     paths:
+      - 'docker-compose.yml'
       - 'deploy/db-restore-test.sh'
       - 'deploy/r2-*'
       - 'deploy/tests/test-db-restore-test.sh'
@@ -59,7 +60,10 @@ jobs:
           "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/pip" install --disable-pip-version-check boto3==1.40.61
       - name: Download latest R2 DB dump and prove it restores
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
-        run: '"$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python" deploy/r2-restore.py'
+        run: |
+          TMP="$(mktemp -d "$RUNNER_TEMP/r2-db-$GITHUB_RUN_ID.XXXXXX")"
+          trap 'rm -rf -- "$TMP"' EXIT
+          TMPDIR="$TMP" "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python" deploy/r2-restore.py
       - name: Restore and verify the uploads mirror in a new temporary directory
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
         run: |

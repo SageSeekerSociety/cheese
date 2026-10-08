@@ -18,31 +18,37 @@ set -u
 
 case "${1:-}" in
   compose)
+    [ "${RESTORE_TEST_COMPOSE_FAIL:-0}" = 0 ] || exit 94
     printf '{"services":{"postgres":{"image":"%s"}}}\n' "$RESTORE_TEST_COMPOSE_IMAGE"
     ;;
   run)
     printf '%s\n' "$*" > "$RESTORE_TEST_RUN_LOG"
-    # Model a server that cannot load the required extension from vanilla PG.
+    # The image returned by composition is the only server with the extension.
+    case " $* " in
+      *" $RESTORE_TEST_COMPOSE_IMAGE "*) ;;
+      *) echo 'could not access file pg_search' >&2; exit 95 ;;
+    esac
     case "$*" in
-      *postgres:17*|*shared_preload_libraries=pg_search*) ;;
+      *shared_preload_libraries=pg_search*) ;;
       *) echo 'missing pg_search preload' >&2; exit 96 ;;
     esac
-    if [[ "$*" == *postgres:17* ]]; then
-      echo 'could not access file pg_search' >&2
-      exit 95
-    fi
     echo restore-test-container
     ;;
-  cp|stop)
+  cp)
+    [ "${RESTORE_TEST_COPY_FAIL:-0}" = 0 ] || exit 93
+    ;;
+  stop)
     ;;
   exec)
     shift
     shift
     case "${1:-}" in
       pg_isready)
+        [ "${RESTORE_TEST_READY_FAIL:-0}" = 0 ] || exit 92
         ;;
       pg_restore)
         if [[ "$*" == *--list* ]]; then
+          [ "${RESTORE_TEST_LIST_FAIL:-0}" = 0 ] || exit 91
           [ "${RESTORE_TEST_NO_EXTENSION:-0}" = 1 ] || echo '5; 3079 16385 EXTENSION - pg_search'
           exit 0
         fi
@@ -79,6 +85,8 @@ case "${1:-}" in
 esac
 FAKE_DOCKER
 chmod +x "$FAKE_BIN/docker"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_BIN/sleep"
+chmod +x "$FAKE_BIN/sleep"
 
 run_restore() {
   local restore_status="$1"
@@ -168,10 +176,36 @@ test_extension_and_image() {
   RESTORE_TEST_NO_EXTENSION=1 run_restore 0 7
   [ "$RUN_STATUS" -ne 0 ]
   grep -q 'dump does not contain the pg_search extension' "$OUTPUT"
-  CHEESE_PG_IMAGE=postgres:17 run_restore 0 7
-  [ "$RUN_STATUS" -ne 0 ]
-  grep -q 'RESTORE-TEST FAIL' "$OUTPUT"
+  for wrong in postgres:17 postgres:16 some-other-image:latest; do
+    CHEESE_PG_IMAGE="$wrong" run_restore 0 7
+    [ "$RUN_STATUS" -ne 0 ]
+    grep -q 'RESTORE-TEST FAIL' "$OUTPUT"
+  done
   echo 'PASS: composition changes propagate, missing extension and wrong image fail'
+}
+
+test_drill_setup_failures() {
+  RESTORE_TEST_COMPOSE_FAIL=1 run_restore 0 7
+  [ "$RUN_STATUS" -ne 0 ]
+  grep -q 'could not resolve the database image' "$OUTPUT"
+  RESTORE_TEST_COPY_FAIL=1 run_restore 0 7
+  [ "$RUN_STATUS" -ne 0 ]
+  grep -q 'could not copy dump' "$OUTPUT"
+  RESTORE_TEST_LIST_FAIL=1 run_restore 0 7
+  [ "$RUN_STATUS" -ne 0 ]
+  grep -q 'could not list dump' "$OUTPUT"
+  RESTORE_TEST_READY_FAIL=1 run_restore 0 7
+  [ "$RUN_STATUS" -ne 0 ]
+  grep -q 'never became ready' "$OUTPUT"
+  run_restore 0 7
+  [ "$RUN_STATUS" -eq 0 ]
+  grep -q -- '--network none' "$CASE_ROOT/run.log"
+  grep -q -- '--rm' "$CASE_ROOT/run.log"
+  if grep -Eq -- '(^| )(-p|--publish|--volume|-v)( |$)' "$CASE_ROOT/run.log"; then
+    echo 'FAIL: restore published a port or mounted a host path' >&2
+    return 1
+  fi
+  echo 'PASS: setup failures are observable and the drill stays isolated'
 }
 
 case "${1:-all}" in
@@ -185,6 +219,7 @@ case "${1:-all}" in
     test_empty_restore_allowed
     test_query_failure
     test_extension_and_image
+    test_drill_setup_failures
     ;;
   *)
     echo "unknown test case: $1" >&2

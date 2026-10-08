@@ -139,6 +139,62 @@ class Backups(unittest.TestCase):
         (directory / ".last-offsite-success").write_text(str(int(time.time()) + 600))
         self.assertEqual(self.call(check, "local"), 1)
 
+    def test_dev_service_receipt_uses_success_time_not_observation_time(self):
+        # The old installed writer needs no rollout: a service receipt is enough.
+        old = int(time.time()) - 7 * 3600
+        show = "Result=success\nExecMainCode=1\nExecMainStatus=0\nExecMainExitTimestamp=old-time\n"
+        responses = [subprocess.CompletedProcess([], 0, show, ""),
+                     subprocess.CompletedProcess([], 0, str(old) + "\n", "")]
+        with patch.object(check.subprocess, "run", side_effect=responses):
+            self.assertEqual(self.call(check, "mirror-receipt"), 0)
+        marker = common.uploads_marker(common.load_config())
+        self.assertEqual(marker.read_text().strip(), str(old))
+        self.assertEqual(self.call(check, "local"), 1)
+
+    def test_failed_or_never_run_dev_service_cannot_refresh_marker(self):
+        marker = common.uploads_marker(common.load_config())
+        marker.parent.mkdir()
+        marker.write_text("old-marker")
+        for show in ("Result=exit-code\nExecMainCode=1\nExecMainStatus=1\n",
+                     "Result=success\nExecMainCode=0\nExecMainStatus=0\n",
+                     "Result=success\nExecMainCode=1\nExecMainStatus=0\nExecMainExitTimestamp=n/a\n"):
+            with patch.object(check.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, show, "")):
+                self.assertEqual(self.call(check, "mirror-receipt"), 0)
+            self.assertEqual(marker.read_text(), "old-marker")
+
+    def test_remote_read_errors_are_red(self):
+        with patch.object(self.store, "paginate", side_effect=RuntimeError("simulated unavailable endpoint")):
+            self.assertEqual(self.call(check, "remote"), 1)
+
+    def test_cli_missing_marker_really_exits_nonzero(self):
+        result = subprocess.run([sys.executable, str(DEPLOY / "r2-check.py"), "local"],
+                                env=os.environ.copy(), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("missing success marker", result.stderr)
+
+    def test_empty_uploads_prefix_preserves_writer_keys_and_does_not_read_whole_bucket(self):
+        os.environ["UPLOADS_PREFIX"] = ""
+        src = self.root / "uploads"
+        src.mkdir()
+        (src / "file").write_bytes(b"value")
+        self.store.add("db/not-an-upload", b"secret")
+        self.assertEqual(self.call(uploads, str(src)), 0)
+        self.assertEqual(self.store.data["/file"], b"value")
+        dst = self.root / "recovered"
+        self.assertEqual(self.call(uploads, "--restore", str(dst), "--verify", str(dst)), 0)
+        self.assertEqual(list(dst.iterdir()), [dst / "file"])
+
+    def test_linux_backslash_filename_roundtrips(self):
+        if os.name != "posix":
+            self.skipTest("POSIX filename contract")
+        src = self.root / "uploads"
+        src.mkdir()
+        (src / "file\\\\name").write_bytes(b"value")
+        self.assertEqual(self.call(uploads, str(src)), 0)
+        dst = self.root / "recovered"
+        self.assertEqual(self.call(uploads, "--restore", str(dst), "--verify", str(dst)), 0)
+        self.assertEqual((dst / "file\\\\name").read_bytes(), b"value")
+
     def test_remote_each_database_and_tar_must_be_fresh(self):
         self.remote_backups()
         self.assertEqual(self.call(check, "remote"), 0)

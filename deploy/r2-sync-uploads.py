@@ -21,9 +21,9 @@ common = importlib.import_module("r2-common")
 
 
 def local_path(dst: Path, key: str, prefix: str) -> Path:
-    relative = key.removeprefix(prefix + "/" if prefix else "")
+    relative = key.removeprefix(prefix + "/")
     parts = PurePosixPath(relative).parts
-    if not parts or relative.startswith("/") or ".." in parts or "\\" in relative:
+    if not parts or relative.startswith("/") or ".." in parts:
         raise ValueError(f"unsafe uploads object key: {key}")
     path = dst.joinpath(*parts)
     if not path.resolve().is_relative_to(dst.resolve()):
@@ -35,7 +35,7 @@ def restore(s3, bucket: str, prefix: str, dst: Path) -> None:
     # Refuse live uploads roots and existing files rather than overwrite them.
     dst.mkdir(parents=True, exist_ok=False)
     count = 0
-    for obj in common.objects(s3, bucket, prefix):
+    for obj in common.objects(s3, bucket, prefix, uploads=True):
         if obj["Key"].endswith("/"):
             continue
         path = local_path(dst, obj["Key"], prefix)
@@ -58,7 +58,7 @@ def digest(stream) -> bytes:
 
 def verify(s3, bucket: str, prefix: str, dst: Path) -> None:
     count = 0
-    for obj in common.objects(s3, bucket, prefix):
+    for obj in common.objects(s3, bucket, prefix, uploads=True):
         if obj["Key"].endswith("/"):
             continue
         path = local_path(dst, obj["Key"], prefix)
@@ -81,13 +81,13 @@ def verify(s3, bucket: str, prefix: str, dst: Path) -> None:
 def mirror(s3, bucket: str, prefix: str, src: Path, env: dict[str, str]) -> int:
     if not src.is_dir():
         raise ValueError(f"not a dir: {src}")
-    remote = {obj["Key"]: obj["Size"] for obj in common.objects(s3, bucket, prefix)}
+    remote = {obj["Key"]: obj["Size"] for obj in common.objects(s3, bucket, prefix, uploads=True)}
     todo = []
     skipped = 0
     for root, _, files in os.walk(src):
         for name in files:
             path = Path(root) / name
-            key = "/".join(filter(None, (prefix, path.relative_to(src).as_posix())))
+            key = f"{prefix}/{path.relative_to(src).as_posix()}"
             size = path.stat().st_size
             if remote.get(key) == size:
                 skipped += 1
