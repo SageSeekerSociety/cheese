@@ -159,6 +159,53 @@ def test_a_decision_asked_of_me_waits_until_i_make_it(client):
     assert _mine(client, "alice") == []
 
 
+def test_a_decision_asked_on_a_card_comes_back_to_the_card(client):
+    """在任务里问的决策答在任务里，不在频道主线上 —— 而清单上它仍旧算这个频道的。
+
+    通知曾经只记得住它所在的频道（`topic_id`），于是不管在哪条对话里问，拍板的
+    回执都写回频道主线：问的那条会话读不到自己等的那句话。它现在记的是**问的那条
+    对话**（`conversation_id`），回执照这一列写回去。
+    """
+    project = _project(client)
+    channel = _channel(client, project)
+    card = _task(client, channel, started=True)
+
+    r = client.post(
+        f"/projects/{project}/alerts",
+        json={
+            "level": "strong",
+            "kind": "decision_request",
+            "title": "这个字段删不删",
+            "body": "芝士问的",
+            "target_handle": "alice",
+            "topic_id": str(card),
+            "payload": {"options": ["删", "留"]},
+        },
+    )
+    assert r.status_code == 200, r.text
+    alert = r.json()["data"]["data"][0]
+    # 通知记的是问的那条对话，不是它所在的频道。
+    assert alert["topic_id"] == str(card)
+
+    # 清单上它归那条活，也在频道那一栏里。
+    (item,) = _mine(client, "alice")
+    assert item["taskId"] == str(card)
+    assert item["topicId"] == channel
+
+    r = client.post(
+        f"/alerts/{alert['id']}/resolve",
+        json={"chosen": "删"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    on_card = client.get(f"/topics/{card}/blocks").json()["data"]["data"]
+    assert any("【决策】" in b["content"] for b in on_card)
+    main_line = client.get(f"/topics/{channel}/blocks").json()["data"]["data"]
+    assert all("【决策】" not in b["content"] for b in main_line)
+    assert _mine(client, "alice") == []
+
+
 def test_a_change_alert_waits_until_i_read_it(client):
     project = _project(client)
     channel = _channel(client, project)

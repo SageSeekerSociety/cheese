@@ -262,14 +262,25 @@ async def waiting_items(
         )
 
     # 写给他、还没了结的通知：芝士请他拍板还没拍的，和芝士说了改了什么他还没读的。
-    # 指向频道的记在频道上（`alerts.create_notification` 把任务、支线都折成它们所在
-    # 的频道），看不见的、归档了的频道里的不算；不指向哪个频道的，记在项目上。
+    # 每条通知自己说它关于哪条对话（`conversation_id`：频道自己那条线、它的一条任
+    # 务、或一条支线），条目按那条对话记 —— 看不见的、归档了的频道里的不算；不指
+    # 哪条对话的，记在项目上。
+    task_by_id = {task.id: task for task in tasks}
+    room_of_conversation: dict[uuid.UUID, uuid.UUID] = {t.id: t.id for t in topics}
+    room_of_conversation.update({task.id: task.room_id for task in tasks})
+    room_of_conversation.update(thread_rooms)
     for alert in await ProjectNotificationService(db).still_open(
         project_ids, recipient_handle=handle
     ):
-        room = rooms.get(alert.topic_id) if alert.topic_id else None
-        if alert.project_id is None or (alert.topic_id and room is None):
+        conversation = alert.conversation_id
+        # 它得能找回自己所在的频道：找不回的（看不见的、归档了的频道里的）不算。
+        at_room = (
+            None if conversation is None else room_of_conversation.get(conversation)
+        )
+        room = None if at_room is None else rooms.get(at_room)
+        if alert.project_id is None or (conversation is not None and room is None):
             continue
+        card = None if conversation is None else task_by_id.get(conversation)
         decision = asks_for_decision(alert)
         listed = (alert.metadata_payload or {}).get("options") if decision else None
         options = listed or []
@@ -279,9 +290,10 @@ async def waiting_items(
                 project_name=names.get(alert.project_id, ""),
                 topic_id=room.id if room else None,
                 topic_title=room.title if room else "",
-                task_id=None,
-                task_title=None,
-                task_title_source=None,
+                task_id=card.id if card else None,
+                task_title=card.title if card else None,
+                task_title_source=str(card.title_source) if card else None,
+                thread_id=conversation if conversation in thread_rooms else None,
                 phrase=PHRASE_DECIDE if decision else PHRASE_CHANGED,
                 reason=REASON_DECIDE if decision else REASON_READ,
                 at=alert.created_at,

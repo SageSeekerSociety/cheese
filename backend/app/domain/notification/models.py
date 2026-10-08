@@ -82,7 +82,7 @@ class NotificationType(str, Enum):
     TEAM_REQUEST_CANCELED = "TEAM_REQUEST_CANCELED"
 
     #: 我参与过的支线里有人回复了（`agent.mentions._tell_thread`）。`payload`
-    #: 带 ``thread_id``；`topic_id` 是支线所在的频道。
+    #: 带 ``thread_id``；`conversation_id` 是支线所在的频道。
     THREAD_REPLY = "THREAD_REPLY"
 
     #: 平台在房间里说的、要人动手的那一句（`app.domain.agent.announce`）。所有
@@ -139,8 +139,13 @@ class Notification(Base):
             "recipient_handle",
             "read",
         ),
-        # 「这个房间 @ 过我没有、还未读没有」——话题列表的相关性一次查完。
-        Index("idx_notification_topic_recipient", "topic_id", "recipient_handle"),
+        # 「这个频道的对话里 @ 过我没有、还有没有没拍板的决策」——话题列表的相关性
+        # 一次查完。频道自己那条线、它的任务和支线都在这一列里。
+        Index(
+            "idx_notification_topic_recipient",
+            "topic_id",
+            "recipient_handle",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, notification_seq, primary_key=True)
@@ -156,12 +161,15 @@ class Notification(Base):
         "type", String(length=255), nullable=False
     )
 
-    #: 这条通知关于哪个项目 / 哪个房间。人对人的那几种没有项目，两列都空。
+    #: 这条通知关于哪个项目 / 哪条对话 —— 一个频道自己那条线、它的一条任务、或一条
+    #: 支线（`conversations` 注册表）。人对人的那几种没有项目、也不指对话，两列都空。
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
     )
-    topic_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), nullable=True
+    #: 列名暂时还是旧的 `topic_id`：改名要分两次发布，这一版先把外键换指
+    #: `conversations`，物理改名留到下一次（`.claude/rules/migrations.md` 第 4 条）。
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        "topic_id", ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True
     )
 
     #: 打扰到什么程度。人对人的那几种不分级，为空 —— 它们不进项目角标，项目角标
