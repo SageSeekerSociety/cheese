@@ -25,14 +25,16 @@ run-name: Deploy ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.h
 # FRONTEND_PORT_NEXT, as it does whenever the `-b` slots serve. The box's :8080
 # and :80 stay up through that (they live in frontend.conf). If a revert lands
 # while the `-b` slots serve, no commit on main has the slots any more, and
-# every automatic deploy of main does exactly that, until someone dispatches
-# this workflow on the last SHA that contains them (#2770): that moves back to
-# `backend` and `frontend`, and the next release of main goes through. From
-# those, an older commit releases as it always did. Before a revert lands, or
-# for a manual dispatch of an SHA from before the slots, do the same first when
-# the last deploy's log ends with "backend-b and frontend-b serve this release".
-# deploy/tests/test-pre-slot-release.sh checks both states against the last
-# commit before the slots.
+# every automatic deploy of main does exactly that. deploy-drift.yml converges
+# it instead of re-firing that forever: deploy/converge-deploy-drift.sh
+# dispatches this workflow on main with `ref` naming the newest commit that
+# still has the slots (#2770), which moves back to `backend` and `frontend`;
+# the next release of main then goes through. Roll back to a pre-slot commit
+# the same way by hand — name it in `ref` — when the last deploy's log ends
+# with "backend-b and frontend-b serve this release". From the first slots an
+# older commit releases as it always did. deploy/tests/test-pre-slot-release.sh
+# checks both states against the last commit before the slots, and
+# deploy/tests/test-converge-drift.sh drives the drift job's choice.
 on:
   workflow_dispatch:
     inputs:

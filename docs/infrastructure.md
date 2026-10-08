@@ -52,7 +52,9 @@ release directory can be cleaned up as leftovers; moving them takes a deliberate
 migration to a version-free path such as `~/ops/`. The old
 `cheese-backend-py.service` systemd unit is also still installed and disabled;
 it would start that same July release, so treat it as an artefact, not as a
-rollback path. Rollback is `deploy-docker.sh` restoring the previous images.
+rollback path. Rollback is `deploy-docker.sh` restoring the previous images, or
+a release of a commit you name — see [Rolling dev back to a named
+commit](#rolling-dev-back-to-a-named-commit).
 
 Device control connections have a separate release boundary. The
 `device-connection` service owns `/connector/agent`, live terminal WebSockets,
@@ -222,11 +224,17 @@ its own `app-router.conf` and reloads, which ends app-router's sockets 30
 seconds later at that config's deadline, pulls and migrates, and then refuses
 to switch while app-router names `BACKEND_PORT_NEXT` or `FRONTEND_PORT_NEXT`.
 If a revert lands while the `-b` slots serve, no commit on main has the slots,
-and every automatic deploy of main does that until someone dispatches the deploy
-workflow on the last SHA that contains them (#2770), which moves back to
-`backend` and `frontend`; the next release of main then goes through. From the first slots an older commit
-releases as it always did. `deploy/tests/test-pre-slot-release.sh`
-runs the last such commit's script against both states.
+and every automatic deploy of main does that. The release that moves the box
+back is a release of the last commit that still has them, which puts app-router
+on `backend` and `frontend`; the next release of main then goes through. That
+is what `deploy/converge-deploy-drift.sh` fires by itself when it finds the box
+drifted and main's tree without the slots (#2770), so no one has to notice the
+hourly red and dispatch it by hand; when it cannot find such a commit it stops
+and says so instead of re-firing a release that will refuse. From the first
+slots an older commit releases as it always did.
+`deploy/tests/test-pre-slot-release.sh` runs the last such commit's script
+against both states, and `deploy/tests/test-converge-drift.sh` drives the
+drift job's choice.
 
 The box's own frontend ports, :8080 and :80, which the edge reaches directly,
 belong to app-router: `frontend.conf`, written by
@@ -275,6 +283,39 @@ devices; subsequent business releases do not reload their ingress. A box without
 Merge to `main` → `deploy-dev.yml` runs on the **self-hosted runner on the dev
 box** (label `cheese-dev`), gated on `build.yml`'s images, then
 `deploy/deploy-docker.sh`. No human step.
+
+### Rolling dev back to a named commit
+
+The deploy's own rollback covers one case: the health check fails, and
+`deploy/deploy-docker.sh` restores the previous images. A release that is
+healthy but wrong is rolled back by nothing — it keeps serving until someone
+releases a commit they name:
+
+```bash
+gh workflow run deploy-dev.yml --ref main -f ref=<sha>
+```
+
+`--ref main` takes the workflow from `main`; `ref` is the commit to release. The
+SHA never has to exist as a ref of its own — `gh workflow run --ref <sha>`
+answers "No ref found", which is why the commit is named here rather than passed
+as the ref. Name any commit whose images are in ghcr. A main commit whose build
+went through has a full set — the images whose sources did not change are copied
+forward from the previous tag — so the merge before the bad one works.
+
+A dispatch that leaves `rebuilt` empty is a manual release: it takes the
+skip=false path, so the "keep automatic deployments from going backwards" guard
+does not apply, and the commit's CI is not re-checked. The run is named
+`Deploy <sha>`.
+
+To see what dev runs now, on the box:
+
+```bash
+docker inspect "$(bash deploy/app-container.sh backend)" --format '{{.Config.Image}}' | sed 's/.*://'
+```
+
+A rollback is an ordinary release of that commit's own script, so naming one
+from before the two slots per service behaves as
+[the runtime section](#the-runtime-docker-deploy-by-sha) describes.
 
 ### prod (RUC) — release-gated
 
