@@ -374,7 +374,7 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
         expect(await notices.count()).toBeGreaterThan(0);
         for (const notice of await notices.all())
           await notice.locator(":scope > summary .sys-text").click();
-        await expect(page.getByText("Settings to confirm", { exact: true }).first()).toBeVisible();
+        await expect(notices.locator(".sys-meta").filter({ hasText: "Settings to confirm" })).toHaveCount(2);
         await expect(page.locator(".sys-detail").filter({ hasText: "Weekly progress" })).toBeVisible();
         await expect(page.locator(".sys-detail").filter({ hasText: "Library review" })).toBeVisible();
       },
