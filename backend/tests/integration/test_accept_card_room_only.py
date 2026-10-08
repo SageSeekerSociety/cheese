@@ -45,7 +45,7 @@ def _file_card(client, place_id: str, reviewer: str = "alice"):
         json={
             "change_subject": _SUBJECT,
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
 

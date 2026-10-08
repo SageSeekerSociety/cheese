@@ -63,7 +63,7 @@ def _make_card_response(client, topic_id: str, reviewer: str = "alice"):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
 
@@ -3223,7 +3223,7 @@ def _treeless_card(client, topic_id: str, status: str) -> None:
                 AcceptCard(
                     topic_id=_uuid.UUID(topic_id),
                     reviewer_handle="alice",
-                    routing_reason="",
+                    focus="",
                     status=AcceptStatus(status),
                     change_subject="chore(old): a card from before trees",
                 )

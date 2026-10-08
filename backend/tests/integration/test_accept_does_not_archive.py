@@ -58,7 +58,7 @@ def _card(
             **delivery_artifact(client, topic_id),
             "change_subject": subject,
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     if response.status_code == 200:

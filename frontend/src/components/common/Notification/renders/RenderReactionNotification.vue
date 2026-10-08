@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="reactor" keypath="notifications.REACTION.title" tag="span">
+      <i18n-t v-if="reactor" scope="global" keypath="notifications.REACTION.title" tag="span">
         <template #reactor><UserRef :handle="reactor.handle" :name="reactor.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>

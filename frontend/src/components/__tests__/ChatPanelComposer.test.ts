@@ -7,6 +7,7 @@
  * 这里钉的是并完之后仍然成立的三件事：输入栏在对话栏里、话题自己的 chips 能从外面
  * 交进来、以及**这条消息 @ 没 @ 芝士**决定它会不会被叫起来。
  */
+import type { Plugin } from 'vue'
 import type { Topic } from '../../cx_types'
 
 import { h } from 'vue'
@@ -16,7 +17,23 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import * as api from '../../api'
+
 import i18n, { setLocale, t } from '@/i18n'
+import { ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
+
+/** 附件字节从哪儿来由外壳在 App.vue 注入（`lib/attachmentSource.ts`），组件只认注入口，
+ *  不 import api。这里在应用这一层做 App.vue 做的同一件事，接的还是上面替身的那几个
+ *  函数 —— 输入栏那颗待发缩略图照旧走 `attachmentImageUrl` 取字节，不挂原始地址。 */
+const attachments: Plugin = {
+  install(app) {
+    app.provide(ATTACHMENT_SOURCE, {
+      imageUrl: api.attachmentImageUrl,
+      documentPdf: api.previewDocumentPdf,
+      fileBytes: api.previewFileBytes,
+    })
+  },
+}
 
 // 发出去的消息走 POST（`postChatMessage`），这里把每一次的请求体记下来。
 const sent = vi.hoisted(() => [] as { payload: string }[])
@@ -111,7 +128,7 @@ function mountPanel(slots: Record<string, () => unknown> = {}, topicId?: string)
   return render(ChatPanel, {
     props: { topic: topic(topicId), showComposer: true, hideHeader: true, members },
     slots,
-    global: { plugins: [vuetify, i18n] },
+    global: { plugins: [vuetify, i18n, attachments] },
   })
 }
 
@@ -757,7 +774,7 @@ describe('对话栏自己的输入栏', () => {
         // 项目名册上也没有芝士那一行——这个房间此刻确实不知道它是谁。
         members: [{ user_handle: 'alice', name: 'Alice', role: 'lead' }],
       },
-      global: { plugins: [vuetify, i18n] },
+      global: { plugins: [vuetify, i18n, attachments] },
     })
     await flush()
 

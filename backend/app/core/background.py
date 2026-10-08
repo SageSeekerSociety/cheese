@@ -359,6 +359,15 @@ def periodic_jobs(
     the only switch a job has. A job whose interval is 0 by DEFAULT is one no
     deployment runs unless it opts in; that is a decision, and it should be made
     on purpose.
+
+    Adding a job here means making it safe to run twice, and safe to run beside
+    another process's copy of itself. The ownership lock (`core/ownership.py`)
+    only softens that: `keep_holding` probes the lock every 10s, and the loop
+    above never re-reads the owner, so a process that lost its connection keeps
+    running every job for that window before it shuts itself down. Do not assume
+    the platform has one process — make the job re-entrant or idempotent on its
+    own (a claim row, a unique key, `with_for_update(skip_locked=True)`), and
+    let that, not the lock, be what stops a doubled run from doubling its effect.
     """
     from app.api.deps import get_work_runner
     from app.domain import backend_log

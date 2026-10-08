@@ -168,7 +168,6 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/device/service.py", "ValidationError"): 1,
     ("app/domain/integration/mail.py", "ValidationError"): 2,
     ("app/domain/integration/service.py", "ValidationError"): 18,
-    ("app/domain/library/records.py", "ValidationError"): 1,
     ("app/domain/library/service.py", "ValidationError"): 9,
     ("app/domain/machine/services.py", "ValidationError"): 4,
     ("app/domain/machine/supply.py", "ValidationError"): 2,

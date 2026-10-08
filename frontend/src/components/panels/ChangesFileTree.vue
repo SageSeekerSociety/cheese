@@ -22,6 +22,8 @@ const props = defineProps<{
   cover: boolean
   /** 空的时候说哪句话：看改动时说「暂无改动」，看全部文件时说「暂无文件」。 */
   emptyLabel: string
+  /** 并排时这一列的宽度（px），由外面那条分隔线拖出来。盖满的时候不用它。 */
+  width?: number
 }>()
 
 const emit = defineEmits<{
@@ -44,7 +46,12 @@ watch(
 </script>
 
 <template>
-  <div ref="listEl" class="file-list" :class="{ 'file-list--cover': props.cover }">
+  <div
+    ref="listEl"
+    class="file-list"
+    :class="{ 'file-list--cover': props.cover }"
+    :style="props.width && !props.cover ? { flexBasis: `${props.width}px` } : undefined"
+  >
     <div v-if="props.rows.length === 0" class="text-center c-faint py-6 t-body">{{ props.emptyLabel }}</div>
     <template v-for="row in props.rows" :key="`${row.type}:${row.path}`">
       <!-- folder row: click toggles expand/collapse -->
@@ -94,7 +101,7 @@ watch(
 
 <style scoped>
 .file-list {
-  flex: 0 0 150px;
+  flex: 0 0 220px;
   overflow-y: auto;
   background: var(--fill);
   border-right: 1px solid rgba(var(--v-border-color), 0.5);

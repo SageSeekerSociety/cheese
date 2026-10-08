@@ -323,7 +323,7 @@ export type WsServerFrame =
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   // A 分身's checklist, on its card's channel (the room's own list is a message).
   | { type: 'todo'; items: TodoItem[] }
-  | { type: 'state'; resource: string; project_ids?: string[] }
+  | { type: 'state'; resource: string; id?: string; project_ids?: string[] }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
@@ -738,7 +738,7 @@ export interface AcceptCard {
   task_id?: string | null
   topic_id: string
   reviewer_handle: string
-  routing_reason: string
+  focus: string
   // 提交与 PR 规范: the commit subject + body this topic will be squash-merged
   // under. Null on a card filed without them (the platform then falls back to
   // the topic title).

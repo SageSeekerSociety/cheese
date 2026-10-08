@@ -18,7 +18,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from functools import lru_cache
 
 from app.core.background import hold
@@ -31,7 +31,6 @@ from app.domain.agent.activity import LIVE_ONLY, RoomActivity
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
-    Pool,
     Slot,
     enter,
     queued,
@@ -61,7 +60,24 @@ from app.domain.agent.platform_notices import (
     delivery_fallback_notice,
     notice,
 )
-from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
+
+# Re-exported for `app.domain.delivery.agent`: its seam may not import the
+# repository module itself (it would close a C3 domain cycle).
+from app.domain.agent.repositories import AgentTurnRepository, TurnRecord  # noqa: F401
+from app.domain.agent.subscriber_queue import (
+    MAX_SUBSCRIBER_BYTES,
+    Frame,
+    SubscriberQueue,
+    cut_off,
+)
+from app.domain.agent.turn_ledger import (
+    close_turns,
+    fire_on_done,
+    open_turn,
+    project_pool,
+    stamp_delivery,
+    utcnow,
+)
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.actor import Actor
@@ -94,55 +110,9 @@ def addressed_to_agent(handle: str | None) -> Addressed:
     return address(Event(asked=handle), Hand.participant) if handle else NOBODY
 
 
-def _fire_on_done(callback: Callable[[], None]) -> None:
-    """Run a `submit(on_done=...)` hook without letting it escape into the loop.
-
-    A done-callback that raises does not fail the turn (that already finished) —
-    it lands in the loop's exception handler as an unattributed error. Swallow
-    and log instead, so a bookkeeping bug in a caller stays a bookkeeping bug.
-    """
-    try:
-        callback()
-    except Exception:  # noqa: BLE001 — a hook must never break the runner
-        logger.exception("submit on_done hook failed")
-
-
-async def _open_turn(session_factory, **fields) -> None:
-    async with session_factory() as session:
-        await AgentTurnRepository(session).open(**fields)
-        await session.commit()
-
-
-async def _stamp_delivery(session_factory, turn_id: uuid.UUID) -> None:
-    """Record that the transport accepted this turn's prompt (the ledger's own
-    helper; mid-turn bookkeeping that must never kill a working turn)."""
-    await turn_inputs.stamp_delivery_fact(
-        session_factory, turn_id=turn_id, at=_utcnow()
-    )
-
-
-async def _close_turns(session_factory, turn_ids) -> None:
-    async with session_factory() as session:
-        await AgentTurnRepository(session).close(turn_ids, _utcnow())
-        await session.commit()
-
-
 # What the room is told while a message waits for its turn. Neither is the
 # turn's outcome, so neither means the turn happened.
 _WAITING = frozenset({EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK})
-
-
-def _project_pool(project_id: uuid.UUID | str, limit: int) -> Pool:
-    """A project's turns: at most ``max_concurrent_turns`` run at once."""
-    return Pool(f"project-turns:{project_id}", limit)
-
-
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
-# Channel = the topic id (str). Frames are the same dicts converse yields.
-Frame = dict
 
 
 class InProcessBroker:
@@ -156,8 +126,12 @@ class InProcessBroker:
     existing lifecycle markers own active state.
     """
 
-    def __init__(self, replay_size: int = 512) -> None:
-        self._subs: dict[str, set[asyncio.Queue[Frame]]] = {}
+    def __init__(
+        self,
+        replay_size: int = 512,
+        max_subscriber_bytes: int = MAX_SUBSCRIBER_BYTES,
+    ) -> None:
+        self._subs: dict[str, set[SubscriberQueue]] = {}
         self._buffer: dict[str, list[Frame]] = {}
         self._active: dict[str, set[str]] = {}
         self._active_since: dict[tuple[str, str], float] = {}
@@ -165,6 +139,7 @@ class InProcessBroker:
         self.activity = RoomActivity(self._active_since)
         self._last_activity_at: dict[str, float] = {}
         self._replay_size = replay_size
+        self._max_subscriber_bytes = max_subscriber_bytes
         self._message_subscriber: Callable[..., None] | None = None
 
     def reset(self) -> None:
@@ -348,8 +323,10 @@ class InProcessBroker:
             self._fan_out(to, extra)
 
     def _fan_out(self, channel: str, frame: Frame) -> None:
-        for q in list(self._subs.get(channel, ())):
-            q.put_nowait(frame)
+        if subs := self._subs.get(channel):
+            for q in list(subs):
+                if not q.offer(frame):
+                    cut_off(self._subs, channel, q)
 
     async def typing(self, channel: str, member: str, *, active: bool) -> None:
         """A person composing in this room's input (or stopping)."""
@@ -398,11 +375,19 @@ class InProcessBroker:
     @contextlib.asynccontextmanager
     async def subscribe(
         self, channel: str, *, replay: bool = False
-    ) -> AsyncIterator[asyncio.Queue[Frame]]:
-        q: asyncio.Queue[Frame] = asyncio.Queue()
+    ) -> AsyncIterator[SubscriberQueue]:
+        q = SubscriberQueue(self._max_subscriber_bytes)
         if replay:
-            for frame in self._buffer.get(channel, ()):
-                q.put_nowait(frame)
+            # Catch-up goes through the same budget, trimmed rather than
+            # refused: a fresh connection must not be cut off by a buffer it
+            # did not cause, and the frames are history the client can also
+            # re-read.
+            if dropped := q.prefill(self._buffer.get(channel, ())):
+                logger.warning(
+                    "broker_replay_trimmed channel=%s dropped=%d",
+                    channel,
+                    dropped,
+                )
         self._subs.setdefault(channel, set()).add(q)
         try:
             yield q
@@ -420,17 +405,6 @@ def get_broker() -> InProcessBroker:
     that needs to publish outside a request/route (background watchers, retry
     loops) can reach the SAME broker instance without importing the api layer."""
     return InProcessBroker()
-
-
-async def announce_stale(room_id: uuid.UUID, resource: str) -> None:
-    """Tell a room that one of its panels changed, so it reads that panel again.
-
-    Sent by the handler that changed the resource, once the change is
-    committed: that handler is the one place that knows the change happened,
-    whichever client asked for it (the CLI, `cheese api`, the page itself).
-    The frontend maps ``resource`` to the panel it reloads.
-    """
-    await get_broker().publish(str(room_id), {"type": "state", "resource": resource})
 
 
 class AgentWorkRunner:
@@ -775,7 +749,7 @@ class AgentWorkRunner:
 
     async def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
         """Turns currently waiting for one of this project's slots."""
-        return await queued(get_redis_client(), _project_pool(project_id, 0))
+        return await queued(get_redis_client(), project_pool(project_id, 0))
 
     def submit(
         self,
@@ -859,7 +833,7 @@ class AgentWorkRunner:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         if on_done is not None:
-            task.add_done_callback(lambda _task: _fire_on_done(on_done))
+            task.add_done_callback(lambda _task: fire_on_done(on_done))
         return turn_id
 
     def subscribe_messages(self) -> None:
@@ -1024,8 +998,8 @@ class AgentWorkRunner:
         )
         self._last_frame_at[str(turn_id)] = time.monotonic()
         self._live_topics[str(turn_id)] = topic_id
-        now = _utcnow()
-        await _open_turn(
+        now = utcnow()
+        await open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
             conversation_id=topic_id,
@@ -1303,7 +1277,7 @@ class AgentWorkRunner:
             min_age_s = self.SWEEP_MIN_AGE_S
         if silence_s is None:
             silence_s = self.SILENT_TURN_S
-        now = _utcnow()
+        now = utcnow()
         old_enough = {
             tid: record
             for tid, record in open_turns.items()
@@ -1466,7 +1440,7 @@ class AgentWorkRunner:
 
         「悬着」在这里不带年龄条件，而这个判断的整个重量压在**送到这个函数的话题是
         哪一种**上：屏幕没了，或者那条消息根本没送到屏幕，而且那几轮已经被上面的
-        `_close_turns` 关掉了。所以一次还没写回来的调用，结果再也到不了 agent 面前，
+        `close_turns` 关掉了。所以一次还没写回来的调用，结果再也到不了 agent 面前，
         无论那台机器此刻怎么样（`dispatch_log` 开头第二节）。这里也没有「先放着、
         下一次扫底再说」这个选项：轮次的区间已经关了，下一次扫底不会再看见这个话题。
 
@@ -1865,7 +1839,7 @@ class AgentWorkRunner:
         slot = await enter(
             get_redis_client(),
             str(turn_id),
-            pool=_project_pool(policy["project_id"], policy["max_concurrent_turns"]),
+            pool=project_pool(policy["project_id"], policy["max_concurrent_turns"]),
             on_queued=tell_queued,
         )
         return "ok", slot
@@ -2242,7 +2216,7 @@ class AgentWorkRunner:
         # The durable interval: if the PROCESS dies (deploy past the drain
         # ceiling, crash), startup finds it still open — a killed turn must
         # never just vanish.
-        await _open_turn(
+        await open_turn(
             chat_service.session_factory,
             turn_id=turn_id,
             conversation_id=topic_id,
@@ -2252,7 +2226,7 @@ class AgentWorkRunner:
             is_resume=is_resume,
             resendable=bool(content.strip())
             and (not is_resume or resume_reason == self.RESEND_REASON),
-            started_at=_utcnow(),
+            started_at=utcnow(),
         )
         logger.info(
             "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
@@ -2408,7 +2382,7 @@ class AgentWorkRunner:
                         # registry NOW: if this process dies a moment later, the
                         # sweep reads a fact instead of guessing from side
                         # effects that may not exist yet.
-                        await _stamp_delivery(chat_service.session_factory, turn_id)
+                        await stamp_delivery(chat_service.session_factory, turn_id)
                         self._delivered.add(str(turn_id))
                         # The turn starts HERE, so the ceiling does too. Both
                         # clocks finally have a real base, and whichever comes
@@ -2725,7 +2699,7 @@ class AgentWorkRunner:
         )
         if not session_owns_ending:
             try:
-                await _close_turns(chat_service.session_factory, [turn_id])
+                await close_turns(chat_service.session_factory, [turn_id])
             except Exception:  # noqa: BLE001 — the turn already finished
                 logger.exception("could not close the interval for turn %s", turn_id)
         clear_context("turn", "topic")

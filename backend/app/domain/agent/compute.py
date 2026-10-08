@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         RoomSessions,
         UnreadProbe,
     )
+    from app.domain.agent.session_host.contract import Image
     from app.domain.agent.session_host.host import SessionHost
     from app.domain.delivery.input_identity import InputRegistrar
 
@@ -123,7 +124,7 @@ class ComputePool:
         self,
         topic_id: uuid.UUID,
         text: str,
-        images: list[dict] | None = None,
+        images: "list[Image] | None" = None,
         *,
         register_input: "InputRegistrar",
         expected_work_id: uuid.UUID | None = None,

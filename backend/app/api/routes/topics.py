@@ -249,7 +249,16 @@ def _topic_out(
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
-    out.activity = [MemberActivityOut(**entry) for entry in activity or []]
+    # 只在干活的队友，不要打字的人：这份列表的读者是侧栏，而侧栏只画在干活的队友，
+    # 打字的人不画（`useTopicRail`）—— 这份列表三十秒才读一次，打字五秒就过去了，
+    # 画出来多半已经不是真的。打字条目还带一个每次都变的 `expires_in`（还差几秒过期，
+    # 每次请求现算），只要它在 body 里，只要有人在打字，整份清单就再也命中不了 ETag、
+    # 每三十秒原样重传一遍（`list_topics` 的条件请求）。
+    out.activity = [
+        MemberActivityOut(**entry)
+        for entry in activity or []
+        if entry["kind"] == WORKING
+    ]
     # A member working here right now is not one the room is waiting on: it is
     # the one handling it.
     working = {a.member for a in out.activity if a.kind == WORKING}

@@ -73,7 +73,7 @@ def test_the_task_page_hears_its_card_filed_and_returned(client):
             json={
                 "change_subject": "chore(test): file an accept card",
                 "reviewer_handle": "alice",
-                "routing_reason": "最懂",
+                "focus": "最懂",
             },
         )
         assert filed.status_code == 200, filed.text
@@ -101,7 +101,7 @@ def test_a_card_that_fails_to_land_tells_no_page(client):
             json={
                 "change_subject": "chore(test): file an accept card",
                 "reviewer_handle": f"nobody-{uuid.uuid4().hex[:6]}",
-                "routing_reason": "最懂",
+                "focus": "最懂",
             },
         )
         assert refused.status_code >= 400

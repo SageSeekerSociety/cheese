@@ -942,6 +942,9 @@
   "topicNotifyLevelInvalid": "Choose one of the three notification levels",
   "libraryVersionNotFound": "That version could not be found",
   "libraryVersionIsCurrent": "That version is already the current one",
+  "libraryBadName": "That name can't be used: every level needs a name, can't start with a dot, and can't contain \\ or control characters",
+  "libraryNameTaken": "The library already has “{name}”",
+  "libraryMoveIntoItself": "A folder can't be moved into itself",
   "personalTeamCannotDisband": "Your personal team belongs to your account and can't be disbanded",
   "personalTeamCannotTransfer": "Your personal team belongs to your account and can't be transferred",
   "teamTransferToSelf": "You already own this team",
@@ -966,5 +969,6 @@
   "channelArchiveOpenTasks": "This channel still has open tasks. Close them before archiving it",
   "projectSlugFormat": "A short name uses lowercase letters, digits and hyphens, 3 to 32 characters, and does not start or end with a hyphen",
   "projectSlugReserved": "This short name is kept for a platform page. Choose another",
-  "projectSlugTaken": "Another project has used this short name. Choose another"
+  "projectSlugTaken": "Another project has used this short name. Choose another",
+  "acceptFocusTooLong": "Review focus takes at most {items} items and {chars} characters in total, one sentence each, saying what the reviewer should check. Test results and how you verified the change go in body"
 }

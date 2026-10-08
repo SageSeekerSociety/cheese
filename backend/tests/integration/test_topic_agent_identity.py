@@ -228,7 +228,7 @@ def test_a_topic_agent_cannot_accept_its_own_work(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": handle,
-            "routing_reason": "自己验",
+            "focus": "自己验",
         },
     )
     assert card.status_code == 200, card.text

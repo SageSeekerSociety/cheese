@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="accepter" keypath="notifications.TEAM_INVITATION_ACCEPTED.title" tag="span">
+      <i18n-t v-if="accepter" scope="global" keypath="notifications.TEAM_INVITATION_ACCEPTED.title" tag="span">
         <template #accepter><UserRef :handle="accepter.handle" :name="accepter.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>
