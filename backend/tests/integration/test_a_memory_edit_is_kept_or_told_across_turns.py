@@ -21,6 +21,7 @@ import pytest
 
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.runner import Runner, memory_root
+from app.domain.agent.live_work import LiveWork
 from app.domain.agent.memory_ledger import MemoryLedger
 from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
@@ -104,6 +105,7 @@ def _ledger(factory, sessions: _Session) -> MemoryLedger:
         gateway_lock=asyncio.Lock(),
         base_prompt="",
         host=None,  # type: ignore[arg-type]
+        live=LiveWork(),
     )
 
 
