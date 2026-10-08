@@ -575,15 +575,18 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
     bind_context(req=rid)
     t0 = time.perf_counter()
-    # **探针不算**。`/health` 与 `/metrics` 是基础设施在按固定间隔敲的门，不是用户
-    # 流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正的路由挤下去，而
-    # 「当前正在处理的请求数」也会恒 ≥1（读它的那一次自己就在里面）。这一条和上面
-    # 那条日志里的 `/health` 例外是同一个判断。
+    # **探针不算**。`/health`、`/metrics`、`/readyz`、`/healthz` 是基础设施在按固定
+    # 间隔敲的门，不是用户流量：把它们算进来，`/metrics` 会稳坐调用次数第一名、把真正
+    # 的路由挤下去，「当前正在处理的请求数」也会恒 ≥1（读它的那一次自己就在里面），
+    # 而容器的 healthcheck 每 15 秒一次的 `/readyz` 会稳坐榜首——真实端点一秒也没被叫
+    # 过，看板上却看着比谁都忙。这一条和下面日志里的探针例外是同一个判断。
     path_now = request.url.path
     probe = (
         path_now == "/metrics"
         or path_now == "/health"
         or path_now.startswith("/health/")
+        or path_now == "/readyz"
+        or path_now == "/healthz"
     )
     if not probe:
         # 正在处理的请求数。**必须在 `call_next` 外面一进一出**，而且走 `finally`
@@ -647,7 +650,9 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
         if cl_out and cl_out.isdigit():
             net_io.note_http_bytes(response_body=int(cl_out))
     # WS upgrades and health probes are logged by their own layers; skip noise.
-    if request.url.path != "/health":
+    # `/readyz` and `/healthz` are the same knock as `/health`, one healthcheck
+    # interval apart — a line every 15 seconds is the loudest thing in the log.
+    if request.url.path not in ("/health", "/readyz", "/healthz"):
         # Who and from where, when known. `auth_user_id` is set by
         # get_auth_user (request.state rides scope, so it survives the
         # middleware task boundary). `client` is the address uvicorn resolved
