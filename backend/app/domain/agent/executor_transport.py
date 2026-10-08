@@ -1103,7 +1103,11 @@ class RemoteClient:
     def checkpoint(self, request_id):
         """A turn's Stop checkpoint: its work synced into the project. A
         session whose work is not kept (a 支线, a task not yet started) has none
-        to sync, and the executor route would refuse it."""
-        if keeps_nothing(self.execution_token()):
+        to sync, and the executor route would refuse it. Nor does a session
+        that never held a sandbox: its turn did nothing on a machine. (One
+        whose sandbox was destroyed while idle is the route's to answer.)"""
+        if self.config.get("kind") == "deferred" or keeps_nothing(
+            self.execution_token()
+        ):
             return {}
         return self.control({"subtype": "checkpoint", "request_id": request_id})
