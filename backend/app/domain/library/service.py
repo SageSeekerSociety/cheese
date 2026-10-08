@@ -227,14 +227,33 @@ def read_replaced(project_id: uuid.UUID, name: str, record_id: uuid.UUID) -> byt
     return target.read_bytes()
 
 
+def _staging_root(project_id: uuid.UUID) -> Path:
+    """替换写到一半的那一份先放这里：在资料库根之外，所以它不是资料库的一条。
+
+    和 `.library/` 同一个 `workspace_root`，换过去才还在同一个文件系统里。
+    """
+    root = Path(settings.workspace_root) / ".library-staging" / str(project_id)
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
 def overwrite_library_file(project_id: uuid.UUID, name: str, data: bytes) -> None:
-    """用新的字节替换这个名字下的那一份。先写到旁边再换过去，读的人不会读到半份。"""
+    """用新的字节替换这个名字下的那一份。先写到旁边再换过去，读的人不会读到半份。
+
+    「旁边」是根之外的暂存目录，不是这一份旁边：写在根里的点文件会被
+    `list_library_files` 列出来（Python 3.13 起 `rglob("*")` 含点文件），一次中途
+    失败就永远留在那儿——既上得了资料库页，又躲得过去删除。
+    """
     target = _safe_path(library_root(project_id), name)
     if not target.is_file():
         raise NotFoundError(say("libraryFileNotFound"))
-    staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}")
-    staging.write_bytes(data)
-    staging.replace(target)
+    staging = _staging_root(project_id) / f"{target.name}.{uuid.uuid4().hex}"
+    try:
+        staging.write_bytes(data)
+        staging.replace(target)
+    finally:
+        # 换过去之后这里不该剩东西；写了一半也一样，不让下一份替换背上一份残骸。
+        staging.unlink(missing_ok=True)
 
 
 def drop_history(project_id: uuid.UUID, record_ids: list[uuid.UUID]) -> None:
@@ -260,6 +279,14 @@ def delete_library_file(project_id: uuid.UUID, name: str) -> None:
     target.unlink()
 
 
+#: 早先的 `overwrite_library_file` 把替换写到一半的那一份留在资料库里留下的名字：
+#: `.{资料名}.{uuid.hex}`。它不算资料库里的一条，也不该由谁去删——替换的字节已经
+#: 换过去了，留下的只是一份没人要的副本。只认这个形状，不认「点开头的名字」：
+#: 从工作区存进资料库的 `.gitignore` 是正经的一条（`room_files.copy_into_room` 用
+#: 的是原名，不过 `clean_upload_name`）。
+_LEFTOVER_OF_A_REPLACE = re.compile(r"^\..+\.[0-9a-f]{32}$")
+
+
 def list_library_files(project_id: uuid.UUID) -> list[dict]:
     """Newest first: the file someone just gave the project is the one they are
     about to reference."""
@@ -268,10 +295,13 @@ def list_library_files(project_id: uuid.UUID) -> list[dict]:
     for entry in root.rglob("*"):
         if not entry.is_file():
             continue
+        rel = entry.relative_to(root)
+        if _LEFTOVER_OF_A_REPLACE.match(entry.name):
+            continue
         stat = entry.stat()
         files.append(
             {
-                "path": str(entry.relative_to(root)),
+                "path": str(rel),
                 "bytes": stat.st_size,
                 "modified": stat.st_mtime,
             }
