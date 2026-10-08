@@ -10,7 +10,7 @@
 
 import type { NavTarget } from './navTarget'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 /** 一条规则。字段和后端 `GET /routines/{id}` 一一对应。 */
 export interface Routine {
@@ -108,8 +108,8 @@ export function routineWeekdays(): string[] {
 export function formatRoutineTime(iso: string | null, timeZone?: string): string {
   if (!iso) return '—'
   try {
-    return new Date(iso).toLocaleString('zh-CN', { timeZone, hour12: false })
+    return new Date(iso).toLocaleString(i18n.global.locale.value, { timeZone, hour12: false })
   } catch {
-    return new Date(iso).toLocaleString()
+    return new Date(iso).toLocaleString(i18n.global.locale.value, { hour12: false })
   }
 }
