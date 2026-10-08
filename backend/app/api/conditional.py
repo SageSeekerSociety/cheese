@@ -12,6 +12,16 @@ import hashlib
 import json
 from typing import Any
 
+#: 清单类响应共用的缓存指令：它是**登录用户**的私有视图（每一行都带「与我的相关性」
+#: 「是不是等我」这类按人算的字段），所以只能是 `private`；`no-cache` 要求客户端每次
+#: 带 `If-None-Match` 回来问一句，命中 ETag 就回 304、空 body —— 没有变化的那些轮询
+#: 和页面切换不再把几百 KB 到几 MB 的清单重传一遍。和 `admin_members` 那份名单同一个
+#: 形状。
+#:
+#: 三份清单共用：项目的话题清单（侧栏每 30 秒轮询）、项目级的任务清单、房间级的任务
+#: 清单（后两份是每次画侧栏的 rail 就要的）。
+LIST_CACHE_CONTROL = "private, no-cache"
+
 
 def if_none_match_hits(header: str, etag: str) -> bool:
     """Does ``If-None-Match`` say the client already has this exact representation?

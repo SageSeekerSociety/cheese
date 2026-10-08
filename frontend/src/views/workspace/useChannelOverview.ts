@@ -30,7 +30,8 @@ export function useChannelOverview(opts: {
     const id = opts.channelId()
     if (!id) return
     try {
-      const listed = await listRoomTasks(id, { limit: 1 })
+      // limit: 0 —— 概览只要支线本身，不看任何一个块。
+      const listed = await listRoomTasks(id, { limit: 0 })
       if (opts.channelId() === id) tasks.value = listed.data
     } catch {
       // 任务列表是概览的一块；读不到就先空着，下一次动静会再读。

@@ -479,8 +479,8 @@ async function pollThreads(opts: { fresh?: boolean } = {}) {
   const cached = cachedTopicPanel('roomTasks', roomId)
   if (cached) countThreads(cached.data)
   try {
-    // limit: 1 — without it this asks for every task's whole history just to
-    // count them. Shared with the channel overview and the chat panel.
+    // 只取支线本身（`fetchRoomTasks` 走 `limit: 0`），不带对话：这里只是为了数一
+    // 数有几条开着，带对话就是整段历史。和频道概览、对话栏共用同一条读法。
     const rows = (await fetchRoomTasks(roomId, opts)).data
     if (props.topic?.id === roomId) countThreads(rows)
   } catch {
