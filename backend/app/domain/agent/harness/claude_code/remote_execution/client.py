@@ -168,11 +168,9 @@ def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) 
     its tools where the project is (`proxy.js`), and the Stop hook that keeps a
     turn from ending while a person in the room is unanswered (`reply`)."""
     if __package__:
-        # deferred-import: dual-mode: relative when packaged, bare when run as a script
         from .release import hook_module
     else:
         sys.path.insert(0, str(Path(__file__).parent))
-        # deferred-import: deferred: bare name
         from release import hook_module
 
     (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
@@ -246,10 +244,8 @@ def prepare(
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     if target.get("kind") == "private":
         if __package__:
-            # deferred-import: dual-mode: bare when run as a script
             from .private import ensure
         else:
-            # deferred-import: deferred: bare name
             from private import ensure
 
         ensure(target, directory, os.environ)
@@ -282,11 +278,9 @@ def prepare(
     config = Path(config_override) if config_override else directory / "config"
     config.mkdir(exist_ok=True)
     if __package__:
-        # deferred-import: dual-mode: relative when packaged, bare when run as a script
         from .release import forget_touched_skills
     else:
         sys.path.insert(0, str(Path(__file__).parent))
-        # deferred-import: deferred: bare name
         from release import forget_touched_skills
 
     # What an earlier session process reached is not this one's: it starts
@@ -314,11 +308,9 @@ def prepare(
             workspace = Path(info["workspace"])
     if seen != placeholder:
         if __package__:
-            # deferred-import: dual-mode: bare when run as a script
             from .release import carry_transcripts
         else:
             sys.path.insert(0, str(Path(__file__).parent))
-            # deferred-import: deferred: bare name
             from release import carry_transcripts
 
         carry_transcripts(config, placeholder, seen)
@@ -377,11 +369,9 @@ def prepare(
     # of it, and the shell prefix runs this file from a directory its siblings need
     # not share.
     if __package__:
-        # deferred-import: dual-mode: relative when packaged, bare when run as a script
         from .release import MOUNT_LIVE, mount_state, release_mount
     else:
         sys.path.insert(0, str(Path(__file__).parent))
-        # deferred-import: deferred: bare name
         from release import MOUNT_LIVE, mount_state, release_mount
 
     mount_log = directory / "forwarded-project.log"
@@ -411,11 +401,9 @@ def prepare(
             raise RuntimeError("Forwarded project mount failed: " + detail)
     if forwarded or unavailable:
         if __package__:
-            # deferred-import: dual-mode: bare when run as a script
             from .release import link_forwarded_user_context
         else:
             sys.path.insert(0, str(Path(__file__).parent))
-            # deferred-import: deferred: bare name
             from release import link_forwarded_user_context
 
         link_forwarded_user_context(
@@ -427,11 +415,9 @@ def prepare(
             view=workspace,
         )
     if __package__:
-        # deferred-import: dual-mode: relative when packaged, bare when run as a script
         from .release import allow_native_tools, platform_tool_names
     else:
         sys.path.insert(0, str(Path(__file__).parent))
-        # deferred-import: deferred: bare name
         from release import allow_native_tools, platform_tool_names
 
     platform_tools = platform_tool_names(cheese_source().read_text())
@@ -674,11 +660,9 @@ def sync_context(target_path, supplied_tree=None):
                 # rules the project has now are the ones linked into its
                 # config dir. (`prepare` links them itself, once mounted.)
                 if __package__:
-                    # deferred-import: dual-mode: bare when run as a script
                     from .release import link_forwarded_user_context
                 else:
                     sys.path.insert(0, str(Path(__file__).parent))
-                    # deferred-import: deferred: bare name
                     from release import link_forwarded_user_context
 
                 link_forwarded_user_context(
@@ -1432,11 +1416,9 @@ def reached_skills(target_path, target, args):
     Claude Code offers once one has (`release.touch_skills`). The tool's own
     result stands whatever happens here."""
     if __package__:
-        # deferred-import: dual-mode: relative when packaged, bare when run as a script
         from .release import touch_skills
     else:
         sys.path.insert(0, str(Path(__file__).parent))
-        # deferred-import: deferred: bare name
         from release import touch_skills
 
     path = args.get("file_path") or args.get("notebook_path")
@@ -1458,10 +1440,8 @@ def reached_skills(target_path, target, args):
 def transport(config, target_path):
 
     if __package__:
-        # deferred-import: dual-mode: relative when packaged, bare when run as a script
         from .context_service import serve
     else:
-        # deferred-import: deferred: bare name
         from context_service import serve
 
     client = RemoteClient(config)
@@ -1852,10 +1832,8 @@ def main():
         transport(config, args.config)
     elif args.mode == "release":
         if __package__:
-            # deferred-import: dual-mode: bare when run as a script
             from .private import release
         else:
-            # deferred-import: deferred: bare name
             from private import release
 
         release(config)
@@ -1864,10 +1842,8 @@ def main():
         remote = set(session_servers(config)) - set(config.get("mcp_servers", []))
         if config.get("kind") == "device" or args.args[0] in remote:
             if __package__:
-                # deferred-import: dual-mode: bare when run as a script
                 from .runtime import bridge
             else:
-                # deferred-import: deferred: bare name
                 from runtime import bridge
 
             bridge(None, args.args[0], call=RemoteClient(config).call)

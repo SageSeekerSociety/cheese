@@ -392,8 +392,7 @@ class Executor:
         self.db_lock = threading.Lock()
         self.context_fs_entries = {}
         # Socket clients load this module without opening the service database.
-        # deferred-import: socket clients load this without the service database
-        import sqlite3
+        import sqlite3  # deferred-import: socket clients load this without a DB
 
         self.db = sqlite3.connect(
             self.state / "requests.sqlite", check_same_thread=False

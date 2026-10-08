@@ -83,8 +83,7 @@ def lock(file):
     """flock(LOCK_EX). This file arrives on stdin before any release is on disk,
     so it cannot load portable.py for the Windows lock; this is the same one."""
     if sys.platform == "win32":
-        # deferred-import: Windows-only module; absent on other platforms
-        import msvcrt
+        import msvcrt  # deferred-import: Windows-only module; absent on other platforms
 
         while True:
             os.lseek(file.fileno(), 0x7FFFFFF0, os.SEEK_SET)
@@ -399,8 +398,7 @@ def executor_state(home, stack, sandboxed):
         # the kernel resolved when it was opened. A room that turns a
         # directory above it into a link afterwards is not stopped here as it
         # is on Linux; on a person's own Mac the other rooms are theirs too.
-        # deferred-import: POSIX-only module; absent on Windows
-        import fcntl
+        import fcntl  # deferred-import: POSIX-only module; absent on Windows
 
         named = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
         return Path(named.split(b"\0", 1)[0].decode())
@@ -489,11 +487,8 @@ def binary(owner, api):
                 remember(destination, record)
                 return str(destination)
     # Warm room preparation needs neither download handling nor TLS setup.
-    # deferred-import: warm-room prep needs no download or TLS handling
-    import platform
-
-    # deferred-import: warm-room prep needs no download or TLS handling
-    from urllib.request import urlopen
+    import platform  # deferred-import: warm-room prep skips this
+    from urllib.request import urlopen  # deferred-import: warm-room prep skips this
 
     architecture = {
         "x86_64": "x64",
