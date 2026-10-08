@@ -18,6 +18,8 @@
 """
 
 import asyncio
+import json
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -441,6 +443,61 @@ def test_usage_totals_series_and_top_projects_read_the_window(client, as_admin):
             "cost_usd": 3.0,
         }
     ]
+
+
+def test_usage_carries_the_account_pool_beside_the_ledger(
+    client, as_admin, tmp_path, monkeypatch
+):
+    """账号池这一块读的是代理写在账本旁边的那个文件，不是数据库。
+
+    两条都要钉住。默认配置（这台上没跑订阅版代理）下它**仍然在**、给的是一句原因而
+    不是一个 500 —— 开发环境就是这样，看板不能因为这一小块红掉。配了之后它照抄代理
+    写下的行，并自己从行上的绝对时刻算最早解冻时刻。
+    """
+    monkeypatch.setattr(settings, "subscription_usage_log", "")
+    blind = _stats(client, as_admin, "usage", days=DAYS)["claude_accounts"]
+    assert blind["accounts"] == []
+    assert blind["reason"]
+
+    ledger = tmp_path / "usage.jsonl"
+    ledger.write_text("")
+    now = time.time()
+    (tmp_path / "accounts.json").write_text(
+        json.dumps(
+            {
+                "written_at": now,
+                "retry_after": 600,
+                "accounts": [
+                    {
+                        "name": "primary",
+                        "state": "available",
+                        "until": None,
+                        "failures": 0,
+                    },
+                    {
+                        "name": "second",
+                        "state": "cooling",
+                        "until": now + 90,
+                        "failures": 2,
+                    },
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(settings, "subscription_usage_log", str(ledger))
+
+    pool = _stats(client, as_admin, "usage", days=DAYS)["claude_accounts"]
+    assert pool["reason"] is None
+    assert pool["stale"] is False
+    assert [row["name"] for row in pool["accounts"]] == ["primary", "second"]
+    assert pool["accounts"][1] == {
+        "name": "second",
+        "state": "cooling",
+        "until": now + 90,
+        "failures": 2,
+    }
+    # 文件里写的是 600，但那是一份同龄的计数；界面要的是从行上现算的那个。
+    assert 0 < pool["retry_after"] <= 90
 
 
 # --- 平台 ---------------------------------------------------------------------
