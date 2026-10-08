@@ -2,7 +2,7 @@
  *
  *  截图里那一刻：工作条写着「芝士Opus正在工作… · 重试中（第 4 次）· 2 小时 06 分」，
  *  页头标题边上却写着「未连接」。原因是页头只读 socket 的那一帧（对话栏报上来的
- *  `connected`），而 socket 在重连时会闪断——可这一轮还在跑，工作条写着「重试中」正是
+ *  链路状态），而 socket 在重连时会断上一阵——可这一轮还在跑，工作条写着「重试中」正是
  *  因为它自己接着干。一轮没跑完，这个房间就是连着的。
  *
  *  这份用例钉的是：页头读的是「socket 那帧 **或** 有没有一轮在跑」，而不是单看前者。
@@ -64,10 +64,10 @@ vi.mock('@/composables/usePageTitle', () => ({
   usePageTitle: () => ({ setDynamicTitle: vi.fn(), clearDynamicTitle: vi.fn() }),
 }))
 
-// 对话栏的替身：它手里握着的正是 socket 那一帧（`connected`），也能替一个正在跑的
+// 对话栏的替身：它手里握着的正是链路断没断（`linkDown`），也能替一个正在跑的
 // 轮次报「开工」——页头要看的恰恰是这两件事。
-const chat: { connected: boolean; working: ((on: boolean) => void) | null } = {
-  connected: true,
+const chat: { linkDown: boolean; working: ((on: boolean) => void) | null } = {
+  linkDown: false,
   working: null,
 }
 vi.mock('@/views/workspace/TopicChatColumn.vue', () => ({
@@ -78,10 +78,10 @@ vi.mock('@/views/workspace/TopicChatColumn.vue', () => ({
       _props: unknown,
       { expose, emit }: { expose: (o: Record<string, unknown>) => void; emit: (e: string, on: boolean) => void }
     ) {
-      const connected = ref(chat.connected)
+      const linkDown = ref(chat.linkDown)
       chat.working = (on: boolean) => emit('working', on)
       expose({
-        connected,
+        linkDown,
         reloadAccept: () => {},
         reloadFeedback: () => {},
         say: () => true,
@@ -114,7 +114,7 @@ beforeEach(() => {
   query = {}
   push.mockReset()
   replace.mockReset()
-  chat.connected = true
+  chat.linkDown = false
   chat.working = null
 })
 
@@ -130,14 +130,14 @@ describe('页头的连接点', () => {
   })
 
   it('socket 断了、也没人在干活：才说「未连接」', async () => {
-    chat.connected = false
+    chat.linkDown = true
     const { getByTestId } = mount()
 
     await waitFor(() => expect(getByTestId('header').getAttribute('data-connected')).toBe('no'))
   })
 
   it('一轮还在跑：socket 那一帧是断的，页头也不说「未连接」', async () => {
-    chat.connected = false
+    chat.linkDown = true
     const { getByTestId } = mount()
     await waitFor(() => expect(getByTestId('header').getAttribute('data-connected')).toBe('no'))
 

@@ -269,7 +269,7 @@ const {
   retryNow,
   onComposerSend,
   errorMsg,
-  connected,
+  linkDown,
   send,
   replyToQuestion,
   viewer,
@@ -355,7 +355,7 @@ const submitQuestion = createQuestionSubmit({
   topicList: () => props.topicList,
   send,
 })
-defineExpose({ send, connected, submitQuestion })
+defineExpose({ send, linkDown, submitQuestion })
 </script>
 
 <template>
@@ -374,7 +374,7 @@ defineExpose({ send, connected, submitQuestion })
     <template v-else>
       <ChatPanelHeader
         :topic="topic"
-        :connected="connected"
+        :connected="!linkDown"
         :pr-header="prHeader"
         :hide-header="hideHeader"
         :pr-short-id="prShortId"
