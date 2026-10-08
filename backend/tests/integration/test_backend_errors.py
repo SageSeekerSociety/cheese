@@ -11,6 +11,7 @@ happened in: the people there are not who reads the platform's own errors.
 
 import time
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import APIRouter
@@ -322,6 +323,32 @@ def test_flushing_with_nothing_expired_writes_nothing(in_process_db):
 
     assert client.portal.call(backend_log.flush_expired) == 0
     assert len(_backend_events(client, tid)) == 1
+
+
+def test_a_failure_inside_the_intake_is_not_reported_back_into_it(
+    client, monkeypatch
+):
+    """The intake is the one route that must never report into itself: its own
+    failure would be pushed straight back at the intake that just failed, on
+    every retry, for as long as it stays broken.
+
+    Reached through the real stack on purpose — the request the reporter
+    middleware inspects carries the path THIS app was handed (`/backend-errors`),
+    which is what the guard has to compare against, not the public
+    `/api/backend-errors` a caller types.
+    """
+    reported = AsyncMock()
+    monkeypatch.setattr(backend_log, "report_request_failure", reported)
+
+    def _broken_intake(*_args, **_kwargs):
+        raise RuntimeError("intake is broken")
+
+    monkeypatch.setattr("app.api.routes.backend_log._room", _broken_intake)
+
+    with pytest.raises(RuntimeError):
+        _post(client, [{"message": "x"}])
+
+    assert not reported.called
 
 
 def test_expected_4xx_is_not_an_incident(in_process_db):

@@ -726,7 +726,15 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
     except Exception as exc:
         # A failure inside the intake endpoint itself must not report into the
         # same channel (a broken intake would amplify every other error).
-        if not request.url.path.startswith("/api/backend-errors"):
+        #
+        # The path compared here is the one THIS app was handed, not the one a
+        # caller typed: the gateway forwards the public origin's `/api/` with a
+        # trailing slash in nginx's `proxy_pass`, so `/api/backend-errors`
+        # arrives as `/backend-errors` — the stripping API_GATEWAY_MOUNT
+        # describes. Compared against the public spelling, this guard never
+        # matched a request at all, so an exception raised by the intake itself
+        # was reported straight back into the intake.
+        if request.url.path != "/backend-errors":
             await backend_log.report_request_failure(
                 exc,
                 method=request.method,
