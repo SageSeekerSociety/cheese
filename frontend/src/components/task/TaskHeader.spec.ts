@@ -69,6 +69,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE) {
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
   const rename = vi.fn(async () => true)
+  const reopen = vi.fn(async () => true)
   const view = render(TaskHeader as Component, {
     props: {
       room: ROOM,
@@ -83,6 +84,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE) {
       actionError: null,
       start,
       close: async () => true,
+      reopen,
       handOver: async () => true,
       rename,
       setCollaborators,
@@ -90,7 +92,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE) {
     },
     global: { plugins: [vuetify] },
   })
-  return { ...view, start, loadMachine, setCollaborators, rename }
+  return { ...view, start, loadMachine, setCollaborators, rename, reopen }
 }
 
 function stubViewport() {
@@ -177,6 +179,22 @@ describe('任务页头', () => {
     expect(buttons).toHaveLength(1)
     await fireEvent.click(buttons[0])
     expect(setCollaborators).toHaveBeenCalledWith(['carol'])
+  })
+
+  it('关了的任务，负责人能重新打开；协作者不能', async () => {
+    stubViewport()
+    const owner = mount({ status: 'closed' })
+    await fireEvent.click(owner.container.querySelector('[data-testid="task-more"]')!)
+    await waitFor(() => expect(document.querySelector('[data-testid="task-reopen"]')).not.toBeNull())
+    await fireEvent.click(document.querySelector('[data-testid="task-reopen"]')!)
+    expect(owner.reopen).toHaveBeenCalledOnce()
+    owner.unmount()
+
+    me = 'bob'
+    const helper = mount({ status: 'closed', contributor_handles: ['bob'] })
+    await fireEvent.click(helper.container.querySelector('[data-testid="task-more"]')!)
+    await waitFor(() => expect(document.querySelector('[data-testid="task-rename"]')).not.toBeNull())
+    expect(document.querySelector('[data-testid="task-reopen"]')).toBeNull()
   })
 
   it('协作者能改名，不能转交和关闭', async () => {

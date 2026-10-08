@@ -255,3 +255,19 @@ to the header's value, replacing whatever the caller sent.
   request, for example to the Codex release whose models the platform should see.
 - `chatgpt-login.sh client-version show` prints it.
 - `chatgpt-login.sh client-version clear` goes back to the built-in default.
+
+When ChatGPT answers an account's turn with a 429 of type `usage_limit_reached`,
+the proxy remembers that the account is spent until the reset the answer names
+(`resets_at` or `resets_in_seconds`). Until then it answers that account's turns
+itself, at once, with a 429 of the same type and a `Retry-After`, so the gateway
+moves to another account without reaching ChatGPT. A plan can open again early
+and nothing announces it, so every `CHEESE_CHATGPT_LIMIT_PROBE_S` seconds (600 by
+default) the proxy asks the account's usage at
+`https://chatgpt.com/backend-api/wham/usage` (what Codex's /status reads), on the
+account's own login and egress, and clears the record as soon as it reports
+capacity. No user turn is sent to a spent account for that. Only when the usage
+cannot be read does the next look send one real turn instead. Any turn the
+account serves clears the record. Other 429s and the model list are passed as
+before.
+The record lives in memory: a restarted proxy learns it again from the next
+refusal.

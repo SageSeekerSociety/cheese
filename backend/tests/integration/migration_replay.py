@@ -22,7 +22,7 @@ from typing import Any
 
 import asyncpg
 
-from tests.conftest import _PG_BASE, _admin_recreate_db
+from tests.conftest import _PG_BASE, _admin_recreate_db, _clone_db, revision_template
 from tests.integration.test_task_conversation_migration import _alembic
 
 _BACKEND = Path(__file__).resolve().parents[2]
@@ -72,14 +72,31 @@ class ReplayDatabase:
         return self.run(lambda conn: conn.fetchval(sql, *args))
 
 
+def _fresh_at(name: str, revision: str) -> ReplayDatabase:
+    """A new database named ``name`` at ``revision``: a copy of that revision's
+    template when one can be had, a walk from nothing otherwise. A copy can fail
+    if another run dropped the template as stale between the check and the
+    copy; the walk is slower and gives the same database."""
+    db = ReplayDatabase(name)
+    template = revision_template(revision)
+    if template is not None:
+        try:
+            asyncio.run(_clone_db(name, template))
+            return db
+        except Exception:  # noqa: BLE001 — the walk below is still correct
+            pass
+    asyncio.run(_admin_recreate_db(name))
+    db.upgrade(revision)
+    return db
+
+
 @contextmanager
 def database_at(revision: str) -> Iterator[ReplayDatabase]:
-    """A fresh database upgraded to ``revision``, dropped on exit."""
+    """A fresh database at ``revision``, dropped on exit. Each call gets its own
+    copy, so nothing one test writes reaches another."""
     name = "migration_replay_" + uuid.uuid4().hex[:12]
-    asyncio.run(_admin_recreate_db(name))
-    db = ReplayDatabase(name)
     try:
-        db.upgrade(revision)
+        db = _fresh_at(name, revision)
         yield db
     finally:
 

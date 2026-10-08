@@ -11,10 +11,9 @@ calls.
 
 import logging
 import uuid
-from datetime import UTC, datetime
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
@@ -94,7 +93,7 @@ async def poll_uncarded_task_prs(
         quota_serves_background,
     )
     from app.domain.review.models import AcceptCard
-    from app.domain.room_task.checkouts import after_close
+    from app.domain.review.task_landing import delivery_landed
     from app.domain.room_task.models import Task, TaskStatus
     from app.domain.topic.models import Topic, TopicStatus
 
@@ -105,9 +104,15 @@ async def poll_uncarded_task_prs(
         .join(Topic, Topic.id == Task.room_id)
         .where(
             Task.pr_number.is_not(None),
-            Task.delivered_head.is_(None),
+            # A delivery that landed and closed the task is done with; an open
+            # task's earlier steps landed on PRs it no longer holds.
+            or_(Task.delivered_head.is_(None), Task.status == TaskStatus.open),
             Topic.status != TopicStatus.archived,
-            ~select(AcceptCard.id).where(AcceptCard.task_id == Task.id).exists(),
+            ~select(AcceptCard.id)
+            .where(
+                AcceptCard.task_id == Task.id, AcceptCard.pr_number == Task.pr_number
+            )
+            .exists(),
         )
         .order_by(Task.id)
         .limit(UNCARDED_TASKS_PER_TICK)
@@ -157,22 +162,30 @@ async def poll_uncarded_task_prs(
                 if (
                     task is None
                     or task.pr_number != number
-                    or task.delivered_head is not None
+                    or (task.status != TaskStatus.open and task.delivered_head)
                 ):
                     continue
                 if await session.scalar(
-                    select(AcceptCard.id).where(AcceptCard.task_id == task_id).limit(1)
+                    select(AcceptCard.id)
+                    .where(
+                        AcceptCard.task_id == task_id, AcceptCard.pr_number == number
+                    )
+                    .limit(1)
                 ):
                     continue
                 topic = await session.get(Topic, task.room_id)
                 if topic is None or topic.status == TopicStatus.archived:
                     continue
-                merged_at = status.merged_at or datetime.now(UTC)
-                task.status = TaskStatus.closed
-                task.closed_at = task.closed_at or merged_at
-                after_close(session, task.room_id)
-                task.accepted_at = task.accepted_at or merged_at
-                task.delivered_head = status.head_sha[:64]
+                # Merged on the forge without a delivery: nothing said it was a
+                # step, so the task is done.
+                await delivery_landed(
+                    session,
+                    task,
+                    by=None,
+                    head=status.head_sha,
+                    pr_number=number,
+                    completes=True,
+                )
                 await announce(
                     session,
                     place_id=task.room_id,

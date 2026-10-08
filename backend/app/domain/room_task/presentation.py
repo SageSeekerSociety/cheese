@@ -491,8 +491,8 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
 
     三条优先级规矩：
 
-    1. **已交付压过一切**。交付和 open/closed 不是同一个问题：一条活可以已交付却
-       还开着（有人继续往同一条分支推），也可以关掉却什么都没交付。
+    1. **关了就是结束**：最后一次交付被采纳的写「已采纳」，留了结论的写「已完成」，
+       都没有的写「已关闭」。还开着的任务就算采纳过前几步，也还在做。
     2. **待回答压过「在跑」**：进程可能还在，但它不会自己往下走了，而看板显示
        「运行中」正是让人不来看的那一句。
     3. **活的事实压过纸面**。`running` 压过验收卡说的一切 —— 卡描述的是它可能马上
@@ -501,9 +501,9 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     `now` 收在签名里是为了和 `room_presentation` 同一个形状。
     """
     del now
-    if facts.accepted_at is not None:
-        return _show(Done.accepted)
     if facts.status == TaskStatus.closed:
+        if facts.accepted_at is not None:
+            return _show(Done.accepted)
         return _show(Done.completed if facts.has_conclusion else Done.closed)
     if facts.awaiting_answer:
         return _show(NeedsYou.awaiting_answer)
@@ -543,6 +543,25 @@ def owner_acts_on(shown: Presentation, *, running: bool) -> bool:
     if running:
         return False
     return shown.phrase in _OWNER_ACTS_ON
+
+
+def waiting_on(
+    shown: Presentation,
+    *,
+    running: bool,
+    owner: str | None,
+    reviewer: str | None,
+    asked: str | None,
+) -> str | None:
+    """这一格在等哪一个人：卡面上写「待 某某 审阅」「待 某某 回答」「待 某某 开始」
+    的那个某某。不是在等一个具体的人就是 None。"""
+    if shown.phrase == NeedsYou.awaiting_review.value:
+        return reviewer
+    if shown.phrase == NeedsYou.awaiting_answer.value:
+        return asked
+    if shown.phrase == NotStarted.discussing.value and not running:
+        return owner
+    return None
 
 
 # —— 停滞 ——————————————————————————————————————————————————————

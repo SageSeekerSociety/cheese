@@ -9,7 +9,7 @@
 // those pieces: header, timeline, new-message pill, error toast.
 import type { GettingStartedStepKey } from '../composables/useGettingStarted'
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
-import type { ProgressLevel } from '../lib/taskProgress'
+import type { TaskLine } from '../lib/channelTasks'
 
 import { computed, watch } from 'vue'
 
@@ -18,8 +18,8 @@ import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { useGettingStarted } from '../composables/useGettingStarted'
 import { useStartGuide } from '../composables/useStartGuide'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
+import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
-import { progressLevel } from '../lib/taskProgress'
 
 import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
@@ -155,15 +155,19 @@ const pins = useChannelPins({
 function keepFile(block: Block) {
   if (props.topic) pins.keep(props.topic.id, block)
 }
-// 频道里一件任务此刻到哪一档：「创建了任务」那一行、支线下面那一行、已派出那一行都写它。
-const taskLevels = computed(
-  () => new Map(panel.roomTasks.value.map((task) => [task.id, progressLevel(task.presentation, task.status)]))
-)
-function taskLevel(taskId: string): ProgressLevel | null {
-  return taskLevels.value.get(taskId) ?? null
-}
 function nameOf(handle: string): string {
   return panel.refMaps.mentionNames[handle] || handle
+}
+// 频道里每件任务的那张卡：挂在它出自的那条消息下面，或者是「新建了任务」那一条。
+const taskLines = computed(
+  () => new Map(panel.roomTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
+)
+const taskOrigins = computed(() => tasksByOrigin(panel.roomTasks.value))
+function taskOf(taskId: string): TaskLine | null {
+  return taskLines.value.get(taskId) ?? null
+}
+function tasksUnder(blockId: string): TaskLine[] {
+  return (taskOrigins.value.get(blockId) ?? []).flatMap((task) => taskLines.value.get(task.id) ?? [])
 }
 
 const {
@@ -388,7 +392,8 @@ defineExpose({ send, connected, submitQuestion })
           :thread-status-for="threadLines.statusFor"
           :pinnable="pinnable"
           :pinned-ids="pins.pinnedIds.value"
-          :task-level="taskLevel"
+          :task-of="taskOf"
+          :tasks-under="tasksUnder"
           :name-of="nameOf"
           :rows="rows"
           :hidden-rows="hiddenRows"

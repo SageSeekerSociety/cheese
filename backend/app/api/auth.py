@@ -368,8 +368,9 @@ class ActorResolver:
         # Device-screen attribution (P3): a cheese call from inside an enrolled device's
         # screen carries that screen's token. It is a per-screen capability that proves
         # the call runs as that screen's agent — so it acts as the device agent-user
-        # (agent-as-user), overriding the generic cheese identity. The write-surface
-        # gate (cheese_token_gate) is unaffected; this only decides *who* the actor is.
+        # (agent-as-user), overriding the generic cheese identity. The write-access
+        # declarations (app/api/write_access.py) are unaffected; this only decides
+        # *who* the actor is.
         if self._screen_token:
             screen = resolve_screen_actor(device_hub, self._screen_token)
             if screen is not None:
@@ -489,13 +490,13 @@ class ActorResolver:
         the agent's scoped token, or the global sandbox override — else 401.
 
         For write endpoints that take no per-person target but must not be an
-        anonymous drive-by surface. The cheese-token middleware gate
-        (``app.main.cheese_token_gate``) used to be the only thing standing in
-        front of notification creation — a gate in another layer is a gate a
-        refactor (or a path the regex does not cover) can silently drop, so the
-        route enforces it itself. The global ``SANDBOX_TOKEN`` stays gate-only
-        (dev / trusted-single-host override): it opens the surface but never
-        becomes an identity — same rule as ``resolve()``.
+        anonymous drive-by surface. A cheese-token middleware gate matching
+        path regexes used to be the only thing standing in front of notification
+        creation — a gate in another layer is a gate a refactor (or a path the
+        regex does not cover) can silently drop, so the route enforces it itself.
+        The global ``SANDBOX_TOKEN`` stays gate-only (dev / trusted-single-host
+        override): it opens the surface but never becomes an identity — same
+        rule as ``resolve()``.
         """
         actor = await self.resolve(project_id=project_id, topic_id=topic_id)
         if actor.authenticated:
@@ -530,7 +531,7 @@ class ActorResolver:
 
         `Actor.via == "cheese"` 答的是另一个问题 —— 「说话的是不是一个 agent」。
         项目级的 agent 凭据也是 `cheese`，而它够得着这个项目的每一个房间
-        （`app.main._CHEESE_WRITE_PATHS` 上那句话），全局的 sandbox token 更是谁
+        （`app.api.write_access._CheeseOnly` 上那句话），全局的 sandbox token 更是谁
         都不是。要「正在这个房间里跑的那一轮」，只能认每一轮现铸的那张 scoped
         token：它把房间签在 `t` 上，冒不出来，也借不到别的房间去用。
 

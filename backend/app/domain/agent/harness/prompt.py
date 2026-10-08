@@ -180,14 +180,15 @@ def fit_doc_to_budget(text: str, budget: int, *, full_read_hint: str) -> str:
 
 
 #: 结论 52：「prompt 里必须有随时 push，包括主 agent 也是」。它进系统提示词而不是
-#: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的那台机器上，子 agent 与
-#: 起它的进程同生同死，机器一回收就只剩分支上已经推走的东西，而恢复的办法是从分支
-#: 重派一次（结论 43）。只 commit 不 push 的活过不了这台机器。
+#: 进 skill，因为它不是默认而是规则：一条活的工作树在做它的沙箱里，子 agent 与
+#: 起它的进程同生同死，沙箱一换就只剩分支上推走的东西和每轮结束时的快照
+#: （`cheese worktree` 在新环境里放回）。一轮当中还没到检查点的活过不了这个沙箱。
 ALWAYS_PUSH = (
     "## 随时 push（所有 agent，主 agent 也一样）\n"
-    "干活期间**随时 push**，不要攒到交付那一下才推。你的工作树在这台机器上，而机器"
-    "随时可能被回收；接着干下去的办法是从分支上重来一次，所以没推上去的改动，到不了"
-    "下一轮，也到不了任何别人手里。提交了却没推等于没有。"
+    "干活期间**随时 push**，不要攒到交付那一下才推。你的环境随时可能被换掉。每轮结束"
+    "时平台会推一次，并把没提交的改动存一份快照，新环境里打开任务目录时放回来；可这"
+    "一轮里还没到那一步的改动、子 agent 手里的改动，环境一换就没有了，而且只有推上去"
+    "的，别人才拿得到。提交了却没推等于没有。"
 )
 
 #: 步骤清单是平台工具，每个 harness 都是同一个 `todo_write`；各自自带的那一套在启动
@@ -315,9 +316,8 @@ PLATFORM_RULES = (
     "只传 `find`。不要自己提取凭据拼 curl 或裸 HTTP 请求，不翻 home、会话文件、"
     "`.git` 内部和系统目录。参数拿不准就看工具的定义或 `--help`，不要瞎试。\n"
     f"{SHARED_CHECKOUT}\n"
-    "- 改项目仓库里的文件、交出东西，在任务里做。任务由人创建：你在支线里时，"
-    "用 `cheese_task` 提议一个，等人创建。怎么提议、怎么交，在 `cheese` 技能里，"
-    "先加载它。\n"
+    "- 改项目仓库里的文件、交出东西，在任务里做。你在支线里时，用 `cheese_task` "
+    "创建一个。怎么创建、怎么交，在 `cheese` 技能里，先加载它。\n"
     "- 用户问这个平台怎么用，先用 `cheese_docs_search` 查官方说明书再答，不凭印象。\n"
     "- 会话可能是新开的：不记得之前聊过什么时，用 `cheese_chat_list`、"
     "`cheese_chat_search` 读记录，不要猜，也不要问人「之前说到哪了」。\n"
@@ -371,6 +371,14 @@ PROJECT_SKILLS = (
 )
 
 
+def own_name(name: str) -> str:
+    """The line that tells a teammate which name on the roster is its own."""
+    return (
+        f"你的名字是「{name}」。项目成员表里叫这个名字的 AI 队友就是你；"
+        "说到自己、在文档里写谁做什么时，用这个名字称呼自己。"
+    )
+
+
 def build_system_prompt(
     base: str,
     skills: str,
@@ -378,8 +386,13 @@ def build_system_prompt(
     has_doc: bool = False,
     role: str | None = None,
     keeps_memory: bool = False,
+    name: str | None = None,
 ) -> str:
     """拼一个会话的系统提示词：只有规矩，没有项目现状。
+
+    ``name`` 是这位队友在项目里的名字，放在最前面：成员表里有好几位 AI 队友，
+    它得知道哪一位是自己，说到自己、写进文档时用自己的名字，而不是产品名。
+    改名会换掉系统提示词，下一轮因此开一段新会话，这是有意的。
 
     骨架在进程启动时读它，进程空闲退出后用 ``--resume`` 接着原来的对话重新拉起时
     再读一次。所以它在一个会话里必须一字不变：变了，从变的那个字往后、连同整段
@@ -393,6 +406,7 @@ def build_system_prompt(
     记忆。
     """
     parts = [
+        *([own_name(name)] if name else []),
         base,
         PLATFORM_RULES,
         ALWAYS_PUSH,
@@ -419,7 +433,15 @@ def build_system_prompt(
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
 #: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
-TRACKED_SECTIONS = ("topics", "artifacts", "roster", "overview", "memory", "machine")
+TRACKED_SECTIONS = (
+    "tasks",
+    "topics",
+    "artifacts",
+    "roster",
+    "overview",
+    "memory",
+    "machine",
+)
 
 #: 任务会话对工作机器能做什么。它随任务开始而变（开始后会话带着留得下改动的凭证重开，
 #: 但接着的是同一条对话，开场不会再发），所以是一段会再告诉一次的现状，而不是写死在开场
@@ -485,6 +507,7 @@ def opening_changes(opening: SessionOpening, told: dict[str, str] | None) -> str
 def build_session_opening(
     *,
     thread: str | None = None,
+    tasks: str | None = None,
     doc: str | None = None,
     memory: MemoryIndex | None = None,
     roster: list[dict] | None = None,
@@ -499,10 +522,14 @@ def build_session_opening(
 ) -> SessionOpening:
     """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。
 
-    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。"""
+    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。
+    ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
+    变，所以和支线那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
     if thread:
         sections["thread"] = "## 这条支线\n" + thread
+    if tasks:
+        sections["tasks"] = tasks
     if machine:
         sections["machine"] = machine
     if teaching is not None and (section := teaching_section(teaching)):
@@ -607,11 +634,17 @@ def build_session_opening(
 
 
 def task_opening_prompt(
-    *, title: str, owner: str | None, source: str, materials: str = ""
+    *,
+    title: str,
+    owner: str | None,
+    source: str,
+    materials: str = "",
+    started: bool = False,
 ) -> str:
     """What a new task's agent is told first: where the task came from, what
     was put on the table there, and to draft the task's document from it
-    before anything else."""
+    before anything else. A task started as it was created goes on to the work
+    once the document is drafted."""
     who = f"负责人是 @{owner}。" if owner else ""
     put = (
         f"{materials}\n整理时读一读它们，文档里写明依据的是哪一份。\n\n"
@@ -624,8 +657,13 @@ def task_opening_prompt(
         f"{put}"
         "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入：目标、现状、"
         "需要谁做什么、已确定、待决；讨论里否掉的做法写进已确定，标明不采用及原因。"
-        "然后用 chat_send 在任务里和负责人"
-        "确认还没定的细节。负责人点「开始」之前，你只讨论、写文档，不改动项目。"
+        + (
+            "任务创建时已经开始：写完文档就按文档动手，在任务自己的工作目录里做"
+            "（cheese worktree），做完提交审阅。要人决定的事，在任务里问负责人。"
+            if started
+            else "然后用 chat_send 在任务里和负责人确认还没定的细节。"
+            "负责人点「开始」之前，你只讨论、写文档，不改动项目。"
+        )
     )
 
 
@@ -635,6 +673,18 @@ def task_started_prompt(*, title: str, actor: str) -> str:
         f"@{actor} 开始了任务「{title}」。从现在起你可以改动项目：按实况文档动手，"
         "在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
         "做的过程中要求变了，就改实况文档；要人决定的事，在任务里问负责人。"
+    )
+
+
+def task_next_step_prompt(*, title: str, task_id) -> str:
+    """What a task's agent is told when one of its deliveries lands and the
+    task goes on."""
+    return (
+        f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
+        f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
+        "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
+        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
+        "这一步是最后一步时 completes_task 填 true。"
     )
 
 

@@ -146,6 +146,19 @@ jobs:
             exit 1
           fi
 
+      # Judges only the migrations this PR adds, against origin/main's models
+      # (is a dropped column still mapped by the release that keeps serving
+      # while migrations run?). Needs main's history for the merge base; a
+      # depth-1 checkout has none. Rules: .claude/rules/migrations.md.
+      - name: Fetch main for comparison
+        run: git fetch --no-tags --unshallow origin
+
+      - name: Added migrations are safe under the running release
+        # The job's default working directory is backend/; the script takes
+        # repository paths.
+        working-directory: ${{ github.workspace }}
+        run: python3 .claude/scripts/check-migration-safety.py
+
   test:
     runs-on: ubuntu-latest
     name: ${{ matrix.layer }} (${{ matrix.shard }})

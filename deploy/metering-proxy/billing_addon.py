@@ -39,8 +39,9 @@ it. See `_forward_to_chatgpt`.
 Config (env): CHEESE_USAGE_LOG, CHEESE_TOKEN_CAP, CHEESE_CAP_WINDOW_S,
 CHEESE_SCOPED_SECRET, CHEESE_ALLOW_HEADER_ATTR, CHEESE_ADMISSION_URL,
 CHEESE_ADMISSION_CACHE_S, CHEESE_GATEWAY_BASE, CHEESE_CHATGPT_CREDENTIALS,
-CHEESE_CHATGPT_KEY. The Codex client version sent to ChatGPT is not env: it
-is a file beside the ChatGPT accounts (ChatGPTAccounts.client_version).
+CHEESE_CHATGPT_KEY, CHEESE_CHATGPT_LIMIT_PROBE_S. The Codex client version
+sent to ChatGPT is not env: it is a file beside the ChatGPT accounts
+(ChatGPTAccounts.client_version).
 """
 
 import asyncio
@@ -59,8 +60,6 @@ from urllib.request import Request, urlopen
 from mitmproxy import http, tls
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from claude_accounts import ClaudeAccounts  # noqa: E402
-from claude_retry import ATTEMPTS, Attempt, install as install_retry  # noqa: E402
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
     BINDING,
@@ -72,6 +71,7 @@ from cheese_billing_core import (  # noqa: E402
     NO_LOGIN_PLACEHOLDER,
     AdmissionGate,
     ChatGPTAccounts,
+    ChatGPTUsageLimits,
     CodexBody,
     Egress,
     Meter,
@@ -79,6 +79,8 @@ from cheese_billing_core import (  # noqa: E402
     PlatformCredential,
     StreamingUsageExtractor,
     chatgpt_route,
+    fetch_chatgpt_usage,
+    usage_capacity,
     control_answer,
     is_haiku_name,
     no_login_answer,
@@ -87,6 +89,9 @@ from cheese_billing_core import (  # noqa: E402
     verify_scoped_token,
     with_client_version,
 )
+from claude_accounts import ClaudeAccounts  # noqa: E402
+from claude_retry import ATTEMPTS, Attempt  # noqa: E402
+from claude_retry import install as install_retry
 
 logger = logging.getLogger("cheese.metering")
 
@@ -148,6 +153,12 @@ CHATGPT_ACCOUNTS = ChatGPTAccounts(
 # since a request that gets through spends a subscription. Unset refuses every
 # request.
 CHATGPT_KEY = os.environ.get("CHEESE_CHATGPT_KEY", "")
+# Which ChatGPT accounts have spent their usage limit; while one is spent its
+# requests are answered here and one real request goes through every this
+# many seconds to notice a reset. See ChatGPTUsageLimits.
+CHATGPT_LIMITS = ChatGPTUsageLimits(
+    probe_s=float(os.environ.get("CHEESE_CHATGPT_LIMIT_PROBE_S", "600"))
+)
 
 if not ADMISSION_URL:
     # Said once, loudly, at load: an unset env var produces no error anywhere
@@ -633,6 +644,114 @@ _CHATGPT_STRIPPED = (
 )
 
 
+def _past_usage_limit(flow: http.HTTPFlow, name: str) -> bool:
+    """Whether a turn for ChatGPT account ``name`` may go to ChatGPT; when the
+    account has spent its usage limit it is answered here instead, with a 429 the
+    gateway fails over on at once."""
+    action, remaining = CHATGPT_LIMITS.decide(name)
+    if action == ChatGPTUsageLimits.CHECK:
+        _start_usage_check(name)
+        action = ChatGPTUsageLimits.ANSWER
+    if action == ChatGPTUsageLimits.ANSWER:
+        _refuse(
+            flow,
+            429,
+            "usage_limit_reached",
+            f"cheese: ChatGPT account {name!r} has spent its usage limit; it "
+            f"opens again in about {int(remaining)}s",
+            {"Retry-After": str(max(1, int(remaining)))},
+        )
+        return False
+    if action == ChatGPTUsageLimits.PROBE:
+        logger.info(
+            "ChatGPT account %s is spent for about %ss more and its usage could "
+            "not be read; sending one request to see whether it has reset",
+            name,
+            int(remaining),
+        )
+    elif action == ChatGPTUsageLimits.REOPENED:
+        logger.info(
+            "ChatGPT account %s has reached its reset time; sending again", name
+        )
+    return True
+
+
+# Usage checks under way, held so the event loop does not drop them.
+_USAGE_CHECKS: set[asyncio.Task] = set()
+
+
+def _start_usage_check(name: str) -> None:
+    """Ask ChatGPT in the background whether spent account ``name`` has
+    capacity again; the request that prompted it is answered here meanwhile."""
+    task = asyncio.get_running_loop().create_task(_check_usage(name))
+    _USAGE_CHECKS.add(task)
+    task.add_done_callback(_USAGE_CHECKS.discard)
+
+
+async def _check_usage(name: str) -> None:
+    """Read account ``name``'s usage on its own login and egress and apply it."""
+    account = CHATGPT_ACCOUNTS.get(name)
+    capacity = None
+    if account is not None:
+        token, account_id, _missing = account.token()
+        if token:
+            try:
+                status, payload = await asyncio.to_thread(
+                    fetch_chatgpt_usage,
+                    token,
+                    account_id,
+                    CHATGPT_ACCOUNTS.client_version(),
+                    20.0,
+                    egress=account.egress(),
+                )
+            except OSError as err:
+                status, payload = 0, {}
+                logger.info(
+                    "usage of ChatGPT account %s could not be read: %s", name, err
+                )
+            if status == 200:
+                capacity = usage_capacity(payload)
+            elif status:
+                logger.info(
+                    "usage of ChatGPT account %s could not be read: HTTP %s",
+                    name,
+                    status,
+                )
+    outcome = CHATGPT_LIMITS.checked(name, capacity)
+    if outcome == "cleared":
+        logger.info("ChatGPT account %s has capacity again; sending to it", name)
+    elif outcome == "unreadable":
+        logger.info(
+            "ChatGPT account %s: usage unreadable, its next look sends a request", name
+        )
+
+
+def _note_chatgpt_answer(flow: http.HTTPFlow) -> None:
+    """Learn from ChatGPT's answer to a turn whether its account is spent."""
+    name = flow.metadata.get("cheese_chatgpt_account")
+    if not name or not flow.metadata.get("cheese_chatgpt_turn") or not flow.response:
+        return
+    status = flow.response.status_code
+    if status == 200:
+        if CHATGPT_LIMITS.served(name):
+            logger.info(
+                "ChatGPT account %s answered again; it is no longer spent", name
+            )
+        return
+    if status != 429:
+        return
+    learned = CHATGPT_LIMITS.refused(name, flow.response.content or b"")
+    if learned is not None and learned[1]:
+        until = learned[0]
+        logger.info(
+            "ChatGPT account %s has spent its usage limit until %s; answering its "
+            "requests here, with a request through every %ss",
+            name,
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until)),
+            int(CHATGPT_LIMITS.probe_s),
+        )
+
+
 def _on_chatgpt_listener(flow: http.HTTPFlow) -> bool:
     mode = getattr(flow.client_conn, "proxy_mode", None)
     return getattr(mode, "type_name", "") == "reverse" and tuple(
@@ -689,6 +808,11 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
             f"cheese: no ChatGPT account named {name!r} on this proxy",
         )
         return
+    turn = flow.request.method == "POST" and upstream_path.startswith(
+        "/backend-api/codex/responses"
+    )
+    if turn and not _past_usage_limit(flow, name):
+        return
     if account.refresh_due():
         await asyncio.to_thread(account.refresh_if_due)
     token, account_id, missing = account.token()
@@ -743,6 +867,7 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
     # egress the previous request on it was given.
     flow.server_conn.via = ("http", (egress.host, egress.port)) if egress else None
     flow.metadata["cheese_chatgpt_account"] = name
+    flow.metadata["cheese_chatgpt_turn"] = turn
     if flow.request.method == "POST" and upstream_path.startswith(
         "/backend-api/codex/responses"
     ):
@@ -1311,6 +1436,13 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         else:
             CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
     if flow.metadata.get("cheese_chatgpt"):
+        if resp.status_code == 429 and flow.metadata.get("cheese_chatgpt_turn"):
+            # Left buffered: response() reads whether it is a spent usage limit.
+            # A short error body, so nothing is held for the length of a turn.
+            resp.stream = False
+            return
+        if resp.status_code == 200:
+            _note_chatgpt_answer(flow)
         resp.stream = True
         return
     if flow.metadata.get("cheese_model_missed"):
@@ -1628,6 +1760,10 @@ def response(flow: http.HTTPFlow) -> None:
         CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
         attempt.close()
     if _answer_a_missed_binding(flow):
+        return
+    if flow.metadata.get("cheese_chatgpt_turn") and flow.response is not None:
+        if flow.response.status_code == 429:
+            _note_chatgpt_answer(flow)
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)

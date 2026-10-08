@@ -108,6 +108,7 @@ class Runner(runner.Runner[Journal]):
             # Codex takes a message said mid-turn into that turn (`turn/steer`
             # needs one in progress), so a finished turn has read every one.
             self.reply_settled()
+            self.turn_ended()
 
     async def _hold_to_reply(self, reason: str, ending: dict) -> None:
         assert self.session is not None

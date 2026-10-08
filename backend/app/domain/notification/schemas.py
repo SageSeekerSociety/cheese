@@ -32,6 +32,10 @@ class NotificationCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     body: str = ""
     target_handle: str | None = Field(default=None, max_length=64)
+    #: 这条通知关于哪条对话，不是哪个频道：一个频道自己那条线、它的一条任务、或一
+    #: 条支线。字段和 URL 里仍旧叫 topic —— 一个任务和一条支线也走
+    #: `/topics/{它的 id}/…`（#2422 起代码里的 topic 名不改），校验完照原样存进
+    #: `conversation_id`，不折成它所在的频道。
     topic_id: uuid.UUID | None = None
     payload: dict = Field(default_factory=dict)
 
@@ -46,6 +50,7 @@ class NotificationOut(BaseModel):
     #: bigint，不再是 uuid：两张表并成一张之后主键跟的是 `notification_seq`。
     id: int
     project_id: uuid.UUID | None
+    #: 这条关于的那条对话（`conversation_id`）。历史字段名，见 `NotificationCreate`。
     topic_id: uuid.UUID | None
     level: NotificationLevel | None
     kind: NotificationType
@@ -63,7 +68,7 @@ class NotificationOut(BaseModel):
         return cls(
             id=row.id,
             project_id=row.project_id,
-            topic_id=row.topic_id,
+            topic_id=row.conversation_id,
             level=NotificationLevel(row.level) if row.level else None,
             kind=NotificationType(row.type),
             target_handle=row.recipient_handle,

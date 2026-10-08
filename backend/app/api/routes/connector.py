@@ -148,10 +148,11 @@ async def _recover_business_state(device_id: str) -> None:
     # Restore screen ownership before cleanup looks for sessions to close.
     from app.core.background import spawn
     from app.core.db import async_session_factory
+    from app.domain.machine.session_work import checkpoint_room
     from app.domain.topic.retire import sweep_retired_storage
 
     spawn(
-        sweep_retired_storage(async_session_factory),
+        sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
         name="cleanup device reconnect",
     )
     # A machine offline when a task of its rooms closed still has the checkout.
@@ -160,6 +161,14 @@ async def _recover_business_state(device_id: str) -> None:
     spawn(
         remove_closed_checkouts(async_session_factory, device_id=device_id),
         name="closed task checkouts device reconnect",
+    )
+    # Rooms from before rooms had an executor are told their files are kept
+    # before anything archives them (`agent/device_storage.py`).
+    from app.domain.agent.device_storage import keep_device_room_files
+
+    spawn(
+        keep_device_room_files(async_session_factory, device_id),
+        name="kept room files device reconnect",
     )
 
 

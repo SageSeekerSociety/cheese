@@ -2057,7 +2057,7 @@ def main():
             beside("predecessor")["end_unrequested"](state, args.state)
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
         with os.fdopen(os.open(state / "service.lock", flags, 0o600), "a") as lock_file:
-            for _ in range(100):
+            for _ in range(int(os.environ.get("CHEESE_EXECUTOR_STOP_TRIES", 100))):
                 try:
                     # The socket closes before handlers finish; the lock marks shutdown.
                     lock(lock_file, blocking=False)

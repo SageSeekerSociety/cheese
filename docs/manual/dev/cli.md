@@ -21,7 +21,7 @@ covers:
 - **机器上**它是 `cheese` 命令，只保留必须在那台机器上作为进程跑的动作。顶层子命令共 14 个：
 
 ```text
-cheese worktree <任务 id>      准备任务工作目录并输出路径
+cheese worktree <任务 id>      准备任务工作目录并输出路径；新环境里第一次建时恢复平台快照
 cheese checkout                准备项目默认分支的代码并输出路径（支线、未开始的任务）
 cheese sync                    同步任务提交并备份未提交的文件
 cheese recover <任务 id>       把最近一次备份恢复到一个独立目录

@@ -1,10 +1,12 @@
 ---
 title: 资源回收与磁盘
 kind: 参考
-summary: 资源目录的回收（宽限、推送检查、记录保留）和主机磁盘的三道回收。
+summary: 资源目录的回收（宽限、一次尽力推送、旧房间文件与记录的保留）和主机磁盘的三道回收。
 covers:
   - backend/app/domain/agent/resource_cleanup.py
   - backend/app/domain/topic/retire.py
+  - backend/app/domain/agent/device_storage.py
+  - backend/scripts/retained_files.py
   - deploy/README-room-cleanup.md
   - deploy/dev-box-disk-cleanup.sh
   - deploy/reclaim-room-caches.sh
@@ -22,8 +24,8 @@ covers:
 ## 归档不等于立刻删 {#archive}
 
 - 没归档的房间保留它正在跑的环境。**归档创建一条持久的回收操作，不立刻销毁机器**：默认宽限五分钟（`TOPIC_ARCHIVE_CLEANUP_DELAY_S=300`，改它只影响以后的归档）。
-- 发布检查没过 → 保留资源并记下原因。
-- 云端宿主机上的房间目录删掉之后，它们在宿主机上占的位置还给云主机池（`HostPool.forget_device_homes`）。已经归档到对象存储的会话目录不在任何机器上：清理不等它原来那台宿主机（那台已经不在线的就不再去问），最后把归档从存储里删掉（`HostPool.forget_room_homes`）。只删宿主机写归档时确认全部推送过的归档（`archive_published`）：没推送的，归档就是那份工作唯一的副本，清理停在认领之前、原因写明，取消归档后会话下一次调用工具时从归档恢复目录。宿主机本身由池子在空闲一段时间后释放，房间清理从不删宿主机。
+- 停下会话之前，房间的每条会话在它的机器上做一次尽力而为的 checkpoint（`session_work.checkpoint_room`，由启动这次清理的一方交给 `sweep_retired_storage`），推没推上去都照常往下走：推不上去丢的只是上一轮 Stop checkpoint 之后的改动，那一轮的快照在平台上。清理不检查发布，不因为没推送的改动保留目录。
+- 云端宿主机上的房间目录删掉之后，它们在宿主机上占的位置还给云主机池（`HostPool.forget_device_homes`）。宿主机本身由池子在空闲一段时间后释放，房间清理从不删宿主机。
 - 进度从 `GET /topics/{id}/cleanup` 读：阶段、期限、已完成的资源数、最近一次失败。
 
 ## 项目归档 {#project-archive}
@@ -43,18 +45,28 @@ covers:
 
 `domain/agent/resource_cleanup.py` 是用 stdin 送到设备上、在那边跑的程序（没有 `__file__`、import 不到平台任何东西），所以它带着几个常数的**副本**，由 `tests/unit/test_footprint_root.py` 与 `place.py` 对齐：`FOOTPRINT_ROOT = ".cheese"`、`CHECKOUT_DIR = "room"`、`TRANSCRIPTS_ROOT = "transcripts"`、`PLATFORM_DIRS = (".cheese", ".claude")`。名字漂移的代价写得很直白：拆卸会对一条从没存在过的路径报成功，而真正的几百 GB 留在机器上。
 
-三个动作（`main` 的第一个参数）：
+动作（`main` 的第一个参数）：
 
 | 动作 | 做什么 |
 | --- | --- |
 | `prepare` | 让房间离开：请启动器停、请执行器停、`check_no_writers`；过不去就是 `StillRunning` |
-| `publication` | 发布检查（中央工作区持有生成的上下文，所以只对不是执行器的那些做） |
-| `remove` | 释放私有席位助手、保留记录、删掉 `work` 与 `home` |
+| `remove` | 旧房间的文件先送进存储（见下一节）、释放私有席位助手、保留记录、删掉 `work` 与 `home` |
+| `keep-room` | 只把旧房间的文件送进存储，不删任何东西 |
+| `tasks` | 删掉房间里已结束任务的检出，只留还有进程在里面的 |
 | `expire` | 到期删除保留的记录 |
 
 宽限的实现有个细节：第一次尝试会在回执目录里写一个 `.requested` 时间戳，**之后每次尝试都从这个戳算宽限**，而不是从自己开始算，所以一个房间绝不会在它第一次拒绝离开时就被打死。超过后强制结束持有者再试一遍。`FORCE_AFTER_S` 默认 600 秒（`CHEESE_CLEANUP_FORCE_AFTER_S` 可覆盖）。给这个数是因为实测（2026-09-18）：45 个归档房间里有 173 个进程还在，有些是几天前的，每一个都把房间的回收卡在「资源还有进程持着文件」上——房间已经归档了，宽限之后的进程是泄漏，不是会话。
 
-什么会让资源被保留（而不是删）：机器上缺工具（Python 3、curl、tmux、lsof）、设备离线、还有人持着文件、有没发布的 git 改动、有没送达的 hook 事件。一次结果未知的 stop 要先弄清才能恢复同一个环境；已经挪到一边的后端工作树归那条没做完的回收所有，直到它做完。
+什么会让资源被保留（而不是删）：机器上缺工具（Python 3、curl、tmux、lsof）、设备离线、还有人持着文件、有没送达的 hook 事件、旧房间的文件没能送进存储。没推送的 git 改动不会。一次结果未知的 stop 要先弄清才能恢复同一个环境；已经挪到一边的后端工作树归那条没做完的回收所有，直到它做完。
+
+## 旧房间的文件 {#kept-room-files}
+
+有执行器之前的房间直接在自己的目录（home 下的 `room/`）里干活，后面没有仓库，那里的文件不在任何分支、也不在任何快照里。这样的 home（没有执行器标记、`room/` 不是 git 检出又不是空的，`resource_cleanup.kept_room_files`）在删之前，`room/` 打成一个 tar.gz 送进私有存储（`kept-room-files/<项目>/<资源>.tar.gz`），保留三十天（`device_storage.RETENTION`），到期由清理的定时器删掉。
+
+- 两个时机。自有设备每次连上来，以及房间清理的定时器每小时最多一次扫一遍已连着的自有设备（`keep_room_files_due`，一台跨过部署一直连着的设备不会再连一次），它上面还没看过的每个 home 都看一次（`keep_device_room_files`），有文件的当场送走，并在那段对话里说一次文件保留到哪天、找平台管理员取回；没文件的也记一行，下次不再看。房间清理删 home 时把上传地址交给 `remove`（`room_files_upload_url`），还没送过的在同一条命令里先送再删；已经送过的传 `-`，不再送一遍。所以这样的 home 不会在没有副本时被删。
+- 记在 `kept_room_files` 表里：哪台设备、哪个 home、存储里的键、大小、到期时间、告诉了哪段对话。同一个 home 同时只由一个进程打包上传：先插入或接过它那一行并记下 `looking_since`，插不进、接不过的进程就不碰它（部署时新旧两个后端会同时扫同一台设备）；送到一半进程没了的，过了 `CLAIM_STALE` 由下一次扫的接着送。
+- 没配私有存储时，有这种文件的 home 不删，清理停在那里并写明原因。
+- 取回：在服务器上 `python -m scripts.retained_files rooms list` 列出还在保留的，`rooms download <键> [--out 路径]` 下载。
 
 ## 记录（transcripts） {#transcripts}
 
@@ -82,7 +94,7 @@ covers:
 
 - 夜间那条的 `--needed` 判断**由脚本自己做**，不写在 unit 里，因为问题不只是关于 `/`：这些机器的 `/tmp` 是单独的 tmpfs，而且先满的是它——2026-09-22 开发机上 `/` 51%、`/tmp` 100%，每个新话题的环境都准备失败，而那个 unit 从来没启动过（当时它的条件是 `df /`）。75% 这个标记压在 `cheesex-disk-pressure-guard` 的 85% 急刹之下，所以是缓存先被回收，轮不到 guard 去删沙箱容器。
 - 房间缓存那条与 nightly 那条的区别是**有没有写者**：这里的每条路径都有写者（项目的 setup 脚本，在 `environment_runner` 的 flock 下跑），所以它按房间取同一把锁，跳过正在安装的房间——安装中途删缓存会得到一个半链接的 venv。
-- 老式 checkout 那条的安全性不在于「没人用得上」，而在于**已发布**：删之前过归档用的同一套检查（`check_no_writers` + `check_published`，同一个模块，不是第二份定义）。过不去的一律留下并报原因——回收量这么大，闸门就得是准的。
+- 老式 checkout 那条的安全性不在于「没人用得上」，而在于**已发布**：删之前过 `check_no_writers`（`resource_cleanup` 里那一个）和脚本自己的 `check_published`。过不去的一律留下并报原因——回收量这么大，闸门就得是准的。
 - 实测回收率不均（2026-09-17）：`~/.npm/_cacache` 792 MiB 全回收、`~/.cache/pip` 240 MiB 全回收，而 `~/.cache/uv` 1.5 GiB 只回收 12%、pnpm store 3.0 GiB 只回收 2%——后两者是内容寻址的 store，安装时是硬链接出去的，大部分字节还在留着的 `.venv`/`node_modules` 里；对 checkout 已经没了的房间，它们才整份回来。
 
 ## 急刹：磁盘压力 {#pressure}
@@ -97,5 +109,5 @@ covers:
 ## 边界与坑 {#traps}
 
 - 宽限只影响以后的归档，改配置不会让已经排上队的操作提前或推迟。
-- 记录保留的是**会话记录**，不是工作成果：工作成果靠提交与推送（换机器前的 `push_before_switch` 就是干这个的，见[执行通道](/dev/execution)）。
+- 记录保留的是**会话记录**，不是工作成果：工作成果靠提交与推送，以及每一轮 Stop checkpoint 留在平台上的快照（见[执行通道](/dev/execution)）。
 - 三条磁盘回收全部默认只报告、要 `--apply` 才删；`--needed` 只是一个「要不要跑」的条件。
