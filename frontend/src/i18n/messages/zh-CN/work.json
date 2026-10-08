@@ -379,7 +379,7 @@
       "reassign": "更换",
       "reassignTitle": "改由谁审阅",
       "noMembers": "暂无可选成员",
-      "routingReason": "推荐理由：{reason}",
+      "focus": "审阅重点",
       "delivery": "这次交付",
       "download": "下载",
       "changeSubject": "合并后的提交标题",
