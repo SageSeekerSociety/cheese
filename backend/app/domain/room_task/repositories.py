@@ -5,13 +5,28 @@ import uuid
 from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import and_, cast, func, not_, or_, select, tuple_
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import (
+    Uuid,
+    and_,
+    any_,
+    bindparam,
+    cast,
+    func,
+    not_,
+    or_,
+    select,
+    tuple_,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.project.address import Numbered, take_number
 from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
+
+
+def _uuids(name: str, values: Collection[uuid.UUID] | None):
+    return bindparam(name, list(values or ()), type_=ARRAY(Uuid()))
 
 
 class TaskRepository:
@@ -106,10 +121,13 @@ class TaskRepository:
         if status is not None:
             stmt = stmt.where(Task.status == TaskStatus(status))
         if ids is not None or origins is not None:
+            # One array parameter each, not one per id: a whole timeline's
+            # blocks (a room read without a limit) can be tens of thousands,
+            # past the driver's 32,767 parameters a statement.
             stmt = stmt.where(
                 or_(
-                    Task.id.in_(list(ids or ())),
-                    Task.upgraded_from_block_id.in_(list(origins or ())),
+                    Task.id == any_(_uuids("ids", ids)),
+                    Task.upgraded_from_block_id == any_(_uuids("origins", origins)),
                 )
             )
         if with_branch:
