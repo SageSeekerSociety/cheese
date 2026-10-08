@@ -16,7 +16,9 @@
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `ROOM_ENTRIES` 这个
  * 值，运行时不构成循环。
  */
+import type { GettingStartedStep } from '@/composables/useGettingStarted'
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
+import type { PendingAttachment } from '@/lib/attachments'
 import type { TaskLine } from '@/lib/channelTasks'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
@@ -24,8 +26,10 @@ import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
 
 import { AGENT_NAME } from './catalogFixtures'
 
+import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
+import GettingStartedCard from '@/components/room/GettingStartedCard.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
@@ -194,6 +198,44 @@ const TASK_ENTRIES: CatalogEntry[] = [
       },
     ],
   },
+]
+
+// ---- 待发的一枚附件（AttachmentChip）------------------------------------------
+
+/** 待发条上的三枚附件：上传中（带进度）、传失败（留着重试）、一张图。图片那一枚走
+ *  外壳注入的附件来源（`lib/attachmentSource.ts`）：目录站不注入，取不到字节，按
+ *  「读不到」画 —— 这正是它真会走的一格。 */
+const CHIP_UPLOADING: PendingAttachment = {
+  path: 'uploading:1:big.bin',
+  mime: 'application/octet-stream',
+  name: 'big.bin',
+  uploading: true,
+  progress: 0.42,
+}
+const CHIP_FAILED: PendingAttachment = {
+  path: 'uploading:2:notes.txt',
+  mime: 'text/plain',
+  name: 'notes.txt',
+  error: true,
+}
+const CHIP_IMAGE: PendingAttachment = { path: 'uploads/demo/板书.png', mime: 'image/png', name: '板书.png' }
+
+// ---- 开始清单（GettingStartedCard）-------------------------------------------
+
+/** 四步一步都没做。 */
+const GS_NONE: GettingStartedStep[] = [
+  { key: 'talk', done: false },
+  { key: 'materials', done: false },
+  { key: 'repo', done: false },
+  { key: 'people', done: false },
+]
+
+/** 说上话了、也放过材料了，仓库还没接、同事已经请了一个。 */
+const GS_SOME: GettingStartedStep[] = [
+  { key: 'talk', done: true },
+  { key: 'materials', done: true },
+  { key: 'repo', done: false },
+  { key: 'people', done: true },
 ]
 
 export const ROOM_ENTRIES: CatalogEntry[] = [
@@ -368,6 +410,61 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
           ]),
           names: { alice: 'Alice', bob: 'Bob' },
         },
+      },
+    ],
+  },
+  {
+    id: 'room-attachment-chip',
+    title: 'AttachmentChip',
+    about:
+      '输入框里待发的一个附件：左边一个记号说它是什么（缩略图 / 进度环 / 警示），右边一直写着文件名 —— 名字必须一直在，否则上传中那一格只是一个圈。',
+    file: 'src/components/room/AttachmentChip.vue',
+    component: AttachmentChip,
+    // 记号（`v-icon` / `v-progress-circular`）、标签上的 `v-tooltip`、缩略图里的
+    // `v-icon` 都是 Vuetify；名字和重试那颗的读屏标签走全局的 `t()`。
+    needs: ['vuetify'],
+    states: [
+      {
+        name: '上传中',
+        note: '服务器已经报过总量，所以画的是确定的圈，报得出走了多少；一进来名字就在右边那一格，记号换掉时标签不跳。',
+        props: { topicId: 'demo', attachment: CHIP_UPLOADING },
+        expectSelector: '.v-progress-circular',
+      },
+      {
+        name: '上传失败',
+        note: '失败那一枚留在待发条里：记号换成警示、多一颗「重试」，File 还在手里，按重试就是把同一份再传一次。',
+        props: { topicId: 'demo', attachment: CHIP_FAILED },
+        expectSelector: 'button.chip__retry',
+      },
+      {
+        name: '带缩略图的图片',
+        note: '一张图会走到缩略图那一支，但图源从外壳注入的 `AttachmentSource` 来：目录站不注入，取不到字节就画一个裂图记号 —— 这一格看的正是「读不到」的样子。',
+        props: { topicId: 'demo', attachment: CHIP_IMAGE },
+        expectSelector: '.im-thumb__failed',
+      },
+    ],
+  },
+  {
+    id: 'room-getting-started',
+    title: 'GettingStartedCard',
+    about: '项目本体里那张「开始清单」：四步，勾完自己就不见了。判据全在别处推出来，这里只画和跳转。',
+    file: 'src/components/room/GettingStartedCard.vue',
+    component: GettingStartedCard,
+    // 四步的记号是 `v-icon`，右边那颗动作是 `BaseButton`（`v-btn`）。跳转走
+    // `useNavigation()`：没装路由时它是 null，按钮点了不动，但卡片照画得出来。
+    needs: ['vuetify'],
+    states: [
+      {
+        name: '一步都还没做',
+        note: '四步各自带一串说明和一颗动作：材料、仓库、同事各去一页（「打开资料库 / 连接仓库 / 去名册」），第一步就在下面那个输入框里做，所以给一句提示、不给去处。',
+        props: { steps: GS_NONE, projectId: 'p1', agentName: AGENT_NAME },
+        expect: '打开资料库',
+      },
+      {
+        name: '做过两步',
+        note: '做完的那两步打勾、写名字划掉、右边不再给动作；只剩「连接仓库」那一颗还在。',
+        props: { steps: GS_SOME, projectId: 'p1', agentName: AGENT_NAME },
+        expectSelector: '.gs__mark--done',
       },
     ],
   },

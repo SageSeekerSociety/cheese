@@ -68,17 +68,14 @@
 <script setup lang="ts">
 import type { RouteIcon } from '@/types/title'
 
-import { computed, ref, useSlots } from 'vue'
+import { computed, inject, ref, useSlots } from 'vue'
 import { useDisplay } from 'vuetify'
 import { clamp } from 'lodash-es'
-import { storeToRefs } from 'pinia'
-
-import { useBreadcrumb } from '@/composables/useBreadcrumb'
 
 import { headerCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
-import { useNavigationStore } from '@/stores/navigation'
+import { EMPTY_PAGE_CHROME, PAGE_CHROME } from '@/lib/pageChrome'
 
 interface Props {
   // 自定义图标，不指定则使用面包屑的图标
@@ -116,9 +113,13 @@ const props = withDefaults(defineProps<Props>(), {
 const display = useDisplay()
 
 const bgProgress = ref(0)
-const { breadcrumbItems } = useBreadcrumb()
-const headerStore = useNavigationStore()
-const { actionsComponent, tabsComponent } = storeToRefs(headerStore)
+// 面包屑、页面登记的操作区和页签都由外壳注入（lib/pageChrome.ts）；没注入时为空，
+// 页头只画自己的标题和插槽，所以它能离开路由和 pinia 单独挂起来。
+const {
+  breadcrumbs: breadcrumbItems,
+  actions: actionsComponent,
+  tabs: tabsComponent,
+} = inject(PAGE_CHROME, EMPTY_PAGE_CHROME)
 
 const renderHeader = () => display.mdAndUp.value || props.showOnMobile || !!tabsComponent.value || !!slots.tabs
 

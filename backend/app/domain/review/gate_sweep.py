@@ -2,9 +2,10 @@
 
 ## 为什么需要它
 
-`review/gate.py` 的 `dispatch` 是纯内存的 `asyncio.create_task`，除了一个模块级
-的引用表之外**没有任何持久化**。所以只要那个 task 不再运行，就再没有人会去调
-`finish_gate`，卡永远停在 `pending_gate` 上。已经证实的三条路径：
+退役前的 `review/gate.py` 的 `dispatch` 是纯内存的 `asyncio.create_task`，除了一个
+模块级的引用表之外**没有任何持久化**。那个 task 一旦不再运行，就再没有人会去调
+`finish_gate`，卡永远停在 `pending_gate` 上。已经证实的三条路径（都发生在闸门还在
+跑的时候；#296 之后新卡不会再进这个状态）：
 
 1. **后端重部署 / 重启**（最常见）：task 随进程死。线上实测一张卡因此卡了 2 小时
    44 分，而同期健康的卡从建卡到落定全部在 17–23 秒。
@@ -30,16 +31,14 @@
 永远不会被扫到，而后端连跑几周是常态。周期兜底同时也是唯一能在"卡住 → 被发现"
 之间设上界的东西 —— 上限从"下次重部署"变成一个可配置的间隔。
 
-误杀的防线有两条，都必须在：
-
-* **计时留余量**：`GATE_TIMEOUT_S`（检查自己的硬上限）+ `GATE_STALE_GRACE_S`。
-  工作区准备、排队都在这段余量里。
-* **在跑的不碰**：`gate.in_flight_card_ids()` 精确回答"这张卡的闸门还在本进程里
-  跑吗"。重启后这张表是空的，正好让启动扫底可以放心地把看到的全部判死。
+误杀的防线只剩一条：**计时留余量**——`GATE_TIMEOUT_S`（检查自己的硬上限）+
+`GATE_STALE_GRACE_S`，工作区准备、排队都在这段余量里。闸门退役之后没有任何检查
+会在任何进程里跑，所以扫底不必再问"这张卡是不是还在跑"：过了判死线的历史
+`pending_gate` 行，全都可以判死。
 """
 
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -92,15 +91,13 @@ def stale_before(now: datetime | None = None) -> datetime:
 async def find_abandoned(
     session: AsyncSession,
     *,
-    skip_card_ids: Iterable[uuid.UUID] = (),
     now: datetime | None = None,
 ) -> list[AcceptCard]:
-    """还在 `pending_gate`、早过判死线、且闸门不在本进程里跑的卡。"""
-    skip = frozenset(skip_card_ids)
+    """还在 `pending_gate`、早过判死线的卡。"""
     cards = await AcceptCardRepository(session).list_stale_pending_gate(
         stale_before(now)
     )
-    return [c for c in cards if c.id not in skip]
+    return list(cards)
 
 
 async def condemn(session: AsyncSession, card: AcceptCard) -> None:
@@ -156,12 +153,10 @@ async def sweep(
     session_factory: async_sessionmaker,
     *,
     nudge: Callable[[uuid.UUID, str, str, dict], Awaitable[None]] | None = None,
-    skip_card_ids: Iterable[uuid.UUID] | None = None,
     now: datetime | None = None,
 ) -> dict:
     """扫一轮。返回 `{"condemned": [card_id...], "errors": [...]}`。
 
-    ``skip_card_ids`` 默认取 `gate.in_flight_card_ids()`；测试可以显式传 `()`。
     ``nudge(topic_id, content, event, meta)`` 用来叫醒芝士去重递；不传就只判死不
     叫人（启动早期 runner 还没准备好时用得上）。`content` 是给芝士的完整说明，
     `event` + `meta` 是房间里那一行（平台提示统一契约）。
@@ -169,13 +164,8 @@ async def sweep(
     一张卡一个事务，跟 `review/pr_poll.py::poll_open_prs` 同样的理由：一张卡出错
     不能把另一张卡已经判死的结果回滚掉。
     """
-    from app.domain.review import gate
-
-    if skip_card_ids is None:
-        skip_card_ids = gate.in_flight_card_ids()
-
     async with session_factory() as session:
-        stale = await find_abandoned(session, skip_card_ids=skip_card_ids, now=now)
+        stale = await find_abandoned(session, now=now)
         targets = [(c.id, c.topic_id) for c in stale]
 
     condemned: list[uuid.UUID] = []

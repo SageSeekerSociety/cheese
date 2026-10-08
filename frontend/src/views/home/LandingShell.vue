@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import i18n, { t } from '@/i18n'
 import { docsUrl } from '@/lib/docsSite'
-import AccountService from '@/services/account'
+import { ANONYMOUS_VISITOR, PUBLIC_VISITOR } from '@/lib/publicVisitor'
 
 // The bar and footer shared by the public pages: the homepage for the people who
 // build projects, the solutions page for the schools, companies and research
@@ -14,12 +14,15 @@ import AccountService from '@/services/account'
 
 defineProps<{ page: 'home' | 'solutions' | 'download' }>()
 
-const loggedIn = computed(() => AccountService.loggedIn)
+// 登录状态从外壳注入（lib/publicVisitor.ts），不是自己读 services/account：这只外壳
+// 一旦连着后端，拿它包着用的三个公共页也跟着连上，目录站里就挂不起来。没人注入时按
+// 「没登录」画——公共页本来就是给没登录的人看的。
+const { signedIn } = inject(PUBLIC_VISITOR, ANONYMOUS_VISITOR)
 // `/` sends a signed-in visitor to their work, so the way back to the
 // introduction for them is `/about`, which always shows it.
-const homeHref = computed(() => (loggedIn.value ? '/about' : '/'))
-const entryHref = computed(() => (loggedIn.value ? '/' : '/account/signin'))
-const entryLabel = computed(() => (loggedIn.value ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
+const homeHref = computed(() => (signedIn.value ? '/about' : '/'))
+const entryHref = computed(() => (signedIn.value ? '/' : '/account/signin'))
+const entryLabel = computed(() => (signedIn.value ? t('publicSite.openWorkspace') : t('publicSite.getStarted')))
 
 // On a phone the nav links do not fit beside the lockup, so the same links
 // live behind a disclosure button instead: without it /download and /docs/ are

@@ -25,6 +25,7 @@
     "lint:i18n": "node scripts/i18n-cjk-gate.mjs",
     "lint:scenes": "python3 ../.claude/scripts/scene-ratchet.py",
     "lint:scenes:update": "python3 ../.claude/scripts/scene-ratchet.py --update",
+    "scene:split": "node scripts/scene-split.mjs",
     "prettier": "prettier --write \"**/*.{vue,js,jsx,ts,tsx}\"",
     "test": "vitest"
   },

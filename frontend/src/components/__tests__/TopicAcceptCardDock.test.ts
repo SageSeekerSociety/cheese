@@ -4,6 +4,7 @@
  * 这是什么、等谁、「审阅」；整张卡点开才有。这一份钉的就是这三件事，以及任务卡
  * 详情里（不贴底）整张卡照旧摊开。
  */
+import type { Plugin } from 'vue'
 import type { AcceptCard } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -28,9 +29,26 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => null }))
 import TopicAcceptCard from '../TopicAcceptCard.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
+import { USER_REF_DIRECTORY } from '@/lib/userRefDirectory'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 let pinia: Pinia
+
+// 句子里的人名 chip（「待 @某人 审阅」）的名字和去处来自外壳注入的目录
+// （lib/userRefDirectory.ts；外壳那份在 composables/useUserRefDirectory.ts）。这里
+// 没有外壳、也没有路由，而这一份要断的正是**显示名**，所以注入一个只查名册的替身：
+// 名字同外壳一样查 workspace store 的成员，去处留空（没有路由，点了也去不了）。
+const directory: Plugin = {
+  install(app) {
+    const store = useWorkspaceStore()
+    app.provide(USER_REF_DIRECTORY, {
+      name: (handle: string) => memberName(store.members.find((m) => m.user_handle === handle)) || null,
+      target: () => null,
+      navigate: () => {},
+    })
+  },
+}
 
 let seq = 0
 function card(over: Partial<AcceptCard>): AcceptCard {
@@ -86,7 +104,7 @@ async function mountWith(cards: AcceptCard[], docked: boolean, topicStatus = 'ac
   const vuetify = createVuetify({ components, directives })
   const utils = render(TopicAcceptCard, {
     props: { topicId: 't1', topicStatus, docked },
-    global: { plugins: [vuetify, i18n, pinia] },
+    global: { plugins: [vuetify, i18n, pinia, directory] },
   })
   await flush()
   return utils
