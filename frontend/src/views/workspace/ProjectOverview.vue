@@ -61,10 +61,11 @@ const recent = useCachedResource(
     }
   }
 )
-// 一次网络抖动不该让「谁在做什么」变空：读失败时留着上一次的。
+// 一次网络抖动不该让「谁在做什么」变空：读失败时留着上一次的。只要还在进行的：总览画的
+// 就是这些，和侧栏读的是同一份。
 const work = useCachedResource(
-  () => `project-tasks:${props.projectId}`,
-  async (key) => (await readProjectTasks(key.slice('project-tasks:'.length), { maxAgeMs: 2_000 })).data
+  () => `project-open-tasks:${props.projectId}`,
+  async (key) => (await readProjectTasks(key.slice('project-open-tasks:'.length), { maxAgeMs: 2_000, open: true })).data
 )
 const overviewText = computed(() => overview.data.value ?? null)
 const progress = computed<ProgressItem[] | null>(() => recent.data.value ?? null)
