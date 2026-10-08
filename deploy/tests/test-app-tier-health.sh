@@ -762,7 +762,7 @@ test_unready_backend_without_slots_still_rolls_back() {
   grep -Fq 'HEALTH CHECK FAILED' "$run_dir/release.log" \
     || { cat "$run_dir/release.log"; fail "a failed compose up skipped the health check"; }
   grep -Fqx \
-    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha' \
+    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha APP_RELEASE=' \
     "$docker_log" || fail "a failed compose up did not roll back to the previous images"
   # Only the release's own `up` fails (FAIL_SUFFIX); the rollback's longer one
   # must have been issued and, in the fake, succeeded.
@@ -1768,6 +1768,7 @@ case "$CASE" in
   local-images) test_local_app_images_skip_registry_pull ;;
   local-images-missing) test_local_app_images_must_exist ;;
   rollback-images) test_rollback_restores_exact_previous_images ;;
+  unready-rollback) test_unready_backend_without_slots_still_rolls_back ;;
   ownership-order) test_ownership_handover_is_the_last_step_before_up ;;
   ownership-rollback) test_rollback_hands_the_mounts_back ;;
   ownership-rollback-noop) test_rollback_leaves_an_already_migrated_box_alone ;;
