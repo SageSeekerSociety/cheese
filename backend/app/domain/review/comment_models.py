@@ -58,6 +58,10 @@ class ReviewComment(UuidPk, Timestamps, Base):
     #: Those lines' text when the comment was written: line numbers move between
     #: rounds, and this is what finds the comment's place in the next version.
     line_text: Mapped[str] = mapped_column(Text, default="", server_default="")
+    #: Where the comment points, in the file's own terms: `L12-L14` for lines,
+    #: and for files without lines `p3` (a page), `s2` (a slide) or `汇总!C5`
+    #: (a cell). See `comment_place`.
+    place: Mapped[str] = mapped_column(String(255), default="", server_default="")
     #: The commit the lines were read from.
     commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     body: Mapped[str] = mapped_column(Text, default="", server_default="")

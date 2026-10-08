@@ -20,6 +20,7 @@ from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
+from app.domain.review import document_compare
 from app.domain.review.comments import ReviewCommentService, describe
 from app.domain.review.schemas import ReviewCommentEdit, ReviewCommentIn
 from app.domain.topic.services import TopicService
@@ -47,6 +48,17 @@ async def list_review_comments(
     return ok({"comments": [describe(row, anchor) for row in rows]})
 
 
+@router.get("/topics/{task_id}/review-comparison")
+async def review_comparison(
+    task_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """A Word document, workbook or deck in the task, compared with the version
+    it is read against: paragraphs, cells or slides. `comparison` is null for
+    any other file, or when a version cannot be read."""
+    _place, _actor, task = await task_conversation(db, resolver, task_id)
+    return ok({"comparison": await document_compare.comparison(db, task, path)})
+
+
 @router.post("/topics/{task_id}/review-comments")
 async def write_review_comment(
     task_id: uuid.UUID, body: ReviewCommentIn, db: DbSession, resolver: ActorResolverDep
@@ -60,6 +72,7 @@ async def write_review_comment(
         line_start=body.line_start,
         line_end=body.line_end,
         line_text=body.line_text,
+        place=body.place,
         commit_sha=body.commit_sha,
         body=body.body,
         suggestion=body.suggestion,

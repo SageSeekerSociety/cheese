@@ -18,12 +18,14 @@ from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.deps import get_broker
+from app.api.deps import get_broker, get_chat_service
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.agent.chat import ChatService
+from app.domain.agent.file_edits import announce_editor_save
 from app.domain.block.shown import add_shown_block
 from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
@@ -334,6 +336,7 @@ async def editor_saves_file(
     link: str,
     request: Request,
     db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     authorization: Annotated[str | None, Header()] = None,
 ) -> JSONResponse:
     """The editor telling us a document changed: 2 when the last person closed
@@ -363,6 +366,7 @@ async def editor_saves_file(
         return JSONResponse({"error": 1})
     users = payload.get("users") or []
     author = str(users[0]) if users else target.handle
+    aside: str | None = None
     if await room_files.saved_by_session(
         db, target.room_id, target.path, target.key, data
     ):
@@ -417,5 +421,13 @@ async def editor_saves_file(
             str(place.room_id),
             {"type": "assistant_block", "block": shown.model_dump(mode="json")},
         )
+    # The AI teammate may hold the version it read; tell it before its next
+    # step, the same as a person's save of a task file.
+    said = await announce_editor_save(
+        db, room_id=target.room_id, who=author, path=target.path, aside=aside
+    )
     await db.commit()
+    if said is not None:
+        line, told = said
+        await chat.notify_running_turn(target.room_id, told, blocks=[line.id])
     return JSONResponse({"error": 0})
