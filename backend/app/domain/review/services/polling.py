@@ -23,7 +23,6 @@ from app.domain.review.models import (
 )
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import poll_claim
-from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
@@ -480,15 +479,17 @@ async def _mark_task_merged(
 ) -> None:
     if card.task_id is None:
         return
+    from app.domain.review.task_landing import delivery_landed
+
     task = await TaskService(self._session).require_in_room(card.topic_id, card.task_id)
-    task.status = TaskStatus.closed
-    task.closed_at = task.closed_at or datetime.now(UTC)
-    after_close(self._session, task.room_id)
-    task.accepted_at = task.accepted_at or datetime.now(UTC)
-    task.accepted_by = task.accepted_by or card.decided_by
-    if delivered_head and not task.delivered_head:
-        task.delivered_head = delivered_head[:64]
-    await self._session.flush()
+    await delivery_landed(
+        self._session,
+        task,
+        by=card.decided_by,
+        head=delivered_head,
+        pr_number=card.pr_number,
+        completes=card.completes_task,
+    )
 
 
 async def _app_pr_client(self: pkg.AcceptService, topic: Topic):  # noqa: ANN202 — GitHubPRClient

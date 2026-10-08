@@ -17,6 +17,7 @@ without a reason fails too.
 """
 
 import ast
+import functools
 import io
 import re
 import tokenize
@@ -27,6 +28,8 @@ APP = ROOT / "backend/app"
 
 CJK = re.compile(r"[　-〿㐀-䶿一-鿿豈-﫿＀-￯]")
 EXEMPT = re.compile(r"#\s*i18n-exempt\b(?P<rest>.*)")
+#: The escapes that can spell a CJK character inside a string literal.
+ESCAPE = re.compile(r"\\(u|U|N\{)")
 
 #: Calls whose arguments are a sentence's parameters, not its text.
 SAYING = {"say", "listing"}
@@ -123,7 +126,10 @@ def scan(paths: list[Path]) -> tuple[list[str], list[str]]:
     violations, unexplained = [], []
     for path, tree in trees.items():
         where = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
-        comments = _comments(sources[path])
+        source = sources[path]
+        # Tokenizing is the costly half of reading a file, and only a file that
+        # spells the marker can hold an exemption.
+        comments = _comments(source) if "i18n-exempt" in source else {}
         for line, (comment, _) in comments.items():
             exempt = EXEMPT.search(comment)
             if exempt and not exempt["rest"].lstrip(" :").strip():
@@ -134,7 +140,11 @@ def scan(paths: list[Path]) -> tuple[list[str], list[str]]:
             for line, (comment, alone) in comments.items()
             if EXEMPT.search(comment)
         }
-        lines = sources[path].splitlines()
+        # Chinese reaches a literal only by being written in the file or by an
+        # escape, so a file with neither cannot hold a violation.
+        if not CJK.search(source) and not ESCAPE.search(source):
+            continue
+        lines = source.splitlines()
         for call in _constructors(tree, errors):
             arguments = [*call.args, *(k.value for k in call.keywords)]
             for hit in (h for a in arguments for h in _cjk_nodes(a)):
@@ -146,17 +156,19 @@ def scan(paths: list[Path]) -> tuple[list[str], list[str]]:
     return sorted(set(violations)), unexplained
 
 
-def _app_files() -> list[Path]:
-    return sorted(APP.rglob("*.py"))
+@functools.cache
+def _app_scan() -> tuple[list[str], list[str]]:
+    """The scan of the whole app, once per process for the two tests below."""
+    return scan(sorted(APP.rglob("*.py")))
 
 
 def test_no_error_is_raised_with_chinese_written_into_it():
-    violations, _ = scan(_app_files())
+    violations, _ = _app_scan()
     assert violations == [], HOW_TO_FIX + "\n" + "\n".join(violations)
 
 
 def test_every_exemption_says_why():
-    _, unexplained = scan(_app_files())
+    _, unexplained = _app_scan()
     assert unexplained == [], (
         "An i18n exemption needs its reason on the same line: "
         "'# i18n-exempt: <why this text is not shown to a person>'.\n"

@@ -228,6 +228,30 @@ class RoomExecutor:
                             }
                         }
                     )
+                latest = (
+                    f"/projects/{executor.project}/git/tasks/{executor.task}"
+                    "/snapshots/latest"
+                )
+                if self.path == latest:
+                    assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
+                    if not executor.snapshots:
+                        # The platform's answer for a task never backed up.
+                        body = b'{"error": {"message": "no backup"}}'
+                        self.send_response(404)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return None
+                    row = list(executor.snapshots.values())[-1]
+                    return self.reply(
+                        {
+                            "data": {
+                                key: row[key]
+                                for key in ("id", "snapshot_sha", "head_sha", "digest")
+                            }
+                        }
+                    )
                 return super().do_GET()
 
             def do_POST(self):

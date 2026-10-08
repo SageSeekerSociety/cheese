@@ -3177,21 +3177,21 @@ def test_a_correction_never_touches_the_delivery_claim(client, sweeping):
 def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(
     client, sweeping, monkeypatch
 ):
-    """巡检**手里攥着树的行锁**的那一刻，采纳在 GitHub 上把这批活合掉了。
+    """巡检拿到树的行锁时，这批活在 GitHub 上可能已经被合并了。
 
-    这是真实的时序，不是「先把 DB 标 merged 再扫」：合并先发生（merge API 返回
-    成功），树的行才被标 merged —— 而那次 UPDATE 正卡在巡检手上的锁后面。所以
-    巡检看到的 `status` 仍然是 `open`，光靠行锁它会给一条**已经被 squash 进
-    main** 的分支开一个 PR，一个谁也合不掉的 PR。
+    合并先发生（merge API 返回成功），树的行才被标 merged，所以巡检在锁里读到
+    的 `status` 仍然是 `open`。光看状态，它会给一条已经被 squash 进 main 的分支
+    开一个谁也合并不了的 PR。
 
-    挡住它的不是锁，是「这一批已经有人递过卡了」：卡就是交付，卡一存在 PR 就归
-    卡管，而**没有任何一条合并路径不经过卡**（正常采纳、绿了自动合、人工放行、
-    以及别人在 GitHub 上直接合掉之后平台补记的那条）。
+    挡住它的是「这一批已经有人递过卡了」：卡就是交付，卡一存在 PR 就归卡管，而
+    没有任何一条合并路径不经过卡（正常采纳、绿了自动合并、人工放行、以及别人在
+    GitHub 上直接合并之后平台补记的那条）。所以这里不用真的去合并：一张已递的卡、
+    一棵仍是 `open` 的树、一条领先 main 的分支，就是巡检在那个时刻看到的全部。
+
+    断言整次巡检一条都没失败：巡检把单条任务上的异常记成 failed 然后继续，所以
+    只看 opened 为 0，巡检自己出错时也会通过。
     """
-    import threading
-
     from app.domain.review import pr_publish
-    from app.domain.room_task.services import TaskService
 
     async def _looks_ahead(_session, _task_id):
         return True
@@ -3206,37 +3206,9 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(
     head_sha = _give_card_a_pr(client, sweeping, tid, cid, 7)
     fake.check_state_by_sha[head_sha] = ("success", "全绿")
 
-    claimed = threading.Event()
-    merged = threading.Event()
-    original_claim = TaskService.claim_for_pr
+    swept = _sweep(client)
 
-    async def _claim_then_wait(self, tree_id):
-        tree = await original_claim(self, tree_id)
-        claimed.set()  # 行锁已经在手上（拿到行的那条路径上）
-        assert merged.wait(20), "采纳那边没有走到合并"
-        return tree
-
-    original_merge = type(fake).merge_pull_request
-
-    async def _merge_then_release(self, **kw):
-        result = await original_merge(self, **kw)
-        merged.set()  # GitHub 已经合了；平台还没来得及标这棵树
-        return result
-
-    TaskService.claim_for_pr = _claim_then_wait
-    type(fake).merge_pull_request = _merge_then_release
-    swept: dict = {}
-    try:
-        worker = threading.Thread(target=lambda: swept.update(_sweep(client)))
-        worker.start()
-        assert claimed.wait(20), "巡检没有走到取锁那一步"
-        assert _accept(client, cid).status_code == 200
-        worker.join(30)
-    finally:
-        TaskService.claim_for_pr = original_claim
-        type(fake).merge_pull_request = original_merge
-
-    assert swept.get("opened") == 0, swept
+    assert swept == {"opened": 0, "skipped": 1, "failed": 0}, swept
     assert [o for o in sweeping["opened"] if o["draft"]] == []
 
 

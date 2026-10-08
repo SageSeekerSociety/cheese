@@ -22,7 +22,11 @@ from app.domain.integration.service import seal, unseal
 from app.domain.library import service as library
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 OWNER = "user-1"
 #: The platform administrator of these tests. Handle-only: the admin page's gate
@@ -181,6 +185,19 @@ def test_a_draft_waits_for_the_owner_and_what_is_sent_is_what_was_drafted(
 
     again = client.post(f"/me/mail-drafts/{draft['id']}/send", headers=person)
     assert again.status_code >= 400 and len(mailbox.sent) == 1
+
+
+def test_the_room_line_names_the_teammate_that_drafted(client, mailbox):
+    """The line under a draft names whoever wrote it, the way a mention chip
+    does, so a teammate called Nova is not announced as 「芝士」."""
+    person, project, room = _setup(client)
+    row = _connect(client, person, [project])
+    seat = room_agent_seat(client, room)
+
+    assert _draft(client, row, room).status_code == 200
+    [card] = _room_events(client, room, person, "mail_drafted")
+    assert card["content"].startswith(f"<@{seat}> "), card["content"]
+    assert "芝士" not in card["content"]
 
 
 def _room_events(client, room, person, event_type):

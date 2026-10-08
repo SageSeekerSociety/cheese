@@ -37,6 +37,7 @@ const props = defineProps<{
   connected?: boolean
   start: (reviewer: string | null) => Promise<void>
   close: (conclusion: string) => Promise<boolean>
+  reopen: () => Promise<boolean>
   handOver: (owner: string) => Promise<boolean>
   rename: (title: string) => Promise<boolean>
   setCollaborators: (handles: string[]) => Promise<boolean>
@@ -274,6 +275,7 @@ async function confirmHandOver() {
             <v-list-item v-if="otherPeople.length" :title="t('work.task.handOver')" @click="handOverOpen = true" />
             <v-list-item :title="t('work.task.close')" @click="closeOpen = true" />
           </template>
+          <v-list-item v-else-if="isOwner" :title="t('work.task.reopen')" data-testid="task-reopen" @click="reopen()" />
         </v-list>
       </v-menu>
     </div>

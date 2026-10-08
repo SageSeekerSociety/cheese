@@ -51,6 +51,8 @@ class RequiredCITest(unittest.TestCase):
                 ".github/workflows/build.yml",
                 ".github/scripts/plan-image-builds.sh",
                 ".github/scripts/ensure-apt.sh",
+                ".claude/scripts/pr-watch.sh",
+                ".github/workflows/desktop.yml",
                 ".github/scripts/test-plan-image-builds.sh",
                 "backend/scripts/gateway_supply_probe.py",
                 "backend/scripts/test_gateway_supply_probe.py",
@@ -131,6 +133,19 @@ class RequiredCITest(unittest.TestCase):
         selected = gate.select(["backend/app/api/rooms.py"])
         self.assertTrue(selected["backend"] and selected["e2e"])
         self.assertFalse(selected["frontend"])
+
+    def test_frontend_ratchet_scripts_run_the_frontend_suite(self):
+        # lint:catalog and lint:scenes run these scripts against the real tree
+        # only in the frontend suite; guards alone never runs them there.
+        for path in (
+            ".claude/scripts/frontend_grade.py",
+            ".claude/scripts/catalog-ratchet.py",
+            ".claude/scripts/scene-ratchet.py",
+            ".claude/scripts/ratchet_report.py",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["frontend"])
+        self.assertFalse(gate.select([".claude/scripts/check.sh"])["frontend"])
 
     def test_combined_merge_group_checks_every_changed_area(self):
         selected = gate.select(["frontend/src/main.ts", "cli/main.go"])

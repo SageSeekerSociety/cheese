@@ -178,7 +178,7 @@ async def _announce_filed(
 
 
 async def _announce_new_artifact(
-    session: AsyncSession, topic: Topic, name: str
+    session: AsyncSession, topic: Topic, name: str, *, task_id: uuid.UUID
 ) -> None:
     """清单上多出一项 —— 在房间里说一声 (#1085 结论三)。
 
@@ -199,6 +199,8 @@ async def _announce_new_artifact(
     await announce(
         session,
         place_id=topic.id,
+        # Said in the task that declared it, beside its card.
+        task_id=task_id,
         content=say("artifactDeclared", name=name),
         meta=notice(
             EVENT_ARTIFACT_DECLARED,

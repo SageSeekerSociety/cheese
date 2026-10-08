@@ -187,8 +187,6 @@ export interface Block {
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
-  // 这一块转成了哪个任务（频道里的「转为任务」走这条）。两者只会有一个非空。
-  upgraded_to_task_id?: string | null
   created_at: string
 }
 
@@ -261,7 +259,7 @@ export interface RoomTask {
   pr_number?: number | null
   pr_url?: string | null
   delivered_head?: string | null
-  // 采纳会关闭任务；单独关闭任务不代表已交付。
+  // 最近一次采纳。最后一步采纳后任务关闭；还开着的任务可能已经采纳过前几步。
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
@@ -353,6 +351,7 @@ export type WsServerFrame =
   // reported its model); the same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
   | import('./types/live').LiveFrame
+  | import('./types/roomSocket').RoomStateFrame
   | import('./types/threads').ThreadActivityFrame
 
 // An uploaded worktree file the message carries. `path` comes from
@@ -362,9 +361,7 @@ export interface ChatAttachment {
   mime: string
 }
 
-// The client sends only the liveness probe and `typing` (I am composing here;
-// `active: false` = stopped; who is the socket's credential) — a message is a POST.
-export type WsClientMessage = { type: 'ping' } | { type: 'typing'; active?: boolean }
+export type { WsClientMessage } from './types/roomSocket'
 
 // POST /topics/{id}/messages. 请求体上没有「叫不叫芝士」这一位：这条消息点了谁的名，
 // 由后端从正文里的 @ 解析（私聊是两席的房间，说话就是对着对方说的）。前端要叫它，
@@ -784,6 +781,7 @@ export interface AcceptCard {
   // 这一版交出去的是什么：一份文件（`filename`，字节在递卡那一刻落了快照）、一个
   // 地址（`url`），或者这次合并本身（`merge`，没有可下载的东西）。
   deliverable: { kind: 'file' | 'link' | 'merge'; filename: string | null; url: string | null } | null
+  completes_task?: boolean // 这次交付是不是任务的最后一步；不是的话采纳后任务接着做下一步
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).

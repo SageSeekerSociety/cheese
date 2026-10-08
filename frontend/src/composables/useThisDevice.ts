@@ -2,7 +2,7 @@
 // 机主自己的 Claude Code 登录了没有），和能对它做的事。接入完成那一步和「设置 → 这台设备」
 // 共用这一份。
 import type { MyDevice, MyTeam } from '@/cx_types'
-import type { ClaudeCodeLogin } from '@/types/ownAgents'
+import type { ClaudeCodeLogin, ModelServiceInput } from '@/types/ownAgents'
 
 import { computed, ref } from 'vue'
 
@@ -18,7 +18,7 @@ import { checkClaudeCode } from '@/api/ownAgents'
 import { t } from '@/i18n'
 import { desktopBridge, markAsked } from '@/lib/desktop'
 import accountService from '@/services/account'
-import { claudeLoginOf } from '@/types/ownAgents'
+import { claudeLoginOf, modelServiceOf } from '@/types/ownAgents'
 
 export type ClaudeLoginState = 'idle' | 'preparing' | 'browser'
 
@@ -31,6 +31,8 @@ export function useThisDevice() {
   const claudeLogin = ref<ClaudeLoginState>('idle')
 
   const claudeCode = computed<ClaudeCodeLogin | null>(() => (device.value ? claudeLoginOf(device.value) : null))
+  /** The model a model service is called with, when Claude Code here uses one. */
+  const claudeService = computed(() => modelServiceOf(claudeCode.value))
 
   function fail(e: unknown, fallback: string) {
     error.value = e instanceof Error ? e.message : t(fallback)
@@ -104,6 +106,22 @@ export function useThisDevice() {
     }
   }
 
+  /** Points this computer's Claude Code at another model service; the key stays on it. */
+  async function useModelService(service: ModelServiceInput) {
+    if (!bridge?.claudeModelService || claudeLogin.value !== 'idle') return
+    error.value = null
+    claudeLogin.value = 'preparing'
+    try {
+      await bridge.claudeModelService(service, (step) => (claudeLogin.value = step))
+      await refreshClaudeCode()
+    } catch (e) {
+      const why = e as { step?: string }
+      if (why.step !== 'cancelled') error.value = t('account.thisDevice.modelServiceFailed')
+    } finally {
+      claudeLogin.value = 'idle'
+    }
+  }
+
   async function cancelClaudeCodeLogin() {
     await bridge?.cancelClaudeLogin()
   }
@@ -134,16 +152,20 @@ export function useThisDevice() {
 
   return {
     available: bridge !== null,
+    /** Whether this app can point Claude Code at another model service. */
+    canUseModelService: !!bridge?.claudeModelService,
     device,
     teams,
     loading,
     error,
     claudeCode,
+    claudeService,
     claudeLogin,
     load,
     rename,
     setTeams,
     logInClaudeCode,
+    useModelService,
     cancelClaudeCodeLogin,
     logOutClaudeCode,
     disconnect,

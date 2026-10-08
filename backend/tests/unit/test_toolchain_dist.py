@@ -161,8 +161,15 @@ def test_windows_is_served_the_tools_it_places_and_its_own_runtime():
         assert toolchain.resolve(tool, "windows-x64"), f"{tool} has no windows-x64"
     for tool in WINDOWS_RUNTIME:
         assert toolchain.resolve(tool, "windows-x64"), tool
-        for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"):
-            assert toolchain.resolve(tool, platform) is None, (tool, platform)
+    for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"):
+        assert toolchain.resolve("git", platform) is None, platform
+
+
+def test_a_mac_or_linux_connector_can_get_a_python_new_enough_for_sessions():
+    """Every Mac's python3 is 3.9, older than the session's runner takes; the
+    connector fetches the server's instead (`cli/internal/devenv`)."""
+    for platform in ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"):
+        assert toolchain.resolve("python", platform), platform
 
 
 def test_the_windows_runtime_is_never_placed_as_a_document_tool():

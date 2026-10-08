@@ -1,5 +1,5 @@
 /**
- * 平台在这段对话里运行时记下的事（运行记录）：排队、环境准备与休眠、AI 服务重试、
+ * 平台在这段对话里运行时记下的事（运行记录）：排队、环境准备与释放、AI 服务重试、
  * 整理上下文、等机器。它们不进对话，只走 `run_record` 帧：现场把它们排在步骤之间，
  * 输入框上方那一行从这里读队友此刻在等什么。
  *
@@ -61,6 +61,14 @@ export function useRunRecords() {
     begun.value = new Set()
   }
 
+  /**
+   * 重连后：排队中的那几轮核对不了（`room_state` 只说在跑的，说不出断线期间是不是已经
+   * 跑完了），不再说它们在排队。还在排的，开工时照常来 `turn_started`。
+   */
+  function forgetWaiting() {
+    for (const record of waiting.value.values()) if (record.turn_id) turnBegan(record.turn_id)
+  }
+
   /** 每位还没开工、在排队的队友那一行。同一位只算最近的那一轮。 */
   const waiting = computed(() => {
     const latest = new Map<string, Block>()
@@ -87,5 +95,5 @@ export function useRunRecords() {
     })
   }
 
-  return { records, receive, turnBegan, reset, waitingLines }
+  return { records, receive, turnBegan, reset, forgetWaiting, waitingLines }
 }

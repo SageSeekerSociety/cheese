@@ -199,31 +199,24 @@ def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, task)
     assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
 
 
-def test_a_task_is_proposed_and_a_person_creates_it(client, room):
-    """芝士不能自己创建任务：`cheese_task` 在房间里放一张提议卡，点了创建的人才是
-    负责人。提议用不到机器。"""
+def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
+    """`cheese_task` creates the task for the person who asked for it. Creating
+    one needs no machine."""
     project, topic = room
     host = BackendHost(client, project, topic)
 
     said = cheese.run_platform_tool(
-        "cheese_task", {"title": "数据清洗", "summary": "按新口径"}, host
+        "cheese_task",
+        {"title": "数据清洗", "summary": "按新口径", "owner": "alice", "start": False},
+        host,
     )
 
     assert "数据清洗" in said
     assert host.synced == []
-    tasks = client.get(f"/topics/{topic}/tasks").json()["data"]["data"]
-    assert tasks == []
-    [proposal] = client.get(
-        f"/topics/{topic}/task-proposals", headers=session_auth_headers("alice")
-    ).json()["data"]
-
-    created = client.post(
-        f"/topics/{topic}/task-proposals/{proposal['id']}/accept",
-        headers=session_auth_headers("alice"),
-    )
-    assert created.status_code == 200, created.text
-    assert created.json()["data"]["title"] == "数据清洗"
-    assert created.json()["data"]["owner_handle"] == "alice"
+    [task] = client.get(f"/topics/{topic}/tasks").json()["data"]["data"]
+    assert task["title"] == "数据清洗"
+    assert task["owner_handle"] == "alice"
+    assert task["started_at"] is None
 
 
 @pytest.mark.parametrize(

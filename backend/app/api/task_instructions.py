@@ -12,10 +12,6 @@ from app.domain.agent.chat import ChatService
 #: How many messages before the one a task comes from its agent is shown: what
 #: was being talked about when it was said.
 SOURCE_CONTEXT_MESSAGES = 8
-#: How many room messages before a proposal its task's agent is shown. A
-#: proposal closes a discussion rather than quoting one line of it, and what
-#: was decided along the way is the document's to keep.
-PROPOSAL_CONTEXT_MESSAGES = 20
 #: How many of a 支线's replies a task made from it is handed. A 支线 is the
 #: whole discussion, so all of it, up to where a prompt would be mostly history.
 THREAD_SOURCE_MESSAGES = 60
@@ -59,22 +55,13 @@ async def thread_text(db, thread, *, root: bool = True) -> str:
     return "\n".join(line for line in lines if line)
 
 
-async def proposal_source_text(db, proposal) -> str:
-    """What a proposed task comes from: the proposal, and the discussion that
-    led to it — the whole 支线 it was proposed in, or the main line's last
-    messages."""
-    from app.domain.thread.models import Thread
-
-    thread = await db.get(Thread, proposal.conversation_id)
-    said = f"[{proposal.proposed_by}] 提议：{proposal.summary}"
-    if thread is not None:
-        return f"{said}\n\n提议之前的讨论：\n{await thread_text(db, thread)}"
-    earlier = await BlockRepository(db).messages_before(
-        proposal.conversation_id, proposal.created_at, limit=PROPOSAL_CONTEXT_MESSAGES
-    )
-    if not earlier:
+def teammate_source_text(teammate: str, summary: str, discussion) -> str:
+    """What a task an AI teammate created comes from: what it wrote the task
+    is for, and the discussion it was in."""
+    said = f"[{teammate}] 创建任务时写的：{summary}"
+    if not discussion:
         return said
-    return f"{said}\n\n提议之前的讨论：\n{_lines(earlier)}"
+    return f"{said}\n\n创建之前的讨论：\n{_lines(discussion)}"
 
 
 async def tell_task(db, task, content: str, *, opening: bool = False) -> None:

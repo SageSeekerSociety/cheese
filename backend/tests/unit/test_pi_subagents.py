@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.harness.driven.runner import SessionStart
+from app.domain.agent.harness.pi import subagents
 from app.domain.agent.harness.pi.events import Assembler
 from app.domain.agent.harness.pi.launch import arguments, extension, provider
 from app.domain.agent.harness.pi.runner import Runner
@@ -47,6 +48,31 @@ from tests.support.completions_fixture import Completions
 from tests.support.room_machine import room_machine
 
 PARENT = "parent-model"
+
+
+@pytest.fixture(autouse=True)
+def _short_stop_grace(monkeypatch):
+    """A subagent stopped while its model request is still open does not answer
+    pi's `abort`, so stopping it waits out the grace before ending it anyway.
+    The order is what these tests read; the length of the grace is not."""
+    monkeypatch.setattr(subagents, "STOP_GRACE_S", 0.5)
+
+
+def held_bash() -> dict:
+    """A command that runs until the test lets it go (`GO` in the room's
+    checkout, where the command runs), so a subagent is still at work when its
+    parent acts on it without the test waiting out a timer. It gives up on its
+    own after 30 s."""
+    return {
+        "tool": "bash",
+        "arguments": {
+            "command": "for i in $(seq 600); do [ -e GO ] && break; sleep 0.05; done"
+        },
+    }
+
+
+def let_go(tmp_path: Path) -> None:
+    (tmp_path / "machine/room/GO").touch()
 
 
 class Admission:
@@ -365,9 +391,12 @@ async def test_a_parent_tells_a_running_subagent_more_and_it_does_that(tmp_path)
             if "只改后端" in said(body):
                 return {"text": "改成只动后端了"}
             if "tool_call_id" not in said(body):
-                return {"tool": "bash", "arguments": {"command": "sleep 4"}}
+                return held_bash()
             return {"text": "按原计划做完了"}
         told = said(body)
+        if "已发给" in told:
+            # The message is with the subagent, which is still at work.
+            let_go(tmp_path)
         if "tool_call_id" not in told:
             return {
                 "tool": "Task",
@@ -404,9 +433,12 @@ async def test_stopping_one_subagent_leaves_its_sibling_running(tmp_path):
         if body["model"] != PARENT:
             first = text_of((body.get("messages") or [{}, {}])[1])
             if "tool_call_id" not in said(body):
-                return {"tool": "bash", "arguments": {"command": "sleep 3"}}
+                return held_bash()
             return {"text": "写完用例" if "写用例" in first else "查完分页"}
         told = said(body)
+        if "已停下" in told:
+            # One is stopped while its sibling is still at work.
+            let_go(tmp_path)
         if told.count("已在后台起了分身") == 0:
             return {
                 "tool": "Task",

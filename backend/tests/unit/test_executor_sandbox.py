@@ -173,10 +173,12 @@ def test_an_executor_from_before_stop_requests_is_still_stopped(tmp_path, throug
         process.kill()
 
 
-def test_a_stop_signals_no_process_but_the_rooms_own_service(tmp_path):
+def test_a_stop_signals_no_process_but_the_rooms_own_service(tmp_path, monkeypatch):
     """What answers on a room's socket is not proof of who is behind it: a
     sandboxed room can put anything there. A pid it names is signalled only
     when that process is the service for this room's state."""
+    # The service is left running on purpose, so the stop would wait all its time.
+    monkeypatch.setenv("CHEESE_EXECUTOR_STOP_TRIES", "5")
     bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     state, process = _previous_executor(tmp_path, named=bystander.pid)
     try:
@@ -365,10 +367,10 @@ def _run_git(*args, cwd):
 def test_git_in_a_sandboxed_rooms_checkout_runs_in_a_sandbox_too(
     tmp_path, monkeypatch, sandbox
 ):
-    """Git runs what a checkout's config names — `core.fsmonitor` on every
-    `git status` — and a sandboxed room writes its checkout's config. So the
-    teardown's own git, in that room's checkouts, sees none of the owner's
-    files."""
+    """Git runs what a repository's config names — `core.fsmonitor` on every
+    `git status` — and a sandboxed room writes its repositories' config. So the
+    teardown's own git in that room (`cleanup.git`, which prunes the room's
+    repositories) sees none of the owner's files."""
     monkeypatch.setenv("HOME", str(tmp_path))
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = tmp_path / ".cheese/home" / project / resource
@@ -387,9 +389,7 @@ def test_git_in_a_sandboxed_rooms_checkout_runs_in_a_sandbox_too(
         marker.parent.mkdir(parents=True)
         marker.write_text(str(tmp_path / "release"))
 
-    with pytest.raises(RuntimeError):
-        # The commit is on no remote; what matters is what ran on the way.
-        cleanup.check_resource_publication(home, home.parent / "absent")
+    cleanup.git(["status", "--porcelain"], checkout, home)
 
     assert escaped.exists() is not sandbox
 

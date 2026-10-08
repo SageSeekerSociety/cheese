@@ -10,13 +10,11 @@ import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useSkillProposals } from './useSkillProposals'
-import { useTaskProposals } from './useTaskProposals'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
-import TaskProposalCard from '@/components/room/TaskProposalCard.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
@@ -85,7 +83,7 @@ const chatRef = ref<{
   send: (content: string, summon: boolean, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
-const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
+const acceptRef = ref<{ reload: () => Promise<void> } | null>(null)
 const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
 const router = useRouter()
@@ -119,26 +117,15 @@ async function join() {
     joining.value = false
   }
 }
-// AI 队友提议的任务（`useTaskProposals`）：创建好就去任务页。
-const {
-  proposals,
-  deciding,
-  load: loadProposals,
-  decide: decideProposal,
-} = useTaskProposals(conversationId, (id) => emit('open-card', id))
-function proposerName(handle: string): string {
-  return props.members.find((m) => m.user_handle === handle)?.name || store.agentName
-}
 
 const connected = computed(() => !!chatRef.value?.connected)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
 defineExpose({
   connected,
-  reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
+  reloadAccept: () => acceptRef.value?.reload(),
   reloadFeedback: () => feedbackRef.value?.reload(),
   reloadSkills: () => skills.load(),
-  reloadProposals: () => loadProposals(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
   // submitQuestion 在正文点名。
   say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
@@ -211,14 +198,6 @@ defineExpose({
           @save="skills.save"
           @decline="skills.decline"
           @open="openSkill"
-        />
-        <TaskProposalCard
-          v-for="proposal in proposals"
-          :key="proposal.id"
-          :proposal="proposal"
-          :proposer="proposerName(proposal.proposed_by)"
-          :busy="deciding === proposal.id"
-          @decide="decideProposal(proposal, $event)"
         />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑

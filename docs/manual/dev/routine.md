@@ -68,7 +68,7 @@ covers:
 
 **一次执行是主线上的一条消息。** `_fire` 先在规则所在频道的主线落一条 AI 队友署名、正文为空的消息，`RoutineRun.message_id` 记下它；再用 `thread.services.answered_in` 决定在哪里答：频道主线上的消息在它的支线里，私聊没有支线，就在私聊里。「开始执行」那一行和投递都落在那里。消息下面那一行（规则名、运行中 / 未能执行、查看这次运行）由 `routine/reads.runs_under` 在频道翻页时挂上，前端是 `RoutineRunLine`。规则的主人算这条支线的参与者（`thread/reads._participants`），所以支线里有人追问，回复会通知到他。
 
-**这一轮留得下，追问留不下。** 支线里芝士的改动本来留不下；执行的那一轮从投递上认出来（`turn_speakers.is_routine_run`，`eventType == routine_run`），凭证不带 `scratch`，开场提示也换成「这一轮就是这次执行，可以保存结果」。之后有人在这条支线里追问，那几轮照支线的规矩改动留不下，会话按新参数重启一次，接着同一段对话。执行那一轮也不改代码：它和支线一样只拿到只读的仓库令牌，要改代码就提议任务（见[支线与未开始的任务](/dev/session#scratch)）。
+**这一轮留得下，追问留不下。** 支线里芝士的改动本来留不下；执行的那一轮从投递上认出来（`turn_speakers.is_routine_run`，`eventType == routine_run`），凭证不带 `scratch`，开场提示也换成「这一轮就是这次执行，可以保存结果」。之后有人在这条支线里追问，那几轮照支线的规矩改动留不下，会话按新参数重启一次，接着同一段对话。执行那一轮也不改代码：它和支线一样只拿到只读的仓库令牌，要改代码就创建任务（见[支线与未开始的任务](/dev/session#scratch)）。
 
 **投递和交回。** 投递事件的 payload 里是这段工作本身：`run_prompt` 把工作内容、资料范围、结果目录、上一次成功执行交回的结果，以及**怎么交回**（`POST /routine-runs/{id}/report`）都写给芝士看。执行的 `turn_id` 就是那一轮。
 
@@ -93,7 +93,7 @@ covers:
 
 - **错过了就不补**：计划时刻晚于现在超过 `MISSED_GRACE`（15 分钟）的，执行记成 `skipped`，理由写「平台当时没有运行，这一次不补跑」，频道里不落消息。补跑一条几小时前的定时任务，通常比不跑更糟。
 - **不重复**：唯一约束那一步返回空就说明这个时刻已经响过了，`_fire` 直接返回。
-- **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；「任务完成触发工作、工作又开任务」也绕不起来：任务只能由人创建，周期任务跑出来的一轮最多提议任务。
+- **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；「任务完成触发工作、工作又开任务」也绕得起来，靠的是上面那条每小时上限：周期任务跑出来的一轮可以用 `cheese_task` 创建任务。
 - **扫描是并发的**：`_fire_schedules` / `_fire_events` / `announce_archived_rooms` / `_settle_open_runs` / `_announce_finished` 都 `with_for_update(skip_locked=True)`，多个后端进程同时在跑也不会互相排队或重复处理。
 
 ## 平台自己的钟：PeriodicRunner {#sweep}

@@ -30,7 +30,7 @@ auth_entries:
   assistant.task: "assistant AuthUser -> require_auth_user, _readable_task -> tasks.ensure_task_readable for task-scoped operations; conversation _owned binds user_id for reads/asks. Source: app/api/routes/assistant.py,73,106."
   controller.room: "agent_control.controller: resolve in canonical room/project, explicitly require authenticated actor, authorize_topic(enforce=True). Source: app/api/routes/agent_control.py."
   notification.recipient: "ActorResolver.resolve_recipient binds the verified/requested recipient to project scope; mutations call alerts._acting_recipient with allow_anonymous=False. List/count endpoints retain the resolver own empty/recipient behavior. Source: app/api/routes/alerts.py and app/api/auth.py."
-  notification.create: "alerts.create_notification: require_verified_caller then authorize_topic(enforce=True) or authorize_project; named recipients pass topic_admits_handle / may_read_project. This handler has its own gate, outside main._CHEESE_WRITE_PATHS. Source: app/api/routes/alerts.py."
+  notification.create: "alerts.create_notification: require_verified_caller then authorize_topic(enforce=True) or authorize_project; named recipients pass topic_admits_handle / may_read_project. This handler has its own gate; the route does not declare cheese-only write access. Source: app/api/routes/alerts.py."
   awaiting.self: "awaiting.list_awaiting_me resolves caller; an unauthenticated caller gets an empty page, and authenticated results use the credential handle/user_id. This is an explicit empty-response behavior, not a blanket require-login gate. Source: app/api/routes/awaiting.py."
   device.flow.start: "public(device enrollment start): connector.device_start issues a pending DeviceService code; binding requires the separate logged-in approval route. No route login dependency. Source: app/api/routes/connector.py."
   device.flow.code: "DeviceService.poll / code_device_name checks the supplied pending device_code, including expiration. The code is the approval-flow secret; no preexisting user login is required. Source: app/api/routes/connector.py,205; app/domain/device/service.py."
@@ -108,9 +108,9 @@ auth_entries:
   topic.channel.self: "topics_channel resolves the authenticated person in the channel and authorize_topic; joining needs the person on the project's roster, a private room or a task is not a channel. Source: app/api/routes/topics_channel.py; domain/topic_membership/services.py."
   topic.channel.manage: "topics_channel description goes through TopicMemberService.require_manager (creator or project manager) after authorize_topic. Source: app/api/routes/topics_channel.py."
   topic.names: "topics.list_topic_names resolves/rejects failed credential and limits names to caller visible project IDs; not a raw global room directory. Source: app/api/routes/topics.py."
-  cheese.room.gate: "main.cheese_token_gate matches this exact POST path in _CHEESE_WRITE_PATHS: valid scoped cheese token, explicit global sandbox override or project-agent credential with actual room authorization, followed by handler room actor check. Source: app/main.py,721."
-  cheese.project.gate: "main.cheese_token_gate matches a project-scoped POST path in _CHEESE_WRITE_PATHS and checks project scope / explicit global sandbox / authorized project-agent credential. Source: app/main.py,721."
-  memory.closed.write: "POST project memory remains in main.cheese_token_gate, but projects.add_memory unconditionally rejects the obsolete write with ValidationError. No memory is persisted; this is a closed operation, not a newly granted permission. Source: app/api/routes/projects.py; app/main.py."
+  cheese.room.gate: "The route declares CHEESE_ONLY_IN_ROOM (write_access._CheeseOnly): valid scoped cheese token for the path topic_id, explicit global sandbox override or project-agent credential with actual room authorization, followed by handler room actor check. Source: app/api/write_access.py."
+  cheese.project.gate: "The route declares CHEESE_ONLY_IN_PROJECT (write_access._CheeseOnly) and checks the path project_id scope / explicit global sandbox / authorized project-agent credential. Source: app/api/write_access.py."
+  memory.closed.write: "POST project memory still declares CHEESE_ONLY_IN_PROJECT, but projects.add_memory unconditionally rejects the obsolete write with ValidationError. No memory is persisted; this is a closed operation, not a newly granted permission. Source: app/api/routes/projects.py; app/api/write_access.py."
   public.catalogue: "public(catalogue): the cited read handler returns published static/catalogue choices without credential dependencies. This entry is only used for agent types, public resource limits, installer and public metadata reads verified below."
   public.health: "public(health/readiness/version): /healthz, /readyz, /health and /version take no credential and call no authorization. They are what a deployment probe and the frontend version badge read; /readyz also names the failing checks and each check's status (and any unmounted route modules) in its 503 body, so an outage stays diagnosable; the error text stays behind /health/detailed. /health/detailed and /metrics are platform.admin. Source: app/api/routes/health.py; app/main.py,842."
   public.legal: "public(legal document text/version): no credential dependency; consent operations use require_auth_user separately. Source: app/api/routes/legal.py onward."
@@ -1141,15 +1141,13 @@ routes:
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/close", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/reopen", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/tasks", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/start", auth: "actor.topic", owner: "room_task"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/teammate-tasks", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/opening", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/related", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/task-proposals", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/accept", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_threads
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/threads", auth: "actor.topic", owner: "thread"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/thread", auth: "actor.topic", owner: "thread"}

@@ -148,11 +148,12 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
 
     if type_ == "CHEESE_QUESTION":
         question = _text(payload, "question")
+        agent = _text(payload, "agentName") or "AI 队友"
         return Letter(
-            subject=f"芝士问你：{_clip(question, _SUBJECT_LIMIT)}"
+            subject=f"{agent} 问你：{_clip(question, _SUBJECT_LIMIT)}"
             if question
-            else "芝士有一个问题待你回答",
-            eyebrow="芝士在等你回答，这一轮已暂停",
+            else f"{agent} 有一个问题待你回答",
+            eyebrow=f"{agent} 在等你回答，这一轮已暂停",
             headline=question or "有一个问题待你回答",
             details=(("房间", room),) if room else (),
             action="去回答",

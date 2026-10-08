@@ -19,6 +19,10 @@ The flow, on a host-scoped failure (``PlatformFailure.host_scoped``):
 The pin is write-once and the resolver NEVER falls back to another device,
 because a topic that silently woke up elsewhere with an empty work tree was a
 real bug that was hard to see. Nothing in this module moves a topic.
+
+This is about machines a topic is pinned to: a person's own computers. A
+cloud sandbox is never a pin and is never waited on: a broken one is replaced
+by the pool (``machine/services.py``), and the session told so.
 """
 
 import logging
@@ -35,7 +39,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.device.service import DeviceService, device_service_for_session
-from app.domain.device.supply import Supply
 
 logger = logging.getLogger(__name__)
 
@@ -101,14 +104,6 @@ async def judge_host_failure(
 
     device = await service.get_device(device_id)
     name = device.name if device is not None else device_id
-    if device is not None and device.supply is Supply.cloud:
-        return HostVerdict(
-            quarantined=True,
-            device_id=device_id,
-            # A cloud host is the platform's; the room hears about its sandbox.
-            message=say("sandboxFailing"),
-            event_meta=_failure_meta(failure, verdict, say("sandboxFailingNext")),
-        )
     return HostVerdict(
         quarantined=True,
         device_id=device_id,

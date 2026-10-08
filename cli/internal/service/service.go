@@ -22,6 +22,7 @@ import (
 
 	ksvc "github.com/kardianos/service"
 
+	"github.com/SageSeekerSociety/cheese/cli/internal/devenv"
 	"github.com/SageSeekerSociety/cheese/cli/internal/host"
 )
 
@@ -51,6 +52,13 @@ func (p *program) Start(_ ksvc.Service) error {
 	p.done = make(chan struct{})
 	go func() {
 		defer close(p.done)
+		// What the server's commands need and this system lacks (an older
+		// python3 than the session's runner takes) is placed before the machine
+		// is announced. A machine that cannot get it still connects: whatever
+		// does not need it keeps working, and the next start tries again.
+		if err := devenv.Ensure(ctx, cfg.Base, os.Stderr); err != nil {
+			log.Printf("cheese: runtime not placed: %v", err)
+		}
 		if err := h.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("cheese: host exited: %v", err)
 		}

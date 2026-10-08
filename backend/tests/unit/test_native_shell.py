@@ -559,8 +559,13 @@ def test_a_dropped_link_loses_and_repeats_nothing(session, machine, failure):
         "for i in 1 2 3 4 5 6; do echo line$i; date +%s%N >> ran.txt; "
         "sleep 0.3; done; exit 4"
     )
+    # Four drops in a row would otherwise wait out 0.5 + 1 + 2 + 4 s of backoff.
     process, log = _driver(
-        session, session.wrapped(command), failures=4, failure=failure
+        session,
+        session.wrapped(command),
+        constants={"SHELL_READ_RETRY_S": [0.05, 0.2]},
+        failures=4,
+        failure=failure,
     )
     assert process.wait(timeout=60) == 4
     assert log.read_text().count("dropped") == 4

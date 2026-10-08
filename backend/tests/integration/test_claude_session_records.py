@@ -257,8 +257,10 @@ def test_a_message_read_inside_the_running_turn_ends_with_it(
         assert _wait_for(client, room, lambda: len(_written(stub_hooks, room)) > before)
         injected = _written(stub_hooks, room)[-1]["message"]["content"]
         assert "顺便跑一下 lint" in injected
-        # The stub calls emit_turn for each stdin write, including steer.
-        assert len(prompts) == 2
+        # The stub calls emit_turn for each stdin write, including steer, but
+        # on the backend's loop after the write is recorded (`call_soon`), so
+        # the write can be seen here before the stub has read it.
+        assert _wait_for(client, room, lambda: len(prompts) == 2)
 
         stub_hooks.returns(topic, "Bash", "42 passed")
         stub_hooks.acknowledges(topic, injected)

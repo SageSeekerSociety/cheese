@@ -31,3 +31,9 @@ const Root = ".cheese"
 // (`CLAUDE_LOGIN_DIR`) and `backend/tests/unit/test_footprint_root.py` fails if
 // the two disagree.
 const ClaudeLogin = "claude-login"
+
+// ModelService is the file in ClaudeLogin that holds another model service the
+// owner set instead of the login (`cheesehost claude login --base-url`). The
+// backend's launch and probe name it in `place.py` (`MODEL_SERVICE_FILE`), held
+// to this one by the same test.
+const ModelService = "model-service.json"

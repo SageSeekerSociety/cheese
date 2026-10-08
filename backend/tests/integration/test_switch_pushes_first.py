@@ -1,9 +1,11 @@
-"""Switching a session's work computer pushes its work first (#1900 step 4).
+"""Switching a session's work computer checkpoints its work first, once.
 
-The push runs on the machine being left; the switch happens only after it
-succeeds. When that machine cannot be reached, a person may switch anyway and
-nobody else may. A cloud sandbox left after a push gives its home on the host
-back to the pool; one left without a push keeps it, and the host with it.
+The checkpoint (`cheese sync --all`) runs on the machine being left, and the
+switch happens whether or not it went through: a machine that is away, a push
+that fails or outlasts its wait, an executor that cannot start — none of them
+holds the room, for a person or for its agent. What such a lost checkpoint
+loses is held by the snapshot of the session's last turn. A cloud sandbox left
+behind gives its home back to the pool either way.
 """
 
 import ast
@@ -18,7 +20,7 @@ import pytest
 from sqlalchemy import select
 
 from app.common.auth import create_access_token
-from app.core import sandbox_auth
+from app.core.config import settings
 from app.core.sandbox_auth import (
     bind_resource_token,
     mint_scoped_token,
@@ -28,13 +30,15 @@ from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.remote_execution import launch
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import Block, BlockKind
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost, CloudHostHome, MachineStatus
+from app.domain.machine.session_work import checkpoint_room
+from app.domain.topic import retire
 from app.domain.topic.models import Topic
+from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from app.main import app
 from tests.delivery import delivery_task
@@ -208,119 +212,62 @@ async def test_an_old_machine_that_just_dropped_is_still_pushed_on(client, monke
     assert target["device_id"] == room.old_device and method == "control"
 
 
-@pytest.mark.parametrize(
-    "push",
-    [
-        {
-            "value": {
-                "stdout": "Exit code 1\n"
-                "[cheese] 任务 t1 同步失败：rejected non-fast-forward"
-            }
-        },
-        {"error": "Stop hook failed"},
-    ],
-)
-async def test_a_failed_push_refuses_the_switch_and_says_why(client, monkeypatch, push):
+FAILED_PUSHES = {
+    "a task did not sync": {
+        "value": {
+            "stdout": "Exit code 1\n"
+            "[cheese] 任务 t1 同步失败：rejected non-fast-forward"
+        }
+    },
+    "a closed task was not backed up": {
+        "value": {
+            "stdout": "Exit code 1\n[cheese] 已结束的任务 t2 同步失败：Connection reset"
+        }
+    },
+    "the command failed": {"error": "Stop hook failed"},
+    "it outlasted its wait": {"value": {"stdout": "", "backgroundTaskId": "task-slow"}},
+    "no answer": TimeoutError("no answer"),
+}
+
+
+@pytest.mark.parametrize("push", FAILED_PUSHES.values(), ids=FAILED_PUSHES.keys())
+async def test_a_failed_checkpoint_does_not_hold_the_switch(client, monkeypatch, push):
     room = await _room(client)
-    _machines(monkeypatch, push=push)
+    remote = _machines(monkeypatch, push=push)
 
-    refused = client.put(room.path, headers=room.person, json=_to_new(room))
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
-    assert refused.status_code == 409, refused.text
-    said = refused.json()["error"]["message"]
-    assert said.startswith("推送失败，没有更换")
-    assert "non-fast-forward" in said or "Stop hook failed" in said
-    # Nobody can switch past a push that ran and failed.
-    forced = client.put(
-        room.path, headers=room.person, json=_to_new(room, abandon_unpushed=True)
-    )
-    assert forced.status_code == 409, forced.text
-    session = await _session(client, room)
-    assert session.work_lease == room.lease
-    assert session.execution_request["choice"]["device_id"] == room.old_device
-
-
-async def test_a_failed_push_names_every_task_it_could_not_sync_and_why(
-    client, monkeypatch
-):
-    room = await _room(client)
-    refused_by_api = (
-        "[cheese] GET /projects/p/git/tasks/{task} 失败 HTTP 401: "
-        + '{"code":401,"message":"AuthenticationRequiredError: '
-        + "git access needs this project's token\"}"
-        + " " * 300
-    )
-    printed = "".join(
-        f"{refused_by_api.replace('{task}', task)}\n"
-        f"[cheese] 同步失败的通知未送达，任务 {task} 的 cheese-sync.log 保留了结果\n"
-        f"[cheese] 任务 {task} 同步失败：1\n"
-        for task in ("task-a", "task-b")
-    )
-    printed += "[cheese] 任务 task-c 同步失败：rejected non-fast-forward\n"
-    _machines(monkeypatch, push={"value": {"stdout": "Exit code 1\n" + printed}})
-
-    refused = client.put(room.path, headers=room.person, json=_to_new(room))
-
-    assert refused.status_code == 409, refused.text
-    said = refused.json()["error"]["message"]
-    lines = said.splitlines()
-    assert lines[0].startswith("推送失败，没有更换")
-    for task in ("task-a", "task-b"):
-        [line] = [line for line in lines if f"任务 {task}" in line]
-        assert "HTTP 401" in line and "this project's token" in line
-    [line] = [line for line in lines if "任务 task-c" in line]
-    assert "rejected non-fast-forward" in line
-
-
-@pytest.mark.parametrize("how", ["offline", "no answer"])
-async def test_an_unreachable_old_machine_only_a_person_can_switch_past(
-    client, monkeypatch, how
-):
-    room = await _room(client)
-    if how == "offline":
-        remote = _machines(monkeypatch, online=False)
-    else:
-        remote = _machines(monkeypatch, push=TimeoutError("no answer"))
-
-    person = client.put(room.path, headers=room.person, json=_to_new(room))
-    assert person.status_code == 409, person.text
-    assert person.json()["error"]["name"] == "WorkComputerUnreachable"
-    assert "连不上" in person.json()["error"]["message"]
-    # The agent's own switch (`cheese_machine`) goes through the room route and
-    # cannot skip the push, whatever it sends.
-    agent = client.put(
-        f"/topics/{room.topic_id}/compute-profile",
-        headers=room.agent,
-        json={
-            "profile": "device",
-            "device_id": room.new_device,
-            "abandon_unpushed": True,
-        },
-    )
-    assert agent.status_code == 409, agent.text
-    assert agent.json()["error"]["name"] == "WorkComputerUnreachable"
-    # The agent is told who can switch past it and where, so it asks them
-    # rather than stopping there (FB-51); the person already has the button.
-    told = agent.json()["error"]["message"]
-    assert "连不上" in told and "「不推送，直接更换」" in told
-    assert "不推送，直接更换" not in person.json()["error"]["message"]
-    session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.old_device
-
-    forced = client.put(
-        room.path, headers=room.person, json=_to_new(room, abandon_unpushed=True)
-    )
-
-    assert forced.status_code == 200, forced.text
+    assert switched.status_code == 200, switched.text
+    remote.assert_awaited()
     session = await _session(client, room)
     assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert session.work_lease is None
     assert session.execution_request["retained_leases"] == [room.lease]
-    if how == "offline":
-        remote.assert_not_awaited()
+
+
+async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
+    client, monkeypatch
+):
+    """Nothing is refused over work that could not be pushed, so the room's
+    agent switches on its own (`cheese_machine`) and never has to find a
+    person to do it."""
+    room = await _room(client)
+    remote = _machines(monkeypatch, online=False)
+
+    switched = client.put(
+        f"/topics/{room.topic_id}/compute-profile",
+        headers=room.agent,
+        json={"profile": "device", "device_id": room.new_device},
+    )
+
+    assert switched.status_code == 200, switched.text
+    remote.assert_not_awaited()
+    session = await _session(client, room)
+    assert session.execution_request["choice"]["device_id"] == room.new_device
 
 
 @pytest.mark.parametrize("reachable", [True, False])
-async def test_a_cloud_sandbox_left_after_a_push_gives_its_home_back(
+async def test_a_cloud_sandbox_left_gives_its_home_back_either_way(
     client, monkeypatch, reachable
 ):
     room = await _room(client, on_cloud=True)
@@ -354,11 +301,7 @@ async def test_a_cloud_sandbox_left_after_a_push_gives_its_home_back(
         await db.commit()
     _machines(monkeypatch, online=reachable)
 
-    switched = client.put(
-        room.path,
-        headers=room.person,
-        json=_to_new(room, abandon_unpushed=not reachable),
-    )
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
     assert switched.status_code == 200, switched.text
     async with client.test_factory() as db:
@@ -369,55 +312,10 @@ async def test_a_cloud_sandbox_left_after_a_push_gives_its_home_back(
         )
         host = await db.get(CloudHost, host_id)
         session = await AgentSessionService(db).by_id(room.session_id)
-    # The host is the pool's either way: a switch never deletes it.
+    # The host is the pool's: a switch never deletes it, and frees its slot.
     assert host.released_at is None
-    if reachable:
-        # Pushed: nothing of the session's is only there, so its slot is free.
-        assert homes == []
-        assert session.execution_request["retained_leases"] == []
-    else:
-        # Switched without a push: whatever was only there stays, and so does
-        # the home, which keeps the host until the room's cleanup.
-        assert [home.left_at is not None for home in homes] == [True]
-        assert session.execution_request["retained_leases"] == [room.lease]
-
-
-async def test_a_cloud_session_whose_home_is_archived_switches_and_keeps_it(
-    client, monkeypatch
-):
-    """Its home is in the bucket and on no machine, so there is nothing to push
-    from and nobody has to agree to leave it: the archive stays, with whatever
-    it holds, until the room's cleanup."""
-    room = await _room(client, on_cloud=True)
-    async with client.test_factory() as db:
-        db.add(
-            CloudHostHome(
-                host_id=None,
-                project_id=room.project_id,
-                topic_id=room.topic_id,
-                room_resource_id=room.lease["room_resource_id"],
-                resource_id=room.lease["resource_id"],
-                session_id=room.session_id,
-                archive_key="sandbox-archives/home.tar.gz",
-                archive_size=1,
-                archive_md5="0" * 32,
-            )
-        )
-        await db.commit()
-    remote = _machines(monkeypatch, online=False)
-
-    switched = client.put(room.path, headers=room.person, json=_to_new(room))
-
-    assert switched.status_code == 200, switched.text
-    remote.assert_not_awaited()
-    async with client.test_factory() as db:
-        home = await db.scalar(
-            select(CloudHostHome).where(CloudHostHome.session_id == room.session_id)
-        )
-        session = await AgentSessionService(db).by_id(room.session_id)
-    assert home.left_at is not None
-    assert home.archive_key == "sandbox-archives/home.tar.gz"
-    assert session.execution_request["retained_leases"] == [room.lease]
+    assert homes == []
+    assert session.execution_request["retained_leases"] == []
 
 
 class _IdleMachine:
@@ -500,18 +398,17 @@ async def test_a_tasks_executor_started_to_push_is_told_it_works_the_task(
     assert told == str(room.conversation_id)
 
 
-async def test_a_machine_that_cannot_start_the_executor_is_unreachable(
+async def test_a_machine_that_cannot_start_the_executor_does_not_hold_the_switch(
     client, monkeypatch
 ):
     room = await _room(client)
     monkeypatch.setattr(work_lease, "device_hub", _IdleMachine(install_exit=1))
 
-    refused = client.put(room.path, headers=room.person, json=_to_new(room))
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
-    assert refused.status_code == 409, refused.text
-    assert refused.json()["error"]["name"] == "WorkComputerUnreachable"
+    assert switched.status_code == 200, switched.text
     session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.old_device
+    assert session.execution_request["choice"]["device_id"] == room.new_device
 
 
 class _PushingMachine(_IdleMachine):
@@ -524,6 +421,7 @@ class _PushingMachine(_IdleMachine):
         self.path = f"/projects/{project_id}/git/tasks/{task_id}"
         self.task_id = task_id
         self.finishes = False
+        self.answered = None
 
     async def call_executor(self, device_id, state, method, params, **kwargs):
         if method != "control" or not self.started:
@@ -535,6 +433,7 @@ class _PushingMachine(_IdleMachine):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as api:
             asked = await api.get(self.path, headers={"X-Cheese-Token": token})
+        self.answered = asked.status_code
         if asked.status_code != 200:
             said = (
                 f"Exit code 1\n[cheese] GET {self.path} 失败 HTTP "
@@ -547,31 +446,25 @@ class _PushingMachine(_IdleMachine):
         return PUSHED
 
 
-async def test_an_executor_started_for_a_push_can_still_push_hours_later(
+async def test_an_executor_started_for_a_checkpoint_pushes_with_its_own_credential(
     client, monkeypatch
 ):
-    """A switch starts an idle session's executor to push; that push outlasts
-    its two minutes and the switch is refused, leaving the executor running.
-    Hours later the switch is asked again: the executor is still up, so it is
-    not started again, and its push must still be let through by the git
-    routes, as the push of a session started by a turn would be."""
+    """A switch starts an idle session's executor to checkpoint; the git routes
+    let its push through as they would a push of a session started by a turn,
+    and the switch does not wait for more than one."""
     room = await _room(client)
     task = delivery_task(client, room.topic_id, commit=False)
     machine = _PushingMachine(room.project_id, task.id)
+    machine.finishes = True
     monkeypatch.setattr(work_lease, "device_hub", machine)
 
-    first = client.put(room.path, headers=room.person, json=_to_new(room))
-    assert first.status_code == 409, first.text
-    assert "两分钟" in first.json()["error"]["message"]
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
-    now = sandbox_auth.time.time
-    later = SimpleNamespace(time=lambda: now() + 3 * 3600)
-    monkeypatch.setattr(sandbox_auth, "time", later)
-    machine.finishes = True
-    again = client.put(room.path, headers=room.person, json=_to_new(room))
-
-    assert again.status_code == 200, again.text
+    assert switched.status_code == 200, switched.text
     assert len(machine.installs) == 1
+    [(_, method, _)] = [call for call in machine.calls if call[1] == "control"]
+    assert method == "control"
+    assert machine.answered == 200
     session = await _session(client, room)
     assert session.execution_request["choice"]["device_id"] == room.new_device
 
@@ -631,85 +524,51 @@ async def test_an_executor_on_an_older_release_is_started_again_to_push(
     assert method == "control" and params["subtype"] == "checkpoint"
 
 
-def _closed_task_failed(task, reason):
-    return {
-        "value": {
-            "stdout": f"Exit code 1\n[cheese] 已结束的任务 {task} 同步失败：{reason}"
-        }
-    }
+ARCHIVE_CHECKPOINTS = {
+    "it went through": PUSHED,
+    "it failed": {"error": "remote rejected the push"},
+    "no answer": TimeoutError("no answer"),
+}
 
 
-async def _room_events(client, room, event_type):
+@pytest.mark.parametrize(
+    "push", ARCHIVE_CHECKPOINTS.values(), ids=ARCHIVE_CHECKPOINTS.keys()
+)
+async def test_an_archived_rooms_cleanup_checkpoints_once_and_goes_on(
+    client, monkeypatch, push
+):
+    """Before the room's sessions are stopped, each gets the same one
+    checkpoint a switch gives; the cleanup removes the room whatever it
+    answered, and does not ask again."""
+    room = await _room(client)
+    remote = _machines(monkeypatch, push=push)
+    monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as db:
-        blocks = await db.scalars(
-            select(Block).where(
-                Block.conversation_id == room.topic_id, Block.kind == BlockKind.event
-            )
+        await TopicService(db).archive(room.topic_id, by="alice")
+        await db.commit()
+    entry = {
+        "kind": "device",
+        "device_id": room.old_device,
+        "resource_id": room.lease["resource_id"],
+    }
+    monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
+    checkpointed_first = []
+
+    async def action(device_id, project_id, resource_id, name, *rest):
+        if name == "prepare":
+            # The machine was asked before the room's sessions were stopped.
+            checkpointed_first.append(remote.await_count > 0)
+        return {}
+
+    monkeypatch.setattr(retire, "_device_action", AsyncMock(side_effect=action))
+
+    swept = client.portal.call(
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
         )
-        return [b for b in blocks if (b.meta or {}).get("event_type") == event_type]
-
-
-async def test_a_closed_tasks_failed_backup_does_not_hold_a_room_on_its_own_machine(
-    client, monkeypatch
-):
-    """A self-hosted machine keeps its files after the room leaves it, so a
-    closed task whose leftovers could not be backed up loses nothing: the room
-    moves, and the switch and the room both say which task and why."""
-    room = await _room(client)
-    _machines(
-        monkeypatch,
-        push=_closed_task_failed("t-closed", "fatal: ref HEAD is not a symbolic ref"),
     )
 
-    switched = client.put(room.path, headers=room.person, json=_to_new(room))
-
-    assert switched.status_code == 200, switched.text
-    [warning] = switched.json()["data"]["warnings"]
-    assert "t-closed" in warning and "not a symbolic ref" in warning
-    session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
-    assert session.execution_request["retained_leases"] == [room.lease]
-    [told] = await _room_events(client, room, "work_left_on_machine")
-    assert "t-closed" in told.meta["detail"]
-    assert "not a symbolic ref" in told.meta["detail"]
-
-
-async def test_a_closed_tasks_failed_backup_still_holds_a_room_on_a_cloud_machine(
-    client, monkeypatch
-):
-    """A Cloud machine is deleted once the room leaves it: a closed task's
-    leftovers that were not backed up would go with it."""
-    room = await _room(client, on_cloud=True)
-    _machines(
-        monkeypatch,
-        push=_closed_task_failed("t-closed", "Connection reset by peer"),
-    )
-
-    refused = client.put(room.path, headers=room.person, json=_to_new(room))
-
-    assert refused.status_code == 409, refused.text
-    said = refused.json()["error"]["message"]
-    assert "t-closed" in said and "Connection reset by peer" in said
-    session = await _session(client, room)
-    assert session.work_lease == room.lease
-    assert not await _room_events(client, room, "work_left_on_machine")
-
-
-async def test_an_open_tasks_failed_push_holds_the_room_beside_a_closed_one(
-    client, monkeypatch
-):
-    room = await _room(client)
-    printed = (
-        "[cheese] 已结束的任务 t-closed 同步失败："
-        "fatal: ref HEAD is not a symbolic ref\n"
-        "[cheese] 任务 t-open 同步失败：rejected non-fast-forward\n"
-    )
-    _machines(monkeypatch, push={"value": {"stdout": "Exit code 1\n" + printed}})
-
-    refused = client.put(room.path, headers=room.person, json=_to_new(room))
-
-    assert refused.status_code == 409, refused.text
-    said = refused.json()["error"]["message"]
-    assert "t-open" in said and "non-fast-forward" in said
-    session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.old_device
+    assert swept == {"completed": 1, "pending": 0}
+    assert checkpointed_first and all(checkpointed_first)
+    controls = [c for c in remote.await_args_list if c.args[1] == "control"]
+    assert [c.args[2]["subtype"] for c in controls] in (["checkpoint"], [])

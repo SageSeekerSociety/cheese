@@ -15,12 +15,14 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.errors import ConflictError
+from app.domain.agent.models import AgentTurn
 from app.domain.machine.models import AiStatus, CloudHost, CloudHostHome, MachineStatus
+from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.services import ProjectService
 from app.domain.topic import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered, session_auth_headers
+from tests.integration.conftest import registered
 
 pytestmark = pytest.mark.anyio
 
@@ -87,7 +89,9 @@ async def test_cancel_before_claim_reuses_environment_without_device_commands(
         assert (await session.get(RoomCleanup, cleanup_id)).state == "cancelled"
         await session.commit()
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 0,
         "pending": 0,
@@ -101,30 +105,39 @@ async def test_a_failed_check_after_the_stop_keeps_resources_and_retries_after_r
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
     inventory = AsyncMock(return_value=[entry])
-    unpublished = [RuntimeError("the room has unpublished work")]
-
-    async def step(device_id, project_id, resource_id, name, *rest):
-        if name == "publication" and unpublished:
-            raise unpublished.pop()
-
-    action = AsyncMock(side_effect=step)
+    action = AsyncMock(return_value={"ready": True})
     monkeypatch.setattr(retire, "_inventory", inventory)
     monkeypatch.setattr(retire, "_device_action", action)
+    # A turn still persisting its result after the room was stopped.
+    turn = AgentTurn(
+        id=uuid.uuid4(),
+        continuation_id=uuid.uuid4(),
+        conversation_id=room_id,
+        author="owner",
+        started_at=datetime.now(UTC),
+    )
+    async with client.test_factory() as session:
+        session.add(turn)
+        await session.commit()
     result = client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
     assert result == {"completed": 0, "pending": 1}
-    assert [call.args[3] for call in action.await_args_list] == [
-        "prepare",
-        "publication",
-    ]
+    assert [call.args[3] for call in action.await_args_list] == ["prepare"]
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
         assert operation.state == "pending"
-        assert operation.last_error == "the room has unpublished work"
+        assert "still finishing" in operation.last_error
+        (await session.get(AgentTurn, turn.id)).stopped_at = datetime.now(UTC)
+        operation.due_at = datetime.now(UTC)
+        await session.commit()
     # A fresh worker/session resumes the same recorded resource, not a fresh inventory.
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 1,
         "pending": 0,
@@ -152,42 +165,14 @@ async def test_uncertain_stop_blocks_reuse_until_device_confirms(client, monkeyp
         retire, "_device_action", AsyncMock(side_effect=TimeoutError("no stop receipt"))
     )
     client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, cleanup_id)).state == "preparing"
         with pytest.raises(ConflictError, match="正在停止"):
             await TopicService(session).unarchive(room_id, by="owner")
-
-
-async def test_unpublished_backend_source_can_be_reopened_before_parking(
-    client, monkeypatch, tmp_path
-):
-    room_id, cleanup_id = await archived_room(client, monkeypatch)
-    work = tmp_path / "work"
-    subprocess.run(["git", "init", "-q", str(work)], check=True)
-    (work / "unfinished.py").write_text("unpublished source")
-    target = tmp_path / "retired"
-    monkeypatch.setattr(
-        retire,
-        "_inventory",
-        AsyncMock(
-            return_value=[
-                {"kind": "worktree", "path": str(work), "retired": str(target)}
-            ]
-        ),
-    )
-    client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
-    )
-    async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        assert operation.state == "pending"
-        assert "unpublished" in operation.last_error
-        await TopicService(session).unarchive(room_id, by="owner")
-        await session.commit()
-    assert not target.exists()
-    assert (work / "unfinished.py").read_text() == "unpublished source"
 
 
 @pytest.mark.parametrize("pointer", ["absolute", "relative", "moved-relative"])
@@ -246,7 +231,9 @@ async def test_parked_worktree_frees_the_branch_before_old_device_is_removed(
 
     monkeypatch.setattr(retire, "_device_action", old_device)
     client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, cleanup_id)).state == "claimed"
@@ -287,7 +274,9 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
     action = AsyncMock(side_effect=RuntimeError("device offline"))
     monkeypatch.setattr(retire, "_device_action", action)
     client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
@@ -297,7 +286,9 @@ async def test_reopen_after_claim_never_redirects_old_deletion(
         await session.commit()
     action.side_effect = None
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 1,
         "pending": 0,
@@ -318,7 +309,7 @@ async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
     release = asyncio.Event()
     passes = 0
 
-    async def slow_pass(sessions):
+    async def slow_pass(sessions, checkpoint):
         nonlocal passes
         passes += 1
         if passes == 1:
@@ -334,11 +325,17 @@ async def test_a_sweep_asked_for_while_one_runs_makes_it_go_round_again(
         await asyncio.sleep(0.05)
     assert not retire._sweeping
     monkeypatch.setattr(retire, "_sweep_once", slow_pass)
-    first = asyncio.create_task(retire.sweep_retired_storage(business_db_factory))
+    first = asyncio.create_task(
+        retire.sweep_retired_storage(business_db_factory, checkpoint=checkpoint_room)
+    )
     await asyncio.wait_for(started.wait(), timeout=5)
     # Two more asks while the first is still running: neither starts a sweep.
     waiting = [
-        asyncio.create_task(retire.sweep_retired_storage(business_db_factory))
+        asyncio.create_task(
+            retire.sweep_retired_storage(
+                business_db_factory, checkpoint=checkpoint_room
+            )
+        )
         for _ in range(2)
     ]
     await asyncio.sleep(0.05)
@@ -370,7 +367,9 @@ async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
         await session.commit()
     # Another process is on it: this sweep does not touch it.
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 0,
         "pending": 0,
@@ -383,7 +382,9 @@ async def test_a_cleanup_leased_to_another_sweep_is_left_alone_until_it_expires(
         operation.lease_until = datetime.now(UTC) - timedelta(seconds=1)
         await session.commit()
     assert client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     ) == {
         "completed": 1,
         "pending": 0,
@@ -576,7 +577,9 @@ async def session_host_room(client, monkeypatch, tmp_path):
 
 def _sweep(client) -> dict:
     return client.portal.call(
-        lambda: retire.sweep_retired_storage(client.test_request_factory)
+        lambda: retire.sweep_retired_storage(
+            client.test_request_factory, checkpoint=checkpoint_room
+        )
     )
 
 
@@ -770,112 +773,14 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
         assert (await session.get(CloudHost, host_id)).released_at is None
 
 
-@pytest.mark.parametrize("pushed", [True, False, None])
-async def test_a_rooms_cleanup_deletes_an_archived_sandbox_home_only_once_pushed(
-    client, monkeypatch, pushed
-):
-    """A session whose home was archived holds no directory on any machine:
-    its host may be gone. The room's cleanup does not wait for that host. The
-    archive goes with the room when its host found everything in it pushed;
-    otherwise it is the only copy of that work, and the cleanup waits, still
-    cancellable by unarchiving the room. An archive with no answer (written
-    before hosts were asked) is not taken for pushed."""
-    from app.domain.agent_session.services import AgentSessionService
-    from app.domain.machine import lifecycle
-
-    class Bucket:
-        def __init__(self):
-            self.objects = {"sandbox-archives/home.tar.gz": b"archived home"}
-
-        async def delete(self, key):
-            return self.objects.pop(key, None) is not None
-
-    bucket = Bucket()
-    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket)
-    room_id, cleanup_id = await archived_room(client, monkeypatch)
-    async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        project_id, generation = operation.project_id, str(operation.resource_id)
-        resource = str(uuid.uuid4())
-        conversation = await AgentSessionService(session).ensure(
-            room_id, "worker", harness="claude-code"
-        )
-        # The lease still names the host the home was archived from.
-        conversation.work_lease = {
-            "device_id": "released-host",
-            "resource_id": resource,
-            "kind": "device",
-        }
-        session.add(
-            CloudHostHome(
-                host_id=None,
-                project_id=project_id,
-                topic_id=room_id,
-                room_resource_id=generation,
-                resource_id=resource,
-                session_id=conversation.id,
-                stopped_at=datetime.now(UTC),
-                archive_key="sandbox-archives/home.tar.gz",
-                archive_size=13,
-                archive_md5="0" * 32,
-                archive_published=pushed,
-            )
-        )
-        await session.commit()
-
-    if pushed:
-        assert _sweep(client) == {"completed": 1, "pending": 0}
-        assert bucket.objects == {}
-        async with client.test_factory() as session:
-            assert (
-                await session.scalar(
-                    select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
-                )
-            ) is None
-        return
-
-    assert _sweep(client) == {"completed": 0, "pending": 1}
-    assert _sweep(client) == {"completed": 0, "pending": 1}
-    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
-    status = client.get(
-        f"/topics/{room_id}/cleanup", headers=session_auth_headers("owner")
-    ).json()["data"]
-    assert status["state"] == "pending"
-    assert "not pushed" in status["reason"]
-    async with client.test_factory() as session:
-        await TopicService(session).unarchive(room_id, by="owner")
-        await session.commit()
-    async with client.test_factory() as session:
-        assert (await session.get(RoomCleanup, cleanup_id)).state == "cancelled"
-        kept = await session.scalar(
-            select(CloudHostHome).where(CloudHostHome.topic_id == room_id)
-        )
-        assert kept.archive_key == "sandbox-archives/home.tar.gz"
-    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
-
-
-@pytest.mark.parametrize("pushed", [True, False])
-async def test_a_room_that_became_a_task_is_still_cleaned_up(
-    client, monkeypatch, pushed
-):
+async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch):
     """A room archived before its cleanup finished became a closed task: its
     row is gone, its conversation stays. Its cleanup is not called off for
-    that: the old generation's home goes once it is found pushed, and an
-    unpushed one still holds the cleanup, as it would for a room."""
+    that, and the old generation's homes go with it."""
     from sqlalchemy import text
 
     from app.domain.agent_session.services import AgentSessionService
-    from app.domain.machine import lifecycle
 
-    class Bucket:
-        def __init__(self):
-            self.objects = {"sandbox-archives/home.tar.gz": b"archived home"}
-
-        async def delete(self, key):
-            return self.objects.pop(key, None) is not None
-
-    bucket = Bucket()
-    monkeypatch.setattr(lifecycle, "private_storage", lambda: bucket)
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
@@ -888,19 +793,31 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(
             "resource_id": resource,
             "kind": "device",
         }
+        host = CloudHost(
+            machine_id=None,
+            customer_id=1,
+            account_id=1,
+            offering_id=1,
+            hostname=f"host-{uuid.uuid4().hex[:8]}",
+            login_user="cheese",
+            cores=1,
+            memory_mb=4096,
+            disk_gb=20,
+            status=MachineStatus.provisioning,
+            ai_mode="none",
+            ai_status=AiStatus.unknown,
+        )
+        session.add(host)
+        await session.flush()
+        # Placed on a host that never came up: no directory anywhere.
         session.add(
             CloudHostHome(
-                host_id=None,
+                host_id=host.id,
                 project_id=operation.project_id,
                 topic_id=room_id,
                 room_resource_id=str(operation.resource_id),
                 resource_id=resource,
                 session_id=conversation.id,
-                stopped_at=datetime.now(UTC),
-                archive_key="sandbox-archives/home.tar.gz",
-                archive_size=13,
-                archive_md5="0" * 32,
-                archive_published=pushed,
             )
         )
         await session.commit()
@@ -922,24 +839,14 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(
         )
         await session.commit()
 
-    if pushed:
-        assert _sweep(client) == {"completed": 1, "pending": 0}
-        assert bucket.objects == {}
-        async with client.test_factory() as session:
-            assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
-            assert (
-                await session.scalar(
-                    select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
-                )
-            ) is None
-        return
-
-    assert _sweep(client) == {"completed": 0, "pending": 1}
-    assert bucket.objects == {"sandbox-archives/home.tar.gz": b"archived home"}
+    assert _sweep(client) == {"completed": 1, "pending": 0}
     async with client.test_factory() as session:
-        operation = await session.get(RoomCleanup, cleanup_id)
-        assert operation.state == "pending"
-        assert "not pushed" in operation.last_error
+        assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
+        assert (
+            await session.scalar(
+                select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
+            )
+        ) is None
 
 
 async def test_a_cleanup_held_for_the_same_reason_backs_off(client, monkeypatch):
@@ -948,10 +855,10 @@ async def test_a_cleanup_held_for_the_same_reason_backs_off(client, monkeypatch)
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     entry = {"kind": "device", "device_id": "fixture", "resource_id": str(room_id)}
     monkeypatch.setattr(retire, "_inventory", AsyncMock(return_value=[entry]))
-    reasons = ["the room has unpublished work"]
+    reasons = ["a process still holds the room"]
 
     async def step(device_id, project_id, resource_id, name, *rest):
-        if name == "publication":
+        if name == "prepare":
             raise RuntimeError(reasons[-1])
 
     monkeypatch.setattr(retire, "_device_action", AsyncMock(side_effect=step))

@@ -35,6 +35,7 @@ class AcceptCardRepository:
         deliverable_kind: DeliverableKind | None = None,
         deliverable_name: str | None = None,
         deliverable_url: str | None = None,
+        completes_task: bool = True,
     ) -> AcceptCard:
         # 递卡是房间的事 —— 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch
         # belongs to the room, not to any one card in it.
@@ -51,6 +52,7 @@ class AcceptCardRepository:
             deliverable_kind=deliverable_kind,
             deliverable_name=deliverable_name,
             deliverable_url=deliverable_url,
+            completes_task=completes_task,
         )
         self._session.add(card)
         await self._session.flush()
@@ -195,6 +197,20 @@ class AcceptCardRepository:
                 AcceptCard.task_id.in_(task_ids),
                 AcceptCard.status == AcceptStatus.rejected,
                 AcceptCard.decided_at >= since,
+            )
+            .order_by(AcceptCard.decided_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def accepted_for_tasks(self, task_ids: list[uuid.UUID]) -> list[AcceptCard]:
+        """这些任务上被采纳的每一次交付，按采纳的先后。"""
+        if not task_ids:
+            return []
+        stmt = (
+            select(AcceptCard)
+            .where(
+                AcceptCard.task_id.in_(task_ids),
+                AcceptCard.status == AcceptStatus.accepted,
             )
             .order_by(AcceptCard.decided_at)
         )

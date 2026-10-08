@@ -87,14 +87,14 @@ async function flush() {
 }
 
 /** 房间那一侧：拿着卡的 ref，能像 TopicView 那样叫它重读；报上来的那几段按顺序记着。 */
-let reload: (silent?: boolean) => Promise<void>
+let reload: () => Promise<void>
 let phases: unknown[]
 
 function mount() {
   phases = []
   const Host = defineComponent(() => {
-    const box = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
-    reload = (silent) => box.value!.reload(silent)
+    const box = ref<{ reload: () => Promise<void> } | null>(null)
+    reload = () => box.value!.reload()
     return () =>
       h(TopicAcceptCard, {
         ref: box,
@@ -162,7 +162,7 @@ describe('这一张卡把话题处在哪一段报给外面', () => {
     expect(phases).toEqual(['pending'])
 
     getAcceptCards.mockResolvedValue({ data: [], has_more: false })
-    await reload(true)
+    await reload()
     await flush()
 
     expect(phases).toEqual(['pending', null])

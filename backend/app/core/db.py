@@ -219,14 +219,11 @@ def apply_migration_timeouts(connection: Connection) -> None:
     """Bound each migration's lock wait and total run time (#356).
 
     Called once by alembic's ``env.py`` on the single connection an
-    ``upgrade head`` uses. Alembic online mode runs the WHOLE upgrade on that
-    one connection inside a single transaction (transaction_per_migration is
-    off), so setting these once protects every migration in the run — the ones
-    present now and any added later.
-
-    ``set_config(name, value, is_local=false)`` is a parameterizable,
-    injection-safe equivalent of session-scoped ``SET``, so the guard survives
-    even if alembic is later switched to transaction-per-migration.
+    ``upgrade head`` uses, before the first migration. Each migration then runs
+    in its own transaction on that connection (``transaction_per_migration``),
+    so the settings must outlive a commit: ``set_config(name, value,
+    is_local=false)`` is a parameterizable, injection-safe equivalent of
+    session-scoped ``SET``, and so protects every migration in the run.
 
     Why it matters: a migration whose ``ALTER TABLE`` needs an ACCESS EXCLUSIVE
     lock will otherwise wait indefinitely behind a live backend's open

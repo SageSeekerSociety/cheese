@@ -83,6 +83,15 @@ tasks:
     desc: Check scenes render standalone (python ratchet, check only)
     cmds:
       - pnpm run lint:scenes
+  # Every .vue under src/ (src/views/demo/ excluded) that grades A — the same
+  # grade as lint:scenes — is in the /demo/catalog preview site or on the
+  # pending list in catalog-baseline.json, which may only shrink. A component
+  # that is new, or newly A, has to get a catalog entry. Writer:
+  # `pnpm run lint:catalog:update` (only ever removes). Needs no install.
+  lint:catalog:
+    desc: Check grade-A components are in the preview catalog (python ratchet, check only)
+    cmds:
+      - pnpm run lint:catalog
   typecheck:
     desc: Run vue-tsc type check
     deps: [install]
@@ -106,11 +115,12 @@ tasks:
     cmds:
       - pnpm exec eslint .
   check:
-    desc: Run all frontend checks (lint + boundaries + scenes + style + typecheck + test + build)
+    desc: Run all frontend checks (lint + boundaries + scenes + catalog + style + typecheck + test + build)
     cmds:
       - task: lint:check
       - task: lint:boundary
       - task: lint:scenes
+      - task: lint:catalog
       - task: lint:style
       - task: typecheck
       - task: test

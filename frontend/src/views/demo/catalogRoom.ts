@@ -17,6 +17,7 @@
  * 值，运行时不构成循环。
  */
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
+import type { TaskLine } from '@/lib/channelTasks'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
@@ -26,6 +27,8 @@ import { AGENT_NAME } from './catalogFixtures'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
+import TaskCard from '@/components/room/TaskCard.vue'
+import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
@@ -124,6 +127,74 @@ function askBlock(answerLog: Record<string, unknown>[]) {
     },
   }
 }
+
+// ---- 任务卡（TaskCard / TaskCreatedPost）--------------------------------------
+
+/** 频道里的一件任务，画成卡片时用到的那几样。 */
+function taskLine(over: Partial<TaskLine>): TaskLine {
+  return {
+    id: 'task-week-1',
+    title: '整理第一周的课件',
+    owner: 'cheese',
+    creator: 'bob',
+    status: '进行中',
+    tone: 'running',
+    accepted: null,
+    at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    ...over,
+  }
+}
+
+const TASK_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'room-task-card',
+    title: 'TaskCard',
+    about: '频道里的一件任务：标题、谁负责、现在到哪一步，点一下打开这件任务。',
+    file: 'src/components/room/TaskCard.vue',
+    component: TaskCard,
+    needs: UI_T,
+    states: [
+      {
+        name: '进行中',
+        note: '状态那一枚跟着任务走：在跑的是一个点，做完是一个勾，关掉是一道横。',
+        props: { task: taskLine({}), ownerName: AGENT_NAME },
+        expect: '整理第一周的课件',
+      },
+      {
+        name: '采纳过几步',
+        note: '还开着、已经采纳过的任务在状态前面写采纳了几次。',
+        props: {
+          task: taskLine({ accepted: '已采纳 2 次', status: '待 波比 审阅', tone: 'waiting' }),
+          ownerName: AGENT_NAME,
+        },
+        expect: '已采纳 2 次',
+      },
+    ],
+  },
+  {
+    id: 'room-task-created-post',
+    title: 'TaskCreatedPost',
+    about: '主线上「谁新建了任务」那一条：署新建它的人，下面是那件任务的卡片。',
+    file: 'src/components/room/TaskCreatedPost.vue',
+    component: TaskCreatedPost,
+    needs: UI_T,
+    states: [
+      {
+        name: '新建了一件',
+        note: '和一条消息一样署名、写时间，后面一句「新建了任务」。',
+        props: {
+          task: taskLine({}),
+          creator: 'bob',
+          creatorName: '波比',
+          ownerName: AGENT_NAME,
+          avatar: null,
+          time: '10:24',
+        },
+        expect: '新建了任务',
+      },
+    ],
+  },
+]
 
 export const ROOM_ENTRIES: CatalogEntry[] = [
   {
@@ -300,4 +371,5 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
     ],
   },
+  ...TASK_ENTRIES,
 ]

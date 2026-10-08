@@ -691,11 +691,16 @@ async def test_a_person_who_writes_mid_turn_is_answered_before_the_next_tool(
 @pytest.mark.anyio
 @every_harness
 async def test_a_platform_notice_mid_turn_holds_nothing_back(tmp_path, harness):
-    steps = [shell("touch STARTED; sleep 2"), shell("touch NEXT")]
+    # The command holds until the notice is in, as the mid-turn case above.
+    steps = [
+        shell("touch STARTED; while [ ! -e RELEASE ]; do sleep 0.05; done"),
+        shell("touch NEXT"),
+    ]
     async with harness(tmp_path, steps) as session:
         await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
         await session.ran("STARTED")
         await session.steer(f"{PLATFORM_NOTICE}\nthe doc changed", owes_reply=False)
+        (session.machine / "RELEASE").touch()
         await session.finished(len(steps) + 1)
 
         assert (session.machine / "NEXT").exists()
@@ -752,7 +757,9 @@ async def test_a_session_held_once_that_still_does_not_answer_is_let_go(
     async with harness(tmp_path, steps) as session:
         await session.send("[someone]: please fix the build", owes_reply=True)
         await session.finished(len(steps))
-        await asyncio.sleep(3)
+        # A session held again would be held as its turn ended, before
+        # `finished` saw it idle; this only gives a late one time to show.
+        await asyncio.sleep(1)
 
         assert len(session.requests) == len(steps)
         assert session.backend.published == []
