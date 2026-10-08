@@ -69,7 +69,7 @@ import type { DocumentTemplate, RoomOutput } from './types/roomOutput'
 import type { SitePage } from './types/site'
 
 import { connectorRequest } from './api/connector'
-import { ApiError, authHeaders, authToken, BASE, request, requestConditional, roomRead } from './api/http'
+import { ApiError, authHeaders, authToken, BASE, refusalError, request, requestConditional, roomRead } from './api/http'
 import { shareInFlight } from './lib/inflight'
 import { refusalWords } from './lib/noticeText'
 import { createPreviewPdfReader } from './lib/previewPdf'
@@ -120,13 +120,11 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(res.status, transportFailureMessage(method, res.status))
   }
   if (!res.ok) {
-    const serverSaid = refusalWords(body)
-    const http = `HTTP ${res.status}`
-    throw new Error(serverSaid ? t('global.labelWithAside', { label: serverSaid, aside: http }) : `${http} for ${path}`)
+    throw refusalError(res, body, path)
   }
   const envelope = body as ApiEnvelope<T>
   if (envelope.code !== 200) {
-    throw new Error(envelope.message || `API error code ${envelope.code}`)
+    throw new ApiError(res.status, envelope.message || `API error code ${envelope.code}`)
   }
   return envelope.data
 }

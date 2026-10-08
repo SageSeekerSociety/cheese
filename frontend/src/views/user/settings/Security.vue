@@ -58,7 +58,7 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import SecurityView from './SecurityView.vue'
 
-import { deleteOAuthConnection, listOAuthConnections } from '@/api'
+import { ApiError, deleteOAuthConnection, listOAuthConnections } from '@/api'
 import { t } from '@/i18n'
 import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -347,7 +347,7 @@ const unbind = async (connectionId: number) => {
   } catch (error) {
     if (error instanceof SudoCancelledError) return
     // The server refuses to remove the last way in (409).
-    const lastWayIn = error instanceof Error && /HTTP 409/.test(error.message)
+    const lastWayIn = error instanceof ApiError && error.status === 409
     toast.error(lastWayIn ? t('account.security.lastWayIn') : t('account.security.unlinkFailed'))
   } finally {
     unbinding.value = null

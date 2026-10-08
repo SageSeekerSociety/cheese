@@ -9,6 +9,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import {
+  ApiError,
   listMyDevices,
   listMyTeams,
   registerDeviceForTeam,
@@ -141,11 +142,11 @@ async function load() {
   } catch (e) {
     const msg = e instanceof Error ? e.message : t('account.devices.loadFailed')
     // We are (client-side) authoritatively signed in, so the connector's
-    // "requires a logged-in user" gate is not the truth about the session — it
-    // means the connector has no owner record for us yet (no device enrolled).
-    // Never surface that as the "please log in" banner; fall through to the
-    // empty-state, which correctly invites the user to run `cheese link`.
-    if (msg.includes('requires a logged-in user')) {
+    // 401 gate is not the truth about the session — it means the connector has
+    // no owner record for us yet (no device enrolled). Never surface that as
+    // the "please log in" banner; fall through to the empty-state, which
+    // correctly invites the user to run `cheese link`.
+    if (e instanceof ApiError && e.status === 401) {
       devices.value = []
     } else {
       error.value = msg
