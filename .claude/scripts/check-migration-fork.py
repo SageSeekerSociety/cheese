@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Fail when merging this branch would fork the alembic chain.
 
-WHY THIS EXISTS, given test.yml already has a `migration-heads` job: that job
-checks the tree it is handed. On a pull request that tree is the branch merged
+WHY THIS EXISTS, given test.yml already checks for one alembic head (the
+`static` job's "Exactly one alembic head" step): that step checks the tree it
+is handed. On a pull request that tree is the branch merged
 with main *as of when CI last ran*. Two branches that each add a migration on
 top of the same parent therefore both pass — each has exactly one head — and
-the fork only appears once the second one lands. `migration-heads` then reds
+the fork only appears once the second one lands. That step then reds
 main, `alembic upgrade head` refuses, and the deploy aborts. That happened four
 times on 2026-08-09/10 (see .claude/rules/migrations.md).
 

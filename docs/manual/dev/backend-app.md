@@ -50,9 +50,11 @@ covers:
 |---|---|
 | 模块导入失败，`settings.environment != "production"` | 当场抛出，服务起不来 |
 | 模块导入失败，生产环境 | 记一条 ERROR 日志，模块名进 `FAILED_ROUTE_MODULES`，进程继续起 |
-| 生产环境有模块没挂上 | `GET /healthz`（`app/api/routes/health.py`）返回 `{"status": "degraded", "unmounted": [...]}` |
+| 生产环境有模块没挂上 | `GET /readyz`（`app/api/routes/health.py`）返回 503，响应体的 `checks.routes.unmounted` 列出模块；`/healthz` 照常 200 |
 
-生产环境选择「一个坏模块不拖垮整个应用」，代价是一整组接口 404 而进程照样健康 —— 所以 `/healthz` 必须把没挂上的模块报出来。历史上 `/sandbox/hooks` 就这样整组消失过（每个 agent 事件 404），而唯一的症状出现在调用方那边。
+生产环境选择「一个坏模块不拖垮整个应用」，代价是一整组接口 404。所以「路由全部挂上」是 `/readyz` 的必需检查项，和数据库、Redis 并列：发版脚本和后端容器的健康检查都等 `/readyz`，这样的版本过不了部署闸门。历史上 `/sandbox/hooks` 就这样整组消失过（每个 agent 事件 404），而唯一的症状出现在调用方那边。
+
+`/healthz` 只回答「进程活着」，依赖断开、模块没挂上都照常 200：这两件事重启修不好，存活探针为它们报错只会多出一轮重启。
 
 路由路径是**裸的**，不带 `/api`：网关那段前缀由前端 nginx 的 `location /api/ { proxy_pass http://backend:8081/; }` 剥掉，约定见[接口约定择要](#conventions)。FastAPI 用 `redirect_slashes=False` 建应用（`main.py` 里的 `app = FastAPI(...)`），尾斜杠是 404 而不是 307。
 
@@ -71,24 +73,24 @@ covers:
 
 ## 错误怎么变成响应 {#errors}
 
-`app/core/errors.py` 装了**两套**异常体系和一张处理器表，全部经 `register_exception_handlers(app)` 注册（`device_connection_app.py` 装的是同一份）。
+`app/core/errors.py` 里只有一棵异常树，根是 `BaseError`，和一张处理器表一起经 `register_exception_handlers(app)` 注册（`device_connection_app.py` 装的是同一份）。异常处理器产出的错误体都由 `format_error_response` 构造；还有几处路由不抛异常、自己写错误体（`main.py` 的沙箱令牌闸门、`routes/sandbox.py`、`routes/assistant.py` 与 `routes/docs_site.py` 的 `_refuse`），收进来是后续一步。
 
 | 异常 | 状态码 | 响应体 |
 |---|---|---|
-| `BaseError` 及其子类（`BadRequestError`、`NotFoundError`、`ForbiddenError`、`ConflictError`、`QuotaExceededError`、`SystemBusyError` …） | 异常自带 | `{"code", "message": "类名: 原话", "error": {"name", "message", "data", "retryable": false}}` |
-| `AppError` 及其子类（`ValidationError`、`UnauthorizedError`、`GatewayUnavailableError`） | 类属性 `code` | `{"code", "message", "data": null, "error": {"name", "message", "retryable": false}}` |
+| `BaseError` 及其子类（`BadRequestError`、`NotFoundError`、`ForbiddenError`、`ConflictError`、`UnprocessableEntityError`、`UpstreamUnavailableError` …） | 异常自带 `status_code` | `{"code", "message": 原话, "error": {"name": 类名或 wire_name, "message", "data", "retryable": 类的 retryable}}` |
 | `StarletteHTTPException`（路由里 `raise HTTPException(...)`） | 原状态码 | 走 `format_error_response`，`name` 恒为 `"Error"`；**异常自带 headers 会带出去** |
 | `RequestValidationError`（请求体不合模型） | 400（不是 FastAPI 默认的 422） | `BadRequestError` 的形状，细节在 `error.data.details` |
 | `DeviceOffline` | 409 | 带 `X-Device-Id` 头 —— 客户端靠它区分「机器不在」和「调用出错」，见[设备与机器接入](/dev/machines#failure)。子类 `LinkInterrupted`（链路断在调用半路，结果未知）另带 `X-Device-Link: interrupted` |
 | `DeviceCallError` | 502 | 机器自己的原话，`failure_code` 挂在 `error` 下 |
 | `ClientDisconnect`（浏览器读到一半挂了） | 499 | 只记一条 info，不当故障 |
-| 其它任何异常 | 500 | `{"code": 500, "message": "服务器内部错误", "data": null}`，真正的原因只进日志 |
+| 其它任何异常 | 500 | 同一个信封，`name` 为 `InternalServerError`、`message` 为「服务器内部错误」，真正的原因只进日志 |
 
-三条读这份表时要记住的：
+读这份表时要记住的：
 
-- `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。
-- `retryable` 在今天构造出的每一个错误体里都是 `false`（`BaseError.to_response_body`、`format_error_response`、`AppError` 那三个都写死）。它现在不是一个能读的信号。
-- `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <一句话>` 的 SSE 正文而不是 JSON；这条分支在四个处理器里各写了一遍，**只有 `BaseError` 和 `HTTPException` 那两支把异常的 headers 转发出去，SSE 与 validation 两支不转**。
+- `error.name` 是调用方用来分辨「状态码一样但条件不同」的字段（`SudoRequiredError` 与普通 403 的区别就在这里）。它取类自己声明的 `wire_name`（不继承），没声明就是类名；改类名或把类并进别的类时，在类上写回旧名，客户端就不受影响。`code` 这个名字留给以后的 snake_case 错误码（`error.code`）。
+- `retryable` 取类属性，默认 `false`；只有同一个请求原样再发、过一会儿真会成功的类才写 `retryable = True`（今天是 forge 的限流和连不上；限流中间件的 429 也带 `true`）。前端对 502–504、520–530 的 GET 只在它不为 `false` 时自动重试。
+- `AppError` 和它的 `ValidationError`、`UnauthorizedError`、`GatewayUnavailableError` 已弃用：它们各自已经是替代类（`UnprocessableEntityError`、`AuthenticationRequiredError`、`UpstreamUnavailableError`）的子类，只保留「消息可省」的构造。`tests/unit/test_legacy_error_ratchet.py` 按文件记着它们的用法次数，多了少了都会红：新代码用替代类，迁完一处就把基线减下来。
+- `Accept: text/event-stream` 的请求拿到的是 `event: error\ndata: <一句话>` 的 SSE 正文而不是 JSON；这条分支在 `BaseError`、`HTTPException`、请求校验三个处理器里各写了一遍，**转发异常 headers 的只有 `HTTPException` 的 JSON 那支和 `DeviceOffline`**；`BaseError` 没有 headers。
 
 处理器一律用 `closing_the_socket` 包一层：异常发生在 WebSocket 连接上时不能返回 HTTP 响应（uvicorn 会拒绝并报「Expected ASGI message ...」），改成记一条 WARNING 后按 1011 关掉。
 
@@ -168,7 +170,7 @@ covers:
 结构由 Alembic 管，`lifespan` 里不建表。约定：
 
 - 迁移放在 `backend/alembic/versions/`，配置在 `backend/alembic.ini` 与 `backend/alembic/env.py`。
-- **一条链，一个 head**。并行开发各写一支会把链分叉，CI 的 `migration-heads` job（`.github/workflows/test.yml`）跑 `uv run alembic heads` 数 `(head)` 的个数，不等于 1 就红，并提示「rechain 到当前 head 或跑 `alembic merge heads`」。
+- **一条链，一个 head**。并行开发各写一支会把链分叉，CI 的 `backend / static` job（`.github/workflows/test.yml`）跑 `uv run alembic heads` 数 `(head)` 的个数，不等于 1 就红，并提示「rechain 到当前 head 或跑 `alembic merge heads`」。
 - `backend/alembic/HEAD` 这个文件记着当前 head 的 revision id，由 pre-commit 的 `merging would not fork the alembic chain` 钩子（只对 `^backend/alembic/` 生效）维护 —— 它同时检查 HEAD 文件点的是链的 head、以及这次改动不会分叉。
 
 退役的列也留在迁移里而不是删文件（例如 `971b4765fa69_drop_ccproxy_columns.py`），`downgrade` 可能只把空列加回来。
@@ -197,10 +199,10 @@ covers:
 ## 边界与坑 {#traps}
 
 - **闸门是字符串，路由是代码。** `_CHEESE_WRITE_PATHS` 不跟随路由移动，失配不报错，只是静默放行。动路由前先看那张表。
-- **`retryable` 恒为 `false`。** 三个构造错误体的地方都写死了它，没有任何一处会把它设成 `true`。字段在，语义不在。
+- **`retryable` 几乎都是 `false`。** 只有两类代码仓库错误和限流 429 是 `true`；想让前端重试一类错误，在它的错误类上设 `retryable = True`。
 - **SSE 分支不转发 headers。** 带 `Accept: text/event-stream` 的请求出 validation 错误或 `HTTPException` 时走 `PlainTextResponse`，`DeviceOffline` 的 `X-Device-Id` 这类头不会跟着出去 —— 只有 JSON 那两支转发。
 - **`page()` 不套信封。** 它返回 `{"data", "total"}`，没有 `code`/`message`；读分页响应时别按 `ok()` 的形状解析。
-- **路由导入失败在生产是「降级」而不是「崩溃」。** 一整个模块会安静地 404，只有 `/healthz` 会说出 `unmounted` 列表 —— 健康检查若只看进程活着，看不出这件事。
+- **路由导入失败在生产是「降级」而不是「崩溃」。** 一整个模块会 404，进程照常起来；`/readyz` 因此返回 503，所以新版本过不了发版闸门。已经在服务的进程如果读到这种状态，不会被摘掉，只在 `/readyz` 和管理后台的「平台健康」里显示出来。
 - **dev 环境导入失败直接起不来。** `_discover_routers` 在 `settings.environment != "production"` 时把异常抛出去，所以本地和测试里一个坏模块是当场可见的。
 - **归属锁只有一把。** `OWNER_LOCK` 是任意一个固定 bigint，唯一要求是「这个库里没有别的东西用它」。换库时若别处也用了这个值，两个系统会互相抢锁。
 - **两个旁路进程的鉴权是共享密钥的常量比较**（`device_connection_auth_secret`、每个部署一条 relay key），没有撤销列表、没有过期；轮换一次就是换一个值。

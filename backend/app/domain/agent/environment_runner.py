@@ -243,9 +243,13 @@ def end_seatbelt(home):
 
 def process_identity(pid, *, reference=None):
     # Keep recognizing status files written by older helpers, including during
-    # reset. New Linux records avoid spawning ps on every readiness poll.
+    # reset. New Linux and macOS records read the process without ps.
     if sys.platform == "win32":
         return portable()["identity"](pid)
+    if sys.platform == "darwin" and (
+        reference is None or reference.startswith("darwin:")
+    ):
+        return darwin_identity(pid)
     if sys.platform == "linux" and (
         reference is None or reference.startswith("linux:")
     ):
@@ -262,6 +266,23 @@ def process_identity(pid, *, reference=None):
         text=True,
         check=False,
     ).stdout.strip()
+
+
+def darwin_identity(pid):
+    """When the process started, to the microsecond, or "" when there is no such
+    process of this user's. From libproc and not `ps`: on macOS `ps` is setuid
+    root, and a process under a Seatbelt profile, as a room's executor is, may
+    not exec a setuid program."""
+    import ctypes
+    import struct
+
+    # struct proc_bsdinfo (PROC_PIDTBSDINFO), with its start time at 120.
+    info = ctypes.create_string_buffer(136)
+    libc = ctypes.CDLL("/usr/lib/libSystem.dylib")
+    if libc.proc_pidinfo(pid, 3, ctypes.c_uint64(0), info, 136) != 136:
+        return ""
+    seconds, microseconds = struct.unpack_from("<QQ", info, 120)
+    return f"darwin:{seconds}.{microseconds:06d}"
 
 
 def tool_prefix():

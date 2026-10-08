@@ -164,7 +164,7 @@ describe('English settings copy', () => {
 
   it('the archive dialog', async () => {
     render(ArchiveProjectDialog as unknown as Component, {
-      props: { modelValue: true, projectId: 'p1', projectName: 'Thesis' },
+      props: { modelValue: true, projectName: 'Thesis' },
       ...mountOpts(),
     })
     await screen.findByRole('dialog')

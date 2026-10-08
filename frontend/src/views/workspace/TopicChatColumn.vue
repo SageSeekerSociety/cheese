@@ -83,7 +83,7 @@ const chatRef = ref<{
   send: (content: string, summon: boolean, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
-const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
+const acceptRef = ref<{ reload: () => Promise<void> } | null>(null)
 const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 
 const router = useRouter()
@@ -123,7 +123,7 @@ const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submit
 
 defineExpose({
   connected,
-  reloadAccept: (silent?: boolean) => acceptRef.value?.reload(silent),
+  reloadAccept: () => acceptRef.value?.reload(),
   reloadFeedback: () => feedbackRef.value?.reload(),
   reloadSkills: () => skills.load(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由

@@ -61,6 +61,7 @@
     "src/components/panels/preview/SlideThumbRail.vue",
     "src/views/404.vue",
     "src/views/DocsSignInView.vue",
+    "src/views/MarketViewView.vue",
     "src/views/account/AddEmailView.vue",
     "src/views/account/AppSignInFinishView.vue",
     "src/views/account/AppSignInStartView.vue",
@@ -111,7 +112,6 @@
   "debt": [
     "src/views/ConnectView.vue",
     "src/views/InboxView.vue",
-    "src/views/MarketView.vue",
     "src/views/MyArchivedProjectsView.vue",
     "src/views/MyConnectionsView.vue",
     "src/views/MyDevicesView.vue",

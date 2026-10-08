@@ -198,7 +198,7 @@ function stateSegments(byState: Record<string, number> | undefined, keys: Record
 const warmSegments = computed(() => stateSegments(extras.value?.machines.warm_by_state, MACHINE_STATE_KEY))
 const hostSegments = computed(() => stateSegments(extras.value?.machines.host_by_status, HOST_STATUS_KEY))
 
-/** 平台的健康度。三格并排，**状态色只在这里用**（up / stalling / down）—— 全页别处
+/** 平台的健康度。四格并排，**状态色只在这里用**（up / stalling / down）—— 全页别处
  *  都是中性阶，这一行是唯一需要「一眼看出好坏」的地方。 */
 const health = computed(() => platform.value?.health ?? null)
 
@@ -210,6 +210,7 @@ const HEALTH_KEY: Record<string, string> = {
   database: 'feedback.dashboard.health.database',
   redis: 'feedback.dashboard.health.redis',
   event_loop: 'feedback.dashboard.health.event_loop',
+  routes: 'feedback.dashboard.health.routes',
 }
 
 const healthRows = computed(() => {
@@ -450,9 +451,10 @@ const xLabels = computed(() => (platform.value?.people.series ?? []).map((row) =
   gap: 16px;
 }
 
+/* 列数跟着检查项数走，和上面 `.ad__kpis` 同一个理由：写死 3 列时第四项落单一行。 */
 @container (min-width: 720px) {
   .ad__health-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   }
 }
 

@@ -91,6 +91,7 @@ class RequiredCITest(unittest.TestCase):
         # Everything the docs build reads: pages, the generator, the files its
         # CLI, settings and CI references are generated from, and any code a
         # developer page names in ``covers`` (a vanished path fails the build).
+        # The build runs in guards, which every merge diff selects.
         for path in (
             "backend/app/domain/chat/service.py",
             "frontend/src/main.ts",
@@ -102,11 +103,11 @@ class RequiredCITest(unittest.TestCase):
             ".github/workflows/test.yml",
         ):
             with self.subTest(path=path):
-                self.assertTrue(gate.select([path])["docs"])
+                self.assertTrue(gate.select([path])["guards"])
 
     def test_documentation_still_runs_guards(self):
         selected = gate.select(["docs/architecture.md"])
-        self.assertEqual({k for k, v in selected.items() if v}, {"guards", "docs"})
+        self.assertEqual({k for k, v in selected.items() if v}, {"guards"})
 
     def test_remote_dependencies_select_both_acceptance_jobs(self):
         for path in (

@@ -130,7 +130,7 @@ describe('待采纳的卡会自己跟上后端', () => {
     expect(acceptButton(container).disabled, '轮询过一轮之后就该能点了').toBe(false)
   })
 
-  // 静默刷新不能把人正在打的退回理由清掉——loadAcceptCard(silent) 就是为此存在的。
+  // 后台重读不能把人正在打的退回理由清掉：只有换话题才清空。
   it('轮询期间正在写的退回理由不会被抹掉', async () => {
     getAcceptCards.mockResolvedValue({ data: [pendingCard(SETTLED)], has_more: false })
     const { container, getByText } = render(TopicAcceptCard, {

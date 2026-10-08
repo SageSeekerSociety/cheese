@@ -135,9 +135,18 @@ class NotificationRepository:
         return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def count_unread_for_user(self, user_id: int) -> int:
-        """Count unread notifications for a given user."""
+        """Count unread notifications for a given user.
+
+        The same rows ``list_for_user`` lists: the inbox does not show a row that
+        has not been finalized, so that row must not be counted either. A count
+        computed over rows nobody can be shown leaves the badge lit with an empty
+        inbox under it — and the button that would clear it (mark all read) is
+        drawn only while the list itself holds an unread row, so nothing on the
+        page could put it out.
+        """
         stmt = self._my_mail(select(func.count(Notification.id)), user_id).where(
-            Notification.read.is_(False)
+            Notification.finalized.is_(True),
+            Notification.read.is_(False),
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)

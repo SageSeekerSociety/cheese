@@ -80,6 +80,7 @@
     "catalogRatchet": "进了组件预览站的独立组件",
     "feBoundary": "前端边界",
     "beContracts": "后端契约",
+    "beDeferredImports": "后端函数内导入",
     "domainImportGuard": "领域导入守卫",
     "harnessBoundary": "测试骨架边界",
     "isPrivateReadPoints": "私有读取点",

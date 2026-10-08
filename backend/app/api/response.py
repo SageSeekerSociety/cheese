@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from pydantic import BaseModel
+
 
 def ok(
     data: Any, message: str = "ok", *, warnings: list[str] | None = None
@@ -20,3 +22,35 @@ def ok(
 
 def page(items: list[Any], total: int) -> dict[str, Any]:
     return {"data": items, "total": total}
+
+
+class Page[T](BaseModel):
+    """``page()``'s payload as a model: the list under ``data``, plus ``total``."""
+
+    data: list[T]
+    total: int
+
+
+class Envelope[T](BaseModel):
+    """``ok()``'s envelope as a model, so a route can *declare* what it returns.
+
+    Name it on the route and the OpenAPI document publishes it, which is what
+    lets the frontend generate its response types instead of hand-copying them::
+
+        @router.get("", response_model=Envelope[Page[AgentTypeOut]],
+                    response_model_exclude_unset=True)
+        async def list_agent_types() -> dict:
+            return ok(page(items, len(items)))
+
+    ``response_model_exclude_unset`` is part of the pattern, not decoration. The
+    route builds the body with ``ok()``, which leaves ``warnings`` out entirely
+    when there is nothing to warn about; serializing the model without it would
+    put ``"warnings": null`` on every such response — a field no caller saw
+    before and that the payload never promised.
+    """
+
+    code: int = 200
+    message: str = "ok"
+    data: T
+    #: Beside ``data``, not inside it — see ``ok()``.
+    warnings: list[str] | None = None

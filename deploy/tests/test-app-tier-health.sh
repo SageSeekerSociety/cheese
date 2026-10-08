@@ -736,6 +736,44 @@ test_rollback_restores_exact_previous_images() {
   echo "PASS: rollback restores exact previous image references"
 }
 
+# Without app-router the frontend waits on the backend's healthcheck (/readyz),
+# so a build that never becomes ready fails `compose up` itself. That must
+# still end in the rollback, not in an exit that leaves the build in place.
+test_unready_backend_without_slots_still_rolls_back() {
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/unready-rollback.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  if PATH="$FAKE_BIN:$PATH" \
+    APP_TIER_SCENARIO=rollback \
+    APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_DOCKER_FAIL_SUFFIX='up -d backend frontend' \
+    BACKEND_IMAGE=repo/backend:testsha \
+    FRONTEND_IMAGE=repo/frontend:testsha COLLAB_IMAGE=repo/collab:testsha \
+    DEPLOY_APP_IMAGE_SOURCE=local \
+    DEPLOY_HEALTH_ATTEMPTS=1 \
+    DEPLOY_HEALTH_INTERVAL_SECONDS=0 \
+    HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >"$run_dir/release.log" 2>&1; then
+    rm -rf "$run_dir"
+    fail "a release whose compose up failed was reported as deployed"
+  fi
+  grep -Fq 'HEALTH CHECK FAILED' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "a failed compose up skipped the health check"; }
+  grep -Fqx \
+    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha APP_RELEASE=' \
+    "$docker_log" || fail "a failed compose up did not roll back to the previous images"
+  # Only the release's own `up` fails (FAIL_SUFFIX); the rollback's longer one
+  # must have been issued and, in the fake, succeeded.
+  grep -q 'up -d backend frontend collab$' "$docker_log" \
+    || fail "the rollback after a failed compose up never brought the previous release up"
+  ! grep -q 'up -d --no-deps collab' "$docker_log" \
+    || fail "collab was replaced although the backend never came up"
+  rm -rf "$run_dir"
+  echo "PASS: an unready backend on a box without slots still rolls back"
+}
+
 # A box with an app-router (ACTIVE_BACKEND_DIR) releases by rollout: the idle
 # slot comes up beside the serving one, app-router is switched once, the old
 # slot drains and is stopped. These tests pin that order and the failures that
@@ -793,7 +831,7 @@ test_rollout_recovers_after_forge_stops_backend() {
       APP_TIER_FORGE_CHECK="$([ "$mode" = first ] && echo 2 || echo 0)" \
       APP_TIER_ROUTER_NEEDS_BACKEND=1 >"$run_dir/release.log" 2>&1 \
       || { cat "$run_dir/release.log"; fail "forge $mode could not recover the stopped backend"; }
-    grep -F ':18085/healthz' "$run_dir/docker.log" >/dev/null \
+    grep -F ':18085/readyz' "$run_dir/docker.log" >/dev/null \
       || fail "recovered release never checked the routed backend"
     [ ! -f "$run_dir/apphome/forge-migration/cutover-pending" ] \
       || fail "recovered release retained the cutover guard"
@@ -802,7 +840,7 @@ test_rollout_recovers_after_forge_stops_backend() {
   done
 }
 
-# One release, one switch: the idle backend slot comes up and answers /healthz,
+# One release, one switch: the idle backend slot comes up and answers /readyz,
 # app-router is pointed at it in a single reload, the backend traffic left hands
 # its work over and drains, and only then is it stopped. Every reload retires a
 # generation of app-router workers, and with them the WebSockets they carry, so
@@ -814,7 +852,7 @@ test_rollout_switches_once() {
   rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container >"$run_dir/release.log" 2>&1 \
     || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
   up="$(log_line "$docker_log" 'up -d --no-deps --force-recreate backend-b')"
-  healthy="$(log_line "$docker_log" ':18082/healthz')"
+  healthy="$(log_line "$docker_log" ':18082/readyz')"
   reload="$(log_line "$docker_log" 'exec cheese-app-router nginx -s reload')"
   reloads="$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log" || true)"
   drain="$(log_line "$docker_log" 'sleep 31')"
@@ -823,7 +861,7 @@ test_rollout_switches_once() {
   [ -n "$up" ] || fail "the idle backend slot was never started"
   [ "$reloads" = 1 ] || fail "a release reloaded app-router $reloads times, not once"
   [ "$up" -lt "$healthy" ] && [ "$healthy" -lt "$reload" ] \
-    || fail "app-router was pointed at the new backend before it answered /healthz"
+    || fail "app-router was pointed at the new backend before it answered /readyz"
   [ "$reload" -lt "$drain" ] && [ -n "$stopped" ] && [ "$drain" -lt "$stopped" ] \
     || fail "the old backend was stopped before traffic left it and drained"
   [ -n "$removed" ] && [ "$stopped" -lt "$removed" ] \
@@ -841,7 +879,7 @@ test_rollout_switches_once() {
     || { cat "$run_dir/release.log"; fail "the release after it did not succeed"; }
   grep -q -- 'up -d --no-deps --force-recreate backend$' "$docker_log" \
     || fail "the second release did not start the first slot"
-  grep -q ':18081/healthz' "$docker_log" || fail "the first slot was not health-checked"
+  grep -q ':18081/readyz' "$docker_log" || fail "the first slot was not health-checked"
   [ "$(grep -c 'exec cheese-app-router nginx -s reload' "$docker_log")" = 1 ] \
     || fail "the second release did not switch exactly once"
   grep -q ' rm -f backend-b$' "$docker_log" || fail "the second release left the old slot behind"
@@ -1114,8 +1152,8 @@ test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up() {
   local run_dir docker_log
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
-  if rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container APP_TIER_CURL_FAIL_MATCH=:18082/ >/dev/null 2>&1; then
-    fail "rollout succeeded although the next backend never answered /healthz"
+  if rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container APP_TIER_CURL_FAIL_MATCH=:18082/readyz >/dev/null 2>&1; then
+    fail "rollout succeeded although the next backend never answered /readyz"
   fi
   grep -q 'up -d --no-deps --force-recreate backend-b' "$docker_log" \
     || fail "the next backend was never started"
@@ -1730,6 +1768,7 @@ case "$CASE" in
   local-images) test_local_app_images_skip_registry_pull ;;
   local-images-missing) test_local_app_images_must_exist ;;
   rollback-images) test_rollback_restores_exact_previous_images ;;
+  unready-rollback) test_unready_backend_without_slots_still_rolls_back ;;
   ownership-order) test_ownership_handover_is_the_last_step_before_up ;;
   ownership-rollback) test_rollback_hands_the_mounts_back ;;
   ownership-rollback-noop) test_rollback_leaves_an_already_migrated_box_alone ;;
@@ -1783,6 +1822,7 @@ case "$CASE" in
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist
     test_rollback_restores_exact_previous_images
+    test_unready_backend_without_slots_still_rolls_back
     test_ownership_handover_is_the_last_step_before_up
     test_rollback_hands_the_mounts_back
     test_rollback_leaves_an_already_migrated_box_alone

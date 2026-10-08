@@ -80,6 +80,7 @@
     "catalogRatchet": "Standalone components in the preview site",
     "feBoundary": "Frontend boundary",
     "beContracts": "Backend contracts",
+    "beDeferredImports": "Backend deferred imports",
     "domainImportGuard": "Domain import guard",
     "harnessBoundary": "Harness boundary",
     "isPrivateReadPoints": "Private read points",
