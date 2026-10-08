@@ -131,7 +131,7 @@ describe('chat recovery after history errors', () => {
     expect(sockets).toHaveLength(2)
   })
 
-  it('a topic’s first connect does not resync the doc; a reconnect does', async () => {
+  it('a topic’s first connect does not resync what the room announces; a reconnect does', async () => {
     // The connect-time doc resync exists for a doc saved while DISCONNECTED. On a
     // topic's first connect the doc panel is already loading the room fresh, so
     // emitting it would only make the panel re-read /docs + /doc/history that it
@@ -146,7 +146,13 @@ describe('chat recovery after history errors', () => {
     await vi.advanceTimersByTimeAsync(1000)
     sockets[1].onopen?.()
     await flushPromises()
-    expect(view.emitted('state-changed'), 'a reconnect catches up the doc').toEqual([['doc']])
+    // What the room announced while the socket was down is gone: everything it
+    // announces is treated as changed once, its own row by the room's id.
+    const caught = view.emitted('state-changed') as unknown[][]
+    expect(caught.map((args) => args[0])).toEqual(
+      expect.arrayContaining(['doc', 'pins', 'accept', 'feedback', 'skills', 'threads', 'topics'])
+    )
+    expect(caught).toContainEqual(['topics', expect.any(String)])
   })
 
   it('does not retry a forbidden history response', async () => {

@@ -56,6 +56,7 @@ import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/top
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
 
+import { ANNOUNCED } from './chatPanelContract'
 import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
@@ -216,9 +217,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
       noteFrame()
     },
     onOpen: (reconnect, newest) => {
-      // State frames are transient, so a re-connect rather than the first open:
-      // a doc saved while we were away has no remaining turn left to replay it.
-      if (reconnect) emit('state-changed', 'doc')
+      // State frames are transient: what the room announced while we were away is
+      // gone, so a re-connect (not the first open) treats each as changed once.
+      if (reconnect) {
+        for (const resource of ANNOUNCED) emit('state-changed', resource)
+        emit('state-changed', 'topics', place()?.id)
+        void reloadRoomTasks()
+      }
       tail.subscribed(newest)
       // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
       sendOnSocket({ type: 'sync' })
