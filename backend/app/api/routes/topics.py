@@ -23,13 +23,10 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.activity import WORKING
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
+from app.domain.agent.realtime.activity import WORKING
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -995,7 +992,7 @@ async def write_topic_progress(
     if current is not None:
         message = await edit_message(
             db,
-            get_broker(),
+            get_broker().publish,
             current.id,
             editor=actor.handle,
             content=text,

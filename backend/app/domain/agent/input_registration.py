@@ -5,6 +5,7 @@ import uuid
 
 from app.core.errors import ValidationError
 from app.domain.agent.live_work import LiveWork
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.queries import reaction_summaries_for_blocks
 from app.domain.delivery.agent import DeliveryTargetChanged, fence_send
 from app.domain.delivery.input_identity import (
@@ -85,7 +86,6 @@ async def confirm_receipt(sessions, live: LiveWork, receipt) -> None:
     pending = live.unread_inputs.get(receipt.identity.conversation_id)
     if pending is not None:
         pending.pop(receipt.identity.input_id, None)
-    from app.domain.agent.runtime import get_broker
 
     for block_id, value in reactions.items():
         await get_broker().publish(

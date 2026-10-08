@@ -50,7 +50,8 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
     business_db_factory, tmp_path
 ):
     from app.domain.agent.compute import ComputePool
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.domain.agent_instance.services import AgentInstanceService
     from app.domain.block.models import consumed_turn
 
@@ -94,11 +95,10 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
     await asyncio.wait_for(provider.started.wait(), HANG_S)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    runner.subscribe_messages()
     quote = slide_quote(f"  @Second <@{other}> <@{current}>\n")
     client_id = str(uuid.uuid4())
     try:
-        landed = await broker.receive_message(
+        landed = await runner.receive_message(
             svc,
             topic_id,
             author="alice",
@@ -123,7 +123,7 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
         async with factory() as session:
             saved = await BlockRepository(session).get(landed)
             assert consumed_turn(saved) is not None
-        again = await broker.receive_message(
+        again = await runner.receive_message(
             svc,
             topic_id,
             author="alice",
@@ -244,9 +244,10 @@ class InstantScreen(StubChannel):
     ],
 )
 async def test_retried_client_delivery_is_persisted_and_submitted_once(
-    business_db_factory, tmp_path, content, attachments, expected_blocks
+    business_db_factory, tmp_path, monkeypatch, content, attachments, expected_blocks
 ):
-    from app.domain.agent.runtime import InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     factory = business_db_factory
     svc = ChatService(
@@ -266,10 +267,15 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
 
     broker = InProcessBroker()
     submitted = []
-    broker.subscribe_messages(lambda *args, **kwargs: submitted.append((args, kwargs)))
+    runner = AgentWorkRunner(broker)
+    monkeypatch.setattr(
+        runner,
+        "_receive_message",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
     async with broker.subscribe(str(topic_id)) as browser:
         first, second = await asyncio.gather(
-            broker.receive_message(
+            runner.receive_message(
                 svc,
                 topic_id,
                 author="u",
@@ -277,7 +283,7 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
                 attachments=attachments,
                 client_id="same-browser-delivery",
             ),
-            broker.receive_message(
+            runner.receive_message(
                 svc,
                 topic_id,
                 author="u",
@@ -307,9 +313,10 @@ async def test_retried_client_delivery_is_persisted_and_submitted_once(
 
 @pytest.mark.anyio
 async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
-    business_db_factory, tmp_path
+    business_db_factory, tmp_path, monkeypatch
 ):
-    from app.domain.agent.runtime import InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     factory = business_db_factory
     svc = ChatService(
@@ -342,8 +349,13 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
 
     broker = InProcessBroker()
     submitted = []
-    broker.subscribe_messages(lambda *args, **kwargs: submitted.append((args, kwargs)))
-    retried = await broker.receive_message(
+    runner = AgentWorkRunner(broker)
+    monkeypatch.setattr(
+        runner,
+        "_receive_message",
+        lambda *args, **kwargs: submitted.append((args, kwargs)),
+    )
+    retried = await runner.receive_message(
         svc,
         topic_id,
         author="u",
@@ -559,7 +571,8 @@ async def test_backend_resolves_a_legacy_shared_seat_mention(
 async def test_backend_mention_starts_when_browser_did_not_summon(
     business_db_factory, tmp_path
 ):
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     factory = business_db_factory
     screen = InstantScreen()
@@ -579,8 +592,7 @@ async def test_backend_mention_starts_when_browser_did_not_summon(
         await session.commit()
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    runner.subscribe_messages()
-    landed = await broker.receive_message(
+    landed = await runner.receive_message(
         svc, topic_id, author="u", content="@芝士 check this"
     )
     # The turn ends when it ends. A deadline here raced it and cancelled it
@@ -603,7 +615,8 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     一轮锁的只是自己那一席 —— 默认 agent 的轮次被捏住不放时，@Second 的
     消息起 Second 自己的一轮，两条会话同时在跑。
     """
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.domain.agent_instance.services import AgentInstanceService
 
     factory = business_db_factory
@@ -638,10 +651,9 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
     await screen.started.wait()
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    runner.subscribe_messages()
     # 点名由服务端从正文算（I13）：`@Second` 落库时展开成它的席位，那一位队友的
     # handle 是 `second`，不以 `cheese` 开头 —— 寻址认席位才起得了这一轮。
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="u", content="@Second Second task"
     )
     # The default agent's turn is still held — Second's runs beside it: its
@@ -873,7 +885,8 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
 ):
     """两位队友在同一间房里各跑各的一轮，后端这时被换掉：新进程接回来以后，
     两位后来说的话都当场落进房间，不必等谁再被点名一次。"""
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.domain.agent_instance.services import AgentInstanceService
 
     factory = business_db_factory
@@ -911,8 +924,7 @@ async def test_every_working_teammate_keeps_landing_after_a_restart(
         pass
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    runner.subscribe_messages()
-    await broker.receive_message(
+    await runner.receive_message(
         svc, topic_id, author="u", content="@Second Second task"
     )
     async with asyncio.timeout(HANG_S):
@@ -1401,7 +1413,8 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
 ):
     """A transport exception after registration keeps the input for reconciliation."""
     from app.domain.agent.compute import ComputePool
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.domain.block.models import consumed_turn
     from app.domain.delivery.input_holds import seat_has_unfinished_input
     from tests.conftest import close_topic_subscriptions
@@ -1749,7 +1762,8 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
 ):
     """后端换人时，一间房的会话积压很长、要回放很久：别的房间照常起轮次，这间房
     里点名芝士的那条等回放完再开跑，等得久了房间里会说一声。"""
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     factory = business_db_factory
 
@@ -1794,20 +1808,19 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     runner.REPLAY_NOTICE_S = 0.2
-    runner.subscribe_messages()
 
     # Taking the sessions over does not wait for the slow room's backlog.
     async with asyncio.timeout(HANG_S):
         assert await replaced.recover_sessions() == 2
 
-    await broker.receive_message(
+    await runner.receive_message(
         replaced, quick, author="u", content="@芝士 quick room task"
     )
     async with asyncio.timeout(HANG_S):
         while "quick room task" not in (after.last_prompt or ""):
             await asyncio.sleep(0.05)
 
-    await broker.receive_message(
+    await runner.receive_message(
         replaced, slow, author="u", content="@芝士 slow room task"
     )
 

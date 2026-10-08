@@ -57,6 +57,7 @@ from app.domain.agent.queries import (
     _model_policy_call,
     require_pinned_seat,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.room.system_prompt import session_system_prompt
 from app.domain.agent.room.thread_context import thread_context as _thread_context
@@ -774,7 +775,6 @@ class RoomTurns:
             if place.thread is not None:
                 # So the main line hears when an AI teammate starts and stops
                 # answering in this 支线 (`InProcessBroker.publish`).
-                from app.domain.agent.runtime import get_broker
 
                 get_broker().activity.note_thread(place.thread.id, place.room_id)
             # Resolve the room choice, then the explicit project default.

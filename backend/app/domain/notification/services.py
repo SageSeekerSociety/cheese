@@ -6,7 +6,7 @@
 """
 
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -489,7 +488,12 @@ class ProjectNotificationService:
         return await self._repo.save(row)
 
     async def resolve(
-        self, notification_id: int, *, chosen: str, decided_by: str
+        self,
+        notification_id: int,
+        *,
+        chosen: str,
+        decided_by: str,
+        publish: Callable[[str, dict], Awaitable[None]],
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
         对话，芝士下一轮读得到。"""
@@ -521,7 +525,7 @@ class ProjectNotificationService:
         if block is not None:
             block_payload = BlockOut.model_validate(block).model_dump(mode="json")
             await self._session.commit()
-            await get_broker().publish(
+            await publish(
                 str(block.conversation_id),
                 {"type": "event_block", "block": block_payload},
             )

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.background import spawn
 from app.domain.agent.announce import SHOW_ONCE_COMMITTED
-from app.domain.agent.runtime import get_broker
+from app.domain.agent.realtime.broker import get_broker
 
 
 @event.listens_for(Session, "after_commit")

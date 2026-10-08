@@ -12,12 +12,9 @@ from sqlalchemy import select
 
 from app.core.sentences import from_descriptor
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
-from app.domain.agent.subscriber_queue import SubscriberOverflow
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.realtime.subscriber_queue import SubscriberOverflow
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.identity.actor import Actor
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat
@@ -165,11 +162,11 @@ async def test_reaction_frames_fan_out_but_never_buffer():
 async def test_what_an_agent_is_writing_is_live_only(monkeypatch):
     """A draft goes to whoever watches the room now and is kept nowhere: a
     client that joins mid-turn is not handed an old one."""
-    from app.domain.agent import runtime as agent_runtime
+    from app.domain.agent import live_frames
     from app.domain.agent.live_frames import publish_live
 
     broker = InProcessBroker()
-    monkeypatch.setattr(agent_runtime, "get_broker", lambda: broker)
+    monkeypatch.setattr(live_frames, "get_broker", lambda: broker)
     topic, turn = uuid.uuid4(), uuid.uuid4()
     await broker.publish(str(topic), {"type": "turn_started", "turn_id": str(turn)})
     async with broker.subscribe(str(topic)) as q:
