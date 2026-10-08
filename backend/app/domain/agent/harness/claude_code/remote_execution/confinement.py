@@ -190,9 +190,16 @@ def seatbelt_profile(*, owner, writable, readable, link):
             "(allow file-read* " + paths("subpath", readable) + ")",
             "(allow file-read-metadata " + paths("literal", above) + ")",
             "(deny network-outbound (remote unix-socket))",
-            "(allow network-outbound (remote unix-socket "
-            + paths("subpath", writable)
-            + ' (literal "/private/var/run/mDNSResponder")))',
+            # One rule per path: several paths in one `remote unix-socket` do
+            # not each allow theirs. Measured on macOS 26 (arm64): with the
+            # resolver's socket last in a shared rule, no name resolved.
+            *(
+                f"(allow network-outbound (remote unix-socket {path}))"
+                for path in [
+                    *(f"(subpath {sbpl(item)})" for item in writable),
+                    '(literal "/private/var/run/mDNSResponder")',
+                ]
+            ),
             "(deny lsopen)",
             '(deny mach-lookup (global-name "com.apple.pasteboard.1"))',
             "(deny signal)",
