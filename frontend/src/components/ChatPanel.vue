@@ -523,8 +523,8 @@ defineExpose({ send, connected, submitQuestion })
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
 
-      <!-- 输入框那一块。「谁在忙」浮在它正上方，压在最后一条消息上淡出，不另占一行：
-           没人在忙时那里什么都没有，输入框也不跟着上下跳。 -->
+      <!-- 输入框那一块。「谁在忙」在它上面单占一格，不压在对话上：时间线底部让出这一
+           格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->
       <div class="composer-zone">
         <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" />
         <div v-if="showComposer && !composerClosed && draftQuote" class="composer-quote">
@@ -632,18 +632,13 @@ defineExpose({ send, connected, submitQuestion })
   display: flex;
   flex-direction: column;
 }
-/* 浮在输入框上方：盖住时间线最下面的一截，底下垫一层由透明到底色的渐变，最后一条
-   消息从它下面淡出去。不接点击，点到的仍然是下面的消息。 */
+/* 在输入框上面单占一格（`.composer-zone` 是 flex 列，它在输入框前面）：时间线的可
+   视高度跟着少这一格，最后一条消息不会被压住。几位队友在忙就占几行，没人在忙时组件
+   本身不渲染，这一格也就不存在。 */
 .chat .composer-activity {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 100%;
   padding: 10px 16px 2px;
   font-size: 12px;
   line-height: var(--lh-12);
-  background: linear-gradient(to bottom, transparent, var(--surface) 55%);
-  pointer-events: none;
 }
 /* 输入框和它上面那行状态收成和对话同一栏（时间线那一份在 ChatTimeline）：桌面上
    是读的一栏 --page-w-read，手机外壳里是 --page-w。三块（时间线、输入框、贴在上

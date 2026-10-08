@@ -2,29 +2,45 @@
 
 /healthz:
   get:
-    summary: Basic health check
+    summary: Liveness check
+    description: >
+      The process is up and answering. Always 200 while it can answer at all,
+      including through a dependency outage or an unmounted route module —
+      a restart fixes neither. Whether to send traffic is /readyz.
     operationId: healthz
     tags: [Health]
     responses:
       '200':
-        description: Service is healthy
+        description: The process is alive
         content:
           application/json:
             schema:
-              $ref: './schemas.yaml#/HealthStatus'
+              $ref: './schemas.yaml#/LivenessStatus'
 
 /readyz:
   get:
     summary: Readiness check
+    description: >
+      Whether this process can serve requests: the database and Redis answer
+      within 2 s, and every route module mounted. The rollout and the backend
+      container healthcheck wait on it.
     operationId: readyz
     tags: [Health]
     responses:
       '200':
-        description: Service is ready to accept traffic
+        description: Ready to take traffic
         content:
           application/json:
             schema:
-              $ref: './schemas.yaml#/HealthStatus'
+              $ref: './schemas.yaml#/ReadyStatus'
+      '503':
+        description: >
+          Not ready. Names the failing required checks and each check's status;
+          the error text of a dependency stays in /health/detailed.
+        content:
+          application/json:
+            schema:
+              $ref: './schemas.yaml#/UnreadyStatus'
 
 /health/detailed:
   get:

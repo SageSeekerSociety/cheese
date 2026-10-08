@@ -1,14 +1,43 @@
 # Health Check Schemas
 
-HealthStatus:
+LivenessStatus:
   type: object
   properties:
     status:
       type: string
-      enum: [healthy, unhealthy, degraded]
-    timestamp:
+      enum: [ok]
+
+ReadyStatus:
+  type: object
+  properties:
+    status:
       type: string
-      format: date-time
+      enum: [ready]
+
+UnreadyStatus:
+  type: object
+  properties:
+    status:
+      type: string
+      enum: [unready]
+    unready:
+      type: array
+      description: The required checks that failed (database, redis, routes).
+      items:
+        type: string
+    checks:
+      type: object
+      description: Every check's status, without its error text.
+      additionalProperties:
+        type: object
+        properties:
+          status:
+            type: string
+          unmounted:
+            type: array
+            description: Only on `routes`, the route modules that failed to import.
+            items:
+              type: string
 
 DetailedHealthStatus:
   type: object
@@ -19,7 +48,7 @@ DetailedHealthStatus:
     checks:
       type: object
       description: >
-        One entry per dependency, keyed by name (database, redis, memory).
+        One entry per check, keyed by name (database, redis, routes, event_loop).
         Only some of them gate readiness — see /readyz. `skipped` means the
         check had nothing to do on this deployment, which is not a failure.
       additionalProperties:

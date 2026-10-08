@@ -263,6 +263,7 @@
       "database": "Database",
       "redis": "Redis",
       "event_loop": "Event loop",
+      "routes": "Route modules",
       "note": "This moment only — not stock, not a window. Same checks as /health/detailed."
     },
     "spine": {

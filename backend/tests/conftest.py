@@ -985,6 +985,21 @@ def _redis_client_per_loop() -> Iterator[None]:
     get_redis_client.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_dependency_probe() -> Iterator[None]:
+    """No test reads a readiness answer another test left behind.
+
+    The database and Redis probes are shared and their answer reused for a
+    second (``dependency_probe`` in app/api/routes/health.py), so a test that
+    patches a probe would otherwise read the previous test's answer.
+    """
+    from app.api.routes.health import dependency_probe
+
+    dependency_probe.forget()
+    yield
+    dependency_probe.forget()
+
+
 #: An executor on a process list: its service, and the worker beside it that
 #: serves the platform CLI.
 _EXECUTOR_PROGRAMS = (
