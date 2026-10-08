@@ -761,8 +761,11 @@ test_unready_backend_without_slots_still_rolls_back() {
   fi
   grep -Fq 'HEALTH CHECK FAILED' "$run_dir/release.log" \
     || { cat "$run_dir/release.log"; fail "a failed compose up skipped the health check"; }
+  # No previous release is recorded in this scenario, so the rollback restores
+  # the images and hands compose an empty APP_RELEASE — the line carries the
+  # field either way, the way the fake writes it.
   grep -Fqx \
-    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha' \
+    'compose-up-env BACKEND_IMAGE=repo/backend:oldsha FRONTEND_IMAGE=repo/frontend:oldsha IMAGE_TAG=oldsha APP_RELEASE=' \
     "$docker_log" || fail "a failed compose up did not roll back to the previous images"
   # Only the release's own `up` fails (FAIL_SUFFIX); the rollback's longer one
   # must have been issued and, in the fake, succeeded.
