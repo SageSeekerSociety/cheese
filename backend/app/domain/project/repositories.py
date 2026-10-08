@@ -1,6 +1,7 @@
 """Project data access."""
 
 import uuid
+from collections.abc import Iterable, Mapping
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,13 +94,63 @@ class ProjectRepository:
         project.root_topic_id = root_topic_id
         await self._session.flush()
 
-    async def set_settings(self, project: Project, settings: dict[str, object]) -> None:
-        """Replace the free-form settings blob. Callers merge — assigning a NEW
-        dict is what makes SQLAlchemy see the change (the column is plain JSON,
-        so an in-place mutation is invisible to the unit of work and silently
-        never persists)."""
-        project.settings = settings
-        await self._session.flush()
+    async def lock_settings(self, project: Project) -> None:
+        """Lock this project's row and re-read its settings, in place.
+
+        Every writer that changes the blob goes through here first. It is one
+        JSON column that a dozen writers each change one key of, and each of
+        them merges into whatever *this* session read: a writer whose flush
+        lands after another's puts its whole stale copy back, dropping the key
+        that landed in between, silently. The lock is what makes the read and
+        the write the same moment, and the re-read is what leaves the merge a
+        current blob to merge into.
+
+        ``FOR NO KEY UPDATE`` rather than ``FOR UPDATE``: the lock has to order
+        settings writers against each other and do nothing else. ``FOR UPDATE``
+        also conflicts with the KEY SHARE an insert takes on the row it points
+        at — every topic, member and installation of this project — so creating
+        a room while someone saves a setting would wait, and the two orders can
+        deadlock. ``project_environment.save_environment`` already locks at this
+        strength.
+
+        A locked re-read has to load the row again: the session keeps objects
+        across commits, so a plain re-read would hand back the copy this request
+        already read, unlocked.
+        """
+        await self._session.execute(
+            select(Project)
+            .where(Project.id == project.id)
+            .with_for_update(key_share=True)
+            .execution_options(populate_existing=True)
+        )
+
+    async def merge_settings(
+        self,
+        project: Project,
+        patch: Mapping[str, object],
+        *,
+        remove: Iterable[str] = (),
+    ) -> dict[str, object]:
+        """Change a few keys of the settings blob, atomically.
+
+        The way to write settings: ``patch`` is what this caller has to say,
+        ``remove`` the keys it has to unset, and every other key stays as the
+        database has it. Two writers that each change their own key both keep
+        theirs, whichever order they land in.
+
+        Assigning a NEW dict is what makes SQLAlchemy see the change: the column
+        is plain JSON, so an in-place mutation is invisible to the unit of work
+        and silently never persists. Mutations made after this call still need
+        that.
+        """
+        await self.lock_settings(project)
+        merged = {**(project.settings or {}), **patch}
+        for key in remove:
+            merged.pop(key, None)
+        if merged != (project.settings or {}):
+            project.settings = merged
+            await self._session.flush()
+        return merged
 
     async def people(self, project_id: uuid.UUID) -> list[dict]:
         """名册上**人**的那一半：每个人的 handle、昵称、头像，和他是怎么在这里的。

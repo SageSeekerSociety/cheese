@@ -120,9 +120,7 @@ class ProjectAgentCredentialService:
         retires nothing the second time."""
         project = await self._get_or_404(project_id)
         epoch = credential_epoch_of(project) + 1
-        await self._projects.set_settings(
-            project, {**(project.settings or {}), _EPOCH_KEY: epoch}
-        )
+        await self._projects.merge_settings(project, {_EPOCH_KEY: epoch})
         return epoch
 
     async def current_epoch(self, *, project_id: uuid.UUID) -> int:

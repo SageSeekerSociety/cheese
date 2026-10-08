@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -281,6 +282,28 @@ class ProjectService:
         if project is None:
             raise NotFoundError("Project not found")
         return project
+
+    async def lock_settings(self, project: Project) -> None:
+        """锁住这个项目那一行并重读它的 settings（``FOR NO KEY UPDATE``）。
+
+        改 settings 前先走这里，合并的才是当下这一份；见
+        :meth:`ProjectRepository.lock_settings`。
+        """
+        await self._repo.lock_settings(project)
+
+    async def merge_settings(
+        self,
+        project: Project,
+        patch: Mapping[str, object],
+        *,
+        remove: Iterable[str] = (),
+    ) -> dict[str, object]:
+        """改 settings 里那几个键，其余照数据库当下的样子留着。
+
+        写 settings 的正路，改一个键的调用点都走它——见
+        :meth:`ProjectRepository.merge_settings`。
+        """
+        return await self._repo.merge_settings(project, patch, remove=remove)
 
     async def archive(self, project_id: uuid.UUID, *, by: str) -> Project:
         """Archive the project (idempotent): it leaves its members' lists,
