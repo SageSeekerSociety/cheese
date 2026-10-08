@@ -82,10 +82,10 @@
     "@vueuse/core": "^13.6.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "axios": "^1.11.0",
+    "axios": "^1.20.0",
     "codemirror": "^6.0.2",
     "dayjs": "^1.11.13",
-    "dompurify": "^3.2.6",
+    "dompurify": "^3.4.16",
     "echarts": "^6.1.0",
     "editorjs-drag-drop": "^1.1.16",
     "editorjs-latex": "^1.0.5",
@@ -173,10 +173,13 @@
   "packageManager": "pnpm@9.15.3+sha512.1f79bc245a66eb0b07c5d4d83131240774642caaa86ef7d0434ab47c0d16f66b04e21e0c086eb61e62c77efc4d7f7ec071afad3796af64892fae66509173893a",
   "pnpm": {
     "overrides": {
+      "body-parser": "2.3.0",
+      "follow-redirects": "1.16.1",
       "prosemirror-model": "1.25.11",
       "prosemirror-state": "1.4.4",
       "prosemirror-transform": "1.12.0",
-      "prosemirror-view": "1.42.1"
+      "prosemirror-view": "1.42.1",
+      "qs": "6.16.0"
     }
   }
 }
