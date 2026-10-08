@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { provideTopicMemory } from '@/composables/useTopicMemory'
 
+import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
+import { trackNavigations } from '@/lib/navigationProgress'
+import { warmPagesWhenIdle } from '@/lib/routePrefetch'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -23,9 +26,14 @@ const PROJECT_FRAME_TITLE = 'project-frame'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
+const router = useRouter()
 const store = useWorkspaceStore()
 // The topic page below is rebuilt per topic; what it keeps across topics lives here.
 provideTopicMemory()
+
+// 点下去到新内容出现之间，路由在等目标那一页的懒加载 chunk（见 lib/routePrefetch.ts
+// 开头）。那一段里屏幕上一动不动，点一下像是没点到；这个计数让内容区当场给出反馈。
+const { navigating } = trackNavigations(router)
 
 // The route is the single source of truth for "what am I looking at" — the
 // store only mirrors it so background refreshes know which badge not to light.
@@ -68,13 +76,21 @@ function refreshVisible() {
   void store.refreshUnread()
   void store.refreshTopics()
 }
+// 这个框架底下这几页的代码，趁空闲先下下来：侧栏那一行「总览/资料库」、侧栏和总览
+// 里的任务行，点下去就是它们。按页名热，因为框架这一层拿不到每一页的地址参数
+//（另一个话题、另一个任务），也不该为了预热编一份出来（见 routePrefetch 的 warmPage）。
+const IDLE_WARM_PAGES = ['workspace-overview', 'project-library', 'workspace-task', 'project-tasks']
+let stopIdleWarm: (() => void) | undefined
+
 onMounted(() => {
   pollTimer = window.setInterval(refreshVisible, 30_000)
   document.addEventListener('visibilitychange', refreshVisible)
+  stopIdleWarm = warmPagesWhenIdle(router, IDLE_WARM_PAGES)
 })
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', refreshVisible)
   if (pollTimer !== undefined) window.clearInterval(pollTimer)
+  stopIdleWarm?.()
 })
 
 // 工作台报错统一走全局 toast：store.error 一旦有值就弹一条并清空，避免同一条
@@ -91,6 +107,16 @@ watch(
 
 <template>
   <div class="project-shell fill-height">
+    <!-- 跳转还在路上（见 script 里的 trackNavigations）：内容区顶上一条进度条，点下去
+         当帧就出现。不换掉现在这一页——换掉等于把屏幕上已有的东西闪一下；也不给每页
+         各做一套骨架，那一帧里还不知道要去的是哪一页长什么样。 -->
+    <v-progress-linear
+      v-if="navigating"
+      class="project-shell__progress"
+      indeterminate
+      color="primary"
+      :aria-label="t('shell.loading')"
+    />
     <!-- Screen-reader heading for the frame. Text from the same store the top
          bar reads (the `project-frame` dynamic title), so the two can never
          drift. Hidden: on desktop the project name lives in the sidebar's top
@@ -111,7 +137,16 @@ watch(
 
 <style scoped>
 .project-shell {
+  position: relative;
   width: 100%;
   overflow: hidden;
+}
+/* 贴着内容区上沿，不占位置：出现和消失都不该让下面那一页动一下。 */
+.project-shell__progress {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: 2;
+  margin: 0;
 }
 </style>

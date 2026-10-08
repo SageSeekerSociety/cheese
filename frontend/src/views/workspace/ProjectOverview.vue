@@ -22,6 +22,7 @@ import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
 import { listProjectProgress } from '@/api/projectProgress'
 import { memberName } from '@/lib/agentNames'
 import { readProjectTasks } from '@/lib/projectTasks'
+import { prefetchNow } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectOverviewView from '@/views/workspace/ProjectOverviewView.vue'
@@ -120,6 +121,13 @@ function openTask(task: { taskId: string; roomId: string }) {
     params: { projectId: props.projectId, topicId: task.roomId, taskId: task.taskId },
   })
 }
+// 这一行按下去（还没松开）就先把任务页的代码下下来；落点和 openTask 一直是同一个。
+function pressTask(task: { taskId: string; roomId: string }) {
+  prefetchNow({
+    router,
+    to: { name: 'workspace-task', params: { projectId: props.projectId, topicId: task.roomId, taskId: task.taskId } },
+  })
+}
 function openArtifact(artifactId: string) {
   void router.push({ name: 'project-artifact', params: { projectId: props.projectId, artifactId } })
 }
@@ -145,6 +153,7 @@ function allTasks() {
     :artifact-api="artifactApi"
     @edit-overview="editOverview"
     @open-task="openTask"
+    @press-task="pressTask"
     @open-artifact="openArtifact"
     @all-tasks="allTasks"
     @retry-progress="loadProgress"

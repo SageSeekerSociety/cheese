@@ -92,6 +92,10 @@ const emit = defineEmits<{
   (e: 'hover-topic', id: string): void
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
+  // 同上，按下去就先下代码：总览/资料库那一行和任务行（见 TopicRailPinnedRows、
+  // TopicRailTaskRow 各自的 `press`）。
+  (e: 'press-page', key: string): void
+  (e: 'press-task', task: { roomId: string; taskId: string }): void
   // 话题清单读失败后那颗「重试」：让拥有这份数据的父级再读一次。
   (e: 'retry'): void
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
@@ -434,6 +438,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :page="page === true"
             @open-page="openProjectPage"
             @hover-page="hoverProjectPage"
+            @press-page="emit('press-page', $event)"
             @cancel-prefetch="cancelPrefetch()"
           />
 
@@ -464,6 +469,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :selected="task.id === selectedTaskId"
                 :unread="unreadOf(task.id)"
                 @select="emit('select-task', $event)"
+                @press="emit('press-task', $event)"
               />
               <TopicRailAllTasksRow
                 v-if="rootTopic && roomTaskTotals?.[rootTopic.id]"
@@ -553,6 +559,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :selected="task.id === selectedTaskId"
                         :unread="unreadOf(task.id)"
                         @select="emit('select-task', $event)"
+                        @press="emit('press-task', $event)"
                       />
                       <TopicRailAllTasksRow
                         v-if="roomTaskTotals?.[item.topic.id]"

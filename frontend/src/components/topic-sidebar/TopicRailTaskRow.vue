@@ -26,6 +26,10 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'select', task: { roomId: string; taskId: string }): void
+  // 鼠标左键按下去了：意图定了，不必再等指针停满 hover 那一百多毫秒（和频道行
+  // `TopicRailRow` 的 `press` 同一条理由）。任务页的代码是懒加载的，早下这一百多
+  // 毫秒，打开它就少等这一段。
+  (e: 'press', task: { roomId: string; taskId: string }): void
 }>()
 
 const mark = computed<'needs-you' | 'running' | null>(() => {
@@ -43,6 +47,9 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
     :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
+    @pointerdown="
+      $event.pointerType === 'mouse' && $event.button === 0 && emit('press', { roomId: task.room_id, taskId: task.id })
+    "
   >
     <!-- 任务名是人起的（占位名除外，那是界面上的字）。 -->
     <span
