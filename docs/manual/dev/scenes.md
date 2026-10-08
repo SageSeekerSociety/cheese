@@ -66,7 +66,7 @@ covers:
 
 今天就能单独跑的那 2 页：`views/404.vue`、`views/user/settings/General.vue`。
 
-2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**。2026-10-08 判据改了两处，当天基线是 **104 个 ready、76 个 debt**：注释里提到 `vue-router` 不再算依赖后，`components/panels/preview/PreviewPage.vue`、`views/MarketViewView.vue`、`views/user/settings/ThisDeviceView.vue` 三页合格进入名单（102 → 105）；`export … from` 算一条边后，`views/tasks/detail/Brief.vue` 落到 container、冻结转到同目录的 `BriefView.vue`（105 → 104，见[这份清单怎么来的](#how)）。
+2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。上面两张表还是 2026-09-30 的口径；「页面」一表里对应的行已改成「容器」并写出画面在哪，目录一表里 `views/account/` 17 页现在全是容器。2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**。2026-10-08 判据改了两处，基线从 **110 个 ready、74 个 debt** 变成 **109 个 ready、74 个 debt**：注释里提到 `vue-router` 不再算依赖（#3066）；模板里画 `<router-view>` / `<router-link>` 现在算 D，`export { … } from` / `export * from` 也算一条边（`export type` 不算）。前一条让仓库里 12 个已冻结在 `ready` 的场景改用 `components/common/NavLink.vue`（改完仍是 A）：`views/account/` 那 8 页、`views/user/settings/ProfileView.vue`、`views/user/settings/RealNameView.vue`、`views/home/Landing.vue`、`views/home/Solutions.vue`。后一条让 `views/tasks/detail/Brief.vue` 经 `views/tasks/composables/index.ts` 的 barrel 够到 `@/api`，落进 container、冻结转到同目录的 `BriefView.vue`（110 → 109，见[这份清单怎么来的](#how)）。
 
 ## 从今天起它是一条闸门 {#ratchet}
 
