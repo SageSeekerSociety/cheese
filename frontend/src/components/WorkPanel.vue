@@ -293,8 +293,11 @@ watch(
   (now, before) => {
     if (!before || now) return
     refreshTick.value += 1
-    void pollPreviewPointer()
-    void pollWorkSummary()
+    // 预览和改动只有任务有（见 CHANNEL_TABS）。
+    if (props.taskId) {
+      void pollPreviewPointer()
+      void pollWorkSummary()
+    }
     // 一轮里派出去的活，收工那一刻就该出现在 任务 那一格上。
     void pollThreads({ fresh: true })
   }
