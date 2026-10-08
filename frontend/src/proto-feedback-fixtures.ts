@@ -1777,6 +1777,25 @@ function signupsOfDay(day: string): number {
   return weekdayOf(day) === 0 ? 0 : hashDay(`s${day}`) % 4
 }
 
+/** Claude 账号池。三张账号各一种状态（可用 / 冷却 / 已停用），解冻时刻从这一刻起算
+ *  —— 这是预览里唯一一个「现在」还说得通的数（同 `usageOfDay` 那条纪律，假数据也得对
+ *  得上一张截图）。 */
+function claudePool(): Record<string, unknown> {
+  const now = Date.now() / 1000
+  return {
+    accounts: [
+      { name: 'primary', state: 'available', until: null, failures: 0 },
+      { name: 'claude-2', state: 'cooling', until: now + 900, failures: 2 },
+      { name: 'claude-3', state: 'disabled', until: null, failures: 6 },
+    ],
+    reason: null,
+    written_at: now,
+    age_seconds: 0,
+    stale: false,
+    retry_after: 900,
+  }
+}
+
 /** 额度燃尽。三个互斥名单 + 从 resource_usage 推的燃烧速率。 */
 function creditsBurnout(): Record<string, unknown> {
   return {
@@ -2321,6 +2340,7 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
     if (stats[1] === 'usage') {
       const u = usageStats(url) as Record<string, unknown>
       u.credits = creditsBurnout()
+      u.claude_accounts = claudePool()
       return { data: u }
     }
     if (stats[1] === 'platform') {
