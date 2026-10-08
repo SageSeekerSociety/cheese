@@ -1,7 +1,7 @@
 """review comments: comments on a task's changes, sent with a 退回
 
 Revision ID: c5d2e8a1f4b7
-Revises: 9e1b64d280dd
+Revises: d3f6a2c85b71
 
 One row per comment a person writes on lines of a task's changes while it
 awaits review: a draft until the next 退回 sends it, then what 芝士 reports
@@ -17,7 +17,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "c5d2e8a1f4b7"
-down_revision: str | Sequence[str] | None = "9e1b64d280dd"
+down_revision: str | Sequence[str] | None = "d3f6a2c85b71"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -614,14 +614,14 @@ async def save_forge_attribution(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
     if body.requester_coauthor is None:
-        values.pop("forge_requester_coauthor", None)
+        await service.merge_settings(project, {}, remove=("forge_requester_coauthor",))
     else:
-        values["forge_requester_coauthor"] = body.requester_coauthor
-    project.settings = values
-    await db.flush()
+        await service.merge_settings(
+            project, {"forge_requester_coauthor": body.requester_coauthor}
+        )
     return await get_forge_attribution(project_id, db, resolver)
 
 
@@ -661,9 +661,9 @@ async def set_task_naming(
     mode = body.get("mode")
     if mode not in naming.MODES:
         raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
-    project = await ProjectService(db).get_or_404(project_id)
-    project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
-    await db.flush()
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
+    await service.merge_settings(project, {naming.SETTINGS_KEY: mode})
     return await get_task_naming(project_id, db, resolver)
 
 
@@ -947,9 +947,13 @@ async def set_branch_protection(
     never dual-written. Who may change review policy is the steward dependency's
     question: the project's owner, or an owner/admin of its team.
     """
-    project = await ProjectRepository(db).get(project_id)
+    repo = ProjectRepository(db)
+    project = await repo.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    # What is written here is read from what is stored (the current rule, merged
+    # with the body), so the read has to happen under the lock.
+    await repo.lock_settings(project)
     new_settings = {**(project.settings or {})}
     if any(key in body for key in _BRANCH_PROTECTION_KEYS):
         try:
@@ -997,7 +1001,8 @@ async def set_project_upstream(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
     if await binding_for_project(project_id, db) is not None:
         raise ConflictError(say("repoAlreadyConnected"))
     if (project.settings or {}).get("forge_kind") != "github_app":
@@ -1007,6 +1012,5 @@ async def set_project_upstream(
     if raw and parsed is None:
         raise ValidationError(say("githubRepoUrlRequired"))
     url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
-    project.settings = {**(project.settings or {}), "github_repository_url": url}
-    await db.flush()
+    await service.merge_settings(project, {"github_repository_url": url})
     return ok({"url": url})

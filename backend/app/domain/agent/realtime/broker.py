@@ -72,10 +72,11 @@ class InProcessBroker:
             self._active.setdefault(channel, set()).add(turn_id)
             self._active_since.setdefault((channel, turn_id), started)
             taken.append((turn_id, agent))
-            if agent and (
-                followed := self.activity.turn_started(channel, turn_id, agent)
-            ):
-                self._fan_out(channel, followed)
+            if agent:
+                for started_frame in self.activity.turn_started(
+                    channel, turn_id, agent
+                ):
+                    self._fan_out(channel, started_frame)
         return taken
 
     async def publish(self, channel: str, frame: Frame) -> None:
@@ -92,14 +93,14 @@ class InProcessBroker:
         author = (frame.get("block") or {}).get("author")
         if kind == "user_block" and author:
             await self.typing(channel, str(author), active=False)
-        followed: Frame | None = None
+        followed: list[Frame] = []
         if kind == "turn_started":
             turn_id = str(frame.get("turn_id") or "")
             if turn_id:
                 self._active.setdefault(channel, set()).add(turn_id)
                 self._active_since.setdefault((channel, turn_id), time.time())
                 if agent := frame.get("agent"):
-                    followed = self.activity.turn_started(channel, turn_id, str(agent))
+                    followed += self.activity.turn_started(channel, turn_id, str(agent))
 
         if self._active.get(channel):
             self._last_activity_at[channel] = time.monotonic()
@@ -118,7 +119,8 @@ class InProcessBroker:
             active = self._active.get(channel)
             if active is not None:
                 active.discard(turn_id)
-                followed = self.activity.turn_finished(channel, turn_id)
+                if (ended := self.activity.turn_finished(channel, turn_id)) is not None:
+                    followed.append(ended)
                 self._active_since.pop((channel, turn_id), None)
                 if not active:
                     self._active.pop(channel, None)
@@ -126,8 +128,9 @@ class InProcessBroker:
                     self._last_activity_at.pop(channel, None)
 
         self._fan_out(channel, frame)
-        for to, extra in self.activity.told(channel, followed):
-            self._fan_out(to, extra)
+        for change in followed:
+            for to, extra in self.activity.told(channel, change):
+                self._fan_out(to, extra)
 
     def _fan_out(self, channel: str, frame: Frame) -> None:
         if subs := self._subs.get(channel):

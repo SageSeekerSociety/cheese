@@ -154,12 +154,14 @@ async def save_default_model(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
     from app.domain.agent_instance.configuration import model_choices
 
     access = await UsageService(db).model_access(project.team_id)
-    valid = {c["id"]: c for c in model_choices(values)}
+    valid = {c["id"]: c for c in model_choices(project.settings)}
+    patch: dict[str, object] = {}
+    remove: list[str] = []
     for field, key in (
         ("model", "default_model"),
         ("subagent_model", "default_subagent_model"),
@@ -168,16 +170,15 @@ async def save_default_model(
             continue
         chosen = getattr(body, field)
         if chosen is None:
-            values.pop(key, None)
+            remove.append(key)
         elif chosen not in valid:
             raise ValidationError(say("modelUnavailableNamed", model=repr(chosen)))
         elif not access.allows(valid[chosen]["tier"]):
             raise ValidationError(say("modelNotInPlan", label=valid[chosen]["label"]))
         else:
-            values[key] = chosen
-    project.settings = values
-    await db.flush()
-    state = _default_model_state(project.settings, access)
+            patch[key] = chosen
+    settings = await service.merge_settings(project, patch, remove=remove)
+    state = _default_model_state(settings, access)
     state["can_manage"] = True
     return ok(state)
 
@@ -269,17 +270,16 @@ async def save_compute_configs(
 ) -> dict:
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    repo = ProjectRepository(db)
+    project = await repo.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     await MemberService(db).require_manager(project_id, actor)
     await validate_choice(db, project_id, body.default)
     await HostPool(db).admit_choice(project_id, actor, body.default)
-    values = dict(project.settings or {})
-    values.pop("compute_profile", None)
-    values["compute_configs"] = body.model_dump()
-    project.settings = values
-    await db.flush()
+    await repo.merge_settings(
+        project, {"compute_configs": body.model_dump()}, remove=("compute_profile",)
+    )
     return ok(body.model_dump())
 
 
@@ -326,14 +326,16 @@ async def set_tier_policy(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
+    patch: dict[str, object] = {}
+    remove: list[str] = []
     if gate.ALLOWED_TIERS_KEY in body:
         tiers = body.get(gate.ALLOWED_TIERS_KEY)
         if tiers is None:
-            values.pop(gate.ALLOWED_TIERS_KEY, None)
+            remove.append(gate.ALLOWED_TIERS_KEY)
         elif isinstance(tiers, list) and all(isinstance(t, str) for t in tiers):
-            values[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
+            patch[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
         else:
             raise ValidationError(say("allowedTiersInvalid"))
     if gate.OVER_TIER_KEY in body:
@@ -342,7 +344,6 @@ async def set_tier_policy(
             raise ValidationError(
                 say("overTierInvalid", values=str(sorted(gate.DISPOSITIONS)))
             )
-        values[gate.OVER_TIER_KEY] = disposition
-    project.settings = values
-    await db.flush()
+        patch[gate.OVER_TIER_KEY] = disposition
+    await service.merge_settings(project, patch, remove=remove)
     return await get_tier_policy(project_id, db, resolver)

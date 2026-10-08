@@ -13,7 +13,7 @@
 import type { Ref } from 'vue'
 import type { WsClientMessage, WsServerFrame } from '../../../cx_types'
 
-import { onScopeDispose, ref } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { chatWsUrl } from '../../../api'
@@ -111,6 +111,33 @@ export function useRoomSocket(options: {
     if (announceTimer) clearTimeout(announceTimer)
     announceTimer = null
   }
+
+  // What the header says about the link: down only once the room has gone this
+  // long without it. Entering a room opens a new socket, and while it
+  // handshakes over the Hong Kong relay `connected` is false — said as 未连接,
+  // that is a lie on every switch. A drop the first reconnect heals is the same
+  // blip the banner above waits out, so the header waits as long.
+  const linkDown = ref(false)
+  let linkDownTimer: ReturnType<typeof setTimeout> | null = null
+  function clearLinkDownTimer() {
+    if (linkDownTimer) clearTimeout(linkDownTimer)
+    linkDownTimer = null
+  }
+  watch(
+    connected,
+    (up) => {
+      if (up) {
+        clearLinkDownTimer()
+        linkDown.value = false
+      } else if (!linkDown.value && !linkDownTimer) {
+        linkDownTimer = setTimeout(() => {
+          linkDownTimer = null
+          if (!connected.value) linkDown.value = true
+        }, OUTAGE_ANNOUNCE_MS)
+      }
+    },
+    { immediate: true, flush: 'sync' }
+  )
 
   function scheduleReconnect(topicId: string) {
     if (retryTimer || connectRefused.value) return
@@ -254,10 +281,13 @@ export function useRoomSocket(options: {
   onScopeDispose(() => {
     closeSocket()
     noteLinkUp()
+    clearLinkDownTimer()
   })
 
   return {
     connected,
+    /** The link has been down long enough to say so (see `linkDown` above). */
+    linkDown,
     /** 连接在开始阶段就被拒了（认证/权限），重连帮不上忙——由房间的状态机置位。 */
     connectRefused,
     isConnectRefusal,

@@ -279,7 +279,7 @@ async def list_accept_cards(
     # 读到的却可能是轮询器几分钟前写下的旧状态，于是「检查全绿、按钮点不动」。
     # 这里把过期的那份补上（有地板，见 settings），而不是让读者自己去猜。
     await svc.refresh_stale_pr_snapshots(cards)
-    return ok(page([await svc.describe(c) for c in cards], total))
+    return ok(page(await svc.describe_many(cards), total))
 
 
 @router.get("/topics/{topic_id}/pr-checks")

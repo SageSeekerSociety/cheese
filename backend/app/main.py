@@ -164,6 +164,51 @@ async def lifespan(application: FastAPI):
     get_work_runner().hold_turns()
     get_work_runner().own_sessions(False)
 
+    # The jobs are built once per process and started in two places: the ones the
+    # ownership lock still guards start with the lock, below (`taken_over`), and
+    # the ones that have left it start at boot, beside it. A job leaving the lock
+    # is one flag per PR (迁移顺序 3e) — `core/job_runs.py` holds the tick lease
+    # that then keeps a job scheduled on every process from running a tick twice.
+    jobs[:] = background.periodic_jobs(
+        chat=get_chat_service(),
+        machines=CloudPoolSweeper(async_session_factory),
+        sandboxes=SandboxSweeper(async_session_factory),
+        compute=ComputeMeterSweeper(async_session_factory),
+        sessions=async_session_factory,
+    )
+    runs = JobRuns(async_session_factory)
+
+    async def start_jobs(*, owner_only: bool) -> None:
+        """Start this process's share of the jobs, each with the time it last ran
+        so one that is already overdue runs at once (`PeriodicRunner.start`)."""
+        mine = [job for job in jobs if job.owner_only is owner_only]
+        try:
+            last_runs = await runs.load(
+                [job.name for job in mine if job.interval_seconds > 0],
+                datetime.now(UTC),
+            )
+        except Exception:  # noqa: BLE001 — never block startup; jobs wait one interval
+            get_logger("cheesex.runtime").exception("periodic job runs unreadable")
+            last_runs = {}
+        for job in mine:
+            job.start(runs, last_runs.get(job.name))
+
+    async def flush_held_errors() -> None:
+        """Keep the summaries this process's `intake` is still holding, full
+        window or not (迁移顺序 2e).
+
+        The `backend error flush` job closes a burst window on a clock, and only
+        once it has filled 300 s. Whatever this process collected in its last
+        minutes is nobody else's: the next process holds its own windows, never
+        this one's. So it is flushed on the way out — at the handover, and again
+        at the last moment of this process's life, because the drain in between
+        keeps serving requests.
+        """
+        try:
+            await backend_log.flush_all()
+        except Exception:  # noqa: BLE001 — never block handing over
+            get_logger("cheesex.runtime").exception("backend error flush failed")
+
     async def take_over() -> None:
         await ownership.acquire()
         held_the_work.append(
@@ -238,24 +283,10 @@ async def lifespan(application: FastAPI):
         except Exception:  # noqa: BLE001 — never block startup
             get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
-        jobs[:] = background.periodic_jobs(
-            chat=get_chat_service(),
-            machines=CloudPoolSweeper(async_session_factory),
-            sandboxes=SandboxSweeper(async_session_factory),
-            compute=ComputeMeterSweeper(async_session_factory),
-            sessions=async_session_factory,
-        )
-        runs = JobRuns(async_session_factory)
-        try:
-            last_runs = await runs.load(
-                [job.name for job in jobs if job.interval_seconds > 0],
-                datetime.now(UTC),
-            )
-        except Exception:  # noqa: BLE001 — never block startup; jobs wait one interval
-            get_logger("cheesex.runtime").exception("periodic job runs unreadable")
-            last_runs = {}
-        for job in jobs:
-            job.start(runs, last_runs.get(job.name))
+        # The jobs the lock still guards start here, now that this process holds
+        # it. The ones that have left it started at boot (`start_jobs` above), so
+        # a handover neither stops them nor waits for them.
+        await start_jobs(owner_only=True)
         background.spawn(
             sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
             name="cleanup startup recovery",
@@ -271,6 +302,14 @@ async def lifespan(application: FastAPI):
             )
 
     taking_over = asyncio.create_task(take_over(), name="take over running work")
+
+    # The jobs no longer behind the ownership lock run on every process, so they
+    # start at boot rather than when the lock arrives: that, and not the lock, is
+    # what leaves no gap in them across a handover. None today — 迁移顺序 3e
+    # flips them one at a time — so this is still the empty case.
+    background.spawn(
+        start_jobs(owner_only=False), name="scheduled jobs beside the lock"
+    )
 
     # Questions asked of sessions are read by whichever process holds each
     # one's lease, not by the one that owns the running work: this process
@@ -353,7 +392,13 @@ async def lifespan(application: FastAPI):
         for task in forge_events:
             task.cancel()
         await asyncio.gather(*forge_events, return_exceptions=True)
-        for job in reversed(jobs):
+        # Before the jobs stop, because `backend error flush` is the only thing
+        # that would have closed this process's windows, and it is going away.
+        await flush_held_errors()
+        # Only the lock's share of them: a job that has left the lock is not the
+        # lock's to give away, and it keeps ticking here until the process goes
+        # (`start_jobs`).
+        for job in reversed([job for job in jobs if job.owner_only]):
             await job.stop()
         await ownership.release()
 
@@ -402,6 +447,10 @@ async def lifespan(application: FastAPI):
             await asyncio.gather(reading_questions, return_exceptions=True)
             await get_consumptions().let_go()
             await hand_over_once()
+            # The backend serves through its drain, so requests since the
+            # handover can have opened windows nobody else can flush: this is
+            # the last moment they exist.
+            await flush_held_errors()
             if listening_for_handover:
                 loop.remove_signal_handler(signal.SIGUSR1)
             if hasattr(hub_runtime, "close"):

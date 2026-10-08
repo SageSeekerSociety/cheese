@@ -239,7 +239,6 @@ const CHUNKS = [
   'prosemirror',
   'vuetify',
   'tiptap',
-  'viewerjs',
   'editorjs',
   'monaco',
 ]
@@ -281,9 +280,6 @@ function chunkName(id: string): string | null {
     }
     if (id.includes('zod')) {
       return 'zod'
-    }
-    if (id.includes('viewerjs')) {
-      return 'viewerjs'
     }
     if (id.includes('tiptap')) {
       return 'tiptap'
@@ -435,11 +431,20 @@ export default defineConfig({
         // Keep '/' out of the precache's implicit '/index.html' alias so the
         // public navigation rule below can fetch the current HTML online.
         directoryIndex: null,
-        // Precache the app shell: the shell-critical chunks (vue, vuetify,
-        // entry) must land in precache or an offline reload white-screens.
-        // Chunks over workbox's 2 MiB default are NOT precached; the /assets/
-        // runtime cache below picks them up on first online visit instead, so
-        // precache stays bounded.
+        // The glob below matches every file in dist carrying those extensions —
+        // the whole app, not just the shell. What stays out is exactly what
+        // globIgnores names; the /assets/ runtime cache below picks those up on
+        // first online use. The shell-critical chunks (vue, vuetify, entry)
+        // must be in it, or an offline reload white-screens; the lazy-route
+        // chunks ride along so a route opened online once also opens offline.
+        //
+        // This config sets no maximumFileSizeToCacheInBytes, so workbox's 2 MiB
+        // default applies — and vite-plugin-pwa turns an oversize match into a
+        // BUILD ERROR rather than dropping it silently: a file that outgrows
+        // 2 MiB fails `vite build` with "Configure workbox.maximumFileSize..."
+        // until you either raise that limit or name the file in globIgnores.
+        // Nothing currently sits near the line — the two large assets (monaco
+        // and its language workers) are excluded by name below.
         //
         // `.woff` is deliberately absent while `.woff2` stays. Both formats of
         // the same faces ship (MDI 574 KB + 394 KB, plus 20 KaTeX pairs) and no
@@ -454,8 +459,8 @@ export default defineConfig({
         // Monaco is not part of the app shell: it loads only when a code panel
         // opens. Its language workers (editor/json/html/css/ts.worker-*.js, up
         // to ~7 MB each) were already excluded, but `monaco-*.js` — the editor
-        // itself, 4.13 MB — has no "worker-" in its name, so the size cap below
-        // waved it through and every install downloaded it. Same reason, same
+        // itself, 4.13 MB — has no "worker-" in its name, so the glob matched it
+        // too and every install downloaded it. Same reason, same
         // treatment: keep both OUT of precache (that is "别缓存到爆"); the
         // /assets/ runtime cache below picks them up on first online use.
         // `docs/**` is the docs site (docs/site → public/docs), not part of
@@ -552,9 +557,11 @@ export default defineConfig({
             },
           },
           {
-            // Content-hashed build assets that were too big to precache
-            // (monaco / prismjs-all, etc.). Immutable filenames → CacheFirst is
-            // safe: a code change ships a new hash, never a stale hit.
+            // Content-hashed build assets the precache did not take — monaco
+            // and its workers are named in globIgnores above, and anything the
+            // glob does not match lands here too. Immutable filenames →
+            // CacheFirst is safe: a code change ships a new hash, never a stale
+            // hit.
             urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/assets/'),
             handler: 'CacheFirst',
             options: {
