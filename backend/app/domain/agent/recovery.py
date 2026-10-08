@@ -18,7 +18,7 @@ from app.domain.agent.harness import SessionRef
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
-    from app.domain.agent.hook_stream import _HookWorkState
+    from app.domain.agent.live_work import HookWorkState, LiveWork
     from app.domain.agent.prewarm import SeatPrewarm
 
 logger = logging.getLogger(__name__)
@@ -31,13 +31,7 @@ class SessionRecovery:
 
     if TYPE_CHECKING:
         _compute: ComputePool
-        _dead_sessions: set[tuple]
-        _hook_work: dict
-        _replays: dict[uuid.UUID, asyncio.Task]
-
-        def _mark_turn_inactive(
-            self, topic_id: uuid.UUID, work_id: uuid.UUID
-        ) -> None: ...
+        live: LiveWork
 
         async def _begin_self_started_turn(
             self,
@@ -48,7 +42,7 @@ class SessionRecovery:
             opened: bool = False,
             agent_handle: str | None = None,
             session_id: str | None = None,
-        ) -> _HookWorkState | None: ...
+        ) -> HookWorkState | None: ...
 
         _replay_slots: asyncio.Semaphore
         prewarm: SeatPrewarm
@@ -77,7 +71,7 @@ class SessionRecovery:
         if sessions_factory is not None:
             async with sessions_factory() as session:
                 await death_evidence.refresh(
-                    session, self._compute, self._dead_sessions
+                    session, self._compute, self.live
                 )
         # One per seat, not per room: teammates in one room run side by side,
         # and a seat left out here is re-attached but never read again until
@@ -98,7 +92,7 @@ class SessionRecovery:
             )
             if (
                 work is not None
-                and (session.conversation_id, work) not in self._hook_work
+                and (session.conversation_id, work) not in self.live.hook_work
             ):
                 try:
                     found = self._compute.found_conversations(
@@ -122,10 +116,10 @@ class SessionRecovery:
             # A device reconnecting while its room still replays: the new
             # replay starts where that one stops, not beside it.
             replay = asyncio.create_task(
-                self._replay_room(seats, after=self._replays.get(topic_id)),
+                self._replay_room(seats, after=self.live.replays.get(topic_id)),
                 name=f"replay:{topic_id}",
             )
-            self._replays[topic_id] = replay
+            self.live.replays[topic_id] = replay
             replay.add_done_callback(self._replayed)
         return len(unique)
 
@@ -174,21 +168,21 @@ class SessionRecovery:
         (or to a person), and no session will ever end them; kept, each one is
         a second live turn on its seat, which refuses that seat's questions as
         ambiguous and keeps reminding a turn nobody runs to speak."""
-        for key in [key for key in self._hook_work if key[1] in turn_ids]:
-            del self._hook_work[key]
-            self._mark_turn_inactive(*key)
+        for key in [key for key in self.live.hook_work if key[1] in turn_ids]:
+            del self.live.hook_work[key]
+            self.live.mark_turn_inactive(*key)
 
     def _replayed(self, replay: asyncio.Task) -> None:
-        for topic_id, current in list(self._replays.items()):
+        for topic_id, current in list(self.live.replays.items()):
             if current is replay:
-                del self._replays[topic_id]
+                del self.live.replays[topic_id]
 
     def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None:
         """The replay a turn in this room has to wait for, if one is running."""
-        replay = self._replays.get(topic_id)
+        replay = self.live.replays.get(topic_id)
         return None if replay is None or replay.done() else replay
 
     async def replays_settled(self) -> None:
         """Wait until no room is replaying."""
-        while self._replays:
-            await asyncio.gather(*self._replays.values(), return_exceptions=True)
+        while self.live.replays:
+            await asyncio.gather(*self.live.replays.values(), return_exceptions=True)

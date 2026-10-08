@@ -30,7 +30,7 @@ from app.domain.agent.harness.prompt import (
     prompt_line,
     publication_prompt,
 )
-from app.domain.agent.hook_stream import _HookWorkState
+from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.mcp_notice import unconnected_mcp
 from app.domain.agent.platform_notices import (
     EVENT_PROMPT_REPLAYED,
@@ -312,9 +312,7 @@ class RoomTurns:
         _compute: _Machines
         _memory: _MemoryBooks
         _skills: str
-        _hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState]
-        _session_route: dict[uuid.UUID, str]
-        _session_model: dict[uuid.UUID, str]
+        live: LiveWork
 
         def _input_registrar(
             self,
@@ -691,7 +689,7 @@ class RoomTurns:
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
-            # 回事」在下游是两种情况（见 `_HookWorkState.roster`）。问的是这间房
+            # 回事」在下游是两种情况（见 `HookWorkState.roster`）。问的是这间房
             # 是不是私聊，不是它此刻坐了几个人：名册还要往下走进 `announce_mentions`。
             roster = await room_roster(session, topic.project_id, topic)
             # Topic list so 芝士 can cross-reference topics with <#id> tokens.
@@ -1201,14 +1199,14 @@ class RoomTurns:
         # fact about where a SESSION's traffic goes, not about one prompt, and a
         # self-started turn has no prompt to resolve it from — it rides the same
         # screen as this one, so this is the answer for both.
-        self._session_route.pop(topic_id, None)
-        self._session_route[topic_id] = route
-        while len(self._session_route) > _SESSION_ROUTES_KEPT:
-            del self._session_route[next(iter(self._session_route))]
-        self._session_model.pop(topic_id, None)
-        self._session_model[topic_id] = model_kwargs["model"]
-        while len(self._session_model) > _SESSION_ROUTES_KEPT:
-            del self._session_model[next(iter(self._session_model))]
+        self.live.session_route.pop(topic_id, None)
+        self.live.session_route[topic_id] = route
+        while len(self.live.session_route) > _SESSION_ROUTES_KEPT:
+            del self.live.session_route[next(iter(self.live.session_route))]
+        self.live.session_model.pop(topic_id, None)
+        self.live.session_model[topic_id] = model_kwargs["model"]
+        while len(self.live.session_model) > _SESSION_ROUTES_KEPT:
+            del self.live.session_model[next(iter(self.live.session_model))]
 
         # Internal: the screen subscription, not this request, owns timeout and
         # thinking lifecycle. Runtime consumes this frame and disables its
@@ -1254,9 +1252,9 @@ class RoomTurns:
             # (hook_stream's AgentUserEntry branch) — not here: registering a
             # send proves nothing about the session, and this loop used to
             # scan the whole topic for it (FB-56).
-            state = self._hook_work.get(key)
+            state = self.live.hook_work.get(key)
             if state is None:
-                self._hook_work[key] = _HookWorkState(
+                self.live.hook_work[key] = HookWorkState(
                     project_id=project_id,
                     topic_id=topic_id,
                     work_id=marked_work_id,
