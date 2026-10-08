@@ -46,6 +46,7 @@ from app.domain.block.models import (
     agent_notice,
     consumed_turn,
 )
+from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import records as library_records
 from app.domain.topic.models import (
@@ -266,6 +267,40 @@ def _pending_input_blocks(history: list[Block]) -> list[Block]:
         if _is_pending_input(b)
         and consumed_turn(b) is None
         and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
+    ]
+
+
+async def live_inputs(
+    session: AsyncSession, block_ids: list[uuid.UUID]
+) -> tuple[Block | None, Block | None]:
+    """Read the persisted authored message, quote and validated reply edge."""
+    stored = replied = None
+    blocks = BlockRepository(session)
+    for block_id in block_ids:
+        block = await blocks.get(block_id)
+        if block is not None:
+            if block.kind == BlockKind.message:
+                stored = block
+            if block.reply_to is not None:
+                replied = await blocks.get(block.reply_to)
+    return stored, replied
+
+
+async def read_images(
+    session: AsyncSession, room: Topic | None, images: list[dict]
+) -> list[Image]:
+    """The pictures said along with words mid-turn, read now: the session that
+    is handed them reads no files of its own. No room, no pictures."""
+    if room is None:
+        return []
+    return [
+        Image(
+            image["media_type"],
+            await library_records.read_attachment(
+                session, room.project_id, room.id, image["path"]
+            ),
+        )
+        for image in images
     ]
 
 

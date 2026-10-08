@@ -1516,7 +1516,21 @@
       "roomDoc": "「{room}」的文档",
       "keep": "另存为文档"
     },
-    "newDocFailed": "新建文档失败"
+    "newDocFailed": "新建文档失败",
+    "newFolder": "新建文件夹",
+    "newFolderConfirm": "新建",
+    "move": "移动或重命名",
+    "moveTitle": "移动或重命名",
+    "moveConfirm": "移动",
+    "moved": "已移动",
+    "moveFailed": "移动失败",
+    "folderField": "文件夹",
+    "nameField": "名称",
+    "topLevel": "资料库最上层",
+    "folderMeta": "{n} 份文件 · {when}",
+    "folderEmpty": "暂无文件",
+    "crumbsLabel": "所在位置",
+    "deleteFolderBody": "文件夹里的 {n} 份文件会一起删除，无法恢复，已经引用过它们的消息也将打不开这些文件"
   },
   "projectSettings": {
     "title": "项目设置",
