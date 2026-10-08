@@ -17,6 +17,27 @@ def command(*args: str) -> str:
     return subprocess.check_output(args, text=True, timeout=30).strip()
 
 
+# The required /readyz checks that fail on the box rather than in the build. A
+# backend unready over these alone stays unready through a release of the same
+# build: the release would only roll back and add a failed run.
+DEPENDENCY_CHECKS = frozenset({"database", "redis"})
+
+
+def unready_dependencies(container: str) -> set[str]:
+    """The dependencies a backend is unready over, or an empty set when it is
+    unready for anything else (or its answer cannot be read)."""
+    try:
+        body = json.loads(command(
+            "docker", "exec", container, "curl", "-sS", "-m", "5", "http://localhost:8081/readyz",
+        ))
+    except (subprocess.SubprocessError, ValueError):
+        return set()
+    unready = body.get("unready") if isinstance(body, dict) else None
+    if not isinstance(unready, list) or not unready or not set(unready) <= DEPENDENCY_CHECKS:
+        return set()
+    return set(unready)
+
+
 # The dev box reaches api.github.com over a path that sometimes drops a TLS
 # connection mid-read (deploy run 37667147156: SSL UNEXPECTED_EOF after the app
 # was already released, so the metering image was not). A dropped connection or
@@ -145,6 +166,8 @@ def should_skip(candidate: str, rebuilt: bool = False) -> bool:
     repository = os.environ["GITHUB_REPOSITORY"]
     versions = set()
     healthy_services = set()
+    running_services = set()
+    unhealthy = []
     all_healthy = True
     for service in ("backend", "frontend"):
         # Each runs in one of two slots on a box that releases without downtime
@@ -169,8 +192,11 @@ def should_skip(candidate: str, rebuilt: bool = False) -> bool:
             health = command("docker", "inspect", "--format",
                              "{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}", container)
             all_healthy = all_healthy and health == "healthy"
+            running_services.add(service)
             if health == "healthy":
                 healthy_services.add(service)
+            else:
+                unhealthy.append((service, container))
     if not versions:
         print("No running application containers; allowing bootstrap.")
     all_identical = bool(versions)
@@ -193,6 +219,19 @@ def should_skip(candidate: str, rebuilt: bool = False) -> bool:
         return False
     if all_identical and all_healthy and healthy_services == {"backend", "frontend"}:
         print(f"Skipping duplicate release {candidate}: both application services are healthy.")
+        return True
+    if all_identical and running_services == {"backend", "frontend"} and unhealthy:
+        # The same build is already in place. A backend unready only because a
+        # dependency is out of reach is the box's outage, not the build's fault.
+        down = set()
+        for service, container in unhealthy:
+            missing = unready_dependencies(container) if service == "backend" else set()
+            if not missing:
+                return False
+            down |= missing
+        print(f"::warning::Skipping release {candidate}: it is already running, and its backend "
+              f"is unready only because {', '.join(sorted(down))} is out of reach. Releasing the "
+              "same build again cannot bring that back.")
         return True
     return False
 

@@ -142,7 +142,11 @@ class QuietRoutineAccess(logging.Filter):
         if not isinstance(args, tuple) or len(args) != 5:
             return True
         path, status = str(args[2]), args[4]
-        routine = path.startswith("/internal/") or path in ("/healthz", "/health")
+        routine = path.startswith("/internal/") or path in (
+            "/healthz",
+            "/readyz",
+            "/health",
+        )
         return not (routine and isinstance(status, int) and status < 400)
 
 

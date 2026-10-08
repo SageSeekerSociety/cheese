@@ -263,6 +263,7 @@
       "database": "数据库",
       "redis": "Redis",
       "event_loop": "事件循环",
+      "routes": "路由模块",
       "note": "这一刻的状态，和上面的存量/窗口不是一回事。判据与 /health/detailed 同源。"
     },
     "spine": {
