@@ -82,6 +82,16 @@ export function findUnknownIcons(names, codepoints) {
 }
 
 /**
+ * 把打包后 CSS 里那条图标字体的 @font-face 换成指向子集的，别动别的字体。
+ *
+ * 认块不认位置：同一份 CSS 里还有 src/styles/fonts.css 那几条 JetBrains Mono，
+ * 替换第一个 @font-face 会把它们顶掉，而图标字体还指着已被删掉的原文件。
+ */
+export function replaceIconFontFace(css, face) {
+  return css.replace(/@font-face\s*\{[^}]*\}/g, (block) => (block.includes('Material Design Icons') ? face : block))
+}
+
+/**
  * 只留用得上的那几条 `.mdi-xxx::before` 规则。
  *
  * 基类（`.mdi:before, .mdi-set`）和 `.mdi-18px` / `.mdi-rotate-45` 那几条工具类不是

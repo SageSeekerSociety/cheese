@@ -18,6 +18,7 @@ import {
   findUnknownIcons,
   keepUsedRules,
   parseCodepoints,
+  replaceIconFontFace,
   shippedNames,
 } from './mdi-icons.mjs'
 
@@ -87,6 +88,24 @@ test('裁掉的规则只剩用到的那些', () => {
   }
 
   assert.ok(after.length < before.length / 10, `只裁掉了 ${before.length - after.length} 条，不对`)
+})
+
+test('换 @font-face 时只换图标那一条，不碰同一份 CSS 里的别的字体', () => {
+  // 打包后图标的 @font-face 和 src/styles/fonts.css 那几条 JetBrains Mono 会落在同一个
+  // CSS 文件里。若替换的是第一个 @font-face，顶掉的会是正文字体，而图标字体还指着已经
+  // 删掉的原文件 —— 页面既没有正文字体也没有图标。
+  const ours = readFileSync(join(ROOT, 'src/styles/fonts.css'), 'utf8')
+  const face = '@font-face{font-family:"Material Design Icons";src:url(/assets/mdi-Ab12.woff2)}'
+  // fonts.css 放前面：位置靠前的那条正是「替换第一个」会误伤的对象。
+  const patched = replaceIconFontFace(`${ours}\n${PACKAGE_CSS}`, face)
+
+  assert.equal(
+    patched.match(/JetBrains Mono/g)?.length,
+    ours.match(/JetBrains Mono/g)?.length,
+    '把正文字体的 @font-face 顶掉了'
+  )
+  assert.ok(patched.includes(face), '图标字体的 @font-face 没换成子集那条')
+  assert.ok(!patched.includes('materialdesignicons-webfont.woff2?v='), '图标字体还指着原文件')
 })
 
 test('图标名在源码里都是字面量，没有运行时拼出来的', () => {

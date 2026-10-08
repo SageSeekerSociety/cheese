@@ -13,7 +13,13 @@ import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
 
-import { findUnknownIcons, keepUsedRules, parseCodepoints, shippedNames } from './scripts/mdi-icons.mjs'
+import {
+  findUnknownIcons,
+  keepUsedRules,
+  parseCodepoints,
+  replaceIconFontFace,
+  shippedNames,
+} from './scripts/mdi-icons.mjs'
 
 // fork 数取「核数 - 1」和「每 3 GB 内存一个」中较小的那个，封顶 16，VITEST_MAX_FORKS 可覆盖。
 // 一个 fork 的内存峰值实测约 1.7–2.1 GB（happy-dom 加上各自编一遍 Vuetify/SCSS）。
@@ -137,16 +143,16 @@ function mdiFont(): Plugin {
       })
       const href = (base.endsWith('/') ? base : `${base}/`) + this.getFileName(reference)
 
-      // 整块换掉：原来那两行 src 里有 eot/woff/ttf，指向的文件下面就被删了。
+      // 整块换掉：原来那几行 src 里有 eot/woff/ttf，指向的文件下面就被删了。
+      // 按块内容认，不按位置：这份 CSS 里还躺着 src/styles/fonts.css 那几条
+      // JetBrains Mono 的 @font-face，替换第一个会把它们顶掉、真正的图标字体反而
+      // 还指着已删的文件。
       const face = `@font-face{font-family:"Material Design Icons";font-style:normal;font-weight:400;font-display:swap;src:url(${href}) format("woff2")}`
       for (const output of Object.values(bundle)) {
-        if (
-          output.type === 'asset' &&
-          output.fileName.endsWith('.css') &&
-          String(output.source).includes('Material Design Icons')
-        ) {
-          output.source = String(output.source).replace(/@font-face\s*\{[^}]*\}/, face)
-        }
+        if (output.type !== 'asset' || !output.fileName.endsWith('.css')) continue
+        const css = String(output.source)
+        if (!css.includes('Material Design Icons')) continue
+        output.source = replaceIconFontFace(css, face)
       }
       for (const file of originals) delete bundle[file]
     },
