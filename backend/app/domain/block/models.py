@@ -28,9 +28,11 @@ from app.domain.block.indexed_rows import (
     COALESCED_ROWS,
     EID,
     FAILED_TURN_ROWS,
+    LAST_SAID_ROWS,
     MACHINE_EVENT_ROWS,
     QUESTION_ROWS,
     QUEUED_MESSAGE_ROWS,
+    UNANSWERED_ROWS,
 )
 from app.domain.common import Timestamps, UuidPk
 
@@ -212,6 +214,25 @@ class Block(UuidPk, Timestamps, Base):
             "conversation_id",
             "created_at",
             postgresql_where=FAILED_TURN_ROWS,
+        ),
+        # 房间里「谁在等人」的那两条扫描（`waits`）：谁最后说过话、谁被点名还没
+        # 回答。两边都是每个项目一把，读各自房间里最近七天的消息，在 `/topics`
+        # 里各占约 200 ms（2026-10-08）。谓词与查询逐字相同（`indexed_rows`）
+        # —— 写成 ORM 表达式的话，参数化的那一份在通用计划下证不出自己蕴含
+        # 索引的 WHERE，索引就不会被采纳；用 `^@` 而不是 LIKE 是为了躲开 `%`
+        # 在各驱动之间的转义分歧，那会让迁移建出的索引和查询说的不是一件事。
+        Index(
+            "ix_blocks_last_said",
+            "conversation_id",
+            "author",
+            text("created_at DESC"),
+            postgresql_where=LAST_SAID_ROWS,
+        ),
+        Index(
+            "ix_blocks_unanswered",
+            "conversation_id",
+            "created_at",
+            postgresql_where=UNANSWERED_ROWS,
         ),
         # The messages still waiting for their turn, read by a sweep every few
         # seconds (`pending_messages`): tens of rows out of every block there is.
