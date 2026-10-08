@@ -4,10 +4,10 @@ import uuid
 
 from app.core.sandbox_auth import SANDBOX_TOKEN
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
 )
 
 
@@ -23,7 +23,7 @@ def _topic(client) -> str:
 def test_turn_blocks_share_one_turn_id(client):
     # 芝士 answers in a 支线, so that is where the turn's blocks are.
     tid = in_thread(client, _topic(client), "user-1")
-    with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
+    with room_socket(client, tid, "user-1") as ws:
         post_message(client, tid, "user-1", {"content": "@芝士 hi"})
         while True:
             frame = ws.receive_json()

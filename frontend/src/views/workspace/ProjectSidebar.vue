@@ -61,7 +61,7 @@ const tasks = ref<RoomTask[]>([])
 async function loadTasks(maxAgeMs?: number) {
   const pid = props.projectId
   try {
-    const payload = await readProjectTasks(pid, { maxAgeMs })
+    const payload = await readProjectTasks(pid, { maxAgeMs, open: true })
     if (props.projectId === pid) tasks.value = payload.data
   } catch {
     // 留着上一次的那份。

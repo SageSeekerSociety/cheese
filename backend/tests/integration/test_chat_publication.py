@@ -12,10 +12,10 @@ from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -62,7 +62,7 @@ def test_publication_is_durable_live_and_does_not_wake_model(
     client, stub_hooks, content
 ):
     topic, headers = room(client)
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         response = publish(client, topic, headers, content)
         assert response.status_code == 200, response.text
         block = response.json()["data"]
@@ -150,7 +150,7 @@ def test_blank_message_is_rejected(client, content):
 def test_raw_terminal_output_never_publishes_even_after_stop(client, stub_hooks):
     topic, _ = room(client)
     stub_hooks.reply = "This terminal output must remain in activity."
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         frames = []
         while True:
@@ -177,7 +177,7 @@ def test_a_private_chat_only_shows_what_chat_send_sent(client, stub_hooks):
     """
     topic, headers = private_room(client)
     stub_hooks.reply = "这段是终端里的最终答复。"
-    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+    with room_socket(client, topic, "user-1") as ws:
         post_message(client, topic, "user-1", {"content": "@芝士 帮我记一下偏好"})
         frames = []
         while True:
@@ -226,7 +226,7 @@ def test_publish_during_work_keeps_the_turn_open(client, stub_hooks, monkeypatch
         stub_hooks.says(topic_id, raw_text)
 
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         turn_id = None
         while True:
@@ -326,7 +326,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         return True
 
     monkeypatch.setattr(chat, "notify_running_turn", delayed_notice)
-    with client.websocket_connect(chat_ws_url(topic, speaker)) as ws:
+    with room_socket(client, topic, speaker) as ws:
         post_message(client, topic, speaker, {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()
@@ -424,7 +424,7 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
     # The executor is remote: this process runs no work for the topic, so the
     # endpoint's runner lookup attributes nothing.
     monkeypatch.setattr(get_work_runner(), "live_work_for_topic", lambda _t: None)
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()

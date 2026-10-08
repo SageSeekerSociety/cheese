@@ -20,21 +20,6 @@ export function screenWsUrl(sid: string): string {
   return `${base}/connector/session/${encodeURIComponent(sid)}/screen${q}`
 }
 
-// Build the absolute WebSocket URL for a topic's chat channel, honoring the
-// current page protocol (ws/wss) so it works behind the dev proxy and in prod.
-export function chatWsUrl(topicId: string): string {
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  // Browsers can't set an Authorization header on a WebSocket, so the session
-  // token rides as ?token=. The socket only carries what lands in the room.
-  const token = authToken()
-  const q = token ? `?token=${encodeURIComponent(token)}` : ''
-  // BASE, not a hand-written '/api': the gateway strips exactly one '/api', so a
-  // single prefix arrived as '/topics/.../chat', matched no route, and the
-  // handshake was refused 403. The browser retried every 16s, which surfaced as
-  // 「连接断开，正在自动重连」 and read like a flaky network.
-  return `${proto}://${window.location.host}${BASE}/topics/${encodeURIComponent(topicId)}/chat${q}`
-}
-
 // Dev-only observability hook, same purpose as `window.__blockCache`: the probe
 // scripts under scripts/ open real sockets and issue real fetches from inside
 // the page, and the prefix they need is the one BASE exists to spell ONCE. Four

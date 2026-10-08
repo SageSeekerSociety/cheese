@@ -24,8 +24,8 @@ from app.domain.room_task.models import Task
 from app.domain.textfile import content_version
 from tests.delivery import delivery_task_id
 from tests.integration.conftest import (
-    chat_ws_url,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.integration.test_file_panel_safety import (  # noqa: F401
@@ -130,7 +130,7 @@ def _docx() -> bytes:
 
 def test_shown_registers_lists_and_broadcasts_the_same_card(client):
     _pid, tid = _room(client)
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+    with room_socket(client, tid, "alice") as ws:
         r = client.post(
             f"/topics/{tid}/shown",
             headers=session_auth_headers("alice"),

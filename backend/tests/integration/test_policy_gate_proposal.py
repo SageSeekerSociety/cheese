@@ -23,10 +23,10 @@ from app.domain.notification.models import Notification
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -251,7 +251,7 @@ def _say(client, topic_id: str, text: str = "帮我看看", who: str = "andyl") 
     """
     # 芝士 answers in a 支线 of the room; the room's machine is what it takes.
     thread = in_thread(client, topic_id, who)
-    with client.websocket_connect(chat_ws_url(thread, who)) as ws:
+    with room_socket(client, thread, who) as ws:
         post_message(client, thread, who, {"content": f"@芝士 {text}"})
         frames = []
         while True:

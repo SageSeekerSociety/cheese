@@ -81,7 +81,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.1 对话与召唤 @芝士  ✅
 
 - **行为**：输入栏发消息，默认**不** @芝士（人与人对话）；**正文里 @ 了它**它才回复——输入栏的「交给芝士」按钮和 ⌘/Ctrl+Enter 是把那个 @ 写进正文的两个入口，不是另一个开关。所有消息都会进库；**未 @ 的消息芝士下次被召唤时也会看到**，每条带 `[发言人]:` 标签（多人话题里芝士能分清谁说的，Batch I）。回复一条消息并 @ 它，被回复的那条原文跟着这次回复一起给它：那条往往已经被前一轮读过，不在待读里。
-- **实现**：发消息是 `POST /api/topics/{id}/messages`（`backend/app/api/routes/topics_messages.py`），人和 AI 队友走同一条路由，按发送者在这个房间里的席位决定它是人说的话还是队友的发言；房间里落下的东西经 WebSocket `GET /api/topics/{id}/chat`（`backend/app/api/routes/chat.py`）推给所有在看的人，这条 socket 不写任何东西。一轮失败之后的「重试」是 `POST /api/topics/{id}/summon`——它只开一轮，让待读窗口把没读到的消息捎上，房间已经在干活或没有待读内容时它什么都不做并说明是哪一种。
+- **实现**：发消息是 `POST /api/topics/{id}/messages`（`backend/app/api/routes/topics_messages.py`），人和 AI 队友走同一条路由，按发送者在这个房间里的席位决定它是人说的话还是队友的发言；房间里落下的东西经 WebSocket `/api/rooms/live`（`backend/app/api/routes/chat.py`）推给所有在看的人：一个页面一条连接，看着的每个房间在上面订阅、退订，这条 socket 不写任何东西。一轮失败之后的「重试」是 `POST /api/topics/{id}/summon`——它只开一轮，让待读窗口把没读到的消息捎上，房间已经在干活或没有待读内容时它什么都不做并说明是哪一种。
   帧：`user_block` → `delta`*（流式 token）→ `tool`*（工具调用：原生 Bash/Write/Edit/Read + cheese Skill）→ `assistant_block` → `done`（或 `error`）。
   编排：`ChatService.converse`（`backend/app/domain/agent/chat.py`）：tx1 存用户块+拼带标签的上下文+加载记忆 → 流式（不持事务）→ tx2 存 🔧 事件块 + 芝士消息 + token 用量。每话题一把 `asyncio.Lock` 串行。
 
@@ -212,7 +212,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
        PUT /{id}/doc · POST /{id}/tasks · POST /{id}/teammate-tasks · POST /{id}/reopen · POST /api/blocks/{id}/upgrade
 任务   {id} 是任务的：GET|PATCH /{id}/task · POST /{id}/{start,close,title,messages} · GET /{id}/document，其余同话题
 对话   POST /api/topics/{id}/messages（人和队友同一条；作者取自凭据，请求体里的 author 不作数）
-       WS  /api/topics/{id}/chat?token=<会话 token>（必带；只推送，不收消息）
+       WS  /api/rooms/live?token=<会话 token>（必带；一页一条，按房间订阅，只推送，不收消息）
 验收   POST /api/topics/{id}/accept-card · GET 同路径 · POST /api/accept-cards/{id}/{accept,reject,reassign,revoke}
 通知   GET /api/projects/{id}/{notifications,inbox} · POST /api/projects/{id}/notifications
        POST /api/notifications/{id}/{read,feedback,resolve}

@@ -5992,6 +5992,10 @@ export interface paths {
          * List Project Tasks
          * @description Every thread in the project, each with the card it currently rides on.
          *
+         *     `status` keeps only threads in that state. The sidebar polls for the open
+         *     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
+         *     read.
+         *
          *     The rail draws rooms and the work inside them, so it needs both halves at
          *     once. Two round trips, not two per room and one per thread: a project here
          *     already holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)
@@ -9343,7 +9347,7 @@ export interface paths {
          *     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
          *     this is the endpoint the sidebar lists from.
          *
-         *     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`etag_for_json`），`If-None-Match`
+         *     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
          *     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
          *     徽章会因为成员刚被拉进来、一张验收卡刚落地、某个队友刚开始干活而变，而这些都不动
          *     `updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。
@@ -28430,7 +28434,9 @@ export interface operations {
     };
     list_project_tasks_projects__project_id__tasks_get: {
         parameters: {
-            query?: never;
+            query?: {
+                status?: ("open" | "closed") | null;
+            };
             header?: {
                 "if-none-match"?: string | null;
             };

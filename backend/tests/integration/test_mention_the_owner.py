@@ -7,17 +7,17 @@ Project.owner_handle 上），名册以前也不把他补进去，于是 <@他> 
 """
 
 from tests.integration.conftest import (
-    chat_ws_url,
     join_project_team,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
 
 def _post(client, topic_id: str, content: str, author: str) -> None:
     """发一条人说的话（不唤醒芝士）：@ 的通知在这条消息落库时就发出去了。"""
-    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+    with room_socket(client, topic_id, author) as ws:
         post_message(client, topic_id, author, {"content": content})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):

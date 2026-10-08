@@ -21,10 +21,10 @@ from app.domain.run_record.models import RunRecord
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
 )
 from tests.support.run_records import records_of
 
@@ -113,7 +113,7 @@ def _start_compacting(client, room: str, service) -> StubChannel:
     before = Compacts()
     old_backend = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old_backend
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 接着做"})
         _until(
             ws,

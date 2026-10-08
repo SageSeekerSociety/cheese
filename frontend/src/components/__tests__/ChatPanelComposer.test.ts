@@ -66,7 +66,6 @@ vi.mock('../../api', async () => {
       ],
       total: 2,
     }),
-    chatWsUrl: () => 'ws://test/ws',
     // 这个地址挂不上 <img src>：附件端点从 Authorization 头认人，浏览器发图片请求
     // 带不了这个头，挂上去的结果是 401。输入框的缩略图得用 attachmentImageUrl 取字节。
     attachmentRawUrl: () => '',

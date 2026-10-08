@@ -125,7 +125,7 @@
 {"index": 123, "protocol": "http", "path": "/backend-errors", "methods": ["POST"], "endpoint": "app.api.routes.backend_log.report_backend_errors", "name": "report_backend_errors"}
 {"index": 124, "protocol": "http", "path": "/blocks/{block_id}", "methods": ["PATCH"], "endpoint": "app.api.routes.blocks.edit_block", "name": "edit_block"}
 {"index": 125, "protocol": "http", "path": "/blocks/{block_id}/reactions", "methods": ["POST"], "endpoint": "app.api.routes.blocks.toggle_reaction", "name": "toggle_reaction"}
-{"index": 126, "protocol": "ws", "path": "/topics/{topic_id}/chat", "methods": [], "endpoint": "app.api.routes.chat.chat", "name": "chat"}
+{"index": 126, "protocol": "ws", "path": "/rooms/live", "methods": [], "endpoint": "app.api.routes.chat.rooms_live", "name": "rooms_live"}
 {"index": 127, "protocol": "http", "path": "/comments/{commentId}/attitudes", "methods": ["POST"], "endpoint": "app.api.routes.comments.update_attitude_to_comment", "name": "update_attitude_to_comment"}
 {"index": 128, "protocol": "http", "path": "/comments/{commentId}", "methods": ["GET"], "endpoint": "app.api.routes.comments.get_comment_by_id", "name": "get_comment_by_id"}
 {"index": 129, "protocol": "http", "path": "/comments/{commentId}", "methods": ["PATCH"], "endpoint": "app.api.routes.comments.update_comment", "name": "update_comment"}

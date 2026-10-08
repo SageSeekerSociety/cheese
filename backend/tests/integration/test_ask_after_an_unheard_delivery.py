@@ -26,11 +26,11 @@ from app.main import app
 from tests.ask_fixtures import agent_credential
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
 )
 
 QUESTION = {
@@ -151,7 +151,7 @@ def test_a_question_after_an_unheard_delivery_is_not_refused(client):
     )
     assert not service.has_running_turn(uuid.UUID(room))
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 好了吗"})
         while ws.receive_json()["type"] != "user_block":
             pass

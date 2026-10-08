@@ -8,10 +8,10 @@ turn is stopped when the agent is taken off; what it wrote so far stays.
 import time
 
 from tests.integration.conftest import (
-    chat_ws_url,
     new_project,
     post_message,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -27,7 +27,7 @@ def _working(client, room: str) -> list[str]:
 
 def _working_in(client, conversation: str) -> list[str]:
     """Who a socket opened on ``conversation`` now is told is working."""
-    with client.websocket_connect(chat_ws_url(conversation, "alice")) as ws:
+    with room_socket(client, conversation, "alice") as ws:
         ws.send_json({"type": "ping"})
         snapshots = []
         while True:

@@ -113,15 +113,31 @@ class RoomActivity:
             if c == channel
         }
 
-    def turn_started(self, channel: str, turn_id: str, agent: str) -> dict | None:
-        """A live turn is known to be ``agent``'s. The frame to send, when this
-        is what makes the agent start working here."""
+    def turn_started(self, channel: str, turn_id: str, agent: str) -> list[dict]:
+        """A live turn is known to be ``agent``'s. The frames to send: the one
+        retiring whoever it was attributed to before, when that changes, and the
+        one saying this agent is working — when it was not already.
+
+        A turn's attribution can change while it runs: a frame arriving before
+        the turn's books are open falls back to the session's own handle, and
+        the ones after it carry the seat. Whoever the turn no longer belongs to
+        has no live turn left on this channel, so it stops working — no other
+        frame would ever retire that mark, and a reconnect would not list it
+        either, leaving it drawn until the page is reloaded."""
+        before = self._turn_agents.get((channel, turn_id))
         was = self._working_since(channel, agent)
         self._turn_agents[(channel, turn_id)] = agent
-        if was is not None:
-            return None
-        since = self._working_since(channel, agent)
-        return activity_frame(agent, WORKING, True, since or time.time())
+        frames: list[dict] = []
+        if (
+            before is not None
+            and before != agent
+            and self._working_since(channel, before) is None
+        ):
+            frames.append(activity_frame(before, WORKING, False, time.time()))
+        if was is None:
+            since = self._working_since(channel, agent)
+            frames.append(activity_frame(agent, WORKING, True, since or time.time()))
+        return frames
 
     def turn_finished(self, channel: str, turn_id: str) -> dict | None:
         """A turn ended. The frame to send, when its agent has no other turn here."""

@@ -7,12 +7,12 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listBlocks: vi.fn(),
   listRoomTasks: vi.fn().mockResolvedValue({ data: [] }),
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
-  chatWsUrl: () => 'ws://test/chat',
 }))
 vi.mock('../api/messages', () => ({ postChatMessage: vi.fn() }))
 
@@ -39,6 +39,7 @@ class TestSocket {
   onmessage: ((event: { data: string }) => void) | null = null
   send = vi.fn()
   close = vi.fn()
+  drop = vi.fn()
   constructor() {
     sockets.push(this)
   }
@@ -318,7 +319,8 @@ describe('chat recovery after history errors', () => {
     expect(said(sockets[0], 'ping')).toEqual([{ type: 'ping' }])
 
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(sockets[0].close).toHaveBeenCalledOnce()
+    // The link under every room is replaced, not just this room's subscription.
+    expect(sockets[0].drop).toHaveBeenCalledOnce()
     expect(sockets).toHaveLength(2)
     expect(vi.mocked(listBlocks)).toHaveBeenCalledTimes(2)
   })

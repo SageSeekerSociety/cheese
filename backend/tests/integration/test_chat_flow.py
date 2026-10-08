@@ -7,13 +7,13 @@ from app.core.config import settings
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     open_task,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.living_doc import document_of
@@ -85,7 +85,7 @@ def test_blocks_empty_then_populated_after_chat(client):
     r = client.get(f"/topics/{topic_id}/blocks")
     assert r.json()["data"]["total"] == 0
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 你好芝士"})
         frames = _drain_until_done(ws)
 
@@ -138,12 +138,12 @@ def test_blocks_empty_then_populated_after_chat(client):
 
 def test_session_id_persisted_for_resume(client):
     _, topic_id = _create_project_and_thread(client)
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
         _drain_until_done(ws)
 
     # Second turn should resume with the captured session id.
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 again"})
         _drain_until_done(ws)
 
@@ -240,7 +240,7 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
 
     asyncio.run(_seed())
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 技术栈是什么"})
         _drain_until_done(ws)
 
@@ -266,7 +266,7 @@ def test_empty_content_rejected(client):
 def test_message_without_summon_does_not_invoke_cheese(client):
     """Default human-to-human: posting without @芝士 stays quiet (spec C3)."""
     _, topic_id = _create_project_and_topic(client)
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "队友我们今晚开会"})
         frames = _drain_until_done(ws)
 
@@ -290,16 +290,16 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
         headers=session_auth_headers("alice"),
     )
     topic_id = in_thread(client, room_id, "alice")
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         post_message(client, topic_id, "alice", {"content": "先随便说一句"})
         quiet = _drain_until_done(ws)
         assert [f["type"] for f in quiet] == ["user_block", "done"]  # 芝士 quiet
 
-    with client.websocket_connect(chat_ws_url(topic_id, "bob")) as ws:
+    with room_socket(client, topic_id, "bob") as ws:
         post_message(client, topic_id, "bob", {"content": "再补一句"})
         _drain_until_done(ws)
 
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         post_message(client, topic_id, "alice", {"content": "@芝士 芝士看看"})
         _drain_until_done(ws)
 
@@ -313,7 +313,7 @@ def test_a_reply_brings_the_message_it_answers(stub_hooks, client):
     # 回复一条前一轮已经读过的消息并 @ 芝士：那条不在待读里了，原文得跟着这次回复
     # 进 prompt，否则「按这条改」到了芝士那里没有「这条」。
     _, topic_id = _create_project_and_thread(client, owner="alice")
-    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+    with room_socket(client, topic_id, "alice") as ws:
         post_message(
             client, topic_id, "alice", {"content": "B 组第 7 行录错了，应该是 0.42"}
         )
@@ -353,7 +353,7 @@ def test_debug_turns_records_lifecycle(client, monkeypatch):
     admin = "chat-flow-admin"
     monkeypatch.setattr(settings, "platform_admin_handles", [admin])
     _, topic_id = _create_project_and_thread(client)
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 你好"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
