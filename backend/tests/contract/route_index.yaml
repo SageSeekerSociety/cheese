@@ -681,6 +681,8 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/versions", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library/restore", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library", auth: "actor.project", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/file", auth: "actor.project", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/folders", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
