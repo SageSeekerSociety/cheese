@@ -32,3 +32,20 @@ def test_untyped_means_no_schema() -> None:
         }
     }
     assert export_openapi.untyped_operations(spec) == ["GET /a", "GET /b"]
+
+
+def test_operation_order_survives_the_order_fastapi_happened_to_build() -> None:
+    """A route's methods arrive as a set, so their order must not reach the file.
+
+    ``--check`` compares the committed document as text against a fresh build, and
+    a set iterates in hash-seed order: without this, unchanged code fails the check
+    on some runs and passes on others.
+    """
+
+    def spec(*methods: str) -> dict:
+        item = {method: {"operationId": method} for method in methods}
+        return {"paths": {"/c": item}, "info": {"title": "t"}}
+
+    assert export_openapi.render(export_openapi.canonicalize(spec("head", "get"))) == (
+        export_openapi.render(export_openapi.canonicalize(spec("get", "head")))
+    )

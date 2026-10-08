@@ -38,6 +38,28 @@ _METHODS = ("get", "put", "post", "delete", "patch", "head", "options")
 _UNTYPED_SCHEMAS = ({}, {"type": "object", "additionalProperties": True})
 
 
+def canonicalize(spec: dict[str, Any]) -> dict[str, Any]:
+    """``spec`` with every path item's operations in ``_METHODS`` order.
+
+    A route registered for several methods reaches FastAPI as a *set* of methods —
+    ``installer.download_binary`` is GET and HEAD — and a set iterates in an order
+    that follows the process hash seed. Left alone, two runs over unchanged code
+    write the same operations in a different order, which ``--check`` reads as a
+    stale document.
+    """
+    paths = spec.get("paths", {})
+    for path, item in paths.items():
+        paths[path] = _ordered_operations(item)
+    return spec
+
+
+def _ordered_operations(item: dict[str, Any]) -> dict[str, Any]:
+    """One path item: everything that is not an operation, then the operations."""
+    ordered = {key: value for key, value in item.items() if key not in _METHODS}
+    ordered.update({m: item[m] for m in _METHODS if m in item})
+    return ordered
+
+
 def build_spec() -> dict[str, Any]:
     with warnings.catch_warnings():
         # installer.download_binary is registered for GET and HEAD under one
@@ -45,7 +67,9 @@ def build_spec() -> dict[str, Any]:
         warnings.filterwarnings("ignore", message="Duplicate Operation ID")
         from app.main import app
 
-        return app.openapi()
+        spec = app.openapi()
+
+    return canonicalize(spec)
 
 
 def render(data: Any) -> str:

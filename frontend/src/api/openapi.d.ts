@@ -238,9 +238,9 @@ export interface paths {
          *     **它不是"放行"**：卡进的是终态，不是 `pending`。放行等于让绿勾替一段没被检查
          *     过的代码背书；作废 + 重递效果一样且安全。
          *
-         *     路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS` 里——这是授权类动作，
-         *     给人不给芝士。但"不加白名单"本身拦不住任何东西（没列进去的写路由压根不过那个
-         *     中间件，症状是静默放行而不是 401），真正拦住芝士的是 `AcceptService.void` 里
+         *     路由**故意不**声明成芝士专用（`app/api/write_access.py`）——这是授权类动作，
+         *     给人不给芝士。但写权限声明只管「只许芝士进」，本身拦不住芝士（症状是静默放行
+         *     而不是 401），真正拦住芝士的是 `AcceptService.void` 里
          *     的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的
          *     `test_void_requires_a_logged_in_human`。
          */
@@ -270,9 +270,9 @@ export interface paths {
          *     平台自己永远不走它，人点一次算一次，卡面上留下谁、什么时候、当时检查什么
          *     状态、为什么。
          *
-         *     跟 `void` 同一条线：路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS`
-         *     里——那是给芝士的白名单，这个动作不给芝士。但"不加白名单"本身拦不住任何东西
-         *     （没列进去的写路由压根不过那个中间件），真正拦住芝士的是这里的登录校验加
+         *     跟 `void` 同一条线：路由**故意不**声明成芝士专用（`app/api/write_access.py`）
+         *     ——这个动作不给芝士。但写权限声明只管「只许芝士进」，本身拦不住芝士，真正
+         *     拦住芝士的是这里的登录校验加
          *     `AcceptService.merge_despite_checks` 里的 `_forbid_ai`。
          */
         post: operations["merge_card_anyway_accept_cards__card_id__merge_anyway_post"];
@@ -296,8 +296,8 @@ export interface paths {
          * @description 绿了自动合 (#718)：验收人在 BLOCKED / BEHIND 时布防，规则满足时平台以
          *     布防人的名义合并；新提交作废采纳（dismiss_stale）同样解除布防。
          *
-         *     授权类动作：actor 只来自 session token，路由**故意不进**
-         *     `_CHEESE_WRITE_PATHS`（同 void / merge-anyway），真正拦住芝士的是登录校验加
+         *     授权类动作：actor 只来自 session token，路由**故意不**声明成芝士专用
+         *     （同 void / merge-anyway），真正拦住芝士的是登录校验加
          *     `AcceptService.arm_auto_merge` 里的 `_forbid_ai`。
          */
         post: operations["set_auto_merge_accept_cards__card_id__auto_merge_post"];
@@ -3977,7 +3977,7 @@ export interface paths {
          *     A GET that accepts gzip gets the gzip copy (`connector_build.gzipped`); the
          *     checksum still names the decoded bytes, which is what the machine runs.
          */
-        get: operations["download_binary_connector_latest__target___name__get"];
+        get: operations["download_connector_binary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3990,7 +3990,7 @@ export interface paths {
          *     A GET that accepts gzip gets the gzip copy (`connector_build.gzipped`); the
          *     checksum still names the decoded bytes, which is what the machine runs.
          */
-        head: operations["download_binary_connector_latest__target___name__get_head"];
+        head: operations["download_connector_binary_head"];
         patch?: never;
         trace?: never;
     };
@@ -10027,12 +10027,12 @@ export interface paths {
          * Set Topic Compute Profile
          * @description A conversation's work computer: a room's, or a task's.
          *
-         *     Every session working on the choice moves with it, each pushing its work
-         *     first (``machine/session_work.request_choice``): for the room, its own
-         *     sessions and those of tasks that follow it; for a task, the task's. Only
-         *     the task's owner, a project manager or the owner of a device the task
-         *     holds changes a task's, or the task's own session. A person's own computer
-         *     works only that person's tasks.
+         *     Every session working on the choice moves with it, each after one
+         *     best-effort checkpoint (``machine/session_work.request_choice``): for the
+         *     room, its own sessions and those of tasks that follow it; for a task, the
+         *     task's. Only the task's owner, a project manager or the owner of a device
+         *     the task holds changes a task's, or the task's own session. A person's own
+         *     computer works only that person's tasks.
          */
         put: operations["set_topic_compute_profile_topics__topic_id__compute_profile_put"];
         post?: never;
@@ -10507,14 +10507,14 @@ export interface paths {
         put?: never;
         /**
          * Upgrade Block
-         * @description 转为任务：a message in a channel becomes a task of its own, owned by
-         *     whoever turned it, and its agent drafts the task's document from the
-         *     message and what was said around it. A private chat's messages do not
-         *     leave it.
+         * @description 转为任务：a message in a channel, or a reply in its 支线, becomes a task
+         *     owned by whoever turned it, and its agent drafts the task's document from
+         *     the message and what was said around it. One message can become several
+         *     tasks. A private chat's messages do not leave it.
          *
          *     这是一条**在频道里造东西**的写：凭据由 resolve/authorize_topic 认，频道由 block
          *     自己带 —— block 的对话所在的频道就是那个频道，不是它自己去请求体里说。转的人也
-         *     由凭据说，而且只能是一个人：AI 队友只能提议任务。
+         *     由凭据说，而且只能是一个人：AI 队友用自己的工具建任务（`cheese_task`）。
          */
         post: operations["upgrade_block_blocks__block_id__upgrade_post"];
         delete?: never;
@@ -10661,6 +10661,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/topics/{topic_id}/reopen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reopen Task
+         * @description 重新打开：the owner takes a closed task up again. Its AI teammate goes on
+         *     from the project's latest code when it has landed something.
+         */
+        post: operations["reopen_task_topics__topic_id__reopen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/topics/{topic_id}/start": {
         parameters: {
             query?: never;
@@ -10683,32 +10704,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/topics/{topic_id}/task-proposals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Task Proposals
-         * @description The proposals in this room still waiting for someone.
-         */
-        get: operations["list_task_proposals_topics__topic_id__task_proposals_get"];
-        put?: never;
-        /**
-         * Propose Task
-         * @description An AI teammate proposes a task (`cheese_task`): a card in the room that a
-         *     person creates or puts aside. A teammate never creates one itself.
-         */
-        post: operations["propose_task_topics__topic_id__task_proposals_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/task-proposals/{proposal_id}/accept": {
+    "/topics/{topic_id}/teammate-tasks": {
         parameters: {
             query?: never;
             header?: never;
@@ -10718,30 +10714,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Accept Task Proposal
-         * @description 创建任务 from a teammate's proposal: the person who creates it owns it.
+         * Create Teammate Task
+         * @description An AI teammate creates a task (`cheese_task`) from the conversation it
+         *     is in. Made in a 支线, the task hangs under the message the 支线 is under.
+         *     Started at once when ``start`` says someone asked for it; otherwise it
+         *     waits for its owner, whom the teammate asks.
          */
-        post: operations["accept_task_proposal_topics__topic_id__task_proposals__proposal_id__accept_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Dismiss Task Proposal
-         * @description Put a teammate's proposal aside.
-         */
-        post: operations["dismiss_task_proposal_topics__topic_id__task_proposals__proposal_id__dismiss_post"];
+        post: operations["create_teammate_task_topics__topic_id__teammate_tasks_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12306,10 +12285,12 @@ export interface paths {
         };
         /**
          * App Version
-         * @description The running build, for the UI's 内测 version badge. Public, unauthenticated
-         *     — it exposes only a commit sha, and only when the box opts in. `badge` is the
-         *     flag the frontend honours; the sha is always returned so a curl can check a
-         *     deploy regardless of the badge.
+         * @description The running release, for the UI's 内测 version badge and for anything
+         *     asking whether a commit is live. Public, unauthenticated — it exposes only
+         *     commit shas. `badge` is the flag the frontend honours; the sha is always
+         *     returned so a curl can check a deploy regardless of the badge. `build` is
+         *     the commit the image was built from, older than `sha` when the release
+         *     reused an unchanged image.
          */
         get: operations["app_version_version_get"];
         put?: never;
@@ -12347,6 +12328,11 @@ export interface components {
             deliver?: string | null;
             /** Deliver Url */
             deliver_url?: string | null;
+            /**
+             * Completes Task
+             * @default true
+             */
+            completes_task: boolean;
         };
         /**
          * AcceptCardDescribe
@@ -15425,13 +15411,6 @@ export interface components {
             /** Remark */
             remark?: string | null;
         };
-        /** TaskProposalIn */
-        TaskProposalIn: {
-            /** Title */
-            title: string;
-            /** Summary */
-            summary: string;
-        };
         /** TaskStartIn */
         TaskStartIn: {
             /** Reviewer Handle */
@@ -15489,6 +15468,20 @@ export interface components {
          * @enum {string}
          */
         TeamVisibility: "public" | "stealth";
+        /** TeammateTaskIn */
+        TeammateTaskIn: {
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /** Owner Handle */
+            owner_handle?: string | null;
+            /**
+             * Start
+             * @default false
+             */
+            start: boolean;
+        };
         /**
          * TextRangeQuoteIn
          * @description A passage picked out of rendered document text.
@@ -23488,7 +23481,7 @@ export interface operations {
             };
         };
     };
-    download_binary_connector_latest__target___name__get: {
+    download_connector_binary: {
         parameters: {
             query?: never;
             header?: never;
@@ -23520,7 +23513,7 @@ export interface operations {
             };
         };
     };
-    download_binary_connector_latest__target___name__get_head: {
+    download_connector_binary_head: {
         parameters: {
             query?: never;
             header?: never;
@@ -38704,6 +38697,39 @@ export interface operations {
             };
         };
     };
+    reopen_task_topics__topic_id__reopen_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     start_task_topics__topic_id__start_post: {
         parameters: {
             query?: never;
@@ -38741,40 +38767,7 @@ export interface operations {
             };
         };
     };
-    list_task_proposals_topics__topic_id__task_proposals_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    propose_task_topics__topic_id__task_proposals_post: {
+    create_teammate_task_topics__topic_id__teammate_tasks_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -38785,77 +38778,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TaskProposalIn"];
+                "application/json": components["schemas"]["TeammateTaskIn"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    accept_task_proposal_topics__topic_id__task_proposals__proposal_id__accept_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    dismiss_task_proposal_topics__topic_id__task_proposals__proposal_id__dismiss_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

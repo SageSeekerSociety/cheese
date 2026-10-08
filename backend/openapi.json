@@ -16,6 +16,50 @@
   ],
   "paths": {
     "/topics/{topic_id}/accept-card": {
+      "get": {
+        "tags": [
+          "accept"
+        ],
+        "summary": "List Accept Cards",
+        "description": "A task's review cards, or for a room every card of its tasks.",
+        "operationId": "list_accept_cards_topics__topic_id__accept_card_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Accept Cards Topics  Topic Id  Accept Card Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "accept"
@@ -54,50 +98,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Create Accept Card Topics  Topic Id  Accept Card Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "accept"
-        ],
-        "summary": "List Accept Cards",
-        "description": "A task's review cards, or for a room every card of its tasks.",
-        "operationId": "list_accept_cards_topics__topic_id__accept_card_get",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Accept Cards Topics  Topic Id  Accept Card Get"
                 }
               }
             }
@@ -588,7 +588,7 @@
           "accept"
         ],
         "summary": "Void Card",
-        "description": "人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).\n\n这是 `pending_gate` / `conflict` 唯一的人工出口——这两个状态被\naccept / reject / revoke / reassign 四条路由全部拒绝，而 `create_card` 又因为\n它们拒绝再建新卡，于是整个话题递不出卡。作废把卡置为终态解开这个死锁。\n\n**它不是\"放行\"**：卡进的是终态，不是 `pending`。放行等于让绿勾替一段没被检查\n过的代码背书；作废 + 重递效果一样且安全。\n\n路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS` 里——这是授权类动作，\n给人不给芝士。但\"不加白名单\"本身拦不住任何东西（没列进去的写路由压根不过那个\n中间件，症状是静默放行而不是 401），真正拦住芝士的是 `AcceptService.void` 里\n的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的\n`test_void_requires_a_logged_in_human`。",
+        "description": "人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).\n\n这是 `pending_gate` / `conflict` 唯一的人工出口——这两个状态被\naccept / reject / revoke / reassign 四条路由全部拒绝，而 `create_card` 又因为\n它们拒绝再建新卡，于是整个话题递不出卡。作废把卡置为终态解开这个死锁。\n\n**它不是\"放行\"**：卡进的是终态，不是 `pending`。放行等于让绿勾替一段没被检查\n过的代码背书；作废 + 重递效果一样且安全。\n\n路由**故意不**声明成芝士专用（`app/api/write_access.py`）——这是授权类动作，\n给人不给芝士。但写权限声明只管「只许芝士进」，本身拦不住芝士（症状是静默放行\n而不是 401），真正拦住芝士的是 `AcceptService.void` 里\n的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的\n`test_void_requires_a_logged_in_human`。",
         "operationId": "void_card_accept_cards__card_id__void_post",
         "parameters": [
           {
@@ -644,7 +644,7 @@
           "accept"
         ],
         "summary": "Merge Card Anyway",
-        "description": "人工放行：明知检查没全绿，仍然合并这张卡的 PR。\n\n平台自己不合 forge 说没过的 PR，所以「红着合」需要一个出口——红着合有时候是\n对的（CI 基础设施抽风、与本次改动无关的既有失败）。不能接受的从来不是红着合，\n而是**没有人做过这个决定**。所以这条路由是**默认拒绝、显式放行**的那一半：\n平台自己永远不走它，人点一次算一次，卡面上留下谁、什么时候、当时检查什么\n状态、为什么。\n\n跟 `void` 同一条线：路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS`\n里——那是给芝士的白名单，这个动作不给芝士。但\"不加白名单\"本身拦不住任何东西\n（没列进去的写路由压根不过那个中间件），真正拦住芝士的是这里的登录校验加\n`AcceptService.merge_despite_checks` 里的 `_forbid_ai`。",
+        "description": "人工放行：明知检查没全绿，仍然合并这张卡的 PR。\n\n平台自己不合 forge 说没过的 PR，所以「红着合」需要一个出口——红着合有时候是\n对的（CI 基础设施抽风、与本次改动无关的既有失败）。不能接受的从来不是红着合，\n而是**没有人做过这个决定**。所以这条路由是**默认拒绝、显式放行**的那一半：\n平台自己永远不走它，人点一次算一次，卡面上留下谁、什么时候、当时检查什么\n状态、为什么。\n\n跟 `void` 同一条线：路由**故意不**声明成芝士专用（`app/api/write_access.py`）\n——这个动作不给芝士。但写权限声明只管「只许芝士进」，本身拦不住芝士，真正\n拦住芝士的是这里的登录校验加\n`AcceptService.merge_despite_checks` 里的 `_forbid_ai`。",
         "operationId": "merge_card_anyway_accept_cards__card_id__merge_anyway_post",
         "parameters": [
           {
@@ -700,7 +700,7 @@
           "accept"
         ],
         "summary": "Set Auto Merge",
-        "description": "绿了自动合 (#718)：验收人在 BLOCKED / BEHIND 时布防，规则满足时平台以\n布防人的名义合并；新提交作废采纳（dismiss_stale）同样解除布防。\n\n授权类动作：actor 只来自 session token，路由**故意不进**\n`_CHEESE_WRITE_PATHS`（同 void / merge-anyway），真正拦住芝士的是登录校验加\n`AcceptService.arm_auto_merge` 里的 `_forbid_ai`。",
+        "description": "绿了自动合 (#718)：验收人在 BLOCKED / BEHIND 时布防，规则满足时平台以\n布防人的名义合并；新提交作废采纳（dismiss_stale）同样解除布防。\n\n授权类动作：actor 只来自 session token，路由**故意不**声明成芝士专用\n（同 void / merge-anyway），真正拦住芝士的是登录校验加\n`AcceptService.arm_auto_merge` 里的 `_forbid_ai`。",
         "operationId": "set_auto_merge_accept_cards__card_id__auto_merge_post",
         "parameters": [
           {
@@ -2699,6 +2699,49 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete Model",
+        "description": "删一条运行时模型，回 `{\"deleted\": true}`（契约 §2.3）。",
+        "operationId": "delete_model_admin_gateway_models__name__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Model Admin Gateway Models  Name  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "admin"
@@ -2736,49 +2779,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Update Model Admin Gateway Models  Name  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Delete Model",
-        "description": "删一条运行时模型，回 `{\"deleted\": true}`（契约 §2.3）。",
-        "operationId": "delete_model_admin_gateway_models__name__delete",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Delete Model Admin Gateway Models  Name  Delete"
                 }
               }
             }
@@ -3735,6 +3735,50 @@
       }
     },
     "/projects/{project_id}/agent-credential": {
+      "get": {
+        "tags": [
+          "agent-credential"
+        ],
+        "summary": "Get Agent Credential Status",
+        "description": "The project's current credential generation — never a secret. Credentials\nare not listed because none are stored; the generation is the only fact the\nplatform keeps about them.",
+        "operationId": "get_agent_credential_status_projects__project_id__agent_credential_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Agent Credential Status Projects  Project Id  Agent Credential Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "agent-credential"
@@ -3773,50 +3817,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Issue Agent Credential Projects  Project Id  Agent Credential Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "agent-credential"
-        ],
-        "summary": "Get Agent Credential Status",
-        "description": "The project's current credential generation — never a secret. Credentials\nare not listed because none are stored; the generation is the only fact the\nplatform keeps about them.",
-        "operationId": "get_agent_credential_status_projects__project_id__agent_credential_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Agent Credential Status Projects  Project Id  Agent Credential Get"
                 }
               }
             }
@@ -3902,60 +3902,6 @@
       }
     },
     "/projects/{project_id}/alerts": {
-      "post": {
-        "tags": [
-          "alerts"
-        ],
-        "summary": "Create Notification",
-        "description": "往项目的收件箱里写 —— agent（带 scope 的令牌）或者一个登录了的人；匿名的进\n不来。\n\n凭据之外还要看两头的成员身份。写的人：这个项目（指了房间就是那个房间）的成员\n—— 否则任何登录了的人都能往一个他不在的项目里、给每个成员的收件箱写一条标题和\n正文都由他定的消息。收的人：同样打得开这个项目或房间 —— 打不开的人读不到它，\n一条到不了任何人的通知不是成功；指着私密房间的那一条，也不能把字给房间外面的\n人看。房间得是这个项目的。全局 sandbox token 是开发用的受信覆盖，和\n``authorize_project`` 一样不问成员。\n\n返回的是**一组**：一条广播在这里就展开成一人一行，所以「刚写下的那一条」不再\n只有一个答案。",
-        "operationId": "create_notification_projects__project_id__alerts_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NotificationCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Create Notification Projects  Project Id  Alerts Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "alerts"
@@ -4010,6 +3956,60 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response List Notifications Projects  Project Id  Alerts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "alerts"
+        ],
+        "summary": "Create Notification",
+        "description": "往项目的收件箱里写 —— agent（带 scope 的令牌）或者一个登录了的人；匿名的进\n不来。\n\n凭据之外还要看两头的成员身份。写的人：这个项目（指了房间就是那个房间）的成员\n—— 否则任何登录了的人都能往一个他不在的项目里、给每个成员的收件箱写一条标题和\n正文都由他定的消息。收的人：同样打得开这个项目或房间 —— 打不开的人读不到它，\n一条到不了任何人的通知不是成功；指着私密房间的那一条，也不能把字给房间外面的\n人看。房间得是这个项目的。全局 sandbox token 是开发用的受信覆盖，和\n``authorize_project`` 一样不问成员。\n\n返回的是**一组**：一条广播在这里就展开成一人一行，所以「刚写下的那一条」不再\n只有一个答案。",
+        "operationId": "create_notification_projects__project_id__alerts_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Notification Projects  Project Id  Alerts Post"
                 }
               }
             }
@@ -4505,6 +4505,91 @@
       }
     },
     "/questions/{question_id}/answers/{answer_id}/vote": {
+      "get": {
+        "tags": [
+          "Answers"
+        ],
+        "summary": "Get Answer Votes",
+        "operationId": "get_answer_votes_questions__question_id__answers__answer_id__vote_get",
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "answer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Answer Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Answer Votes Questions  Question Id  Answers  Answer Id  Vote Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "Answers"
@@ -4671,91 +4756,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Remove Answer Vote Questions  Question Id  Answers  Answer Id  Vote Delete"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Answers"
-        ],
-        "summary": "Get Answer Votes",
-        "operationId": "get_answer_votes_questions__question_id__answers__answer_id__vote_get",
-        "parameters": [
-          {
-            "name": "question_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Question Id"
-            }
-          },
-          {
-            "name": "answer_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Answer Id"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Answer Votes Questions  Question Id  Answers  Answer Id  Vote Get"
                 }
               }
             }
@@ -7360,6 +7360,81 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "Comments"
+        ],
+        "summary": "Delete Comment",
+        "operationId": "delete_comment_comments__commentId__delete",
+        "parameters": [
+          {
+            "name": "commentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Commentid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Comment Comments  Commentid  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Comments"
@@ -7431,81 +7506,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Update Comment Comments  Commentid  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Comments"
-        ],
-        "summary": "Delete Comment",
-        "operationId": "delete_comment_comments__commentId__delete",
-        "parameters": [
-          {
-            "name": "commentId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Commentid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Delete Comment Comments  Commentid  Delete"
                 }
               }
             }
@@ -8049,6 +8049,49 @@
       }
     },
     "/connector/my/devices/{device_id}": {
+      "delete": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Unbind My Device",
+        "description": "Unbind (forget) a device the caller owns — its durable token stops working.",
+        "operationId": "unbind_my_device_connector_my_devices__device_id__delete",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Unbind My Device Connector My Devices  Device Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "connector"
@@ -8086,49 +8129,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Rename My Device Connector My Devices  Device Id  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "connector"
-        ],
-        "summary": "Unbind My Device",
-        "description": "Unbind (forget) a device the caller owns — its durable token stops working.",
-        "operationId": "unbind_my_device_connector_my_devices__device_id__delete",
-        "parameters": [
-          {
-            "name": "device_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Device Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Unbind My Device Connector My Devices  Device Id  Delete"
                 }
               }
             }
@@ -11286,75 +11286,6 @@
       }
     },
     "/projects/{project_id}/git/tasks/{task_id}": {
-      "post": {
-        "tags": [
-          "git"
-        ],
-        "summary": "Open Task Workspace",
-        "operationId": "open_task_workspace_projects__project_id__git_tasks__task_id__post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "task_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Task Id"
-            }
-          },
-          {
-            "name": "X-Cheese-Token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Cheese-Token"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Open Task Workspace Projects  Project Id  Git Tasks  Task Id  Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "git"
@@ -11408,6 +11339,75 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Task Workspace Projects  Project Id  Git Tasks  Task Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "git"
+        ],
+        "summary": "Open Task Workspace",
+        "operationId": "open_task_workspace_projects__project_id__git_tasks__task_id__post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "X-Cheese-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Cheese-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Open Task Workspace Projects  Project Id  Git Tasks  Task Id  Post"
                 }
               }
             }
@@ -13525,7 +13525,7 @@
         ],
         "summary": "Download Binary",
         "description": "The connector for ``target``. ``X-Checksum-SHA256`` names its bytes, so\nthe connection owner can ask which build is published with a HEAD.\n\nA GET that accepts gzip gets the gzip copy (`connector_build.gzipped`); the\nchecksum still names the decoded bytes, which is what the machine runs.",
-        "operationId": "download_binary_connector_latest__target___name__get",
+        "operationId": "download_connector_binary",
         "parameters": [
           {
             "name": "target",
@@ -13573,7 +13573,7 @@
         ],
         "summary": "Download Binary",
         "description": "The connector for ``target``. ``X-Checksum-SHA256`` names its bytes, so\nthe connection owner can ask which build is published with a HEAD.\n\nA GET that accepts gzip gets the gzip copy (`connector_build.gzipped`); the\nchecksum still names the decoded bytes, which is what the machine runs.",
-        "operationId": "download_binary_connector_latest__target___name__get",
+        "operationId": "download_connector_binary",
         "parameters": [
           {
             "name": "target",
@@ -13729,6 +13729,49 @@
       }
     },
     "/me/integrations/{integration_id}": {
+      "delete": {
+        "tags": [
+          "integrations"
+        ],
+        "summary": "Delete Integration",
+        "operationId": "delete_integration_me_integrations__integration_id__delete",
+        "parameters": [
+          {
+            "name": "integration_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Integration Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Integration Me Integrations  Integration Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "integrations"
@@ -13766,49 +13809,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Update Integration Me Integrations  Integration Id  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "integrations"
-        ],
-        "summary": "Delete Integration",
-        "operationId": "delete_integration_me_integrations__integration_id__delete",
-        "parameters": [
-          {
-            "name": "integration_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Integration Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Delete Integration Me Integrations  Integration Id  Delete"
                 }
               }
             }
@@ -14725,83 +14725,6 @@
       }
     },
     "/knowledge": {
-      "post": {
-        "tags": [
-          "Knowledge"
-        ],
-        "summary": "Create Knowledge",
-        "operationId": "create_knowledge_knowledge_post",
-        "parameters": [
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Payload"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Create Knowledge Knowledge Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "Knowledge"
@@ -14993,6 +14916,83 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Create Knowledge",
+        "operationId": "create_knowledge_knowledge_post",
+        "parameters": [
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Knowledge Knowledge Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/knowledge/{knowledgeId}": {
@@ -15055,6 +15055,81 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Get Knowledge By Id Knowledge  Knowledgeid  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Delete Knowledge",
+        "operationId": "delete_knowledge_knowledge__knowledgeId__delete",
+        "parameters": [
+          {
+            "name": "knowledgeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Knowledgeid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Knowledge Knowledge  Knowledgeid  Delete"
                 }
               }
             }
@@ -15140,81 +15215,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Patch Knowledge Knowledge  Knowledgeid  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Knowledge"
-        ],
-        "summary": "Delete Knowledge",
-        "operationId": "delete_knowledge_knowledge__knowledgeId__delete",
-        "parameters": [
-          {
-            "name": "knowledgeId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Knowledgeid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Delete Knowledge Knowledge  Knowledgeid  Delete"
                 }
               }
             }
@@ -15889,60 +15889,6 @@
           }
         }
       },
-      "post": {
-        "tags": [
-          "library"
-        ],
-        "summary": "Upload Library File",
-        "description": "在资料库页上直接放进一份文件。撞名不覆盖：拿下一个 `(n)`。",
-        "operationId": "upload_library_file_projects__project_id__library_post",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_upload_library_file_projects__project_id__library_post"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Upload Library File Projects  Project Id  Library Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "put": {
         "tags": [
           "library"
@@ -15990,6 +15936,60 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Replace Library File Projects  Project Id  Library Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Upload Library File",
+        "description": "在资料库页上直接放进一份文件。撞名不覆盖：拿下一个 `(n)`。",
+        "operationId": "upload_library_file_projects__project_id__library_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_library_file_projects__project_id__library_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Upload Library File Projects  Project Id  Library Post"
                 }
               }
             }
@@ -16107,103 +16107,6 @@
       }
     },
     "/documents/{document_id}": {
-      "patch": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Rename Document",
-        "operationId": "rename_document_documents__document_id__patch",
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DocumentRenameIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Rename Document Documents  Document Id  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Delete Document",
-        "description": "Delete a document of the project's own, its history and its comments.\nWhoever has it open is told; what they type after that is not kept.",
-        "operationId": "delete_document_documents__document_id__delete",
-        "parameters": [
-          {
-            "name": "document_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Document Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Delete Document Documents  Document Id  Delete"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "documents"
@@ -16285,6 +16188,103 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Replace Document Documents  Document Id  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Delete Document",
+        "description": "Delete a document of the project's own, its history and its comments.\nWhoever has it open is told; what they type after that is not kept.",
+        "operationId": "delete_document_documents__document_id__delete",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Document Documents  Document Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Rename Document",
+        "operationId": "rename_document_documents__document_id__patch",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentRenameIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Rename Document Documents  Document Id  Patch"
                 }
               }
             }
@@ -17571,6 +17571,72 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "MaterialBundles"
+        ],
+        "summary": "Delete Material Bundle",
+        "operationId": "delete_material_bundle_material_bundles__bundle_id__delete",
+        "parameters": [
+          {
+            "name": "bundle_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Bundle Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "MaterialBundles"
@@ -17645,72 +17711,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "MaterialBundles"
-        ],
-        "summary": "Delete Material Bundle",
-        "operationId": "delete_material_bundle_material_bundles__bundle_id__delete",
-        "parameters": [
-          {
-            "name": "bundle_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Bundle Id"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -17946,6 +17946,50 @@
       }
     },
     "/projects/{project_id}/members": {
+      "get": {
+        "tags": [
+          "members"
+        ],
+        "summary": "List Members",
+        "description": "The project's roster — 队友也在上面。\n\n「这个项目里有谁」只有一个读法（``membership.roster.roster``），人和 agent 是它\n的两个来源。以前这里只读人那一半，于是一个 agent 在项目里列不出另一个 agent。\n\n读名册要凭据，和话题列表同一道 项目成员 门：以前它不认凭据就全量作答，一个不是\n成员的人打开空工作区，照样看得见所有人的脸。",
+        "operationId": "list_members_projects__project_id__members_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Members Projects  Project Id  Members Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "members"
@@ -17983,50 +18027,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Add Member Projects  Project Id  Members Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "members"
-        ],
-        "summary": "List Members",
-        "description": "The project's roster — 队友也在上面。\n\n「这个项目里有谁」只有一个读法（``membership.roster.roster``），人和 agent 是它\n的两个来源。以前这里只读人那一半，于是一个 agent 在项目里列不出另一个 agent。\n\n读名册要凭据，和话题列表同一道 项目成员 门：以前它不认凭据就全量作答，一个不是\n成员的人打开空工作区，照样看得见所有人的脸。",
-        "operationId": "list_members_projects__project_id__members_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Members Projects  Project Id  Members Get"
                 }
               }
             }
@@ -18145,6 +18145,50 @@
       }
     },
     "/projects/{project_id}/invitations": {
+      "get": {
+        "tags": [
+          "members"
+        ],
+        "summary": "List Project Invitations",
+        "description": "这个项目还在等谁答复。\n\nSame door as the roster next door. It lists people who have not even\njoined yet, so \"读是开放的\" stopped being true the day\nthe roster was guarded - this route was left behind holding the old\npromise.",
+        "operationId": "list_project_invitations_projects__project_id__invitations_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Project Invitations Projects  Project Id  Invitations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "members"
@@ -18182,50 +18226,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Invite Member Projects  Project Id  Invitations Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "members"
-        ],
-        "summary": "List Project Invitations",
-        "description": "这个项目还在等谁答复。\n\nSame door as the roster next door. It lists people who have not even\njoined yet, so \"读是开放的\" stopped being true the day\nthe roster was guarded - this route was left behind holding the old\npromise.",
-        "operationId": "list_project_invitations_projects__project_id__invitations_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Project Invitations Projects  Project Id  Invitations Get"
                 }
               }
             }
@@ -19200,6 +19200,76 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "notifications"
+        ],
+        "summary": "Delete Notification",
+        "operationId": "delete_notification_notifications__notification_id__delete",
+        "parameters": [
+          {
+            "name": "notification_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Notification Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "notifications"
@@ -19269,76 +19339,6 @@
                   "additionalProperties": true,
                   "title": "Response Update Notification Status Notifications  Notification Id  Patch"
                 }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "notifications"
-        ],
-        "summary": "Delete Notification",
-        "operationId": "delete_notification_notifications__notification_id__delete",
-        "parameters": [
-          {
-            "name": "notification_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Notification Id"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
               }
             }
           },
@@ -20708,6 +20708,49 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "project-skills"
+        ],
+        "summary": "Delete Skill",
+        "operationId": "delete_skill_skills__skill_id__delete",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Skill Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Skill Skills  Skill Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "project-skills"
@@ -20762,49 +20805,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Update Skill Skills  Skill Id  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "project-skills"
-        ],
-        "summary": "Delete Skill",
-        "operationId": "delete_skill_skills__skill_id__delete",
-        "parameters": [
-          {
-            "name": "skill_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Skill Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Delete Skill Skills  Skill Id  Delete"
                 }
               }
             }
@@ -20992,47 +20992,6 @@
       }
     },
     "/projects": {
-      "post": {
-        "tags": [
-          "projects"
-        ],
-        "summary": "Create Project",
-        "operationId": "create_project_projects_post",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProjectCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Create Project Projects Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "projects"
@@ -21077,6 +21036,47 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response List Projects Projects Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Create Project",
+        "operationId": "create_project_projects_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Project Projects Post"
                 }
               }
             }
@@ -22488,6 +22488,60 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Delete Artifact",
+        "description": "把这一项从清单上去掉 —— 用户说它本来就不该是一项。\n\n声明过它的那些卡留在原处，只是不再指向任何一项：那些交付确实发生过。",
+        "operationId": "delete_artifact_projects__project_id__artifacts__artifact_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "artifact_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Artifact Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Artifact Projects  Project Id  Artifacts  Artifact Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "projects"
@@ -22538,60 +22592,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Rename Artifact Projects  Project Id  Artifacts  Artifact Id  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "projects"
-        ],
-        "summary": "Delete Artifact",
-        "description": "把这一项从清单上去掉 —— 用户说它本来就不该是一项。\n\n声明过它的那些卡留在原处，只是不再指向任何一项：那些交付确实发生过。",
-        "operationId": "delete_artifact_projects__project_id__artifacts__artifact_id__delete",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          },
-          {
-            "name": "artifact_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Artifact Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Delete Artifact Projects  Project Id  Artifacts  Artifact Id  Delete"
                 }
               }
             }
@@ -24112,6 +24112,153 @@
       }
     },
     "/questions/{question_id}/followers": {
+      "get": {
+        "tags": [
+          "Questions"
+        ],
+        "summary": "List Question Followers",
+        "operationId": "list_question_followers_questions__question_id__followers_get",
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "page_start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Page Start"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Page Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Question Followers Questions  Question Id  Followers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Questions"
+        ],
+        "summary": "Follow Question (PUT)",
+        "operationId": "follow_question_put_questions__question_id__followers_put",
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Follow Question Put Questions  Question Id  Followers Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "Questions"
@@ -24246,153 +24393,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Unfollow Question Questions  Question Id  Followers Delete"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Questions"
-        ],
-        "summary": "List Question Followers",
-        "operationId": "list_question_followers_questions__question_id__followers_get",
-        "parameters": [
-          {
-            "name": "question_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Question Id"
-            }
-          },
-          {
-            "name": "page_start",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer",
-                  "minimum": 0
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Page Start"
-            }
-          },
-          {
-            "name": "page_size",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Page Size"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Question Followers Questions  Question Id  Followers Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Questions"
-        ],
-        "summary": "Follow Question (PUT)",
-        "operationId": "follow_question_put_questions__question_id__followers_put",
-        "parameters": [
-          {
-            "name": "question_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Question Id"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Follow Question Put Questions  Question Id  Followers Put"
                 }
               }
             }
@@ -24574,6 +24574,81 @@
       }
     },
     "/questions/{question_id}/vote": {
+      "get": {
+        "tags": [
+          "Questions"
+        ],
+        "summary": "Get Question Votes",
+        "operationId": "get_question_votes_questions__question_id__vote_get",
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Question Votes Questions  Question Id  Vote Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "Questions"
@@ -24720,81 +24795,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Remove Question Vote Questions  Question Id  Vote Delete"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Questions"
-        ],
-        "summary": "Get Question Votes",
-        "operationId": "get_question_votes_questions__question_id__vote_get",
-        "parameters": [
-          {
-            "name": "question_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Question Id"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Question Votes Questions  Question Id  Vote Get"
                 }
               }
             }
@@ -25857,6 +25857,72 @@
       }
     },
     "/recruitment/{postId}": {
+      "delete": {
+        "tags": [
+          "Recruitment"
+        ],
+        "summary": "Delete Recruitment Post",
+        "operationId": "delete_recruitment_post_recruitment__postId__delete",
+        "parameters": [
+          {
+            "name": "postId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Postid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Recruitment"
@@ -25941,22 +26007,25 @@
             }
           }
         }
-      },
-      "delete": {
+      }
+    },
+    "/teams/{teamId}/recruitment": {
+      "get": {
         "tags": [
+          "Teams",
           "Recruitment"
         ],
-        "summary": "Delete Recruitment Post",
-        "operationId": "delete_recruitment_post_recruitment__postId__delete",
+        "summary": "List Team Recruitment Posts",
+        "operationId": "list_team_recruitment_posts_teams__teamId__recruitment_get",
         "parameters": [
           {
-            "name": "postId",
+            "name": "teamId",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
               "minimum": 1,
-              "title": "Postid"
+              "title": "Teamid"
             }
           },
           {
@@ -25993,8 +26062,17 @@
           }
         ],
         "responses": {
-          "204": {
-            "description": "Successful Response"
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Team Recruitment Posts Teams  Teamid  Recruitment Get"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -26007,9 +26085,7 @@
             }
           }
         }
-      }
-    },
-    "/teams/{teamId}/recruitment": {
+      },
       "post": {
         "tags": [
           "Teams",
@@ -26080,82 +26156,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Create Recruitment Post Teams  Teamid  Recruitment Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Teams",
-          "Recruitment"
-        ],
-        "summary": "List Team Recruitment Posts",
-        "operationId": "list_team_recruitment_posts_teams__teamId__recruitment_get",
-        "parameters": [
-          {
-            "name": "teamId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Teamid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Team Recruitment Posts Teams  Teamid  Recruitment Get"
                 }
               }
             }
@@ -27276,6 +27276,49 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Delete Routine",
+        "operationId": "delete_routine_routines__routine_id__delete",
+        "parameters": [
+          {
+            "name": "routine_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Routine Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Routine Routines  Routine Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "routines"
@@ -27313,49 +27356,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Update Routine Routines  Routine Id  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "routines"
-        ],
-        "summary": "Delete Routine",
-        "operationId": "delete_routine_routines__routine_id__delete",
-        "parameters": [
-          {
-            "name": "routine_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Routine Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Delete Routine Routines  Routine Id  Delete"
                 }
               }
             }
@@ -28162,6 +28162,82 @@
       }
     },
     "/spaces/{spaceId}/announcements/{announcementId}": {
+      "delete": {
+        "tags": [
+          "Spaces"
+        ],
+        "summary": "Delete an announcement",
+        "operationId": "delete_announcement_spaces__spaceId__announcements__announcementId__delete",
+        "parameters": [
+          {
+            "name": "spaceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Spaceid"
+            }
+          },
+          {
+            "name": "announcementId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Announcementid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Spaces"
@@ -28244,82 +28320,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Spaces"
-        ],
-        "summary": "Delete an announcement",
-        "operationId": "delete_announcement_spaces__spaceId__announcements__announcementId__delete",
-        "parameters": [
-          {
-            "name": "spaceId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Spaceid"
-            }
-          },
-          {
-            "name": "announcementId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Announcementid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -28637,6 +28637,72 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "Spaces"
+        ],
+        "summary": "Delete Space",
+        "operationId": "delete_space_spaces__spaceId__delete",
+        "parameters": [
+          {
+            "name": "spaceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Spaceid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Spaces"
@@ -28709,72 +28775,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Spaces"
-        ],
-        "summary": "Delete Space",
-        "operationId": "delete_space_spaces__spaceId__delete",
-        "parameters": [
-          {
-            "name": "spaceId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Spaceid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -31701,6 +31701,82 @@
       }
     },
     "/spaces/{spaceId}/invite-codes/{codeId}": {
+      "delete": {
+        "tags": [
+          "Spaces"
+        ],
+        "summary": "Revoke Space Invite Code",
+        "operationId": "revoke_space_invite_code_spaces__spaceId__invite_codes__codeId__delete",
+        "parameters": [
+          {
+            "name": "spaceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Spaceid"
+            }
+          },
+          {
+            "name": "codeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Codeid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Spaces"
@@ -31783,82 +31859,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Spaces"
-        ],
-        "summary": "Revoke Space Invite Code",
-        "operationId": "revoke_space_invite_code_spaces__spaceId__invite_codes__codeId__delete",
-        "parameters": [
-          {
-            "name": "spaceId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Spaceid"
-            }
-          },
-          {
-            "name": "codeId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Codeid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -32036,6 +32036,82 @@
       }
     },
     "/spaces/{spaceId}/materials/{materialId}": {
+      "delete": {
+        "tags": [
+          "Spaces"
+        ],
+        "summary": "Delete Space Material",
+        "operationId": "delete_space_material_spaces__spaceId__materials__materialId__delete",
+        "parameters": [
+          {
+            "name": "spaceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Spaceid"
+            }
+          },
+          {
+            "name": "materialId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Materialid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Spaces"
@@ -32118,82 +32194,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Spaces"
-        ],
-        "summary": "Delete Space Material",
-        "operationId": "delete_space_material_spaces__spaceId__materials__materialId__delete",
-        "parameters": [
-          {
-            "name": "spaceId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Spaceid"
-            }
-          },
-          {
-            "name": "materialId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Materialid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -32774,101 +32774,6 @@
       }
     },
     "/spaces/{spaceId}/categories/{categoryId}": {
-      "patch": {
-        "tags": [
-          "Spaces"
-        ],
-        "summary": "Update Space Category",
-        "operationId": "patch_space_category_spaces__spaceId__categories__categoryId__patch",
-        "parameters": [
-          {
-            "name": "spaceId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Spaceid"
-            }
-          },
-          {
-            "name": "categoryId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Categoryid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchSpaceCategoryRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Patch Space Category Spaces  Spaceid  Categories  Categoryid  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "Spaces"
@@ -33017,6 +32922,101 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Spaces"
+        ],
+        "summary": "Update Space Category",
+        "operationId": "patch_space_category_spaces__spaceId__categories__categoryId__patch",
+        "parameters": [
+          {
+            "name": "spaceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Spaceid"
+            }
+          },
+          {
+            "name": "categoryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Categoryid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchSpaceCategoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Space Category Spaces  Spaceid  Categories  Categoryid  Patch"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -33366,6 +33366,82 @@
       }
     },
     "/spaces/{spaceId}/domain-groups/{groupId}": {
+      "delete": {
+        "tags": [
+          "Spaces"
+        ],
+        "summary": "Delete Space Domain Group",
+        "operationId": "delete_space_domain_group_spaces__spaceId__domain_groups__groupId__delete",
+        "parameters": [
+          {
+            "name": "spaceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Spaceid"
+            }
+          },
+          {
+            "name": "groupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Groupid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Spaces"
@@ -33448,82 +33524,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Spaces"
-        ],
-        "summary": "Delete Space Domain Group",
-        "operationId": "delete_space_domain_group_spaces__spaceId__domain_groups__groupId__delete",
-        "parameters": [
-          {
-            "name": "spaceId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Spaceid"
-            }
-          },
-          {
-            "name": "groupId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Groupid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -34217,82 +34217,6 @@
       }
     },
     "/tasks": {
-      "post": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Create Task",
-        "description": "Create a new task (simplified port of Kotlin TaskService.createTask).\n\nNOTE:\n- 权限：调用者必须是 ``space`` 的成员（在成员名册里，或所有者在管理员关系里），\n  否则 403 —— 从前这条 route 只要求提供 space 并验证 category 归属，任何登录\n  用户都能往别人的板里发题；中间一度收成「只有管理员能发」，重设计后放开为\n  「板里的人都能发、所有者与管理员审」（见 ``_create_task_entity`` 里的\n  ``may_publish_in_space``）；\n- submissionSchema 与 PATCH 一样写入提交表单；topics 只插关系行，不做校验。",
-        "operationId": "create_task_tasks_post",
-        "parameters": [
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateTaskRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Create Task Tasks Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "Tasks"
@@ -34616,6 +34540,82 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Get Tasks Tasks Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Create Task",
+        "description": "Create a new task (simplified port of Kotlin TaskService.createTask).\n\nNOTE:\n- 权限：调用者必须是 ``space`` 的成员（在成员名册里，或所有者在管理员关系里），\n  否则 403 —— 从前这条 route 只要求提供 space 并验证 category 归属，任何登录\n  用户都能往别人的板里发题；中间一度收成「只有管理员能发」，重设计后放开为\n  「板里的人都能发、所有者与管理员审」（见 ``_create_task_entity`` 里的\n  ``may_publish_in_space``）；\n- submissionSchema 与 PATCH 一样写入提交表单；topics 只插关系行，不做校验。",
+        "operationId": "create_task_tasks_post",
+        "parameters": [
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Task Tasks Post"
                 }
               }
             }
@@ -35138,6 +35138,108 @@
       }
     },
     "/tasks/{taskId}/participants": {
+      "get": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Get Participants",
+        "description": "Return participants for a given task.\n\nNT requires @Auth(\"task:enumerate:participant\"); we used to expose this\npublicly, leaking participant identities (member ids, contact info) to\nanyone who knew a task id.",
+        "operationId": "get_task_participants_tasks__taskId__participants_get",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "approved",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Approved"
+            }
+          },
+          {
+            "name": "queryRealNameInfo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Queryrealnameinfo"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Task Participants Tasks  Taskid  Participants Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "Tasks"
@@ -35423,108 +35525,6 @@
             }
           }
         }
-      },
-      "get": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Get Participants",
-        "description": "Return participants for a given task.\n\nNT requires @Auth(\"task:enumerate:participant\"); we used to expose this\npublicly, leaking participant identities (member ids, contact info) to\nanyone who knew a task id.",
-        "operationId": "get_task_participants_tasks__taskId__participants_get",
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Taskid"
-            }
-          },
-          {
-            "name": "approved",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Approved"
-            }
-          },
-          {
-            "name": "queryRealNameInfo",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": false,
-              "title": "Queryrealnameinfo"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Task Participants Tasks  Taskid  Participants Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/tasks/{taskId}/participations/user": {
@@ -35711,13 +35711,13 @@
       }
     },
     "/tasks/{taskId}/participants/{participantId}": {
-      "patch": {
+      "get": {
         "tags": [
           "Tasks"
         ],
-        "summary": "Update TaskMembership",
-        "description": "Patch a single TaskMembership by participant id.",
-        "operationId": "patch_task_participant_tasks__taskId__participants__participantId__patch",
+        "summary": "Get Task Participant",
+        "description": "一条报名记录，判据与上面的列表版**一模一样**。\n\n返回体里带着报名者填的 ``email`` / ``phone``（``_membership_to_api_model``），而\n``participantId`` 是小整数、可枚举 —— 从前这里那句 ``_ = auth_user`` 等于把报名\n表交给任何登录用户。单条是列表的一种取法，没有理由比列表更宽：看得了名单的人\n（``may_teach_task``）才看得到单条。\n\n403 而不是 404，口径照抄列表版：同一个调用者在同一个资源上，列表版已经用 403\n说了「你看不了这份名单」；换 404 是另一句话（「这道题上没有这个人」），而调用者\n早已知道这个人存在。",
+        "operationId": "get_task_participant_tasks__taskId__participants__participantId__get",
         "parameters": [
           {
             "name": "taskId",
@@ -35772,16 +35772,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchTaskParticipantRequest"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -35790,7 +35780,7 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": true,
-                  "title": "Response Patch Task Participant Tasks  Taskid  Participants  Participantid  Patch"
+                  "title": "Response Get Task Participant Tasks  Taskid  Participants  Participantid  Get"
                 }
               }
             }
@@ -35884,13 +35874,13 @@
           }
         }
       },
-      "get": {
+      "patch": {
         "tags": [
           "Tasks"
         ],
-        "summary": "Get Task Participant",
-        "description": "一条报名记录，判据与上面的列表版**一模一样**。\n\n返回体里带着报名者填的 ``email`` / ``phone``（``_membership_to_api_model``），而\n``participantId`` 是小整数、可枚举 —— 从前这里那句 ``_ = auth_user`` 等于把报名\n表交给任何登录用户。单条是列表的一种取法，没有理由比列表更宽：看得了名单的人\n（``may_teach_task``）才看得到单条。\n\n403 而不是 404，口径照抄列表版：同一个调用者在同一个资源上，列表版已经用 403\n说了「你看不了这份名单」；换 404 是另一句话（「这道题上没有这个人」），而调用者\n早已知道这个人存在。",
-        "operationId": "get_task_participant_tasks__taskId__participants__participantId__get",
+        "summary": "Update TaskMembership",
+        "description": "Patch a single TaskMembership by participant id.",
+        "operationId": "patch_task_participant_tasks__taskId__participants__participantId__patch",
         "parameters": [
           {
             "name": "taskId",
@@ -35945,6 +35935,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchTaskParticipantRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -35953,7 +35953,7 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": true,
-                  "title": "Response Get Task Participant Tasks  Taskid  Participants  Participantid  Get"
+                  "title": "Response Patch Task Participant Tasks  Taskid  Participants  Participantid  Patch"
                 }
               }
             }
@@ -36117,6 +36117,73 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Delete Task",
+        "description": "Soft delete a task and its participants.\n\nNOTE: 与 Kotlin 版本类似，这里只做软删除；\n提交记录的删除将在后续引入 submission ORM 时一并处理。",
+        "operationId": "delete_task_tasks__taskId__delete",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Tasks"
@@ -36190,73 +36257,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Delete Task",
-        "description": "Soft delete a task and its participants.\n\nNOTE: 与 Kotlin 版本类似，这里只做软删除；\n提交记录的删除将在后续引入 submission ORM 时一并处理。",
-        "operationId": "delete_task_tasks__taskId__delete",
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Taskid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -36823,111 +36823,6 @@
       }
     },
     "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review": {
-      "post": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Create Submission Review",
-        "operationId": "post_task_submission_review_tasks__taskId__participants__participantId__submissions__submissionId__review_post",
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Taskid"
-            }
-          },
-          {
-            "name": "participantId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Participantid"
-            }
-          },
-          {
-            "name": "submissionId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Submissionid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateSubmissionReviewRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Post Task Submission Review Tasks  Taskid  Participants  Participantid  Submissions  Submissionid  Review Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "Tasks"
@@ -37008,111 +36903,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Get Task Submission Review Tasks  Taskid  Participants  Participantid  Submissions  Submissionid  Review Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Re-Review Submission",
-        "operationId": "patch_task_submission_review_tasks__taskId__participants__participantId__submissions__submissionId__review_patch",
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Taskid"
-            }
-          },
-          {
-            "name": "participantId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Participantid"
-            }
-          },
-          {
-            "name": "submissionId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Submissionid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchSubmissionReviewRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Patch Task Submission Review Tasks  Taskid  Participants  Participantid  Submissions  Submissionid  Review Patch"
                 }
               }
             }
@@ -37234,6 +37024,111 @@
           }
         }
       },
+      "post": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Create Submission Review",
+        "operationId": "post_task_submission_review_tasks__taskId__participants__participantId__submissions__submissionId__review_post",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "participantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Participantid"
+            }
+          },
+          {
+            "name": "submissionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Submissionid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSubmissionReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Post Task Submission Review Tasks  Taskid  Participants  Participantid  Submissions  Submissionid  Review Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Tasks"
@@ -37313,6 +37208,111 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Delete Task Submission Review Tasks  Taskid  Participants  Participantid  Submissions  Submissionid  Review Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Re-Review Submission",
+        "operationId": "patch_task_submission_review_tasks__taskId__participants__participantId__submissions__submissionId__review_patch",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "participantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Participantid"
+            }
+          },
+          {
+            "name": "submissionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Submissionid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchSubmissionReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Task Submission Review Tasks  Taskid  Participants  Participantid  Submissions  Submissionid  Review Patch"
                 }
               }
             }
@@ -37655,6 +37655,72 @@
           }
         }
       },
+      "delete": {
+        "tags": [
+          "Teams"
+        ],
+        "summary": "Disband Team",
+        "operationId": "delete_team_teams__teamId__delete",
+        "parameters": [
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Teamid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Teams"
@@ -37727,72 +37793,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Teams"
-        ],
-        "summary": "Disband Team",
-        "operationId": "delete_team_teams__teamId__delete",
-        "parameters": [
-          {
-            "name": "teamId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Teamid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -39831,47 +39831,6 @@
       }
     },
     "/topics": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Create Topic",
-        "operationId": "create_topic_topics_post",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TopicCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Create Topic Topics Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "topics"
@@ -39965,6 +39924,47 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Create Topic",
+        "operationId": "create_topic_topics_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Topic Topics Post"
+                }
               }
             }
           },
@@ -41889,7 +41889,7 @@
           "topics"
         ],
         "summary": "Set Topic Compute Profile",
-        "description": "A conversation's work computer: a room's, or a task's.\n\nEvery session working on the choice moves with it, each pushing its work\nfirst (``machine/session_work.request_choice``): for the room, its own\nsessions and those of tasks that follow it; for a task, the task's. Only\nthe task's owner, a project manager or the owner of a device the task\nholds changes a task's, or the task's own session. A person's own computer\nworks only that person's tasks.",
+        "description": "A conversation's work computer: a room's, or a task's.\n\nEvery session working on the choice moves with it, each after one\nbest-effort checkpoint (``machine/session_work.request_choice``): for the\nroom, its own sessions and those of tasks that follow it; for a task, the\ntask's. Only the task's owner, a project manager or the owner of a device\nthe task holds changes a task's, or the task's own session. A person's own\ncomputer works only that person's tasks.",
         "operationId": "set_topic_compute_profile_topics__topic_id__compute_profile_put",
         "parameters": [
           {
@@ -42701,6 +42701,50 @@
       }
     },
     "/topics/{topic_id}/shown": {
+      "get": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "List Shown",
+        "description": "这个房间里摆出来过的东西 (#1085 结论四)。\n\n一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全\n部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。",
+        "operationId": "list_shown_topics__topic_id__shown_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Shown Topics  Topic Id  Shown Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "topics"
@@ -42741,50 +42785,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Show In Room Topics  Topic Id  Shown Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "List Shown",
-        "description": "这个房间里摆出来过的东西 (#1085 结论四)。\n\n一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全\n部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。",
-        "operationId": "list_shown_topics__topic_id__shown_get",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Shown Topics  Topic Id  Shown Get"
                 }
               }
             }
@@ -43082,7 +43082,7 @@
           "topics"
         ],
         "summary": "Upgrade Block",
-        "description": "转为任务：a message in a channel becomes a task of its own, owned by\nwhoever turned it, and its agent drafts the task's document from the\nmessage and what was said around it. A private chat's messages do not\nleave it.\n\n这是一条**在频道里造东西**的写：凭据由 resolve/authorize_topic 认，频道由 block\n自己带 —— block 的对话所在的频道就是那个频道，不是它自己去请求体里说。转的人也\n由凭据说，而且只能是一个人：AI 队友只能提议任务。",
+        "description": "转为任务：a message in a channel, or a reply in its 支线, becomes a task\nowned by whoever turned it, and its agent drafts the task's document from\nthe message and what was said around it. One message can become several\ntasks. A private chat's messages do not leave it.\n\n这是一条**在频道里造东西**的写：凭据由 resolve/authorize_topic 认，频道由 block\n自己带 —— block 的对话所在的频道就是那个频道，不是它自己去请求体里说。转的人也\n由凭据说，而且只能是一个人：AI 队友用自己的工具建任务（`cheese_task`）。",
         "operationId": "upgrade_block_blocks__block_id__upgrade_post",
         "parameters": [
           {
@@ -43488,6 +43488,52 @@
         }
       }
     },
+    "/topics/{topic_id}/reopen": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Reopen Task",
+        "description": "重新打开：the owner takes a closed task up again. Its AI teammate goes on\nfrom the project's latest code when it has landed something.",
+        "operationId": "reopen_task_topics__topic_id__reopen_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reopen Task Topics  Topic Id  Reopen Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/topics/{topic_id}/start": {
       "post": {
         "tags": [
@@ -43544,14 +43590,14 @@
         }
       }
     },
-    "/topics/{topic_id}/task-proposals": {
+    "/topics/{topic_id}/teammate-tasks": {
       "post": {
         "tags": [
           "topics"
         ],
-        "summary": "Propose Task",
-        "description": "An AI teammate proposes a task (`cheese_task`): a card in the room that a\nperson creates or puts aside. A teammate never creates one itself.",
-        "operationId": "propose_task_topics__topic_id__task_proposals_post",
+        "summary": "Create Teammate Task",
+        "description": "An AI teammate creates a task (`cheese_task`) from the conversation it\nis in. Made in a 支线, the task hangs under the message the 支线 is under.\nStarted at once when ``start`` says someone asked for it; otherwise it\nwaits for its owner, whom the teammate asks.",
+        "operationId": "create_teammate_task_topics__topic_id__teammate_tasks_post",
         "parameters": [
           {
             "name": "topic_id",
@@ -43569,7 +43615,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TaskProposalIn"
+                "$ref": "#/components/schemas/TeammateTaskIn"
               }
             }
           }
@@ -43582,163 +43628,7 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": true,
-                  "title": "Response Propose Task Topics  Topic Id  Task Proposals Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "List Task Proposals",
-        "description": "The proposals in this room still waiting for someone.",
-        "operationId": "list_task_proposals_topics__topic_id__task_proposals_get",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Task Proposals Topics  Topic Id  Task Proposals Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/task-proposals/{proposal_id}/accept": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Accept Task Proposal",
-        "description": "创建任务 from a teammate's proposal: the person who creates it owns it.",
-        "operationId": "accept_task_proposal_topics__topic_id__task_proposals__proposal_id__accept_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          },
-          {
-            "name": "proposal_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Proposal Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Accept Task Proposal Topics  Topic Id  Task Proposals  Proposal Id  Accept Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/task-proposals/{proposal_id}/dismiss": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Dismiss Task Proposal",
-        "description": "Put a teammate's proposal aside.",
-        "operationId": "dismiss_task_proposal_topics__topic_id__task_proposals__proposal_id__dismiss_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          },
-          {
-            "name": "proposal_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Proposal Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Dismiss Task Proposal Topics  Topic Id  Task Proposals  Proposal Id  Dismiss Post"
+                  "title": "Response Create Teammate Task Topics  Topic Id  Teammate Tasks Post"
                 }
               }
             }
@@ -44584,48 +44474,6 @@
       }
     },
     "/users": {
-      "post": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "Register User",
-        "description": "Registration flow with email verification.",
-        "operationId": "register_user_users_post",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterUserRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Register User Users Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "get": {
         "tags": [
           "Users"
@@ -44721,6 +44569,48 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response List Users Users Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Register User",
+        "description": "Registration flow with email verification.",
+        "operationId": "register_user_users_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Register User Users Post"
                 }
               }
             }
@@ -45172,93 +45062,6 @@
           }
         }
       },
-      "patch": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "Update user profile (partial)",
-        "operationId": "patch_user_profile_users__userId__patch",
-        "parameters": [
-          {
-            "name": "userId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Userid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Payload"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Patch User Profile Users  Userid  Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "put": {
         "tags": [
           "Users"
@@ -45330,6 +45133,93 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Put User Profile Users  Userid  Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update user profile (partial)",
+        "operationId": "patch_user_profile_users__userId__patch",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Userid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch User Profile Users  Userid  Patch"
                 }
               }
             }
@@ -47381,91 +47271,6 @@
           }
         }
       },
-      "patch": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "Update User Real Name Identity Info (partial)",
-        "operationId": "patch_user_identity_users__userId__identity_patch",
-        "parameters": [
-          {
-            "name": "userId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Userid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PatchUserIdentityRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Patch User Identity Users  Userid  Identity Patch"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
       "delete": {
         "tags": [
           "Users"
@@ -47535,6 +47340,91 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Delete User Identity Users  Userid  Identity Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update User Real Name Identity Info (partial)",
+        "operationId": "patch_user_identity_users__userId__identity_patch",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Userid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchUserIdentityRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch User Identity Users  Userid  Identity Patch"
                 }
               }
             }
@@ -47823,6 +47713,81 @@
       }
     },
     "/users/{userId}/passkeys": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "List user passkeys",
+        "operationId": "list_passkeys_users__userId__passkeys_get",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Userid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Passkeys Users  Userid  Passkeys Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "Users"
@@ -47894,81 +47859,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Passkey Register Verify Users  Userid  Passkeys Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "List user passkeys",
-        "operationId": "list_passkeys_users__userId__passkeys_get",
-        "parameters": [
-          {
-            "name": "userId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "title": "Userid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response List Passkeys Users  Userid  Passkeys Get"
                 }
               }
             }
@@ -50129,7 +50019,7 @@
     "/version": {
       "get": {
         "summary": "App Version",
-        "description": "The running build, for the UI's 内测 version badge. Public, unauthenticated\n— it exposes only a commit sha, and only when the box opts in. `badge` is the\nflag the frontend honours; the sha is always returned so a curl can check a\ndeploy regardless of the badge.",
+        "description": "The running release, for the UI's 内测 version badge and for anything\nasking whether a commit is live. Public, unauthenticated — it exposes only\ncommit shas. `badge` is the flag the frontend honours; the sha is always\nreturned so a curl can check a deploy regardless of the badge. `build` is\nthe commit the image was built from, older than `sha` when the release\nreused an unchanged image.",
         "operationId": "app_version_version_get",
         "responses": {
           "200": {
@@ -50248,6 +50138,11 @@
               }
             ],
             "title": "Deliver Url"
+          },
+          "completes_task": {
+            "type": "boolean",
+            "title": "Completes Task",
+            "default": true
           }
         },
         "type": "object",
@@ -58726,28 +58621,6 @@
         "title": "TaskParticipantRequest",
         "description": "Body for joining a task (user or team). All fields optional."
       },
-      "TaskProposalIn": {
-        "properties": {
-          "title": {
-            "type": "string",
-            "maxLength": 300,
-            "minLength": 1,
-            "title": "Title"
-          },
-          "summary": {
-            "type": "string",
-            "maxLength": 20000,
-            "minLength": 1,
-            "title": "Summary"
-          }
-        },
-        "type": "object",
-        "required": [
-          "title",
-          "summary"
-        ],
-        "title": "TaskProposalIn"
-      },
       "TaskStartIn": {
         "properties": {
           "reviewer_handle": {
@@ -58894,6 +58767,45 @@
         ],
         "title": "TeamVisibility",
         "description": "Who can find a team without being in it.\n\nPUBLIC teams show up in search and open by id; STEALTH teams do neither and\nare reached only through the team's join link. How joining then works is\nthe team's ``join_approval`` — the same switch a project has."
+      },
+      "TeammateTaskIn": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Summary"
+          },
+          "owner_handle": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Handle"
+          },
+          "start": {
+            "type": "boolean",
+            "title": "Start",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "summary"
+        ],
+        "title": "TeammateTaskIn"
       },
       "TextRangeQuoteIn": {
         "properties": {
