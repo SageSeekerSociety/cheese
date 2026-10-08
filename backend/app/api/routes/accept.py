@@ -24,6 +24,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.delivery.agent import dispatch_pending
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
@@ -425,7 +426,6 @@ async def reject_card(
         if actionable
         else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
     )
-    from app.domain.delivery.agent import dispatch_pending
 
     topic = await svc._topic_or_404(topic_id)
     await svc._record_task_nudge(

@@ -76,14 +76,17 @@ from app.domain.agent.compute_configs import (
     project_configs,
     validate_choice,
 )
+from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_TIERS,
     cloud_vm_provisionable,
     compute_selectable,
 )
-from app.domain.agent_instance.configuration import model_choices
+from app.domain.agent_instance.configuration import model_choices, project_pool
+from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import HostPool
+from app.domain.machine.session_reports import device_sessions, project_distribution
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.project.schemas import ProjectDefaultModelUpdate
@@ -98,7 +101,6 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 def _default_model_state(project_settings: dict | None, access: ModelAccess) -> dict:
-    from app.domain.agent_instance.configuration import model_choices, project_pool
 
     # Each model says whether the team's plan allows it and, when not, which
     # plan would; the picker shows that plan and does not offer the model.
@@ -156,7 +158,6 @@ async def save_default_model(
     await MemberService(db).require_manager(project_id, actor)
     service = ProjectService(db)
     project = await service.get_or_404(project_id)
-    from app.domain.agent_instance.configuration import model_choices
 
     access = await UsageService(db).model_access(project.team_id)
     valid = {c["id"]: c for c in model_choices(project.settings)}
@@ -190,8 +191,6 @@ async def save_default_model(
 async def get_compute_configs(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.domain.agent.device_hub import device_hub
-    from app.domain.device.wiring import sql_device_service
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -204,7 +203,6 @@ async def get_compute_configs(
     except ForbiddenError:
         can_manage = False
     devices = await sql_device_service(db).list_devices_for_project(project_id)
-    from app.domain.machine.session_reports import project_distribution
 
     return ok(
         {
@@ -243,7 +241,6 @@ async def list_device_sessions(
     session in a room the caller cannot open is counted in ``hidden`` and not
     listed, so its room's title stays in that room.
     """
-    from app.domain.machine.session_reports import device_sessions
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)

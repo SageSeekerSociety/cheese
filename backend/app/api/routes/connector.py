@@ -39,9 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_chat_service, get_work_runner
 from app.common.auth import AccessClaims, verify_access_token
+from app.core.background import spawn
 from app.core.config import settings
-from app.core.db import get_db
+from app.core.db import async_session_factory, get_db
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -55,13 +57,24 @@ from app.domain.agent.device_hub import (
     ViewerTransport,
     device_hub,
 )
+from app.domain.agent.device_storage import keep_device_room_files
 from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device import owner_reads
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
+from app.domain.local_fs.enforcement import push_grants_on_connect
+from app.domain.machine.session_work import (
+    checkpoint_room,
+    device_users,
+    screen_agent_name,
+)
+from app.domain.project.services import ProjectService
+from app.domain.room_task.checkouts import remove_closed_checkouts
 from app.domain.team.repositories import TeamRepository
+from app.domain.topic.retire import sweep_retired_storage
 from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -95,9 +108,6 @@ _recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
 
 
 async def recover_business_state(device_id: str) -> None:
-    from app.core.background import spawn
-    from app.core.db import async_session_factory
-    from app.domain.local_fs.enforcement import push_grants_on_connect
 
     # The machine enforces its own copy of its directory grants, so it is sent
     # the current set as it connects, before anything else waits. It is not
@@ -119,7 +129,6 @@ async def recover_business_state(device_id: str) -> None:
 
 
 async def _recover_business_state(device_id: str) -> None:
-    from app.api.deps import get_chat_service, get_work_runner
 
     # Every backend watches devices come and go, but only the one running the
     # work listens to their sessions: two listeners land one session's output
@@ -147,17 +156,12 @@ async def _recover_business_state(device_id: str) -> None:
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
     # Restore screen ownership before cleanup looks for sessions to close.
-    from app.core.background import spawn
-    from app.core.db import async_session_factory
-    from app.domain.machine.session_work import checkpoint_room
-    from app.domain.topic.retire import sweep_retired_storage
 
     spawn(
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
         name="cleanup device reconnect",
     )
     # A machine offline when a task of its rooms closed still has the checkout.
-    from app.domain.room_task.checkouts import remove_closed_checkouts
 
     spawn(
         remove_closed_checkouts(async_session_factory, device_id=device_id),
@@ -165,7 +169,6 @@ async def _recover_business_state(device_id: str) -> None:
     )
     # Rooms from before rooms had an executor are told their files are kept
     # before anything archives them (`agent/device_storage.py`).
-    from app.domain.agent.device_storage import keep_device_room_files
 
     spawn(
         keep_device_room_files(async_session_factory, device_id),
@@ -413,7 +416,6 @@ async def _note_seen(db: AsyncSession, device_id: str) -> None:
     with the server is torn down by cancelling this handler, and a database
     write cut short there leaves the connection broken for its next user.
     Committed at once, like the read that opened the link."""
-    from app.domain.device.wiring import sql_device_service
 
     try:
         await sql_device_service(db).note_last_seen(device_id, datetime.now(UTC))
@@ -637,7 +639,6 @@ async def _require_user(resolver: ActorResolverDep) -> int:
 async def _device_screens(db: AsyncSession, device_id: str) -> list[dict[str, Any]]:
     """The device's currently-open screens (agents), for the UI to open their 现场,
     each with the name its agent goes by."""
-    from app.domain.machine.session_work import screen_agent_name
 
     out: list[dict[str, Any]] = []
     for screen in device_hub.all_online_screens():
@@ -785,8 +786,6 @@ async def team_devices(
     user_id = await _require_user(resolver)
     if not await TeamRepository(db).is_team_member(team_id, user_id):
         raise ForbiddenError(say("notTeamMember"))
-    from app.domain.machine.session_work import device_users
-    from app.domain.project.services import ProjectService
 
     names = {p.id: p.name for p in await ProjectService(db).list_for_team(team_id)}
     devices = await service.list_devices_for_team(team_id)

@@ -75,6 +75,7 @@ from app.domain.documents.spreadsheet import (
 from app.domain.library import service as library
 from app.domain.project import room_files
 from app.domain.project.room_files import MAX_ARTIFACT_BYTES, clean_artifact_path
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
 from app.domain.topic.services import TopicService
@@ -249,8 +250,6 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(exception_text(exc)) from exc
     if task is not None:
-        from app.domain.repository.forge_files import ProjectFiles
-
         await ProjectFiles(db, topic.project_id, task).write_bytes(
             clean, made, expected
         )

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -424,7 +425,6 @@ async def resume_routine(
 async def run_routine_now(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.api.deps import get_chat_service, get_work_runner
 
     row, actor = await _routine_actor(db, resolver, routine_id)
     _person(actor, say("routineRunNow"))

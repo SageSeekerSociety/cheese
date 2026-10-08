@@ -38,6 +38,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
@@ -69,6 +70,7 @@ from app.domain.task.services import (
 )
 from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
+from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import (
     UserRealNameRepository,
@@ -183,8 +185,6 @@ async def get_task(
     participation_eligibility: dict | None = None
 
     if auth_user.user_id > 0:
-        from app.domain.team.repositories import TeamRepository as _TeamRepo
-
         user_membership = await membership_service.get_user_membership(
             task_id=task_id,
             user_id=auth_user.user_id,
@@ -298,8 +298,6 @@ async def patch_task(
     task = await task_repo.get_by_id(task_id)
     if task is None:
         raise NotFoundError("Task not found")
-
-    from app.domain.space.repositories import SpaceAdminRelationRepository
 
     # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员，出题者不可自审 ——
     # 那是一个比「管理员」更窄的问题，不能拿 may_teach_task 顶。
@@ -887,8 +885,6 @@ async def patch_task_membership_by_member(
         email=payload.email,
         phone=payload.phone,
     )
-
-    from app.domain.project.services import ProjectService
 
     await ProjectService(db).activate_participation(task=task, membership=membership)
 

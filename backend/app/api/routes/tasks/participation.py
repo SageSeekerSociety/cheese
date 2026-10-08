@@ -30,6 +30,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
@@ -47,6 +48,7 @@ from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
 )
+from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
 from app.domain.user.repositories import (
     UserRepository,
@@ -78,12 +80,9 @@ async def list_joined_tasks(resolver: ActorResolverDep, db=Depends(get_db)) -> d
 
 
 async def _participation_response(db, task, membership, auth_user) -> dict:
-    from app.domain.project.services import ProjectService
 
     owner_id = auth_user.user_id if membership.is_team else membership.member_id
     if membership.is_team:
-        from app.domain.team.models import TeamMemberRole
-
         members = await TeamRepository(db).list_members_of_team(membership.member_id)
         if not any(member.user_id == owner_id for member in members):
             owner_id = next(
@@ -286,7 +285,6 @@ async def join_task_as_team(
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Allow team to join a task."""
-    from app.domain.team.repositories import TeamRepository
 
     team_repo = TeamRepository(session=db)
     if not await team_repo.is_team_member(payload.team_id, auth_user.user_id):
@@ -383,8 +381,6 @@ async def patch_task_participant(
         email=payload.email,
         phone=payload.phone,
     )
-
-    from app.domain.project.services import ProjectService
 
     await ProjectService(db).activate_participation(task=task, membership=updated)
     # Commit before answering: the participant told they are approved can reload

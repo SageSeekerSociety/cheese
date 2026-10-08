@@ -22,6 +22,7 @@ from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.repository.forge_files import ProjectFiles
 
 
 async def source_bytes(
@@ -44,7 +45,6 @@ async def source_bytes(
     if task is not None or source == "committed":
         if library.library_name(path) is not None:
             raise ValidationError(say("libraryFileNoTaskBranch"))
-        from app.domain.repository.forge_files import ProjectFiles
 
         data, _ = await ProjectFiles(db, project_id, task).raw(path, source)
         return data

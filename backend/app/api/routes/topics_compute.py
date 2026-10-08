@@ -53,14 +53,30 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
+from pydantic import ValidationError as SchemaError
 
 from app.api.auth import ActorResolverDep, require_seated_agent
 from app.api.deps import project_device_online
 from app.api.response import ok
 from app.api.routes.topics import DbSession, ProjectRepository
 from app.core.config import settings
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
+from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
+from app.domain.agent.compute_configs import (
+    ComputeChoice,
+    machine_policy_call,
+    place_choice,
+    project_configs,
+    standard_choice,
+    validate_choice,
+    works_tasks_of,
+)
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_DEVICE,
@@ -78,7 +94,10 @@ from app.domain.device.supply import (
     sandbox_unavailable,
 )
 from app.domain.device.wiring import sql_device_service
+from app.domain.machine import session_work as work_lease
 from app.domain.machine.services import HostPool
+from app.domain.machine.session_reports import devices_held_by, session_machines
+from app.domain.machine.session_work import room_machine_visibility
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
@@ -100,7 +119,6 @@ async def _may_move_task(db, resolver, actor, topic, task) -> bool:
         return True
     except ForbiddenError:
         pass
-    from app.domain.machine.session_reports import devices_held_by
 
     devices = sql_device_service(db)
     for device_id in await devices_held_by(db, task.id):
@@ -127,11 +145,6 @@ async def get_topic_compute_profile(
     )
     topic_id = topic.id
     project = await ProjectRepository(db).get(topic.project_id)
-    from app.domain.agent.compute_configs import (
-        place_choice,
-        project_configs,
-        works_tasks_of,
-    )
 
     configs = project_configs(project.settings if project else None)
     choice = place_choice(topic, the_task, project.settings if project else None)
@@ -160,8 +173,6 @@ async def get_topic_compute_profile(
     # 都是同一台机器，而它就是房间那一项算出来的那台，所以读那一项就够了。Surfaced
     # so the room shows a visible safety badge instead of the platform granting
     # whole-machine access silently (原则八).
-    from app.domain.machine.session_reports import session_machines
-    from app.domain.machine.session_work import room_machine_visibility
 
     if the_task is None:
         visibility = await room_machine_visibility(
@@ -256,9 +267,6 @@ async def acquire_session_work_lease(
     request: Request,
     db: DbSession,
 ) -> dict:
-    from app.core.errors import AuthenticationRequiredError
-    from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.machine import session_work as work_lease
 
     token = request.headers.get("x-cheese-token", "")
     claims = scoped_token_claims(token)
@@ -318,17 +326,6 @@ async def set_topic_compute_profile(
     the task holds changes a task's, or the task's own session. A person's own
     computer works only that person's tasks.
     """
-    from pydantic import ValidationError as SchemaError
-
-    from app.domain.agent.compute_configs import (
-        ComputeChoice,
-        machine_policy_call,
-        place_choice,
-        standard_choice,
-        validate_choice,
-        works_tasks_of,
-    )
-    from app.domain.machine import session_work as work_lease
 
     place = await TopicService(db).place_or_404(topic_id)
     topic, the_task = place.room, place.task
@@ -339,7 +336,6 @@ async def set_topic_compute_profile(
     await TopicService(db).lock_for_execution(topic.id)
     # 一张签出来的会话凭据能改这一间房，但只能改它自己那一代的那一间：房间重开换了
     # 代，旧凭据改不动新房间（它手里那条会话已经不属于它了）。
-    from app.core.sandbox_auth import scoped_token_claims
 
     claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
     scoped_session = claims.get("session") if actor.via == "cheese" else None

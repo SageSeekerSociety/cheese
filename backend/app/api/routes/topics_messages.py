@@ -96,6 +96,10 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
+from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.input_identity import InputReconciliationPending
+from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
+from app.domain.delivery.note import send_note
 from app.domain.room_task.services import TaskService
 from app.domain.thread.services import answered_in
 from app.domain.topic.services import TopicService
@@ -240,8 +244,6 @@ async def _summon_the_named(
 
     消息先落库、先广播，再记投递：被点名的那位醒来时，房间里已经有它要读的那一行。
     """
-    from app.domain.delivery.agent import dispatch_pending
-    from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 
     async with chat.session_factory() as session:
         block = await BlockRepository(session).get(uuid.UUID(payload["id"]))
@@ -308,7 +310,6 @@ async def leave_a_note(
     它不落时间线：便条进的是那条线程正在跑的那一轮（`notify_running_turn`），不是
     房间里的一条消息。那边这一刻没有在跑的轮次就没人接住，如实回 `delivered: false`。
     """
-    from app.domain.delivery.note import send_note
 
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -330,7 +331,6 @@ async def leave_a_note(
         to_thread=to_thread,
         content=body.get("content") or "",
     )
-    from app.domain.delivery.input_identity import InputReconciliationPending
 
     if isinstance(delivered, InputReconciliationPending):
         return ok(

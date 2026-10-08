@@ -23,6 +23,13 @@ from app.core.sandbox_auth import (
     verify_scoped_token,
 )
 from app.core.sentences import say
+from app.domain.project.forge import binding_for_project, ensure_author_email
+from app.domain.repository import identity
+from app.domain.review.services import AcceptService
+from app.domain.room_task import snapshots
+from app.domain.room_task.models import TaskSnapshot
+from app.domain.room_task.services import TaskService
+from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["git"])
 
@@ -36,7 +43,6 @@ async def _task_for(db, project_id, task_id, token, *, opening: bool = False):
     directory there — and never opens it: the task is worked in its own
     conversation, by its owner and that session, and nowhere else.
     """
-    from app.domain.room_task.services import TaskService
 
     if not token or not verify_scoped_token(token, project_id=str(project_id)):
         raise AuthenticationRequiredError("Task access needs this project's token")
@@ -65,7 +71,6 @@ async def save_task_snapshot(
     x_cheese_head: str = Header(),
     x_content_sha256: str = Header(),
 ) -> dict:
-    from app.domain.room_task import snapshots
 
     task = await _task_for(db, project_id, task_id, x_cheese_token)
     size = 0
@@ -95,7 +100,6 @@ async def latest_task_snapshot(
     db: Annotated[AsyncSession, Depends(get_db)],
     x_cheese_token: str | None = Header(default=None),
 ) -> dict:
-    from app.domain.room_task import snapshots
 
     await _task_for(db, project_id, task_id, x_cheese_token)
     row = await snapshots.latest(db, task_id)
@@ -118,8 +122,6 @@ async def download_task_snapshot(
     db: Annotated[AsyncSession, Depends(get_db)],
     x_cheese_token: str | None = Header(default=None),
 ) -> Response:
-    from app.domain.room_task import snapshots
-    from app.domain.room_task.models import TaskSnapshot
 
     await _task_for(db, project_id, task_id, x_cheese_token)
     row = await db.get(TaskSnapshot, snapshot_id)
@@ -139,7 +141,6 @@ async def open_task_workspace(
     db: Annotated[AsyncSession, Depends(get_db)],
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> dict:
-    from app.domain.room_task.services import TaskService
 
     task = await _task_for(db, project_id, task_id, x_cheese_token, opening=True)
     acting = token_agent_handle(x_cheese_token or "")
@@ -149,8 +150,6 @@ async def open_task_workspace(
         raise ValidationError(say("taskEndedCreateNew"))
     await TaskService(db).record_author(task, acting)
     if task.branch_name is None:
-        from app.domain.project.forge import binding_for_project
-
         # A room turned into a task carries no branch; its own session opening
         # it is the moment it needs one. Without it the opening was a 404 that
         # said the task was not in the project (dev, 2026-10-06).
@@ -168,7 +167,6 @@ async def task_workspace(
     db: Annotated[AsyncSession, Depends(get_db)],
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> dict:
-    from app.domain.project.forge import binding_for_project
 
     task = await _task_for(db, project_id, task_id, x_cheese_token)
     if task.branch_name is None:
@@ -179,16 +177,12 @@ async def task_workspace(
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError(say("projectHasNoRepo"))
-    from app.domain.repository import identity
-    from app.domain.topic.services import TopicService
 
     room = await TopicService(db).get_or_404(task.room_id)
     who = await identity.attribution(db, room, task_id=task.id)
-    from app.domain.project.forge import ensure_author_email
 
     if who.author:
         await ensure_author_email(project_id, db, who.author.email)
-    from app.domain.review.services import AcceptService
 
     # A queued PR's branch is locked by the forge until the queue merges or
     # drops it; a machine that pushes to it is refused. It is told here so it

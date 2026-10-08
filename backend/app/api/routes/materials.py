@@ -11,6 +11,7 @@
 散件今天依然是「登录就读得到」。那张表和 ``attachment`` 记的是同一个缺口。
 """
 
+import io
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
@@ -64,8 +65,6 @@ async def upload_material(
         raise UnprocessableEntityError(
             f"MIME type {file_mime} does not match type {type}"
         )
-
-    import io
 
     storage = get_storage_backend()
     storage_key = generate_storage_key(file_name, prefix=f"materials/{type}")

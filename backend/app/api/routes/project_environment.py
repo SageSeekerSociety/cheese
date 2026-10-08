@@ -1,6 +1,7 @@
 """Project environment settings and explicit room preparation controls."""
 
 import uuid
+from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -8,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_chat_service
+from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -34,6 +35,7 @@ from app.domain.machine.repositories import CloudHostRepository
 from app.domain.membership.roster import roster
 from app.domain.membership.services import MemberService
 from app.domain.project.environment import EnvironmentConfig, project_environment
+from app.domain.project.environment_diagnosis import diagnose
 from app.domain.project.models import Project
 from app.domain.project.services import refuse_writes_if_archived
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
@@ -261,7 +263,6 @@ async def apply_environment(
     user: User,
     chat: Chat,
 ) -> dict:
-    from app.api.deps import get_work_runner
 
     project, _ = await access(db, project_id, user, write=True)
     async with chat.edit_environment(topic_id):
@@ -312,9 +313,6 @@ async def diagnose_environment(
     """「让芝士看看」: why this channel's latest failure happened and what to
     change, read from its log and the scripts it ran. Nothing is changed:
     the answer is a proposal a person takes or leaves."""
-    from dataclasses import asdict
-
-    from app.domain.project.environment_diagnosis import diagnose
 
     project, _ = await access(db, project_id, user, write=True)
     topic = await room(db, project_id, topic_id, viewer=user)

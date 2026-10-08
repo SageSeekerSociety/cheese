@@ -12,14 +12,18 @@ from fastapi import (
     Request,
 )
 from pydantic import BaseModel, ConfigDict, Field
+from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes.users_common import (
     TRUST_COOKIE,
 )
 from app.common.auth import (
+    PENDING_2FA_TTL_S,
     SudoPurpose,
+    mint_2fa_pending_token,
 )
+from app.core.client_address import resolved_client_address
 from app.core.config import settings
 from app.core.email import is_placeholder_email
 from app.core.errors import (
@@ -29,12 +33,15 @@ from app.core.errors import (
     UnprocessableEntityError,
 )
 from app.core.sentences import say
+from app.core.single_use_state import SingleUseUnavailableError, reserve
 from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS
+from app.domain.user.login_security import ClientFailureBudget
 from app.domain.user.models import (
     UserTrustedDevice,
 )
 from app.domain.user.trusted_devices import TrustedDeviceService
+from app.domain.user.verification_service import EmailVerificationService
 
 if TYPE_CHECKING:
     pass
@@ -163,8 +170,6 @@ async def _issue_2fa_pending_token(
     ``mint_2fa_pending_token``); the reservation is sized to match, so the
     key dies with the ticket rather than outliving it.
     """
-    from app.common.auth import PENDING_2FA_TTL_S, mint_2fa_pending_token
-    from app.core.single_use_state import SingleUseUnavailableError, reserve
 
     if expires_at is None:
         ttl_s = PENDING_2FA_TTL_S
@@ -237,10 +242,6 @@ async def _send_email_code(request: Request, email: str) -> None:
     """Mail a code proving ownership of ``email``: the sign-up code, with its
     per-address quota, the site's mail allowance and its limit on wrong
     guesses."""
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.client_address import resolved_client_address
-    from app.domain.user.verification_service import EmailVerificationService
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -253,11 +254,6 @@ async def _send_email_code(request: Request, email: str) -> None:
 
 async def _check_email_code(request: Request, email: str, code: str) -> None:
     """Spend ``code`` against ``email``, counted like the sign-up check."""
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.client_address import resolved_client_address
-    from app.domain.user.login_security import ClientFailureBudget
-    from app.domain.user.verification_service import EmailVerificationService
 
     client = resolved_client_address(request)
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
