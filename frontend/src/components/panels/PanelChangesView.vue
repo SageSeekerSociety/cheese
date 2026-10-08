@@ -19,18 +19,16 @@ import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevis
 import type { FileSource, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { DiffLine, FileDiff } from '../../lib/diff'
 import type { FileKind } from '../../lib/fileKind'
-import type { MergeConflict, ReviewBundle } from '../../types/reviewComment'
+import type { MergeConflict, OfficeComparison, ReviewBundle } from '../../types/reviewComment'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { buildFileRows, fmtBytes } from '../../lib/changesTree'
 import CodeEditor from '../CodeEditor.vue'
+import ReviewDocument from '../review/ReviewDocument.vue'
 import ReviewMergePicker from '../review/ReviewMergePicker.vue'
 
-import PreviewPages from './preview/PreviewPages.vue'
-import PreviewSheet from './preview/PreviewSheet.vue'
-import RevisionList from './preview/RevisionList.vue'
 import ChangesDiff from './ChangesDiff.vue'
 import ChangesDiffList from './ChangesDiffList.vue'
 import ChangesFileTree from './ChangesFileTree.vue'
@@ -97,6 +95,12 @@ const props = defineProps<{
   revs: DocumentRevisionsBundle
   /** 这件任务的批注；宿主不给就不画（`composables/useReviewComments.ts`）。 */
   review?: ReviewBundle | null
+  /** 打开的 Office 文件和上一版的比较（`usePanelChanges` 的那几个）。 */
+  canCompare?: boolean
+  comparing?: boolean
+  comparison?: OfficeComparison | null
+  comparisonLoading?: boolean
+  comparisonError?: string
 }>()
 
 const emit = defineEmits<{
@@ -111,6 +115,7 @@ const emit = defineEmits<{
   (e: 'overwrite'): void
   (e: 'resolve-merge', content: string): void
   (e: 'cancel-merge'): void
+  (e: 'toggle-compare'): void
   (e: 'reload'): void
   (e: 'view-changed', view: 'diff' | 'edit'): void
   (e: 'draft-changed', content: string): void
@@ -435,11 +440,25 @@ const fileRows = computed(() =>
                 {{ t('work.room.changes.downloadOriginal') }}
               </BaseButton>
             </div>
-            <div v-else class="doc-view__body">
-              <PreviewPages v-if="props.openDocumentType?.view === 'pages'" :data="props.docBytes" />
-              <PreviewSheet v-else :data="props.docBytes" :kind="props.openDocumentType?.sheet ?? 'workbook'" />
-              <RevisionList :revs="props.revs" :path="props.revisionPath" />
-            </div>
+            <ReviewDocument
+              v-else
+              class="doc-view__body"
+              :path="props.openPath"
+              :document-type="props.openDocumentType"
+              :doc-bytes="props.docBytes"
+              :revs="props.revs"
+              :revision-path="props.revisionPath"
+              :review="props.review"
+              :can-compare="props.canCompare"
+              :comparing="props.comparing"
+              :comparison="props.comparison"
+              :comparison-loading="props.comparisonLoading"
+              :comparison-error="props.comparisonError"
+              @toggle-compare="emit('toggle-compare')"
+              @comment="(d) => void props.review?.add(d)"
+              @edit-comment="(id, b, s) => void props.review?.edit(id, b, s)"
+              @remove-comment="(id) => void props.review?.remove(id)"
+            />
           </div>
           <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法
              定位到文件，所以验收动线以前根本立不起来。行号、折行、窗口化都在

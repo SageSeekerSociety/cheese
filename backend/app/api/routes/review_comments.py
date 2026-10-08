@@ -21,6 +21,7 @@ from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
+from app.domain.review import document_compare
 from app.domain.review.comments import ReviewCommentService, describe
 from app.domain.review.schemas import ReviewCommentEdit, ReviewCommentIn
 from app.domain.topic.services import TopicService
@@ -42,6 +43,8 @@ class ReviewCommentOut(BaseModel):
     line_start: int
     line_end: int
     line_text: str
+    #: 指着文件的哪里：`L12-L14`、`p3`（页）、`s2`（幻灯片）、`汇总!C5`（单元格）。
+    place: str
     current_line: int | None
     body: str
     suggestion: str | None
@@ -52,6 +55,63 @@ class ReviewCommentOut(BaseModel):
     outcome: str | None
     outcome_note: str | None
     created_at: str
+
+
+class ComparePieceOut(BaseModel):
+    op: str
+    text: str
+
+
+class CompareRowOut(BaseModel):
+    """一段（Word）或一页（幻灯片）：两边各是第几个，没有就是 null。"""
+
+    op: str
+    before: int | None
+    after: int | None
+    text: str | None = None
+    title: str | None = None
+    pieces: list[ComparePieceOut] | None = None
+
+
+class CompareCellOut(BaseModel):
+    address: str
+    before: str
+    after: str
+    before_formula: str | None
+    after_formula: str | None
+    formula: bool
+
+
+class CompareSheetOut(BaseModel):
+    name: str
+    status: str
+    cells: list[CompareCellOut]
+    truncated: bool | None = None
+
+
+class FormattingOut(BaseModel):
+    after: int
+    text: str
+
+
+class OfficeComparisonOut(BaseModel):
+    """一份 Office 文件和它该对着读的那一版比（`documents.compare`）。"""
+
+    kind: str
+    new_file: bool
+    identical: bool
+    changed: int
+    rows: list[CompareRowOut] | None = None
+    truncated: bool | None = None
+    formatting: list[FormattingOut] | None = None
+    sheets: list[CompareSheetOut] | None = None
+    slides: list[CompareRowOut] | None = None
+    against: str
+    base: str | None
+
+
+class ReviewComparisonOut(BaseModel):
+    comparison: OfficeComparisonOut | None
 
 
 class ReviewCommentsOut(BaseModel):
@@ -85,6 +145,19 @@ async def list_review_comments(
     return ok({"comments": [describe(row, anchor) for row in rows]})
 
 
+@router.get(
+    "/topics/{task_id}/review-comparison", **typed_response(ReviewComparisonOut)
+)
+async def review_comparison(
+    task_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """A Word document, workbook or deck in the task, compared with the version
+    it is read against: paragraphs, cells or slides. `comparison` is null for
+    any other file, or when a version cannot be read."""
+    _place, _actor, task = await task_conversation(db, resolver, task_id)
+    return ok({"comparison": await document_compare.comparison(db, task, path)})
+
+
 @router.post("/topics/{task_id}/review-comments", **typed_response(ReviewCommentOut))
 async def write_review_comment(
     task_id: uuid.UUID, body: ReviewCommentIn, db: DbSession, resolver: ActorResolverDep
@@ -98,6 +171,7 @@ async def write_review_comment(
         line_start=body.line_start,
         line_end=body.line_end,
         line_text=body.line_text,
+        place=body.place,
         commit_sha=body.commit_sha,
         body=body.body,
         suggestion=body.suggestion,

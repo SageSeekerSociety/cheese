@@ -26992,6 +26992,59 @@
         }
       }
     },
+    "/topics/{task_id}/review-comparison": {
+      "get": {
+        "tags": [
+          "review-comments"
+        ],
+        "summary": "Review Comparison",
+        "description": "A Word document, workbook or deck in the task, compared with the version\nit is read against: paragraphs, cells or slides. `comparison` is null for\nany other file, or when a version cannot be read.",
+        "operationId": "review_comparison_topics__task_id__review_comparison_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewComparisonOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/review-comments/{comment_id}": {
       "delete": {
         "tags": [
@@ -52191,6 +52244,187 @@
         ],
         "title": "CommentPageOutEnvelope"
       },
+      "CompareCellOut": {
+        "properties": {
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "before": {
+            "type": "string",
+            "title": "Before"
+          },
+          "after": {
+            "type": "string",
+            "title": "After"
+          },
+          "before_formula": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Formula"
+          },
+          "after_formula": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Formula"
+          },
+          "formula": {
+            "type": "boolean",
+            "title": "Formula"
+          }
+        },
+        "type": "object",
+        "required": [
+          "address",
+          "before",
+          "after",
+          "before_formula",
+          "after_formula",
+          "formula"
+        ],
+        "title": "CompareCellOut"
+      },
+      "ComparePieceOut": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "title": "Op"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "op",
+          "text"
+        ],
+        "title": "ComparePieceOut"
+      },
+      "CompareRowOut": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "title": "Op"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "pieces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ComparePieceOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pieces"
+          }
+        },
+        "type": "object",
+        "required": [
+          "op",
+          "before",
+          "after"
+        ],
+        "title": "CompareRowOut",
+        "description": "一段（Word）或一页（幻灯片）：两边各是第几个，没有就是 null。"
+      },
+      "CompareSheetOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/CompareCellOut"
+            },
+            "type": "array",
+            "title": "Cells"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "cells"
+        ],
+        "title": "CompareSheetOut"
+      },
       "ComputeChoice": {
         "properties": {
           "name": {
@@ -55018,6 +55252,24 @@
         ],
         "title": "ForgotPasswordRequest"
       },
+      "FormattingOut": {
+        "properties": {
+          "after": {
+            "type": "integer",
+            "title": "After"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "after",
+          "text"
+        ],
+        "title": "FormattingOut"
+      },
       "FrontendErrorBatchIn": {
         "properties": {
           "project_id": {
@@ -56445,6 +56697,119 @@
           "code"
         ],
         "title": "OAuthEmailVerifyRequest"
+      },
+      "OfficeComparisonOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "new_file": {
+            "type": "boolean",
+            "title": "New File"
+          },
+          "identical": {
+            "type": "boolean",
+            "title": "Identical"
+          },
+          "changed": {
+            "type": "integer",
+            "title": "Changed"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompareRowOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          },
+          "formatting": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FormattingOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatting"
+          },
+          "sheets": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompareSheetOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheets"
+          },
+          "slides": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompareRowOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slides"
+          },
+          "against": {
+            "type": "string",
+            "title": "Against"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "new_file",
+          "identical",
+          "changed",
+          "against",
+          "base"
+        ],
+        "title": "OfficeComparisonOut",
+        "description": "一份 Office 文件和它该对着读的那一版比（`documents.compare`）。"
       },
       "OwnAgentsUpdate": {
         "properties": {
@@ -58870,6 +59235,12 @@
             "title": "Line Text",
             "default": ""
           },
+          "place": {
+            "type": "string",
+            "maxLength": 255,
+            "title": "Place",
+            "default": ""
+          },
           "commit_sha": {
             "anyOf": [
               {
@@ -58940,6 +59311,10 @@
           "line_text": {
             "type": "string",
             "title": "Line Text"
+          },
+          "place": {
+            "type": "string",
+            "title": "Place"
           },
           "current_line": {
             "anyOf": [
@@ -59039,6 +59414,7 @@
           "line_start",
           "line_end",
           "line_text",
+          "place",
           "current_line",
           "body",
           "suggestion",
@@ -59141,6 +59517,61 @@
           "data"
         ],
         "title": "ReviewCommentsOutEnvelope"
+      },
+      "ReviewComparisonOut": {
+        "properties": {
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OfficeComparisonOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "comparison"
+        ],
+        "title": "ReviewComparisonOut"
+      },
+      "ReviewComparisonOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ReviewComparisonOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ReviewComparisonOutEnvelope"
       },
       "ReviewSpaceRequest": {
         "properties": {

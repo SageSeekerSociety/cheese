@@ -379,6 +379,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/accept-cards/{card_id}/revoke", auth: "review.card", owner: "review"}
   # app.api.routes.review_comments
   - {protocol: "http", method: "GET", path: "/topics/{task_id}/review-comments", auth: "review.comment", owner: "review"}
+  - {protocol: "http", method: "GET", path: "/topics/{task_id}/review-comparison", auth: "review.comment", owner: "review"}
   - {protocol: "http", method: "POST", path: "/topics/{task_id}/review-comments", auth: "review.comment", owner: "review"}
   - {protocol: "http", method: "PATCH", path: "/review-comments/{comment_id}", auth: "review.comment", owner: "review"}
   - {protocol: "http", method: "DELETE", path: "/review-comments/{comment_id}", auth: "review.comment", owner: "review"}

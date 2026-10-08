@@ -374,5 +374,7 @@
   "taskQuiet": "No progress on the task \"{title}\" for {days} days",
   "roomFilesKept": "Files from this conversation's earlier working folder are kept until {date} and then deleted. To get them back, contact the platform administrator.",
   "taskFileEdited": "{who} edited {path} {lines} and told {agent}",
-  "taskFileEditedLines": "lines {lines}"
+  "taskFileEditedLines": "lines {lines}",
+  "roomFileEditorSaved": "{who} saved {path} in the editor, and {agent} was told",
+  "roomFileEditorSavedAside": "{path} had changed when {who} saved, so this copy was saved as {aside}, and {agent} was told"
 }

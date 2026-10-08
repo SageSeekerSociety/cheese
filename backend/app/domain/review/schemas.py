@@ -102,6 +102,9 @@ class ReviewCommentIn(BaseModel):
     line_start: int = 0
     line_end: int = 0
     line_text: str = Field(default="", max_length=200_000)
+    #: For a Word document, a deck or a workbook: `p3`, `s2` or `汇总!C5`; a
+    #: text file's place is its lines and this stays empty.
+    place: str = Field(default="", max_length=255)
     commit_sha: str | None = Field(default=None, max_length=64)
     body: str = ""
     suggestion: str | None = None

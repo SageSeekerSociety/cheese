@@ -35,7 +35,7 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
 def machine_commits(
     project_id: uuid.UUID,
     place_id: uuid.UUID,
-    files: dict[str, str],
+    files: dict[str, str | bytes],
     message: str = "chore: work from the machine",
     *,
     author: tuple[str, str] = (CHEESE_NAME, CHEESE_EMAIL),
@@ -63,7 +63,10 @@ def machine_commits(
         for path, content in files.items():
             target = work / path
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            if isinstance(content, bytes):
+                target.write_bytes(content)
+            else:
+                target.write_text(content, encoding="utf-8")
         _git(work, "add", "-A")
         _git(
             work,
