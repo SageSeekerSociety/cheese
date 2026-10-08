@@ -211,7 +211,6 @@ export async function canonicalAddress(to: RouteLocationNormalized): Promise<tru
       params: { projectId: project.slug, docId: found?.number != null ? String(found.number) : doc },
       query,
       hash: to.hash,
-      replace: true,
     }
   }
 
@@ -233,5 +232,6 @@ export async function canonicalAddress(to: RouteLocationNormalized): Promise<tru
     }
   }
   if (!changed) return true
-  return { name: to.name ?? undefined, params, query: to.query, hash: to.hash, replace: true } as RouteLocationRaw
+  // 不写 `replace`：改写沿用原来那一跳，点链接仍在身后留一格，返回键才回得去。
+  return { name: to.name ?? undefined, params, query: to.query, hash: to.hash } as RouteLocationRaw
 }
