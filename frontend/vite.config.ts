@@ -13,7 +13,7 @@ import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 import svgLoader from 'vite-svg-loader'
 import { configDefaults } from 'vitest/config'
 
-import { collectNamesFromTree, findUnknownIcons, keepUsedRules, parseCodepoints } from './scripts/mdi-icons.mjs'
+import { findUnknownIcons, keepUsedRules, parseCodepoints, shippedNames } from './scripts/mdi-icons.mjs'
 
 // fork 数取「核数 - 1」和「每 3 GB 内存一个」中较小的那个，封顶 16，VITEST_MAX_FORKS 可覆盖。
 // 一个 fork 的内存峰值实测约 1.7–2.1 GB（happy-dom 加上各自编一遍 Vuetify/SCSS）。
@@ -77,13 +77,10 @@ function mdiFont(): Plugin {
   let packageCss: string | null = null
   let used: Set<string> | null = null
 
-  // 要发的字形清单：源码里的字面量 + Vuetify 组件内部用的别名。构建期源码不再变，
-  // 算一次就够。
+  // 要发的字形清单：源码里的字面量 + 两个入口 HTML + Vuetify 组件内部用的别名。
+  // 构建期源码不再变，算一次就够。和单测共用 shippedNames，免得两边算得不一样。
   const usedNames = (): Set<string> => {
-    if (!used) {
-      used = collectNamesFromTree(fileURLToPath(new URL('./src', import.meta.url)))
-      for (const name of Object.values(mdiAliases)) used.add(name)
-    }
+    if (!used) used = shippedNames(fileURLToPath(new URL('.', import.meta.url)), mdiAliases)
     return used
   }
 

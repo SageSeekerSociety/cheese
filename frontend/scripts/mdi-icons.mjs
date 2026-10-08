@@ -6,12 +6,15 @@
 // 名字只有 390 多个，裁完是 21 KB。同一份 CSS 里 7448 条图标规则只用得上 390 条，
 // 那份也一起裁（gzip 54 KB → 2 KB）。
 //
-// 名字从两条路来，缺一不可：
+// 名字从三处来，缺一不可：
 //
 //   1. 扫源码里的 `mdi-xxx` 字面量。本仓库的图标名全是字符串常量（模板里的
 //      `:icon="'mdi-chevron-down'"`、命令表里的 `icon: 'mdi-plus'`、组件里的映射
 //      表），没有一处是运行时拼出来的 —— mdi-icons.test.mjs 盯着这一条。
-//   2. Vuetify 自己的别名表（`vuetify/iconsets/mdi` 的 aliases）。勾、下拉箭头这些
+//   2. 两个入口 HTML（index.html、demo.html）。它们能直接写 `class="mdi mdi-xxx"`，
+//      而扫漏一处就是一片方块。构建和测试都调 shippedNames，免得两边各扫各的、
+//      一边有一边没有。
+//   3. Vuetify 自己的别名表（`vuetify/iconsets/mdi` 的 aliases）。勾、下拉箭头这些
 //      画在 Vuetify 组件内部，不在我们源码里；漏一个就是一片方块。它是 import 进来
 //      的，所以 Vuetify 升版带进来的新别名自动跟上，不用手工同步一份清单。
 //
@@ -28,6 +31,9 @@ const SOURCE_EXTENSIONS = new Set(['.vue', '.ts', '.tsx', '.js', '.jsx', '.mjs',
 
 /** 不进产物的文件：测试、测试夹具、测试用的 setup。 */
 const TEST_FILE = /(?:^|[/\\])(?:__tests__|__mocks__|test)[/\\]|\.(?:spec|test)\.[cm]?[jt]sx?$/
+
+/** 构建的入口 HTML。它们不在 src 下，但同样能写图标类。 */
+const ENTRY_HTML = ['index.html', 'demo.html']
 
 /** 一段文本里出现的图标名，并进 `into`。 */
 export function collectNamesFromText(text, into = new Set()) {
@@ -46,6 +52,17 @@ export function collectNamesFromTree(dir, into = new Set()) {
     }
   }
   return into
+}
+
+/**
+ * 最终要发进字体的全部名字：源码、入口 HTML、Vuetify 别名表三处的并集。
+ * 构建和单测都用它，免得两边各算各的。
+ */
+export function shippedNames(root, aliases) {
+  const names = collectNamesFromTree(join(root, 'src'))
+  for (const file of ENTRY_HTML) collectNamesFromText(readFileSync(join(root, file), 'utf8'), names)
+  for (const name of Object.values(aliases)) names.add(name)
+  return names
 }
 
 /**

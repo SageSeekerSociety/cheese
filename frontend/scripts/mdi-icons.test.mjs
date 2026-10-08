@@ -18,6 +18,7 @@ import {
   findUnknownIcons,
   keepUsedRules,
   parseCodepoints,
+  shippedNames,
 } from './mdi-icons.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -27,22 +28,40 @@ const PACKAGE_CSS = readFileSync(require.resolve('@mdi/font/css/materialdesignic
 /** 上游 CSS 里每个名字对应的码位。 */
 const CODEPOINTS = parseCodepoints(PACKAGE_CSS)
 
-/** 一起发送进字体的名字：源码里的 + Vuetify 别名表里的。 */
-function shippedNames() {
-  const names = collectNamesFromTree(join(ROOT, 'src'))
-  for (const file of ['index.html', 'demo.html']) collectNamesFromText(readFileSync(join(ROOT, file), 'utf8'), names)
-  for (const name of Object.values(aliases)) names.add(name)
-  return names
-}
+/** 构建会发出去的那份名字，和 vite.config.ts 走同一个函数。 */
+const SHIPPED = () => shippedNames(ROOT, aliases)
 
 test('每个用到的图标名都在 @mdi/font 里存在', () => {
-  const unknown = findUnknownIcons(shippedNames(), CODEPOINTS)
+  const unknown = findUnknownIcons(SHIPPED(), CODEPOINTS)
   assert.deepEqual(
     unknown,
     [],
     `这些图标名在 @mdi/font 里不存在，界面上会是空白：${unknown.join(', ')}\n` +
       '换一个字体里真实存在的名字；确实是新图标就升 @mdi/font。'
   )
+})
+
+test('要发的名字是源码、入口 HTML、别名表三处的并集', () => {
+  // 三处少算一处，那里画的图标就不在子集里，界面上是一片方块。构建和测试共用
+  // shippedNames，这条盯着它别哪天漏掉一路。
+  const shipped = SHIPPED()
+  const fromSrc = collectNamesFromTree(join(ROOT, 'src'))
+  const fromEntries = ['index.html', 'demo.html'].reduce(
+    (into, file) => collectNamesFromText(readFileSync(join(ROOT, file), 'utf8'), into),
+    new Set()
+  )
+  const fromAliases = new Set(Object.values(aliases))
+  const sources = [
+    ['源码里的', fromSrc],
+    ['入口 HTML 里的', fromEntries],
+    ['别名表里的', fromAliases],
+  ]
+  for (const [label, names] of sources) {
+    const missing = [...names].filter((name) => !shipped.has(name))
+    assert.deepEqual(missing, [], `${label}名字没进要发的清单：${missing.join(', ')}`)
+  }
+  // 入口 HTML 今天一个图标类都没写，所以只查另外两路扫没扫到东西。
+  assert.ok(fromSrc.size > 0 && fromAliases.size > 0, '源码或别名表扫出来是空的，这条就没在拦东西')
 })
 
 test('Vuetify 的别名表接得上字体的码位表', () => {
@@ -53,7 +72,7 @@ test('Vuetify 的别名表接得上字体的码位表', () => {
 })
 
 test('裁掉的规则只剩用到的那些', () => {
-  const names = shippedNames()
+  const names = SHIPPED()
   const kept = keepUsedRules(PACKAGE_CSS, names)
   const before = PACKAGE_CSS.match(/\.mdi-[a-z0-9-]+::before/g) ?? []
   const after = kept.match(/\.mdi-[a-z0-9-]+::before/g) ?? []
