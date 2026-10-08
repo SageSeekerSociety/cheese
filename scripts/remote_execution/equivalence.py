@@ -1285,8 +1285,6 @@ def play_run(build, binary, layout, port, names):
         name: [run.normalize(entry) for entry in entries]
         for name, entries in hook_logs(layout).items()
     }
-    if build.__name__ == "remote":  # PROBE: negative control, removed before merge
-        record["output"] = {"tampered": True}
     # Nothing a run left behind may be taken for the next one's.
     for pattern in LEFTOVERS:
         subprocess.run(["pkill", "-f", "-x", pattern], capture_output=True)
