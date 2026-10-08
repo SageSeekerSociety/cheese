@@ -1620,6 +1620,40 @@ def self_test() -> int:
         check("a tag string inside an attribute does not break a real container",
               run_cli(root, baseline_path).returncode, 0)
 
+        # -- 14. what the template renders, and a comment that only mentions ---
+        #    The router test is a real import plus the template's own tags. A
+        #    page whose only tie to the router is the link it draws is not
+        #    standalone — that is what a router tag needs an app for — and a
+        #    comment naming the package is prose, not a dependency:
+        #    `common/NavLink.vue` is the file the manual points at for *not*
+        #    importing vue-router, and the substring test graded it D for the
+        #    paragraph in its header that says so.
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/SettleView.vue": "",
+            "frontend/src/views/Settle.vue": (
+                '<script setup lang="ts">\ndefineProps<{ id: string }>()\n</script>\n'
+                '<template><router-link to="/x">{{ id }}</router-link></template>\n'
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a page whose only router use is the tag it renders is not ready",
+              result.returncode, 1)
+        check("and it is named", "src/views/Settle.vue: D" in result.stdout, True)
+        check("and the tag is the reason", "renders <router-link>" in result.stdout, True)
+
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": (
+                '<script setup lang="ts">\n'
+                "// The host passes a NavLink's `to` down; no vue-router here.\n"
+                "defineProps<{ id: string }>()\n</script>\n"
+                "<template><div>{{ id }}</div></template>\n"
+            ),
+        })
+        check("a comment that names vue-router is not a dependency",
+              run_cli(root, baseline_path).returncode, 0)
+
         for rel in (
             "frontend/src/views/Settle.vue",
             "frontend/src/views/SettleView.vue",
@@ -1735,6 +1769,8 @@ def self_test() -> int:
         "lowercase component, a quoted </template>, a shadowing declaration, a "
         "V-name the import map lacks — and two more — a trusted name claimed by "
         "a local binding, a view mentioned only inside an attribute value — "
+        "and two the router decides — a link the template draws against a "
+        "comment that only names the package — "
         "with the controls that stay green, "
         "debt that is grandfathered, debt paid down, a type-only import that "
         "is not reach, --update refusing both edits, and four ways of not being able "

@@ -21,7 +21,8 @@ an Apollo-shaped store":
      it calls `fetch`/`axios` itself — or it reads a business store.
   D  it is tied to where it is mounted, or to a channel other than
      props/emits: `useRoute`/`useRouter`/`$router`/`vue-router`,
-     `$parent`/`$root`, an event bus, or `provide`/`inject`.
+     `<router-view>`/`<router-link>`, `$parent`/`$root`, an event bus, or
+     `provide`/`inject`.
 
   The first letter that applies, worst first, is the grade: a component that
   reads the route AND fetches is D, not C.
@@ -36,6 +37,13 @@ inventory counted them, which is how `PanelPreviewView` was called C while
 containing no fetch of its own; fixing it in this one place fixed both the
 board and the gate at once.)
 
+The router import is the one place type-only specifiers still count, and it
+does so on purpose: `docs/manual/dev/frontend.md` bans
+`import type { RouteLocationRaw } from 'vue-router'` under
+`frontend/src/components/**` too, and points at `@/lib/navTarget` as the
+substitute. So `imports_router` reads the specifier list without dropping
+them.
+
 WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
 
   - Regex over the `<script>` block and the template, not a compiler (the
@@ -48,6 +56,11 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     spot. `@/` is resolved against `frontend/src`, matching `vite.config.ts`.
   - A store is recognised by the `useXStore` naming convention. One spelled
     another way is invisible here.
+  - Comments are stripped before the router test: a file that mentions
+    `vue-router` in a comment — `common/NavLink.vue` explains in its header
+    why it does *not* import it — is not a file that depends on the router.
+    The template half is read tag by tag (`<router-view>`, `<router-link>`),
+    the way `scene-ratchet.py` pairs a page with its view.
 
 `reasons` is the other half of the answer and exists for the gate: a failure
 that says "PanelCard is C" is a puzzle, and one that says "reaches the API
@@ -72,6 +85,9 @@ _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _TAG_START = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9_-]*)")
 STORE_USE = re.compile(r"\buse([A-Za-z0-9_]+)Store\b")
 ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
+#: vue-router's two globals as a template tag, normalised (lowercased, dashes
+#: dropped): `<router-view>`, `<RouterView>` and `<routerView>` are one name.
+ROUTER_TAGS = {"routerview", "routerlink"}
 PARENT_USE = re.compile(r"\$parent|\$root")
 BUS_USE = re.compile(r"\beventBus\b|\$eventBus\b")
 INJECT_USE = re.compile(r"\binject\s*\(")
@@ -298,6 +314,46 @@ def tag_names(block: str) -> list[str]:
     return names
 
 
+_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_LINE_COMMENT = re.compile(r"//[^\n]*")
+
+
+def strip_comments(script: str) -> str:
+    """`script` with its comments removed.
+
+    Block comments go first: a `//` inside one is prose, and stripping lines
+    first would leave the rest of the comment behind as if it were code.
+    """
+    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", script))
+
+
+def imports_router(script: str) -> bool:
+    """Does this `<script>` really import `vue-router`?
+
+    An import, not a mention: the specifier list of the comment-stripped
+    script. This is what the router test used to do with the substring
+    `"vue-router" in script`, and a file that explains in its header why it
+    does *not* import vue-router satisfied it — every component whose comment
+    mentioned the package was graded D for the prose. Type-only specifiers
+    count here on purpose; see the module docstring.
+    """
+    return any(spec == "vue-router" for _, spec in specifiers(strip_comments(script)))
+
+
+def router_tags(template: str) -> list[str]:
+    """The template tags that need vue-router installed, as written.
+
+    `<router-view>`/`<router-link>` are globals vue-router registers, and only
+    an application that installed it resolves them: in a tree without a router
+    they are a "failed to resolve component" warning and an empty shell. The
+    script half of the grade has always seen them (the import, the composable);
+    the template half saw nothing, so a page whose only tie to the router was
+    the link it rendered was called standalone-ready.
+    """
+    return [name for name in tag_names(template)
+            if name.lower().replace("-", "") in ROUTER_TAGS]
+
+
 def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
     """Grade the component at `path` (a `.vue` or a `.ts` file under src).
 
@@ -349,16 +405,21 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
             reasons.append(f"reaches the API layer through {rel}")
 
     stores = {normalise_store(name) for name in STORE_USE.findall(whole)}
+    rendered_router_tags = router_tags(template)
     hard = bool(
         ROUTER_USE.search(whole)
-        or "vue-router" in script
+        or imports_router(script)
+        or rendered_router_tags
         or PARENT_USE.search(text)
         or BUS_USE.search(text)
         or INJECT_USE.search(script)
         or PROVIDE_USE.search(script)
     )
-    if ROUTER_USE.search(whole) or "vue-router" in script:
+    if ROUTER_USE.search(whole) or imports_router(script):
         reasons.append("reads the route (useRoute/useRouter/$router/vue-router)")
+    if rendered_router_tags:
+        tag = rendered_router_tags[0]
+        reasons.append(f"renders <{tag}>, which only resolves with a router installed")
     if PARENT_USE.search(text):
         reasons.append("reads $parent/$root")
     if BUS_USE.search(text):

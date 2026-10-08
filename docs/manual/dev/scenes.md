@@ -21,16 +21,16 @@ covers:
 
 ## 「单独渲染」是什么意思 {#standalone}
 
-**给一组 props，它就能出画面**：不要后端（不 import `@/api`、`@/network`、`@/services/*`，也不经别的模块绕过去），不要路由（不读 `useRoute` / `$route`），不要任何会自己去取数的 store。判据就是[架构指标](/dev/arch-metrics#metrics)那套 A/B/C/D：
+**给一组 props，它就能出画面**：不要后端（不 import `@/api`、`@/network`、`@/services/*`，也不经别的模块绕过去），不要路由（不读 `useRoute` / `$route` / `$router`，自己也不画 `<router-view>` / `<router-link>`），不要任何会自己去取数的 store。判据就是[架构指标](/dev/arch-metrics#metrics)那套 A/B/C/D：
 
 | 档 | 什么情况 | 要补什么才能单独跑 |
 |---|---|---|
 | **A** | 只吃 props 和事件 | 不用补，只差一份形状数据 |
 | **B** | 只读应用外壳的 store（`usePageTitleStore`、`useNavigationStore`） | 在外壳里装一个空的同名 store，或者把那两个读点改成 props |
 | **C** | 自己取数——直接 import、经中间模块绕、自己写 `fetch`/`axios`——或者读业务 store | 把取数那一段挪出去：外面拿数据，它只收结果。已合的样板：#2193 的 `views/spaces/detail/settings/BasicInfo.vue` 取数、读 store、保存、删除后跳转，同目录 `BasicInfoView.vue` 只收 props 和事件，A 级、已冻结在 ready |
-| **D** | 还绑在挂载位置上：读路由、`$parent` / `$root`、事件总线、`provide` / `inject` | 先把「从哪来」改成 props 或事件，再谈数据 |
+| **D** | 还绑在挂载位置上：读路由、画 `<router-view>` / `<router-link>`、`$parent` / `$root`、事件总线、`provide` / `inject` | 先把「从哪来」改成 props 或事件，再谈数据 |
 
-判据只有一份，写在 `.claude/scripts/frontend_grade.py` 里：看板（`arch-metrics.py`）和下面那条闸门读的是同一个函数，所以不会出现「看板说是 A、闸门说不是」。**A 档在这一页就叫「能单独跑」**，[基线](#ratchet)冻的就是它。
+判据只有一份，写在 `.claude/scripts/frontend_grade.py` 里：看板（`arch-metrics.py`）和下面那条闸门读的是同一个函数，所以不会出现「看板说是 A、闸门说不是」。`vue-router` 按**真的 import 和模板里画出来的标签**算：注释里写到它不算（`components/common/NavLink.vue` 的注释就在说它替谁干活，它是 A 级）。**A 档在这一页就叫「能单独跑」**，[基线](#ratchet)冻的就是它。
 
 ## 一共多少 {#totals}
 
@@ -125,6 +125,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 - 「在目录里」看代码不看标签：从 `src/views/demo/catalog.ts` 出发，它本身、以及它 `import` 进来**并展开**进列表（`...X_ENTRIES`）的同目录 `catalog*.ts` 分册（分册再引分册也照此递归；`*Fixtures.ts` 只放数据，不读），其中某个文件 `import` 了这个 `.vue`，并且把它写成某条条目的 `component:`。`@/` 和相对路径都认。为什么从 `catalog.ts` 出发：预览站渲染的、`catalog.spec.ts` 挂载的都是那里的 `CATALOG`，分册只有被它导入并展开才上得了站。所以 `demoRouter.ts` 里路由的 `component:`、没人导入的 `catalogXxx.ts`、spec 里的 import 都不算；`//` 和 `/* */` 注释先去掉再匹配（字符串里的 `//`，比如 URL，不受影响），注释里的 `component: X` 也不算；只写了 `file:` 或只 import 没用上，同样不算。
 - `pending` 是今天欠下的账（首次生成时 277 个），**只许减少**：新组件、或者刚变成 A 级的老组件，不进目录就失败——不能把它加进名单了事，`--update` 只会从名单里划掉，碰到这种组件干脆拒绝写。
+- **`layouts/` 和外壳那一类不是目录候选**：`src/layouts/RouterPassThrough.vue`、`src/layouts/account/Account.vue`、`src/layouts/spaces/SpacesTasks.vue`、`src/proto-shell.vue` 自己画 `<router-view>`，判据收紧后是 D 级——收录它们是白收录，目录里的条目要能单独挂起来，而 `<router-view>` 要有一个装着路由的应用才画得出东西。这 4 条已经 `--update` 从 `pending` 里划掉。
 - 名单里的组件已经进了目录、文件没了、或者不再是 A 级，检查**不失败**，只提示跑 `pnpm run lint:catalog:update` 把它划掉（和上面场景基线「变好了就提示收紧」是同一个做法）。
 - 进了目录但不是 A 级的组件不归它管：`pnpm exec vitest run src/views/demo/catalog.spec.ts` 会把每条条目真挂一遍，那才是「它真的能单独挂起来」的结论；`--list` 里会标出来。
 
