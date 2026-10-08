@@ -78,3 +78,42 @@ EID = text("(meta ->> 'eid')")
 #: A coalesced message: one block that landed several hook events, listed in
 #: `meta.eids`. About 2,300 of the 442,000 blocks on dev.
 COALESCED_ROWS = text("(meta -> 'eids') IS NOT NULL")
+
+#: An agent said something on this conversation's own line. The room-waits scan
+#: (`waits._last_said`) asks it for every room of a project at once, to tell
+#: which member has spoken since a wait began.
+#:
+#: Two things keep this out of the ORM expression it mirrors
+#: (`handles.agent_handle_column`). A partial index is proved usable by
+#: comparing expression trees, and after a few executions PostgreSQL plans these
+#: statements from a generic plan, where the ORM form's bind parameters
+#: (`author LIKE $2 || '%' ESCAPE '/'`) are invisible — so it cannot prove this
+#: WHERE implies the index's and passes the index by.
+#:
+#: The handle test is written `^@` (`starts_with`) rather than LIKE, because `%`
+#: is a wildcard for the driver as well as for SQL: SQLAlchemy doubles it for
+#: the dialects that escape it and the asyncpg DDL path does not undo that, so
+#: the migration built `LIKE 'cheese-%%'` while the model declared `'cheese-%'`
+#: and the index stopped meaning what the query says. `^@` has no such spelling
+#: to disagree about, and `cheese-` holds no wildcard, so it says exactly what
+#: that LIKE said. Index and query have to keep using the same text; neither may
+#: be reworded alone.
+LAST_SAID_ROWS = text(
+    "kind = 'message' AND author_type = 'participant'"
+    " AND (author = 'cheese' OR author ^@ 'cheese-')"
+)
+
+#: A person named an agent and that turn has not been taken (`consumed_turn`
+#: unset). The same scan reads these to say who is still owed an answer.
+#:
+#: Literal and `^@` for the reasons above. The two `CAST`s are the shape the ORM
+#: expressions compile to (`Block.meta[...].as_boolean()`,
+#: `.as_string().is_(None)`); writing `(meta ->> 'consumed_turn') IS NULL`
+#: instead asks the same question with a different expression tree, and the
+#: index is proved by trees, not meanings.
+UNANSWERED_ROWS = text(
+    "kind = 'message' AND author_type = 'participant'"
+    " AND NOT (author = 'cheese' OR author ^@ 'cheese-')"
+    " AND CAST((meta -> 'agent_recipient' ->> 'mentioned') AS BOOLEAN)"
+    " AND CAST((meta ->> 'consumed_turn') AS VARCHAR) IS NULL"
+)

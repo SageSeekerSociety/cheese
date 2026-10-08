@@ -1,7 +1,7 @@
 """Every library record names where its bytes are
 
 Revision ID: c47997681006
-Revises: c46448bdc315
+Revises: e5b1c7d29f04
 Create Date: 2026-10-08
 
 ``0c800ff1db2f`` added ``library_files.blob_key`` and left it empty on the
@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "c47997681006"
-down_revision: str | Sequence[str] | None = "c46448bdc315"
+down_revision: str | Sequence[str] | None = "e5b1c7d29f04"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
