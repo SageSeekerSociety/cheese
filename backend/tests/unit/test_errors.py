@@ -1,5 +1,6 @@
 import logging
 
+import pytest
 from starlette.status import (
     HTTP_400_BAD_REQUEST,
     HTTP_401_UNAUTHORIZED,
@@ -24,10 +25,16 @@ from app.core.errors import (
     BaseError,
     ConflictError,
     ForbiddenError,
+    GatewayTimeoutError,
+    InternalServerError,
+    InvalidTokenError,
     NameAlreadyExistsError,
     NotFoundError,
     PermissionDeniedError,
     QuotaExceededError,
+    SystemBusyError,
+    TokenExpiredError,
+    UpstreamUnavailableError,
 )
 
 
@@ -85,6 +92,38 @@ class TestCommonErrors:
     def test_quota_exceeded_error(self) -> None:
         error = QuotaExceededError()
         assert error.status_code == HTTP_429_TOO_MANY_REQUESTS
+
+
+class TestADefaultSentenceIsACatalogSentence:
+    """A class that is raised with no sentence of its own still says a key.
+
+    The browser shows the server's own words when the response carries no
+    ``error.i18n`` (``noticeText.ts``), so an English default reached a reader
+    on the Chinese UI. Each default below is a ``say(...)``, which puts the key
+    beside the sentence for the screen to render in its own language.
+    """
+
+    @pytest.mark.parametrize(
+        ("error_class", "key"),
+        [
+            (NotFoundError, "resourceNotFound"),
+            (ForbiddenError, "accessDenied"),
+            (AccessDeniedError, "accessDenied"),
+            (AuthenticationRequiredError, "signInRequired"),
+            (InternalServerError, "serverInternalError"),
+            (PermissionDeniedError, "permissionDenied"),
+            (TokenExpiredError, "tokenExpired"),
+            (InvalidTokenError, "invalidToken"),
+            (QuotaExceededError, "quotaExceeded"),
+            (SystemBusyError, "systemBusy"),
+            (UpstreamUnavailableError, "upstreamUnavailable"),
+            (GatewayTimeoutError, "gatewayTimeout"),
+        ],
+    )
+    def test_the_default_names_a_key_and_carries_no_parameters(
+        self, error_class: type[BaseError], key: str
+    ) -> None:
+        assert error_class().args[0].descriptor() == {"key": key, "params": {}}
 
 
 class TestSpecializedErrors:
