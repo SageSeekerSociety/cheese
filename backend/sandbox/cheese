@@ -533,6 +533,23 @@ PLATFORM_TOOLS = ToolTable(
                     "type": "boolean",
                     "description": "这次交付做完了整个任务填 true；分步做、后面还有步骤填 false",
                 },
+                "comment_outcomes": {
+                    "type": "array",
+                    "description": (
+                        "上一次退回附带了批注时必填：逐条说处理了没有。id 照抄退回消息里"
+                        "方括号中的那个；handled 处理了填 true，没处理填 false；note 一句话，"
+                        "处理了写怎么改的，没处理写为什么。审阅的人看着这一句核对"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "handled": {"type": "boolean"},
+                            "note": {"type": "string"},
+                        },
+                        "required": ["id", "handled", "note"],
+                    },
+                },
             },
             ["subject", "completes_task"],
         ),
@@ -1294,6 +1311,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                     "deliver",
                     "deliver_url",
                     "completes_task",
+                    "comment_outcomes",
                 ),
             },
         }

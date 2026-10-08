@@ -1413,6 +1413,58 @@ class GitHubPRClient:
         return parse_pull_request_status(await self.pr_view(number))
 
     @_as_pr_error
+    async def post_review(
+        self, number: int, *, commit_id: str | None, body: str, comments: list[dict]
+    ) -> None:
+        """Post one review of comments on lines (`path`, `line`, optional
+        `start_line`, `body`), or, when GitHub refuses a line that is not in the
+        PR's diff, the same review with every comment written into its body."""
+        token, _ = await self._tokens.write_token()
+        inline = [
+            {
+                "path": c["path"],
+                "line": c["line"],
+                "side": "RIGHT",
+                "body": c["body"],
+                **(
+                    {"start_line": c["start_line"], "start_side": "RIGHT"}
+                    if c.get("start_line") and c["start_line"] < c["line"]
+                    else {}
+                ),
+            }
+            for c in comments
+        ]
+        payload: dict = {"event": "COMMENT", "body": body, "comments": inline}
+        if commit_id:
+            payload["commit_id"] = commit_id
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
+            resp = await client.post(
+                self._url(f"/pulls/{number}/reviews"),
+                json=payload,
+                headers=self._headers(token),
+            )
+            if resp.status_code == 422 and inline:
+                folded = "\n\n".join(
+                    [
+                        body,
+                        *(f"`{c['path']}:{c['line']}`\n{c['body']}" for c in comments),
+                    ]
+                )
+                resp = await client.post(
+                    self._url(f"/pulls/{number}/reviews"),
+                    json={"event": "COMMENT", "body": folded},
+                    headers=self._headers(token),
+                )
+        if resp.status_code not in (200, 201):
+            raise GitHubPRError(
+                say(
+                    "githubReviewPostFailed",
+                    status=resp.status_code,
+                    reply=resp.text[:300],
+                )
+            )
+
+    @_as_pr_error
     async def update_pr(
         self,
         number: int,
