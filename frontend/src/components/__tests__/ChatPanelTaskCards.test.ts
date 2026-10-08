@@ -33,7 +33,6 @@ vi.mock('../../api', async () => {
     // 一件活不再是话题列表里的一行，标记要从房间的支线里读。
     listRoomTasks: (...a: unknown[]) => listRoomTasks(...a),
     // 面板打开时顺手要的东西 —— 安静地给空答案。
-    chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
     toggleReaction: vi.fn(),
   }

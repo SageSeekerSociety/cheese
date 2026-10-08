@@ -1,3 +1,4 @@
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 // 出错提示：一次没成的事说一句就走；连不上服务器时说的是房间此刻的状态，一直留着。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'

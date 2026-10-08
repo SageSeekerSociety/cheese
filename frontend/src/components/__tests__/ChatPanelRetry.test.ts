@@ -28,7 +28,6 @@ vi.mock('../../api', async () => {
     listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     summonAgent: (...a: unknown[]) => summonAgent(...a),
-    chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
   }
 })

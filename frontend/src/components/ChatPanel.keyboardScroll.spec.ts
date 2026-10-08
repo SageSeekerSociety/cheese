@@ -30,7 +30,6 @@ vi.mock('@/api', async () => {
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
-    chatWsUrl: () => 'ws://test/chat',
   }
 })
 

@@ -7,6 +7,7 @@ import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listBlocks: vi.fn().mockResolvedValue({
@@ -19,7 +20,6 @@ vi.mock('../api', async () => ({
   }),
   listRoomTasks: vi.fn().mockResolvedValue({ data: [] }),
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
-  chatWsUrl: () => 'ws://test/chat',
 }))
 
 import ChatPanel from './ChatPanel.vue'
