@@ -88,7 +88,7 @@ from app.domain.agent.realtime.subscriber_queue import (
 )
 from app.domain.agent.turn_adoption import adopt, open_turns_on, watch_books
 from app.domain.authz.policy import refuse_unauthenticated_chat
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.queries import newest_block_id
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 
@@ -333,12 +333,11 @@ class _Room:
             # container while both ran, is missing from it though its agent is
             # still at work.
             place = await PlaceResolver(auth_session).conversation(self.topic_id)
-            newest = None
-            if place is not None:
-                tail = await BlockRepository(auth_session).page_for_topic(
-                    place.conversation_id, limit=1
-                )
-                newest = str(tail.items[-1].id) if tail.items else None
+            newest = (
+                await newest_block_id(auth_session, place.conversation_id)
+                if place is not None
+                else None
+            )
             return (
                 None,
                 await open_turns_on(auth_session, self.topic_id),
