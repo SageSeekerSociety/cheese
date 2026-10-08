@@ -5,6 +5,7 @@ summary: 一轮是什么、会话身份与座位、后台运行和发版交接�
 covers:
   - backend/app/domain/agent/chat.py
   - backend/app/domain/agent/runtime.py
+  - backend/app/domain/agent/realtime/broker.py
   - backend/app/domain/agent/models.py
   - backend/app/domain/agent/dispatch_log.py
   - backend/app/domain/agent/repositories.py
@@ -62,7 +63,7 @@ covers:
 
 ## 后台的 runner 与 broker {#background}
 
-`agent/runtime.py` 里是两个进程内的东西。`InProcessBroker` 把帧发给订阅者、并给每个频道留一段重放缓冲，所以 WebSocket 断开只掉订阅者，模型请求和会话照跑。`AgentWorkRunner` 管准入、超时和恢复账：`submit()` 立刻返回 turn id，同一话题的轮次在 `ChatService` 的话题锁上排队。
+后台有两个进程内的东西：`agent/realtime/broker.py` 里的 `InProcessBroker` 把帧发给订阅者、并给每个频道留一段重放缓冲，所以 WebSocket 断开只掉订阅者，模型请求和会话照跑。`agent/runtime.py` 里的 `AgentWorkRunner` 接收消息，管准入、超时和恢复账：`submit()` 立刻返回 turn id，同一话题的轮次在 `ChatService` 的话题锁上排队。
 
 `submit()` 没有一个参数说「跑一轮」——一轮是 agent 那一档收件人的到达形态，调用点只能点名，跑不跑由 `_a_turn_was_addressed` 从寻址结果读出来。跑着的一轮记在 `_live` 里，记的是那个 `asyncio.Task` 而不只是 id：一轮也可能在里面而卡住了（子容器死了、流永远不结束），认领它得先取消它。`_last_frame_at` 记每个活轮最后一次发帧的时刻，帧包含不落块的工具调用，所以数据库看不见的动静它看得见。
 
