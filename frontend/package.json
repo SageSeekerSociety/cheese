@@ -54,7 +54,7 @@
     "@tiptap/core": "^3.26.1",
     "@tiptap/extension-code-block-lowlight": "^3.26.1",
     "@tiptap/extension-collaboration": "^3.27.3",
-    "@tiptap/extension-collaboration-caret": "~3.27.3",
+    "@tiptap/extension-collaboration-caret": "~3.31.4",
     "@tiptap/extension-drag-handle": "^3.27.3",
     "@tiptap/extension-drag-handle-vue-3": "^3.27.3",
     "@tiptap/extension-highlight": "^3.27.3",
