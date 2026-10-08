@@ -66,6 +66,7 @@ async def health_report() -> dict[str, Any]:
     checks["database"], checks["redis"] = await dependency_probe()
     checks["routes"] = _check_routes()
     checks["event_loop"] = _check_event_loop()
+    checks["alerting"] = _check_alerting()
 
     overall = (
         "healthy"
@@ -187,6 +188,32 @@ def _check_event_loop() -> dict[str, Any]:
     return {
         "status": "up" if lag["recent_ms"] < STALL_S * 1000 else "stalling",
         **lag,
+    }
+
+
+def _check_alerting() -> dict[str, Any]:
+    """Whether this deployment can reach a human when something breaks.
+
+    Reported, never required: a box whose webhook is unset still answers every
+    request, and failing readiness over a missing setting would trade an
+    invisible gap for a real outage.
+
+    Outside production an unset webhook is the normal state — dev and test do
+    not open Feishu — so it reads `skipped`. In production it reads `down`,
+    because that is the one deployment where "no alerts" means nobody ever
+    hears about an outage. Nothing else looks: `alerting.send` is a no-op when
+    the webhook is unset, and neither this report nor the boot path said so, so
+    the whole channel could be off while every page read healthy.
+    """
+    from app.core import alerting
+
+    if alerting.configured():
+        return {"status": "up"}
+    if settings.environment != "production":
+        return {"status": "skipped"}
+    return {
+        "status": "down",
+        "error": "FEISHU_ALERT_WEBHOOK is unset: alerts reach nobody",
     }
 
 

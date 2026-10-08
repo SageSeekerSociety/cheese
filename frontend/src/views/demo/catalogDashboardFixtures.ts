@@ -351,6 +351,7 @@ export const DASH_PLATFORM: StatsPlatform = {
       redis: { status: 'up' },
       event_loop: { status: 'up', detail: 3.4 },
       routes: { status: 'up' },
+      alerting: { status: 'up' },
     },
   },
   extras: {
