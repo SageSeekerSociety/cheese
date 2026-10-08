@@ -4,9 +4,9 @@
 born `pending_gate`。但退役之前留在库里的 `pending_gate` 行还得有出路——否则那些
 话题永远递不出新卡（`create_card` 的互斥仍然认这个状态）。这两条出路都保留：
 
-* **扫底判死**（`review/gate_sweep.py`）：闸门 runner 早就不再 dispatch，所以
-  `gate.in_flight_card_ids()` 恒为空，扫底会把每一张过了判死线的历史 `pending_gate`
-  卡判成 `gate_failed`，解开话题的死锁。
+* **扫底判死**（`review/gate_sweep.py`）：闸门 runner 早就不再 dispatch，也没有任何
+  闸门在任何进程里跑，所以扫底会把每一张过了判死线的历史 `pending_gate` 卡判成
+  `gate_failed`，解开话题的死锁。
 * **人工作废**（`AcceptService.void`）：给人的那个出口，同样覆盖历史 `pending_gate`
   以及仍然活着的 `conflict` / `pr_open`。
 

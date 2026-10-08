@@ -62,6 +62,11 @@ jobs:
       - name: A release of an older commit keeps the box's frontend ports
         run: bash deploy/tests/test-pre-slot-release.sh
 
+      # The other half of that case: which commit the drift job fires when a
+      # release of main would refuse while the `-b` slots serve.
+      - name: Deploy drift converges across the two-slot boundary
+        run: bash deploy/tests/test-converge-drift.sh
+
       - name: Automatic release ordering
         run: python3 deploy/tests/test_auto_deploy.py
 

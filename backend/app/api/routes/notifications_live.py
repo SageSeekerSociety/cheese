@@ -13,7 +13,10 @@ notifications (`desktop/src-tauri/src/notices.rs`):
   time with the count of things waiting on the person. ``null`` means a first
   connection: nothing old is sent, only where "now" is. A beat every
   ``BEAT_SECONDS`` lets the app tell a dead connection from a quiet one, and is
-  when a signed-out session closes the connection.
+  when a signed-out session closes the connection. Two backend slots run side by
+  side during a deploy, and a notice committed in the other one wakes nobody
+  here (`notification/live.py`), so a beat also compares the cursor with the
+  newest notice in the database and catches up: at worst ``BEAT_SECONDS`` behind.
 
 Frames sent: ``{"kind": "notices", "latest": <id> | null, "items": [...],
 "away": <text>}``, ``{"kind": "waiting", "count": n}``, ``{"kind": "beat"}``.
@@ -43,7 +46,7 @@ from app.common.auth import (
 )
 from app.core.errors import BadRequestError
 from app.domain.agent.chat import ChatService
-from app.domain.notification.live import listening, notices_after
+from app.domain.notification.live import behind, listening, notices_after
 from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="", tags=["notifications"])
@@ -79,6 +82,15 @@ async def _signed_in(chat: ChatService, user_id: int, sid: uuid.UUID) -> str | N
     """The handle whose sign-in this is, while it lasts."""
     async with chat.session_factory() as db:
         return await SessionService(db).live_handle(user_id, sid)
+
+
+async def _behind(chat: ChatService, user_id: int, cursor: int) -> bool:
+    """Whether a notice this connection has not been sent is already committed.
+
+    One max(id) per beat, on its own session.
+    """
+    async with chat.session_factory() as db:
+        return await behind(db, user_id, cursor)
 
 
 @router.websocket("/notifications/live")
@@ -125,19 +137,27 @@ async def live(websocket: WebSocket, chat: ChatDep) -> None:
                     return
                 if beat in done:
                     beat = asyncio.create_task(asyncio.sleep(BEAT_SECONDS))
+                    # A wake that arrives in the same round is not lost: the
+                    # catch-up below reads by cursor, not by wake.
+                    wake.cancel()
                     if await _signed_in(chat, user_id, sid) is None:
                         await websocket.close(code=4401)
                         return
-                    await websocket.send_json({"kind": "beat"})
-                if wake in done:
+                    # The beat's other errand. A notice committed by the other
+                    # backend slot during a deploy wakes nobody in this process:
+                    # read where "now" is, and catch up rather than stay quiet
+                    # until the app gives up and reconnects.
+                    if not await _behind(chat, user_id, cursor):
+                        await websocket.send_json({"kind": "beat"})
+                        continue
+                elif wake in done:
                     woken.clear()
-                    frame = await _notices_after(chat, user_id, cursor)
-                    cursor = frame["latest"] or cursor
-                    if frame["items"]:
-                        await websocket.send_json(frame)
-                    await websocket.send_json(await _waiting(chat, user_id, handle))
-                else:
-                    wake.cancel()
+
+                frame = await _notices_after(chat, user_id, cursor)
+                cursor = frame["latest"] or cursor
+                if frame["items"]:
+                    await websocket.send_json(frame)
+                await websocket.send_json(await _waiting(chat, user_id, handle))
         finally:
             hung_up.cancel()
             beat.cancel()
