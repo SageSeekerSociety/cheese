@@ -9,11 +9,10 @@ import subprocess
 import tarfile
 import tempfile
 import uuid
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-
-from collections.abc import Sequence
 from typing import Protocol
 
 from anyio.to_thread import run_sync
