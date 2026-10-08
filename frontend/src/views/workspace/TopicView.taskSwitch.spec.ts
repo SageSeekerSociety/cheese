@@ -70,6 +70,11 @@ vi.mock('@/api', () => ({
   // 频道的任务清单：进过这个频道，里面这件任务那一行已经读过。
   listRoomTasks: vi.fn(async () => ({ data: [listed], total: 1 })),
 }))
+// 任务改动上的审阅评论：这里不看它。
+vi.mock('@/api/reviewComments', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/reviewComments')>()),
+  listReviewComments: vi.fn(async () => ({ comments: [] })),
+}))
 // 任务自己的那一读一直没回来：这一刻屏幕上能画的只有清单里那一行。
 vi.mock('@/api/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/tasks')>()),
