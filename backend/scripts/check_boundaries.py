@@ -509,9 +509,6 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
 #: but freezes an exception as a wildcard — the one thing this format must not
 #: accept, and which import-linter itself honours happily.
 _THIN_CONFIG = "[importlinter]\nroot_package = app\n"
-_WILDCARD_CONFIG = DEFAULT_CONFIG.read_text().replace(
-    "ignore_imports =\n", "ignore_imports =\n    app.api.** -> app.domain.**\n", 1
-)
 
 
 def _invoke(tmp: Path, *extra: str) -> tuple[int, str, str]:
@@ -588,6 +585,11 @@ def _tail(output: str, lines: int = 25) -> str:
 
 def self_test() -> int:
     failures: list[str] = []
+    # Only self-tests need the project's default declaration. Normal --config,
+    # --json and --help must not read it before judge can report exit 2.
+    wildcard_config = DEFAULT_CONFIG.read_text().replace(
+        "ignore_imports =\n", "ignore_imports =\n    app.api.** -> app.domain.**\n", 1
+    )
 
     def report(what: str, code: int, output: str, expected: int, needle: str | None):
         verdict = "ok"
@@ -665,9 +667,63 @@ def self_test() -> int:
         tmp.mkdir()
         report(
             "an exception written as a wildcard",
-            *_run(_WILDCARD_CONFIG, {}, tmp),
+            *_run(wildcard_config, {}, tmp),
             BROKEN,
             "wildcard",
+        )
+
+        # Copy the checker away from its default config. --config must remain
+        # independent of that file, and an absent default must be judged, not
+        # crash while importing self-test fixture constants.
+        detached = sandbox / "detached"
+        detached.mkdir()
+        _plant(None, {}, detached)
+        alternate = detached / "explicit.ini"
+        (detached / DEFAULT_CONFIG.name).rename(alternate)
+        copied = detached / "scripts" / HERE.name
+        copied.parent.mkdir()
+        shutil.copy(HERE, copied)
+        detached_cases = [
+            ("help with no default config", ("--help",), OK, False),
+            ("missing default config", ("--json",), CANNOT_JUDGE, True),
+            (
+                "explicit config with no default config",
+                ("--config", str(alternate), "--json"),
+                OK,
+                True,
+            ),
+        ]
+        for what, arguments, expected, has_record in detached_cases:
+            result = subprocess.run(
+                [sys.executable, str(copied), *arguments],
+                cwd=detached,
+                capture_output=True,
+                text=True,
+            )
+            report(what, result.returncode, result.stderr, expected, None)
+            if has_record:
+                try:
+                    output_lines = result.stdout.strip().splitlines()
+                    assert len(output_lines) == 1
+                    record = json.loads(output_lines[0])
+                    assert record["id"] == CHECK_ID
+                    assert record["status"] == _STATUS_OF_EXIT[expected]
+                except (AssertionError, KeyError, ValueError) as exc:
+                    failures.append(f"{what}: invalid single-line JSON: {exc!r}")
+        # A non-file at the default path also must not be touched by --config.
+        (detached / DEFAULT_CONFIG.name).mkdir()
+        result = subprocess.run(
+            [sys.executable, str(copied), "--config", str(alternate), "--json"],
+            cwd=detached,
+            capture_output=True,
+            text=True,
+        )
+        report(
+            "explicit config with unreadable default path",
+            result.returncode,
+            result.stdout + result.stderr,
+            OK,
+            None,
         )
 
         # Every planted tree again under --json: the record has to agree with
