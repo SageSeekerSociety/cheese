@@ -3,8 +3,6 @@
   "files": {
     "src/components/agents/AgentEditorDialog.vue": 1,
     "src/components/ArtifactVersionPreview.vue": 1,
-    "src/components/AttachmentDocThumb.vue": 1,
-    "src/components/AttachmentImage.vue": 1,
     "src/components/common/Navigation/AppBar.vue": 1,
     "src/components/common/Navigation/HelpAndFeedbackMenu.vue": 1,
     "src/components/common/TopicSelector.vue": 1,

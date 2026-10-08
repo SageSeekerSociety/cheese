@@ -180,3 +180,33 @@ it('shows the new room first and refreshes the sidebar without delaying navigati
   expect(store.topics.map((topic) => topic.id)).toEqual(['new', 'older'])
   fresh.resolve({ data: [created, room('older', 'a')], total: 2 })
 })
+
+it('a row named by id is read back on its own, and no other row moves', async () => {
+  const store = useWorkspaceStore()
+  await store.openProject('a')
+  store.topics = [room('r1', 'a'), room('r2', 'a')]
+  vi.mocked(listTopics).mockClear()
+  vi.mocked(getTopic).mockResolvedValueOnce({ ...room('r2', 'a'), title: '改过了' })
+
+  await store.refreshTopicRow('r2')
+
+  expect(store.topics.map((topic) => topic.title)).toEqual(['r1', '改过了'])
+  // The whole list was NOT read again — that is the point of naming the row.
+  expect(listTopics).not.toHaveBeenCalled()
+})
+
+it('a named row this list does not hold yet falls back to reading the list', async () => {
+  const store = useWorkspaceStore()
+  await store.openProject('a')
+  store.topics = [room('r1', 'a')]
+  vi.mocked(getTopic).mockResolvedValueOnce(room('r2', 'a'))
+  vi.mocked(listTopics)
+    .mockClear()
+    .mockResolvedValueOnce({ data: [room('r1', 'a'), room('r2', 'a')], total: 2 } as never)
+
+  await store.refreshTopicRow('r2')
+
+  // Joining a private channel can name a row this sidebar never held; only a
+  // whole-list read can bring it in.
+  expect(store.topics.map((topic) => topic.id)).toEqual(['r1', 'r2'])
+})

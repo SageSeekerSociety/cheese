@@ -2,7 +2,7 @@
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
     <div class="text-body-2 text-medium-emphasis mt-1">
-      <i18n-t v-if="canceler" keypath="notifications.TEAM_INVITATION_CANCELED.body" tag="span">
+      <i18n-t v-if="canceler" scope="global" keypath="notifications.TEAM_INVITATION_CANCELED.body" tag="span">
         <template #canceler><UserRef :handle="canceler.handle" :name="canceler.name" :project-id="null" /></template>
         <template #team>{{ team?.name || t('notifications.common.unknownTeam') }}</template>
       </i18n-t>

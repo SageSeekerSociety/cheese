@@ -20,7 +20,7 @@ from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.block.schemas import BlockOut
 from app.domain.thread import reads
 from app.domain.thread.services import open_thread

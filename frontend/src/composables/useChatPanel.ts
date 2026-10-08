@@ -322,7 +322,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // A platform resource changed → parent refreshes that panel live.
         // The clickable record of the action is a persisted event_block (below).
         if (frame.resource === 'topics' || frame.resource === 'tasks') void reloadRoomTasks()
-        emit('state-changed', frame.resource)
+        emit('state-changed', frame.resource, frame.id)
         break
       case 'event_block':
         // A persisted, clickable action card (doc/topics/...) for this turn.

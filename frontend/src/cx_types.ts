@@ -323,7 +323,7 @@ export type WsServerFrame =
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   // A 分身's checklist, on its card's channel (the room's own list is a message).
   | { type: 'todo'; items: TodoItem[] }
-  | { type: 'state'; resource: string; project_ids?: string[] }
+  | { type: 'state'; resource: string; id?: string; project_ids?: string[] }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event

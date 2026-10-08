@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t keypath="notifications.DEVICE_IN_USE.title" tag="span">
+      <i18n-t scope="global" keypath="notifications.DEVICE_IN_USE.title" tag="span">
         <template #agent>
           <UserRef :handle="text('agentHandle')" :name="agentName" :project-id="text('projectId') || null" />
         </template>
