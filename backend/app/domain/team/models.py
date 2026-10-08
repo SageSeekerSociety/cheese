@@ -29,6 +29,11 @@ team_membership_application_seq = Sequence("team_membership_application_seq")
 # same predicate so Postgres can match its ON CONFLICT to that index.
 PERSONAL_TEAM_ROW = text("personal_owner_user_id IS NOT NULL AND deleted_at IS NULL")
 
+# A membership that was not deleted. Every reader of this table filters it, and
+# it is what keeps `ix_team_user_relation_team_user` from holding people who
+# left. The migration building that index spells the same text out again.
+LIVE_TEAM_MEMBER_ROWS = text("deleted_at IS NULL")
+
 
 class TeamVisibility(str, Enum):
     """Who can find a team without being in it.
@@ -137,6 +142,23 @@ class TeamMemberRole:
 
 class TeamUserRelation(Base):
     __tablename__ = "team_user_relation"
+    __table_args__ = (
+        # Team access asks "is this person in this team" on every request
+        # (`app.auth.domains.team`, `app.auth.domains.knowledge`), task
+        # visibility asks it inside an EXISTS for every candidate task, and the
+        # team roster reads it the same way. That is why the index starts at
+        # `team_id` — it also pays off `team_user_relation.team_id`'s
+        # foreign-key-without-index debt. Readers that filter by `user_id`
+        # alone (`UserStatisticsRepository.count_teams`,
+        # `TeamRepository.list_teams_of_user`) are not served by it; the
+        # migration says why they are left alone.
+        Index(
+            "ix_team_user_relation_team_user",
+            "team_id",
+            "user_id",
+            postgresql_where=LIVE_TEAM_MEMBER_ROWS,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         BigInteger, team_user_relation_seq, primary_key=True
