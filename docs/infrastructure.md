@@ -1091,6 +1091,24 @@ Rollback, on the dev box: `sudo systemctl disable --now cheese-bj-relay-a
 cheese-bj-relay-b`. Nothing else depends on the Beijing box, and the Hong Kong
 units are untouched by it.
 
+## Campus model API: dev reaches it through 119pve, hand-managed
+
+`deepseek-flash-ruc` (deploy/gateway/config.yaml) calls RUC's self-hosted model
+at `RUC_DEEPSEEK_API_BASE` (gateway `.env`), which admits campus addresses only. Everything
+the dev box sends by default goes through router-2 and leaves off campus, and
+the endpoint drops those connections after about 5 s with an empty reply. So
+TCP to that address and port, and nothing else, takes the same path as tunnel B:
+a policy route to 192.168.16.1, masqueraded by 119pve as 183.174.60.119.
+
+| Box | Path | What it is |
+|---|---|---|
+| dev | `/usr/local/libexec/cheese-campus-llm/route.sh` | table 18200, rule priority 18200 |
+| dev | `/etc/systemd/system/cheese-campus-llm-route.service` | runs it at boot (enabled) |
+| 119pve | `/etc/network/interfaces`, `vmbr0` post-up | raw-table conntrack zone 1 rules for the endpoint's address and port, both directions |
+
+Check: on the dev box, `curl --noproxy '*' "$RUC_DEEPSEEK_API_BASE/health/liveliness"`
+answers 200 within milliseconds.
+
 ## Access
 
 - **ghg private net (dev/prod boxes)**: reachable via the OpenVPN split-tunnel

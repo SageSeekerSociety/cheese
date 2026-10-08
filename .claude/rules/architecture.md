@@ -62,7 +62,7 @@ the graph rather than transcribed by hand.
 Freeze policy, which is the whole ratchet:
 
 - Every current violation is frozen in the same file as an exact
-  `importer -> imported` pair — 28 + 49 + 154 = 231 today (C1 + C2 + C3). New
+  `importer -> imported` pair — 28 + 49 + 153 = 230 today (C1 + C2 + C3). New
   ones fail CI.
 - No wildcards. `check_boundaries.py` fails (exit 1) on any `*` in the freeze,
   because an exemption that can absorb a file nobody looked at is not an

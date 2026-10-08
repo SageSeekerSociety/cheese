@@ -68,7 +68,7 @@ from app.domain.agent.realtime.subscriber_queue import (
     SubscriberOverflow,
     SubscriberQueue,
 )
-from app.domain.agent.turn_adoption import adopt, open_turns_on
+from app.domain.agent.turn_adoption import adopt, open_turns_on, watch_books
 from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.room_task.services import TaskService
 
@@ -215,6 +215,15 @@ async def chat(
             chat_service.prewarm.room_active(room_id)
 
         relay_task = asyncio.create_task(relay(queue))
+        # The connect-time adoption above is a snapshot, and a turn that ends on
+        # the OTHER container of an overlapping rollout does not send its
+        # `turn_finished` here: the room would keep 正在思考 for a turn that is
+        # over. So re-read the room's books from the database while this socket
+        # lives (`turn_adoption.watch_books`). One task per socket, gone with it.
+        books_task = asyncio.create_task(
+            watch_books(chat_service.session_factory, broker, channel, topic_id),
+            name=f"turn books {channel}",
+        )
         try:
             # A send that finds the peer gone closes the socket on our side and
             # is swallowed by `send` above, so nothing raises: the next read is
@@ -252,5 +261,8 @@ async def chat(
             pass
         finally:
             relay_task.cancel()
+            books_task.cancel()
             with contextlib.suppress(BaseException):
                 await relay_task
+            with contextlib.suppress(BaseException):
+                await books_task

@@ -1,5 +1,5 @@
-/** 「改动」这一格的主要行为：一棵标着增删的文件树、一份文件的差异 / 全文两面、
- *  选中、空态、错误态、保存与冲突。
+/** 「改动」这一格的主要行为：一棵标着增删的文件树、默认那一面把全部改动连着排、
+ *  单独打开一份文件时的差异 / 全文两面、空态、错误态、保存与冲突。
  *
  * 它 1708 行、直接调 9 个接口函数、会写文件（writeFile 失败会丢用户的编辑），而
  * 在这份 spec 之前只有一个 75 行的 PanelChanges.noRepo.spec.ts，只覆盖「项目没接
@@ -26,7 +26,6 @@ import { setLocale } from '@/i18n'
 beforeEach(() => setLocale('zh-CN'))
 
 const getForgeConnection = vi.fn()
-const getGitLog = vi.fn()
 const getGitDiff = vi.fn()
 const listFiles = vi.fn()
 const listRoomTasks = vi.fn()
@@ -37,7 +36,6 @@ vi.mock('@/api', async () => {
   return {
     ...actual,
     getForgeConnection: (...a: unknown[]) => getForgeConnection(...a),
-    getGitLog: (...a: unknown[]) => getGitLog(...a),
     getGitDiff: (...a: unknown[]) => getGitDiff(...a),
     listFiles: (...a: unknown[]) => listFiles(...a),
     listRoomTasks: (...a: unknown[]) => listRoomTasks(...a),
@@ -124,7 +122,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   getForgeConnection.mockReset().mockResolvedValue({ kind: 'forgejo', connected: true, repo: 'a/b', url: 'x' })
-  getGitLog.mockReset().mockResolvedValue({ data: [], total: 0 })
   getGitDiff.mockReset().mockResolvedValue({ diff: DIFF })
   listFiles.mockReset().mockResolvedValue({ data: FILES, total: FILES.length, source: 'live' })
   listRoomTasks.mockReset().mockResolvedValue({ data: [openTask()], total: 1 })
@@ -146,34 +143,61 @@ function fileRow(name: string): HTMLElement {
   return row as HTMLElement
 }
 
+/** 全部改动那一面里某个文件那一段的「打开」：单独看这一份。 */
+async function openSection(path: string) {
+  const section = await waitFor(() => {
+    const el = document.querySelector(`.diff-file[data-path="${path}"]`)
+    expect(el, `改动里应该有 ${path} 这一段`).toBeTruthy()
+    return el as HTMLElement
+  })
+  const open = Array.from(section.querySelectorAll('button')).find((b) => b.textContent?.trim() === '打开')
+  await fireEvent.click(open!)
+}
+
 describe('树上有什么，点开的是什么', () => {
-  it('每个文件标着它改了多少，右边点开的是这一份自己的差异', async () => {
+  it('每个文件标着它改了多少；默认那一面把全部改动连着排，不先替人打开哪一份', async () => {
     mount()
     // 树: 这一支改过的文件都在，增删标在行上。
-    expect(await screen.findByText('app.ts')).toBeTruthy()
-    expect(screen.getByText('README.md')).toBeTruthy()
-    expect(screen.getByText('+2')).toBeTruthy()
-    expect(screen.getByText('−1')).toBeTruthy()
+    await waitFor(() => expect(document.querySelector('.file-item')).toBeTruthy())
+    expect(fileRow('app.ts').textContent).toContain('+2')
+    expect(fileRow('app.ts').textContent).toContain('−1')
     // 新加的文件说的是「新增」，不是 +2。
-    expect(screen.getByText('新增')).toBeTruthy()
+    expect(fileRow('README.md').textContent).toContain('新增')
 
-    // 没打开过任何文件时的第一份，是清单里的第一份改过的文件。
-    await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', 't-1', 'live'))
-    expect(screen.getByText('src/app.ts')).toBeTruthy()
-    // 逐文件 diff：增删各自一行，hunk 头也在。
-    expect(screen.getByText('-const b = 2')).toBeTruthy()
+    // 两个文件的差异都在，一个接一个；git 的头信息不在屏幕上，@@ 换成了行号区间。
+    expect(await screen.findByText('-const b = 2')).toBeTruthy()
     expect(screen.getByText('+const c = 4')).toBeTruthy()
-    expect(screen.getByText('@@ -1,3 +1,4 @@')).toBeTruthy()
+    expect(screen.getByText('+# hi')).toBeTruthy()
+    expect(screen.queryByText('@@ -1,3 +1,4 @@')).toBeNull()
+    expect(screen.queryByText('index 0000000..1111111 100644')).toBeNull()
+    expect(screen.getByText('1–4')).toBeTruthy()
+    expect(readFile).not.toHaveBeenCalled()
   })
 
-  it('点树上的另一份文件，右边换成它自己的差异', async () => {
+  it('点树上改过的文件，滚到它那一段，不另开一份', async () => {
+    const scrolled: Element[] = []
+    const spy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (this: Element) {
+      scrolled.push(this)
+    })
     mount()
-    await screen.findByText('app.ts')
+    await screen.findByText('+# hi')
     await fireEvent.click(fileRow('README.md'))
+    await waitFor(() => expect(scrolled.some((el) => el.getAttribute('data-path') === 'README.md')).toBe(true))
+    expect(readFile).not.toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('点一段的「打开」，单独看这一份；返回之后又是全部改动', async () => {
+    mount()
+    await openSection('README.md')
+    await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('p1', 'README.md', 'room-1', 't-1', 'live'))
     expect(await screen.findByText('+# hi')).toBeTruthy()
-    expect(readFile).toHaveBeenLastCalledWith('p1', 'README.md', 'room-1', 't-1', 'live')
-    // 上一份的差异不该还留在屏幕上。
+    // 别的文件的差异不该还留在屏幕上。
     expect(screen.queryByText('-const b = 2')).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: '返回全部改动' }))
+    expect(await screen.findByText('-const b = 2')).toBeTruthy()
+    expect(screen.getByText('+# hi')).toBeTruthy()
   })
 
   it('没有差异的文件只有一面：不摆「差异 / 全文」这个开关', async () => {
@@ -195,8 +219,8 @@ describe('树上有什么，点开的是什么', () => {
         }),
     })
     render(Host, { global: { plugins: [vuetify] } })
-    await screen.findByText('app.ts')
-    expect(screen.getByText('差异')).toBeTruthy()
+    await openSection('src/app.ts')
+    expect(await screen.findByText('差异')).toBeTruthy()
     await panel.value?.openFile('notes.txt')
     await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('p1', 'notes.txt', 'room-1', 't-1', 'live'))
     expect(screen.queryByText('差异')).toBeNull()
@@ -205,8 +229,9 @@ describe('树上有什么，点开的是什么', () => {
 })
 
 describe('这一支的活', () => {
-  it('活还在跑时，打开的是它的工作树', async () => {
+  it('活还在跑时，看的是它的工作树', async () => {
     mount()
+    await openSection('src/app.ts')
     await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', 't-1', 'live'))
     expect(listFiles).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live')
     expect(getGitDiff).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live')
@@ -214,8 +239,9 @@ describe('这一支的活', () => {
 
   it('改文件保存：把内容连同读到的那一版一起写回去', async () => {
     mount()
+    await openSection('src/app.ts')
     await waitFor(() => expect(readFile).toHaveBeenCalled())
-    // 默认看差异，所以先切到「编辑」（活还开着，这一面是能改的）。
+    // 打开时看差异，所以先切到「编辑」（活还开着，这一面是能改的）。
     await fireEvent.click(await screen.findByText('编辑'))
     await fireEvent.click(await screen.findByText('改'))
     await fireEvent.click(screen.getByText('保存'))
@@ -227,6 +253,7 @@ describe('这一支的活', () => {
   it('保存撞上 409：说清冲突，两条出路都由人点', async () => {
     writeFile.mockRejectedValue(new ApiError(409, '这个文件已经被改过了'))
     mount()
+    await openSection('src/app.ts')
     await waitFor(() => expect(readFile).toHaveBeenCalled())
     await fireEvent.click(await screen.findByText('编辑'))
     await fireEvent.click(await screen.findByText('改'))
@@ -255,13 +282,13 @@ describe('这一支的活', () => {
     getGitDiff.mockResolvedValue({ diff: '' })
     listFiles.mockResolvedValue({ data: [], total: 0, source: 'live' })
     mount()
-    expect(await screen.findByText('暂无改动')).toBeTruthy()
+    expect((await screen.findAllByText('暂无改动')).length).toBeGreaterThan(0)
     expect(readFile).not.toHaveBeenCalled()
   })
 
-  it('一帧新数据来了（refreshTick）就静默重取提交与差异', async () => {
+  it('一帧新数据来了（refreshTick）就静默重取差异', async () => {
     const { rerender } = mount()
-    await waitFor(() => expect(readFile).toHaveBeenCalled())
+    await waitFor(() => expect(getGitDiff).toHaveBeenCalled())
     const before = getGitDiff.mock.calls.length
     await rerender({ topicId: 'room-1', taskId: 't-1', projectId: 'p1', active: true, refreshTick: 1 })
     await waitFor(() => expect(getGitDiff.mock.calls.length).toBeGreaterThan(before))

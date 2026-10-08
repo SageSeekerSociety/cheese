@@ -342,7 +342,7 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'accept-card',
     title: 'TopicAcceptCard',
-    about: '输入框上方那张验收卡：平时一行横条，点开是整张卡。',
+    about: '输入框上方那一条采纳横条：现在在等什么，轮到人时在这里退回或采纳。详情在「改动」页顶部。',
     file: 'src/components/TopicAcceptCard.vue',
     component: TopicAcceptCard,
     // 这张卡自己去接口取数（`getAcceptCards` / `getPrChecks`），也读工作区 store。
@@ -350,16 +350,10 @@ export const CATALOG: CatalogEntry[] = [
     states: [
       {
         name: '贴在输入框上方',
-        note: '收着的一行：待谁审阅、改动的标题。点一下才摊开（这里不点，看的就是这一行）。',
+        note: '一行：待谁审阅，以及退回和采纳两颗按钮。交的是什么不在这一行上。',
         // 卡上带着哪一条活的 id：不传就只看「不属于任何一条活」的那些卡（见组件里那个 filter）。
-        props: { topicId: 'demo', topicStatus: 'active', taskId: ACCEPT_CARD?.task_id, docked: true },
-        expect: 'docs: add a welcome note',
-      },
-      {
-        name: '整张摊开',
-        note: '不贴底的时候（任务卡详情里）整张摊开：改动说明、检查、采纳与退回都在。',
-        props: { topicId: 'demo', topicStatus: 'active', taskId: ACCEPT_CARD?.task_id, docked: false },
-        expect: '采纳',
+        props: { topicId: 'demo', topicStatus: 'active', taskId: ACCEPT_CARD?.task_id },
+        expect: '采纳并完成任务',
       },
     ],
   },
@@ -672,7 +666,7 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'panel-changes',
     title: 'PanelChangesView',
-    about: '改动那一格：一棵标着增删的树，点开是这一份文件自己的逐行 diff。',
+    about: '改动那一格：一棵标着增删的树，默认把全部改动连着排，单独打开一份可以看全文或编辑。',
     file: 'src/components/panels/PanelChangesView.vue',
     component: PanelChangesView,
     needs: UI,
@@ -690,13 +684,19 @@ export const CATALOG: CatalogEntry[] = [
       },
       {
         name: '这一轮什么都没改',
-        note: '树上写「暂无改动」，右边那一半装的是提交记录 —— 它也没有，于是写「暂无提交」。',
+        note: '树上和右边都写「暂无改动」。',
         props: CHANGES_EMPTY,
-        expect: '暂无提交',
+        expect: '暂无改动',
       },
       {
-        name: '一份文件自己的 diff',
-        note: '树上每行一个文件（+N −M 标着改了多少），点开的是它自己那一段：文件头、hunk 头、增删各自着色，定位得到行。',
+        name: '全部改动',
+        note: '默认那一面：树上每行一个文件（+N −M 标着改了多少），右边每个文件一段连着往下排。顶部那块（这次交付的情况）由宿主塞进 head 插槽，这里没有。',
+        props: changesPanelProps({ openPath: null, openDiff: null, openDiffLines: [] }),
+        expect: '3 个文件',
+      },
+      {
+        name: '单独打开一份',
+        note: '点段头的「打开」：只看这一份，横条上有返回、差异和全文两面。',
         props: changesPanelProps(),
         expect: '这个项目放本课程的课件和作业',
       },

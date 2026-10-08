@@ -304,6 +304,34 @@ class AgentTurnRepository:
             )
         )
 
+    async def ended_on(
+        self, conversation_id: uuid.UUID, turn_ids: Iterable[uuid.UUID]
+    ) -> set[uuid.UUID]:
+        """Which of ``turn_ids`` this conversation has an ENDED interval for.
+
+        The other half of ``still_open``, asked about ids that come from outside
+        the database: a process's own memory of what it is relaying
+        (``turn_adoption``). It answers the narrow question and no more — an id
+        with no row here, or a row with no end yet, is NOT in the answer. A turn
+        the platform has no row for is not over (``interval_is_over`` says why),
+        and a turn still being born is what an id with an undelivered row is.
+
+        Scoped to one conversation like the rest of the bookkeeping: an id is
+        only ever this room's, and a turn that ran somewhere else is not closed
+        here.
+        """
+        ids = list(turn_ids)
+        if not ids:
+            return set()
+        rows = await self._session.scalars(
+            select(AgentTurn.id).where(
+                AgentTurn.conversation_id == conversation_id,
+                AgentTurn.id.in_(ids),
+                AgentTurn.stopped_at.is_not(None),
+            )
+        )
+        return set(rows)
+
     async def close_one(
         self, topic_id: uuid.UUID, turn_id: uuid.UUID, at: datetime
     ) -> int:

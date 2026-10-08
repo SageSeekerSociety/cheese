@@ -158,6 +158,10 @@ class StreamingUsageExtractor:
         self._buf = b""
         self.usage: dict = {}
         self.model = ""
+        # Set once the addon has written this extractor's usage to the meter.
+        # The end-of-stream sentinel and an interruption both try to record, and
+        # a turn must land exactly once.
+        self.recorded = False
         self._decode = _decoder(encoding)
 
     # A usage-bearing SSE line is well under 1 KiB; nothing we meter is remotely
@@ -230,6 +234,10 @@ class Meter:
         self._window = cap_window_s
         self._log = usage_log
         self._events: list[tuple[float, int]] = []  # (ts, total_tokens)
+        # Turns admitted but not yet recorded, each holding an estimate of its
+        # own cost against the cap: reservation handle → (tokens, reserved_at).
+        self._inflight: dict[int, tuple[int, float]] = {}
+        self._next_reservation = 0
         self._log.parent.mkdir(parents=True, exist_ok=True)
         self._restore()
 
@@ -260,8 +268,47 @@ class Meter:
             self._prune(time.time())
             return sum(t for _, t in self._events)
 
+    def reserve(self, tokens: int) -> int:
+        """Hold an estimate of a running turn's cost against the cap.
+
+        ``record`` only counts turns that have ENDED, so on its own every turn
+        admitted while ``used() < cap`` can run and the in-flight ones overshoot
+        the cap together. The addon reserves before forwarding and releases at
+        the record point — or on the paths that never record. Returns a handle
+        for ``release``."""
+        with self._lock:
+            handle = self._next_reservation
+            self._next_reservation += 1
+            self._inflight[handle] = (max(0, int(tokens)), time.time())
+            return handle
+
+    def release(self, handle: int | None) -> None:
+        if handle is None:
+            return
+        with self._lock:
+            self._inflight.pop(handle, None)
+
+    def _inflight_tokens(self, now: float) -> int:
+        """What the turns still running hold against the cap.
+
+        Holds older than the window are dropped: no turn runs that long, so a
+        hold that age belongs to a flow that ended without releasing — and a
+        leaked hold must not shrink the deployment's headroom forever."""
+        self._inflight = {
+            h: held
+            for h, held in self._inflight.items()
+            if now - held[1] < self._window
+        }
+        return sum(tokens for tokens, _ in self._inflight.values())
+
     def would_exceed(self, cap: int) -> bool:
-        return cap > 0 and self.used() >= cap
+        if cap <= 0:
+            return False  # cap off: identical to before reservations existed
+        now = time.time()
+        with self._lock:
+            self._prune(now)
+            used = sum(t for _, t in self._events)
+            return used + self._inflight_tokens(now) >= cap
 
     def record(self, project_id: str, topic_id: str, usage: dict, model: str) -> None:
         total = (

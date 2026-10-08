@@ -84,6 +84,25 @@ export function numberDiffLines(lines: DiffLine[]): DiffRow[] {
   })
 }
 
+/**
+ * What a hunk header says to a reader: the lines it covers and the code it sits
+ * in, without git's `@@ -a,b +c,d @@` notation. `@@ -205,12 +205,14 @@ class X`
+ * reads `205–218 · class X`. The range is the new side's, since that is the file
+ * being reviewed; a hunk that only deletes (no new lines) falls back to the old
+ * side's. A header that does not parse is returned unchanged.
+ */
+export function hunkLabel(header: string): string {
+  const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/.exec(header)
+  if (!m) return header
+  const newCount = m[4] === undefined ? 1 : Number.parseInt(m[4], 10)
+  const useOld = newCount === 0
+  const start = Number.parseInt(useOld ? m[1]! : m[3]!, 10)
+  const count = useOld ? (m[2] === undefined ? 1 : Number.parseInt(m[2], 10)) : newCount
+  const range = count > 1 ? `${start}–${start + count - 1}` : String(start)
+  const context = (m[5] ?? '').trim()
+  return context ? `${range} · ${context}` : range
+}
+
 /** Unquote git's C-style path escaping (`"a\tb"`), which it uses for paths with
  * spaces or non-ASCII bytes. Left as-is when the path is not quoted. */
 function unquote(path: string): string {

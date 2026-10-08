@@ -607,13 +607,6 @@ export interface ProfileTopic {
 
 // ---- 执行面板 (Phase 4 tool drawers) ----
 
-// One git commit row (GET /projects/{id}/git/log).
-export interface GitCommit {
-  hash: string
-  author: string
-  message: string
-}
-
 // A file in the project workspace (GET /projects/{id}/files).
 export interface WorkspaceFile {
   path: string

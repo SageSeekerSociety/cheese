@@ -58,21 +58,25 @@ class InProcessBroker:
 
     def adopt(
         self, channel: str, turns: Iterable[tuple[str, float, str | None]]
-    ) -> None:
+    ) -> list[tuple[str, str | None]]:
         """Take in live turns without synthesising or buffering turn progress.
 
         Existing turns keep their original start and attribution. Adopted turns
         end on the same ``turn_finished`` boundary as locally observed turns.
+        Return the newly adopted ids and seats so callers can announce them.
         """
+        taken: list[tuple[str, str | None]] = []
         for turn_id, started, agent in turns:
             if turn_id in self._active.get(channel, ()):
                 continue
             self._active.setdefault(channel, set()).add(turn_id)
             self._active_since.setdefault((channel, turn_id), started)
+            taken.append((turn_id, agent))
             if agent and (
                 followed := self.activity.turn_started(channel, turn_id, agent)
             ):
                 self._fan_out(channel, followed)
+        return taken
 
     async def publish(self, channel: str, frame: Frame) -> None:
         kind = frame.get("type")
