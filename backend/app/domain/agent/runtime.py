@@ -1,4 +1,4 @@
-"""AgentWorkRunner + Broker: run agent work as background jobs.
+"""AgentWorkRunner: receive messages and run agent work as background jobs.
 
 WebSocket connections subscribe and relay; they never own model work. A
 disconnect drops only the subscriber while the background request or live
@@ -19,7 +19,6 @@ import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
-from functools import lru_cache
 
 from app.core.background import hold
 from app.core.errors import AppError
@@ -27,7 +26,6 @@ from app.core.obs import bind_context, clear_context
 from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, listing, say
 from app.domain.agent import death_evidence, dispatch_log, turn_inputs
-from app.domain.agent.activity import LIVE_ONLY, RoomActivity
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
@@ -60,16 +58,12 @@ from app.domain.agent.platform_notices import (
     delivery_fallback_notice,
     notice,
 )
+from app.domain.agent.realtime import broker as realtime
+from app.domain.agent.realtime import subscriber_queue
 
 # Re-exported for `app.domain.delivery.agent`: its seam may not import the
 # repository module itself (it would close a C3 domain cycle).
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord  # noqa: F401
-from app.domain.agent.subscriber_queue import (
-    MAX_SUBSCRIBER_BYTES,
-    Frame,
-    SubscriberQueue,
-    cut_off,
-)
 from app.domain.agent.turn_ledger import (
     close_turns,
     fire_on_done,
@@ -115,298 +109,6 @@ def addressed_to_agent(handle: str | None) -> Addressed:
 _WAITING = frozenset({EVENT_TURN_QUEUED, EVENT_DELIVERY_FALLBACK})
 
 
-class InProcessBroker:
-    """Fan-out pub/sub for one process, with a per-channel replay buffer of the
-    IN-PROGRESS turn's ephemeral frames (R3). A connection that subscribes mid-turn
-    gets those frames immediately (catch-up), then the live continuation — so a
-    reconnect (after `GET /blocks` for persisted history) is seamless.
-
-    Active work is keyed by its compatibility id. A message folded into a live
-    Claude session emits no synthetic completion boundary; only the session's
-    existing lifecycle markers own active state.
-    """
-
-    def __init__(
-        self,
-        replay_size: int = 512,
-        max_subscriber_bytes: int = MAX_SUBSCRIBER_BYTES,
-    ) -> None:
-        self._subs: dict[str, set[SubscriberQueue]] = {}
-        self._buffer: dict[str, list[Frame]] = {}
-        self._active: dict[str, set[str]] = {}
-        self._active_since: dict[tuple[str, str], float] = {}
-        # Who is typing or working here; reads the turn starts above.
-        self.activity = RoomActivity(self._active_since)
-        self._last_activity_at: dict[str, float] = {}
-        self._replay_size = replay_size
-        self._max_subscriber_bytes = max_subscriber_bytes
-        self._message_subscriber: Callable[..., None] | None = None
-
-    def reset(self) -> None:
-        """Drop all buffered frames + subscriptions. The broker is a process-wide
-        singleton (get_broker is lru_cached); tests that TRUNCATE ... RESTART
-        IDENTITY reuse channel ids (topic id 1, 2, …) across tests, so without this
-        a prior test's buffered frames would replay into the next test on the same
-        reused channel. Called between tests by the client/python_client fixtures."""
-        self._subs.clear()
-        self._buffer.clear()
-        self._active.clear()
-        self._active_since.clear()
-        self.activity.reset()
-        self._last_activity_at.clear()
-
-    async def receive_message(
-        self,
-        chat_service,
-        topic_id: uuid.UUID,
-        *,
-        author: str,
-        content: str,
-        reply_to: str | None = None,
-        attachments: list[dict] | None = None,
-        provision_actor: Actor | None = None,
-        client_id: str | None = None,
-        quoted_context: dict | None = None,
-    ) -> uuid.UUID:
-        """Persist one human message now, then deliver it to whoever it named.
-
-        Only model turns use queue/credit gates; quotes carry no summon authority.
-        **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
-        `summon: bool` 入参，从浏览器的帧上一路传到这里，和服务端解析出来的 @ 做或
-        运算 —— 也就是说一条谁也没 @ 的消息，只要客户端把那个布尔置真，照样起一轮。
-        现在只认落库那一刻解析出来的 `agent_recipient`：@ 了谁，就是点了谁的名。
-        """
-        received_at = time.monotonic()
-        channel = str(topic_id)
-        # Capture the user's arrival-time expectation before the database write.
-        # The live session may finish while the message is being persisted; that
-        # race is still a delivery fallback, not an ordinary idle-topic message.
-        live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
-            self.active_turn_ids(channel)
-        )
-        (
-            payloads,
-            user_block_id,
-            user_block_ids,
-            duplicate,
-        ) = await chat_service.post_user_message(
-            topic_id,
-            author=author,
-            content=content,
-            turn_id=None,
-            reply_to=reply_to,
-            attachments=attachments,
-            client_id=client_id,
-            quoted_context=quoted_context,
-        )
-        turn_id = user_block_id
-        recipient = next(
-            (
-                (payload.get("meta") or {}).get("agent_recipient")
-                for payload in payloads
-                if (payload.get("meta") or {}).get("agent_recipient")
-            ),
-            None,
-        )
-        recipient_handle = (recipient or {}).get("handle")
-        mentioned = any(
-            (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
-            for payload in payloads
-        )
-        # 点到的是**席位**，不是这个队友自己的名字。`agent_recipient.handle` 是项目
-        # 给它起的名（`reviewer`、`planner`…，`AgentInstance.handle` 允许任意小写
-        # 串），而一条投递怎么到达是按席位的命名规矩判出来的
-        # （`how_it_arrives` → `looks_like_agent_handle`）。拿实例名去问，一个没叫
-        # `cheese` 开头的队友就永远不是「靠一轮收到」—— @ 它、和它私聊，都跑不起一
-        # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
-        #
-        # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
-        # 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = addressed_to_agent(recipient_seat(recipient) if mentioned else None)
-        persisted_at = time.monotonic()
-        for payload in payloads:
-            await self.publish(channel, {"type": "user_block", "block": payload})
-        logger.info(
-            "chat_receive_timing topic=%s turn=%s persist_ms=%.3f publish_ms=%.3f",
-            topic_id,
-            turn_id,
-            (persisted_at - received_at) * 1000,
-            (time.monotonic() - persisted_at) * 1000,
-        )
-        if duplicate:
-            return turn_id
-        # A message to 芝士 in a channel's main line is answered in its 支线.
-        answer_in = await answer_place(
-            chat_service.session_factory, user_block_id if mentioned else None, topic_id
-        )
-        if answer_in != topic_id:
-            live_delivery_expected = chat_service.has_running_turn(answer_in)
-        if self._message_subscriber is not None:
-            self._message_subscriber(
-                chat_service,
-                answer_in,
-                turn_id,
-                addressed=addressed,
-                continuation_id=turn_id,
-                author=author,
-                content=next(
-                    (
-                        payload["content"]
-                        for payload in payloads
-                        if payload.get("id") == str(user_block_id) and content
-                    ),
-                    content,
-                ),
-                reply_to=reply_to,
-                attachments=attachments,
-                provision_actor=provision_actor,
-                landed_user_block_id=user_block_id,
-                landed_user_block_ids=user_block_ids,
-                live_delivery_expected=live_delivery_expected,
-                recipient_handle=recipient_handle,
-            )
-        return turn_id
-
-    def subscribe_messages(self, subscriber: Callable[..., None]) -> None:
-        """Subscribe to accepted sends; browser replay never enters this stream."""
-        self._message_subscriber = subscriber
-
-    async def publish(self, channel: str, frame: Frame) -> None:
-        kind = frame.get("type")
-        # Standalone facts, not turn progress: fanned out live, never buffered. A
-        # reconnect reads each back whole (reactions from GET /blocks, session state
-        # from GET /topics/{id}/agent/control, member activity from the snapshot on
-        # connect, a comment thread's progress from its thread list); buffering would
-        # replay states that have moved on and make an idle channel look in_flight.
-        if kind in LIVE_ONLY:
-            self._fan_out(channel, frame)
-            return
-        # A person's message landing ends their typing in this room.
-        author = (frame.get("block") or {}).get("author")
-        if kind == "user_block" and author:
-            await self.typing(channel, str(author), active=False)
-        followed: Frame | None = None
-        if kind == "turn_started":
-            turn_id = str(frame.get("turn_id") or "")
-            if turn_id:
-                self._active.setdefault(channel, set()).add(turn_id)
-                self._active_since.setdefault((channel, turn_id), time.time())
-                if agent := frame.get("agent"):
-                    followed = self.activity.turn_started(channel, turn_id, str(agent))
-
-        if self._active.get(channel):
-            self._last_activity_at[channel] = time.monotonic()
-
-        # Idle state changes and persisted blocks are fanned out live but never
-        # retained. This is what stops a queue notice or other system event from
-        # making a reconnect look like an agent turn is still running.
-        if self._active.get(channel):
-            buf = self._buffer.setdefault(channel, [])
-            buf.append(frame)
-            if len(buf) > self._replay_size:
-                del buf[: len(buf) - self._replay_size]
-
-        if kind == "turn_finished":
-            turn_id = str(frame.get("turn_id") or "")
-            active = self._active.get(channel)
-            if active is not None:
-                active.discard(turn_id)
-                followed = self.activity.turn_finished(channel, turn_id)
-                self._active_since.pop((channel, turn_id), None)
-                if not active:
-                    self._active.pop(channel, None)
-                    self._buffer.pop(channel, None)
-                    self._last_activity_at.pop(channel, None)
-
-        self._fan_out(channel, frame)
-        for to, extra in self.activity.told(channel, followed):
-            self._fan_out(to, extra)
-
-    def _fan_out(self, channel: str, frame: Frame) -> None:
-        if subs := self._subs.get(channel):
-            for q in list(subs):
-                if not q.offer(frame):
-                    cut_off(self._subs, channel, q)
-
-    async def typing(self, channel: str, member: str, *, active: bool) -> None:
-        """A person composing in this room's input (or stopping)."""
-        if (frame := self.activity.typing(channel, member, active)) is not None:
-            self._fan_out(channel, frame)
-
-    def in_flight(self, channel: str) -> bool:
-        """True while at least one explicitly-started turn is active. Lets a
-        (re)connecting client rebuild the 正在思考 indicator instead of showing
-        a silent, seemingly-dead topic."""
-        return bool(self._active.get(channel))
-
-    def active_turn_ids(self, channel: str) -> list[str]:
-        """Stable snapshot for a reconnecting client."""
-        return sorted(self._active.get(channel, ()))
-
-    def active_turns_since(self, channel: str) -> dict[str, float]:
-        """When each live turn on this channel started, in epoch seconds."""
-        return {
-            turn_id: self._active_since[(channel, turn_id)]
-            for turn_id in self.active_turn_ids(channel)
-            if (channel, turn_id) in self._active_since
-        }
-
-    def active_channels(self) -> set[str]:
-        """Channels whose session or request activity is currently live."""
-        return set(self._active)
-
-    def active_count(self) -> int:
-        """Number of live attributed work ids across all channels."""
-        return sum(len(ids) for ids in self._active.values())
-
-    def activity_snapshot(self, channel: str) -> dict | None:
-        """Current attribution and activity time for one channel."""
-        ids = self.active_turn_ids(channel)
-        if not ids:
-            return None
-        newest = max(ids, key=lambda work_id: self._active_since[(channel, work_id)])
-        last_at = self._last_activity_at.get(channel)
-        return {
-            "turn_id": newest,
-            "started_at": self._active_since[(channel, newest)],
-            "idle_for_s": (time.monotonic() - last_at if last_at is not None else None),
-        }
-
-    @contextlib.asynccontextmanager
-    async def subscribe(
-        self, channel: str, *, replay: bool = False
-    ) -> AsyncIterator[SubscriberQueue]:
-        q = SubscriberQueue(self._max_subscriber_bytes)
-        if replay:
-            # Catch-up goes through the same budget, trimmed rather than
-            # refused: a fresh connection must not be cut off by a buffer it
-            # did not cause, and the frames are history the client can also
-            # re-read.
-            if dropped := q.prefill(self._buffer.get(channel, ())):
-                logger.warning(
-                    "broker_replay_trimmed channel=%s dropped=%d",
-                    channel,
-                    dropped,
-                )
-        self._subs.setdefault(channel, set()).add(q)
-        try:
-            yield q
-        finally:
-            subs = self._subs.get(channel)
-            if subs is not None:
-                subs.discard(q)
-                if not subs:
-                    self._subs.pop(channel, None)
-
-
-@lru_cache
-def get_broker() -> InProcessBroker:
-    """Process-wide singleton — defined here (not app.api.deps) so domain code
-    that needs to publish outside a request/route (background watchers, retry
-    loops) can reach the SAME broker instance without importing the api layer."""
-    return InProcessBroker()
-
-
 class AgentWorkRunner:
     """Admit background work and publish its frames to the broker.
 
@@ -417,7 +119,7 @@ class AgentWorkRunner:
 
     def __init__(
         self,
-        broker: InProcessBroker,
+        broker: realtime.InProcessBroker,
         *,
         turn_timeout_s: float = 900.0,
         first_output_timeout_s: float = 300.0,
@@ -836,12 +538,118 @@ class AgentWorkRunner:
             task.add_done_callback(lambda _task: fire_on_done(on_done))
         return turn_id
 
-    def subscribe_messages(self) -> None:
-        """Attach the process-owned runner to accepted room messages."""
-        from app.domain.agent.pending_messages import bind_runner
+    async def receive_message(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+        provision_actor: Actor | None = None,
+        client_id: str | None = None,
+        quoted_context: dict | None = None,
+    ) -> uuid.UUID:
+        """Persist one human message now, then deliver it to whoever it named.
 
-        bind_runner(self)
-        self._broker.subscribe_messages(self._receive_message)
+        Only model turns use queue/credit gates; quotes carry no summon authority.
+        **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
+        `summon: bool` 入参，从浏览器的帧上一路传到这里，和服务端解析出来的 @ 做或
+        运算 —— 也就是说一条谁也没 @ 的消息，只要客户端把那个布尔置真，照样起一轮。
+        现在只认落库那一刻解析出来的 `agent_recipient`：@ 了谁，就是点了谁的名。
+        """
+        received_at = time.monotonic()
+        channel = str(topic_id)
+        # Capture the user's arrival-time expectation before the database write.
+        # The live session may finish while the message is being persisted; that
+        # race is still a delivery fallback, not an ordinary idle-topic message.
+        live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
+            self._broker.active_turn_ids(channel)
+        )
+        (
+            payloads,
+            user_block_id,
+            user_block_ids,
+            duplicate,
+        ) = await chat_service.post_user_message(
+            topic_id,
+            author=author,
+            content=content,
+            turn_id=None,
+            reply_to=reply_to,
+            attachments=attachments,
+            client_id=client_id,
+            quoted_context=quoted_context,
+        )
+        turn_id = user_block_id
+        recipient = next(
+            (
+                (payload.get("meta") or {}).get("agent_recipient")
+                for payload in payloads
+                if (payload.get("meta") or {}).get("agent_recipient")
+            ),
+            None,
+        )
+        recipient_handle = (recipient or {}).get("handle")
+        mentioned = any(
+            (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
+            for payload in payloads
+        )
+        # 点到的是**席位**，不是这个队友自己的名字。`agent_recipient.handle` 是项目
+        # 给它起的名（`reviewer`、`planner`…，`AgentInstance.handle` 允许任意小写
+        # 串），而一条投递怎么到达是按席位的命名规矩判出来的
+        # （`how_it_arrives` → `looks_like_agent_handle`）。拿实例名去问，一个没叫
+        # `cheese` 开头的队友就永远不是「靠一轮收到」—— @ 它、和它私聊，都跑不起一
+        # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
+        #
+        # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
+        # 问的是「哪个实例在跑」，那边认的就是实例名。
+        addressed = addressed_to_agent(recipient_seat(recipient) if mentioned else None)
+        persisted_at = time.monotonic()
+        for payload in payloads:
+            await self._broker.publish(
+                channel, {"type": "user_block", "block": payload}
+            )
+        logger.info(
+            "chat_receive_timing topic=%s turn=%s persist_ms=%.3f publish_ms=%.3f",
+            topic_id,
+            turn_id,
+            (persisted_at - received_at) * 1000,
+            (time.monotonic() - persisted_at) * 1000,
+        )
+        if duplicate:
+            return turn_id
+        # A message to 芝士 in a channel's main line is answered in its 支线.
+        answer_in = await answer_place(
+            chat_service.session_factory, user_block_id if mentioned else None, topic_id
+        )
+        if answer_in != topic_id:
+            live_delivery_expected = chat_service.has_running_turn(answer_in)
+        self._receive_message(
+            chat_service,
+            answer_in,
+            turn_id,
+            addressed=addressed,
+            continuation_id=turn_id,
+            author=author,
+            content=next(
+                (
+                    payload["content"]
+                    for payload in payloads
+                    if payload.get("id") == str(user_block_id) and content
+                ),
+                content,
+            ),
+            reply_to=reply_to,
+            attachments=attachments,
+            provision_actor=provision_actor,
+            landed_user_block_id=user_block_id,
+            landed_user_block_ids=user_block_ids,
+            live_delivery_expected=live_delivery_expected,
+            recipient_handle=recipient_handle,
+        )
+        return turn_id
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
         # Named like `submit`'s, so `turn_pending` sees a message still waiting
@@ -1990,7 +1798,7 @@ class AgentWorkRunner:
         # 一轮只有一种开法：converse。以前还有第二种 —— kickoff 把一条预制的帧流从
         # 外面递进来，平台用它起「没有人写过提示词」的那种轮次。那条路整条退场
         # （I12），所以这里没有外来的帧流可接，只剩下面自己准备的那一份。
-        frames: AsyncIterator[Frame] | None = None
+        frames: AsyncIterator[subscriber_queue.Frame] | None = None
         # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
         # project's concurrent-turn ceiling is reached. Both states are posted
         # into the topic as platform system events, so people SEE why nothing
@@ -2159,7 +1967,7 @@ class AgentWorkRunner:
         provision_actor: Actor | None = None,
         # 已经准备好的帧流（`converse_prepared` 是现在唯一的来源）。None → 这里
         # 自己跑一轮 converse。
-        frames: AsyncIterator[Frame] | None = None,
+        frames: AsyncIterator[subscriber_queue.Frame] | None = None,
         lifecycle: dict[str, bool] | None = None,
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,

@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.deps import get_broker
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
 from app.core.db import get_db
@@ -259,7 +260,10 @@ async def resolve_notification(
     row = await service.get_or_404(notification_id)
     handle = await _acting_recipient(resolver, row)
     resolved = await service.resolve(
-        notification_id, chosen=body.chosen, decided_by=handle
+        notification_id,
+        chosen=body.chosen,
+        decided_by=handle,
+        publish=get_broker().publish,
     )
     await db.commit()
     return ok(_dump(resolved))

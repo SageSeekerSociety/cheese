@@ -51,6 +51,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.prompt import _compaction_notice
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room_events import (
     _mark_step_failed,
@@ -438,7 +439,6 @@ async def _consume_hook_event(
     platform_unsolicited: bool,
 ) -> None:
     """Persist and broadcast one event from a live screen subscription."""
-    from app.domain.agent.runtime import get_broker
 
     broker = get_broker()
     frame: dict | None = None

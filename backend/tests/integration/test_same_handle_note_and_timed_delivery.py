@@ -285,7 +285,8 @@ def test_a_scan_leaves_a_row_another_scanner_already_holds(client):
 
 def test_admission_refusal_retains_the_timer_for_retry(client, monkeypatch):
     from app.api.deps import get_chat_service
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.main import app
 
     project = _project(client, "credit refusal")
@@ -429,7 +430,8 @@ def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
 ):
     from app.api.deps import get_chat_service
     from app.core.sandbox_auth import mint_scoped_token
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from app.main import app
 
     project = _project(client, "addressed timer")

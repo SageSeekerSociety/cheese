@@ -44,7 +44,8 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness import harness_for
 from app.domain.agent.live_work import LiveWork
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_session.models import AgentSession
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService

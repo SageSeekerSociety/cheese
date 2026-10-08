@@ -16,8 +16,8 @@ Protocol:
            assistant_block / live / activity / activity_snapshot / error / done
 (Typing is the one thing a client says on this socket, and it is not written:
 it is member activity — who is busy in this room right now, a person composing
-or an agent with a turn running (`agent/activity.py`) — and it lives only in the
-broker. The member is the socket's credential, never a field of the frame.)
+or an agent with a turn running (`agent/realtime/activity.py`) — and it lives
+only in the broker. The member is the socket's credential, never a frame field.)
 (`sync` asks for the room's live state as one frame, empty or not: the turns
 running here and who is busy. The opening `turn_active` / `activity_snapshot`
 are sent only when something is going on, so a client cannot tell "nobody is
@@ -63,8 +63,11 @@ from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sentences import error_frame
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import InProcessBroker
-from app.domain.agent.subscriber_queue import SubscriberOverflow, SubscriberQueue
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.realtime.subscriber_queue import (
+    SubscriberOverflow,
+    SubscriberQueue,
+)
 from app.domain.agent.turn_adoption import adopt, open_turns_on, watch_books
 from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.room_task.services import TaskService

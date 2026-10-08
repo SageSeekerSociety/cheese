@@ -30,7 +30,7 @@ from app.api.response import ok
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
-from app.domain.agent.runtime import get_broker
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.staleness import announce_stale
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository

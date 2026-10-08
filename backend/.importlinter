@@ -309,7 +309,6 @@ ignore_imports =
     app.domain.notification.outbox -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.notification.maintenance
     app.domain.notification.push_delivery -> app.domain.notification.outbox
-    app.domain.notification.services -> app.domain.agent.runtime
     app.domain.platform_stats.gaps -> app.domain.agent.preview_hub
     app.domain.platform_stats.gaps -> app.domain.machine.models
     app.domain.platform_stats.pipeline -> app.domain.agent.dispatch_log

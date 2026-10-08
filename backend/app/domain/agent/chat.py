@@ -164,6 +164,7 @@ from app.domain.agent.queries import (
     _resolved_agent,
     _session_agent,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
@@ -1257,7 +1258,6 @@ class ChatService(SessionRecovery, RoomTurns):
     ) -> None:
         """Project subscription activity onto the existing realtime protocol."""
         del project_id
-        from app.domain.agent.runtime import get_broker
 
         # 「谁在干活」要和块署名答同一个名字：块落在 acting seat 上，所以
         # 帧也带它。轮次开账前（自起的轮次，账还没开）状态不在，退回运行时
@@ -1464,7 +1464,6 @@ class ChatService(SessionRecovery, RoomTurns):
         Asked of the room rather than remembered, so a turn another backend
         picks up halfway does not announce twice, or forget what came before.
         """
-        from app.domain.agent.runtime import get_broker
 
         landed = landing(
             EventAbout.room, project_id=state.project_id, room_id=state.topic_id

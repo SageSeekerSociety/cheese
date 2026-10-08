@@ -35,6 +35,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
@@ -977,7 +978,6 @@ async def publish_run_messages(
     line under it of its 支线."""
     if not message_ids:
         return
-    from app.domain.agent.runtime import get_broker
     from app.domain.block.repositories import BlockRepository
     from app.domain.block.schemas import BlockOut
     from app.domain.routine.reads import runs_under

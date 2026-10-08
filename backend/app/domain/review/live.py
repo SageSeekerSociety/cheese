@@ -18,6 +18,7 @@ from itertools import chain
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.review.models import AcceptCard
 
 _PENDING = "accept_cards_changed"
@@ -44,7 +45,6 @@ def _tell_pages(session: Session) -> None:
     if not channels:
         return
     from app.core.background import spawn
-    from app.domain.agent.runtime import get_broker
 
     # The card itself, and the task's progress (待审阅 / 已退回 / 已采纳), which the
     # card decides: the task page's header and the room's task list read it.

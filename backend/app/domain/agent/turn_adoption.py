@@ -1,8 +1,8 @@
 """The turns a backend relays, against the turns the database has.
 
-The broker (`runtime.InProcessBroker`) learns which turns are running from the
-``turn_started`` frames it relays, and keeps that in this process's memory. The
-database keeps the same fact durably: a turn's interval is open
+The broker (`realtime.broker.InProcessBroker`) learns which turns are running
+from the ``turn_started`` frames it relays, and keeps that in this process's
+memory. The database keeps the same fact durably: a turn's interval is open
 (``AgentTurnRepository.open_on``) from the moment it is fed until whatever ends
 it stamps ``stopped_at``.
 
@@ -21,8 +21,8 @@ running is invisible.
   Reconciliation ends it (``ended_on``).
 
 The database is the only judge of which of the two it is, and both questions are
-asked of it. Here rather than on the broker because `runtime.py` is over its
-size cap.
+asked of it. Database reads stay here; the realtime broker owns only the
+in-memory adoption.
 """
 
 import asyncio
@@ -32,8 +32,8 @@ from collections.abc import Iterable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.agent.runtime import InProcessBroker
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -65,18 +65,7 @@ def adopt(
     Returns the ``(turn id, agent seat)`` of the turns it took in, so a caller
     can tell the room about them (``reconcile`` does).
     """
-    taken: list[tuple[str, str | None]] = []
-    for turn_id, started, agent in turns:
-        if turn_id in broker._active.get(channel, ()):
-            continue
-        broker._active.setdefault(channel, set()).add(turn_id)
-        broker._active_since.setdefault((channel, turn_id), started)
-        taken.append((turn_id, agent))
-        if agent and (
-            followed := broker.activity.turn_started(channel, turn_id, agent)
-        ):
-            broker._fan_out(channel, followed)
-    return taken
+    return broker.adopt(channel, turns)
 
 
 async def reconcile(
