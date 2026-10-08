@@ -199,6 +199,16 @@ jobs:
       - name: API types match backend/openapi.json
         run: pnpm run check:api-types
 
+      # The other half of the same drift: the *paths* this frontend calls. They
+      # are string literals in src/api/*.ts and nothing connected them to the
+      # backend, so a renamed route type-checked and failed in the browser.
+      # Judged against backend/scripts/route_index.json, the artifact the
+      # addressing contract test holds the app to. Reports how many call sites
+      # it judged and how many it could not read, so "clean" never means "the
+      # gate understood nothing".
+      - name: Request paths match the backend's routes
+        run: pnpm run check:request-paths
+
       # Via the package script, not a bare `node --test scripts/`: passing a
       # DIRECTORY resolves as a module entry point on node 22 while node 20
       # treated it as a search path, so the two disagreed and CI failed on

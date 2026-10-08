@@ -18,6 +18,10 @@ type Schemas = components['schemas']
 export interface Project {
   id: string
   name: string
+  /** 项目在地址里的名字（`/projects/<slug>/…`）；后端 `ProjectOut` 一直下发，漏了它读出来是 `unknown`。 */
+  slug?: string
+  /** 这个项目用哪种 AI 模式；后端 `ProjectOut` 一直下发，前端目前只声明不读。 */
+  ai_mode?: string
   created_at: string
   // 建项目的人自己写的「打算做什么」（#946 片 C）。空串 = 建的时候没答，或跳过了。
   intent?: string

@@ -27,6 +27,7 @@
     "lint:scenes:update": "python3 ../.claude/scripts/scene-ratchet.py --update",
     "gen:api-types": "node scripts/gen-api-types.mjs",
     "check:api-types": "node scripts/gen-api-types.mjs --check",
+    "check:request-paths": "node scripts/check-request-paths.mjs",
     "prettier": "prettier --write \"**/*.{vue,js,jsx,ts,tsx}\"",
     "test": "vitest"
   },
