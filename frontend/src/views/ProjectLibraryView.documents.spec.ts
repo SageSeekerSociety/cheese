@@ -14,8 +14,8 @@ import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '../i18n'
-
 import { libraryFile, servesDocuments, servesLibrary } from '../test/fakeLibrary'
+
 import ProjectLibraryView from './ProjectLibraryView.vue'
 
 vi.mock('../api', () => ({
