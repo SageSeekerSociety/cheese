@@ -7,10 +7,15 @@
 //
 // object URL 不会自己消失——它把字节钉在内存里直到被 revoke。一屏消息翻过去就是
 // 几十张图，所以每换一次地址都要把上一张还回去，卸载时也一样。
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+//
+// 「去哪儿取字节」不在这里：那只函数连着后端，而这张图散在对话栏、工作面板和公共页
+// 里——这一颗 import 了它，渲染它的每一个组件都得跟着装后端才能挂起来。所以从外壳
+// 注入的 AttachmentSource 问（lib/attachmentSource.ts），没人注入时按「读不到」画。
+import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 
-import { attachmentImageUrl } from '../api'
 import { t } from '../i18n'
+
+import { ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
 
 const props = defineProps<{
   topicId: string | null
@@ -20,6 +25,8 @@ const props = defineProps<{
   /** 输入框里那张待发的缩略图：不带外链、点不开，尺寸固定成一个小方块。 */
   thumb?: boolean
 }>()
+
+const source = inject(ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE)
 
 // 路径是工作区里的，`uploads/<id>/…`；说给读者听的是文件名那一段。
 const altText = computed(() => props.alt || props.path.split('/').pop() || t('work.image.alt'))
@@ -42,7 +49,7 @@ async function load() {
   release()
   if (!props.topicId || !props.path) return
   try {
-    const next = await attachmentImageUrl(props.topicId, props.path)
+    const next = await source.imageUrl(props.topicId, props.path)
     // 已经不是最新那一轮了：刚拿到的 URL 不会有人挂上去，只能在这里还回去。
     if (mine !== generation) {
       URL.revokeObjectURL(next)

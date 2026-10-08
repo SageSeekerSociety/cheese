@@ -32,6 +32,25 @@ vi.mock('@/api', async () => {
   }
 })
 
+// 首页和方案页上那张品牌画布（`BrandScene`）：它那一行场景名是拿画布底下那层**计算
+// 出来的背景色**当颜色解析的（`scenes.ts` 里每个场景的 `u_colorBack`），而 happy-dom
+// 既没有 WebGL 2，也不算样式表 —— 读出来的背景色是空串，那套着色器就为它报一句
+// 「Unsupported color format」，而且是在动态 import 回来之后，落在**下一个**测试的
+// 记录里。预览站里不给它场景：组件按它本来就写好的那一支收下（没有 WebGL 2 的机器上
+// 也是这一支），那一块只剩自己的底色，控制台里一句都不留。
+vi.mock('@/components/account/brandScene/scenes', async () => {
+  const actual = await vi.importActual<typeof import('@/components/account/brandScene/scenes')>(
+    '@/components/account/brandScene/scenes'
+  )
+  return { ...actual, SCENES: {} as typeof actual.SCENES }
+})
+
+// 文档方格（`AttachmentDocThumb`）为了画封面会去动态 import pdf.js。那一次 import 是
+// 整份压缩过的库，装它要几百毫秒的主线程时间 —— 预览站里一次字节都取不回来（没有注入
+// 取字节的那一份），画封面这条路根本走不到，落下的只是「方格摆类型图标」那一格。给一个
+// 空壳之后，后面按秒数判定的那几格（目录页那句「找到几个」要等手停下来）不再被拖过线。
+vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({ GlobalWorkerOptions: {} }))
+
 import { CATALOG, catalogGroup, stateProps } from './catalog'
 import { installCatalogAnswers } from './catalogFixtures'
 import { isTodo, TODO_MARK, todoSites } from './catalogTodo'
@@ -94,6 +113,17 @@ describe('组件预览站', () => {
     })
     vi.stubGlobal(
       'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    )
+    // 首页那段故事跟着滚动走，用的是 IntersectionObserver，而 happy-dom 没有它
+    // （`Landing.spec.ts` 同样补一个）。补的是浏览器本来就有的东西，不是这一件的
+    // 依赖 —— 补上之后它照样只装自己声明的那几样插件。
+    vi.stubGlobal(
+      'IntersectionObserver',
       class {
         observe() {}
         unobserve() {}

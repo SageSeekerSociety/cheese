@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref, watch } from 'vue'
+import { computed, getCurrentInstance, inject, provide, ref, watch } from 'vue'
 import { NodeViewContent, nodeViewProps, NodeViewWrapper } from '@tiptap/vue-3'
 
 import { ATTACHMENT_IMAGE_SOURCE } from './attachmentImageSource'
@@ -8,6 +8,16 @@ import { t } from '@/i18n'
 
 const props = defineProps(nodeViewProps)
 const images = inject(ATTACHMENT_IMAGE_SOURCE, null)
+
+// tiptap 的 NodeViewWrapper 从包它的那一层 inject 这两样（拖动时的处理、装饰类），而它没有
+// 默认值：在编辑器里那个包裹层 provide 过了，这一件单独挂起来（预览站、测试）时却没人给，
+// 于是每个实例都吼一句 injection not found。给过就让给它（编辑器里那两样是真的），没给才补
+// 一对空的，好让这一件真的只吃 props。`provides` 是 Vue 内部实例上的东西，类型里没有它。
+const instance = getCurrentInstance() as unknown as { provides?: Record<string | symbol, unknown> } | null
+const provided = instance?.provides
+if (!provided || !Object.prototype.hasOwnProperty.call(provided, 'onDragStart')) provide('onDragStart', undefined)
+if (!provided || !Object.prototype.hasOwnProperty.call(provided, 'decorationClasses'))
+  provide('decorationClasses', undefined)
 
 const src = ref<string | null>(null)
 const failed = ref(false)

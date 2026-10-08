@@ -656,11 +656,15 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   // 拍板之后这个地点的状态会变 —— 重新取一次，补进它所在的那张表，头部的状态
   // 标才会跟着动。
+  //
+  // 清单里没有这一行就退回整份重取：这一行可能是刚变得对这个人可见、此前根本不在
+  // 他清单里的房间（加入一个私有频道就是这样），只补一行补不出来。
   async function refreshTopicRow(topicId: string) {
     try {
       const place = await getTopic(topicId)
       const i = topics.value.findIndex((t) => t.id === topicId)
       if (i >= 0) topics.value[i] = place
+      else await refreshTopics()
     } catch {
       // ignore
     }

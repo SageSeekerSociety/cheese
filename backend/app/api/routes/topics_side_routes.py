@@ -52,7 +52,7 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.conversation.services import room_of
 from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.services import TopicService
@@ -221,6 +221,6 @@ async def upgrade_block(
         opening=True,
     )
     await db.commit()
-    await announce_stale(room.id, "topics")
+    await announce_stale(room.id, "topics", id=room.id)
     await dispatch(chat)
     return ok(out)

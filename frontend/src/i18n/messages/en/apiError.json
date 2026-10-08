@@ -128,6 +128,8 @@
   "artifactNameTaken": "“{name}” is already another item on the list. If they really are the same thing, merge this item into it; if not, choose a name that tells them apart.",
   "computeKindUnavailable": "This kind of environment isn't connected yet and can't be selected: {name}",
   "deviceNotInProject": "This device doesn't belong to this project",
+  "deviceApproveSignIn": "Sign in to approve a device",
+  "deviceManageSignIn": "Sign in to manage your devices",
   "cloudNotAvailable": "Cloud isn't connected yet and can't be used",
   "cloudVmNotAvailable": "This deployment doesn't offer whole cloud VMs",
   "deviceNotInProjectOrTeam": "This device doesn't belong to this project or team",

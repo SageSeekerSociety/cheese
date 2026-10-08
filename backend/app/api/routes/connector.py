@@ -245,7 +245,7 @@ async def device_connect(
     owner, and optionally assigns it to ``project_id``."""
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
-        raise UnauthorizedError("Approving a device requires a logged-in user")
+        raise UnauthorizedError(say("deviceApproveSignIn"))
 
     if body.project_id is not None:
         await resolver.authorize_project(actor, project_id=body.project_id)
@@ -572,7 +572,7 @@ class BindTeamRequest(BaseModel):
 async def _require_user(resolver: ActorResolverDep) -> int:
     actor = await resolver.resolve()
     if not actor.authenticated or actor.user_id is None:
-        raise UnauthorizedError("Managing devices requires a logged-in user")
+        raise UnauthorizedError(say("deviceManageSignIn"))
     return actor.user_id
 
 

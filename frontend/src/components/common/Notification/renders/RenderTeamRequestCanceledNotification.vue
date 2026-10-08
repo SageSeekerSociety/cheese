@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="canceler" keypath="notifications.TEAM_REQUEST_CANCELED.title" tag="span">
+      <i18n-t v-if="canceler" scope="global" keypath="notifications.TEAM_REQUEST_CANCELED.title" tag="span">
         <template #canceler><UserRef :handle="canceler.handle" :name="canceler.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>

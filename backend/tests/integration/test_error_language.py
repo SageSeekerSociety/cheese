@@ -53,23 +53,25 @@ def test_a_permission_refusal_carries_its_key(client, bearer):
 
 def test_a_refusal_asked_for_as_a_stream_carries_its_key(client, bearer):
     """A client that asked for a stream gets the refusal as one ``event: error``
-    frame, whose data carries the same key an error body does."""
+    frame whose data is the very body the JSON answer would carry — the key
+    beside the sentence, and the fields a caller switches on."""
     project_id = new_project(client, name="Demo", owner=OWNER)["id"]
     invitation = _invite(client, bearer, project_id, "alice").json()["data"]["id"]
+    path = f"/invitations/{invitation}/respond"
+    body = {"accept": True}
 
     answered = client.post(
-        f"/invitations/{invitation}/respond",
-        json={"accept": True},
-        headers={**bearer("mallory"), "Accept": "text/event-stream"},
+        path, json=body, headers={**bearer("mallory"), "Accept": "text/event-stream"}
     )
+    refused = client.post(path, json=body, headers=bearer("mallory"))
 
     assert answered.status_code == 403
     event, data = answered.text.strip().split("\n")
     assert event == "event: error"
-    assert json.loads(data.removeprefix("data: ")) == {
-        "message": "只有被邀请的人能答复这张邀请",
-        "i18n": {"key": "inviteNotYours", "params": {}},
-    }
+    frame = json.loads(data.removeprefix("data: "))
+    assert frame == refused.json()
+    assert frame["error"]["i18n"] == {"key": "inviteNotYours", "params": {}}
+    assert frame["error"]["name"] == "ForbiddenError"
 
 
 def test_an_error_said_in_plain_words_carries_no_key(client, bearer):

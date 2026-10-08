@@ -16,7 +16,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.topics import DbSession
 from app.core.errors import AuthenticationRequiredError, NotFoundError
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -47,7 +47,7 @@ async def join_channel(
     _, actor = await _person(db, resolver, topic_id)
     await TopicMemberService(db).join(topic_id, actor.handle)
     await db.commit()
-    await announce_stale(topic_id, "topics")
+    await announce_stale(topic_id, "topics", id=topic_id)
     return ok({"topic_id": str(topic_id), "joined": True})
 
 
@@ -60,7 +60,7 @@ async def leave_channel(
     _, actor = await _person(db, resolver, topic_id)
     await TopicMemberService(db).leave(topic_id, actor.handle)
     await db.commit()
-    await announce_stale(topic_id, "topics")
+    await announce_stale(topic_id, "topics", id=topic_id)
     return ok({"topic_id": str(topic_id), "joined": False})
 
 
@@ -75,7 +75,7 @@ async def set_description(
     await db.flush()
     out = TopicOut.model_validate(room).model_dump(mode="json")
     await db.commit()
-    await announce_stale(topic_id, "topics")
+    await announce_stale(topic_id, "topics", id=topic_id)
     return ok(out)
 
 
@@ -95,5 +95,5 @@ async def set_members_only(
     )
     out = TopicOut.model_validate(room).model_dump(mode="json")
     await db.commit()
-    await announce_stale(topic_id, "topics")
+    await announce_stale(topic_id, "topics", id=topic_id)
     return ok(out)

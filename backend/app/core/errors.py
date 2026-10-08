@@ -40,14 +40,16 @@ def _with_key(error: dict, message: object) -> dict:
     return error if key is None else {**error, "i18n": key}
 
 
-def _event_error(message: object) -> str:
+def _event_error(body: dict) -> str:
     """An ``event: error`` frame for a client that asked for a stream.
 
-    ``data`` is JSON, like every other frame on the streams we serve: the
-    sentence as ``message`` and, when it was said with ``say()``, its key as
-    ``i18n`` — the same ``{key, params}`` an error body carries."""
-    data = _with_key({"message": str(message)}, message)
-    return f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    ``data`` is JSON, like every other frame on the streams we serve, and it is
+    the very body the JSON branch would have answered with — the sentence as
+    ``message``, plus the ``error`` object carrying ``name``, ``data`` and
+    ``retryable`` (and ``i18n`` when the sentence came from ``say()``). A caller
+    then tells one condition from another the same way whichever way the
+    refusal arrived, instead of branching on the sentence."""
+    return f"event: error\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
 class BaseError(Exception):
@@ -278,7 +280,7 @@ async def base_error_handler(
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
     if "text/event-stream" in accept:
-        body = _event_error(exc.args[0])
+        body = _event_error(exc.to_response_body())
         return PlainTextResponse(
             content=body, status_code=exc.status_code, media_type="text/event-stream"
         )
@@ -303,7 +305,9 @@ async def http_exception_handler(
     # did not mention it.
     headers = getattr(exc, "headers", None)
     if "text/event-stream" in accept:
-        body = _event_error(detail)
+        body = _event_error(
+            format_error_response(status_code=exc.status_code, message=detail)
+        )
         return PlainTextResponse(
             content=body,
             status_code=exc.status_code,
@@ -337,19 +341,18 @@ async def validation_exception_handler(
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
     message = _validator_sentence(exc) or "Invalid request parameters"
-    if "text/event-stream" in accept:
-        body = _event_error(message)
-        return PlainTextResponse(
-            content=body,
-            status_code=HTTP_400_BAD_REQUEST,
-            media_type="text/event-stream",
-        )
     # A validator's own `raise ValueError(...)` travels in `ctx["error"]` as the
     # exception object, which `JSONResponse` cannot serialize: the handler then
     # raised, and any body refused by a custom validator answered 500. Its
     # sentence is what the caller needs, so it goes out as text.
     data = {"details": jsonable_encoder(exc.errors(), custom_encoder={Exception: str})}
     body = BadRequestError(message, data=data).to_response_body()
+    if "text/event-stream" in accept:
+        return PlainTextResponse(
+            content=_event_error(body),
+            status_code=HTTP_400_BAD_REQUEST,
+            media_type="text/event-stream",
+        )
     return JSONResponse(status_code=HTTP_400_BAD_REQUEST, content=body)
 
 
