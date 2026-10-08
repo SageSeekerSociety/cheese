@@ -10,12 +10,15 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep, require_seated_in_its_room
+from app.api.deps import get_chat_service
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
 from app.core.db import get_db
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
+from app.domain.agent.chat import ChatService
+from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
@@ -182,28 +185,56 @@ async def write_file(
     project_id: uuid.UUID,
     body: dict,
     db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
 ) -> dict:
     """Save an edited workspace file (人改文件即指令). Writes to the topic's
     worktree.
 
-    `version` is the one the caller read. Sending it makes the write conditional:
-    if 芝士 (or anyone else) wrote the file in between, the save is rejected with
-    409 instead of silently erasing their work, and the panel shows the conflict.
+    `version` is the one the caller read and `base` the text it read. If the
+    file moved on in between, the two sets of edits are merged against `base`:
+    a clean merge is saved, overlapping edits answer 409 with the regions to
+    pick from. A person's save is then said in the task, and the task's AI
+    teammate is told before its next tool call to re-read the file.
     """
     await ProjectService(db).get_or_404(project_id)
     path = (body.get("path") or "").strip()
     content = body.get("content") or ""
     version = body.get("version") or None
+    base = body.get("base")
     if not path:
         raise ValidationError("path is required")
     if task is None:
         raise ValidationError(say("chooseTaskToEdit"))
-    saved = await ProjectFiles(db, project_id, task, release_session=True).write(
-        path, content, version
+    actor = await resolver.resolve(project_id=project_id, topic_id=task)
+    saved = await ProjectFiles(db, project_id, task, release_session=True).save(
+        path, content, version, base if isinstance(base, str) else None
     )
-    return ok({"path": path, "version": saved["version"], "source": "live"})
+    row = await TaskService(db).get(task)
+    if row is not None and actor.authenticated and actor.via != "cheese":
+        said = await announce_edit(
+            db,
+            task=row,
+            who=actor.handle,
+            path=path,
+            previous=saved["previous"],
+            content=saved.get("content", content),
+        )
+        await db.commit()
+        if said is not None:
+            line, told = said
+            await chat.notify_running_turn(row.id, told, blocks=[line.id])
+    return ok(
+        {
+            "path": path,
+            "version": saved["version"],
+            "source": "live",
+            "merged": saved["merged"],
+            **({"content": saved["content"]} if saved["merged"] else {}),
+        }
+    )
 
 
 @router.get("/{project_id}/git/diff", dependencies=[Depends(require_project_access)])

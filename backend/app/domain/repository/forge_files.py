@@ -27,6 +27,7 @@ from app.domain.project.forge import (
     status_client,
     tokens_for_project,
 )
+from app.domain.repository import merge3
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
@@ -534,6 +535,43 @@ class ProjectFiles:
         return await self.live(
             "write", path=clean_path(path), content=content, version=version
         )
+
+    async def save(
+        self, path: str, content: str, version: str | None, base: str | None
+    ) -> dict:
+        """A person's save, merged with whatever changed the file since they read it.
+
+        `base` is the text they read, the one `version` names. When the file
+        moved on in between, their edits and the other ones are merged against
+        it: a clean merge is written, overlapping edits come back as a 409
+        carrying the regions to pick from and the version to save over. Without
+        a `base` (or one that is not the text `version` names) there is nothing
+        to merge against, and the save is refused as before. Answers the saved
+        version and the text it replaced.
+        """
+        try:
+            saved = await self.write(path, content, version)
+            return {**saved, "previous": base, "merged": False}
+        except ConflictError:
+            if base is None or content_version(base.encode()) != version:
+                raise
+        now = await self.text(path, "live")
+        theirs, theirs_version = now.get("content"), now.get("version")
+        if theirs is None:
+            raise ConflictError(say("taskFileChangedReload"))
+        regions = merge3.merge(base, content, theirs)
+        merged = merge3.merged_text(regions)
+        if merged is None:
+            raise ConflictError(
+                say("taskFileEditsOverlap"),
+                data={
+                    "regions": [region.as_dict() for region in regions],
+                    "version": theirs_version,
+                    "base": theirs,
+                },
+            )
+        saved = await self.write(path, merged, theirs_version)
+        return {**saved, "previous": theirs, "merged": True, "content": merged}
 
     async def write_bytes(self, path: str, data: bytes, version: str):
         task = await self.task()
