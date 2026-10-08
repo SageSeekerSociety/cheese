@@ -60,7 +60,9 @@ class TestCommonErrors:
     def test_not_found_error(self) -> None:
         error = NotFoundError()
         assert error.status_code == HTTP_404_NOT_FOUND
-        assert error.args[0] == "Resource not found"
+        # The default sentence is a key, so a screen reads it in its own
+        # language instead of the server's English (see core/sentences.py).
+        assert error.args[0].descriptor() == {"key": "resourceNotFound", "params": {}}
 
     def test_not_found_for_resource(self) -> None:
         error = NotFoundError.for_resource("team", 123)
