@@ -24,10 +24,10 @@ from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -104,7 +104,7 @@ def test_a_check_in_read_before_the_backend_changed_ends_with_that_work(client):
     # arrives on the subscription owned by the service that started it.
     old_backend = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old_backend
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 看一眼 CI"})
         assert _wait_for(
             client, room, lambda: before.sessions and _written(before, room)
@@ -201,7 +201,7 @@ def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client)
         compute=stub_compute(channel),
     )
     app.dependency_overrides[get_chat_service] = lambda: chat
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 看一眼 CI"})
         assert _wait_for(
             client, room, lambda: channel.sessions and _written(channel, room)

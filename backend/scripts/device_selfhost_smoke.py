@@ -169,8 +169,11 @@ async def main() -> int:
 
     frames: list[dict] = []
     url = f"{BASE.replace('http://', 'ws://').replace('https://', 'wss://')}"
-    url += f"/topics/{topic_id}/chat?token={token}"
+    url += f"/rooms/live?token={token}"
     async with websockets.connect(url, open_timeout=20) as sock:
+        await sock.send(
+            json.dumps({"type": "subscribe", "topic": str(topic_id), "token": token})
+        )
         await sock.send(
             json.dumps(
                 {

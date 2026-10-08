@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const listBlocks = vi.fn()
 const listTopicMembers = vi.fn()
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../lib/libraryApi', async () => ({
   ...(await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')),
   listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
@@ -20,7 +21,6 @@ vi.mock('@/api', async () => {
     listTopicMembers: (...args: unknown[]) => listTopicMembers(...args),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
-    chatWsUrl: () => 'ws://test/chat',
   }
 })
 

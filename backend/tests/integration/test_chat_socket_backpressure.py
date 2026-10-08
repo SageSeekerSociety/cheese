@@ -1,15 +1,17 @@
-"""A connection that stops reading is closed, not buffered without bound.
+"""A room that stops being read is ended, not buffered without bound.
 
 The frames a subscriber has not read are held by the process, not by the
 socket, and uvicorn's ping/pong cannot see the backlog: a consumer that keeps
 answering pings while falling further behind looks healthy — a live socket with
 a red dot — right up to the moment the process runs out of memory. So the
 broker budgets each subscriber's queue in bytes (`MAX_SUBSCRIBER_BYTES`) and,
-past that, stops feeding it and hands its relay a sentinel to hang up on (1013).
+past that, stops feeding it and hands its relay a sentinel to end that room
+on (`closed`, code 1013). The other rooms on the same connection are not behind
+and keep their feed.
 
-It is a close and not an `error` frame the client would have to learn: a drop is
-already something this socket's client recovers from — it reconnects, refetches
-history and resumes — so a slow reader pays with a reconnect instead of the
+It is the room ending and not an `error` frame the client would have to learn: a
+drop is already something the client recovers from — it resubscribes, refetches
+history and resumes — so a slow reader pays with a resubscribe instead of the
 process paying with memory.
 """
 
@@ -18,8 +20,8 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.domain.agent.realtime.broker import get_broker
 from tests.integration.conftest import (
-    chat_ws_url,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -41,7 +43,7 @@ def test_a_socket_that_stops_reading_is_closed_rather_than_buffered(
     monkeypatch.setattr(broker, "_max_subscriber_bytes", 200)
     over_budget = {"type": "delta", "text": "x" * 150}
 
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+    with room_socket(client, tid, "alice") as ws:
 
         async def burst() -> None:
             # Nothing awaits a suspension point between these two publishes, so

@@ -16,7 +16,6 @@ vi.mock('@/api', () => ({
   ApiError: class extends Error {},
   authToken: () => '',
   BASE: '/api',
-  chatWsUrl: vi.fn(),
   listMyDevices: vi.fn(async () => ({ devices: [] })),
   listProjects: vi.fn(async () => ({ data: [{ id: 'p1', name: 'Alpha' }] })),
   listTeamDevices: vi.fn(async () => ({

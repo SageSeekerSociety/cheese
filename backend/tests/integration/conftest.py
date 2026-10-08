@@ -13,6 +13,7 @@ this by creating one session-scoped anyio blocking portal and:
   reuses it instead of spinning up a fresh per-instance loop.
 """
 
+import contextlib
 import time
 import uuid
 from collections.abc import Generator
@@ -411,16 +412,76 @@ def open_task(
     return task
 
 
-def chat_ws_url(topic_id: str, handle: str) -> str:
-    """The topic's chat WebSocket, authenticated as ``handle``.
+class RoomSocket:
+    """One room watched on the rooms socket, read the way a room's own socket
+    used to be: frames without their `topic`, a frame sent goes to this room,
+    and the room's `closed` (a refusal, an overflow) ends it like a close."""
+
+    def __init__(self, ws, topic_id: str) -> None:
+        self._ws = ws
+        self.topic_id = str(topic_id)
+        self._held: list[dict] = []
+
+    def _next(self) -> dict:
+        if self._held:
+            return self._held.pop(0)
+        while True:
+            frame = self._ws.receive_json()
+            if frame.get("topic") in (self.topic_id, None):
+                return frame
+
+    def receive_json(self) -> dict:
+        from starlette.websockets import WebSocketDisconnect
+
+        frame = self._next()
+        if frame.get("type") == "closed":
+            raise WebSocketDisconnect(code=frame.get("code", 1008))
+        frame.pop("topic", None)
+        return frame
+
+    def send_json(self, frame: dict) -> None:
+        self._ws.send_json({**frame, "topic": self.topic_id})
+
+    @property
+    def portal(self):
+        return self._ws.portal
+
+    def opened(self) -> "RoomSocket":
+        """Wait for the subscription to be acknowledged, as a connect used to
+        wait for the accept: a message posted after this is heard. A refusal is
+        kept for the test to read."""
+        while True:
+            frame = self._ws.receive_json()
+            if frame.get("topic") not in (self.topic_id, None):
+                continue
+            if frame.get("type") == "subscribed":
+                return self
+            self._held.append(frame)
+            if frame.get("type") == "closed":
+                return self
+
+
+@contextlib.contextmanager
+def room_socket(
+    client, topic_id: str, handle: str | None, *, token: str | None = None
+) -> Generator[RoomSocket]:
+    """``topic_id`` watched on the rooms socket, as ``handle`` (or with a raw
+    ``token``; ``handle=None`` and no token subscribes without one).
 
     The socket requires a session token (``app.api.routes.chat``), so tests take
     the same path the browser does. It only carries what lands in the room; a
     message is sent with :func:`post_message`. ``handle`` must be able to reach
     the topic — its roster owner, or a member/owner of its project — or the
-    connect is refused with ``code: forbidden``.
+    subscription is refused with ``code: forbidden``.
     """
-    return f"/topics/{topic_id}/chat?token={session_token(handle)}"
+    credential = (
+        token if token is not None else (session_token(handle) if handle else "")
+    )
+    # The connection is a signed-in page's; what is judged is the subscription.
+    connect = session_token(handle or "alice")
+    with client.websocket_connect(f"/rooms/live?token={connect}") as ws:
+        ws.send_json({"type": "subscribe", "topic": str(topic_id), "token": credential})
+        yield RoomSocket(ws, topic_id).opened()
 
 
 def in_thread(client, room_id: str, handle: str) -> str:

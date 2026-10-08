@@ -24,10 +24,10 @@ from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -118,7 +118,7 @@ def _say(client, topic_id: str, text: str) -> None:
 
     这是 2026-09-27 CI 上两条随机红的成因之一（`-n auto` 并发下更常撞上）：先收到
     上一轮的 `done` 就返回，紧接着读到的 `after.last_prompt` 还是上一轮的样子。"""
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": f"{text} @芝士"})
         landed = False
         while True:
@@ -260,7 +260,7 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
         workspace_root="/tmp/replay-ws",
         compute=stub_compute(before),
     )
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": f"{first} @芝士"})
         while True:
             frame = ws.receive_json()

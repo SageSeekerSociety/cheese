@@ -25,10 +25,10 @@ from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -121,7 +121,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
     before = FirstPromptOnly()
     old_backend = service(before)
     app.dependency_overrides[get_chat_service] = lambda: old_backend
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 看一眼 CI"})
         assert _wait_for(
             client, room, lambda: before.sessions and _written(before, room)

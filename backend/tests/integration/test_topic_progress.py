@@ -16,13 +16,13 @@ import pytest
 from app.api.deps import get_broker
 from app.core.sandbox_auth import mint_scoped_token
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     open_task,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -71,7 +71,7 @@ def _task(client, room_id: str) -> tuple[str, dict]:
 def _chat(client, topic_id: str) -> list[dict]:
     """Run one turn, returning every frame it produced."""
     frames: list[dict] = []
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "@芝士 hi"})
         while True:
             frame = ws.receive_json()
@@ -106,7 +106,7 @@ CHECKLIST = "✓ 核实 issue 论断\n✱ 写实现\n○ 补测试"
 
 def test_the_first_write_posts_the_checklist_as_the_agents_message(client):
     topic, headers = _room(client)
-    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+    with room_socket(client, topic, "user-1") as ws:
         response = _write(client, topic, headers, PLAN)
         assert response.status_code == 200, response.text
         message = _frame(ws, "assistant_block")
@@ -131,7 +131,7 @@ def test_later_writes_edit_that_same_message(client):
     topic, headers = _room(client)
     first = _write(client, topic, headers, PLAN).json()["data"]["message_id"]
     done = [{**t, "status": "completed"} for t in PLAN]
-    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+    with room_socket(client, topic, "user-1") as ws:
         response = _write(client, topic, headers, done)
         assert response.status_code == 200, response.text
         edited = _frame(ws, "block_updated")
@@ -165,7 +165,7 @@ def test_the_last_write_puts_the_result_under_the_list(client):
     topic, headers = _room(client)
     first = _write(client, topic, headers, PLAN).json()["data"]["message_id"]
     done = [{**t, "status": "completed"} for t in PLAN]
-    with client.websocket_connect(chat_ws_url(topic, "user-1")) as ws:
+    with room_socket(client, topic, "user-1") as ws:
         _write(client, topic, headers, done, result="接口改好了，测试全过")
         edited = _frame(ws, "block_updated")
     assert edited["id"] == first
@@ -325,7 +325,7 @@ def _messages_by(client, topic_id: str, author: str) -> list[dict]:
 def test_a_person_posts_a_checklist_as_their_own_message(client):
     room = _shared_room(client)
     alice = session_auth_headers("alice")
-    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+    with room_socket(client, room, "bob") as bob:
         response = _write(client, room, alice, PLAN)
         assert response.status_code == 200, response.text
         seen = _frame(bob, "assistant_block")
@@ -342,7 +342,7 @@ def test_a_persons_next_write_edits_their_checklist_and_new_starts_another(clien
     alice = session_auth_headers("alice")
     first = _write(client, room, alice, PLAN).json()["data"]["message_id"]
     done = [{**t, "status": "completed"} for t in PLAN]
-    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+    with room_socket(client, room, "bob") as bob:
         assert _write(client, room, alice, done).status_code == 200
         edited = _frame(bob, "block_updated")
     assert edited["id"] == first

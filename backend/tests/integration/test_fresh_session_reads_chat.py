@@ -15,10 +15,10 @@ from pathlib import Path
 
 from app.domain.agent_session.services import AgentSessionService
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -64,7 +64,7 @@ def _messages(client, room: str) -> int:
 
 
 def _turn(client, room: str, text: str) -> None:
-    with client.websocket_connect(chat_ws_url(room, "user-1")) as ws:
+    with room_socket(client, room, "user-1") as ws:
         post_message(client, room, "user-1", {"content": text})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass

@@ -40,8 +40,10 @@ function readTaskList(path: string): Promise<ListPayload<RoomTask>> {
 
 // 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
 // → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
-export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
-  return readTaskList(`/projects/${encodeURIComponent(projectId)}/tasks`)
+// `open` 只要还在进行的：侧栏只挂这些，而已经关掉的是它们的十几倍。
+export function listProjectTasks(projectId: string, opts: { open?: boolean } = {}): Promise<ListPayload<RoomTask>> {
+  const path = `/projects/${encodeURIComponent(projectId)}/tasks`
+  return readTaskList(opts.open ? `${path}?status=open` : path)
 }
 
 /** Tasks in this room, each with its own branch and delivery. */

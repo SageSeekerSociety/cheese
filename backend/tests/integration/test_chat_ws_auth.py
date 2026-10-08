@@ -13,11 +13,13 @@ possible:
 
 The socket no longer carries messages at all — a message is a POST to
 `/topics/{id}/messages`, authenticated per request — so the second defect has
-nowhere left to live. The connect check still has exactly three exits —
+nowhere left to live. Watching a room still has exactly three refusals —
 `auth_required`, `auth_expired`, `forbidden` — and every one of them is pinned
 below, because the client latches on the code: one the frontend does not
 recognise is indistinguishable from a dropped connection, so it reconnects
-forever and buries the reason.
+forever and buries the reason. One connection carries every room a page
+watches, and each room is judged by the credential its own subscription
+carries.
 """
 
 import uuid
@@ -25,9 +27,9 @@ import uuid
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     open_task,
     post_project,
+    room_socket,
     session_auth_headers,
     session_token,
 )
@@ -53,7 +55,7 @@ def test_expired_token_is_refused_not_downgraded(client):
     _, tid = _project_topic(client, owner="alice")
     stale = session_token("alice", ttl_s=-60)
 
-    with client.websocket_connect(f"/topics/{tid}/chat?token={stale}") as ws:
+    with room_socket(client, tid, None, token=stale) as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "auth_expired"
@@ -70,7 +72,7 @@ def test_expired_token_is_refused_not_downgraded(client):
 def test_garbage_token_is_refused(client):
     """A malformed token is the same failure as an expired one, not 'no token'."""
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(f"/topics/{tid}/chat?token=not-a-jwt") as ws:
+    with room_socket(client, tid, None, token="not-a-jwt") as ws:
         frame = ws.receive_json()
     assert frame["type"] == "error"
     assert frame["code"] == "auth_expired"
@@ -83,7 +85,7 @@ def test_garbage_token_is_refused(client):
 def test_tokenless_caller_cannot_post_as_anyone(client):
     """No token at all → refused, so `author` in the body can't be forged."""
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(f"/topics/{tid}/chat") as ws:
+    with room_socket(client, tid, None) as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "auth_required"
@@ -101,6 +103,26 @@ def test_tokenless_caller_cannot_post_as_anyone(client):
     assert _blocks(client, tid) == []
 
 
+def test_a_connection_that_cannot_be_identified_is_refused(client):
+    """The connection itself needs a token that verifies, and says which of the
+    two sign-in failures it is before closing."""
+    from starlette.websockets import WebSocketDisconnect
+
+    for url, code in (
+        ("/rooms/live?token=not-a-jwt", "auth_expired"),
+        ("/rooms/live", "auth_required"),
+    ):
+        with client.websocket_connect(url) as ws:
+            frame = ws.receive_json()
+            assert (frame["type"], frame["code"]) == ("error", code)
+            try:
+                ws.receive_json()
+            except WebSocketDisconnect as closed:
+                assert closed.code == 1008
+            else:
+                raise AssertionError("the connection stayed open")
+
+
 def test_authenticated_non_member_is_refused_as_forbidden(client):
     """The third exit: a real login, but not this room's member.
 
@@ -111,7 +133,7 @@ def test_authenticated_non_member_is_refused_as_forbidden(client):
     """
     _, tid = _project_topic(client, owner="alice")
 
-    with client.websocket_connect(chat_ws_url(tid, "mallory")) as ws:
+    with room_socket(client, tid, "mallory") as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "forbidden"
@@ -129,7 +151,7 @@ def test_the_socket_writes_nothing(client):
     """A message frame on the socket is refused, not stored: the one way a
     message enters a room is the POST everyone uses."""
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+    with room_socket(client, tid, "alice") as ws:
         ws.send_json({"type": "message", "content": "hello"})
         frame = ws.receive_json()
         assert frame["type"] == "error"
@@ -142,7 +164,7 @@ def test_a_member_socket_answers_the_liveness_ping(client):
     """A page waiting for 芝士 sends nothing; the ping is how it learns the
     link is still there, so it must be answered without posting anything."""
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+    with room_socket(client, tid, "alice") as ws:
         ws.send_json({"type": "ping"})
         assert ws.receive_json() == {"type": "pong"}
     assert _blocks(client, tid) == []
@@ -170,7 +192,7 @@ def test_a_peer_that_drops_under_a_send_ends_the_socket_quietly(client, monkeypa
 
     monkeypatch.setattr(WebSocket, "send", send_to_a_dropped_peer)
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+    with room_socket(client, tid, "alice") as ws:
         ws.send_json({"type": "ping"})
         assert ws.receive_json() == {"type": "pong"}
         peer_gone = True
@@ -217,7 +239,7 @@ def test_a_tasks_channel_refuses_someone_outside_its_room(client):
     _, room = _project_topic(client, owner="alice")
     card = _task(client, room)
 
-    with client.websocket_connect(chat_ws_url(card, "mallory")) as ws:
+    with room_socket(client, card, "mallory") as ws:
         frame = ws.receive_json()
     assert frame["type"] == "error"
     assert frame["code"] == "forbidden"
@@ -230,7 +252,7 @@ def test_a_member_watching_a_task_sees_its_workers_checklist(client):
     card = _task(client, room)
     agent = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=card)}
 
-    with client.websocket_connect(chat_ws_url(card, "alice")) as ws:
+    with room_socket(client, card, "alice") as ws:
         # The pong says the subscription is live; the task's own session may
         # already be talking on the channel ahead of it.
         ws.send_json({"type": "ping"})
@@ -248,3 +270,57 @@ def test_a_member_watching_a_task_sees_its_workers_checklist(client):
     assert [(i["subject"], i["status"]) for i in frame["items"]] == [
         ("改接口", "in_progress")
     ]
+
+
+def _said(client, topic_id: str, text: str) -> None:
+    sent = client.post(
+        f"/topics/{topic_id}/messages",
+        json={"content": text, "request_id": str(uuid.uuid4())},
+        headers=session_auth_headers("alice"),
+    )
+    assert sent.status_code == 200, sent.text
+
+
+def _until(ws, predicate) -> dict:
+    while True:
+        frame = ws.receive_json()
+        if predicate(frame):
+            return frame
+
+
+def test_one_connection_carries_each_room_to_its_own_watcher(client):
+    """A page watches several rooms on one connection: what lands in a room
+    arrives tagged with that room, a room no longer watched sends nothing more,
+    and a room this person may not see is refused without costing the others."""
+    pid, first = _project_topic(client, owner="alice")
+    second = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "T2"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    _, elsewhere = _project_topic(client, owner="bob")
+
+    def text_of(frame: dict) -> str | None:
+        return (frame.get("block") or {}).get("content")
+
+    with client.websocket_connect(f"/rooms/live?token={session_token('alice')}") as ws:
+        for topic in (first, second, elsewhere):
+            ws.send_json(
+                {"type": "subscribe", "topic": topic, "token": session_token("alice")}
+            )
+        refused = _until(ws, lambda f: f.get("topic") == elsewhere)
+        assert (refused["type"], refused["code"]) == ("error", "forbidden")
+        assert _until(ws, lambda f: f.get("topic") == elsewhere)["type"] == "closed"
+        for topic in (first, second):
+            ws.send_json({"type": "ping", "topic": topic})
+            _until(ws, lambda f, t=topic: f == {"type": "pong", "topic": t})
+
+        _said(client, second, "第二个房间的话")
+        landed = _until(ws, lambda f: f.get("type") == "user_block")
+        assert (landed["topic"], text_of(landed)) == (second, "第二个房间的话")
+
+        ws.send_json({"type": "unsubscribe", "topic": second})
+        _said(client, second, "没人在看了")
+        _said(client, first, "第一个房间的话")
+        landed = _until(ws, lambda f: f.get("type") == "user_block")
+        assert (landed["topic"], text_of(landed)) == (first, "第一个房间的话")

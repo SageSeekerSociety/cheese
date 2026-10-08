@@ -9,6 +9,7 @@ import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../lib/libraryApi', async () => ({
   ...(await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')),
   listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
@@ -21,7 +22,6 @@ vi.mock('@/api', async () => {
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
-    chatWsUrl: () => 'ws://test/chat',
   }
 })
 

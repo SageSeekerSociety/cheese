@@ -24,13 +24,13 @@ from app.main import app
 from tests.ask_fixtures import active_ask, question_row, wait_turn_idle
 from tests.conftest import StubChannel, seed_user, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     post_message,
     post_project,
     room_agent_headers,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -86,7 +86,7 @@ def _prompts(stub_hooks, monkeypatch) -> list[str]:
 
 def _say(client, room, handle, body) -> dict:
     """``handle`` sends a message and the turn it starts, if any, runs out."""
-    with client.websocket_connect(chat_ws_url(room, handle)) as ws:
+    with room_socket(client, room, handle) as ws:
         sent = post_message(client, room, handle, body)
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
