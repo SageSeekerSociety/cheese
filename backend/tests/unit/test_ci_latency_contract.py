@@ -59,13 +59,14 @@ def test_remote_execution_keeps_every_main_push():
 
 
 def test_backend_lint_is_a_separate_hosted_job():
-    """Lint is its own job, kept out of `test` (which must not re-run
-    ruff/pyright), and it runs on a GitHub-hosted runner: the repository is
-    public, hosted minutes are free, and nothing in lint needs the pool. What
-    this test guards is the split itself — a separate lint job, never
+    """Lint runs in the `static` job, kept out of `test` (which must not re-run
+    ruff/pyright), on a GitHub-hosted runner: the repository is public, hosted
+    minutes are free, and nothing in lint needs the pool. `static` also holds
+    the other service-free checks, so they share one runner's queue wait. What
+    this test guards is the split itself — lint in its own job, never
     duplicated inside `test`."""
     workflow = load_workflow("test.yml")
-    lint = workflow["jobs"]["lint"]
+    lint = workflow["jobs"]["static"]
     assert lint["runs-on"] == "ubuntu-latest"
 
     # The commands themselves moved into .pre-commit-config.yaml, so what is
@@ -86,6 +87,34 @@ def test_backend_lint_is_a_separate_hosted_job():
     )
     assert "ruff" not in test_commands
     assert "pyright" not in test_commands
+
+
+def test_merged_checks_are_not_hidden_by_an_earlier_failure():
+    static = load_workflow("test.yml")["jobs"]["static"]
+    for name in (
+        "Fetch main for comparison",
+        "Added migrations are safe under the running release",
+    ):
+        condition = step_named(static, name).get("if", "")
+        assert "!cancelled()" in condition, name
+        assert "steps.install.outcome == 'success'" in condition, name
+
+    guards = load_workflow("repo-guards.yml")["jobs"]["guards"]
+    for name in (
+        "Fetch main for comparison",
+        "Fetch release tags for the changelog",
+        "Build the docs site",
+    ):
+        assert "!cancelled()" in step_named(guards, name).get("if", ""), name
+    node = next(
+        s
+        for s in guards["steps"]
+        if s.get("uses", "").startswith("actions/setup-node@")
+    )
+    assert "!cancelled()" in node.get("if", "")
+    build = step_named(guards, "Build the docs site")
+    assert "steps.docs_node.outcome == 'success'" in build["if"]
+    assert "steps.docs_tags.outcome == 'success'" in build["if"]
 
 
 def test_ci_service_images_do_not_depend_on_docker_hub():

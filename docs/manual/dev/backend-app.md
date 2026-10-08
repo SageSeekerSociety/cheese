@@ -170,7 +170,7 @@ covers:
 结构由 Alembic 管，`lifespan` 里不建表。约定：
 
 - 迁移放在 `backend/alembic/versions/`，配置在 `backend/alembic.ini` 与 `backend/alembic/env.py`。
-- **一条链，一个 head**。并行开发各写一支会把链分叉，CI 的 `migration-heads` job（`.github/workflows/test.yml`）跑 `uv run alembic heads` 数 `(head)` 的个数，不等于 1 就红，并提示「rechain 到当前 head 或跑 `alembic merge heads`」。
+- **一条链，一个 head**。并行开发各写一支会把链分叉，CI 的 `backend / static` job（`.github/workflows/test.yml`）跑 `uv run alembic heads` 数 `(head)` 的个数，不等于 1 就红，并提示「rechain 到当前 head 或跑 `alembic merge heads`」。
 - `backend/alembic/HEAD` 这个文件记着当前 head 的 revision id，由 pre-commit 的 `merging would not fork the alembic chain` 钩子（只对 `^backend/alembic/` 生效）维护 —— 它同时检查 HEAD 文件点的是链的 head、以及这次改动不会分叉。
 
 退役的列也留在迁移里而不是删文件（例如 `971b4765fa69_drop_ccproxy_columns.py`），`downgrade` 可能只把空列加回来。
