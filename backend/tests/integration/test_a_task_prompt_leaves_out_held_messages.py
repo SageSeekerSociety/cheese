@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import AuthorType, Block, BlockKind
@@ -84,6 +85,7 @@ def test_a_task_turn_sends_without_a_message_held_elsewhere(client):
     project, room = uuid.UUID(data["id"]), data["root_topic_id"]
     channel = StubChannel()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/task-held-ws",

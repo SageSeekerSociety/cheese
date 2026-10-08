@@ -9,6 +9,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.project.services import ProjectService
@@ -32,6 +33,7 @@ async def _three_turns(factory, tmp_path) -> list[tuple[str, str]]:
     话题、项目总览也改了；第二轮之后什么都没变。"""
     screen = Screen()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=ComputePool([screen.runtime], screen.name),
         base_system_prompt="You are Cheese.",

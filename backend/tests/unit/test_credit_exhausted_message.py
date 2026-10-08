@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService, _is_out_of_credit
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import AuthorType
@@ -146,6 +147,7 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
 
     screen = _CreditsRefusedScreen()
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=db_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -169,6 +171,7 @@ async def test_an_unstamped_stop_failure_keeps_todays_notice(db_factory, tmp_pat
 
     screen = _CreditsRefusedScreen()
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=db_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -223,6 +226,7 @@ async def test_a_refused_turn_ending_says_when_the_credits_come_back(
         await session.commit()
 
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=db_factory,
         compute=stub_compute(_CreditsRefusedScreen()),
         base_system_prompt="你是芝士。",

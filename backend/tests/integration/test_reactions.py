@@ -8,6 +8,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.api.auth import ActorResolver
 from app.domain.agent.chat import ChatService
 from tests.conftest import finish_turn, stub_compute
@@ -217,6 +218,7 @@ async def test_resume_turn_adds_no_receipt(business_db_factory, tmp_path):
     factory = business_db_factory  # type: ignore[attr-defined]
 
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),

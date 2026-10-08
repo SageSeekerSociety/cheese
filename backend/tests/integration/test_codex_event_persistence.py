@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.codex.backlog import CodexBacklog
@@ -35,6 +36,7 @@ async def test_replayed_codex_reply_is_not_persisted_twice(client, tmp_path):
     async def deliver(item_id):
         # A fresh service and assembler represent a backend reconnect/replay.
         service = ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=factory,
             base_system_prompt="fixture",
             workspace_root=str(tmp_path),
@@ -165,6 +167,7 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
     # that teammate, whoever the room's current agent is.
     seat = client.portal.call(teammate)
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="fixture",
         workspace_root=str(tmp_path),
@@ -255,6 +258,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
 
     def service(compute=None):
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="fixture",
             workspace_root=str(tmp_path),

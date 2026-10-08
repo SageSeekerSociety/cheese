@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
@@ -93,6 +94,7 @@ def test_a_check_in_read_before_the_backend_changed_ends_with_that_work(client):
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/taken-across-backends-ws",
@@ -195,6 +197,7 @@ def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client)
     topic = uuid.UUID(room)
     channel = FirstPromptOnly()
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/taken-same-backend-ws",

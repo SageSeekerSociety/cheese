@@ -75,6 +75,7 @@ from app.domain.agent.service import (
     AgentUserEntry,
     proves_output,
 )
+from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
 from app.domain.delivery.receipts import inputs_answered_inside
@@ -82,20 +83,6 @@ from app.domain.room_task.place import PlaceResolver
 from app.domain.run_record import service as run_records
 
 logger = logging.getLogger(__name__)
-
-
-class _WorkRunner(Protocol):
-    """轮次运行器里本模块用到的面（``runtime.AgentWorkRunner``）。
-
-    「这条会话又出活了」和「会话自己开的那一轮，把它在运行器里留的记号收掉」是
-    这条路要说的两句话。类型写在这里而不是 import ``runtime``：那个实例由
-    ``app/api/deps.py`` 建出来，本模块够不着也不该够着 ``app.api`` —— 它从调用
-    方手上拿（``_compute`` 那两处也是这么绑的）。
-    """
-
-    def note_session_output(self, turn_id: uuid.UUID, *, tool: bool) -> None: ...
-
-    def close_turn_the_session_started(self, turn_id: uuid.UUID) -> None: ...
 
 
 class _HookStream(Protocol):
@@ -285,7 +272,7 @@ def _with_log(meta: dict, log: str | None) -> dict:
 async def _drop_takeover_marks(
     sessions,
     live: LiveWork,
-    work_runner: "_WorkRunner",
+    work_runner: "SessionTurnEvents",
     topic_id: uuid.UUID,
     seat: str,
     generation: uuid.UUID,
@@ -325,7 +312,7 @@ async def _drop_takeover_marks(
 async def _bind_user_entry(
     sessions,
     live: LiveWork,
-    work_runner: "_WorkRunner",
+    work_runner: "SessionTurnEvents",
     *,
     topic_id: uuid.UUID,
     seat: str | None,
@@ -429,7 +416,7 @@ async def _consume_hook_event(
     service: _HookStream,
     sessions: async_sessionmaker,
     live: LiveWork,
-    work_runner: _WorkRunner,
+    work_runner: SessionTurnEvents,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
@@ -776,7 +763,7 @@ async def _end_inputs_answered_inside(
     service: _HookStream,
     sessions: async_sessionmaker,
     live: LiveWork,
-    work_runner: _WorkRunner,
+    work_runner: SessionTurnEvents,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,

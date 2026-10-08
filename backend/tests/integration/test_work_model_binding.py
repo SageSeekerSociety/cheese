@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.core.config import settings
 from app.domain.agent import gateway_catalog
 from app.domain.agent.chat import ChatService
@@ -75,6 +76,7 @@ def _card(client, ids) -> dict:
 
 def _chat(factory, tmp_path) -> ChatService:
     return ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(),
         base_system_prompt="你是芝士。",

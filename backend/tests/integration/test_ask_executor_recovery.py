@@ -8,6 +8,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
@@ -36,6 +37,7 @@ def test_recovered_original_executor_takes_busy_input_and_releases_both_batches(
 
     def service(channel):
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(channel.root / "workspace"),

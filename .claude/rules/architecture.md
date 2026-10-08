@@ -38,9 +38,9 @@ measures, how to read it, and today's numbers: `docs/manual/dev/arch-metrics.md`
 ## Backend: the import graph is checked, not assumed
 
 `backend/.importlinter` declares three contracts (import-linter, AST-based, so
-an import inside a function counts too — of the 33 import statements behind the
-29 frozen layer violations, two are at module level (one of them under
-`if TYPE_CHECKING:`), and the rest are inside functions, which is how an import
+an import inside a function counts too — of the 30 import statements behind the
+27 frozen layer violations, one is at module level under
+`if TYPE_CHECKING:`, and the other 29 are inside functions, which is how an import
 that "would never happen" happens):
 
 - **api → domain → core, never backwards.** A route may not reach into a
@@ -62,7 +62,7 @@ the graph rather than transcribed by hand.
 Freeze policy, which is the whole ratchet:
 
 - Every current violation is frozen in the same file as an exact
-  `importer -> imported` pair — 28 + 49 + 153 = 230 today (C1 + C2 + C3). New
+  `importer -> imported` pair — 27 + 49 + 153 = 229 today (C1 + C2 + C3). New
   ones fail CI.
 - No wildcards. `check_boundaries.py` fails (exit 1) on any `*` in the freeze,
   because an exemption that can absorb a file nobody looked at is not an
@@ -89,7 +89,7 @@ lifetime; new ones are an admission, not a habit.
 An `import` inside a function body is invisible to whoever reads the top of the
 module, and to every tool that reads dependencies from module level —
 import-linter sees it, almost nothing else does. It is also the usual way a
-cycle is dodged instead of removed: 27 of the 29 frozen layer violations above
+cycle is dodged instead of removed: 26 of the 27 frozen layer violations above
 are imports inside a function. So such an import either moves to the top of the
 module, or says why it cannot, on the same line or the line directly above:
 

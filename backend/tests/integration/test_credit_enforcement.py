@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select, update
 
+from app.api import deps as session_turn_deps
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.team.models import Team
@@ -352,6 +353,7 @@ async def test_the_gateway_budget_narrows_as_packs_lapse_and_clears_on_reserve(
 
     fake = FakeGateway()
     svc = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=business_db_factory,
         compute=stub_compute(),
         base_system_prompt="",

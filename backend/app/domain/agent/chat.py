@@ -194,6 +194,7 @@ from app.domain.agent.service import (
     AgentToolResult,
     AgentUsage,
 )
+from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
 from app.domain.agent.turn_usage import record_turn_usage, reported_usage
 from app.domain.agent.work_policy import work_policy
@@ -295,6 +296,7 @@ class ChatService(SessionRecovery, RoomTurns):
         base_system_prompt: str,
         workspace_root: str,
         compute: ComputePool,
+        work_runner: SessionTurnEvents,
         profiles: ProfileRegistry | None = None,
         gateway: LlmGateway | None = None,
     ):
@@ -309,6 +311,7 @@ class ChatService(SessionRecovery, RoomTurns):
         # itself out of an SDK client, and building compute out of nothing is
         # exactly what no longer exists.
         self._compute = compute
+        self._work_runner = work_runner
         # 这一进程正在跑的活：按房间/按轮次键住的进程内状态（`hook_work`、
         # `active_turn_ids`、座位锁与房间锁、几张 note 表、`dead_sessions`……）
         # 全在 `live_work.py` 那片叶子里。本对象唯一持有它，处理器按一个方向读
@@ -1370,7 +1373,6 @@ class ChatService(SessionRecovery, RoomTurns):
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
-        from app.api.deps import get_work_runner
         from app.domain.agent.repositories import AgentTurnRepository
 
         try:
@@ -1398,7 +1400,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 # first saw the turn wrote what it knew on the row.
                 row = await AgentTurnRepository(session).get(turn_id)
             if not opened:
-                await get_work_runner().open_turn_the_session_started(
+                await self._work_runner.open_turn_the_session_started(
                     self,
                     topic_id,
                     turn_id,
@@ -1536,13 +1538,11 @@ class ChatService(SessionRecovery, RoomTurns):
         platform_unsolicited: bool,
     ) -> None:
         """Persist and broadcast one event (hook_stream.py)."""
-        from app.api.deps import get_work_runner
-
         return await _consume_hook_event(
             self,
             self._sessions,
             self.live,
-            get_work_runner(),
+            self._work_runner,
             project_id,
             topic_id,
             turn_id,

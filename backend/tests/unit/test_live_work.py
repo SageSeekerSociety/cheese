@@ -12,6 +12,7 @@ object — the smallest layer that can be held, no database and no socket.
 import uuid
 from datetime import UTC, datetime
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.live_work import HookWorkState, LiveWork
 from tests.conftest import stub_compute
@@ -19,6 +20,7 @@ from tests.conftest import stub_compute
 
 def _service() -> ChatService:
     return ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=None,
         base_system_prompt="You are Cheese.",
         workspace_root="/tmp/live-work-ws",

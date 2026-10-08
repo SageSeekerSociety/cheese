@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.driven.subscription import STALE_S
@@ -112,6 +113,7 @@ def test_a_turn_whose_end_was_read_hours_late_still_ends_and_says_nothing(client
 
     def service(channel: StubChannel) -> ChatService:
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root="/tmp/late-turn-end-ws",

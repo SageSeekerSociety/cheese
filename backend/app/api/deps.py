@@ -151,6 +151,7 @@ def get_chat_service() -> ChatService:
         workspace_root=settings.workspace_root,
         profiles=get_profile_registry(),
         compute=get_compute_pool(),
+        work_runner=get_work_runner(),
         gateway=get_llm_gateway(),
     )
 
