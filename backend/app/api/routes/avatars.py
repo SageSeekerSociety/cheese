@@ -49,14 +49,6 @@ def _sniff_media_type(content: bytes) -> str:
     return "application/octet-stream"
 
 
-#: 能当头像的格式：`_sniff_media_type` 认得出来的这几类。其余字节在头像位置上只会
-#: 变成一个下载（浏览器不认，位置上是空的），所以上传时就拒掉；SVG 尤其不收 —— 它
-#: 会被内联执行脚本，而头像那一份是原样发回去的字节。
-_AVATAR_MEDIA_TYPES = frozenset(
-    {media_type for _magic, media_type in _MAGIC_MEDIA_TYPES} | {"image/webp"}
-)
-
-
 async def _read_avatar_file(avatar_id: int) -> bytes | None:
     """Return the stored bytes for ``avatar_id``, or ``None`` if there is no file.
 
@@ -135,10 +127,6 @@ async def create_avatar(
         raise UnprocessableEntityError(
             say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
         )
-    # 存的是不透明的字节、出站时才 sniff（`_stored_avatar_response`），所以「这个是
-    # 不是一张图」只有入口能判：收下什么，之后就一直是什么。
-    if _sniff_media_type(file_content) not in _AVATAR_MEDIA_TYPES:
-        raise UnprocessableEntityError(say("avatarNotImage"))
     file_name = avatar.filename or "avatar"
 
     await aiofiles.os.makedirs(AVATAR_STORAGE_DIR, exist_ok=True)

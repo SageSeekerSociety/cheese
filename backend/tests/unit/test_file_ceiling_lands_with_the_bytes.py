@@ -217,24 +217,10 @@ async def test_an_avatar_over_the_ceiling_is_refused(monkeypatch: pytest.MonkeyP
     assert file.file.tell() == CEILING + 1
 
 
-async def test_an_avatar_that_is_not_an_image_is_refused_at_the_door():
-    """存的是不透明的字节、出站时才 sniff，所以「这是不是一张图」只有入口判得了。"""
-    for content in (
-        b"not an image at all",
-        b"<svg xmlns='http://www.w3.org/2000/svg'></svg>",
-        b"",
-    ):
-        with pytest.raises(UnprocessableEntityError) as refused:
-            await avatars.create_avatar(
-                avatar=_upload(content), auth_user=None, service=None
-            )
-        assert refused.value.message.key == "avatarNotImage"
-
-
-async def test_an_avatar_that_is_an_image_gets_all_the_way_through(
+async def test_an_avatar_under_the_ceiling_gets_all_the_way_through(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    """认得出来的四种格式都收：拒掉认不出的那一堆，不等于把口也收窄。"""
+    """头像存的是原样字节，出站才 sniff：限读不改变这一点。"""
     monkeypatch.setattr(avatars, "AVATAR_STORAGE_DIR", str(tmp_path))
     for content in (
         b"\x89PNG\r\n\x1a\n" + b"\x00" * 32,

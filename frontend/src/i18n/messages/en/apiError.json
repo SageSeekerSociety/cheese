@@ -998,6 +998,5 @@
   "githubReviewPostFailed": "GitHub refused the review (HTTP {status}): {reply}",
   "reviewCommentSuggestionOnly": "Suggested change",
   "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each",
-  "fileTooLarge": "The file is too large ({mb}MB max)",
-  "avatarNotImage": "An avatar must be a PNG, JPEG, GIF or WebP image"
+  "fileTooLarge": "The file is too large ({mb}MB max)"
 }
