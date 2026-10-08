@@ -60,11 +60,11 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     high; a `reach` computed over `.ts` and `.vue` only has the same blind
     spot. `@/` is resolved against `frontend/src`, matching `vite.config.ts`.
   - An edge is read in both its spellings, `import` and `export … from` (and
-    `export * from`), and both are regexes over the whole file, so a
-    specifier-shaped string in a comment, a template or a string literal counts
-    as an edge too. An index barrel is how a chain gets past the file that
-    names it, and leaving the re-export out called a page that fetched through
-    one standalone-ready.
+    `export * from`, and `import('…')`), by regex, so a specifier-shaped string
+    inside a string literal counts as an edge too — a comment does not, the
+    comments are stripped first (below). An index barrel is how a chain gets
+    past the file that names it, and leaving the re-export out called a page
+    that fetched through one standalone-ready.
   - A store is recognised by the `useXStore` naming convention. One spelled
     another way is invisible here.
   - Comments are not code. `// 不 import vue-router` is the sentence a file
