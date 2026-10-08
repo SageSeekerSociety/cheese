@@ -186,7 +186,10 @@ async def test_cache_writes_are_charged_by_their_lifetime(
     # chose the 1-hour end; this side takes the under-priced end instead).
     assert unsplit.cost_usd == pytest.approx(3000 * OPUS[3])
     assert unsplit.cache_write_1h_tokens == 0
-    assert unsplit.cost_usd < pytest.approx(3000 * OPUS[4])
+    # Both sides are the same exact float arithmetic here, so this needs no
+    # tolerance; ``pytest.approx`` is not orderable and cannot be used with
+    # ``<`` at all.
+    assert unsplit.cost_usd < 3000 * OPUS[4]
     assert (both.cache_write_tokens, both.cache_write_1h_tokens) == (2000, 500)
 
 
