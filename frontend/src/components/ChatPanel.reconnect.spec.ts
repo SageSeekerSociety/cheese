@@ -484,3 +484,60 @@ it('editing a message that failed to send puts its text back in the box and take
   await flushPromises()
   expect(sends()).toHaveLength(1)
 })
+
+// 读历史走 HTTP，之后落下的走 socket。一条消息落在「读」和「订阅生效」之间，两头都
+// 不会带它来；订阅确认时服务端说了那一刻最新的是哪条，手里没有就补读一次。
+describe('a message that lands between the read and the subscription', () => {
+  function message(id: string, content: string): Block {
+    return {
+      id,
+      project_id: 'p',
+      conversation_id: 'c',
+      kind: 'message',
+      author_type: 'participant',
+      author: 'someone',
+      content,
+      created_at: new Date().toISOString(),
+    } as unknown as Block
+  }
+  function page(blocks: Block[]) {
+    return {
+      data: blocks,
+      has_more: false,
+      total: blocks.length,
+      oldest_id: blocks[0]?.id ?? null,
+      has_newer: false,
+      newest_id: blocks.at(-1)?.id ?? null,
+    }
+  }
+
+  it('is read once the room is subscribed', async () => {
+    const before = message('m1', '读之前就在的')
+    const between = message('m2', '读完才落下的')
+    vi.mocked(listBlocks)
+      .mockResolvedValueOnce(page([before]))
+      .mockResolvedValueOnce(page([before, between]))
+    const view = mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 'm2' })
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenCalledTimes(2)
+    expect(view.container.textContent).toContain('读完才落下的')
+    expect(sockets).toHaveLength(1)
+  })
+
+  it('is not looked for when the room already holds the newest message', async () => {
+    vi.mocked(listBlocks).mockResolvedValueOnce(page([message('m1', '只有这一条')]))
+    mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 'm1' })
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenCalledTimes(1)
+  })
+})

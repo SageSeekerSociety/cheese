@@ -1,7 +1,8 @@
 // 一个页面一条房间连接。写在代码之前的规则：
 //
 // - 换房间不新开连接：退订上一个、订阅这一个，都在已经连着的那条上；
-// - 一个房间要等服务端确认订阅才算连上，那之前它什么也收不到；
+// - 一个房间要等服务端确认订阅才算连上，那之前它什么也收不到；确认时它知道那一刻房间
+//   里最新的一条；
 // - 每次订阅带的是此刻的 token，不是连接打开那一刻的；
 // - 一个房间只收到它自己的帧；
 // - 服务端结束一个房间（拒绝、读得太慢），别的房间不受影响；
@@ -93,6 +94,15 @@ describe('一个页面一条房间连接', () => {
     expect(a.events).toEqual([])
     a.room.send(JSON.stringify({ type: 'typing' }))
     expect(links[0].sent.filter((f) => f.type === 'typing')).toEqual([])
+  })
+
+  it('确认订阅时，房间知道那一刻最新的一条', async () => {
+    const a = watch('room-a')
+    let newestOnOpen: string | null | undefined
+    a.room.onopen = () => (newestOnOpen = a.room.newest)
+    links[0].up()
+    links[0].frame({ type: 'subscribed', topic: 'room-a', newest: 'b-9' })
+    expect(newestOnOpen).toBe('b-9')
   })
 
   it('每次订阅带的是此刻的 token', async () => {
