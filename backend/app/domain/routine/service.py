@@ -56,6 +56,7 @@ from app.domain.routine.models import (
     RoutineTrigger,
     RunStatus,
 )
+from app.domain.routine.trigger import describe_trigger
 from app.domain.thread.services import answered_in
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -103,14 +104,6 @@ def _clean_dir(raw: str) -> str:
     if any(part in ("", ".", "..") for part in path.split("/")) and path:
         raise ValidationError(say("routineOutputDirInvalid"))
     return path
-
-
-def describe_trigger(routine: Routine) -> str:
-    trigger = RoutineTrigger(routine.trigger)
-    if trigger is RoutineTrigger.schedule:
-        return schedule.describe(routine.spec, routine.timezone)
-    scope = "本房间" if routine.spec.get("scope") == "room" else "整个项目"
-    return f"{TRIGGER_LABELS[trigger]}（{scope}）"
 
 
 def _validate(trigger: str, spec: dict, tz: str) -> dict:
