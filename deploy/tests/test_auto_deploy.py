@@ -739,8 +739,38 @@ exit 0
                     expressions.add(step["env"]["CANDIDATE_SHA"])
                 if step.get("name", "").startswith("Check out the built commit"):
                     expressions.add(step["with"]["ref"])
-        self.assertEqual(expressions, {"${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}"})
-        self.assertIn("rebuilt", workflow[True]["workflow_dispatch"]["inputs"])
+        self.assertEqual(expressions, {"${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}"})
+        inputs = workflow[True]["workflow_dispatch"]["inputs"]
+        self.assertIn("rebuilt", inputs)
+        # The rollback entry: dispatch on main, name the commit in `ref`. Every
+        # expression above has to read it, or the run would release one commit
+        # and say another.
+        self.assertIn("ref", inputs)
+        self.assertEqual(inputs["ref"]["default"], "")
+
+    def test_a_ref_dispatch_is_a_manual_release(self):
+        # A bare commit SHA is not a legal `--ref` for `gh workflow run`, so
+        # releasing one without inventing a ref is what the `ref` input is for.
+        # It must take the manual bypass, exactly like a dispatch with no inputs:
+        # that is what lets it roll the box back to a commit the automatic
+        # "no going backwards" guard refuses.
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        check = next(step for step in workflow["jobs"]["eligibility"]["steps"]
+                     if step.get("id") == "check")
+        release = next(step for step in workflow["jobs"]["deploy"]["steps"]
+                       if step.get("id") == "release")
+        for step in (check, release):
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                result = subprocess.run(
+                    ["bash", "-eu", "-c", step["run"]],
+                    cwd=directory if step is check else ROOT,
+                    capture_output=True, text=True,
+                    env={**os.environ, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                         "REBUILT": "", "CANDIDATE_SHA": self.built,
+                         "GITHUB_OUTPUT": str(output)})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(("ready=true" if step is check else "skip=false"), output.read_text())
 
     def test_a_rebuilt_dispatch_checks_its_images_and_tests(self):
         # Without the policy script in the working directory, the check fails:

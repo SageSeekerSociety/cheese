@@ -51,7 +51,7 @@ async function submit() {
         <p class="t-meta c-muted">{{ team.handle }}</p>
         <div class="t-meta c-muted mt-1">
           <span v-if="team.owner">
-            <i18n-t keypath="work.teamProfile.owner" tag="span">
+            <i18n-t scope="global" keypath="work.teamProfile.owner" tag="span">
               <template #name><UserRef :handle="team.owner.username" :name="team.owner.nickname" /></template>
             </i18n-t>
             ·

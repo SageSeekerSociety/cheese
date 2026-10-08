@@ -229,9 +229,13 @@ defineExpose({ reload })
 <style scoped>
 .accept-fold {
   display: grid;
+  /* 列宽的下限不能是内容的最小宽度：卡里一个没有断点的长串（下划线连起来的标识符）
+     会把整张卡撑得比对话栏宽，右边被裁掉。 */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 1fr;
 }
 .accept-fold__inner {
+  min-width: 0;
   min-height: 0;
 }
 /* 进来走 --dur-base 的减速，走掉快一档、加速离开（§9.3）。 */

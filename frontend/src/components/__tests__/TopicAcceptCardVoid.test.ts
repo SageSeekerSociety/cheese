@@ -40,7 +40,7 @@ function stuckCard(over: Partial<AcceptCard> = {}): AcceptCard {
     id: 'card-1',
     topic_id: 't1',
     reviewer_handle: 'alice',
-    routing_reason: '',
+    focus: '',
     change_subject: 'feat: a thing',
     change_body: null,
     status: 'pending',

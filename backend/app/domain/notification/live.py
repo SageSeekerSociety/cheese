@@ -8,7 +8,10 @@ catches up with. So nothing is sent that a rolled-back transaction never wrote,
 and the live path and the catch-up can never disagree about what a notice says.
 
 The backend is one process (the chat broker, `agent/runtime.py`, is in-process
-too), so an in-process registry reaches every connection.
+too), so an in-process registry reaches every connection. During a deploy two
+slots run side by side, and a commit made in the other one wakes nobody here:
+that connection is at most one beat late, because each beat compares its cursor
+with the newest notice in the database (`notifications_live.py`).
 """
 
 from __future__ import annotations
@@ -60,6 +63,17 @@ def wake_after_commit(session: AsyncSession, user_ids: set[int]) -> None:
     event.listen(
         session.sync_session, "after_commit", lambda _s: wake(user_ids), once=True
     )
+
+
+async def behind(db: AsyncSession, user_id: int, cursor: int) -> bool:
+    """Whether a pushable notice past `cursor` is already committed.
+
+    The same query `notices_after` opens with, on its own. A connection's beat
+    asks it, for the notice a commit in the other backend slot never woke it
+    for (`api/routes/notifications_live.py`).
+    """
+    latest = await NotificationRepository(db).latest_id_for_user(user_id, PUSHABLE)
+    return latest is not None and latest > cursor
 
 
 async def notices_after(db: AsyncSession, user_id: int, after: int | None) -> dict:

@@ -2,14 +2,15 @@
 
 拆出来的理由是结论 49 / 不变量 I21b：被托管的仓库只装 agent 替用户做的活。用户
 给项目的资料、贴进房间的截图、发布出来的预览产物都不是那个活的源，所以它们既不
-进项目的 git 树，也不落在检出目录里——它们住在平台侧，`settings.workspace_root`
-下自己的两个目录（`.library/`、`.room-files/`），和项目那唯一一个 git 源
+进项目的 git 树，也不落在检出目录里——它们住在平台侧，和项目那唯一一个 git 源
 （:mod:`app.domain.repository.service`）互不相干。
 
-两个根，两种寻址：
+两处，两种寻址：
 
-- 资料库（`.library/<project>/`）项目级、按原名寻址、只读。「上周那份预算表」这
-  句话里名字就是身份，所以这里不放随机串。
+- 资料库项目级、按原名寻址、只读。「上周那份预算表」这句话里名字就是身份，所以
+  这里不放随机串；名字里的 `/` 是文件夹。清单和名字在记录表里，字节按每一行自己
+  的键存放（:mod:`app.domain.library.records`、:mod:`app.domain.library.blobs`），
+  这里只管名字长什么样。
 - 房间文件（`.room-files/<project>/<room>/`）只属于一个房间：贴进来的截图没有名
   字，`image.png` 是浏览器替它编的，它只属于那条消息。发布出来的预览产物同理。
 
@@ -127,75 +128,39 @@ def library_name(path: str) -> str | None:
     return path[len(prefix) :] if path.startswith(prefix) else None
 
 
-def read_attachment(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bytes:
-    """一个附件的字节:资料库里那一份,或者只属于这个房间的那一份。"""
-    name = library_name(path)
-    if name is not None:
-        return read_library_file(project_id, name)
-    return read_room_file(project_id, room_id, path)
-
-
-def attachment_exists(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bool:
-    """这个地址今天还读得到吗：资料库里那一份可以被人删掉，引用它的消息还在。"""
-    name = library_name(path)
-    if name is not None:
-        return _safe_path(library_root(project_id), name).is_file()
-    return room_file_exists(project_id, room_id, path)
-
-
-def read_attachment_text(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
-    """同一个地址，读成文本(二进制的那一份照旧只回元数据和版本)。"""
-    name = library_name(path)
-    if name is not None:
-        target = _safe_path(library_root(project_id), name)
-        if not target.is_file():
-            # 一条旧消息里的引用，而那份资料已经被扔掉了。说清是哪一种打不开：这个
-            # 地址没错，是东西不在了。
-            raise ValidationError(say("libraryFileGone"))
-        return text_payload(target, path)
-    return read_room_text_file(project_id, room_id, path)
-
-
-def library_root(project_id: uuid.UUID) -> Path:
-    root = Path(settings.workspace_root) / ".library" / str(project_id)
-    root.mkdir(parents=True, exist_ok=True)
-    return root.resolve()
-
-
-def _next_name(name: str, attempt: int) -> str:
+def next_name(name: str, attempt: int) -> str:
+    """撞名时的第 `attempt` 个名字：`预算表(2).xlsx`。编号加在最后一层上，
+    文件夹不跟着编号。"""
     if attempt == 1:
         return name
-    stem, dot, ext = name.rpartition(".")
-    if not dot:
-        return f"{name}({attempt})"
-    return f"{stem}({attempt}).{ext}"
+    folder, slash, leaf = name.rpartition("/")
+    stem, dot, ext = leaf.rpartition(".")
+    numbered = f"{stem}({attempt}).{ext}" if dot else f"{leaf}({attempt})"
+    return f"{folder}{slash}{numbered}"
 
 
-def write_library_file(project_id: uuid.UUID, name: str, data: bytes) -> str:
-    """Keep the name the user gave it; a taken name takes the next `(n)`.
-
-    Allocating the name IS the write (`open(..., "xb")`): two uploads of the
-    same name in flight is the case this exists for, and check-then-write loses
-    one of them. Returns the name it ended up with."""
-    root = library_root(project_id)
-    for attempt in range(1, 1000):
-        candidate = _next_name(name, attempt)
-        target = _safe_path(root, candidate)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with target.open("xb") as sink:
-                sink.write(data)
-        except FileExistsError:
-            continue
-        return candidate
-    raise ValidationError(say("tooManySameNameFiles", name=name))
+#: 记录表里 `name` 那一列多长。
+MAX_LIBRARY_NAME = 512
 
 
-def read_library_file(project_id: uuid.UUID, path: str) -> bytes:
-    target = _safe_path(library_root(project_id), path)
-    if not target.is_file():
-        raise NotFoundError(say("libraryFileNotFound"))
-    return target.read_bytes()
+def clean_library_path(raw: str | None) -> str:
+    """人给的一个资料库名字（改名的目标、要放进去的文件夹），每一层都得是个名字。
+
+    和 `clean_upload_name` 不是一回事：那边从一个上传的文件名里只留最后一层，这边
+    整条路径都是人有意写下的，所以一层不合规就拒绝，不替人改。"""
+    parts = [part.strip() for part in (raw or "").strip().strip("/").split("/")]
+    if not parts or any(
+        not part
+        or part.startswith(".")
+        or re.search(r"[\x00-\x1f\x7f\\]", part)
+        or len(part.encode("utf-8")) > 180
+        for part in parts
+    ):
+        raise ValidationError(say("libraryBadName"))
+    name = "/".join(parts)
+    if len(name) > MAX_LIBRARY_NAME:
+        raise ValidationError(say("libraryBadName"))
+    return name
 
 
 def clean_upload_name(filename: str | None) -> str:
@@ -203,111 +168,6 @@ def clean_upload_name(filename: str | None) -> str:
     name = (filename or "file").replace("\\", "/").rsplit("/", 1)[-1]
     name = re.sub(r"[\x00-\x1f\x7f]", "_", name).strip().strip(".") or "file"
     return name.encode("utf-8")[:180].decode("utf-8", errors="ignore")
-
-
-def _history_root(project_id: uuid.UUID) -> Path:
-    return Path(settings.workspace_root) / ".library-history" / str(project_id)
-
-
-def keep_replaced(project_id: uuid.UUID, name: str, record_id: uuid.UUID) -> None:
-    """替换之前，把现在这一份挪进历史目录：替换不是删除，旧的那一份还在。"""
-    source = _safe_path(library_root(project_id), name)
-    if not source.is_file():
-        raise NotFoundError(say("libraryFileNotFound"))
-    target = _history_root(project_id) / str(record_id) / PurePosixPath(name).name
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(source.read_bytes())
-
-
-def read_replaced(project_id: uuid.UUID, name: str, record_id: uuid.UUID) -> bytes:
-    """被替换下来的那一版的字节（`keep_replaced` 存进去的那一份）。"""
-    target = _history_root(project_id) / str(record_id) / PurePosixPath(name).name
-    if not target.is_file():
-        raise NotFoundError(say("libraryVersionNotFound"))
-    return target.read_bytes()
-
-
-def _staging_root(project_id: uuid.UUID) -> Path:
-    """替换写到一半的那一份先放这里：在资料库根之外，所以它不是资料库的一条。
-
-    和 `.library/` 同一个 `workspace_root`，换过去才还在同一个文件系统里。
-    """
-    root = Path(settings.workspace_root) / ".library-staging" / str(project_id)
-    root.mkdir(parents=True, exist_ok=True)
-    return root.resolve()
-
-
-def overwrite_library_file(project_id: uuid.UUID, name: str, data: bytes) -> None:
-    """用新的字节替换这个名字下的那一份。先写到旁边再换过去，读的人不会读到半份。
-
-    「旁边」是根之外的暂存目录，不是这一份旁边：写在根里的点文件会被
-    `list_library_files` 列出来（Python 3.13 起 `rglob("*")` 含点文件），一次中途
-    失败就永远留在那儿——既上得了资料库页，又躲得过去删除。
-    """
-    target = _safe_path(library_root(project_id), name)
-    if not target.is_file():
-        raise NotFoundError(say("libraryFileNotFound"))
-    staging = _staging_root(project_id) / f"{target.name}.{uuid.uuid4().hex}"
-    try:
-        staging.write_bytes(data)
-        staging.replace(target)
-    finally:
-        # 换过去之后这里不该剩东西；写了一半也一样，不让下一份替换背上一份残骸。
-        staging.unlink(missing_ok=True)
-
-
-def drop_history(project_id: uuid.UUID, record_ids: list[uuid.UUID]) -> None:
-    """一份资料被删掉时，它被替换下来的那几版也一起扔掉。"""
-    root = _history_root(project_id)
-    for record_id in record_ids:
-        folder = root / str(record_id)
-        if not folder.is_dir():
-            continue
-        for entry in folder.iterdir():
-            entry.unlink()
-        folder.rmdir()
-
-
-def delete_library_file(project_id: uuid.UUID, name: str) -> None:
-    """扔掉一份资料。
-
-    旧消息里引用它的那枚 chip 随之打不开了，这是对的：那条引用指的就是这一份，而
-    这一份没有了——在它的位置上摆一份别的东西，才是把读者读到的内容换掉。"""
-    target = _safe_path(library_root(project_id), name)
-    if not target.is_file():
-        raise NotFoundError(say("libraryFileNotFound"))
-    target.unlink()
-
-
-#: 早先的 `overwrite_library_file` 把替换写到一半的那一份留在资料库里留下的名字：
-#: `.{资料名}.{uuid.hex}`。它不算资料库里的一条，也不该由谁去删——替换的字节已经
-#: 换过去了，留下的只是一份没人要的副本。只认这个形状，不认「点开头的名字」：
-#: 从工作区存进资料库的 `.gitignore` 是正经的一条（`room_files.copy_into_room` 用
-#: 的是原名，不过 `clean_upload_name`）。
-_LEFTOVER_OF_A_REPLACE = re.compile(r"^\..+\.[0-9a-f]{32}$")
-
-
-def list_library_files(project_id: uuid.UUID) -> list[dict]:
-    """Newest first: the file someone just gave the project is the one they are
-    about to reference."""
-    root = library_root(project_id)
-    files = []
-    for entry in root.rglob("*"):
-        if not entry.is_file():
-            continue
-        rel = entry.relative_to(root)
-        if _LEFTOVER_OF_A_REPLACE.match(entry.name):
-            continue
-        stat = entry.stat()
-        files.append(
-            {
-                "path": str(rel),
-                "bytes": stat.st_size,
-                "modified": stat.st_mtime,
-            }
-        )
-    files.sort(key=lambda f: f["modified"], reverse=True)
-    return files
 
 
 def artifact_snapshot_path(

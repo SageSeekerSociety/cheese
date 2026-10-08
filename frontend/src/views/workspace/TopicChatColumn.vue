@@ -41,6 +41,8 @@ const props = defineProps<{
   taskId?: string | null
   /** 这里此刻不能说话的原因，见 ChatPanel。 */
   composerClosed?: string | null
+  /** 采纳那一条此刻挂在别处（专注模式里它在面板底部），这里不再放一份。 */
+  acceptElsewhere?: boolean
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
@@ -58,7 +60,8 @@ const emit = defineEmits<{
   (e: 'site-turns', turns: Record<string, number>): void
   // 谁在这个房间里忙：现场那一格画同一份。
   (e: 'activity', lines: MemberActivityLine[]): void
-  (e: 'state-changed', payload: unknown): void
+  // `id` 是后端指名的那一行（topics 帧上是房间 id）；两个都要转，漏掉的话刷新又退回整份重下。
+  (e: 'state-changed', resource: string, id?: string): void
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
@@ -153,7 +156,7 @@ defineExpose({
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
       @activity="emit('activity', $event)"
-      @state-changed="emit('state-changed', $event)"
+      @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path) => emit('open-file', path)"
@@ -170,6 +173,7 @@ defineExpose({
            见，但平时只占一行，不把对话挤到只剩几行。 -->
       <template #above-composer>
         <TopicAcceptCard
+          v-if="!acceptElsewhere"
           ref="acceptRef"
           class="chat-dock"
           docked

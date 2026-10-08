@@ -142,7 +142,7 @@ function confirmRemove() {
     <!-- 回的是谁。单独一行而不是塞进正文前面：正文是用户写的多段文字（保留换行），
          把「回复 X」拼进去会让第一段被挤变形，也让人分不清这句是谁写的。 -->
     <div v-if="comment.reply_to_handle" class="fb-ci__re">
-      <i18n-t keypath="feedback.comment.replyTo" tag="span">
+      <i18n-t keypath="feedback.comment.replyTo" tag="span" scope="global">
         <template #handle><UserRef :handle="comment.reply_to_handle" /></template>
       </i18n-t>
     </div>

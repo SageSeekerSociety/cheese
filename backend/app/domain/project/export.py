@@ -24,10 +24,14 @@ from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
     GatewayUnavailableError,
+    NotFoundError,
+    UpstreamUnavailableError,
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_rooms, room_column
 from app.domain.identity.services import IdentityService
+from app.domain.library import blobs
+from app.domain.library import records as library_records
 from app.domain.library.service import artifact_snapshot_path
 from app.domain.living_doc.services import Documents
 from app.domain.project import artifacts, forge
@@ -306,6 +310,7 @@ async def create_archive(
             else:
                 version["offline_bytes"] = False
         catalog.append(row)
+    library_files = await library_records.stored(db, project_id)
     # All database reads end before credential renewal or Git I/O.
     await db.commit()
     workspace = Path(settings.workspace_root)
@@ -342,11 +347,19 @@ async def create_archive(
             )
         else:
             manifest["repository"] = {"status": "not_configured"}
-        library = workspace / ".library" / str(project_id)
-        manifest["library"] = {
-            "status": "directory_present" if library.is_dir() else "directory_absent"
-        }
-        await run_sync(_copy_tree, library, output / "library")
+        manifest["library"] = {"files": len(library_files)}
+        for name, location, key in library_files:
+            try:
+                data = await run_sync(blobs.store(location).get, key)
+            except NotFoundError as exc:
+                raise UpstreamUnavailableError(
+                    "A library file is missing; no archive was returned"
+                ) from exc
+            target = output / "library" / name
+            if not target.resolve().is_relative_to((output / "library").resolve()):
+                raise UpstreamUnavailableError("Export path escaped its storage root")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            await run_sync(target.write_bytes, data)
         for topic_id in visible:
             await run_sync(
                 _copy_tree,

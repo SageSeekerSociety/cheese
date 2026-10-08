@@ -15,7 +15,7 @@ from app.api.deps import get_broker
 from app.api.response import ok
 from app.api.routes.topics import DbSession
 from app.core.errors import AuthenticationRequiredError, NotFoundError
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.block.schemas import BlockOut
 from app.domain.pin.services import Pins
 from app.domain.topic.services import TopicService
