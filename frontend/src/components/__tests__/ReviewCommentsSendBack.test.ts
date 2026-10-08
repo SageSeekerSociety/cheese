@@ -77,6 +77,7 @@ function draft(id: string, body: string, line: number): ReviewComment {
     line_start: line,
     line_end: line,
     line_text: 'x',
+    place: `L${line}`,
     current_line: line,
     body,
     suggestion: null,

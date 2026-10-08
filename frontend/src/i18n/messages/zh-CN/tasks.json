@@ -20,7 +20,6 @@
     "title": "版本比较",
     "oversized": "文件超过 1 MB，请并排预览或下载比较",
     "binary": "此格式不提供逐行差异，请并排预览或下载比较",
-    "document": "比较的是文档正文，版式和修订记录不在其中",
     "unsupported": "此文件格式或大小不支持逐行比较",
     "many": "改动的文件较多，此文件未展开逐行差异",
     "unavailable": "这两个版本的交付形式不同，或没有留存可比较的内容",
@@ -70,9 +69,6 @@
     "paragraphsChanged": "修改 {n} 段",
     "paragraphsAdded": "新增 {n} 段",
     "paragraphsRemoved": "删除 {n} 段",
-    "paragraph": "第 {n} 段",
-    "paragraphNew": "第 {n} 段（新增）",
-    "paragraphGone": "原第 {n} 段（已删除）",
     "noLineChanges": "内容相同，仅文件权限不同",
     "status": {
       "added": "新增",

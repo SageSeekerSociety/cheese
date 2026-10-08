@@ -501,6 +501,22 @@ class ProjectFiles:
         head = await self.revision()
         return await self._blob(await self._entry(path, head)), source
 
+    async def raw_at(self, path: str, revision: str) -> bytes | None:
+        """The file as one commit has it; None when that commit has no such file."""
+        try:
+            entry = await self._entry(clean_path(path), revision)
+        except NotFoundError:
+            return None
+        return await self._blob(entry)
+
+    async def base_revision(self) -> str | None:
+        """The commit this task's work started from: the merge base with the
+        branch it goes into, which is the last version taken in."""
+        comparison = await self.comparison()
+        if not comparison:
+            return None
+        return (comparison.get("merge_base_commit") or {}).get("sha")
+
     async def text(self, path: str, source: str):
         path = clean_path(path)
         source = await self.source(source)

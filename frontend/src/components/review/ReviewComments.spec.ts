@@ -44,6 +44,7 @@ function sent(over: Partial<ReviewComment>): ReviewComment {
     line_start: 2,
     line_end: 2,
     line_text: 'const b = 3',
+    place: 'L2',
     current_line: 2,
     body: '这里要改',
     suggestion: null,
