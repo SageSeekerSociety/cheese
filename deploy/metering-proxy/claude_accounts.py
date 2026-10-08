@@ -20,7 +20,9 @@ log = logging.getLogger("cheese.accounts")
 
 
 class ClaudeAccounts:
-    def __init__(self, primary: PlatformCredential, *, now=time.time, snapshot_path=None):
+    def __init__(
+        self, primary: PlatformCredential, *, now=time.time, snapshot_path=None
+    ):
         self.primary = primary
         self.now = now
         self.path = primary.path.parent / "cooldowns.json"
