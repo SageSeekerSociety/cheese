@@ -265,3 +265,32 @@ def test_only_a_retry_that_passed_is_named(tmp_path: Path) -> None:
     )
     lines = not_clean(report(tmp_path, passed_nodeid(one) + failed_two), retried)
     assert lines == [f"{one} passed only on a retry; first it failed: flaky"]
+
+
+@pytest.mark.parametrize("phase,copies", [("call", 2), ("setup", 2), ("teardown", 3)])
+def test_retries_do_not_explain_unrelated_duplicate_results(
+    tmp_path: Path, phase: str, copies: int
+) -> None:
+    nodeid = "tests/unit/test_a.py::test_one"
+    directory = selection(tmp_path, [nodeid])
+    retried = reruns(tmp_path, {"nodeid": nodeid, "when": phase})
+    with pytest.raises(SuiteDidNotRun):
+        assert_suite_ran(
+            report(tmp_path, passed_nodeid(nodeid) * copies),
+            at_least=1,
+            selection_dir=directory,
+            reruns=retried,
+        )
+
+
+@pytest.mark.parametrize("outcome", ["failure", "error", "skipped"])
+def test_a_teardown_retry_never_hides_a_bad_result(
+    tmp_path: Path, outcome: str
+) -> None:
+    nodeid = "tests/unit/test_a.py::test_one"
+    directory = selection(tmp_path, [nodeid])
+    retried = reruns(tmp_path, {"nodeid": nodeid, "when": "teardown"})
+    bad = passed_nodeid(nodeid).replace("</testcase>", f"<{outcome}/></testcase>")
+    results = report(tmp_path, bad + passed_nodeid(nodeid))
+    with pytest.raises(SuiteDidNotRun):
+        assert_suite_ran(results, at_least=1, selection_dir=directory, reruns=retried)

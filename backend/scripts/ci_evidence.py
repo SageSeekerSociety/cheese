@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 import pytest
+import pytest_timeout
 
 # How long before a case's timeout the stacks are dumped. pytest-timeout's
 # timer calls os._exit at the deadline itself, so the dump has to come first;
@@ -88,6 +89,27 @@ def pytest_timeout_cancel_timer(item):
         del item.config.stash[_PENDING]
         _line(log, f"end {item.nodeid}")
     return None
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    # rerunfailures retries inside one protocol. Its first failure cancels the
+    # protocol's timer, so each later attempt needs its own setup/teardown timer.
+    if getattr(item, "execution_count", 1) <= 1:
+        return
+    settings = pytest_timeout._get_item_settings(item)
+    if settings.timeout and settings.timeout > 0 and not settings.func_only:
+        item.ihook.pytest_timeout_cancel_timer(item=item)
+        item.ihook.pytest_timeout_set_timer(item=item, settings=settings)
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item):
+    try:
+        return (yield)
+    finally:
+        if getattr(item, "execution_count", 1) > 1:
+            item.ihook.pytest_timeout_cancel_timer(item=item)
 
 
 class _RerunRecorder:

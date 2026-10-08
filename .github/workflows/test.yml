@@ -370,11 +370,11 @@ jobs:
           if [ "$TEST_LAYER" = pure ]; then
             observe+=(--no-postgres)
           fi
-          # One retry for a failed or crashed case: a timeout ends its xdist
-          # worker with os._exit (pyproject.toml, timeout_method), which turned
-          # about 6.5% of pure runs red on 2026-10-07. ci_evidence records each
-          # retry and the stacks of a case that ran out its timeout; the
-          # verification step below names the cases that needed one.
+          # Retry a failed or crashed case once. The 300 s hang timeout ends
+          # its worker with os._exit; layer time ceilings only fail the case.
+          # Silent worker losses tracked in #3005 have an unknown cause.
+          # ci_evidence records retries and hang stacks; verification names
+          # the cases that passed only on a retry without claiming a fix.
           "${observe[@]}" -- uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
             --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \

@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -101,3 +102,104 @@ def test_the_retry_is_recorded_and_named_on_the_run(wedged_run: Path) -> None:
     )
     [line] = not_clean(results, wedged_run / "reruns.jsonl")
     assert "test_wedges_once passed only on a retry; first its worker died" in line
+
+
+@pytest.mark.parametrize("method", ["signal", "thread"])
+def test_a_retry_gets_a_timeout_of_its_own(tmp_path: Path, method: str) -> None:
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_sample.py").write_text(
+        "import pathlib, time\n"
+        "def test_fails_then_wedges():\n"
+        "    mark = pathlib.Path(__file__).with_name('failed')\n"
+        "    if not mark.exists():\n"
+        "        mark.write_text('')\n"
+        "        assert False\n"
+        "    time.sleep(30)\n"
+    )
+    started = time.monotonic()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "scripts.ci_evidence",
+            "--ci-evidence-dir",
+            str(tmp_path / "evidence"),
+            "--timeout",
+            "1",
+            "-o",
+            f"timeout_method={method}",
+            "--reruns",
+            "1",
+            "-q",
+            str(tmp_path / "test_sample.py"),
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(BACKEND)},
+        capture_output=True,
+        text=True,
+        timeout=12,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert time.monotonic() - started < 10
+    assert "Timeout" in result.stdout + result.stderr
+    log = (tmp_path / "evidence" / "hang-main.log").read_text()
+    assert log.count("start test_sample.py::test_fails_then_wedges") == 2
+    assert "test_fails_then_wedges" in log.split("Timeout (")[-1]
+
+
+@pytest.mark.parametrize("workers", [0, 1])
+def test_a_teardown_retry_counts_once_and_warns(tmp_path: Path, workers: int) -> None:
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    (tmp_path / "test_sample.py").write_text(
+        "import pathlib, pytest\n"
+        "@pytest.fixture\n"
+        "def teardown_once():\n"
+        "    yield\n"
+        "    mark = pathlib.Path(__file__).with_name('torn_down')\n"
+        "    if not mark.exists():\n"
+        "        mark.write_text('')\n"
+        "        raise RuntimeError('teardown once')\n"
+        "def test_retried(teardown_once): pass\n"
+        "def test_steady(): pass\n"
+    )
+    evidence = tmp_path / "evidence"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "scripts.ci_shard",
+            "-p",
+            "scripts.ci_evidence",
+            "--ci-evidence-dir",
+            str(evidence),
+            "--ci-selection-output",
+            str(evidence),
+            "-n",
+            str(workers),
+            "--reruns",
+            "1",
+            "--junitxml",
+            str(evidence / "results.xml"),
+            "-q",
+            str(tmp_path / "test_sample.py"),
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(BACKEND)},
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    results, reruns = evidence / "results.xml", evidence / "reruns.jsonl"
+    assert (
+        assert_suite_ran(results, at_least=2, selection_dir=evidence, reruns=reruns)
+        == 2
+    )
+    [warning] = not_clean(results, reruns)
+    assert "test_retried passed only on a retry" in warning
+    with pytest.raises(SuiteDidNotRun):
+        assert_suite_ran(results, at_least=2, selection_dir=evidence)

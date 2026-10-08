@@ -24,6 +24,7 @@ import json
 import os
 import sys
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 
 
@@ -58,6 +59,34 @@ def _is_crash_placeholder(case: ET.Element) -> bool:
     xdist sends when a worker dies mid-case; the case itself is reported again
     by its retry."""
     return not case.get("name") and not case.get("classname") and len(case) == 0
+
+
+def _nodeid_of(case: ET.Element) -> str | None:
+    values = [
+        prop.get("value")
+        for prop in case.findall("./properties/property")
+        if prop.get("name") == "cheese_nodeid"
+    ]
+    return values[0] if len(values) == 1 and values[0] else None
+
+
+def _final_attempts(root: ET.Element, reruns: list[dict]) -> list[ET.Element]:
+    """A teardown retry leaves its earlier passing call in JUnit too. Discard
+    only those extra passes justified by recorded teardown retries, never a
+    skip, error or failure, an unnamed case, or an unexplained duplicate."""
+    remaining = Counter(r["nodeid"] for r in reruns if r.get("when") == "teardown")
+    seen: set[str] = set()
+    final = []
+    for case in reversed(list(root.iter("testcase"))):
+        nodeid = _nodeid_of(case)
+        passed = all(case.find(tag) is None for tag in ("skipped", "error", "failure"))
+        if nodeid and nodeid in seen and remaining[nodeid] > 0 and passed:
+            remaining[nodeid] -= 1
+            continue
+        if nodeid:
+            seen.add(nodeid)
+        final.append(case)
+    return list(reversed(final))
 
 
 def _is_quarantined(skip: ET.Element) -> bool:
@@ -158,9 +187,10 @@ def assert_suite_ran(
     selection_result = (
         read_selection(selection_dir) if selection_dir is not None else None
     )
-    crashes = sum(1 for rerun in read_reruns(reruns) if rerun.get("crashed"))
+    recorded_reruns = read_reruns(reruns)
+    crashes = sum(1 for rerun in recorded_reruns if rerun.get("crashed"))
     placeholders = 0
-    cases = tree.getroot().iter("testcase")
+    cases = _final_attempts(tree.getroot(), recorded_reruns)
     ran, skipped, errored, executed_nodeids = 0, [], [], []
     for case in cases:
         if _is_crash_placeholder(case):
@@ -249,14 +279,9 @@ def not_clean(junit_xml: Path, reruns: Path | None) -> list[str]:
         return []
     final: dict[str, str] = {}
     lines = []
-    for case in root.iter("testcase"):
-        nodeid = next(
-            (
-                value
-                for prop in case.findall("./properties/property")
-                if prop.get("name") == "cheese_nodeid" and (value := prop.get("value"))
-            ),
-            f"{case.get('classname', '')}::{case.get('name', '')}",
+    for case in _final_attempts(root, read_reruns(reruns)):
+        nodeid = (
+            _nodeid_of(case) or f"{case.get('classname', '')}::{case.get('name', '')}"
         )
         skip = case.find("skipped")
         if skip is not None and _is_quarantined(skip):
