@@ -170,14 +170,7 @@ from app.domain.agent.room.turn import RoomTurns, _is_dm, room_roster
 # 仍是既有调用点与测试的导入路径；`ChatService` 上留一行同名委托，调用点一格没动。
 # 带 noqa 的常量本文件不用，只是给外部留的导入路径。
 from app.domain.agent.room_events import (
-    _CHANGE_COMMIT_WALK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _known_commits,
-    _mark_step_failed,
-    _persist_change_summary,
-    _persist_room_event,
-    _persist_subagent_result,
-    _persist_tool_event,
-    _record_step_output,
     _turn_changeset,
     post_system_event,
 )
@@ -191,11 +184,18 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
+from app.domain.agent.turn.intake.events import (
+    _persist_change_summary,
+    _persist_room_event,
+    _persist_subagent_result,
+    _persist_tool_event,
+)
 
 # 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
+from app.domain.agent.turn.store.events import _mark_step_failed, _record_step_output
 from app.domain.agent.turn_usage import record_turn_usage, reported_usage
 from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import (

@@ -64,10 +64,9 @@ from app.domain.agent.realtime import subscriber_queue
 # Re-exported for `app.domain.delivery.agent`: its seam may not import the
 # repository module itself (it would close a C3 domain cycle).
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord  # noqa: F401
+from app.domain.agent.turn.store.intervals import close_turns, open_turn
 from app.domain.agent.turn_ledger import (
-    close_turns,
     fire_on_done,
-    open_turn,
     project_pool,
     stamp_delivery,
     utcnow,
