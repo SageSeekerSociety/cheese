@@ -254,7 +254,16 @@ class RunnerIntake:
                     await self._broker.publish(str(topic_id), {"type": "done"})
                     return
                 if await self._deliver_message(
-                    chat_service, topic_id, turn_id, **message
+                    chat_service,
+                    topic_id,
+                    turn_id,
+                    recipient_handle=message["recipient_handle"],
+                    live_delivery_expected=message["live_delivery_expected"],
+                    landed_user_block_id=message["landed_user_block_id"],
+                    landed_user_block_ids=message["landed_user_block_ids"],
+                    content=message["content"],
+                    author=message["author"],
+                    attachments=message["attachments"],
                 ):
                     return
             logger.info(
@@ -278,6 +287,7 @@ class RunnerIntake:
                 provision_actor=message["provision_actor"],
                 landed_user_block_id=message["landed_user_block_id"],
                 recipient_handle=message["recipient_handle"],
+                recipient_instance_id=message.get("recipient_instance_id"),
             )
         except Exception:
             logger.exception(
@@ -460,10 +470,6 @@ class RunnerIntake:
         content="",
         author="",
         attachments: list[dict] | None = None,
-        addressed: Addressed | None = None,
-        continuation_id: uuid.UUID | None = None,
-        reply_to: str | None = None,
-        provision_actor: Actor | None = None,
     ) -> bool:
         if landed_user_block_id is not None and (content or attachments):
             recipient: RecipientOptions = (

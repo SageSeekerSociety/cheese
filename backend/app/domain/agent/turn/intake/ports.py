@@ -7,7 +7,7 @@ implementation, arbitrary private helpers, or a service locator.
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
-from typing import Protocol, TypedDict, Unpack
+from typing import NotRequired, Protocol, TypedDict, Unpack
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -120,6 +120,7 @@ class ReceivedMessage(TypedDict):
     landed_user_block_ids: list[uuid.UUID]
     live_delivery_expected: bool
     recipient_handle: str | None
+    recipient_instance_id: NotRequired[uuid.UUID | None]
 
 
 class MessageScheduler(Protocol):
