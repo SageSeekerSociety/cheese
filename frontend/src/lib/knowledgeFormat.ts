@@ -203,7 +203,8 @@ export function fileTypeIcon(file: File): string {
   } else if (file.type.startsWith('audio/')) {
     return 'mdi-file-music-outline'
   } else if (file.type.includes('pdf')) {
-    return 'mdi-file-pdf-outline'
+    // mdi-file-pdf-box：@mdi/font 7.4.47 里没有 -outline 那一个，写了也是一片空白。
+    return 'mdi-file-pdf-box'
   } else if (file.type.includes('word') || file.type.includes('document')) {
     return 'mdi-file-word-outline'
   } else {
