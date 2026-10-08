@@ -291,10 +291,12 @@ def _refusal(policy: str, retry_after: int, path: str, kind: str) -> JSONRespons
     else:
         message = "Too many requests at once. Try again in a moment"
     body: dict[str, Any] = format_error_response(
-        429, message, name="QuotaExceededError"
+        429,
+        message,
+        name="QuotaExceededError",
+        data={"violated-policies": [policy], "retry-after": retry_after},
+        retryable=True,
     )
-    body["error"]["retryable"] = True
-    body["error"]["data"] = {"violated-policies": [policy], "retry-after": retry_after}
     body["type"] = QUOTA_EXCEEDED
     body["violated-policies"] = [policy]
     item = f'"{RATE}";r=0;t={retry_after}' if policy == RATE else f'"{CONCURRENCY}";r=0'

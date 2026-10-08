@@ -46,7 +46,7 @@ class TestBaseError:
         error = BadRequestError("Invalid input", {"field": "name"})
         body = error.to_response_body()
         assert body["code"] == HTTP_400_BAD_REQUEST
-        assert body["message"] == "BadRequestError: Invalid input"
+        assert body["message"] == "Invalid input"
         assert body["error"]["name"] == "BadRequestError"
         assert body["error"]["message"] == "Invalid input"
         assert body["error"]["data"] == {"field": "name"}
@@ -181,7 +181,7 @@ class TestUnhandledExceptionHandler:
         assert response.headers["content-type"].startswith("application/json")
         body = response.json()
         assert body["code"] == 500
-        assert body["data"] is None
+        assert "data" not in body
         assert body["message"]
 
     def test_unhandled_error_does_not_leak_its_message(self) -> None:
