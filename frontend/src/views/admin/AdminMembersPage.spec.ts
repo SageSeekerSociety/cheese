@@ -67,6 +67,8 @@ vi.mock('@/api', async () => {
   }
 })
 
+import { provideUserRefDirectory } from '@/composables/useUserRefDirectory'
+
 import AdminMembersPage from './AdminMembersPage.vue'
 
 import i18n, { setLocale } from '@/i18n'
@@ -128,9 +130,16 @@ function mountPage() {
     routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }],
   })
   const vuetify = createVuetify({ components, directives })
+  // 句子里的人名 chip 从外壳注入的目录问「叫什么、点了去哪」（lib/userRefDirectory.ts）。
+  // 这一页单独挂起来时外壳不在，在树根上做同一件事（`composables/useUserRefDirectory.ts`
+  // ——`App.vue` 里也是这么调的）：名册里没有 andy，chip 就退回画 `@andy`，去处按当前
+  // 路由上的项目算。
   const Wrapper = {
     components: { AdminMembersPage },
     template: '<v-app><AdminMembersPage /></v-app>',
+    setup() {
+      provideUserRefDirectory()
+    },
   }
   return render(Wrapper as unknown as Component, {
     global: { plugins: [vuetify, createPinia(), router, i18n] },
