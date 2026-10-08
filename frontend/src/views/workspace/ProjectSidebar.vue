@@ -53,8 +53,9 @@ const activeAllTasks = computed(() =>
 )
 
 // 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和全部任务、项目
-// 总览读同一份（`readProjectTasks`），它们刚读过就拿那一份；换了地方（新建、开始、关闭
-// 任务之后）也重读一次。
+// 总览读同一份（`readProjectTasks`），它们刚读过就拿那一份。任务变了（新建、开始、关闭）
+// 房间会收到通知（`store.tasksChanged`），那时立刻重读；换个页面不算变，30 秒内读过的
+// 就用那一份 —— 这份清单是整个项目的任务，后端每读一次都要把它们全部算一遍。
 const TASKS_REFRESH_MS = 30_000
 const tasks = ref<RoomTask[]>([])
 async function loadTasks(maxAgeMs?: number) {
@@ -74,14 +75,26 @@ const roomTaskTotals = computed(() =>
   Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.total]))
 )
 let tasksTimer: number | undefined
+// 看不见的标签页不读；回到前台时补一次。
+function refreshTasksIfVisible() {
+  if (document.visibilityState !== 'hidden') void loadTasks(TASKS_REFRESH_MS)
+}
 onMounted(() => {
   void loadTasks()
-  tasksTimer = window.setInterval(() => void loadTasks(TASKS_REFRESH_MS), TASKS_REFRESH_MS)
+  tasksTimer = window.setInterval(refreshTasksIfVisible, TASKS_REFRESH_MS)
+  document.addEventListener('visibilitychange', refreshTasksIfVisible)
 })
-onUnmounted(() => window.clearInterval(tasksTimer))
+onUnmounted(() => {
+  window.clearInterval(tasksTimer)
+  document.removeEventListener('visibilitychange', refreshTasksIfVisible)
+})
 watch(
-  () => [props.projectId, route.fullPath],
+  () => props.projectId,
   () => void loadTasks(2_000)
+)
+watch(
+  () => route.fullPath,
+  () => void loadTasks(TASKS_REFRESH_MS)
 )
 watch(
   () => store.tasksChanged,

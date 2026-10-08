@@ -1,4 +1,4 @@
-"""Observe an integration command without changing its selection or result."""
+"""Observe a test command without changing its selection or result."""
 
 import argparse
 import asyncio
@@ -9,6 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -81,6 +82,36 @@ def sample_storage(postgres_pid):
         time.sleep(5)
 
 
+def disk_snapshot(paths):
+    """Size and free space of the filesystem under each path."""
+    disks = {}
+    for path in paths:
+        usage = os.statvfs(path)
+        disks[str(path)] = {
+            "total_bytes": usage.f_blocks * usage.f_frsize,
+            "available_bytes": usage.f_bavail * usage.f_frsize,
+        }
+    return disks
+
+
+def sample_disks(paths):
+    # The runner's own disks, beside the Postgres tmpfs above: a run that
+    # writes the root or $RUNNER_TEMP full says so here instead of only in a
+    # test's OSError.
+    record(sys.stdout, event="sampler_started", paths=paths, interval_seconds=5)
+    while True:
+        try:
+            record(sys.stdout, disks=disk_snapshot(paths))
+        except Exception as error:
+            record(sys.stdout, error=type(error).__name__)
+        time.sleep(5)
+
+
+def observed_disks():
+    paths = ["/", os.environ.get("RUNNER_TEMP"), tempfile.gettempdir()]
+    return list(dict.fromkeys(path for path in paths if path))
+
+
 def stop(process):
     if process.poll() is None:
         process.terminate()
@@ -91,7 +122,7 @@ def stop(process):
             process.wait()
 
 
-def observe(output, command):
+def observe(output, command, *, postgres=True):
     output.mkdir(parents=True, exist_ok=False)
     monitors = []
     streams = []
@@ -129,17 +160,13 @@ def observe(output, command):
 
         try:
             vmstat = shutil.which("vmstat")
-            commands = [
-                (
-                    "postgres",
-                    [
-                        sys.executable,
-                        "-m",
-                        "scripts.observe_ci_resources",
-                        "--sample-postgres",
-                    ],
-                )
+            module = [sys.executable, "-m", "scripts.observe_ci_resources"]
+            disks = [
+                arg for path in observed_disks() for arg in ("--sample-disk", path)
             ]
+            commands = [("disks", [*module, *disks])]
+            if postgres:
+                commands.append(("postgres", [*module, "--sample-postgres"]))
             if postgres_pid := os.environ.get("CHEESE_CI_POSTGRES_PID"):
                 commands.append(
                     (
@@ -203,6 +230,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sample-postgres", action="store_true")
     parser.add_argument("--sample-storage", type=int)
+    parser.add_argument("--sample-disk", action="append")
+    parser.add_argument(
+        "--no-postgres",
+        action="store_true",
+        help="the command has no database to watch (the pure layer)",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -210,9 +243,11 @@ def main():
         asyncio.run(sample_postgres())
     elif args.sample_storage:
         sample_storage(args.sample_storage)
+    elif args.sample_disk:
+        sample_disks(args.sample_disk)
     else:
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
-        raise SystemExit(observe(args.output, command))
+        raise SystemExit(observe(args.output, command, postgres=not args.no_postgres))
 
 
 if __name__ == "__main__":

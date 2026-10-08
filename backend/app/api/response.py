@@ -25,21 +25,8 @@ def page(items: list[Any], total: int) -> dict[str, Any]:
     return {"data": items, "total": total}
 
 
-class Envelope[T](BaseModel):
-    """What ``ok(data)`` puts on the wire, as a type the OpenAPI document can name.
-
-    Only ever a *documentation* model (see ``typed_response``): no route returns
-    one, so it cannot change a response. ``warnings`` is left out on purpose — a
-    route that sends them declares its own envelope when it gets a type.
-    """
-
-    code: int
-    message: str
-    data: T
-
-
 class Page[T](BaseModel):
-    """What ``page(items, total)`` builds: one page of a list, and the list's size.
+    """``page()``'s payload as a model: the list under ``data``, plus ``total``.
 
     Subclass it to name a page, as ``class FeedbackListOut(Page[FeedbackCard])``
     does: the subclass is the name OpenAPI and the frontend types use.
@@ -47,6 +34,36 @@ class Page[T](BaseModel):
 
     data: list[T]
     total: int
+
+
+class Envelope[T](BaseModel):
+    """``ok()``'s envelope as a model, so a route can *declare* what it returns.
+
+    Name it on the route and the OpenAPI document publishes it, which is what
+    lets the frontend generate its response types instead of hand-copying them::
+
+        @router.get("", response_model=Envelope[Page[AgentTypeOut]],
+                    response_model_exclude_unset=True)
+        async def list_agent_types() -> dict:
+            return ok(page(items, len(items)))
+
+    The other way in is ``typed_response(model)`` below, which writes the same
+    envelope into ``responses[200]`` under a *named* subclass — that is how a
+    route published its schema before this class was named on a route, and how
+    the feedback routes still do it.
+
+    ``response_model_exclude_unset`` is part of the pattern, not decoration. The
+    route builds the body with ``ok()``, which leaves ``warnings`` out entirely
+    when there is nothing to warn about; serializing the model without it would
+    put ``"warnings": null`` on every such response — a field no caller saw
+    before and that the payload never promised.
+    """
+
+    code: int = 200
+    message: str = "ok"
+    data: T
+    #: Beside ``data``, not inside it — see ``ok()``.
+    warnings: list[str] | None = None
 
 
 class Deleted(BaseModel):

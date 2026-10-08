@@ -28,6 +28,7 @@ async def _seed(
     factory,
     *,
     read: bool = False,
+    finalized: bool = True,
     type_: NotificationType = NotificationType.MENTION,
     created_at: datetime | None = None,
     metadata: dict | None = None,
@@ -38,7 +39,7 @@ async def _seed(
             receiver_id=_AGENT_USER_ID,
             type=type_,
             read=read,
-            finalized=True,
+            finalized=finalized,
             metadata_payload=metadata or {},
             created_at=created_at or now,
             updated_at=now,
@@ -289,3 +290,114 @@ async def test_entities_resolved_from_metadata(authed_client: AsyncClient) -> No
     assert entities["actor"]["type"] == "user"
     assert entities["actor"]["id"] == str(actor_id)
     assert entities["actor"]["name"] == "Mochi"
+
+
+@pytest.mark.anyio
+async def test_an_unfinalized_row_never_lights_the_unread_count(
+    authed_client: AsyncClient,
+) -> None:
+    """小点上的数就是待办页列出来的行数 —— 数（`/notifications/unread-count`）和
+    名单（`/notifications`）过同一套判据。
+
+    还没落定的那一行不在列表里，所以也不能进未读数：那会让小点亮着、点进去一条未读
+    也读不到，而唯一能按灭它的「全部已读」按钮只在列表里真有未读行时才画出来 ——
+    那颗点谁都清不掉。
+    """
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    landed = await _seed(factory)
+    await _seed(factory, finalized=False)
+
+    listed = await authed_client.get(
+        "/notifications", params={"pageSize": 10, "read": False}
+    )
+    data = listed.json()["data"]
+    assert [n["id"] for n in data["notifications"]] == [landed]
+
+    unread = await authed_client.get("/notifications/unread-count")
+    assert unread.json()["data"]["count"] == len(data["notifications"])
+
+
+async def _seed_page_with_project_entities(factory, count: int) -> list[int]:
+    """``count`` 条站内信，每条指向一个**不同的**项目。
+
+    项目是逐条解析时最贵的那一种实体（每条一次 ``get_or_404``），而且指向不同的
+    项目才不会让 SQLAlchemy 的身份映射替我们把重复的查询吃掉 —— 那样量出来的就
+    不是端点的开销了。
+    """
+    from app.domain.project.models import Project
+
+    now = datetime.now(UTC)
+    ids: list[int] = []
+    async with factory() as session:
+        team_id = await a_team(session)
+        for _ in range(count):
+            project = Project(team_id=team_id, name="P", owner_handle=_AGENT_HANDLE)
+            session.add(project)
+            await session.flush()
+            row = Notification(
+                receiver_id=_AGENT_USER_ID,
+                type=NotificationType.MENTION,
+                read=False,
+                finalized=True,
+                metadata_payload={
+                    "project": {"type": "project", "id": str(project.id)}
+                },
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            await session.flush()
+            ids.append(row.id)
+        await session.commit()
+    return ids
+
+
+@pytest.mark.anyio
+async def test_a_page_of_notifications_costs_constant_queries(
+    authed_client: AsyncClient,
+) -> None:
+    """整页实体解析的查询数是常数，不随页里的条数长。
+
+    页里每条都引一个项目实体，而项目解析曾经是逐 id ``get_or_404`` —— 一屏 20 条
+    就是 20 次往返。这里在同一个测试里量两个规模（1 条对 20 条），比的不是一个固定
+    数字，而是**这个数字不动**：固定数字只会钉住今天这个端点，两个规模互比才钉住
+    真正要紧的那件事。
+    """
+    import re
+
+    from sqlalchemy import event
+
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        statements.append(statement)
+
+    engine = authed_client.test_app_engine.sync_engine  # type: ignore[attr-defined]
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        await _seed_page_with_project_entities(factory, 1)
+        statements.clear()
+        resp = await authed_client.get("/notifications", params={"pageSize": 20})
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()["data"]["notifications"]) == 1
+        one = list(statements)
+
+        await _seed_page_with_project_entities(factory, 19)
+        statements.clear()
+        resp = await authed_client.get("/notifications", params={"pageSize": 20})
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()["data"]["notifications"]) == 20
+        twenty = list(statements)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    # ``\b`` so ``FROM project_members`` / ``FROM project_forges`` do not count.
+    def project_reads(log: list[str]) -> int:
+        return sum(1 for s in log if re.search(r"\bFROM projects\b", s))
+
+    # 整页一次查完：1 条和 20 条读项目表都是一次。
+    assert project_reads(one) == 1
+    assert project_reads(twenty) == 1
+    # 端点的总往返数也不随页里的条数长。
+    assert len(twenty) == len(one)

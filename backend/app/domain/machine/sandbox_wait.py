@@ -27,7 +27,6 @@ SANDBOX_LOST = (
     "什么。检查点之后才做的改动、依赖和缓存、生成目录、/tmp、正在运行的进程不在"
     "了，需要的重新做、重新安装、重新启动。"
 )
-LOST_KEY = "sandbox_lost"
 
 
 async def _home_removed(db, session_id) -> bool:

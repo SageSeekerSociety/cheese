@@ -1,4 +1,5 @@
-import type { StatsFeedback, StatsPerformance, StatsPlatform, StatsUsage } from './stats'
+import type { StatsUsage } from '../types/statsUsage'
+import type { StatsFeedback, StatsPerformance, StatsPlatform } from './stats'
 
 import { request } from '../http'
 import { feedbackQuery } from '../query'

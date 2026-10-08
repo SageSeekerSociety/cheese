@@ -238,7 +238,7 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
         headers=delivery_headers(client, tid),
     )
@@ -249,7 +249,7 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
         headers=delivery_headers(client, tid),
     )

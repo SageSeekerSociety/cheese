@@ -25,7 +25,7 @@ from app.domain.agent.platform_notices import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.actor import Actor

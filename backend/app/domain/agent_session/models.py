@@ -52,6 +52,11 @@ from app.domain.common import Timestamps, UuidPk
 # foreign key resolves in a process that never imports `app.models`.
 from app.domain.conversation.models import Conversation  # noqa: F401
 
+#: Set in a session's ``execution_request`` when its cloud sandbox was destroyed
+#: (idle, or given up with its host). Cleared by the first tool call that lands
+#: in a new one; until then the room's lease still names the machine it was on.
+LOST_KEY = "sandbox_lost"
+
 
 @dataclass(frozen=True, slots=True)
 class SessionPlace:

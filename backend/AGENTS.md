@@ -7,7 +7,7 @@ Read [`../CLAUDE.md`](../CLAUDE.md) first; this file only adds what applies here
 `app/` is layered **api -> domain -> core**. Imports that point backwards, a
 route reaching into another domain's models, or a cycle between sibling domains
 under `app.domain` are failures — including when the import sits inside a
-function. 260 pre-existing violations are frozen in `.importlinter` as exact
+function. 230 pre-existing violations are frozen in `.importlinter` as exact
 `importer -> imported` pairs; new ones are not.
 
 ```bash
@@ -19,6 +19,16 @@ uv run python scripts/boundary_baseline.py --update  # drop stale frozen lines (
 There is no wildcard exemption: if a pair is in the freeze, it names that module
 and that target. Full reasoning, and which rules are conventions rather than
 checks: [`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
+
+Imports inside a function body may only go down: lift one to the top of the
+module, or say why it cannot be with `# deferred-import: <reason>` on the same
+line or the line above. Unexplained ones are frozen per file in
+`deferred-import-baseline.json`; a new file may have none.
+
+```bash
+uv run python scripts/check_deferred_imports.py            # what CI runs (add --self-test)
+uv run python scripts/check_deferred_imports.py --update   # lower the baseline (never raises)
+```
 
 ## Caps and conventions
 

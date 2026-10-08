@@ -184,14 +184,14 @@ def test_a_refused_message_says_why(client, monkeypatch):
     """A message the platform refuses comes back with the reason, so the sender's
     copy can show it instead of waiting for an echo that will never come."""
     from app.core.errors import ForbiddenError
-    from app.domain.agent.runtime import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
     _, tid = _project_topic(client, owner="alice")
 
     async def fail(*args, **kwargs):
         raise ForbiddenError("房间已关闭")
 
-    monkeypatch.setattr(InProcessBroker, "receive_message", fail)
+    monkeypatch.setattr(AgentWorkRunner, "receive_message", fail)
     sent = client.post(
         f"/topics/{tid}/messages",
         json={"content": "hello", "request_id": str(uuid.uuid4())},

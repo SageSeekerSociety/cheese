@@ -10,9 +10,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code import ClaudeLaunch, device_launch
 from app.domain.agent.harness.claude_code.session_launch import (
-    ClaudeLaunch,
     session_settings,
 )
 from app.domain.agent.harness.launch import MachinePlace

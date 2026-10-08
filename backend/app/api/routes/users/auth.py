@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import (
@@ -11,51 +11,13 @@ from fastapi import (
     Request,
     Response,
 )
+from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
     get_passkey_service,
     get_user_auth_service,
 )
-from app.api.routes.users_common import (
-    _SUDO_TICKET_SCOPE,
-    REFRESH_COOKIE,
-    _clear_refresh_cookie,
-    _set_refresh_cookie,
-    challenge_from_credential,
-    issue_session,
-)
-from app.auth.checker import require_auth_user
-from app.auth.core import AuthUserInfo
-from app.common.auth import (
-    SudoPurpose,
-    create_access_token,
-    get_current_session_id,
-)
-from app.core.config import settings
-from app.core.email import is_placeholder_email
-from app.core.errors import (
-    AuthenticationRequiredError,
-    BadRequestError,
-    ForbiddenError,
-    InternalServerError,
-    SudoRequiredError,
-    UnprocessableEntityError,
-)
-from app.core.sentences import say
-from app.db.session import get_db
-from app.domain.passkey.prompt import PasskeyPromptService
-from app.domain.passkey.services import PasskeyService
-from app.domain.user.services import (
-    UserAuthService,
-)
-from app.domain.user.sessions import SessionService
-
-if TYPE_CHECKING:
-    from redis.asyncio import Redis
-
-    from app.domain.user.login_security import LoginDelay
-
 from app.api.routes.users._common import (
     _EMAIL_FORMAT,
     _PENDING_2FA_SCOPE,
@@ -69,6 +31,62 @@ from app.api.routes.users._common import (
     _too_many_from_client,
     _trusted_device,
     logger,
+)
+from app.api.routes.users_common import (
+    _SUDO_TICKET_SCOPE,
+    REFRESH_COOKIE,
+    _clear_refresh_cookie,
+    _set_refresh_cookie,
+    challenge_from_credential,
+    issue_session,
+)
+from app.auth.checker import require_auth_user
+from app.auth.core import AuthUserInfo
+from app.common.auth import (
+    SUDO_TICKET_TTL_S,
+    SudoPurpose,
+    create_access_token,
+    get_current_session_id,
+    mint_sudo_ticket,
+    verify_2fa_pending_token,
+)
+from app.core import single_use_state
+from app.core.background import spawn
+from app.core.client_address import resolved_client_address
+from app.core.config import settings
+from app.core.email import is_placeholder_email
+from app.core.errors import (
+    AuthenticationRequiredError,
+    BadRequestError,
+    ForbiddenError,
+    InternalServerError,
+    SudoRequiredError,
+    UnprocessableEntityError,
+)
+from app.core.sentences import say
+from app.core.single_use_state import SingleUseUnavailableError
+from app.db.session import get_db
+from app.domain.passkey.prompt import PasskeyPromptService
+from app.domain.passkey.services import PasskeyService
+from app.domain.user.login_security import (
+    LOCKOUT_DURATION_SECONDS,
+    AttemptLimiter,
+    BackupCodeRateLimiter,
+    ClientFailureBudget,
+    LoginDelay,
+    StepUpPasswordRateLimiter,
+    StepUpTwoFactorRateLimiter,
+    TOTPService,
+    TwoFactorRateLimiter,
+)
+from app.domain.user.services import (
+    UserAuthService,
+)
+from app.domain.user.sessions import SessionService
+from app.domain.user.verification_service import (
+    EmailCodePurpose,
+    EmailVerificationService,
+    Issued,
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -106,7 +124,7 @@ def _require_same_origin(request: Request) -> None:
 
 
 async def _spend_2fa_attempt(
-    redis: "Redis",
+    redis: AsyncRedis,
     user_id: int,
     verify: Callable[[], Awaitable[bool]],
     *,
@@ -148,15 +166,6 @@ async def _spend_2fa_attempt(
     fifteen minutes" need three different things from the user, and a client
     that cannot tell them apart will sit there retrying the impossible one.
     """
-    from app.domain.user.login_security import (
-        LOCKOUT_DURATION_SECONDS,
-        AttemptLimiter,
-        BackupCodeRateLimiter,
-        ClientFailureBudget,
-        StepUpTwoFactorRateLimiter,
-        TwoFactorRateLimiter,
-    )
-
     subject = str(user_id)
     # Exactly one of the two TOTP budgets, plus the backup-code one when the
     # code is a backup code — so a backup guess spends both and routine TOTP
@@ -225,7 +234,7 @@ async def _spend_2fa_attempt(
 
 
 async def _spend_sudo_password_attempt(
-    redis: "Redis",
+    redis: AsyncRedis,
     user_id: int,
     verify: Callable[[], Awaitable[bool]],
     *,
@@ -239,11 +248,6 @@ async def _spend_sudo_password_attempt(
     spent before the comparison, for the same check-then-act reason
     ``consume_attempt`` documents.
     """
-    from app.domain.user.login_security import (
-        LOCKOUT_DURATION_SECONDS,
-        StepUpPasswordRateLimiter,
-    )
-
     limiter = StepUpPasswordRateLimiter(redis)
     subject = str(user_id)
 
@@ -288,12 +292,11 @@ async def _issue_sudo_ticket(user_id: int, purpose: SudoPurpose) -> str:
     could not reserve is one the operation will refuse anyway, so handing it
     out turns an error here into a baffling "verify again" a screen later.
     """
-    from app.common.auth import SUDO_TICKET_TTL_S, mint_sudo_ticket
-    from app.core.single_use_state import SingleUseUnavailableError, reserve
-
     minted = mint_sudo_ticket(user_id, purpose)
     try:
-        await reserve(_SUDO_TICKET_SCOPE, minted.jti, ttl_s=SUDO_TICKET_TTL_S)
+        await single_use_state.reserve(
+            _SUDO_TICKET_SCOPE, minted.jti, ttl_s=SUDO_TICKET_TTL_S
+        )
     except SingleUseUnavailableError:
         logger.exception("sudo: cannot reserve ticket uid=%s", user_id)
         raise InternalServerError(say("securityCheckUnavailable")) from None
@@ -321,7 +324,7 @@ async def _passkey_enrollment(user_id: int, session: AsyncSession) -> dict[str, 
     }
 
 
-async def _admit_login_attempt(delay: "LoginDelay", username: str) -> int:
+async def _admit_login_attempt(delay: LoginDelay, username: str) -> int:
     """Admit one password check for ``username``, or refuse it while the wait
     earlier failures started is still running. Returns the wait this attempt
     starts if the password turns out wrong. The caller clears the count once
@@ -360,16 +363,6 @@ async def user_login(
     auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.client_address import resolved_client_address
-    from app.core.config import settings
-    from app.domain.user.login_security import (
-        ClientFailureBudget,
-        LoginDelay,
-        TOTPService,
-    )
-
     username = payload.username
     password = payload.password
     totp_code = payload.totp_code
@@ -483,14 +476,6 @@ async def verify_2fa_login(
     whether the code was right or wrong, and the user has a per-15-minutes
     attempt budget that a successful password step does *not* reset.
     """
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.common.auth import verify_2fa_pending_token
-    from app.core.client_address import resolved_client_address
-    from app.core.config import settings
-    from app.core.single_use_state import SingleUseUnavailableError, claim
-    from app.domain.user.login_security import TOTPService
-
     temp_token = payload.get("temp_token") or ""
     code = (payload.get("code") or "").strip()
     trust_device = payload.get("trust_device") is True
@@ -511,7 +496,7 @@ async def verify_2fa_login(
     # ticket. A wrong code gets a *replacement* ticket below, on the original
     # deadline, so bounding fan-out costs an honest user nothing.
     try:
-        first_use = await claim(_PENDING_2FA_SCOPE, claims.jti)
+        first_use = await single_use_state.claim(_PENDING_2FA_SCOPE, claims.jti)
     except SingleUseUnavailableError:
         logger.exception("2fa: cannot claim pending ticket uid=%s", user_id)
         raise InternalServerError(say("twoFactorUnavailable")) from None
@@ -603,14 +588,6 @@ async def _mail_sign_in_code(email: str) -> None:
     """Issue a sign-in code and mail it; runs after the response has gone,
     so that the response takes as long for an unknown address as for a known
     one. A failed send is only logged, for the same reason."""
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.domain.user.verification_service import (
-        EmailCodePurpose,
-        EmailVerificationService,
-        Issued,
-    )
-
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         service = EmailVerificationService(redis, EmailCodePurpose.SIGN_IN)
@@ -636,15 +613,6 @@ async def request_sign_in_code(
     is refused exactly when a known one would be, and otherwise gets the same
     answer while nothing is sent.
     """
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.background import spawn
-    from app.core.client_address import resolved_client_address
-    from app.domain.user.verification_service import (
-        EmailCodePurpose,
-        EmailVerificationService,
-    )
-
     email = payload.email.strip()
     if not _EMAIL_FORMAT.match(email):
         raise UnprocessableEntityError("Invalid email address format")
@@ -677,15 +645,6 @@ async def verify_sign_in_code(
     """The mailed code is a first step like a password: an account with 2FA
     gets the same ``2fa_pending`` ticket the password step hands out, unless
     this browser is trusted to skip it."""
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.client_address import resolved_client_address
-    from app.domain.user.login_security import ClientFailureBudget, TOTPService
-    from app.domain.user.verification_service import (
-        EmailCodePurpose,
-        EmailVerificationService,
-    )
-
     email = payload.email.strip()
     client = resolved_client_address(request)
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
@@ -860,15 +819,6 @@ async def sudo_auth(
     either way, and the window belongs to the session: revoking it ends the
     window, and the account's other sessions keep their own.
     """
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
-    from app.domain.user.login_security import TOTPService
-    from app.domain.user.verification_service import (
-        EmailCodePurpose,
-        EmailVerificationService,
-    )
-
     method = payload.method
     credentials = payload.credentials
     sessions = SessionService(session)

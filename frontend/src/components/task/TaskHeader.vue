@@ -29,6 +29,8 @@ const props = defineProps<{
   memberNames: Record<string, string>
   agentName: string
   people: TopicMemberRow[]
+  /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
+  agents: TopicMemberRow[]
   machine: TopicComputeProfile | null
   machineError: boolean
   starting: boolean
@@ -41,6 +43,7 @@ const props = defineProps<{
   handOver: (owner: string) => Promise<boolean>
   rename: (title: string) => Promise<boolean>
   setCollaborators: (handles: string[]) => Promise<boolean>
+  setAgent: (handle: string | null) => Promise<boolean>
   loadMachine: () => Promise<void>
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
@@ -87,6 +90,38 @@ async function addCollaborator() {
 }
 function removeCollaborator(handle: string) {
   void props.setCollaborators(collaborators.value.filter((h) => h !== handle))
+}
+
+// 做这件事的队友：菜单里是这间房名册上的队友（后端换的时候也只认名册上那个座位），
+// 加上「跟随频道」——不给这件事单独指定，房间的那位就接着做。
+const agentOptions = computed<{ handle: string | null; name: string }[]>(() => {
+  const current = props.task?.agent_handle ?? ''
+  return [
+    { handle: null, name: t('work.task.followsRoom') },
+    // 现在指着的那一位即使已经不在名册上，也留在菜单里——不然这一格就再也改不回他
+    // 头上，也看不出这件事现在交给了谁。
+    ...(current ? [{ handle: current, name: nameOf(current) }] : []),
+    ...props.agents
+      .filter((m) => m.member_handle !== current)
+      .map((m) => ({ handle: m.member_handle, name: nameOf(m.member_handle) })),
+  ]
+})
+// 只有一项可挑（除了「跟随频道」没别人）就不给这颗「改」——和环境那行同一道判断。
+const canPickAgent = computed(() => isOwner.value && isOpen.value && agentOptions.value.length > 1)
+const agentOpen = ref(false)
+const swappingAgent = ref(false)
+async function pickAgent(handle: string | null) {
+  if ((props.task?.agent_handle ?? null) === handle) {
+    agentOpen.value = false
+    return
+  }
+  swappingAgent.value = true
+  try {
+    // 换成了才收菜单。后端没让换就留着，让他再挑一次——理由写在页头下面那一行。
+    if (await props.setAgent(handle)) agentOpen.value = false
+  } finally {
+    swappingAgent.value = false
+  }
 }
 
 const detailsOpen = ref(false)
@@ -219,13 +254,46 @@ async function confirmHandOver() {
                 </span>
               </dd>
             </div>
-            <div class="task-details__row">
+            <div class="task-details__row" data-testid="task-agent">
               <dt>{{ t('work.task.agent') }}</dt>
-              <dd>{{ taskAgentName }}</dd>
+              <dd class="task-details__pair">
+                <span>{{ taskAgentName }}</span>
+                <span v-if="!task.agent_handle" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
+                <v-menu v-if="canPickAgent" v-model="agentOpen" location="bottom end" :close-on-content-click="false">
+                  <template #activator="{ props: menuProps }">
+                    <button
+                      type="button"
+                      class="task-details__edit"
+                      v-bind="menuProps"
+                      :title="t('work.task.agentEdit')"
+                      data-testid="task-agent-edit"
+                    >
+                      {{ t('work.task.agentEdit') }}
+                    </button>
+                  </template>
+                  <v-card class="task-agent-menu" data-testid="task-agent-menu">
+                    <div class="task-agent-menu__heading">{{ t('work.task.agentHeading') }}</div>
+                    <p class="task-agent-menu__hint">{{ t('work.task.agentHint') }}</p>
+                    <button
+                      v-for="option in agentOptions"
+                      :key="option.handle ?? 'room'"
+                      type="button"
+                      class="task-agent-menu__row"
+                      :disabled="swappingAgent"
+                      @click="pickAgent(option.handle)"
+                    >
+                      <v-icon size="18">{{
+                        (task.agent_handle ?? null) === option.handle ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'
+                      }}</v-icon>
+                      <span>{{ option.name }}</span>
+                    </button>
+                  </v-card>
+                </v-menu>
+              </dd>
             </div>
             <div class="task-details__row" data-testid="task-machine">
               <dt>{{ t('work.task.machine') }}</dt>
-              <dd v-if="machine" class="task-details__machine">
+              <dd v-if="machine" class="task-details__pair">
                 <span>{{ choiceName(machine.choice) }}</span>
                 <span v-if="machine.follows_room" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
                 <TopicComputePicker
@@ -482,7 +550,7 @@ async function confirmHandOver() {
   margin: 0;
   color: var(--text);
 }
-.task-details__machine {
+.task-details__pair {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -500,6 +568,56 @@ async function confirmHandOver() {
   color: var(--muted);
   text-decoration: underline;
   cursor: pointer;
+}
+/* 行尾那颗「改」，和环境那一行同一档小动作。 */
+.task-details__edit {
+  flex: none;
+  margin-left: auto;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  cursor: pointer;
+}
+.task-details__edit:hover {
+  color: var(--ink);
+}
+.task-agent-menu {
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+}
+.task-agent-menu__heading {
+  padding: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.task-agent-menu__hint {
+  margin: 4px 8px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.task-agent-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.task-agent-menu__row:hover {
+  background: var(--fill);
+}
+.task-agent-menu__row:disabled {
+  cursor: wait;
 }
 .task-notice {
   display: flex;

@@ -157,99 +157,111 @@ const inkStyle = computed(() =>
 
 <template>
   <div class="tabbar-host">
-    <div
-      ref="tabbarRef"
-      v-roving-tabs
-      class="tabbar"
-      :class="{ 'tabbar--phone': phone }"
-      role="tablist"
-      @scroll="measureOverflow"
-    >
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        type="button"
-        role="tab"
-        class="tabbar__tab"
-        :class="{ 'tabbar__tab--on': active === tab.key, 'tabbar__tab--empty': tab.empty }"
-        :aria-selected="active === tab.key"
-        :aria-controls="panelId"
-        :title="tab.title ?? tab.label"
-        @click="emit('select', tab.key)"
+    <div class="tabbar-host__scroll">
+      <div
+        ref="tabbarRef"
+        v-roving-tabs
+        class="tabbar"
+        :class="{ 'tabbar--phone': phone }"
+        role="tablist"
+        @scroll="measureOverflow"
       >
-        <v-icon size="16">{{ tab.icon }}</v-icon>
-        {{ tab.label }}
-        <!-- 信号上 Tab，不抢占视图: 芝士 works for minutes at a time and the
-           reader is usually somewhere else while it does, so what it produced
-           has to be visible from the tab it produced it on. None of these ever
-           selects a tab for you. -->
-        <span v-if="tab.signal?.kind === 'pulse'" class="tabbar__pulse" />
-        <!-- A dot, not a count: there is only ever one current preview, so a
-           number would be noise. -->
-        <span v-else-if="tab.signal?.kind === 'dot'" class="tabbar__dot" />
-        <!-- 有几件在路上。和 改动 一样用数字而不是点：几件在跑本身就是要看的那个
-           信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
-        <span
-          v-else-if="tab.signal?.kind === 'count' && tab.signal.count"
-          class="tabbar__count"
-          :class="{ 'tabbar__count--new': tab.signal.fresh }"
-          >{{ tab.signal.count }}</span
-        >
-      </button>
-      <!-- 自由区。关闭钮和页签是兄弟，不是它的孩子：按钮里套按钮不合法，读屏也会把
-         两者念成一个东西。 -->
-      <span v-if="files.length" class="tabbar__sep" aria-hidden="true" />
-      <div v-for="f in files" :key="fileKey(f.path)" class="tabbar__file" :class="{ 'tabbar__file--temp': !f.pinned }">
         <button
+          v-for="tab in tabs"
+          :key="tab.key"
           type="button"
           role="tab"
           class="tabbar__tab"
-          :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
-          :aria-selected="active === fileKey(f.path)"
+          :class="{ 'tabbar__tab--on': active === tab.key, 'tabbar__tab--empty': tab.empty }"
+          :aria-selected="active === tab.key"
           :aria-controls="panelId"
-          :title="f.pinned ? tabName(f) : t('work.room.tabs.pinHint', { path: tabName(f) })"
-          @click="emit('select', fileKey(f.path))"
-          @dblclick="emit('pin-file', f.path)"
+          :title="tab.title ?? tab.label"
+          @click="emit('select', tab.key)"
         >
-          <v-icon size="16">{{ f.document ? 'mdi-file-document-edit-outline' : fileIcon(f.path) }}</v-icon>
-          <span class="tabbar__name">{{ tabName(f) }}</span>
+          <v-icon size="16">{{ tab.icon }}</v-icon>
+          {{ tab.label }}
+          <!-- 信号上 Tab，不抢占视图: 芝士 works for minutes at a time and the
+           reader is usually somewhere else while it does, so what it produced
+           has to be visible from the tab it produced it on. None of these ever
+           selects a tab for you. -->
+          <span v-if="tab.signal?.kind === 'pulse'" class="tabbar__pulse" />
+          <!-- A dot, not a count: there is only ever one current preview, so a
+           number would be noise. -->
+          <span v-else-if="tab.signal?.kind === 'dot'" class="tabbar__dot" />
+          <!-- 有几件在路上。和 改动 一样用数字而不是点：几件在跑本身就是要看的那个
+           信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
+          <span
+            v-else-if="tab.signal?.kind === 'count' && tab.signal.count"
+            class="tabbar__count"
+            :class="{ 'tabbar__count--new': tab.signal.fresh }"
+            >{{ tab.signal.count }}</span
+          >
         </button>
-        <button
-          type="button"
-          class="tabbar__close"
-          :aria-label="t('work.room.tabs.close', { name: tabName(f) })"
-          :title="t('work.room.tabs.close', { name: tabName(f) })"
-          @click="emit('close-file', f.path)"
+        <!-- 自由区。关闭钮和页签是兄弟，不是它的孩子：按钮里套按钮不合法，读屏也会把
+         两者念成一个东西。 -->
+        <span v-if="files.length" class="tabbar__sep" aria-hidden="true" />
+        <div
+          v-for="f in files"
+          :key="fileKey(f.path)"
+          class="tabbar__file"
+          :class="{ 'tabbar__file--temp': !f.pinned }"
         >
-          <v-icon size="14">mdi-close</v-icon>
-        </button>
+          <button
+            type="button"
+            role="tab"
+            class="tabbar__tab"
+            :class="{ 'tabbar__tab--on': active === fileKey(f.path) }"
+            :aria-selected="active === fileKey(f.path)"
+            :aria-controls="panelId"
+            :title="f.pinned ? tabName(f) : t('work.room.tabs.pinHint', { path: tabName(f) })"
+            @click="emit('select', fileKey(f.path))"
+            @dblclick="emit('pin-file', f.path)"
+          >
+            <v-icon size="16">{{ f.document ? 'mdi-file-document-edit-outline' : fileIcon(f.path) }}</v-icon>
+            <span class="tabbar__name">{{ tabName(f) }}</span>
+          </button>
+          <button
+            type="button"
+            class="tabbar__close"
+            :aria-label="t('work.room.tabs.close', { name: tabName(f) })"
+            :title="t('work.room.tabs.close', { name: tabName(f) })"
+            @click="emit('close-file', f.path)"
+          >
+            <v-icon size="14">mdi-close</v-icon>
+          </button>
+        </div>
+        <span class="tabbar__ink" :class="{ 'tabbar__ink--moves': inkMoves }" :style="inkStyle" aria-hidden="true" />
       </div>
-      <span class="tabbar__ink" :class="{ 'tabbar__ink--moves': inkMoves }" :style="inkStyle" aria-hidden="true" />
-    </div>
-    <!-- 溢出到屏幕外的那一侧：一层淡出 + 一颗箭头。它们只在那一侧真溢出时出现，
+      <!-- 溢出到屏幕外的那一侧：一层淡出 + 一颗箭头。它们只在那一侧真溢出时出现，
          滚到头就退回去，不挡着最后一格。箭头读屏念得出，手指点得中（44×44）。 -->
-    <div v-if="canLeft" class="tabbar-host__edge tabbar-host__edge--left" aria-hidden="true" />
-    <div v-if="canRight" class="tabbar-host__edge tabbar-host__edge--right" aria-hidden="true" />
-    <button
-      v-if="canLeft"
-      type="button"
-      class="tabbar-host__arrow tabbar-host__arrow--left"
-      :aria-label="t('work.room.tabs.scrollLeft')"
-      :title="t('work.room.tabs.scrollLeft')"
-      @click="scrollTabs(-1)"
-    >
-      <v-icon size="20">mdi-chevron-left</v-icon>
-    </button>
-    <button
-      v-if="canRight"
-      type="button"
-      class="tabbar-host__arrow tabbar-host__arrow--right"
-      :aria-label="t('work.room.tabs.scrollRight')"
-      :title="t('work.room.tabs.scrollRight')"
-      @click="scrollTabs(1)"
-    >
-      <v-icon size="20">mdi-chevron-right</v-icon>
-    </button>
+      <div v-if="canLeft" class="tabbar-host__edge tabbar-host__edge--left" aria-hidden="true" />
+      <div v-if="canRight" class="tabbar-host__edge tabbar-host__edge--right" aria-hidden="true" />
+      <button
+        v-if="canLeft"
+        type="button"
+        class="tabbar-host__arrow tabbar-host__arrow--left"
+        :aria-label="t('work.room.tabs.scrollLeft')"
+        :title="t('work.room.tabs.scrollLeft')"
+        @click="scrollTabs(-1)"
+      >
+        <v-icon size="20">mdi-chevron-left</v-icon>
+      </button>
+      <button
+        v-if="canRight"
+        type="button"
+        class="tabbar-host__arrow tabbar-host__arrow--right"
+        :aria-label="t('work.room.tabs.scrollRight')"
+        :title="t('work.room.tabs.scrollRight')"
+        @click="scrollTabs(1)"
+      >
+        <v-icon size="20">mdi-chevron-right</v-icon>
+      </button>
+    </div>
+    <!-- 栏右端调用方的几颗按钮（话题页放面板的铺满和关闭）。它们不随页签横滚：
+         页签再多，这几颗也一直在原处。 -->
+    <div v-if="$slots.actions" class="tabbar-host__actions">
+      <slot name="actions" />
+    </div>
   </div>
 </template>
 
@@ -438,9 +450,25 @@ const inkStyle = computed(() =>
   flex: 0 0 auto;
 }
 
+.tabbar-host__scroll {
+  display: flex;
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .tabbar-host .tabbar {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.tabbar-host__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line);
 }
 
 .tabbar-host__edge {

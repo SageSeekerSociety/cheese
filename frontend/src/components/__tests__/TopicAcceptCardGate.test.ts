@@ -29,7 +29,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import TopicAcceptCard from '../TopicAcceptCard.vue'
+import { AcceptPage } from './acceptHarness'
 
 import i18n, { setLocale } from '@/i18n'
 
@@ -40,7 +40,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     id: `card-${seq}`,
     topic_id: 't1',
     reviewer_handle: 'alice',
-    routing_reason: '最懂',
+    focus: '最懂',
     change_subject: 'chore: do a thing',
     change_body: null,
     status: 'pending',
@@ -85,7 +85,7 @@ async function flush() {
 async function mountWith(cards: AcceptCard[]) {
   getAcceptCards.mockResolvedValue({ data: cards, has_more: false })
   const vuetify = createVuetify({ components, directives })
-  const utils = render(TopicAcceptCard, {
+  const utils = render(AcceptPage, {
     props: { topicId: 't1', topicStatus: 'active' },
     global: { plugins: [vuetify, i18n] },
   })
@@ -107,6 +107,8 @@ describe('历史闸门卡还要能看', () => {
     ])
 
     expect(container.textContent).toContain('平台检查未通过')
+    // 历史卡平时只有一条，点它才在上面展开当年那张卡；输出还要再点一下。
+    await fireEvent.click(container.querySelector('.accept-bar__status')!)
     expect(container.textContent).not.toContain('ruff: E501 line too long')
 
     await fireEvent.click(getByText('查看检查输出'))
@@ -119,6 +121,7 @@ describe('历史闸门卡还要能看', () => {
 
     expect(container.textContent).toContain('平台检查未能执行')
     expect(container.textContent).not.toContain('平台检查未通过')
+    await fireEvent.click(container.querySelector('.accept-bar__status')!)
     expect(container.textContent).toContain('检查未能运行')
   })
 })
@@ -134,7 +137,7 @@ describe('闸门退役之后不该再出现的东西', () => {
   it('今天递的卡上没有任何闸门读数', async () => {
     const { container } = await mountWith([card({ status: 'pending' })])
 
-    expect(container.textContent).toContain('改动')
+    expect(container.querySelector('.review-head')).not.toBeNull()
     expect(container.textContent).not.toContain('平台检查')
   })
 

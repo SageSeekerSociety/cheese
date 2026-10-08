@@ -84,6 +84,10 @@ def test_upload_then_raw_roundtrip(client):
     assert raw.status_code == 200
     assert raw.headers["content-type"].startswith("image/png")
     assert raw.content == PNG_1PX
+    # 同一个地址下的字节会被替换（替换资料库文件），所以浏览器不许把它留一小时：
+    # 照资料库自己的字节端点的规矩。剪贴板贴进来的那一份相反，它钉在一次粘贴上、
+    # 字节不再变，留一小时是有意的（test_room_file_helpers_move.py）。
+    assert raw.headers["cache-control"] == "private, no-cache"
 
 
 @pytest.mark.parametrize(

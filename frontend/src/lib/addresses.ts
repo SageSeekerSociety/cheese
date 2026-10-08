@@ -151,8 +151,10 @@ export function shortRoute(to: RouteLocationRaw): RouteLocationRaw {
 
 async function projectOf(ref: string): Promise<{ id: string; slug: string } | null> {
   const known = projectIdByRef.get(ref)
-  // 旧短名查得到 UUID，但地址要换成现在的短名，所以只认现在的。
-  if (known && slugById.get(known) === ref) return { id: known, slug: ref }
+  const slug = known ? slugById.get(known) : undefined
+  // 旧短名查得到 UUID，但地址要换成现在的短名，所以只认现在的短名和 UUID 本身。
+  // 侧栏点频道时给的是 UUID：认得它，切一次频道就少等一个来回。
+  if (known && slug && (slug === ref || known === ref)) return { id: known, slug }
   try {
     const found = await once(`p/${ref}`, () => resolveProject(ref))
     rememberProject(found.id, found.slug)

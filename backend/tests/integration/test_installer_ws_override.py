@@ -6,9 +6,16 @@ installer bakes a WS-capable control-channel URL into the cli config's "ws"
 key. Default (no override) must stay byte-identical in behaviour.
 """
 
+import hashlib
+
 import pytest
 
 from app.core.config import settings
+
+# What a zero-length file hashes to. The fake curl below writes an empty file
+# wherever -o points, and install.sh checks that file against the digest the
+# response announced — so -D has to name this.
+EMPTY_DIGEST = hashlib.sha256(b"").hexdigest()
 
 
 def test_install_script_default_has_no_ws_override(client):
@@ -72,8 +79,17 @@ def test_install_script_writes_ws_url_where_cheesehost_reads_its_config(
     bin_dir.mkdir()
     fakes = {
         "uname": f'[ "$1" = -m ] && echo arm64 || echo {uname_s}\n',
-        # Every download lands as an empty file wherever -o points.
-        "curl": 'while [ $# -gt 0 ]; do [ "$1" = -o ] && : > "$2"; shift; done\n',
+        # Every download lands as an empty file wherever -o points, and the
+        # headers curl would keep for -D name that empty file's digest.
+        "curl": (
+            "while [ $# -gt 0 ]; do\n"
+            '  if [ "$1" = -o ]; then : > "$2"; fi\n'
+            '  if [ "$1" = -D ]; then echo "X-Checksum-SHA256: '
+            + EMPTY_DIGEST
+            + '" > "$2"; fi\n'
+            "  shift\n"
+            "done\n"
+        ),
     }
     for name, body in fakes.items():
         fake = bin_dir / name

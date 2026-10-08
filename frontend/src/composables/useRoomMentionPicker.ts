@@ -17,9 +17,9 @@ import type { Topic } from '../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { listProjectLibrary } from '../api'
 import { t } from '../i18n'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
+import { listProjectLibrary } from '../lib/libraryApi'
 
 /** 能被 @ 到的人：这个房间里的，加上项目里还没进这个房间的。 */
 export interface MentionPoolEntry {
@@ -81,6 +81,9 @@ const broadcastItems = (): MentionItem[] => [
 /** 这一格里「算不算图片」比预览域宽：gif / webp 浏览器也画得出来，而这里只是分组。 */
 const PICKER_IMAGE_SUFFIXES = new Set([...IMAGE_SUFFIXES, 'gif', 'webp'])
 
+/** 一次从资料库取几份候选；菜单里最多摆 12 份，图片和文件分两组，多取一些。 */
+const LIBRARY_PICKS = 24
+
 export interface MentionPickerDeps {
   /** 正文。挑中一项之后由这里改它。 */
   draft: Ref<string>
@@ -134,16 +137,25 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     ]
   }
 
-  async function loadLibrary() {
+  // 按打的字去服务端找：资料库可以很大，不整份拉下来再筛。晚到的旧回答不盖住新的
+  // （`librarySequence`）。
+  let librarySequence = 0
+  async function loadLibrary(q: string) {
     const projectId = deps.topic()?.project_id
-    if (!projectId || libraryFor.value === projectId) return
-    libraryFor.value = projectId
+    const key = `${projectId}\n${q}`
+    if (!projectId || libraryFor.value === key) return
+    libraryFor.value = key
+    const sequence = ++librarySequence
     try {
-      libraryFiles.value = (await listProjectLibrary(projectId)).data
+      const page = await listProjectLibrary(projectId, { flat: true, q, limit: LIBRARY_PICKS })
+      if (sequence === librarySequence)
+        libraryFiles.value = page.data.filter((row): row is LibraryFile => row.type === 'file')
     } catch {
       // 挑文件是输入栏里的一个便利，不是这条消息发不出去的理由。
-      libraryFiles.value = []
-      libraryFor.value = null
+      if (sequence === librarySequence) {
+        libraryFiles.value = []
+        libraryFor.value = null
+      }
     }
   }
 
@@ -157,13 +169,18 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
   watch(
     () => query.value !== null,
     (open) => {
-      if (open) void loadLibrary()
       // 菜单关了就回到一级：下一次打 @ 的人不该落在上一次翻到的地方。
-      else level.value = 'root'
+      if (!open) level.value = 'root'
+    }
+  )
+  // immediate: 草稿是恢复出来的（上次在这个房间打了一半的 @），输入区建起来的那一刻
+  // 菜单就已经是开着的。只等「变成开着」的话，这一次永远等不到，菜单开着却一份文件
+  // 都列不出来。
+  watch(
+    query,
+    (q) => {
+      if (q !== null) void loadLibrary(q)
     },
-    // immediate: 草稿是恢复出来的（上次在这个房间打了一半的 @），输入区建起来的
-    // 那一刻菜单就已经是开着的。只等「变成开着」的话，这一次永远等不到，菜单开着
-    // 却一份文件都列不出来。
     { immediate: true }
   )
 

@@ -1,10 +1,8 @@
 import type { ApiEnvelope } from '../cx_types'
 
-import { t } from '../i18n'
-import { refusalWords } from '../lib/noticeText'
 import { isTransportFailure, readJson, transportFailureMessage } from '../lib/transportFailure'
 
-import { ApiError, authHeaders } from './http'
+import { ApiError, authHeaders, refusalError } from './http'
 
 // Mirrors `request`'s envelope unwrap and auth header, minus the GET retry.
 //
@@ -28,13 +26,11 @@ export async function legacyRequest<T>(path: string, init?: RequestInit): Promis
     throw new ApiError(res.status, transportFailureMessage(method, res.status))
   }
   if (!res.ok) {
-    const serverSaid = refusalWords(body)
-    const http = `HTTP ${res.status}`
-    throw new Error(serverSaid ? t('global.labelWithAside', { label: serverSaid, aside: http }) : `${http} for ${path}`)
+    throw refusalError(res, body, path)
   }
   const envelope = body as ApiEnvelope<T>
   if (envelope.code !== 200) {
-    throw new Error(envelope.message || `API error code ${envelope.code}`)
+    throw new ApiError(res.status, envelope.message || `API error code ${envelope.code}`)
   }
   return envelope.data
 }

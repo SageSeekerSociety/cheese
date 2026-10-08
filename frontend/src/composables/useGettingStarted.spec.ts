@@ -12,7 +12,11 @@ const mocks = vi.hoisted(() => ({ library: vi.fn(), forge: vi.fn() }))
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
-  return { ...actual, listProjectLibrary: mocks.library, getForgeConnection: mocks.forge }
+  return { ...actual, getForgeConnection: mocks.forge }
+})
+vi.mock('../lib/libraryApi', async () => {
+  const actual = await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')
+  return { ...actual, listProjectLibrary: mocks.library }
 })
 
 import { useGettingStarted } from './useGettingStarted'

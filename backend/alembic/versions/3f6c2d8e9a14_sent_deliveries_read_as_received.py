@@ -30,5 +30,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Which rows read as pending before is not recorded; received is their truth.
+    """Which rows read as pending before is not recorded; received is their truth."""
     pass

@@ -24,7 +24,6 @@ import type {
   FeedbackStatus,
   FileContent,
   FileSource,
-  GitCommit,
   PrChecks,
   ProjectMemberRow,
   RoomTask,
@@ -188,10 +187,10 @@ export function installCatalogAnswers(): void {
 // ---- 验收卡（TopicAcceptCard）拆出来的那几件 ----------------------------------
 //
 // 拆开之后 `components/accept/` 里这几件都是「只吃 props、只往上发事件」的那种
-// （`frontend_grade.py` 的 A 级）：三件只管画的零件（AcceptPrChecks / AcceptNoteLine
-// / AcceptDockBar）和五张脸（闸门未过 / 闸门没跑成 / 待采纳 / 已采纳等合并 / 已采
-// 纳）。于是每一件都能单独摆进预览站，条目在 `catalogAccept.ts`。数据就着剧本第四
-// 步那张卡改几格（`ACCEPT_CARD` / `ACCEPT_CHECKS`）——它们本来就是同一张卡上的几段。
+// （`frontend_grade.py` 的 A 级）：横条、退回那一块、「改动」页顶部那块，几件零件，
+// 以及两张只读的历史脸。于是每一件都能单独摆进预览站，条目在 `catalogAccept.ts`。
+// 数据就着剧本第四步那张卡改几格（`ACCEPT_CARD` / `ACCEPT_CHECKS`）——它们本来就是
+// 同一张卡上的几段。
 
 /** 那张卡（`AcceptPrChecks` / 几张脸都要）。剧本第四步一定有它（`installCatalogAnswers`
  *  也是照着它答的），所以这里就是那一张。 */
@@ -226,8 +225,6 @@ export const ACCEPT_GATE_BLOCKED: AcceptCard = {
 }
 /** 已采纳等合并（`pr_open`，#718 退役的兜底脸）：采纳过、合并没走完，只读。 */
 export const ACCEPT_DELIVERING_ONE: AcceptCard = { ...ACCEPT_ONE, status: 'pr_open', decided_by: 'wang' }
-/** 归档话题上那张已采纳的卡：它存在的理由就是「撤回采纳」那个入口。 */
-export const ACCEPT_ACCEPTED_ONE: AcceptCard = { ...ACCEPT_ONE, status: 'accepted', decided_by: 'wang' }
 /** 主分支保护：这次改动要两个人批准，李甘已经批了。`approvals` 记的是 handle
  *  （剧本里 `li` 就是李甘）。 */
 export const ACCEPT_APPROVALS: AcceptCard = { ...ACCEPT_ONE, approvals: ['li'], approvals_required: 2 }
@@ -255,35 +252,31 @@ export const ACCEPT_REVIEWERS: ProjectMemberRow[] = [
 ]
 
 /**
- * `AcceptPendingFace` 要吃的那一大把 props。默认是「可以采纳」那一档（剧本第四步
- * 那张卡），要看别的档就换一两个键就行。
+ * `ChangesReviewHead`（「改动」页顶部那块）要吃的那一大把 props。默认是「可以采纳」那
+ * 一档（剧本第四步那张卡），要看别的档就换一两个键就行。
  */
-export function acceptPendingProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+export function acceptHeadProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   const card = (over.card as AcceptCard | undefined) ?? ACCEPT_ONE
   return {
     card,
-    // 冲突卡不画状态词（标题已经说了「芝士处理中」），别的卡按合并态翻译。
+    // 冲突卡不画合并那个信号（下面那句已经说了芝士在处理），别的卡按合并态翻译。
     badge: card.status === 'conflict' ? null : mergeBadgeOf(card.merge_state, AGENT_NAME),
     reasons: visibleReasons(card.merge_state),
     forgeDeclaration: card.forge.declaration,
     note: null,
+    prChecks: ACCEPT_CHECKS,
     reviewerChoices: ACCEPT_REVIEWERS,
     busy: false,
-    blockedTitle: null,
-    needsPr: false,
     autoMergeVisible: false,
     autoMergeArmedBy: null,
-    prChecks: ACCEPT_CHECKS,
-    docked: false,
+    forceMergeVisible: false,
     myHandle: 'wang',
     agentName: AGENT_NAME,
     agentHandle: 'cheese',
     deliverableBusy: false,
     deliverableError: '',
-    // 六个 `defineModel` 在这张脸上都是 required（它们的初值属于调用方的状态，
-    // 重新读卡要能收起来）。预览站给的就是「三个小表单都收着」。
-    showRejectInput: false,
-    rejectNote: '',
+    // 四个 `defineModel` 是 required（它们的初值属于调用方的状态，重新读卡要能收起来）。
+    // 预览站给的是「两个确认框都关着」。
     showVoidInput: false,
     voidNote: '',
     showForceMergeInput: false,
@@ -700,12 +693,6 @@ const CHANGES_TASK: RoomTask = roomTask(
   0
 )
 
-/** 没打开文件时那一半画的是提交记录。 */
-const CHANGES_COMMITS: GitCommit[] = [
-  { hash: '1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c', author: '芝士', message: '整理第一周的课件' },
-  { hash: '4c3b2a1908f7e6d5c4b3a2918070605040302010', author: '芝士', message: '删掉旧的大纲' },
-]
-
 const CHANGES_BASE = {
   // 修订清单那一包：这一格只画，清单本身另有它自己的用例（`RevisionList.library.spec.ts`）。
   revs: revisionsBundle(),
@@ -716,7 +703,6 @@ const CHANGES_BASE = {
   currentTask: CHANGES_TASK,
   sourceStatus: '待审阅',
   sourceUnavailable: false,
-  showAll: false,
   fileSource: 'committed' as FileSource,
   fileToolReady: true,
   loading: false,
@@ -724,10 +710,10 @@ const CHANGES_BASE = {
   errorMsg: null,
   noRepo: false,
   missing: null,
-  gitCommits: CHANGES_COMMITS,
   fileDiffs: CHANGES_FILE_DIFFS,
   diffByPath: CHANGES_BY_PATH,
   treeFiles: CHANGES_TREE,
+  allFiles: CHANGES_TREE,
   openPath: CHANGES_OPEN.path,
   fileDraft: '# 课程资料\n\n这个项目放本课程的课件和作业。',
   fileSaving: false,
@@ -747,7 +733,7 @@ const CHANGES_BASE = {
   openDocumentType: null,
   revisionPath: null,
   openRawUrl: '/api/projects/demo/file/raw?path=README.md',
-  expandedDirs: new Set<string>(['docs']),
+  collapsedDirs: new Set<string>(),
   revealTick: 0,
   draftCount: 0,
   docBytes: null,
@@ -761,13 +747,13 @@ export function changesPanelProps(over: Record<string, unknown> = {}): Record<st
   return { ...CHANGES_BASE, ...over }
 }
 
-/** 手上什么都没有的那几样：没有 diff、没有树、没有提交，右边也没打开任何文件 —— 取数
+/** 手上什么都没有的那几样：没有 diff、没有树，右边也没打开任何文件 —— 取数
  *  那一层在那时真会是这些值（`openRawUrl` 没有路径时是空串，横条上文件那半不摆）。 */
 export const NOTHING_CHANGED = {
   fileDiffs: [],
   diffByPath: new Map<string, FileDiff>(),
   treeFiles: [],
-  gitCommits: [],
+  allFiles: [],
   openPath: null,
   openDiff: null,
   openDiffLines: [],
@@ -775,11 +761,11 @@ export const NOTHING_CHANGED = {
   fileVersion: null,
   fileBytes: 0,
   openRawUrl: '',
-  expandedDirs: new Set<string>(),
+  collapsedDirs: new Set<string>(),
   fileToolReady: false,
 }
 
-/** 空的那一格：这一支活什么都没改，提交记录也没有。 */
+/** 空的那一格：这一支活什么都没改。 */
 export const CHANGES_EMPTY = changesPanelProps(NOTHING_CHANGED)
 
 /** 没绑仓库：取数那一层问到这一点就不再取树和提交（`loadAll` 在 `noRepo` 上返回），

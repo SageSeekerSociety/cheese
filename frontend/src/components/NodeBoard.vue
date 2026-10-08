@@ -1,40 +1,14 @@
 <script setup lang="ts">
 import type { MarketNodes } from '../cx_types'
 
-import { onBeforeUnmount, onMounted, ref } from 'vue'
-
-import { getMarketNodes } from '../api'
 import { t } from '../i18n'
 import { responseText } from '../lib/noticeText'
 
 // 节点状态 (spec §9.1): the physical side of the compute pools — every machine
 // pool this deployment can run a turn on, and whether it can run one right now.
-// Self-contained: fetches + refreshes itself.
-const board = ref<MarketNodes | null>(null)
-const loading = ref(false)
-const error = ref<string | null>(null)
-let timer: number | undefined
-
-async function load() {
-  loading.value = board.value === null
-  error.value = null
-  try {
-    board.value = await getMarketNodes()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.nodeBoard.loadFailed')
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(() => {
-  void load()
-  // Light auto-refresh so 在线 stays honest while the page is open.
-  timer = window.setInterval(() => void load(), 15000)
-})
-onBeforeUnmount(() => {
-  if (timer !== undefined) window.clearInterval(timer)
-})
+// Draws what it is given: fetching and the 15-second refresh live in
+// `composables/useMarketNodes.ts`, called by the market page.
+defineProps<{ board: MarketNodes | null; loading: boolean; error: string | null }>()
 </script>
 
 <template>

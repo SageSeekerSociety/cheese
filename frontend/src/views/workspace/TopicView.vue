@@ -9,22 +9,23 @@ import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, 
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
+import { provideAcceptCard } from '@/composables/useAcceptCard'
 import { useChannelThreads } from '@/composables/useChannelThreads'
 import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
-import { useTopicMemory } from '@/composables/useTopicMemory'
 import { useTopicPanel } from '@/composables/useTopicPanel'
 
 import { getTask } from '@/api/tasks'
 import { openThread } from '@/api/threads'
-import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskOverview from '@/components/task/TaskOverview.vue'
+import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
@@ -40,6 +41,7 @@ import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
 import { useTaskPage } from '@/views/workspace/useTaskPage'
+import { useTopicPanes } from '@/views/workspace/useTopicPanes'
 
 // 话题视图: ONE topic header, then the chat | 工作面板 split. A task in the room
 // is drawn by the same view with the task's header, its own conversation in the
@@ -295,45 +297,11 @@ function openTopic(topicId: string) {
   void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
 }
 
-// ---- Layout: the chat|panel split, persisted across sessions (in the store, so
-// the sidebar's own width sits in the same record). This splitter is the ONLY
-// width control in the workspace now — the tool drawer used to carry a second
-// one of its own (`cheesex.toolWidth`), plus a 钉住 toggle that decided whether
-// the doc made room for it at all.
-const { focusMode } = useTopicMemory() // 专注模式 (spec §7.1): session-only, a transient mode
-// 专注模式是「对话让开、面板占满」：面板没并排开着时它不成立，一进这种状态就关掉，
-// 免得从宽档带来的那个开关和这里的布局打架。
-const docked = computed(() => !panelFloat.value && panelOpen.value)
-watch(
-  docked,
-  (on) => {
-    if (!on) focusMode.value = false
-  },
-  { immediate: true }
-)
-// 专注模式只在面板并排开着时有。
-useCommands(() =>
-  mdAndUp.value && docked.value
-    ? [
-        {
-          id: 'room.focus',
-          title: focusMode.value ? t('work.room.menu.exitFocus') : t('work.room.menu.focus'),
-          icon: focusMode.value ? 'mdi-arrow-collapse' : 'mdi-arrow-expand',
-          run: () => (focusMode.value = !focusMode.value),
-        },
-      ]
-    : []
-)
-// 对话那一栏的宽度：面板并排开着时是 `0 0 N%`（可拖的分隔），否则它吃掉整宽——面板
-// 收着，或浮在上面。
-const chatStyle = computed(() => (docked.value ? { flex: `0 0 ${store.chatPct}%` } : { flex: '1 1 0', minWidth: 0 }))
-// 收起 / 拉开的那一下里，栏在变窄变宽，里面的东西不跟着变：几百条消息每一帧按新
-// 宽度重新折行，既费又难看。把里面钉在这一栏落定时的宽度上，栏只是把它裁开、露出。
-function freezeChatWidth(el: Element) {
-  const panes = (el as HTMLElement).parentElement
-  if (!panes) return
-  ;(el as HTMLElement).style.setProperty('--chat-frozen-w', `${(panes.clientWidth * store.chatPct) / 100}px`)
-}
+// ---- 左右两栏：分隔、专注模式、对话收起时的窄边（见 useTopicPanes）----
+const panes = useTopicPanes({ panelOpen, panelFloat, desktop: mdAndUp })
+const { focusMode, focusIcon, focusLabel, docked, chatNews, noteChatNews, toggleFocus, chatStyle } = panes
+const { freezeChatWidth, startPaneDrag } = panes
+const closeLabel = computed(() => t('work.room.panel.close'))
 const panelRef = ref<{
   showOverview: () => Promise<void>
   openFile?: (path: string, taskId?: string | null) => void
@@ -343,38 +311,33 @@ const panelRef = ref<{
   // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
   activeTab: () => string
 } | null>(null)
+// 这个话题（任务）的采纳卡，整页一份：对话栏的那一条、「改动」页顶部、专注模式和手机
+// 上面板底部那一条读的都是它（见 provideAcceptCard）。
+const accept = provideAcceptCard({
+  get topicId() {
+    return props.topicId
+  },
+  get topicStatus() {
+    return selectedTopic.value?.status ?? ''
+  },
+  get taskId() {
+    return props.taskId ?? null
+  },
+})
+function reloadAccept() {
+  void accept.reload()
+}
 const chatColumn = ref<{
-  connected: boolean
-  reloadAccept: () => void
+  linkDown: boolean
   reloadFeedback: () => void
   reloadSkills: () => void
   say: (content: string, attachments?: ChatAttachment[]) => boolean
   submitQuestion: SubmitPreviewQuestion
 } | null>(null)
 
-// Drag the chat|panel splitter: set chat's width as a % of the panes row.
-function startPaneDrag(e: MouseEvent) {
-  const panes = (e.currentTarget as HTMLElement).parentElement
-  if (!panes) return
-  const rect = panes.getBoundingClientRect()
-  const move = (ev: MouseEvent) => {
-    store.setChatPct(((ev.clientX - rect.left) / rect.width) * 100)
-  }
-  const stop = () => {
-    window.removeEventListener('mousemove', move)
-    window.removeEventListener('mouseup', stop)
-    document.body.style.cursor = ''
-    document.body.style.userSelect = ''
-  }
-  window.addEventListener('mousemove', move)
-  window.addEventListener('mouseup', stop)
-  document.body.style.cursor = 'col-resize'
-  document.body.style.userSelect = 'none'
-}
-
 // The chat column's own composer is the one this topic uses; TopicView only
 // needs a handle on the panel it lives in for the connection dot in the header.
-const composerReady = computed(() => !!chatColumn.value?.connected)
+const linkDown = computed(() => !!chatColumn.value?.linkDown)
 
 // 预览里指出的一处位置，作为一条普通消息进这个房间的对话。没有新接口，也没有
 // 长期锚点：它只在下一轮被读一次。
@@ -402,7 +365,6 @@ const chatEvents = {
   'open-thread': onOpenThread,
   'open-topic': openTopic,
   'open-card': onOpenCard,
-  phase: (p: CardPhase) => (cardPhase.value = p),
   review: onReview,
 }
 
@@ -422,11 +384,12 @@ function openDiscussion(conversationId: string) {
 }
 
 // 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
-// `composerReady` 是 socket 的那一帧，而 socket 会在连接打嗝时闪断：那一瞬它说
-// 未连接，可这一轮还在跑（工作条写着「正在工作 · 重试中」，因为重试就是靠它自己
-// 接着干）。一轮没跑完，这个房间就是连着的 —— 断了它没法把这一轮干完。所以两个
-// 一起看：只要工作条在说「正在工作」，页头就不能同时说「未连接」。
-const roomConnected = computed(() => composerReady.value || working.value)
+// `linkDown` 已经不算刚进房间时的握手和一下就重连上的闪断（`useRoomSocket`），
+// 可 socket 断得再久一点时，这一轮可能还在跑（工作条写着「正在工作 · 重试中」，
+// 因为重试就是靠它自己接着干）。一轮没跑完，这个房间就是连着的 —— 断了它没法
+// 把这一轮干完。所以两个一起看：只要工作条在说「正在工作」，页头就不能同时说
+// 「未连接」。
+const roomConnected = computed(() => !linkDown.value || working.value)
 // 此刻谁在这个房间里忙，对话栏从 socket 上学来：现场那一格画其中在干活的队友。
 const activity = ref<MemberActivityLine[]>([])
 // 会话状态的最近一帧，对话栏从 socket 上收到，现场那格的会话详情读它。
@@ -441,6 +404,13 @@ const siteTurns = ref<Record<string, number>>({})
 // get to pick a tab on an answer nobody has yet. The room header does not show
 // it: a card's stage is the card's, shown on the card and on the board.
 const cardPhase = ref<CardPhase | undefined>(undefined)
+watch(
+  [accept.loaded, accept.phase],
+  () => {
+    if (accept.loaded.value) cardPhase.value = accept.phase.value
+  },
+  { immediate: true }
+)
 
 // 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
 // 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到它第
@@ -453,6 +423,7 @@ function handleWorking(now: boolean) {
 function handleTurnDone() {
   // 这一轮干完了 —— 现场那条时间线就是它留下的记录。
   working.value = false
+  noteChatNews()
   activityTick.value += 1
   if (props.taskId) void taskPage.load(true)
   void store.refreshTopics()
@@ -465,15 +436,18 @@ function handleTurnDone() {
 
 // A platform resource in this room changed (the API handler that changed it
 // sent the frame) — refresh the affected panel live (§3.1.1).
-function handleStateChanged(resource: string) {
+function handleStateChanged(resource: string, id?: string) {
   // 「topics」也说任务清单变了（建、改名、关），任务页自己的页头和侧栏都要跟着变。
   if (resource === 'topics') {
-    void store.refreshTopics()
+    // 后端指名了变的是哪一行（房间 id）就只重取那一行 —— 改一个房间名不再重下整份
+    // 清单（400 多个话题近 300KB）。没指名（老后端、或没带 id 的调用点）退回整块重取。
+    if (id) void store.refreshTopicRow(id)
+    else void store.refreshTopics()
     store.noteTasksChanged()
     if (props.taskId) void taskPage.load(true)
     else void channelOverview.loadTasks()
   } else if (resource === 'pins') void channelOverview.loadPins()
-  else if (resource === 'accept') chatColumn.value?.reloadAccept()
+  else if (resource === 'accept') reloadAccept()
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   // 技能的提议落下、被保存或被拒：那张卡跟着变。
@@ -507,7 +481,7 @@ async function handleOpenResource(
     focusMode.value = false
     onPanelTab('changes')
   } else if (resource === 'accept') {
-    chatColumn.value?.reloadAccept()
+    reloadAccept()
   } else if (resource === 'doc') {
     // B1 Phase 2: highlight the exact paragraphs this turn changed (falls back to
     // a whole-doc pulse when the turn's blocks aren't tagged). Leaving focus mode
@@ -546,6 +520,9 @@ const unreadOnOpen = store.unreadMap[props.topicId]?.messages ?? 0
 // 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
 const roomMembers = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
+// 任务那一栏「做这件事的队友」能挑的几位：这间房名册上的 AI 队友。换的时候后端也只认
+// 名册上那个座位，所以给的就是名册。
+const roomAgents = computed<TopicMemberRow[]>(() => roomMembers.value.filter((m) => m.agent))
 const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
@@ -627,6 +604,7 @@ void openPlace()
         :member-names="memberNames"
         :agent-name="store.agentName"
         :people="taskPeople"
+        :agents="roomAgents"
         :machine="taskMachine"
         :machine-error="taskMachineError"
         :starting="taskStarting"
@@ -639,6 +617,7 @@ void openPlace()
         :hand-over="taskPage.handOver"
         :rename="taskPage.rename"
         :set-collaborators="taskPage.setCollaborators"
+        :set-agent="taskPage.setAgent"
         :load-machine="taskPage.loadMachine"
         :panel-open="panelOpen"
         @open-room="backToRoom"
@@ -650,10 +629,7 @@ void openPlace()
         :members="store.members"
         :me="AUTHOR"
         :connected="roomConnected"
-        :focus="focusMode"
-        :can-focus="docked"
         :panel-open="panelOpen"
-        @toggle-focus="focusMode = !focusMode"
         @toggle-panel="togglePanel"
         @open-topic="openTopic"
         @rename="(title) => store.renameTopic(topicId, title)"
@@ -707,11 +683,24 @@ void openPlace()
             :unread-on-open="unreadOnOpen"
             :focus-block="focusBlock"
             :task-id="taskId ?? null"
+            :task-agent-handle="currentTask?.agent_handle ?? null"
             :composer-closed="composerClosed"
+            :accept-elsewhere="focusMode"
             v-on="chatEvents"
             @open-room="backToRoom"
           />
         </Transition>
+        <!-- 专注模式里对话收成这一条窄边：点它回到并排，有新回复时带一个点。 -->
+        <div v-if="mdAndUp && focusMode" class="chat-rail">
+          <BaseButton
+            icon="mdi-message-outline"
+            size="sm"
+            :title="focusLabel"
+            :aria-label="focusLabel"
+            @click="toggleFocus"
+          />
+          <span v-if="chatNews" class="chat-rail__news" aria-hidden="true" />
+        </div>
         <div
           v-if="mdAndUp && !focusMode && docked"
           class="pane-resizer"
@@ -777,6 +766,17 @@ void openPlace()
             @update:tab="onPanelTab"
             @locate="onLocate"
           >
+            <!-- 页签栏右端：铺满（专注模式）和收起面板。只在桌面上并排的时候有。 -->
+            <template v-if="mdAndUp && docked" #tab-actions>
+              <BaseButton
+                :icon="focusIcon"
+                size="sm"
+                :title="focusLabel"
+                :aria-label="focusLabel"
+                @click="toggleFocus"
+              />
+              <BaseButton icon="mdi-close" size="sm" :title="closeLabel" :aria-label="closeLabel" @click="closePanel" />
+            </template>
             <template #overview>
               <TaskOverview
                 v-if="taskId && currentTask"
@@ -851,12 +851,24 @@ void openPlace()
                 :unread-on-open="unreadOnOpen"
                 :focus-block="focusBlock"
                 :task-id="taskId ?? null"
+                :task-agent-handle="currentTask?.agent_handle ?? null"
                 :composer-closed="composerClosed"
+                accept-review-button
                 v-on="chatEvents"
                 @open-room="backToRoom"
               />
             </template>
           </WorkPanel>
+          <!-- 专注模式里对话让开了，采纳那一条跟着到面板底部：要做的决定不能跟着消失。
+               手机上对话和「改动」是两个页签，在「改动」页签里决定，这一条也在底部。 -->
+          <TopicAcceptCard
+            v-if="selectedTopic && ((mdAndUp && focusMode) || (!mdAndUp && panelTab === 'changes'))"
+            class="panel-accept"
+            :topic-id="selectedTopic.id"
+            :task-id="taskId ?? undefined"
+            :topic-status="selectedTopic.status"
+            @review="onReview"
+          />
         </div>
       </div>
     </template>
@@ -885,52 +897,6 @@ void openPlace()
 .col {
   min-width: 0;
 }
-/* 专注模式：对话栏是一只侧抽屉（§9：整块进出 --dur-slow，走掉快一档）。动的是
-   flex-basis；`!important` 是为了压过模板上那条内联的 `flex: 0 0 N%`。 */
-.focus-chat-enter-active,
-.focus-chat-leave-active {
-  overflow: hidden;
-}
-.focus-chat-enter-active {
-  transition:
-    flex-basis var(--dur-slow) var(--ease-out),
-    opacity var(--dur-slow) var(--ease-out);
-}
-.focus-chat-leave-active {
-  transition:
-    flex-basis var(--dur-base) var(--ease-in),
-    opacity var(--dur-base) var(--ease-in);
-}
-.focus-chat-enter-from,
-.focus-chat-leave-to {
-  flex-basis: 0% !important;
-  opacity: 0;
-}
-.focus-chat-enter-active > :deep(*),
-.focus-chat-leave-active > :deep(*) {
-  width: var(--chat-frozen-w);
-  min-width: var(--chat-frozen-w);
-}
-/* 对话和面板之间那条可拖的线。看得见的只有 1px，和页面上别的分隔线一样重；能抓
-   的范围左右各多 4px（::before），不然一条细线很难按准。它原来是一条 5px 的灰带，
-   比屏幕上任何一条线都粗，悬停还变琥珀——琥珀留给主操作。 */
-.pane-resizer {
-  position: relative;
-  z-index: var(--z-raised);
-  flex: 0 0 1px;
-  cursor: col-resize;
-  background: var(--line);
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.pane-resizer::before {
-  content: '';
-  position: absolute;
-  inset: 0 -4px;
-}
-.pane-resizer:hover {
-  background: var(--faint);
-}
-
 /* 工作面板的外壳（里面就是 WorkPanel 本身）：并排时是普通的 flex 子项，窄档里被
    下面的 --sheet 改成一只浮层。 */
 .panel-host {
@@ -993,3 +959,5 @@ void openPlace()
   }
 }
 </style>
+
+<style scoped src="./topic-panes.css"></style>

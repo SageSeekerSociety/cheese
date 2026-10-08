@@ -159,7 +159,20 @@ def text_payload(target: Path, path: str) -> dict:
         except OSError:
             version = None
         return {**meta, "content": None, "version": version, "too_large": True}
-    data = target.read_bytes()
+    return bytes_text_payload(target.read_bytes(), path)
+
+
+def bytes_text_payload(data: bytes, path: str) -> dict:
+    """`text_payload` 的同一种回答，给已经在手里的字节：资料库的字节不在一个能
+    stat 的路径上，而是从它的存储里读出来的。"""
+    meta = {"path": path, "bytes": len(data), "binary": False, "too_large": False}
+    if len(data) > MAX_TEXT_BYTES:
+        return {
+            **meta,
+            "content": None,
+            "version": content_version(data),
+            "too_large": True,
+        }
     text = decode_text(data)
     if text is None:
         return {

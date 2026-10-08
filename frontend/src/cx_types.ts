@@ -96,7 +96,7 @@ export interface Topic {
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
-  // 状态，有的是成员在做什么（backend `agent/activity.py`）。只有 list/get 话题时才带。
+  // 状态，有的是成员在做什么（backend `agent/realtime/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
   // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
   joined?: boolean
@@ -330,7 +330,7 @@ export type WsServerFrame =
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   // A 分身's checklist, on its card's channel (the room's own list is a message).
   | { type: 'todo'; items: TodoItem[] }
-  | { type: 'state'; resource: string; project_ids?: string[] }
+  | { type: 'state'; resource: string; id?: string; project_ids?: string[] }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
   // persisted=true → the failure already landed in the timeline as an event
@@ -614,13 +614,6 @@ export interface ProfileTopic {
 
 // ---- 执行面板 (Phase 4 tool drawers) ----
 
-// One git commit row (GET /projects/{id}/git/log).
-export interface GitCommit {
-  hash: string
-  author: string
-  message: string
-}
-
 // A file in the project workspace (GET /projects/{id}/files).
 export interface WorkspaceFile {
   path: string
@@ -745,7 +738,7 @@ export interface AcceptCard {
   task_id?: string | null
   topic_id: string
   reviewer_handle: string
-  routing_reason: string
+  focus: string
   // 提交与 PR 规范: the commit subject + body this topic will be squash-merged
   // under. Null on a card filed without them (the platform then falls back to
   // the topic title).

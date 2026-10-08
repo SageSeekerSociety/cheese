@@ -16,8 +16,8 @@ Protocol:
            assistant_block / live / activity / activity_snapshot / error / done
 (Typing is the one thing a client says on this socket, and it is not written:
 it is member activity — who is busy in this room right now, a person composing
-or an agent with a turn running (`agent/activity.py`) — and it lives only in the
-broker. The member is the socket's credential, never a field of the frame.)
+or an agent with a turn running (`agent/realtime/activity.py`) — and it lives
+only in the broker. The member is the socket's credential, never a frame field.)
 (`sync` asks for the room's live state as one frame, empty or not: the turns
 running here and who is busy. The opening `turn_active` / `activity_snapshot`
 are sent only when something is going on, so a client cannot tell "nobody is
@@ -39,6 +39,13 @@ The `?token=` is not optional and a socket the connect check refuses is closed
 member of this topic). Those three are the WHOLE refusal set — a client that
 recognises only some of them treats the rest as a dropped connection and retries
 into a wall, which is the bug the codes exist to prevent.
+
+A socket can also be closed by the server for reading too slowly: one that lets
+more than `MAX_SUBSCRIBER_BYTES` of frames pile up unread is cut off (1013)
+instead of being allowed to grow the process's memory, and reconnecting — what
+the client does for any drop — refetches history and resumes from the replay
+buffer. That is not a refusal: nothing is wrong with the credential, and coming
+straight back is the point.
 """
 
 import asyncio
@@ -56,8 +63,12 @@ from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sentences import error_frame
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import InProcessBroker
-from app.domain.agent.turn_adoption import adopt, open_turns_on
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.realtime.subscriber_queue import (
+    SubscriberOverflow,
+    SubscriberQueue,
+)
+from app.domain.agent.turn_adoption import adopt, open_turns_on, watch_books
 from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.room_task.services import TaskService
 
@@ -90,13 +101,35 @@ async def chat(
                         sent_unix_ms=time.time() * 1000,
                     )
 
+    async def hang_up() -> None:
+        """End the socket from the relay task, under the same lock as `send`:
+        a close racing a pong is exactly what that lock is for. 1013 is "try
+        again later" — this client is welcome back the moment it reconnects."""
+        async with send_lock:
+            with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+                await websocket.close(code=1013, reason="subscriber overflow")
+
     token = websocket.query_params.get("token") or ""
     refusal: tuple[str, str] | None = None
     open_turns: list[tuple[str, float, str | None]] = []
 
-    async def relay(queue: asyncio.Queue[dict]) -> None:
+    async def relay(queue: SubscriberQueue) -> None:
         while True:
-            await send(await queue.get())
+            frame = await queue.get()
+            # The broker stopped feeding this connection: it is publishing
+            # faster than we can read and will not hold the backlog for us.
+            # Reconnecting (which the client does for any drop, refetching
+            # history) is how it catches up; staying open would only keep the
+            # frames in the process's memory.
+            if isinstance(frame, SubscriberOverflow):
+                _log.warning(
+                    "chat_ws_subscriber_overflow",
+                    topic=str(topic_id),
+                    queued_bytes=queue.queued_bytes,
+                )
+                await hang_up()
+                return
+            await send(frame)
 
     # Subscribe first, authorise next, accept last. Once the client sees the
     # socket open it treats the topic as live: it posts a message, reacts, opens
@@ -182,6 +215,15 @@ async def chat(
             chat_service.prewarm.room_active(room_id)
 
         relay_task = asyncio.create_task(relay(queue))
+        # The connect-time adoption above is a snapshot, and a turn that ends on
+        # the OTHER container of an overlapping rollout does not send its
+        # `turn_finished` here: the room would keep 正在思考 for a turn that is
+        # over. So re-read the room's books from the database while this socket
+        # lives (`turn_adoption.watch_books`). One task per socket, gone with it.
+        books_task = asyncio.create_task(
+            watch_books(chat_service.session_factory, broker, channel, topic_id),
+            name=f"turn books {channel}",
+        )
         try:
             # A send that finds the peer gone closes the socket on our side and
             # is swallowed by `send` above, so nothing raises: the next read is
@@ -219,5 +261,8 @@ async def chat(
             pass
         finally:
             relay_task.cancel()
+            books_task.cancel()
             with contextlib.suppress(BaseException):
                 await relay_task
+            with contextlib.suppress(BaseException):
+                await books_task

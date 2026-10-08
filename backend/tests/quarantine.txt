@@ -1,0 +1,11 @@
+# Tests that fail intermittently and are set aside while an issue tracks the
+# fix. Each still runs, as a non-strict xfail (tests/conftest.py): a failure
+# does not turn CI red, a pass is reported as a pass, and the backend jobs
+# name every quarantined case that failed (scripts/assert_suite_ran.py).
+#
+# One test per line: its node id, then `#` and the GitHub issue that owns the
+# fix. A line without an issue link aborts collection. Remove the line in the
+# change that fixes the test.
+#
+# Example:
+# tests/integration/test_example.py::test_flaky_thing  # https://github.com/OWNER/REPO/issues/123

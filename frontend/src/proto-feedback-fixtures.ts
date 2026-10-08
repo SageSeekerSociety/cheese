@@ -33,6 +33,7 @@ import type {
 } from '@/cx_types'
 
 import { adminRoutes } from './proto-admin-fixtures'
+import { claudePool, creditsBurnout } from './proto-usage-fixtures'
 
 /** 预览里「我」是谁。管理端入口和「我的」那一栏都看它。 */
 const ME = 'andy'
@@ -1777,39 +1778,6 @@ function signupsOfDay(day: string): number {
   return weekdayOf(day) === 0 ? 0 : hashDay(`s${day}`) % 4
 }
 
-/** 额度燃尽。三个互斥名单 + 从 resource_usage 推的燃烧速率。 */
-function creditsBurnout(): Record<string, unknown> {
-  return {
-    exhausted: [
-      {
-        project_id: 'p-x',
-        name: '容器',
-        credits_total: 100,
-        credits_used: 110,
-        credits_remaining: -10,
-        ratio: 1,
-      },
-    ],
-    low: [
-      {
-        project_id: 'p-y',
-        name: '城西社区',
-        credits_total: 200,
-        credits_used: 190,
-        credits_remaining: 10,
-        ratio: 0.05,
-      },
-    ],
-    unlimited_project_ids: ['p-z'],
-    unlimited_count: 1,
-    burn: {
-      credits_in_window: 42,
-      credits_per_day: 6,
-      method: 'derived_from_resource_usage',
-    },
-  }
-}
-
 /** 平台那一块：账号的存量与新增、设备台账的存量。 */
 function platformStats(url: URL): Record<string, unknown> {
   const days = windowDays(url)
@@ -2321,6 +2289,7 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
     if (stats[1] === 'usage') {
       const u = usageStats(url) as Record<string, unknown>
       u.credits = creditsBurnout()
+      u.claude_accounts = claudePool()
       return { data: u }
     }
     if (stats[1] === 'platform') {

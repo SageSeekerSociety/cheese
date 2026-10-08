@@ -4,6 +4,7 @@ kind: 参考
 summary: 不在 git 树上的那一半文件：资料库、房间文件、交付快照、产物清单和课件资料集。
 covers:
   - backend/app/domain/library/
+  - frontend/src/lib/libraryFolders.ts
   - backend/app/domain/materials/
   - backend/app/domain/project/artifacts.py
   - backend/app/domain/project/room_files.py
@@ -21,35 +22,50 @@ covers:
 
 ## 两个根，两种寻址 {#roots}
 
-`domain/library/service.py` 是这半个世界的全部。它下面是自己管辖的四个目录，都在 `settings.workspace_root` 下，和项目那唯一一个 git 源（`domain/repository/service.py`）互不相干——被托管的仓库只装芝士替用户做的活，用户给的资料、贴进来的截图、发布出来的预览产物都不是那个活的源，所以**既不进 git 树，也不落在检出目录里**（结论 49 / 不变量 I21b）。
+`domain/library/` 是这半个世界的全部。它的字节都在 `settings.workspace_root` 下，和项目那唯一一个 git 源（`domain/repository/service.py`）互不相干——被托管的仓库只装芝士替用户做的活，用户给的资料、贴进来的截图、发布出来的预览产物都不是那个活的源，所以**既不进 git 树，也不落在检出目录里**（结论 49 / 不变量 I21b）。
 
-| 目录 | 属于谁 | 寻址 |
+| 在哪 | 属于谁 | 寻址 |
 |---|---|---|
-| `.library/<project>/` | 项目 | 按原名，名字就是身份 |
+| 资料库：记录表 `library_files` + 每一行的 `location` / `blob_key` | 项目 | 按原名，名字就是身份 |
 | `.room-files/<project>/<room>/` | 一个房间 | 房间内相对路径 |
 | `.room-file-history/<project>/<room>/` | 一个房间 | 内容 sha256，房间路径够不着 |
 | `.artifacts/<project>/<card>/` | 一次交付 | 文件名，卡分目录 |
-| `.library-history/<project>/<记录 id>/` | 资料库里被替换下来的一份 | 记录 id |
 
-`_safe_path` 只有包含关系这一条检查——和仓库那侧的同名检查不是一条规则，那边还要挡 `.git`，因为那边的根是一棵 git 树，这两个根里没有 git。房间文件里 `library/` 这个前缀被留着：`write_room_file` 见到它以「`library/` 留给资料库」拒掉，否则读的人会拿到房间那份、以为看的是资料库里的原件。
+资料库和另外三个不一样：它不是一个目录，是一张表。列出来的是表里的行，字节在每一行自己说的地方（`blobs.py`，今天只有本地磁盘一种，新写的字节在 `.library-blobs/<project>/<记录 id>`）。名字和字节的位置分开，所以改名、挪进文件夹只改名字，以后把字节放进对象存储也只是多一种 `location`（#2114）。
+
+房间文件这几个根的 `_safe_path` 只有包含关系这一条检查——和仓库那侧的同名检查不是一条规则，那边还要挡 `.git`，因为那边的根是一棵 git 树，这两个根里没有 git。房间文件里 `library/` 这个前缀被留着：`write_room_file` 见到它以「`library/` 留给资料库」拒掉，否则读的人会拿到房间那份、以为看的是资料库里的原件。
 
 ## 资料库：名字就是身份 {#library-names}
 
-`write_library_file` 保留用户给的名字，撞名不覆盖：拿下一个 `(n)`（`_next_name`）。**分配名字就是这次写入本身**（`open(..., "xb")`），因为「先查再写」会在两个同名上传同时在飞时丢掉一份。返回的是最终落下的名字，调用方别自己拼。
+`records.add` 保留用户给的名字，撞名不覆盖：拿下一个 `(n)`（`service.next_name`，编号加在最后一层上）。**分配名字就是插入那一行**：`(project_id, name) WHERE superseded_at IS NULL` 上的唯一索引让两个同时在飞的同名上传里后到的那一个去拿下一个号，「先查再写」会丢掉一份。返回的是最终落下的名字，调用方别自己拼。
 
 一份资料在消息里、在字节端点上都是同一个地址：`library/<名字>`（`library_ref` / `library_name`）。**不拷贝**——一份资料在这个项目里只有一份字节。送上机器的那一份是另一回事，它落在会话 home 的 `attachments/` 下（`domain/agent/place.py`），**不落在检出目录里**，芝士拿到的是机器报回来的绝对路径；`cheese library get` 走的也是这条（默认落到 `$HOME/attachments/library/<名字>`）。
 
 上传这条路上有一个岔口（`POST /topics/{id}/attachments`）：用户挑出来或拖进来的文件进资料库；剪贴板里贴进来的那张图**不进**（`origin="clipboard"`），落在房间文件区一个 `uploads/<随机串>/` 里。理由是资料库的前提是「名字就是身份」，而截图没有名字，`image.png` 是浏览器替它编的，它只属于那条消息。已经是资料库里那一份被当附件再选一次时，一个字节都不写，直接回它自己的地址。
 
-「扔掉一份资料」（`delete_library_file`）不找替代品：旧消息里那枚 chip 随之打不开，这是对的——那条引用指的就是这一份，在它的位置上摆一份别的东西，才是把读者读到的内容换掉。`read_attachment_text` 遇到「资料已经不在」与「地址写错了」给的是两句不同的话。
+「扔掉一份资料」（`records.remove`）不找替代品：旧消息里那枚 chip 随之打不开，这是对的——那条引用指的就是这一份，在它的位置上摆一份别的东西，才是把读者读到的内容换掉。`records.read_attachment_text` 遇到「资料已经不在」与「地址写错了」给的是两句不同的话。
 
 ## 资料库的记录表 {#library-records}
 
-字节在磁盘上按名字寻址，磁盘记不住的事记在 `library_files`（`domain/library/models.py`，读写在 `records.py`）：谁放进来的、在哪个房间、什么时候、多大、sha256。三条放进来的路都经过 `records.add`：话题里上传（`POST /topics/{id}/attachments`）、从房间留下（`save_to_library`）、资料库页上直接放（`POST /projects/{id}/library`）。先记一行、再动磁盘，请求结束时一起提交。
+`library_files`（`domain/library/models.py`，读写在 `records.py`）一行是一份存下来的字节：名字、谁放进来的、在哪个房间、什么时候、多大、sha256、字节在哪。读、判断在不在、列清单、项目导出都查这张表，不扫目录。三条放进来的路都经过 `records.add`：话题里上传（`POST /topics/{id}/attachments`）、从房间留下（`save_to_library`）、资料库页上直接放（`POST /projects/{id}/library`）。先记一行、再写字节，请求结束时一起提交。
 
-「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，字节拷进 `.library-history/<project>/<记录 id>/`，新字节覆盖原名，再记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和历史字节一起扔掉。
+「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，它的字节原地不动，新字节记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和字节一起扔掉。
 
-记录表之前就在的文件没有行，列表时的来源取第一条带上它（`content == library/<名字>`）的附件消息。列表上的房间名只给读得了那个房间的人（`readable_topic_ids`），「被几条消息引用」也只数这些房间里的。放进、替换、删除都只有人能做：一轮里铸出来的凭据在 `authorize_project` 那里只读得进来。
+加 `blob_key` 之前写下的行，由迁移 `c47997681006` 按它们当时写进去的目录补上了键（现在这一份在 `.library/<project>/<名字>`，被替换下来的在 `.library-history/<project>/<记录 id>/`），之后这一列非空。
+
+列表上的房间名只给读得了那个房间的人（`readable_topic_ids`），「被几条消息引用」也只数这些房间里的。放进、替换、删除都只有人能做：一轮里铸出来的凭据在 `authorize_project` 那里只读得进来。
+
+## 一页一页地列 {#library-pages}
+
+资料库页从不一次读全部。`GET /projects/{id}/library`（`domain/library/listing.py`）一次给一页：不带 `q` / `kind` 时是 `dir` 那一层，这一层的文件夹（按名字前缀从记录表里聚出来，带份数和最近一份的时间）在前，然后是文件；带了就是整个资料库里名字或类型对得上的文件。按名字查一份用 `GET …/library/file`，「移动到」要的全部文件夹用 `GET …/library/folders`。
+
+每一行带一个位置 `rank`（`app/core/rank.py`）：按字符串从小到大排就是显示的顺序，它也是下一页的游标。文档在文档表里用同一种位置翻页（`GET /projects/{id}/documents`），所以资料库页能把两串像合并两条有序队列那样并成一张混排的表，而两边的接口都不用知道对方。
+
+## 文件夹与挪动 {#library-folders}
+
+名字里的 `/` 就是文件夹，没有文件夹表：一个文件夹在它里面还有文件时存在，前端从清单里算出每一层（`frontend/src/lib/libraryFolders.ts`）。一个名字不能既是文件又是文件夹（`records._taken`）：`报告` 是文件时 `报告/附录.md` 放不进来，反过来同名的文件拿下一个号。
+
+`POST /projects/{id}/library/move`（`records.move`）把一份资料或一个文件夹改名、挪到别处，`to` 是新的完整名字。只改 `name`，字节不动，被替换下来的几版跟着走；新名字被占了就拒绝，不替人编号。引用旧名字的消息一起改过去：附件块的 `library/<旧名>`，和正文里的 `<&library/<旧名>>`。芝士自己会话记录里写过的旧名字改不到，它照旧名去取会得到「不在」，再列一遍资料库就找得到。上传可以带 `folder`，删除给一个文件夹就连同里面的一切一起删。
 
 ## 写回资料库：一个动作 {#save-to-library}
 
@@ -90,4 +106,4 @@ covers:
 - **快照不是「按名字的最新一版」**。它按卡分目录，所以一份产物交过七版就是七个目录；想看某一版的字节只能通过那一版的卡（`GET /projects/{id}/artifacts/{artifact}/versions/{card}/file`，加 `preview_pdf=true` 顺带转成 PDF）。
 - **撤回采纳不动字节**。卡的状态变了，`.artifacts/<card>/` 里的文件还在；`list_for_project` 也不再把它数进版本。
 - **清单上的一项不会因为没字节就不在**。`link` 型交付只记指针（`deliverable_url`），`merge` 型干脆没有文件；`deliverable_kind` 为 NULL 的卡说的是「没声明过」，和 `merge` 是两件不同的事。
-- **`_libraries` 没有 git 备份**。这四个根都在 `workspace_root` 下，跟着平台自己的存储走，不在任何项目的仓库里；它们的保护来自平台侧，不来自项目的分支。
+- **`_libraries` 没有 git 备份**。资料库的字节和另外三个根都在 `workspace_root` 下，跟着平台自己的存储走，不在任何项目的仓库里；它们的保护来自平台侧，不来自项目的分支。

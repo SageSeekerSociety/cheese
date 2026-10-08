@@ -1,5 +1,6 @@
 import logging
 
+import pytest
 from starlette.status import (
     HTTP_400_BAD_REQUEST,
     HTTP_401_UNAUTHORIZED,
@@ -24,10 +25,16 @@ from app.core.errors import (
     BaseError,
     ConflictError,
     ForbiddenError,
+    GatewayTimeoutError,
+    InternalServerError,
+    InvalidTokenError,
     NameAlreadyExistsError,
     NotFoundError,
     PermissionDeniedError,
     QuotaExceededError,
+    SystemBusyError,
+    TokenExpiredError,
+    UpstreamUnavailableError,
 )
 
 
@@ -46,7 +53,7 @@ class TestBaseError:
         error = BadRequestError("Invalid input", {"field": "name"})
         body = error.to_response_body()
         assert body["code"] == HTTP_400_BAD_REQUEST
-        assert body["message"] == "BadRequestError: Invalid input"
+        assert body["message"] == "Invalid input"
         assert body["error"]["name"] == "BadRequestError"
         assert body["error"]["message"] == "Invalid input"
         assert body["error"]["data"] == {"field": "name"}
@@ -60,7 +67,9 @@ class TestCommonErrors:
     def test_not_found_error(self) -> None:
         error = NotFoundError()
         assert error.status_code == HTTP_404_NOT_FOUND
-        assert error.args[0] == "Resource not found"
+        # The default sentence is a key, so a screen reads it in its own
+        # language instead of the server's English (see core/sentences.py).
+        assert error.args[0].descriptor() == {"key": "resourceNotFound", "params": {}}
 
     def test_not_found_for_resource(self) -> None:
         error = NotFoundError.for_resource("team", 123)
@@ -83,6 +92,38 @@ class TestCommonErrors:
     def test_quota_exceeded_error(self) -> None:
         error = QuotaExceededError()
         assert error.status_code == HTTP_429_TOO_MANY_REQUESTS
+
+
+class TestADefaultSentenceIsACatalogSentence:
+    """A class that is raised with no sentence of its own still says a key.
+
+    The browser shows the server's own words when the response carries no
+    ``error.i18n`` (``noticeText.ts``), so an English default reached a reader
+    on the Chinese UI. Each default below is a ``say(...)``, which puts the key
+    beside the sentence for the screen to render in its own language.
+    """
+
+    @pytest.mark.parametrize(
+        ("error_class", "key"),
+        [
+            (NotFoundError, "resourceNotFound"),
+            (ForbiddenError, "accessDenied"),
+            (AccessDeniedError, "accessDenied"),
+            (AuthenticationRequiredError, "signInRequired"),
+            (InternalServerError, "serverInternalError"),
+            (PermissionDeniedError, "permissionDenied"),
+            (TokenExpiredError, "tokenExpired"),
+            (InvalidTokenError, "invalidToken"),
+            (QuotaExceededError, "quotaExceeded"),
+            (SystemBusyError, "systemBusy"),
+            (UpstreamUnavailableError, "upstreamUnavailable"),
+            (GatewayTimeoutError, "gatewayTimeout"),
+        ],
+    )
+    def test_the_default_names_a_key_and_carries_no_parameters(
+        self, error_class: type[BaseError], key: str
+    ) -> None:
+        assert error_class().args[0].descriptor() == {"key": key, "params": {}}
 
 
 class TestSpecializedErrors:
@@ -181,7 +222,7 @@ class TestUnhandledExceptionHandler:
         assert response.headers["content-type"].startswith("application/json")
         body = response.json()
         assert body["code"] == 500
-        assert body["data"] is None
+        assert "data" not in body
         assert body["message"]
 
     def test_unhandled_error_does_not_leak_its_message(self) -> None:

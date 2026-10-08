@@ -43,7 +43,9 @@ from app.domain.agent import dispatch_log, execution
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness import harness_for
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.live_work import LiveWork
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_session.models import AgentSession
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -83,7 +85,6 @@ class _Chat:
 
     # Admission resolves the fixture's real room and seat before the fake send.
     _turn_seat_handle = ChatService._turn_seat_handle
-    _seat_lock_for = ChatService._seat_lock_for
     _resolved_agent = ChatService._resolved_agent
     _agent_at = ChatService._agent_at
     _session_agent = staticmethod(ChatService._session_agent)
@@ -92,7 +93,7 @@ class _Chat:
     def __init__(self, factory):
         self.session_factory = factory
         self._sessions = factory
-        self._seat_locks = {}
+        self.live = LiveWork()
         self.events: list[tuple[uuid.UUID, str, dict]] = []
         self.converse_calls: list[dict] = []
 

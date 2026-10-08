@@ -91,7 +91,6 @@ vi.mock('../../api', async () => {
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
-    getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getForgeConnection: vi.fn().mockResolvedValue({ kind: 'forgejo', connected: true, repo: 'o/r', url: null }),
     getPreview: vi.fn().mockResolvedValue(null),
     getTopicUsage: vi.fn().mockResolvedValue(null),
@@ -127,6 +126,15 @@ async function openChanges(container: Element) {
   const tab = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title')?.startsWith('改动'))
   expect(tab, '找不到 改动 tab').toBeTruthy()
   await fireEvent.click(tab!)
+  await flush()
+}
+
+/** 全部改动里这一份文件那一段的「打开」：单独看它。 */
+async function openSection(container: Element, path: string) {
+  const section = container.querySelector(`.diff-file[data-path="${path}"]`)
+  expect(section, `改动里应该有 ${path} 这一段`).toBeTruthy()
+  const open = Array.from(section!.querySelectorAll('button')).find((b) => b.textContent?.trim() === '打开')
+  await fireEvent.click(open!)
   await flush()
 }
 
@@ -180,6 +188,7 @@ describe('改动 tab: 一份文档', () => {
     const { container } = mountPanel()
     await flush()
     await openChanges(container)
+    await openSection(container, '合同.docx')
     await fireEvent.click(container.querySelector('.panel-changes [aria-label="更多"]')!)
     await flush()
     await fireEvent.click(screen.getByText('已提交版本', { selector: '.v-list-item-title' }))
@@ -199,6 +208,7 @@ describe('改动 tab: 一份文档', () => {
     const { container } = mountPanel()
     await flush()
     await openChanges(container)
+    await openSection(container, '合同.docx')
 
     expect(container.querySelector('.stub-pages')?.getAttribute('data-bytes')).toBe('4096')
     expect(container.textContent).not.toContain('二进制文件，不能按文本编辑')
@@ -210,6 +220,7 @@ describe('改动 tab: 一份文档', () => {
     const { container } = mountPanel()
     await flush()
     await openChanges(container)
+    await openSection(container, '合同.docx')
 
     expect(documentRevisions).toHaveBeenCalledWith('topic-A', '合同.docx', 'task-1', 'live')
     expect(container.textContent).toContain('把「30 天」改成「60 天」')

@@ -8,14 +8,17 @@ opens nothing else.
 """
 
 import asyncio
+import time
 import uuid
 
 import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app.api.routes import notifications_live
 from app.common.auth import create_access_token
 from app.core.sentences import notice_message, say, with_keys
+from app.domain.notification import handlers as notification_handlers
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
     NotificationDelivery,
@@ -213,6 +216,51 @@ def test_signing_out_ends_the_connection(client):
         ws.receive_json()
 
 
+def test_the_connection_ends_even_while_notices_keep_coming(client, monkeypatch):
+    """A notice arriving sooner than the beat must not put the check off: the
+    ended session is the connection's end whatever the traffic. The beat used
+    to be the wait's timeout and every notice restarted it, so the connection
+    with the most to say — an active room, a task running, a second device —
+    was the one never asked.
+
+    The beat is 25s in production; its length is not what this pins, so it is
+    shortened to keep the test quick."""
+    monkeypatch.setattr(notifications_live, "BEAT_SECONDS", 0.2)
+    user_id, sid, page = _signed_in(client, "fang")
+    notices = _notices_token(client, page)
+
+    def sign_out() -> None:
+        async def revoke() -> None:
+            async with client.test_factory() as db:  # type: ignore[attr-defined]
+                await SessionService(db).revoke(user_id, sid)
+                await db.commit()
+
+        asyncio.run(revoke())
+
+    with client.websocket_connect(
+        "/notifications/live", headers={"Authorization": f"Bearer {notices}"}
+    ) as ws:
+        ws.send_json({"after": None})
+        _next(ws, "notices")
+        _settled(ws)
+
+        sign_out()
+        ended = False
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            _deliver(
+                client, user_id, (NotificationType.ROOM_NOTICE, {"content": "还在来"})
+            )
+            try:
+                while ws.receive_json()["kind"] != "waiting":
+                    pass
+            except WebSocketDisconnect as closed:
+                assert closed.code == 4401
+                ended = True
+                break
+    assert ended, "the connection outlived the sign-in that opened it"
+
+
 def test_the_apps_credential_opens_nothing_else(client):
     _, _, page = _signed_in(client, "dai")
     notices = _notices_token(client, page)
@@ -220,3 +268,41 @@ def test_the_apps_credential_opens_nothing_else(client):
         "/notifications/unread-count", headers={"Authorization": f"Bearer {notices}"}
     )
     assert resp.status_code == 401
+
+
+def test_a_notice_committed_by_the_other_process_arrives_on_a_beat(client, monkeypatch):
+    """Two backend slots run side by side during a deploy, and a notice the other
+    one commits wakes nobody in this process (`notification/live.py` keeps its
+    registry in-process). The connection has to find it on its own, within a beat,
+    rather than stay quiet until the app gives up and reconnects."""
+    user_id, _, page = _signed_in(client, "fay")
+    notices = _notices_token(client, page)
+    monkeypatch.setattr("app.api.routes.notifications_live.BEAT_SECONDS", 0.5)
+
+    with client.websocket_connect(
+        "/notifications/live", headers={"Authorization": f"Bearer {notices}"}
+    ) as ws:
+        ws.send_json({"after": None})
+        _next(ws, "notices")
+        _settled(ws)
+
+        # The row lands, the wake does not: what committing from the other slot
+        # looks like from inside this one.
+        monkeypatch.setattr(
+            notification_handlers, "wake_after_commit", lambda *_args: None
+        )
+        _deliver(client, user_id, (NotificationType.CHEESE_QUESTION, QUESTION))
+
+        # Eight beats of 0.5s with no notices is a beat that never looked.
+        live = None
+        for _ in range(8):
+            frame = ws.receive_json()
+            if frame["kind"] == "notices":
+                live = frame
+                _settled(ws)
+                break
+
+    assert live is not None, "the beat never caught up with the other process"
+    assert [(i["title"], i["body"], i["url"]) for i in live["items"]] == [
+        ("用哪个数据库？", "在「迁移」", "/projects/p1/topics/t1")
+    ]

@@ -11,7 +11,7 @@ name: Warm dependency caches
 #   backend uv (setup-uv inputs)       test.yml, harness-contract.yml, remote-execution.yml
 #   npm-harness-pins-*                 test.yml, harness-contract.yml
 #   pre-commit uv (setup-uv inputs)    repo-guards.yml
-#   npm-remote-execution-*             mcp-contract.yml
+#   npm-remote-execution-*             mcp-contract.yml, mcp-equivalence.yml
 #   go-*                               cli.yml
 #   pnpm-hosted-v2-*                   frontend.yml
 # Changing a key or an install step in one of those suites means changing it

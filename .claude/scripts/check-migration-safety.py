@@ -19,6 +19,11 @@ checks the ones that can be read off the source:
   constraint-not-valid
       A foreign key or CHECK added to an existing table without ``NOT VALID``
       scans it under lock. Add it ``NOT VALID`` and ``VALIDATE`` separately.
+  validate-outside-autocommit
+      A ``VALIDATE CONSTRAINT`` sharing a migration with the ``NOT VALID``
+      constraint it follows runs in that migration's transaction, holds the
+      lock to the end of it and cancels the ``NOT VALID`` gain. Validate in
+      ``op.get_context().autocommit_block()``.
   unique-constraint
       ``ADD CONSTRAINT ... UNIQUE`` on an existing table builds its index under
       lock. Build a unique index ``CONCURRENTLY``, then ``ADD ... USING INDEX``.
@@ -33,16 +38,27 @@ checks the ones that can be read off the source:
   app-import
       Migrations never import ``app.*``: they run long after they are written,
       against whatever ``app`` has become by then.
+  unresolved-table
+      A statement whose table name is not a literal cannot be checked against
+      the previous release; spell the name out (or justify an exception). The
+      same bargain ``unresolved-drop`` makes, one step earlier: a name the
+      check cannot read is a lock risk it cannot clear.
   unresolved-drop
       A drop or rename whose table or column is not a literal cannot be
       checked; spell the names out (or justify an exception).
   lock-retry-copy
       Lock retries come from ``migration_helpers.with_lock_retries``, not a
       pasted ``DO`` block.
+  empty-downgrade
+      A migration whose ``downgrade()`` does nothing — a lone ``pass``, once
+      its docstring is set aside — must say why in that docstring: what it
+      deliberately leaves in place, or a ``raise``. The Alembic template's
+      ``Downgrade schema.`` is not a reason.
 
 Only migrations ADDED relative to the merge base with ``--base`` are judged:
 the ones on main are immutable, and judging them would make every PR pay for
-history. Statements in ``downgrade()`` are not judged.
+history. What a ``downgrade()`` *does* is still not judged for the risks
+above; only whether an empty one explains itself (``empty-downgrade``) is.
 
 An exception is written next to the statement it excuses, with a reason:
 
@@ -81,13 +97,16 @@ ERROR_RULES = frozenset(
         "index-not-concurrent",
         "index-outside-autocommit",
         "constraint-not-valid",
+        "validate-outside-autocommit",
         "unique-constraint",
         "add-column-not-null",
         "fk-without-index",
         "json-not-jsonb",
         "app-import",
         "lock-retry-copy",
+        "unresolved-table",
         "unresolved-drop",
+        "empty-downgrade",
     }
 )
 WARNING_RULES = frozenset({"alter-column-existing", "fk-on-add-column", "unresolved"})
@@ -220,6 +239,7 @@ _SQL_RENAME_TABLE = re.compile(r"^\s*RENAME\s+TO\b", re.I)
 _SQL_ADD_CONSTRAINT = re.compile(
     r"\bADD\s+(?:CONSTRAINT\s+\"?\w+\"?\s+)?(FOREIGN\s+KEY|CHECK|UNIQUE)\b", re.I
 )
+_SQL_VALIDATE_CONSTRAINT = re.compile(r"\bVALIDATE\s+CONSTRAINT\b", re.I)
 _SQL_CREATE_INDEX = re.compile(
     r"\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"
     r"(?:\"?\w+\"?\s+)?ON\s+(?:ONLY\s+)?\"?(\w+)\"?(?:\s+USING\s+\w+)?\s*\(\s*\"?(\w+)?",
@@ -275,6 +295,58 @@ def _kw(call: ast.Call, name: str) -> ast.AST | None:
 
 def _truthy(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Constant) and bool(node.value)
+
+
+# --------------------------------------------------------------------------
+# ``downgrade()``: an empty one has to say why (the ``empty-downgrade`` rule).
+# --------------------------------------------------------------------------
+
+#: What Alembic's own template leaves in a new downgrade. Carries no reason.
+_DOWNGRADE_TEMPLATE = "downgrade schema"
+
+
+def _downgrade_docstring(node: ast.FunctionDef) -> str | None:
+    """The string that opens ``node``'s body as a docstring, or ``None``."""
+    body = node.body
+    if body and isinstance(body[0], ast.Expr):
+        value = body[0].value
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return value.value
+    return None
+
+
+def _is_a_reason(doc: str | None) -> bool:
+    """Whether ``doc`` states a reason — not blank, not the template."""
+    if doc is None or not doc.strip():
+        return False
+    return re.sub(r"\s+", " ", doc.strip()).rstrip(".").lower() != _DOWNGRADE_TEMPLATE
+
+
+def _downgrade_is_empty(node: ast.FunctionDef) -> bool:
+    """A ``downgrade()`` that does nothing (a lone ``pass``) and gives no reason.
+
+    The docstring is set aside first, so the Alembic template text followed by
+    ``pass`` counts as empty: writing the template is not saying why.
+    """
+    doc = _downgrade_docstring(node)
+    body = node.body[1:] if doc is not None else node.body
+    return len(body) == 1 and isinstance(body[0], ast.Pass) and not _is_a_reason(doc)
+
+
+def empty_downgrade(source: str) -> bool:
+    """Whether ``source``'s ``downgrade()`` does nothing and gives no reason.
+
+    Used by the visitor below, and by the test that keeps the migrations
+    already on main from drifting back into the shape this rule catches.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "downgrade":
+            return _downgrade_is_empty(node)
+    return False
 
 
 def _is_json_type(node: ast.AST | None) -> bool:
@@ -354,6 +426,8 @@ class _Migration(ast.NodeVisitor):
         self.facts = facts
         self.findings: list[Finding] = []
         self._autocommit = 0
+        self._not_valid_added = False
+        self._unblocked_validates: list[ast.AST] = []
         self.constants: dict[str, ast.AST] = {}
         self._docstrings: set[int] = set()
 
@@ -374,8 +448,35 @@ class _Migration(ast.NodeVisitor):
     def existing(self, table: str | None) -> bool:
         return table is not None and table not in self.new_tables
 
+    def _existing(self, node: ast.AST, table: str | None) -> bool:
+        """``existing()``, but a name it cannot read is reported, not passed.
+
+        A table the migration creates is exempt; one whose name is not a
+        literal is not — the check cannot clear it, so it fails until spelled
+        out or waived with a reason, the same as an unreadable drop.
+        """
+        if table is None:
+            self.report(
+                node,
+                "unresolved-table",
+                "could not read the table name; spell it as a literal (or justify an exception)",
+            )
+            return False
+        return table not in self.new_tables
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         if node.name == "downgrade":
+            # Its statements are not judged (see the module docstring); only an
+            # empty one that does not say why is reported, then we stop before
+            # descending into the body.
+            if _downgrade_is_empty(node):
+                self.report(
+                    node,
+                    "empty-downgrade",
+                    "downgrade() is a lone `pass` with no reason; say in a docstring what it "
+                    "deliberately leaves in place, or raise "
+                    "(the Alembic `Downgrade schema.` template is not a reason)",
+                )
             return
         self.generic_visit(node)
 
@@ -456,11 +557,10 @@ class _Migration(ast.NodeVisitor):
         column = _str(node.args[1]) if len(node.args) > 1 else None
         if _kw(node, "new_column_name") is not None:
             self._gone_from_base(node, "rename", table, column)
-        if not self.existing(table):
-            return
-        if _kw(node, "type_") is not None or (
+        rewrites = _kw(node, "type_") is not None or (
             isinstance(_kw(node, "nullable"), ast.Constant) and _kw(node, "nullable").value is False  # type: ignore[union-attr]
-        ):
+        )
+        if rewrites and self._existing(node, table):
             self.report(
                 node,
                 "alter-column-existing",
@@ -473,9 +573,15 @@ class _Migration(ast.NodeVisitor):
         columns = node.args[2] if len(node.args) > 2 else _kw(node, "columns")
         if table and _leading_column(columns):
             self.facts.indexed.add((table, _leading_column(columns)))  # type: ignore[arg-type]
-        if not self.existing(table):
+        concurrently = _truthy(_kw(node, "postgresql_concurrently"))
+        if table is None and concurrently and self._autocommit:
+            # Concurrent, in its own transaction: safe on an existing table and
+            # on one this migration creates, so the name being unreadable costs
+            # nothing.
             return
-        if not _truthy(_kw(node, "postgresql_concurrently")):
+        if not self._existing(node, table):
+            return
+        if not concurrently:
             self.report(
                 node,
                 "index-not-concurrent",
@@ -491,7 +597,10 @@ class _Migration(ast.NodeVisitor):
 
     def _op_create_foreign_key(self, node: ast.Call) -> None:
         source = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "source_table"))
-        if self.existing(source) and not _truthy(_kw(node, "postgresql_not_valid")):
+        not_valid = _truthy(_kw(node, "postgresql_not_valid"))
+        if not_valid:
+            self._not_valid_added = True
+        elif self._existing(node, source):
             self.report(
                 node,
                 "constraint-not-valid",
@@ -501,7 +610,10 @@ class _Migration(ast.NodeVisitor):
 
     def _op_create_check_constraint(self, node: ast.Call) -> None:
         table = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "table_name"))
-        if self.existing(table) and not _truthy(_kw(node, "postgresql_not_valid")):
+        not_valid = _truthy(_kw(node, "postgresql_not_valid"))
+        if not_valid:
+            self._not_valid_added = True
+        elif self._existing(node, table):
             self.report(
                 node,
                 "constraint-not-valid",
@@ -511,7 +623,7 @@ class _Migration(ast.NodeVisitor):
 
     def _op_create_unique_constraint(self, node: ast.Call) -> None:
         table = _str(node.args[1]) if len(node.args) > 1 else _str(_kw(node, "table_name"))
-        if self.existing(table):
+        if self._existing(node, table):
             self.report(
                 node,
                 "unique-constraint",
@@ -522,7 +634,18 @@ class _Migration(ast.NodeVisitor):
     def _op_add_column(self, node: ast.Call) -> None:
         table = _str(node.args[0]) if node.args else None
         column = _column(node.args[1]) if len(node.args) > 1 and isinstance(node.args[1], ast.Call) else None
-        if table is None or column is None:
+        if column is None:
+            return
+        if table is None:
+            # Only the existing-table rules need the name; report the one that
+            # would fire had it been read (a nullable column harms nothing).
+            if not column.nullable and not column.server_default:
+                self.report(
+                    node,
+                    "unresolved-table",
+                    f"NOT NULL column {column.name} on a table whose name could not be read; "
+                    "spell the table as a literal (or justify an exception)",
+                )
             return
         self._column_rules(node, table, column)
         if self.existing(table):
@@ -648,6 +771,10 @@ class _Migration(ast.NodeVisitor):
                 if (column := _SQL_RENAME_COLUMN.search(clause)) is not None:
                     self._gone_from_base(node, "rename", table, column.group(1))
                     continue
+                if _SQL_VALIDATE_CONSTRAINT.search(clause):
+                    if not self._autocommit and node not in self._unblocked_validates:
+                        self._unblocked_validates.append(node)
+                    continue
                 if re.match(r"\s*DROP\s+(?!CONSTRAINT|DEFAULT|NOT\s+NULL|TRIGGER)", clause, re.I):
                     column = _SQL_DROP_COLUMN.search(clause)
                     if column:
@@ -657,6 +784,8 @@ class _Migration(ast.NodeVisitor):
                     self._sql_add_column(node, table, added.group(1), added.group(2))
                     continue
                 constraint = _SQL_ADD_CONSTRAINT.search(clause)
+                if constraint is not None and re.search(r"\bNOT\s+VALID\b", clause, re.I):
+                    self._not_valid_added = True
                 if constraint is None or not self.existing(table):
                     continue
                 kind = constraint.group(1).upper()
@@ -675,6 +804,22 @@ class _Migration(ast.NodeVisitor):
                     )
         if match := _SQL_CREATE_TABLE.search(sql):
             self.facts.created_tables.add(match.group(1))
+
+    def finish(self) -> None:
+        """Rules that need the whole file, not one statement: a ``NOT VALID``
+        constraint and its ``VALIDATE`` are safe only when the VALIDATE runs in
+        its own transaction. In the migration's own, it holds the lock to the
+        end of the migration and cancels what ``NOT VALID`` bought."""
+        if not self._not_valid_added:
+            return
+        for node in self._unblocked_validates:
+            self.report(
+                node,
+                "validate-outside-autocommit",
+                "VALIDATE CONSTRAINT shares the transaction with the NOT VALID constraint it follows, "
+                "holding the lock to the end of the migration; "
+                "put it in `with op.get_context().autocommit_block():`",
+            )
 
 
 _SQL_ADD_COLUMN = re.compile(
@@ -771,6 +916,7 @@ def analyze(migrations: dict[str, str], base_models: dict[str, str]) -> list[Fin
         facts = _FileFacts()
         visitor = _Migration(path, source, base_tables, new_tables, facts)
         visitor.visit(tree)
+        visitor.finish()
         indexed_anywhere |= facts.indexed
         # A statement's span: the widest node starting on its first line, so an
         # exception on any line of a multi-line call counts.
@@ -921,6 +1067,12 @@ def _rules_found(body: str, extra: str = "") -> list[str]:
     return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS))
 
 
+def _downgrade_rules(body: str) -> list[str]:
+    """The rules a source fires whose ``downgrade()`` body is ``body``."""
+    source = _HEAD + "\ndef upgrade() -> None:\n    pass\n\ndef downgrade() -> None:\n" + body + "\n"
+    return sorted(f.rule for f in analyze({"m.py": source}, _BASE_MODELS))
+
+
 def self_test() -> int:
     failures: list[str] = []
 
@@ -1012,7 +1164,8 @@ def self_test() -> int:
         "raw SQL done right",
         _rules_found(
             '    op.execute("ALTER TABLE task ADD CONSTRAINT fk FOREIGN KEY (owner_id) REFERENCES users (id) NOT VALID")\n'
-            '    op.execute("ALTER TABLE task VALIDATE CONSTRAINT fk")\n'
+            "    with op.get_context().autocommit_block():\n"
+            '        op.execute("ALTER TABLE task VALIDATE CONSTRAINT fk")\n'
             '    op.execute("ALTER TABLE task DROP CONSTRAINT old_fk")\n'
             "    with op.get_context().autocommit_block():\n"
             '        op.execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_t ON task (video_url)")'
@@ -1133,11 +1286,137 @@ def self_test() -> int:
         [],
     )
 
+    # Found in review (2026-10-07): a name no literal spells, and a NOT VALID
+    # constraint validated in the migration's own transaction.
+    check(
+        "a unique constraint on a table named by a loop variable",
+        _rules_found(
+            "    for table in ('tasks', 'topics'):\n"
+            "        op.create_unique_constraint(f'uq_{table}_number', table, ['project_id', 'number'])"
+        ),
+        ["unresolved-table"],
+    )
+    check(
+        "an index on a table named by a loop variable",
+        _rules_found("    for t in ('task', 'tasks'):\n        op.create_index('ix', t, ['x'])"),
+        ["unresolved-table"],
+    )
+    check(
+        "a nullable column on a table only a loop variable names",
+        _rules_found(
+            "    for t in ('task',):\n        op.add_column(t, sa.Column('n', sa.Integer(), nullable=True))"
+        ),
+        [],
+    )
+    check(
+        "a NOT NULL column on a table only a loop variable names",
+        _rules_found(
+            "    for t in ('task',):\n        op.add_column(t, sa.Column('n', sa.Integer(), nullable=False))"
+        ),
+        ["unresolved-table"],
+    )
+    check(
+        "a concurrent index in an autocommit block on a loop-variable table",
+        _rules_found(
+            "    with op.get_context().autocommit_block():\n"
+            "        for t in ('task', 'tasks'):\n"
+            "            op.create_index('ix', t, ['x'], postgresql_concurrently=True)"
+        ),
+        [],
+    )
+    check(
+        "a NOT VALID foreign key on a loop-variable table",
+        _rules_found(
+            "    for t in ('task',):\n"
+            "        op.create_foreign_key('fk', t, 'users', ['owner_id'], ['id'], postgresql_not_valid=True)"
+        ),
+        [],
+    )
+    check(
+        "op.create_foreign_key NOT VALID, then VALIDATE in the same migration",
+        _rules_found(
+            "    op.create_foreign_key('fk', 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)\n"
+            "    op.execute('ALTER TABLE task VALIDATE CONSTRAINT fk')"
+        ),
+        ["validate-outside-autocommit"],
+    )
+    check(
+        "op.create_foreign_key NOT VALID, then VALIDATE in an autocommit block",
+        _rules_found(
+            "    op.create_foreign_key('fk', 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)\n"
+            "    with op.get_context().autocommit_block():\n"
+            "        op.execute('ALTER TABLE task VALIDATE CONSTRAINT fk')"
+        ),
+        [],
+    )
+    check(
+        "a NOT VALID constraint with no VALIDATE in this migration",
+        _rules_found(
+            "    op.create_foreign_key('fk', 'task', 'users', ['owner_id'], ['id'], postgresql_not_valid=True)"
+        ),
+        [],
+    )
+    check(
+        "a lone VALIDATE in its own migration",
+        _rules_found("    op.execute('ALTER TABLE task VALIDATE CONSTRAINT fk')"),
+        [],
+    )
+    check(
+        "raw SQL: NOT VALID added, validated in an autocommit block",
+        _rules_found(
+            '    op.execute("ALTER TABLE task ADD CONSTRAINT fk FOREIGN KEY (owner_id) REFERENCES users (id) NOT VALID")\n'
+            "    with op.get_context().autocommit_block():\n"
+            '        op.execute("ALTER TABLE task VALIDATE CONSTRAINT fk")'
+        ),
+        [],
+    )
+    check(
+        "a CHECK added NOT VALID, then VALIDATE in the same migration",
+        _rules_found(
+            "    op.create_check_constraint('ck', 'task', 'video_url IS NOT NULL', postgresql_not_valid=True)\n"
+            "    op.execute('ALTER TABLE task VALIDATE CONSTRAINT ck')"
+        ),
+        ["validate-outside-autocommit"],
+    )
+
+    # Found in review (2026-10-07): an empty downgrade has to say why. The
+    # historical migrations are the reason for the rule — a `pass` on its own
+    # reads the same whether it was thought about or never written.
+    check("a bare pass downgrade", _downgrade_rules("    pass"), ["empty-downgrade"])
+    check(
+        "a downgrade with an empty docstring",
+        _downgrade_rules('    """"""\n    pass'),
+        ["empty-downgrade"],
+    )
+    check(
+        "the Alembic template's downgrade docstring is not a reason",
+        _downgrade_rules('    """Downgrade schema."""\n    pass'),
+        ["empty-downgrade"],
+    )
+    check(
+        "a pass downgrade that says what it leaves in place",
+        _downgrade_rules('    """Nothing to put back: the previous code reads it as empty."""\n    pass'),
+        [],
+    )
+    check(
+        "a downgrade that raises",
+        _downgrade_rules('    raise NotImplementedError("b 无法反向，恢复整库转储")'),
+        [],
+    )
+    check(
+        "a real downgrade is not judged for what it does",
+        _downgrade_rules("    op.drop_column('task', 'video_url')"),
+        [],
+    )
+
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}")
     if failures:
         return 1
-    print("PASS: check-migration-safety self-test (drop/rename, index, constraints, columns, imports, exceptions)")
+    print(
+        "PASS: check-migration-safety self-test (drop/rename, index, constraints, columns, imports, "
+        "unreadable names, NOT VALID/VALIDATE, empty downgrade, exceptions)"
+    )
     return 0
 
 

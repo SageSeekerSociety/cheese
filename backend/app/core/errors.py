@@ -40,17 +40,39 @@ def _with_key(error: dict, message: object) -> dict:
     return error if key is None else {**error, "i18n": key}
 
 
-def _event_error(message: object) -> str:
+def _event_error(body: dict) -> str:
     """An ``event: error`` frame for a client that asked for a stream.
 
-    ``data`` is JSON, like every other frame on the streams we serve: the
-    sentence as ``message`` and, when it was said with ``say()``, its key as
-    ``i18n`` — the same ``{key, params}`` an error body carries."""
-    data = _with_key({"message": str(message)}, message)
-    return f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    ``data`` is JSON, like every other frame on the streams we serve, and it is
+    the very body the JSON branch would have answered with — the sentence as
+    ``message``, plus the ``error`` object carrying ``name``, ``data`` and
+    ``retryable`` (and ``i18n`` when the sentence came from ``say()``). A caller
+    then tells one condition from another the same way whichever way the
+    refusal arrived, instead of branching on the sentence."""
+    return f"event: error\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
 class BaseError(Exception):
+    """The one root of every error this server answers with.
+
+    Each class says two things about itself, and the response carries both:
+
+    - ``wire_name``: sent as ``error.name``, which clients switch on when the
+      status alone does not say which condition it was. Left unset it is the
+      class's name; a class that is renamed or folded into another sets it to
+      the old name, so what clients read does not move with the code.
+    - ``retryable``: whether the same request can succeed later unchanged.
+      Clients read it to decide between waiting and giving up — the web
+      client retries a failed GET only when this is not ``False``.
+
+    ``code`` is deliberately not one of them: it is kept for the stable
+    snake_case error code (``error.code``) that will replace class names as
+    the thing clients switch on.
+    """
+
+    wire_name: str | None = None
+    retryable: bool = False
+
     def __init__(self, status_code: int, message: str, data: Any | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
@@ -58,22 +80,23 @@ class BaseError(Exception):
 
     @property
     def name(self) -> str:
-        return self.__class__.__name__
+        # Read off the class itself, not inherited: a subclass is a condition
+        # of its own, and answers with its own name unless it freezes one.
+        cls = type(self)
+        return cls.__dict__.get("wire_name") or cls.__name__
+
+    @property
+    def message(self) -> str:
+        return self.args[0]
 
     def to_response_body(self) -> dict:
-        return {
-            "code": self.status_code,
-            "message": f"{self.name}: {self.args[0]}",
-            "error": _with_key(
-                {
-                    "name": self.name,
-                    "message": self.args[0],
-                    "data": self.data,
-                    "retryable": False,
-                },
-                self.args[0],
-            ),
-        }
+        return format_error_response(
+            self.status_code,
+            self.args[0],
+            self.name,
+            data=self.data,
+            retryable=self.retryable,
+        )
 
 
 class BadRequestError(BaseError):
@@ -83,7 +106,7 @@ class BadRequestError(BaseError):
 
 class NotFoundError(BaseError):
     def __init__(
-        self, message: str = "Resource not found", data: Any | None = None
+        self, message: str = say("resourceNotFound"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_404_NOT_FOUND, message, data)
 
@@ -98,13 +121,15 @@ class NotFoundError(BaseError):
 
 
 class ForbiddenError(BaseError):
-    def __init__(self, message: str = "Access denied", data: Any | None = None) -> None:
+    def __init__(
+        self, message: str = say("accessDenied"), data: Any | None = None
+    ) -> None:
         super().__init__(HTTP_403_FORBIDDEN, message, data)
 
 
 class AuthenticationRequiredError(BaseError):
     def __init__(
-        self, message: str = "Authentication required", data: Any | None = None
+        self, message: str = say("signInRequired"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, data)
 
@@ -125,7 +150,7 @@ class UnprocessableEntityError(BaseError):
 
 
 class InternalServerError(BaseError):
-    def __init__(self, message: str = "Internal server error") -> None:
+    def __init__(self, message: str = say("serverInternalError")) -> None:
         super().__init__(HTTP_500_INTERNAL_SERVER_ERROR, message, None)
 
 
@@ -143,12 +168,12 @@ class AccessDeniedError(ForbiddenError):
             data["resourceType"] = resource_type
         if resource_id is not None:
             data["resourceId"] = resource_id
-        super().__init__(message="Access denied", data=data or None)
+        super().__init__(message=say("accessDenied"), data=data or None)
 
 
 class PermissionDeniedError(ForbiddenError):
     def __init__(
-        self, message: str = "Permission denied", data: Any | None = None
+        self, message: str = say("permissionDenied"), data: Any | None = None
     ) -> None:
         super().__init__(message, data)
 
@@ -165,12 +190,12 @@ class SudoRequiredError(ForbiddenError):
 
 
 class TokenExpiredError(BaseError):
-    def __init__(self, message: str = "Token has expired") -> None:
+    def __init__(self, message: str = say("tokenExpired")) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, None)
 
 
 class InvalidTokenError(BaseError):
-    def __init__(self, message: str = "Invalid token") -> None:
+    def __init__(self, message: str = say("invalidToken")) -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, None)
 
 
@@ -183,39 +208,69 @@ class NameAlreadyExistsError(ConflictError):
 
 
 class QuotaExceededError(BaseError):
-    def __init__(self, message: str = "Quota exceeded") -> None:
+    def __init__(self, message: str = say("quotaExceeded")) -> None:
         super().__init__(HTTP_429_TOO_MANY_REQUESTS, message, None)
 
 
 class SystemBusyError(BaseError):
     def __init__(
         self,
-        message: str = "System is busy, please try again later",
+        message: str = say("systemBusy"),
         data: Any | None = None,
+    ) -> None:
+        super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
+
+
+class UpstreamUnavailableError(BaseError):
+    """Something we depend on is not there to answer: a gateway, a forge, a
+    model pool. Not retryable by default — most of these are a missing or
+    refused configuration, which waiting does not fix; a subclass for an
+    outage that passes on its own says ``retryable = True``."""
+
+    def __init__(
+        self, message: str = say("upstreamUnavailable"), data: Any | None = None
     ) -> None:
         super().__init__(HTTP_503_SERVICE_UNAVAILABLE, message, data)
 
 
 class GatewayTimeoutError(BaseError):
     """Something we called did not answer in time. Not a fault of this server,
-    and a 500 says it was — see the execution route and `device_connection_app`."""
+    and a 500 says it was — see the execution route and `device_connection_app`.
 
-    def __init__(self, message: str = "Upstream did not answer in time") -> None:
+    Not retryable: the one call that raises it (an execution, a POST) may
+    or may not have run, so sending it again is not the same request."""
+
+    def __init__(self, message: str = say("gatewayTimeout")) -> None:
         super().__init__(HTTP_504_GATEWAY_TIMEOUT, message, None)
 
 
-def format_error_response(status_code: int, message: str, name: str = "Error") -> dict:
-    """The envelope every client of ours parses. ``name`` is what a caller
-    switches on when the status alone does not say which condition it was."""
+def format_error_response(
+    status_code: int,
+    message: str,
+    name: str = "Error",
+    *,
+    data: Any | None = None,
+    retryable: bool = False,
+) -> dict:
+    """The envelope every client of ours parses, built for every exception
+    handler here (a few routes that answer without raising still write their
+    own; they are listed in docs/manual/dev/backend-app.md).
+
+    ``name`` is what a caller switches on when the status alone does not say
+    which condition it was. The top-level ``message`` is the sentence alone:
+    the web client shows it as it is (``refusalWords``), so a class name in
+    front of it reached the screen. There is no top-level ``data``: a refusal
+    carries nothing of what was asked for, and what it does carry about
+    itself is ``error.data``."""
     return {
         "code": status_code,
-        "message": f"{name}: {message}",
+        "message": message,
         "error": _with_key(
             {
                 "name": name,
-                "retryable": False,
                 "message": message,
-                "data": None,
+                "data": data,
+                "retryable": retryable,
             },
             message,
         ),
@@ -227,7 +282,7 @@ async def base_error_handler(
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
     if "text/event-stream" in accept:
-        body = _event_error(exc.args[0])
+        body = _event_error(exc.to_response_body())
         return PlainTextResponse(
             content=body, status_code=exc.status_code, media_type="text/event-stream"
         )
@@ -252,7 +307,9 @@ async def http_exception_handler(
     # did not mention it.
     headers = getattr(exc, "headers", None)
     if "text/event-stream" in accept:
-        body = _event_error(detail)
+        body = _event_error(
+            format_error_response(status_code=exc.status_code, message=detail)
+        )
         return PlainTextResponse(
             content=body,
             status_code=exc.status_code,
@@ -285,30 +342,25 @@ async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse | PlainTextResponse:
     accept = request.headers.get("accept") or ""
-    message = _validator_sentence(exc) or "Invalid request parameters"
-    if "text/event-stream" in accept:
-        body = _event_error(message)
-        return PlainTextResponse(
-            content=body,
-            status_code=HTTP_400_BAD_REQUEST,
-            media_type="text/event-stream",
-        )
+    message = _validator_sentence(exc) or say("invalidRequestParameters")
     # A validator's own `raise ValueError(...)` travels in `ctx["error"]` as the
     # exception object, which `JSONResponse` cannot serialize: the handler then
     # raised, and any body refused by a custom validator answered 500. Its
     # sentence is what the caller needs, so it goes out as text.
     data = {"details": jsonable_encoder(exc.errors(), custom_encoder={Exception: str})}
     body = BadRequestError(message, data=data).to_response_body()
+    if "text/event-stream" in accept:
+        return PlainTextResponse(
+            content=_event_error(body),
+            status_code=HTTP_400_BAD_REQUEST,
+            media_type="text/event-stream",
+        )
     return JSONResponse(status_code=HTTP_400_BAD_REQUEST, content=body)
 
 
 # ---------------------------------------------------------------------------
-# cheesex 合并附加 (fusion §8.5 / I3-errors): the BaseError framework above is
-# adopted as canonical (main's product raises it). These are the cheesex-only
-# error names our agent/topic/chat code raises; they keep the {code,message,data}
-# envelope via the AppError handler registered below. NotFoundError/ForbiddenError
-# are NOT redefined here — cheesex call sites (raise NotFoundError("...")) are
-# ctor-compatible with main's BaseError versions.
+# The deprecated AppError family, kept until its call sites have moved to the
+# BaseError classes above (see AppError).
 # ---------------------------------------------------------------------------
 from fastapi import FastAPI  # noqa: E402
 
@@ -317,33 +369,48 @@ from app.core.obs import get_logger  # noqa: E402
 _log = get_logger("app.errors")
 
 
-class AppError(Exception):
-    """Base for cheesex client-facing errors (kept for our agent/topic layer)."""
+class AppError(BaseError):
+    """Deprecated: raise the BaseError class each subclass names instead.
 
-    code: int = 400
-    message: str = "Bad request"
-    # Whether the same request can succeed later unchanged. Callers (agents
-    # included) read it to decide between waiting and giving up.
-    retryable: bool = False
+    What is left of the second error framework the cheesex merge brought in.
+    Each subclass is already the BaseError class it is being replaced by
+    (ValidationError is an UnprocessableEntityError, and so on), so an
+    ``except`` written for either catches both while the raises move over one
+    domain at a time. What AppError keeps is its constructor — the message
+    may be left out, and the class's ``message`` stands in — and
+    tests/unit/test_legacy_error_ratchet.py counts every use of these names
+    per file, so the count only goes down meanwhile.
+    """
+
+    status_code: int = HTTP_400_BAD_REQUEST
+    message: str = "Bad request"  # type: ignore[assignment]
 
     def __init__(self, message: str | None = None) -> None:
         if message is not None:
             self.message = message
-        super().__init__(self.message)
+        # Not super(): the next class in a subclass's MRO is its replacement,
+        # whose constructor takes (message, data).
+        BaseError.__init__(self, type(self).status_code, self.message, None)
 
 
-class ValidationError(AppError):
-    code = 422
+class ValidationError(AppError, UnprocessableEntityError):
+    """Deprecated, and shadows pydantic's: raise UnprocessableEntityError."""
+
+    status_code = HTTP_422_UNPROCESSABLE_CONTENT
     message = "Validation failed"
 
 
-class UnauthorizedError(AppError):
-    code = 401
+class UnauthorizedError(AppError, AuthenticationRequiredError):
+    """Deprecated: raise AuthenticationRequiredError."""
+
+    status_code = HTTP_401_UNAUTHORIZED
     message = "Unauthorized"
 
 
-class GatewayUnavailableError(AppError):
-    code = 503
+class GatewayUnavailableError(AppError, UpstreamUnavailableError):
+    """Deprecated: raise UpstreamUnavailableError."""
+
+    status_code = HTTP_503_SERVICE_UNAVAILABLE
     message = "AI gateway unavailable"
 
 
@@ -382,9 +449,9 @@ def closing_the_socket(handler):  # type: ignore[no-untyped-def]
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Register BOTH error frameworks (fusion merge): main's BaseError family +
-    HTTP/validation handlers, and cheesex's AppError handler. Called from our
-    main.py; main's product code raises BaseError, ours raises AppError."""
+    """Register the error handlers: the BaseError family (AppError included),
+    HTTP and request-validation errors, the device-link conditions, and the
+    catch-all. Shared by main.py and the connection owner."""
     # Imported here, not at module scope: `device_hub` sits above this module and
     # imports back through `app.core`, and nothing but this registration needs
     # the name.
@@ -491,24 +558,6 @@ def register_exception_handlers(app: FastAPI) -> None:
             ),
         )
 
-    async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:
-        return JSONResponse(
-            status_code=exc.code,
-            content={
-                "code": exc.code,
-                "message": exc.message,
-                "data": None,
-                "error": _with_key(
-                    {
-                        "name": type(exc).__name__,
-                        "message": exc.message,
-                        "retryable": exc.retryable,
-                    },
-                    exc.message,
-                ),
-            },
-        )
-
     @app.exception_handler(Exception)
     async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
         """Anything no handler above claimed.
@@ -516,7 +565,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         Without this, Starlette answers with a 21-byte ``Internal Server Error``
         in plain text — a shape no client of ours can read, from a failure
         nobody logged. The two facts that make such a 500 diagnosable are the
-        traceback in the backend's log and the same ``{code, message, data}``
+        traceback in the backend's log and the same ``{code, message, error}``
         envelope every other error uses, so the frontend reports 「出错了」
         rather than parsing a JSON that isn't there.
 
@@ -531,21 +580,15 @@ def register_exception_handlers(app: FastAPI) -> None:
         message = say("serverInternalError")
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "code": HTTP_500_INTERNAL_SERVER_ERROR,
-                "message": message,
-                "data": None,
-                "error": _with_key(
-                    {"name": "InternalServerError", "message": message}, message
-                ),
-            },
+            content=format_error_response(
+                HTTP_500_INTERNAL_SERVER_ERROR, message, "InternalServerError"
+            ),
         )
 
     for exc_type, handler in (
         (DeviceOffline, _handle_device_offline),
         (DeviceCallError, _handle_device_call_error),
         (ClientDisconnect, _handle_client_disconnect),
-        (AppError, _handle_app_error),
         (BaseError, base_error_handler),
         (StarletteHTTPException, http_exception_handler),
         (RequestValidationError, validation_exception_handler),

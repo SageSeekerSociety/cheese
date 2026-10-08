@@ -83,14 +83,12 @@ export function setAutoMerge(cardId: string, enabled: boolean, headSha: string |
 }
 
 // 改验收人 (spec §4.4: 任何成员都可以改推荐/加人). Reassign a pending card to
-// another reviewer. The backend reuses the create schema, so we pass an empty
-// routing_reason to keep the recommendation neutral on a manual reassign.
+// another reviewer; what the deliverer asked them to check stays as it was.
 export function reassignCard(cardId: string, reviewerHandle: string): Promise<AcceptCard> {
   return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/reassign`, {
     method: 'POST',
     body: JSON.stringify({
       reviewer_handle: reviewerHandle,
-      routing_reason: '',
     }),
   })
 }

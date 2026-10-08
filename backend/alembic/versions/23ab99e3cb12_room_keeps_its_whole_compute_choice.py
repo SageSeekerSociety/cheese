@@ -61,6 +61,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Nothing to undo: the previous code reads `compute_config` before
-    # `compute_profile` and understands every value written here.
+    """Nothing to undo: the previous code reads `compute_config` before
+    `compute_profile` and understands every value written here."""
     pass

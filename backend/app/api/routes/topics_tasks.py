@@ -17,10 +17,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
+from app.api.conditional import LIST_CACHE_CONTROL, etag_for_json, if_none_match_hits
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
 from app.api.response import ok, page
@@ -37,7 +38,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
-    ValidationError,
+    UnprocessableEntityError,
 )
 from app.core.sentences import say
 from app.domain.agent.announce import announce
@@ -45,7 +46,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
-from app.domain.agent.runtime import announce_stale
+from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.own import may_work_for
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
@@ -63,14 +64,19 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.get("/{topic_id}/tasks")
+# `response_model=None`: the 304 path returns a bare `Response`, and FastAPI
+# would otherwise try to build a response field out of `dict | Response` and
+# refuse the whole module at import. `list_topics` carries the same.
+@router.get("/{topic_id}/tasks", response_model=None)
 async def list_room_tasks(
     topic_id: uuid.UUID,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
-    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
-) -> dict:
+    response: Response,
+    limit: Annotated[int | None, Query(ge=0, le=500)] = None,
+    if_none_match: Annotated[str | None, Header()] = None,
+) -> dict | Response:
     """This room's threads — every piece of work in it, each with its own
     conversation.
 
@@ -92,6 +98,17 @@ async def list_room_tasks(
     number truncates silently — the exact failure the neighbouring default
     exists to avoid — but a caller rendering a room should be passing `limit`,
     and whoever builds that view should decide what it is.
+
+    `limit=0` is the roster shape: every thread, none of their conversation. A
+    client drawing a rail or an overview wants the threads themselves and never
+    reads a block; asking for `limit=1` made it download one message per thread
+    to throw away. 0 is spelled rather than inferred from a separate flag
+    because it is the same knob — "newest zero blocks each" — and it skips the
+    block query entirely instead of filtering its result.
+
+    条件请求：侧栏画一次 rail 就要整份清单，而一个房间这里有 ~1317 条活、`limit=0`
+    也有 1 MB 上下。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回
+    304、空 body —— 切页面时「没有新东西」不再重传这一份。
     """
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
@@ -174,7 +191,13 @@ async def list_room_tasks(
                 },
             }
         )
-    return ok(page(items, len(items)))
+    payload = ok(page(items, len(items)))
+    etag = etag_for_json(payload)
+    cache_headers = {"Cache-Control": LIST_CACHE_CONTROL, "ETag": f'"{etag}"'}
+    if if_none_match and if_none_match_hits(if_none_match, etag):
+        return Response(status_code=304, headers=cache_headers)
+    response.headers.update(cache_headers)
+    return payload
 
 
 @router.get("/{topic_id}/task")
@@ -341,7 +364,7 @@ async def conclude_task(
     await tell_origin(db, task, ended)
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -367,7 +390,7 @@ async def reopen_task(
     )
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -413,7 +436,7 @@ async def create_task(
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -445,7 +468,7 @@ async def start_task(
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     await dispatch(chat)
     return ok(out)
 
@@ -477,14 +500,14 @@ async def update_task(
         await tasks.set_contributors(task, leaving)
         out = await _task_out(db, chat, task)
         await db.commit()
-        await announce_stale(place.room_id, "topics")
+        await announce_stale(place.room_id, "topics", id=place.room_id)
         return ok(out)
     members = TopicMemberService(db)
     if "owner_handle" in body.model_fields_set and body.owner_handle:
         # Work is handed to anyone in the project, and whoever takes it is in
         # its channel from then on.
         if body.owner_handle not in await members.project_people(place.project_id):
-            raise ValidationError(say("taskOwnerNotInProject"))
+            raise UnprocessableEntityError(say("taskOwnerNotInProject"))
         await members.take_in(place.room_id, body.owner_handle)
         await _move_off_former_owners_computer(
             db, actor, place, task, body.owner_handle
@@ -509,7 +532,7 @@ async def update_task(
         people = await members.project_people(place.project_id)
         wanted = list(dict.fromkeys(body.contributor_handles))
         if any(h not in people for h in wanted):
-            raise ValidationError(say("contributorNotInProject"))
+            raise UnprocessableEntityError(say("contributorNotInProject"))
         for handle in wanted:
             await members.take_in(place.room_id, handle)
         await tasks.set_contributors(
@@ -517,7 +540,7 @@ async def update_task(
         )
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -598,7 +621,7 @@ async def create_teammate_task(
     if named and named not in await TopicMemberService(db).project_people(
         place.project_id
     ):
-        raise ValidationError(say("taskOwnerNotInProject"))
+        raise UnprocessableEntityError(say("taskOwnerNotInProject"))
     owner = named or (origin.author if origin is not None else None)
     task = await TopicService(db).create_task(
         room_id=place.room_id,
@@ -615,7 +638,7 @@ async def create_teammate_task(
         try:
             await TaskService(db).start(task, by=task.owner_handle)
             started = True
-        except ValidationError as exc:
+        except UnprocessableEntityError as exc:
             why_not = str(exc)
     await tell_task(
         db,
@@ -637,6 +660,6 @@ async def create_teammate_task(
     if key is not None:
         await idem.record_result(db, key, out)
     await db.commit()
-    await announce_stale(place.room_id, "topics")
+    await announce_stale(place.room_id, "topics", id=place.room_id)
     await dispatch(chat)
     return ok(out)

@@ -17,6 +17,7 @@ The indexes are built by migrations that spell their predicates out again;
 the first test fails when that copy and the code's drift apart.
 """
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -28,7 +29,7 @@ from sqlalchemy.schema import CreateIndex
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.waits import MemberWaits
+from app.domain.block.waits import MemberWaits, StuckCard
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.room_task.repositories import TaskRepository
@@ -43,6 +44,10 @@ INDEXES = {
     "ix_blocks_queued_messages",
     "ix_blocks_conversation_eid",
     "ix_blocks_coalesced",
+    "ix_blocks_last_said",
+    "ix_blocks_unanswered",
+    "ix_blocks_agent_checks",
+    "ix_blocks_upgraded_to_topic_id",
 }
 
 
@@ -80,8 +85,17 @@ async def test_the_migrated_indexes_are_the_ones_the_code_declares(db_factory):
 
 
 async def _seed(session) -> dict[str, object]:
-    """Rooms and tasks with one of each case, over a few thousand older blocks
-    so the planner has a real table to choose a path through."""
+    """Rooms and tasks with one of each case, over a few thousand blocks.
+
+    The bulk sits inside the seven days the wait reads look back over, and
+    behind the blocks the cases are built from. Inside the window, or the sort
+    those reads do is free, the partial index is dearer than the index already
+    there, and the plan says which path is cheapest instead of whether the
+    index can be used at all — the two things these assertions exist to tell
+    apart. Behind the cases, because the bulk is signed by the agent handle: a
+    bulk block newer than a question in the same conversation reads as the asker
+    speaking again, which `_awaiting_an_answer` takes for the question
+    withdrawn."""
     now = datetime.now(UTC)
     project = Project(team_id=await a_team(session), name="P", owner_handle="o")
     session.add(project)
@@ -166,7 +180,7 @@ async def _seed(session) -> dict[str, object]:
             "(ARRAY[CAST(:a AS uuid),CAST(:b AS uuid),CAST(:c AS uuid)])[g%3+1] END,"
             "CASE WHEN g%2=0 THEN 'message' ELSE 'event' END,'participant','cheese',"
             "'x','[]',json_build_object('tool','Bash'),gen_random_uuid(),"
-            "now()-interval '30 days'-(g||' minutes')::interval,now() "
+            "now()-interval '2 hours'-(g||' minutes')::interval,now() "
             "FROM generate_series(1,4000) g"
         ),
         {
@@ -193,14 +207,29 @@ def _literal(value: object) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-async def _generic_plan(conn, name: str, sql: str, params) -> str:
-    """The plan PostgreSQL gives `sql` when it plans it without its values."""
-    await conn.exec_driver_sql(f"PREPARE {name} AS {sql}")
-    await conn.exec_driver_sql("SET LOCAL plan_cache_mode = force_generic_plan")
-    args = ", ".join(_literal(value) for value in params)
-    rows = (await conn.exec_driver_sql(f"EXPLAIN EXECUTE {name}({args})")).all()
-    await conn.exec_driver_sql(f"DEALLOCATE {name}")
-    return "\n".join(row[0] for row in rows)
+async def _generic_plan(
+    conn, name: str, sql: str, params, *, ordered: bool = False
+) -> str:
+    """The plan PostgreSQL gives `sql` when it plans it without its values.
+
+    `ordered` also takes the sort away, for a probe whose index earns its keep by
+    the order the scan comes back in rather than by holding few rows. Without the
+    sort the ordered scan is the only path left to that query, which is what
+    "usable at all" means for that read. The other probes keep theirs: those
+    indexes are selective, and the planner reaches for them on cost alone.
+    """
+    if ordered:
+        await conn.exec_driver_sql("SET LOCAL enable_sort = off")
+    try:
+        await conn.exec_driver_sql(f"PREPARE {name} AS {sql}")
+        await conn.exec_driver_sql("SET LOCAL plan_cache_mode = force_generic_plan")
+        args = ", ".join(_literal(value) for value in params)
+        rows = (await conn.exec_driver_sql(f"EXPLAIN EXECUTE {name}({args})")).all()
+        await conn.exec_driver_sql(f"DEALLOCATE {name}")
+        return "\n".join(row[0] for row in rows)
+    finally:
+        if ordered:
+            await conn.exec_driver_sql("SET LOCAL enable_sort = on")
 
 
 @contextmanager
@@ -248,6 +277,13 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             ),
             "ix_blocks_machine_events": lambda sql: "'environment_repaired'" in sql,
             "ix_blocks_failed_turns": lambda sql: "'severity') = 'error'" in sql,
+            # 「谁最后说过话」和「谁被点名还没回答」这两条，谓词是字面量，所以它们在
+            # sql 里看得见条件本身 —— 反过来，一条退回绑定参数的查询既不该被这个
+            # 挑选器选中，也证不出索引。
+            "ix_blocks_last_said": lambda sql: (
+                "DISTINCT ON (blocks.conversation_id, blocks.author)" in sql
+            ),
+            "ix_blocks_unanswered": lambda sql: "'mentioned'" in sql,
         }
         conn = await session.connection()
         for index, picks in expected.items():
@@ -256,7 +292,20 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             found = [(sql, params) for sql, params in seen if picks(f"{sql} {params}")]
             assert len(found) == 1, f"expected one query for {index}, got {found}"
             sql, params = found[0]
-            plan = await _generic_plan(conn, f"probe_{index}", sql, params)
+            plan = await _generic_plan(
+                conn,
+                f"probe_{index}",
+                sql,
+                params,
+                # Most of the table is agent-signed messages, so this index is
+                # not selective: what it buys is the order the scan comes back
+                # in, and at fixture size the sort it saves is cheap — the
+                # planner takes the index it already has and sorts, which says
+                # which path is cheapest today and not whether this one can be
+                # used at all. Taking the sort away leaves the ordered scan as
+                # the only path to this query.
+                ordered=index == "ix_blocks_last_said",
+            )
             assert index in plan, f"{index} is not used:\n{sql}\n{plan}"
 
         with statements(session) as seen:
@@ -272,6 +321,148 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
         [(sql, params)] = seen
         plan = await _generic_plan(conn, "probe_beats", sql, params)
         assert "Backward using ix_blocks_conversation_created_at" in plan, plan
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_a_stuck_card_waits_on_the_agent_and_neither_read_scans_every_block(
+    db_factory,
+):
+    """For each room whose card is stuck, `GET /topics` asks when an agent was
+    handed the fix and when an agent last touched the room. A busy room's week
+    is mostly its agent's own lines, so neither may be answered by reading the
+    blocks of every room there is."""
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        now, room, task = (
+            seeded["now"],
+            seeded["rooms"]["quiet"],
+            seeded["tasks"]["silent"],
+        )
+
+        def on_task(by, *, meta, ago):
+            platform = by == "platform"
+            return Block(
+                project_id=room.project_id,
+                conversation_id=task.id,
+                kind=BlockKind.event if platform else BlockKind.message,
+                author_type=AuthorType.platform if platform else AuthorType.participant,
+                author=by,
+                content="x",
+                meta=meta,
+                created_at=now - ago,
+            )
+
+        touched = now - timedelta(minutes=5)
+        session.add_all(
+            [
+                on_task(
+                    "platform",
+                    meta={"event_type": "ci_failed", "severity": "error"},
+                    ago=timedelta(minutes=30),
+                ),
+                on_task("cheese-builder", meta={}, ago=timedelta(minutes=5)),
+            ]
+        )
+        await session.flush()
+        await session.execute(text("ANALYZE blocks"))
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+
+        with statements(session) as seen:
+            waits = await MemberWaits(session).for_rooms(
+                [room.id],
+                now=now,
+                stuck_rooms={room.id: StuckCard(kind="check", pr=7)},
+            )
+
+        [wait] = waits[room.id]
+        assert (wait.member, wait.reason, wait.pr) == ("cheese-builder", "check", 7)
+        assert abs(wait.since - touched) < timedelta(seconds=1)
+
+        conn = await session.connection()
+        [events] = [(sql, p) for sql, p in seen if "'ci_failed'" in sql]
+        plan = await _generic_plan(conn, "probe_agent_checks", *events)
+        assert "ix_blocks_agent_checks" in plan, plan
+        for i, (sql, params) in enumerate(seen):
+            plan = await _generic_plan(conn, f"probe_wait_{i}", sql, params)
+            assert "Seq Scan on blocks" not in plan, f"{sql}\n{plan}"
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_a_whole_room_read_finds_its_conversations_blocks_by_index(db_factory):
+    """A read across a room — its own line, its tasks', its 支线' — goes to
+    those conversations' blocks, not through every block of every room."""
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        # A room with a task of its own, among rooms that hold most of the
+        # blocks: reading those is the whole table, whichever way it is done.
+        room = seeded["rooms"]["answered"]
+        task = Task(project_id=room.project_id, room_id=room.id, title="t")
+        session.add(task)
+        await session.flush()
+        session.add(
+            Block(
+                project_id=room.project_id,
+                conversation_id=task.id,
+                kind=BlockKind.message,
+                author_type=AuthorType.participant,
+                author="u1",
+                content="x",
+            )
+        )
+        # Many rooms, as on a live platform: with the fixture's few, any room's
+        # share of the table is a large part of it, and reading everything is
+        # the right plan for that.
+        others = [
+            Topic(project_id=room.project_id, title=f"r{i}", kind=TopicKind.topic)
+            for i in range(300)
+        ]
+        session.add_all(others)
+        await session.flush()
+        await session.execute(
+            text(
+                "INSERT INTO blocks (project_id,conversation_id,kind,author_type,"
+                "author,content,refs,meta,id,created_at,updated_at) "
+                "SELECT :pid, (CAST(:rooms AS uuid[]))[g % 300 + 1], 'message',"
+                "'participant','u1','x','[]','{}',gen_random_uuid(),now(),now() "
+                "FROM generate_series(1,6000) g"
+            ),
+            {"pid": room.project_id, "rooms": [other.id for other in others]},
+        )
+        await session.execute(text("ANALYZE blocks"))
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+
+        with statements(session) as seen:
+            page = await BlockRepository(session).page_for_topic(
+                room.id, limit=50, whole_room=room.id
+            )
+        assert {block.conversation_id for block in page.items} == {room.id, task.id}
+
+        [(sql, params)] = seen
+        conn = await session.connection()
+        plan = await _generic_plan(conn, "probe_whole_room", sql, params)
+        assert re.search(r"Index Cond: \(conversation_id = ", plan), plan
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_deleting_a_room_finds_the_blocks_linking_to_it_by_index(db_factory):
+    """A block upgraded into a room links to it, and deleting the room clears
+    those links (ON DELETE SET NULL). PostgreSQL finds them with the statement
+    below, planned without its value; it must not read every block to do so."""
+    async with db_factory() as session:
+        await _seed(session)
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+        conn = await session.connection()
+        plan = await _generic_plan(
+            conn,
+            "probe_topic_links",
+            "UPDATE ONLY blocks SET upgraded_to_topic_id = NULL"
+            " WHERE $1::uuid OPERATOR(pg_catalog.=) upgraded_to_topic_id",
+            ["00000000-0000-0000-0000-000000000000"],
+        )
+        assert "ix_blocks_upgraded_to_topic_id" in plan, plan
         await session.rollback()
 
 

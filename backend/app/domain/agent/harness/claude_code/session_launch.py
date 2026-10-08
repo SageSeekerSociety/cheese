@@ -1,21 +1,20 @@
-"""What a Claude Code session is started with: its settings, and the launch plan.
+"""What a Claude Code session is started with: its settings.
 
-``ClaudeLaunch`` is what a channel is handed, and all it can do with one is say
-where its machine keeps things and take back a launch; the answer being Claude
-Code's is not something the transport finds out.
+The settings file is read ONCE, at launch: a session that is merely reused keeps
+what it started with. It is written on every launch anyway, because the write is
+for the NEXT fresh session. Writing it is ``device_launch``'s half — this module
+only says what goes in.
 
-The settings file and the system prompt file are each read ONCE, at launch: a
-session that is merely reused keeps what it started with. Both are written on
-every launch anyway, because the write is for the NEXT fresh session.
+``ClaudeLaunch``, the plan a channel is handed, lives in ``device_launch`` beside
+``on_machine``: ``on`` can only be answered there, and a plan that imported this
+module while this module's only reader imported the plan would be a cycle
+(``.importlinter``, C3).
 """
 
 import json
 import shlex
-from dataclasses import dataclass
 
-from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS
-from app.domain.agent.harness.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.harness.prompt import SUBAGENT_RULES
 
 
@@ -124,38 +123,3 @@ def session_settings() -> dict:
             "SubagentStart": subagent_rules,
         },
     }
-
-
-@dataclass(frozen=True, slots=True)
-class ClaudeLaunch:
-    """Claude Code as a ``LaunchPlan``: 跑什么，交给机器去说在哪。
-
-    The values a turn actually chooses, held until a channel says where its
-    machine keeps things — at which point ``on`` turns them into the launch.
-    """
-
-    system_prompt: str
-    model: str | None = None
-    resume_session_id: str | None = None
-    # Names this start of the runner (``runner.LAUNCH``); new on every turn,
-    # so it is never part of what a live session is compared against.
-    launch_name: str = ""
-    harness: str = CLAUDE_CODE
-
-    @property
-    def execution(self) -> ExecutorLaunch:
-        from app.domain.agent.harness.claude_code.remote_execution import launch
-
-        return launch
-
-    def on(self, place: MachinePlace) -> MachineLaunch:
-        from app.domain.agent.harness.claude_code.device_launch import on_machine
-
-        return on_machine(
-            place,
-            system_prompt=self.system_prompt,
-            # A screen is retired and reopened for reasons that say nothing
-            # about the conversation, so every launch offers to continue it.
-            resume_session_id=self.resume_session_id,
-            launch_name=self.launch_name,
-        )

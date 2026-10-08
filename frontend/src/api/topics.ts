@@ -1,6 +1,6 @@
-import type { Block, ListPayload, RoomTask, Topic } from '../cx_types'
+import type { ListPayload, RoomTask, Topic } from '../cx_types'
 
-import { request, requestConditional, roomRead } from './http'
+import { request, requestConditional } from './http'
 
 // `last_activity_at` = 最后活动时间 (the topic's newest block). `updated_at` is
 // the row's own mtime and does NOT move when a block lands — it is kept only
@@ -42,25 +42,6 @@ export type TopicName = Pick<Topic, 'id' | 'project_id' | 'title' | 'kind' | 'st
 /** 我能看到的所有项目里的话题名，最近有动静的在前。私聊不在里面。 */
 export async function listTopicNames(): Promise<TopicName[]> {
   return (await request<{ topics: TopicName[] }>('/topics/names')).topics
-}
-
-// 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
-// → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
-export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
-  return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`)
-}
-
-/** Tasks in this room, each with its own branch and delivery. */
-export function listRoomTasks(
-  roomId: string,
-  // 每条支线最多带回多少块对话。标记只要支线本身，所以取 1 —— 不传的话后端会把
-  // 房间里每条支线的全部历史都吐回来（它自己的 docstring 说明了为什么没有默认上限）。
-  opts?: { limit?: number }
-): Promise<ListPayload<RoomTask & { blocks: Block[] }>> {
-  const q = new URLSearchParams()
-  if (opts?.limit != null) q.set('limit', String(opts.limit))
-  const query = q.toString() ? `?${q.toString()}` : ''
-  return roomRead<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
 export function createTopic(pid: string, title: string, description?: string, membersOnly = false): Promise<Topic> {

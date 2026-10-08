@@ -85,6 +85,6 @@ def close() -> None:
 
 
 def downgrade() -> None:
-    # Which records said "compacting" before is not kept, and saying it again
-    # of a turn that has ended would be untrue.
+    """Which records said "compacting" before is not kept, and saying it again
+    of a turn that has ended would be untrue."""
     pass

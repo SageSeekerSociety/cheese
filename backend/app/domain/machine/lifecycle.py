@@ -45,12 +45,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.agent import execution, resource_cleanup
 from app.domain.agent.device_hub import device_hub
-from app.domain.agent_session.models import AgentSession
+from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.machine import sandbox_home
 from app.domain.machine.models import CloudHost, CloudHostHome
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
 from app.domain.machine.repositories import CloudHostRepository
-from app.domain.machine.sandbox_wait import LOST_KEY
 
 logger = logging.getLogger("cheese.machine.lifecycle")
 

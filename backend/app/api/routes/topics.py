@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.conditional import etag_for_json, if_none_match_hits
+from app.api.conditional import LIST_CACHE_CONTROL, etag_for_json, if_none_match_hits
 from app.api.deps import (
     get_broker,
     get_chat_service,
@@ -23,13 +23,10 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.activity import WORKING
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
+from app.domain.agent.realtime.activity import WORKING
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -42,6 +39,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard
 from app.domain.conversation.services import room_of
+from app.domain.delivery.agent import redispatch_undelivered
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -249,7 +247,16 @@ def _topic_out(
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
-    out.activity = [MemberActivityOut(**entry) for entry in activity or []]
+    # 只在干活的队友，不要打字的人：这份列表的读者是侧栏，而侧栏只画在干活的队友，
+    # 打字的人不画（`useTopicRail`）—— 这份列表三十秒才读一次，打字五秒就过去了，
+    # 画出来多半已经不是真的。打字条目还带一个每次都变的 `expires_in`（还差几秒过期，
+    # 每次请求现算），只要它在 body 里，只要有人在打字，整份清单就再也命中不了 ETag、
+    # 每三十秒原样重传一遍（`list_topics` 的条件请求）。
+    out.activity = [
+        MemberActivityOut(**entry)
+        for entry in activity or []
+        if entry["kind"] == WORKING
+    ]
     # A member working here right now is not one the room is waiting on: it is
     # the one handling it.
     working = {a.member for a in out.activity if a.kind == WORKING}
@@ -277,11 +284,8 @@ def _topic_out(
     return data
 
 
-#: 侧栏每 30 秒轮询一次整份话题清单。它是**登录用户**的私有视图（每一行都带「与我的
-#: 相关性」），所以只能是 `private`；`no-cache` 要求每次带 `If-None-Match` 回来问一句，
-#: 命中 ETag 就回 304、空 body —— 没有变化的那些轮询不再把一个几百 KB 的清单重传一遍。
-#: 和 `admin_members` 那份名单同一个形状。
-TOPICS_LIST_CACHE_CONTROL = "private, no-cache"
+#: 侧栏每 30 秒轮询一次整份话题清单，和另外两份清单共用同一套条件请求指令。
+TOPICS_LIST_CACHE_CONTROL = LIST_CACHE_CONTROL
 
 
 @router.get("", response_model=None)
@@ -989,7 +993,7 @@ async def write_topic_progress(
     if current is not None:
         message = await edit_message(
             db,
-            get_broker(),
+            get_broker().publish,
             current.id,
             editor=actor.handle,
             content=text,
@@ -1040,7 +1044,7 @@ async def summon_agent(
     在时间线上了——补发一条一模一样的，读的人要自己分辨哪条是真的。
 
     两种情况下它什么都不做，并如实说明是哪一种：房间已经在干活（正在跑的那一轮
-    会自己把没 @ 的消息接过去），或者根本没有待读的东西（有人先 @ 过了）。两种
+    会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
     place = await TopicService(db).place_or_404(topic_id)
@@ -1054,6 +1058,16 @@ async def summon_agent(
     if chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
     if not await chat.has_unread_input(place.conversation_id):
+        # 房间里没有待读的消息，不等于这一下没事可做：平台自己欠这个频道的输入
+        # （任务的开始指令那类）也在账本上等着，等的是退避时间。点「重试」的意思
+        # 就是「现在」—— 不然那句话只能等这个项目里碰巧发生的下一件事把它捎上。
+        if await redispatch_undelivered(
+            chat.session_factory,
+            conversation_id=place.conversation_id,
+            chat=chat,
+            runner=runner,
+        ):
+            return ok({"started": True})
         return ok({"started": False, "reason": "nothing_pending"})
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在

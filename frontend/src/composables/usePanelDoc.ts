@@ -191,17 +191,27 @@ export function usePanelDoc(props: PanelDocProps) {
     }
   }
 
+  // 「现在打开的是哪一份」：三个 id 拼成一串字面量，watch 比的是这串字本身，值没变就不
+  // 触发下面的回调。不能直接返回数组字面量 —— 每次求值都是新数组，Vue 按引用比较，值没变
+  // 也判定为变化：任务页的数据一刷新，props.topic 就换成另一个对象（id 没变），回调跑起来
+  // 先把 documentId 置空，协同连接跟着拆掉、正文销毁，等同一个 id 解析回来再挂一遍。
+  function openKey(): string {
+    return JSON.stringify([props.document?.id ?? null, props.topic?.id ?? null, props.taskId ?? null])
+  }
+
   watch(
-    () => [props.document?.id ?? null, props.topic?.id ?? null, props.taskId ?? null] as const,
-    ([given, topicId, taskId]) => {
+    openKey,
+    () => {
       documentSequence++
       resolveError.value = null
+      const given = props.document?.id ?? null
       if (given) {
         documentId.value = given
         return
       }
       documentId.value = null
-      if (topicId) void resolveDocument(topicId, taskId)
+      const topicId = props.topic?.id ?? null
+      if (topicId) void resolveDocument(topicId, props.taskId ?? null)
     },
     { immediate: true }
   )

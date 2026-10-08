@@ -13,7 +13,12 @@ is the question "can this be mounted on its own, without a backend, a route or
 an Apollo-shaped store":
 
   A  nothing but props and emits. Standalone-ready: the only thing missing is a
-     fixture in the shape its props describe.
+     fixture in the shape its props describe. An `inject(KEY, fallback)` with a
+     fallback is allowed here: the component mounts on its own and draws the
+     fallback, and the shell (or a catalog story) fills the seam when it wants
+     the real thing — GitLab's condition for injected values
+     (`fe_guide/vue.md`, "provide/inject"). `provide()` alone is allowed too:
+     handing a value down says nothing about where the provider is mounted.
   B  it reads an app-chrome store (`usePageTitleStore`, `useNavigationStore`) —
      stores the shell owns, not the data a page is about.
   C  it reaches the network: it imports `@/api`, `@/network/*` or
@@ -21,7 +26,9 @@ an Apollo-shaped store":
      it calls `fetch`/`axios` itself — or it reads a business store.
   D  it is tied to where it is mounted, or to a channel other than
      props/emits: `useRoute`/`useRouter`/`$router`/`vue-router`,
-     `$parent`/`$root`, an event bus, or `provide`/`inject`.
+     `$parent`/`$root`, an event bus, or an `inject(KEY)` with no fallback —
+     mounted outside its provider, that one is `undefined` and the component
+     breaks.
 
   The first letter that applies, worst first, is the grade: a component that
   reads the route AND fetches is D, not C.
@@ -48,6 +55,21 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     spot. `@/` is resolved against `frontend/src`, matching `vite.config.ts`.
   - A store is recognised by the `useXStore` naming convention. One spelled
     another way is invisible here.
+  - Comments are not code. `// 不 import vue-router` is the sentence a file
+    writes precisely BECAUSE it took its route through `useNavigation()`, and
+    reading it as a router import graded five such components D. The script
+    is matched with its `//` and `/* */` comments removed (strings, template
+    literals and regex literals are kept, so `'https://x'` is not cut at its
+    `//`); template HTML comments were already dropped by `template_blocks`.
+    The same stripping applies to `api_reach`: `lib/loadFailure.ts` names
+    `axios` in a comment and was read as a module that fetches, which made
+    every component that imported it C.
+  - "Has a fallback" is read off the call: a top-level comma inside
+    `inject(...)`. `inject(KEY, undefined)` passes that test and still hands
+    back `undefined`; the regex cannot tell a useful fallback from a useless
+    one.
+
+    python3 .claude/scripts/frontend_grade.py --self-test   prove the cases below
 
 `reasons` is the other half of the answer and exists for the gate: a failure
 that says "PanelCard is C" is a puzzle, and one that says "reaches the API
@@ -57,6 +79,8 @@ layer through components/room/composables/useRoomSocket.ts" is a task.
 from __future__ import annotations
 
 import re
+import sys
+import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -74,8 +98,7 @@ STORE_USE = re.compile(r"\buse([A-Za-z0-9_]+)Store\b")
 ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
 PARENT_USE = re.compile(r"\$parent|\$root")
 BUS_USE = re.compile(r"\beventBus\b|\$eventBus\b")
-INJECT_USE = re.compile(r"\binject\s*\(")
-PROVIDE_USE = re.compile(r"\bprovide\s*\(")
+INJECT_CALL = re.compile(r"\binject\s*(?:<[^>()]*>)?\s*\(")
 RAW_HTTP = re.compile(r"\bfetch\s*\(|\baxios\b")
 
 #: Stores whose identity is app chrome rather than business data (the audit's list).
@@ -165,7 +188,7 @@ def api_reach(root: Path) -> set[Path]:
     for path in sorted(list(src.rglob("*.ts")) + list(src.rglob("*.vue"))):
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = code_of(path, path.read_text(encoding="utf-8", errors="replace"))
         deps: set[Path] = set()
         direct = bool(RAW_HTTP.search(text))
         for is_type, spec in specifiers(text):
@@ -207,6 +230,124 @@ class Grade:
     @property
     def standalone(self) -> bool:
         return self.letter == STANDALONE
+
+
+#: Characters after which a `/` starts a regex literal rather than a division.
+_REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%<>~^")
+_AFTER_RETURN = re.compile(r"\breturn\s*$")
+
+
+def strip_js_comments(code: str) -> str:
+    r"""`code` with its `//` and `/* */` comments blanked out.
+
+    A comment is replaced by whitespace of the same shape (newlines kept), so
+    nothing that follows it moves. Quoted strings, template literals and regex
+    literals are copied through untouched: the `//` in `'https://x'` or in
+    `/https?:\/\//` is not a comment. A template literal's `${ ... }` is code
+    again — it may hold strings, comments and further template literals — so it
+    is scanned like the rest, up to the `}` that closes it. A regex literal is
+    told from a division by the character before it — the usual heuristic, and
+    the place this can still be wrong is a `/` right after a keyword other than
+    `return`.
+    """
+    out: list[str] = []
+    _strip_code(code, 0, out, in_substitution=False)
+    return "".join(out)
+
+
+def _strip_code(code: str, i: int, out: list[str], *, in_substitution: bool) -> int:
+    """Copy code from `i` into `out` with comments blanked; return where it stopped.
+
+    Inside a template literal's `${ ... }` (`in_substitution`) it stops at the
+    `}` that balances the opening brace, leaving that `}` uncopied; otherwise
+    it runs to the end of `code`.
+    """
+    n = len(code)
+    prev = ""  # last significant (non-space) character copied through
+    depth = 0  # open `{` inside a `${ ... }`
+    while i < n:
+        char = code[i]
+        nxt = code[i + 1] if i + 1 < n else ""
+        if char == "/" and nxt == "/":
+            end = code.find("\n", i)
+            end = n if end == -1 else end
+            out.append(" " * (end - i))
+            i = end
+            continue
+        if char == "/" and nxt == "*":
+            end = code.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            out.append("".join(c if c == "\n" else " " for c in code[i:end]))
+            i = end
+            continue
+        if char == "`":
+            i = _strip_template(code, i, out)
+            prev = char
+            continue
+        if char in "'\"":
+            j = i + 1
+            while j < n and code[j] != char:
+                if code[j] == "\\":
+                    j += 1
+                elif code[j] == "\n":
+                    break  # an unterminated quote ends at the line, like JS
+                j += 1
+            out.append(code[i:j + 1])
+            i = j + 1
+            prev = char
+            continue
+        if char == "/" and (
+            prev == "" or prev in _REGEX_PRECEDERS or _AFTER_RETURN.search(code[max(0, i - 40):i])
+        ):
+            j = i + 1
+            in_class = False
+            while j < n and code[j] != "\n":
+                if code[j] == "\\":
+                    j += 1
+                elif code[j] == "[":
+                    in_class = True
+                elif code[j] == "]":
+                    in_class = False
+                elif code[j] == "/" and not in_class:
+                    break
+                j += 1
+            out.append(code[i:j + 1])
+            i = j + 1
+            prev = "/"
+            continue
+        if in_substitution:
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                if depth == 0:
+                    return i
+                depth -= 1
+        out.append(char)
+        if not char.isspace():
+            prev = char
+        i += 1
+    return n
+
+
+def _strip_template(code: str, i: int, out: list[str]) -> int:
+    """Copy the template literal opening at `code[i]`; return the index after it."""
+    n = len(code)
+    start = i
+    j = i + 1
+    while j < n and code[j] != "`":
+        if code[j] == "\\":
+            j += 2
+            continue
+        if code[j] == "$" and j + 1 < n and code[j + 1] == "{":
+            out.append(code[start:j + 2])
+            j = _strip_code(code, j + 2, out, in_substitution=True)
+            start = j  # the closing `}` (if any) is copied with the next run
+            if j < n:
+                j += 1
+            continue
+        j += 1
+    out.append(code[start:j + 1])
+    return j + 1
 
 
 def normalise_store(name: str) -> str:
@@ -298,6 +439,53 @@ def tag_names(block: str) -> list[str]:
     return names
 
 
+def code_of(path: Path, text: str) -> str:
+    """The code in a `.ts` or `.vue` file, with its comments gone.
+
+    A `.ts` file is all script. A `.vue` file is its `<script>` blocks (comments
+    stripped) plus its template blocks (HTML comments already dropped there).
+    """
+    if path.suffix == ".vue":
+        script = strip_js_comments("\n".join(SCRIPT_BLOCK.findall(text)))
+        return script + "\n" + "\n".join(template_blocks(text))
+    return strip_js_comments(text)
+
+
+def bare_injects(script: str) -> int:
+    """How many `inject(...)` calls in `script` have no fallback argument.
+
+    The call's arguments are scanned to the parenthesis that closes it, with
+    brackets and quotes balanced; a comma at the top level means a second
+    argument, so the component mounts without a provider. `script` is expected
+    comment-free (`strip_js_comments`).
+    """
+    count = 0
+    for match in INJECT_CALL.finditer(script):
+        i, n = match.end(), len(script)
+        depth, quote, comma = 0, "", False
+        while i < n:
+            char = script[i]
+            if quote:
+                if char == "\\":
+                    i += 1
+                elif char == quote:
+                    quote = ""
+            elif char in "'\"`":
+                quote = char
+            elif char in "([{":
+                depth += 1
+            elif char in ")]}":
+                if depth == 0:
+                    break
+                depth -= 1
+            elif char == "," and depth == 0:
+                comma = True
+            i += 1
+        if not comma:
+            count += 1
+    return count
+
+
 def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> Grade:
     """Grade the component at `path` (a `.vue` or a `.ts` file under src).
 
@@ -312,7 +500,9 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     if reach is None:
         reach = api_reach(root)
     text = path.read_text(encoding="utf-8", errors="replace")
-    script = "\n".join(SCRIPT_BLOCK.findall(text))
+    # Comments are not code: a file that says "this does not import
+    # vue-router" in a comment is not a file that imports it.
+    script = strip_js_comments("\n".join(SCRIPT_BLOCK.findall(text)))
     template = "\n".join(template_blocks(text))
     whole = script + "\n" + template
 
@@ -320,7 +510,7 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     api_direct = bool(RAW_HTTP.search(script))
     if api_direct:
         reasons.append("calls fetch()/axios itself")
-    for spec in specifiers(text):
+    for spec in specifiers(script):
         is_type, specifier = spec
         if is_type:
             continue  # a type-only import pulls in no runtime dependency
@@ -352,19 +542,18 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
     hard = bool(
         ROUTER_USE.search(whole)
         or "vue-router" in script
-        or PARENT_USE.search(text)
-        or BUS_USE.search(text)
-        or INJECT_USE.search(script)
-        or PROVIDE_USE.search(script)
+        or PARENT_USE.search(whole)
+        or BUS_USE.search(whole)
+        or bare_injects(script)
     )
     if ROUTER_USE.search(whole) or "vue-router" in script:
         reasons.append("reads the route (useRoute/useRouter/$router/vue-router)")
-    if PARENT_USE.search(text):
+    if PARENT_USE.search(whole):
         reasons.append("reads $parent/$root")
-    if BUS_USE.search(text):
+    if BUS_USE.search(whole):
         reasons.append("uses an event bus")
-    if INJECT_USE.search(script) or PROVIDE_USE.search(script):
-        reasons.append("uses provide()/inject()")
+    if bare_injects(script):
+        reasons.append("inject()s a value with no fallback (cannot mount outside its provider)")
 
     business = stores - BENIGN_STORES
     for name in sorted(business):
@@ -406,3 +595,150 @@ def grade_frontend(root: Path) -> dict[str, Any]:
         },
         "grade_lines": {g: lines_by_grade.get(g, 0) for g in "ABCD"},
     }
+
+
+# ---------------------------------------------------------------- self-test
+
+#: Components whose grade the comment rule decides. Each one says "vue-router"
+#: (or `useRoute(`, `$parent`) only in a comment and is A; `Real.vue` is the
+#: control that really reads the route, and `Url.vue` keeps a `//` inside a
+#: string, which must not swallow the `useRoute()` after it on the same line.
+_FIXTURE: dict[str, str] = {
+    "frontend/src/components/LineComment.vue": (
+        "<script setup lang=\"ts\">\n"
+        "// 不 import vue-router：去处走 useNavigation()，不用 useRoute()\n"
+        "defineProps<{ to: string }>()\n</script>\n<template><a>{{ to }}</a></template>\n"
+    ),
+    "frontend/src/components/BlockComment.vue": (
+        "<script setup lang=\"ts\">\n"
+        "/**\n * `state.back` 是 vue-router 记下的上一个地址；不读 $router、$parent。\n */\n"
+        "defineProps<{ to: string }>()\n</script>\n<template><a>{{ to }}</a></template>\n"
+    ),
+    "frontend/src/components/Real.vue": (
+        "<script setup lang=\"ts\">\nimport { useRoute } from 'vue-router'\n"
+        "const route = useRoute()\n</script>\n<template><a>{{ route.path }}</a></template>\n"
+    ),
+    "frontend/src/components/Url.vue": (
+        "<script setup lang=\"ts\">\n"
+        "const home = 'https://example.com'; const route = useRoute()\n"
+        "const re = /\\/\\//g; const r2 = useRoute()\n"
+        "</script>\n<template><a :href=\"home\">{{ route }}</a></template>\n"
+    ),
+    "frontend/src/components/NestedTemplate.vue": (
+        "<script setup lang=\"ts\">\n"
+        "const a = `x ${y ? `//q` : ''} z`; const route = useRoute()\n"
+        "</script>\n<template><a>{{ a }}{{ route }}</a></template>\n"
+    ),
+    # provide/inject: a fallback makes the component mountable on its own.
+    "frontend/src/components/InjectFallback.vue": (
+        "<script setup lang=\"ts\">\nimport { inject } from 'vue'\n"
+        "const dir = inject<Dir>(DIR_KEY, { name: (h: string) => h, go: () => {} })\n"
+        "const f = inject(K2, () => ({ a: '(,)' }), true)\n"
+        "</script>\n<template><a>{{ dir.name('x') }}{{ f }}</a></template>\n"
+    ),
+    "frontend/src/components/InjectBare.vue": (
+        "<script setup lang=\"ts\">\nimport { inject } from 'vue'\n"
+        "const ok = inject(K1, null)\nconst sort = inject<Sort>(fn(SORT_KEY, 'a,b'))\n"
+        "</script>\n<template><a>{{ sort }}{{ ok }}</a></template>\n"
+    ),
+    "frontend/src/components/ProvideOnly.vue": (
+        "<script setup lang=\"ts\">\nimport { provide } from 'vue'\n"
+        "provide(SORT_KEY, { by: 'name' })\n</script>\n<template><slot /></template>\n"
+    ),
+    # A module that names axios only in a comment does not reach the network.
+    "frontend/src/lib/failure.ts": (
+        "// The shape axios gives a failed request; nothing here calls it.\n"
+        "/* fetch( is not called either */\nexport const reason = (e: unknown) => String(e)\n"
+    ),
+    "frontend/src/components/UsesFailure.vue": (
+        "<script setup lang=\"ts\">\nimport { reason } from '@/lib/failure'\n"
+        "defineProps<{ e: unknown }>()\n</script>\n<template><a>{{ reason(e) }}</a></template>\n"
+    ),
+    "frontend/src/lib/fetcher.ts": "export const get = (u: string) => fetch(u)\n",
+    "frontend/src/components/UsesFetcher.vue": (
+        "<script setup lang=\"ts\">\nimport { get } from '@/lib/fetcher'\n"
+        "void get('/x')\n</script>\n<template><a /></template>\n"
+    ),
+}
+
+
+def self_test() -> int:
+    """Grade the fixture components and require each letter."""
+    failures: list[str] = []
+
+    def check(label: str, got: Any, want: Any) -> None:
+        if got != want:
+            failures.append(f"{label}: got {got!r}, want {want!r}")
+
+    check(
+        "a // inside a string is not a comment",
+        strip_js_comments("a = 'http://x' // gone\n"),
+        "a = 'http://x'        \n",
+    )
+    check(
+        "a block comment keeps its newlines",
+        strip_js_comments("a /* x\ny */ b"),
+        "a     \n     b",
+    )
+    check(
+        "a template literal nested in ${ } does not end the outer one",
+        strip_js_comments("a = `x ${y ? `//q` : '}'} z`; f() // gone"),
+        "a = `x ${y ? `//q` : '}'} z`; f()        ",
+    )
+    check(
+        "a comment inside ${ } is still a comment",
+        strip_js_comments("a = `x ${ /* `} */ y // }\n } z` // gone"),
+        "a = `x ${          y     \n } z`        ",
+    )
+    check(
+        "a regex literal keeps its //",
+        strip_js_comments("s.replace(/\\/\\//g, '') // gone"),
+        "s.replace(/\\/\\//g, '')        ",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="frontend-grade-selftest-") as raw:
+        root = Path(raw)
+        for rel, body in _FIXTURE.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+        reach = api_reach(root)
+        components = root / "frontend" / "src" / "components"
+
+        def letter(name: str) -> str:
+            return grade_component(root, components / name, reach).letter
+
+        check("vue-router named in a // comment is not a router read", letter("LineComment.vue"), "A")
+        check("vue-router, $router, $parent in a /* */ comment are not read", letter("BlockComment.vue"), "A")
+        check("a real useRoute() is still D", letter("Real.vue"), "D")
+        check("a // inside a string does not hide the code after it", letter("Url.vue"), "D")
+        check(
+            "a // in a template literal nested in ${ } does not hide the code after it",
+            letter("NestedTemplate.vue"),
+            "D",
+        )
+        check("inject() with a fallback (generic, factory) mounts alone: A", letter("InjectFallback.vue"), "A")
+        check("an inject() with no fallback beside one that has it is still D", letter("InjectBare.vue"), "D")
+        check("provide() alone is not tied to where it is mounted: A", letter("ProvideOnly.vue"), "A")
+        check("a module naming axios/fetch( only in comments does not reach the API", letter("UsesFailure.vue"), "A")
+        check("a module that really calls fetch() still reaches the API", letter("UsesFetcher.vue"), "C")
+
+    for failure in failures:
+        print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
+    if failures:
+        return 1
+    print(
+        "PASS: frontend_grade self-test (comments are not code: vue-router, $router "
+        "and $parent named in // and /* */ comments grade A, a real useRoute() "
+        "stays D, and a // inside a string, a regex or a template literal nested in "
+        "${ } is not a comment; inject() with a fallback and provide() alone grade A, "
+        "a bare inject() stays D; a module naming axios only in a comment does not fetch)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-test"]:
+        sys.exit(self_test())
+    print("usage: frontend_grade.py --self-test (the graders import this module)", file=sys.stderr)
+    sys.exit(2)

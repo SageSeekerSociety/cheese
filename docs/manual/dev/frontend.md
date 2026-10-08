@@ -143,7 +143,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 ## 工作面板与页签 {#workpanel}
 
-`WorkPanel.vue` 只负责两件事：**哪一页签在屏幕上、到底有哪几页签**；以及那些「必须一直对、不随页签切走」的信号。一页签渲染和取的东西都属于它自己那个 SFC。唯一的跨页签线是 `open-file`：文档里（或聊天里）一个 `<&path>` chip 打开那个文件 —— 房间文件里能画的走自己的页签；在频道里，其余的开一格只读的文件页签（`ProjectFileTab` → `useProjectFile` → `panels/ProjectFileView`），读项目当前版本，带行号就滚到那几行；在任务里走「改动」，读这件任务的版本。「改动」只看这一件任务：别的任务在它们自己的页面上，整个仓库在 ⋯ →「范围」→「全部文件」。
+`WorkPanel.vue` 只负责两件事：**哪一页签在屏幕上、到底有哪几页签**；以及那些「必须一直对、不随页签切走」的信号。一页签渲染和取的东西都属于它自己那个 SFC。唯一的跨页签线是 `open-file`：文档里（或聊天里）一个 `<&path>` chip 打开那个文件 —— 房间文件里能画的走自己的页签；在频道里，其余的开一格只读的文件页签（`ProjectFileTab` → `useProjectFile` → `panels/ProjectFileView`），读项目当前版本，带行号就滚到那几行；在任务里走「改动」，读这件任务的版本。「改动」只看这一件任务：别的任务在它们自己的页面上，不在改动里的文件从「打开其他文件」按名字找。
 
 固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（支线）、`routines`（定时与触发）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
 
@@ -225,7 +225,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 ## 边界与坑 {#traps}
 
 - **两套请求栈不是重构没做完。** 改一个接口前先确认调用方用的是 `@/api`（fetch、自己剥信封）还是 `@/network`（axios、拦截器剥），两边的重试与 401 行为不同。
-- **后端的错误体几乎都写着 `retryable: false`，所以几乎都不重试。** `api/http.ts` 的 GET 只在状态码是 502–504、520–530 且 `error.retryable !== false` 时重试。后端把它设成 `true` 的只有 `ForgeRateLimitedError`、`ForgeUnreachableError`（`backend/app/domain/project/forge.py`，都是 503）和限流的 429（`app/core/request_limits.py`，429 不在上面的状态码里）。结果是：后端自己答出的 503（比如 `GatewayUnavailableError`）不重试，会重试的只有边缘返回的非 JSON 页面、没有错误体的 5xx 和这两类代码仓库错误。想让一类错误被重试，在它的 `AppError` 子类上设 `retryable = True`。
+- **后端的错误体几乎都写着 `retryable: false`，所以几乎都不重试。** `api/http.ts` 的 GET 只在状态码是 502–504、520–530 且 `error.retryable !== false` 时重试。后端把它设成 `true` 的只有 `ForgeRateLimitedError`、`ForgeUnreachableError`（`backend/app/domain/project/forge.py`，都是 503）和限流的 429（`app/core/request_limits.py`，429 不在上面的状态码里）。结果是：后端自己答出的 503（比如 `GatewayUnavailableError`）不重试，会重试的只有边缘返回的非 JSON 页面、没有错误体的 5xx 和这两类代码仓库错误。想让一类错误被重试，在它的错误类上设 `retryable = True`。
 - **`App.vue` 之外还有第二个入口。** 改全局样式或插件时，`demo-main.ts` 那条路只装了 vuetify 和 i18n：依赖路由、登录态或任何 store 的东西在那里都没有，而文档的每次构建都会跑到它。
 - **`NotFound` 通配必须最后。** 前面插一条落不进任何 match 的路由，被它吃掉的表现是「页面打不开」，看起来像后端 404。
 - **折起来的必须还在。** `collapseNotices` 的硬约束是「信息不能丢，只能收起来」；新增一档折叠时，原文必须仍然在展开区里，不能只留一行摘要。

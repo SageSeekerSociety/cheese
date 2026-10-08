@@ -72,7 +72,7 @@ auth_entries:
   skill.project: "project_skills._in_project / _load bind skill actual project, use enforced room access when topic is supplied, otherwise authorize_project. Source: app/api/routes/project_skills.py,127."
   skill.bundle: "skill_bundles.download_skill_bundle reads scoped_token_claims from X-Cheese-Token (the session's project token) and derives the project from claim p; the URL carries no project id, so the credential itself is the only scope. A global sandbox token is not a project claim and is refused. Source: app/api/routes/skill_bundles.py and app/core/sandbox_auth.py."
   environment.user: "project_environment.User -> require_auth_user; access resolves user handle and checks roster for reads / MemberService.manages for writes, plus archive-write guard. room/apply operations bind the room and idle requirement. Source: app/api/routes/project_environment.py,54,79."
-  export.human: "domain/project/export.create_archive requires token user_id, rejects IdentityService agent binding, checks may_read_project and filters readable_topic_ids. This is the route delegated authorization seam. Source: app/domain/project/export.py."
+  export.human: "project_export.export_project resolves the caller, requires token user_id, rejects IdentityService agent binding and checks may_read_project; domain/project/export.create_archive is handed that actor and asks readable_topic_ids which of the project's rooms this caller reads. The credential is decided at the route, the archive is the domain's. Source: app/api/routes/project_export.py and app/domain/project/export.py."
   context.rooms: "project_context._readable_rooms uses enforced supplied-room access or authorize_project, then readable_topic_ids filters every search group. Source: app/api/routes/project_context.py."
   site.access: "ActorResolver resolves verified actor then site.services.require_site_access, for publication/read or minting a short-lived site grant. Source: app/api/routes/project_sites.py and site_sessions.py; app/domain/site/services.py."
   preview.access: "preview_sessions resolves authenticated actor then api/preview_host.require_preview_access, before minting resource-bound preview grant. Source: app/api/routes/preview_sessions.py; app/api/preview_host.py."
@@ -681,9 +681,12 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/versions", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library/restore", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library", auth: "actor.project", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/file", auth: "actor.project", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/folders", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
+  - {protocol: "http", method: "POST", path: "/projects/{project_id}/library/move", auth: "library.keeper", owner: "library"}
   # app.api.routes.living_docs
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/document", auth: "actor.topic", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
@@ -1244,7 +1247,6 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/file", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/file/raw", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/file", auth: "workspace.access", owner: "repository.transport"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/log", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/git/diff", auth: "workspace.access", owner: "repository.transport"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/topics/{topic_id}/work-summary", auth: "workspace.access", owner: "repository.transport"}
   # app.main

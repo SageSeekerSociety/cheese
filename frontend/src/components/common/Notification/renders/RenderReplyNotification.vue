@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="replier" keypath="notifications.REPLY.title" tag="span">
+      <i18n-t v-if="replier" scope="global" keypath="notifications.REPLY.title" tag="span">
         <template #replier><UserRef :handle="replier.handle" :name="replier.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>

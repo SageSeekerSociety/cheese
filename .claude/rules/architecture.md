@@ -15,6 +15,7 @@ One command runs all five: `task boundaries`. Individually:
 | Check | Command |
 |---|---|
 | Backend import graph | `cd backend && uv run python scripts/check_boundaries.py` |
+| Backend imports inside a function | `cd backend && uv run python scripts/check_deferred_imports.py` |
 | Component imports | `pnpm --dir frontend run lint:boundary` |
 | File sizes | `python3 .claude/scripts/check-file-sizes.py` |
 | Scenes run standalone | `pnpm --dir frontend run lint:scenes` |
@@ -37,9 +38,10 @@ measures, how to read it, and today's numbers: `docs/manual/dev/arch-metrics.md`
 ## Backend: the import graph is checked, not assumed
 
 `backend/.importlinter` declares three contracts (import-linter, AST-based, so
-an import inside a function counts too — of the 32 import statements behind the
-26 frozen layer violations, exactly one is at module level, and the rest are
-inside functions, which is how an import that "would never happen" happens):
+an import inside a function counts too — of the 33 import statements behind the
+29 frozen layer violations, two are at module level (one of them under
+`if TYPE_CHECKING:`), and the rest are inside functions, which is how an import
+that "would never happen" happens):
 
 - **api → domain → core, never backwards.** A route may not reach into a
   domain's internals, and nothing below `app.api` may import `app.api`.
@@ -60,7 +62,8 @@ the graph rather than transcribed by hand.
 Freeze policy, which is the whole ratchet:
 
 - Every current violation is frozen in the same file as an exact
-  `importer -> imported` pair — 26 + 56 + 178 = 260 today. New ones fail CI.
+  `importer -> imported` pair — 28 + 49 + 153 = 230 today (C1 + C2 + C3). New
+  ones fail CI.
 - No wildcards. `check_boundaries.py` fails (exit 1) on any `*` in the freeze,
   because an exemption that can absorb a file nobody looked at is not an
   exemption.
@@ -68,7 +71,11 @@ Freeze policy, which is the whole ratchet:
   warning, never a failure. Run
   `uv run python scripts/boundary_baseline.py --update` to drop the stale lines
   (it refuses to *add* any without `--freeze-new`, so accepting new debt is a
-  visible act).
+  visible act). C3's frozen list is a cycle-breaker set, and that set is not
+  unique: recomputed from scratch it can come out as a different set of the
+  same knot, which `--update` reports as new violations and refuses. When that
+  happens, delete exactly the lines `lint-imports` lists under "No matches for
+  ignored import" instead of freezing a reshuffled set.
 - Exit 2 means "could not judge" (a missing `app` on the path, an unparseable
   config, a contract that stopped running) and is never a pass.
 
@@ -76,6 +83,48 @@ Freeze policy, which is the whole ratchet:
 built at import time — is a boundary leak that no contract here sees. If one is
 unavoidable it belongs in `app.core` with a comment saying what owns its
 lifetime; new ones are an admission, not a habit.
+
+## Backend: an import inside a function says why, or goes to the top
+
+An `import` inside a function body is invisible to whoever reads the top of the
+module, and to every tool that reads dependencies from module level —
+import-linter sees it, almost nothing else does. It is also the usual way a
+cycle is dodged instead of removed: 27 of the 29 frozen layer violations above
+are imports inside a function. So such an import either moves to the top of the
+module, or says why it cannot, on the same line or the line directly above:
+
+```python
+# deferred-import: breaks the cycle domain.topic -> domain.project
+from app.domain.project.services import ProjectService
+```
+
+Good reasons are specific: the cycle it breaks, an optional dependency that may
+be absent, a start-up cost worth deferring, a test double that replaces the name
+on its home module (often better solved by importing the module and calling
+`module.name(...)`, which keeps the import at the top and the patch working).
+"Avoid circular import" with no cycle named is not one — check whether the cycle
+still exists before writing it.
+
+**Enforced** by `backend/scripts/check_deferred_imports.py` (pre-commit hook
+`deferred-imports`, CI, `task boundaries`):
+
+- Unannotated ones are frozen **per file** in `backend/deferred-import-baseline.json`.
+  A file not in it must have none; a file in it may only go down. 773 in 171
+  files when the ratchet started (2026-10, after the sign-in routes were lifted
+  from 850).
+- Annotated ones are not limited, and every run lists them with their reasons,
+  so a reviewer sees what was explained and how.
+- Counting is by AST: an import lexically inside a `def`/`async def`, once each
+  however deeply nested. A module-level `if TYPE_CHECKING:` import is not inside
+  a function and does not count. `arch-metrics.py`'s `deferred_imports` (the
+  board's number, annotated or not) imports the same counter, so the two cannot
+  drift apart.
+- Paying down is free: a baseline above the tree is a warning. Lower it with
+  `uv run python scripts/check_deferred_imports.py --update`, which only
+  shrinks; growth is refused unless you add `--freeze-new`, which prints every
+  line it freezes. `--self-test` (also in CI) proves the check still goes red.
+- Exit 0 pass, 1 a file grew, 2 could not judge (no baseline, an unreadable
+  baseline, a file that does not parse) — never a pass.
 
 ## Frontend: a component does not fetch
 
@@ -101,7 +150,7 @@ Four principles, in the order they matter:
    decide which side of that line a file is on.
 
 The rule is ratcheted because the tree started dirty — 127 violations in 82
-components when it landed, 59 in 47 today (`frontend/import-boundary-baseline.json`);
+components when it landed, 21 in 21 on 2026-10-07 (`frontend/import-boundary-baseline.json`);
 a gate that reddened the whole tree on day one would be switched off within a week. It is a separate ESLint config
 (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs` for the
 same reason. Only *new* violations fail; `pnpm run lint:boundary:update` writes

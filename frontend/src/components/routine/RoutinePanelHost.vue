@@ -15,6 +15,7 @@ import type { UserRefTarget } from '@/lib/userRef'
 
 import { computed, getCurrentInstance } from 'vue'
 
+import { useNavigation } from '@/composables/useNavigation'
 import { useRoutineList } from '@/composables/useRoutineList'
 
 import PanelRoutines from '../panels/PanelRoutines.vue'
@@ -31,8 +32,10 @@ const props = withDefaults(
   { refreshTick: 0 }
 )
 
-// 路由和 pinia 都从 app 上拿（和 composables/useUserRef 同一个理由）：这一只也可能在
-// 没装路由、没装 store 的树里被孤立渲染（单测），那里照样画，只是人名不可点、画 handle。
+// 路由走 useNavigation()、pinia 从 app 上拿（和 composables/useUserRef 同一个理由）：
+// 这一只也可能在没装路由、没装 store 的树里被孤立渲染（单测），那里照样画，只是人名
+// 不可点、画 handle。
+const nav = useNavigation()
 const app = getCurrentInstance()?.appContext.config.globalProperties
 const store = app?.$pinia ? useWorkspaceStore() : null
 
@@ -44,7 +47,7 @@ const userNames = computed(() =>
 )
 
 function go(target: UserRefTarget) {
-  void app?.$router?.push(target)
+  void nav?.navigate(target)
 }
 
 const {

@@ -25,7 +25,8 @@ WHAT IT MEASURES, and how each number is obtained:
                            — read, not re-derived: the ESLint rule that produces
                            them needs node_modules, and this has to run anywhere.
   backend.contracts        Frozen `importer -> imported` pairs per contract in
-                           `backend/.importlinter`. 26 + 56 + 178 = 260 today.
+                           `backend/.importlinter`, C1 + C2 + C3 (counts in
+                           `.claude/rules/architecture.md`).
   backend.deferred_imports `Import`/`ImportFrom` statements lexically inside a
                            function body under `backend/app`, via `ast`. This is
                            the shape a cycle is dodged with, which is why the
@@ -85,7 +86,6 @@ say — is reported as null, never as zero.
 from __future__ import annotations
 
 import argparse
-import ast
 import importlib.util
 import json
 import re
@@ -218,48 +218,36 @@ def parse_importlinter(path: Path) -> dict[str, Any] | None:
     }
 
 
+def load_deferred_imports() -> Any:
+    """The counter, imported from the gate that enforces it.
+
+    Loaded from this repository's `backend/scripts/check_deferred_imports.py`,
+    never from a `--root` tree, for the same reason as the caps below: the
+    board and the gate must not have two definitions of "an import inside a
+    function" to drift apart.
+    """
+    source = REPO_ROOT / "backend" / "scripts" / "check_deferred_imports.py"
+    spec = importlib.util.spec_from_file_location("_check_deferred_imports", source)
+    if spec is None or spec.loader is None:  # pragma: no cover - unreadable script
+        raise ImportError(f"cannot load {source}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_check_deferred_imports"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def count_deferred_imports(root: Path) -> int | None:
-    """Import statements inside a function body under `backend/app`.
+    """Import statements inside a function body under `backend/app`, annotated
+    with `# deferred-import:` or not.
 
     AST, so a statement inside `if TYPE_CHECKING:` at module level is not one of
-    these and an import inside a nested function is counted once.
+    these and an import inside a nested function is counted once. The counting
+    is `check_deferred_imports.py`'s; a file that does not parse is skipped.
     """
     app = root / "backend" / "app"
     if not app.is_dir():
         return None
-    found = 0
-
-    class Counter_(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.depth = 0
-            self.count = 0
-
-        def visit_FunctionDef(self, node: ast.AST) -> None:
-            self.depth += 1
-            self.generic_visit(node)
-            self.depth -= 1
-
-        visit_AsyncFunctionDef = visit_FunctionDef
-
-        def visit_Import(self, node: ast.AST) -> None:
-            if self.depth:
-                self.count += 1
-
-        def visit_ImportFrom(self, node: ast.AST) -> None:
-            if self.depth:
-                self.count += 1
-
-    for path in sorted(app.rglob("*.py")):
-        if not path.is_file():
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-        except (SyntaxError, ValueError):
-            continue  # a file that does not parse is not a number to invent
-        visitor = Counter_()
-        visitor.visit(tree)
-        found += visitor.count
-    return found
+    return load_deferred_imports().count_deferred_imports(app)
 
 
 def count_lines(data: bytes) -> int:

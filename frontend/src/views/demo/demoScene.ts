@@ -91,8 +91,7 @@ export type SceneEvent =
   // 「已派出」标记：拆出去的一条活。同一个 id 再写一次是改它的状态。
   | { at: number; do: 'split'; id: string; title: string; status: 'open' | 'closed' }
   // 输入框上方的验收卡，整张换掉；null 是收起。字段按 AcceptCard，没写的取默认。
-  // `open` 把卡摊开（等于点了卡上的展开）：卡面上的采纳、退回、检查都露出来。
-  | { at: number; do: 'card'; card: Partial<AcceptCard> | null; open?: boolean }
+  | { at: number; do: 'card'; card: Partial<AcceptCard> | null }
   // 验收卡那个 PR 的检查。
   | { at: number; do: 'checks'; checks: Partial<PrChecks> | null }
   // 对话栏里一条安静的分隔说明（不是谁说的话）。
@@ -243,7 +242,6 @@ export interface Frame {
   changes: ChangesScene | null
   preview: PreviewScene | null
   card: AcceptCard | null
-  cardOpen: boolean
   checks: PrChecks | null
   files: MemoryFile[]
   injected: string[]
@@ -279,7 +277,7 @@ function fullCard(card: Partial<AcceptCard>, created_at: string): AcceptCard {
     task_id: 'demo-task',
     topic_id: 'demo',
     reviewer_handle: 'wang',
-    routing_reason: '',
+    focus: '',
     change_subject: null,
     change_body: null,
     status: 'pending',
@@ -336,7 +334,6 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
   )
   let injected: string[] = []
   let card: AcceptCard | null = null
-  let cardOpen = false
   let checks: PrChecks | null = null
   const stations: Frame['stations'] = {}
   let at: string | null = null
@@ -448,7 +445,6 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
         }
         case 'card':
           card = e.card ? fullCard(e.card, created_at) : null
-          cardOpen = !!e.card && e.open === true
           break
         case 'checks':
           checks = e.checks ? { available: true, ...e.checks } : null
@@ -569,7 +565,6 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
     changes,
     preview,
     card,
-    cardOpen,
     checks,
     files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)),
     injected,

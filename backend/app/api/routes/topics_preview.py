@@ -48,6 +48,7 @@ from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
+from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.project.room_files import ARTIFACT_MIME, clean_artifact_path
 from app.domain.topic.services import TopicService
@@ -143,8 +144,8 @@ async def preview_file(
     await _actor_in_place(resolver, place)
     if path:
         return ok(
-            library.read_attachment_text(
-                place.project_id, place.room_id, clean_artifact_path(path)
+            await library_records.read_attachment_text(
+                db, place.project_id, place.room_id, clean_artifact_path(path)
             )
         )
     art = await BlockRepository(db).latest_artifact(place.conversation_id)

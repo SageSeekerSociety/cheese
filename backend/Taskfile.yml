@@ -31,14 +31,18 @@ tasks:
     sources:
       - app/**/*.py
       - pyproject.toml
-  # The import graph: declared boundaries in .importlinter, with the 260
+  # The import graph: declared boundaries in .importlinter, with the 231
   # pre-existing violations frozen inside the same file as exact
   # `importer -> imported` pairs. Refreshing the freeze is
   # `uv run python scripts/boundary_baseline.py --update` (shrink-only).
+  # Imports inside a function body: unannotated ones frozen per file in
+  # deferred-import-baseline.json, may only go down. Refresh (shrink-only):
+  # `uv run python scripts/check_deferred_imports.py --update`.
   boundaries:
-    desc: Check declared module boundaries (import-linter + frozen baseline)
+    desc: Check declared module boundaries (import-linter + frozen baseline) and deferred imports
     cmds:
       - uv run python scripts/check_boundaries.py
+      - uv run python scripts/check_deferred_imports.py
   test:
     desc: Run tests (incremental via testmon)
     cmds:
@@ -75,10 +79,11 @@ tasks:
       - uv run alembic revision --autogenerate -m "{{.MSG}}"
     requires:
       vars: [MSG]
-  db:downgrade:
-    desc: Downgrade one migration step
-    cmds:
-      - uv run alembic downgrade -1
+  # There is deliberately no `db:downgrade` task: a release is not rolled
+  # forward and backward through the schema. Rolling back rolls the image
+  # (docs/manual/dev/deploy-scripts.md, "回滚"): it restores the previous
+  # image, not the data — a migration that ran stays run. Going back on a
+  # schema means restoring a database dump, not `alembic downgrade`.
   deps:sync:
     desc: Sync Python dependencies
     cmds:

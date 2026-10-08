@@ -233,7 +233,7 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             memory=AsyncMock(),
         )
         monkeypatch.setattr(chat._compute, "_runtimes", lambda: [runtime])
-        chat._active_turn_ids[ref.topic_id] = {work}
+        chat.live.active_turn_ids[ref.topic_id] = {work}
         injected = []
 
         def fail_commit(session):
@@ -304,6 +304,6 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             )
             assert len(notices) == 1
             assert len(channel.admitted) == 1
-        chat._active_turn_ids.pop(ref.topic_id, None)
+        chat.live.active_turn_ids.pop(ref.topic_id, None)
 
     client.portal.call(run)

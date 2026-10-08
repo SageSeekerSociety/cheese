@@ -244,7 +244,7 @@
     </AdaptiveDialog>
 
     <!-- 内测: running-build badge, self-hides unless the box opted in. -->
-    <VersionBadge />
+    <VersionBadge :version="appVersion" />
 
     <!-- 离线指示: shows only while offline, auto-hides when the network returns. -->
     <OfflineBanner />
@@ -280,14 +280,18 @@ import { useEventListener } from '@vueuse/core'
 import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
+import { provideAttachmentSource } from '@/composables/useAttachmentSource'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
+import { providePageChrome } from '@/composables/usePageChrome'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
+import { providePublicVisitor } from '@/composables/usePublicVisitor'
 import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useStartGuide } from '@/composables/useStartGuide'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
+import { provideUserRefDirectory } from '@/composables/useUserRefDirectory'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import ConsentGate from './components/account/ConsentGate.vue'
@@ -304,7 +308,7 @@ import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
-import { createProject, listProjects } from '@/api'
+import { type AppVersion, createProject, getAppVersion, listProjects } from '@/api'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
@@ -373,6 +377,15 @@ const workspace = useWorkspaceStore()
 
 const titleManager = usePageTitle()
 const store = usePageTitleStore()
+
+// 外壳给内容区注入的四样东西：人名 chip 的名册（lib/userRefDirectory.ts）、页头的
+// 面包屑与操作区（lib/pageChrome.ts）、公共页要的登录状态（lib/publicVisitor.ts）、
+// 附件字节从哪儿取（lib/attachmentSource.ts）。组件只认注入口，没人注入时各有兜底，
+// 所以它们能离开外壳单独挂起来。
+provideUserRefDirectory()
+providePageChrome()
+providePublicVisitor()
+provideAttachmentSource()
 
 router.isReady().then(async () => {
   const updateDocumentTitle = () => {
@@ -513,6 +526,16 @@ function skipToContent(): void {
   el.focus()
   el.scrollIntoView({ block: 'start', behavior: scrollBehavior() })
 }
+
+// 内测版本徽标要画的那个构建。壳来问，徽标只画：取不到（接口不通、后端太旧）就不画。
+const appVersion = ref<AppVersion | null>(null)
+onMounted(async () => {
+  try {
+    appVersion.value = await getAppVersion()
+  } catch {
+    // Best-effort: no badge if the endpoint is unreachable or old.
+  }
+})
 
 onMounted(async () => {
   await router.isReady().catch(() => {})
