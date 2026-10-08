@@ -32,6 +32,7 @@ covers:
 | deploy | `deploy-scripts-test.yml` | 部署脚本的测试 |
 | harness | `harness-contract.yml` | 骨架请求契约 |
 | mcp | `mcp-contract.yml` | Claude Code 构建契约 |
+| equivalence | `mcp-equivalence.yml` | 房间里的远程 Bash 和机器上直接跑的 Claude Code 行为一致（`equivalence.py`），每种运行方式、每种 shell 各一个 job |
 | remote | `remote-execution.yml` | 远端执行验收 |
 | cifast | `ci-fast.yml` | `ci:fast` 本地快检的黑盒测试，驱动真实 pre-commit |
 
@@ -43,7 +44,7 @@ covers:
 title: 勾几行路径，看这套检查选了什么
 note: 左边勾上这次改到的路径，右边就是 Required CI 会要求成功的套件。选中的必须成功，没选中的必须是跳过。
 source: ci-scope
-expect: backend, frontend, e2e, cli, guards, deploy, harness, mcp, remote, cifast
+expect: backend, frontend, e2e, cli, guards, deploy, harness, remote, mcp, equivalence, cifast
 paths:
   - path: docs/manual/dev/ci.md
     label: 改文档

@@ -15,9 +15,10 @@ from sqlalchemy import event, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from app.domain.agent.chat import ChatService, _HookWorkState
+from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.events import Assembler
+from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputReceipt
@@ -28,7 +29,7 @@ from tests.integration.test_same_handle_note_and_timed_delivery import _project,
 
 
 def _state(identity):
-    return _HookWorkState(
+    return HookWorkState(
         project_id=identity.project_id,
         topic_id=identity.conversation_id,
         work_id=identity.work_id,
@@ -104,7 +105,8 @@ def test_only_exact_clean_native_work_releases_its_registered_batch(client, case
                 cheese={"agent_handle": identity.recipient_handle, "interrupted": True},
             )
         chat = ChatService.__new__(ChatService)
-        chat._sessions, chat._gateway, chat._conversation_rooms = factory, None, {}
+        chat._sessions, chat._gateway = factory, None
+        chat.live = LiveWork()
         await chat._close_hook_work(state, result)
         await chat._close_hook_work(state, result)
         async with factory() as session:
@@ -165,7 +167,8 @@ def test_completion_commit_abort_rolls_back_release_and_consumption_together(cli
             )
             await session.commit()
         chat = ChatService.__new__(ChatService)
-        chat._sessions, chat._gateway, chat._conversation_rooms = factory, None, {}
+        chat._sessions, chat._gateway = factory, None
+        chat.live = LiveWork()
         state, result = _state(identity), _result(identity)
         aborted = []
         # The listener is on every Session in the process, and the app's

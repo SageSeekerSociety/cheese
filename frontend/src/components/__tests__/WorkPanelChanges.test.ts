@@ -303,7 +303,6 @@ describe('文件面板', () => {
           title: 'one',
           status: 'closed',
           branch_name: 'task/one',
-          blocks: [],
           created_at: '2026-09-09T00:00:00Z',
           updated_at: '2026-09-09T00:00:00Z',
           presentation: { column: 'done', phrase: 'accepted' },

@@ -738,7 +738,7 @@ export interface AcceptCard {
   task_id?: string | null
   topic_id: string
   reviewer_handle: string
-  routing_reason: string
+  focus: string
   // 提交与 PR 规范: the commit subject + body this topic will be squash-merged
   // under. Null on a card filed without them (the platform then falls back to
   // the topic title).

@@ -762,7 +762,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 了什么）。
   //
   // 单独拉一次而不是从 topicList 里挑：一件活不再是话题树上的一个节点，话题列表里
-  // 根本没有它了。`limit: 1` 是因为标记只要支线本身，不要它们的对话。
+  // 根本没有它了。`limit: 0` 是因为标记只要支线本身，不要它们的对话。
   const { tasks: roomTasks, reload: reloadRoomTasks } = useRoomTasks(() => topic()?.id)
 
   // <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的

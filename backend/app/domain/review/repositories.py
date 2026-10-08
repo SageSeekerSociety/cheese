@@ -25,7 +25,7 @@ class AcceptCardRepository:
         *,
         topic_id: uuid.UUID,
         reviewer_handle: str,
-        routing_reason: str = "",
+        focus: str = "",
         status: AcceptStatus = AcceptStatus.pending,
         change_subject: str | None = None,
         change_body: str | None = None,
@@ -43,7 +43,7 @@ class AcceptCardRepository:
             topic_id=topic_id,
             task_id=task_id,
             reviewer_handle=reviewer_handle,
-            routing_reason=routing_reason,
+            focus=focus,
             status=status,
             change_subject=change_subject,
             change_body=change_body,
@@ -203,7 +203,12 @@ class AcceptCardRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def accepted_for_tasks(self, task_ids: list[uuid.UUID]) -> list[AcceptCard]:
-        """这些任务上被采纳的每一次交付，按采纳的先后。"""
+        """这些任务上被采纳的每一次交付，按采纳的先后。
+
+        并列的决定时间上再按 id 排：调用方取最后一张当「最新的那次交付」，而这份
+        结果现在会进任务清单的 ETag（`topics_tasks.py`）——同一次查询两次跑出不同
+        的顺序就会让清单每次都换 tag，304 永不命中。
+        """
         if not task_ids:
             return []
         stmt = (
@@ -212,7 +217,7 @@ class AcceptCardRepository:
                 AcceptCard.task_id.in_(task_ids),
                 AcceptCard.status == AcceptStatus.accepted,
             )
-            .order_by(AcceptCard.decided_at)
+            .order_by(AcceptCard.decided_at, AcceptCard.id)
         )
         return list((await self._session.scalars(stmt)).all())
 

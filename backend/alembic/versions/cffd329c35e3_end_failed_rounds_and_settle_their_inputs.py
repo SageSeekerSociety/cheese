@@ -48,9 +48,6 @@ What this does not touch: a round with no recorded failure, one that wrote
 something in the last six hours, one that never reached its session (the orphan
 sweep re-sends those), one on a task's line (its task settles it), and any
 input the round did not read.
-
-Downgrade puts nothing back: a re-opened interval makes the room busy with a
-turn nobody is running, and an unstamped input shuts the seat again.
 """
 
 from collections.abc import Sequence
@@ -117,4 +114,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade puts nothing back: a re-opened interval makes the room busy with a
+    turn nobody is running, and an unstamped input shuts the seat again."""
     pass

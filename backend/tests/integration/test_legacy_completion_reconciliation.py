@@ -18,6 +18,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.subscription import Subscription
+from app.domain.agent.live_work import LiveWork
 from app.domain.block.models import Block, consumed_turn
 from app.domain.delivery.input_identity import InputEffects, InputReceipt
 from app.domain.delivery.models import NativeInput
@@ -90,7 +91,8 @@ def test_legacy_completion_failure_keeps_cursor_and_reconstructed_reader_settles
 
         def reader(fail):
             chat = ChatService.__new__(ChatService)
-            chat._sessions, chat._unread_inputs = factory, {}
+            chat._sessions = factory
+            chat.live = LiveWork()
 
             async def complete(value):
                 # The listener is on every Session in the process, and the

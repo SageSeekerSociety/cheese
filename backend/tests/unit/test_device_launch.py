@@ -19,13 +19,12 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent import machine_launcher, place
-from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code import ClaudeLaunch, device_launch
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS, LAUNCH_ARGS
 from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
 from app.domain.agent.harness.claude_code.session_launch import (
-    ClaudeLaunch,
     session_settings,
 )
 from app.domain.agent.harness.launch import MachinePlace

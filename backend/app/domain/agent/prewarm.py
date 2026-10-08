@@ -34,6 +34,7 @@ from app.domain.agent.seat_admission import seat_admission
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
+    from app.domain.agent.live_work import LiveWork
     from app.domain.agent.room.turn import _Launch
 
 logger = logging.getLogger(__name__)
@@ -54,10 +55,7 @@ class _Rooms(Protocol):
     start it with."""
 
     _compute: "ComputePool"
-
-    def _seat_lock_for(
-        self, topic_id: uuid.UUID, agent_handle: str
-    ) -> asyncio.Lock: ...
+    live: "LiveWork"
 
     async def _launch_inputs(
         self, topic_id: uuid.UUID, agent_handle: str, *, acting: str
@@ -148,7 +146,7 @@ class SeatPrewarm:
         runtime = chat._compute.seat_runtime(topic_id, seat)
         if runtime is None:
             return "not_held"
-        async with self._slots, seat_admission(chat._seat_lock_for(topic_id, seat)):
+        async with self._slots, seat_admission(chat.live.seat_lock_for(topic_id, seat)):
             live = runtime.prewarm_due(session)
             if live is None:
                 return "not_due"
