@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.platform_notices import EVENT_ROUTINE_RUN
 from app.domain.block.models import Block
+from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import names_a_person
 
 
@@ -62,7 +63,6 @@ async def routine_owner(
     """
     if delivery_id is None:
         return None
-    from app.domain.delivery.models import Delivery
 
     row = await session.get(Delivery, delivery_id)
     payload = (row.payload if row is not None else None) or {}
@@ -77,7 +77,6 @@ async def is_routine_run(session: AsyncSession, delivery_id: uuid.UUID | None) -
     也可以写（存它的结果），之后有人追问的那几轮照支线的规矩只读。"""
     if delivery_id is None:
         return False
-    from app.domain.delivery.models import Delivery
 
     row = await session.get(Delivery, delivery_id)
     payload = (row.payload if row is not None else None) or {}

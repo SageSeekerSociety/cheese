@@ -26,7 +26,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.conversation.services import of_room
 from app.domain.machine import lease_claim, session_work
 from app.domain.machine.models import CloudHost, CloudHostHome
 from app.domain.machine.progress import publish_line, tell_vm_released
@@ -108,8 +110,6 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         await db.commit()
         return False
     # Looked at with the room locked: no turn has started since.
-    from app.domain.agent.models import AgentTurn
-    from app.domain.conversation.services import of_room
 
     running = await db.scalar(
         select(AgentTurn.id)

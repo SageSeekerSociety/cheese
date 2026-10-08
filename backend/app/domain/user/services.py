@@ -2,11 +2,12 @@ import re
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.email import is_placeholder_email
-from app.core.errors import UnprocessableEntityError
+from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
 from app.domain.user.passwords import (
@@ -121,7 +122,6 @@ async def timezones_by_handles(
     session: AsyncSession, handles: Iterable[str]
 ) -> dict[str, str]:
     """handle -> 他浏览器报上来的时区；没报过的人不在结果里。"""
-    from sqlalchemy import select
 
     wanted = set(handles)
     if not wanted:
@@ -348,8 +348,6 @@ class UserProfileService:
             nickname = normalize_nickname(nickname)
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
         if profile is None:
-            from app.core.errors import NotFoundError
-
             raise NotFoundError("User profile not found")
         await self._profile_repo.update_profile(
             profile, nickname=nickname, intro=intro, avatar_id=avatar_id

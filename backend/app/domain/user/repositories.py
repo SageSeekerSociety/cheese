@@ -10,7 +10,8 @@ from app.domain.identity.models import AgentBinding
 from app.domain.knowledge.models import Knowledge
 from app.domain.platform_stats.windows import utc_day
 from app.domain.questions.models import Question
-from app.domain.team.models import Team
+from app.domain.task.models import TaskMembership, TaskSubmission
+from app.domain.team.models import Team, TeamUserRelation
 from app.domain.user.models import (
     User,
     UserProfile,
@@ -597,7 +598,6 @@ class UserStatisticsRepository:
         self._session = session
 
     async def count_teams(self, user_id: int) -> int:
-        from app.domain.team.models import TeamUserRelation
 
         stmt = select(func.count(TeamUserRelation.id)).where(
             TeamUserRelation.user_id == user_id,
@@ -607,7 +607,6 @@ class UserStatisticsRepository:
         return int(result.scalar_one() or 0)
 
     async def count_task_memberships(self, user_id: int) -> int:
-        from app.domain.task.models import TaskMembership
 
         stmt = select(func.count(TaskMembership.id)).where(
             TaskMembership.member_id == user_id,
@@ -626,7 +625,6 @@ class UserStatisticsRepository:
         return int(result.scalar_one() or 0)
 
     async def count_submissions(self, user_id: int) -> int:
-        from app.domain.task.models import TaskSubmission
 
         stmt = select(func.count(TaskSubmission.id)).where(
             TaskSubmission.submitter_id == user_id,

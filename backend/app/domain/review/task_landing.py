@@ -18,9 +18,21 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
+from app.domain.agent.announce import SHOW_ONCE_COMMITTED
+from app.domain.agent.harness.prompt import task_next_step_prompt
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.schemas import BlockOut
+from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.notification.models import NotificationType
+from app.domain.project.models import Project
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.thread.services import open_thread
+from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +98,6 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
 
 
 async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
-    from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.block.models import AuthorType, Block, BlockKind
-    from app.domain.identity.handles import agent_instance_handle
-    from app.domain.project.models import Project
-    from app.domain.thread.services import open_thread
-    from app.domain.topic.models import Topic, TopicStatus
 
     if task.upgraded_from_block_id is None:
         return
@@ -132,24 +138,18 @@ async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
 
 
 def _out(block) -> dict:
-    from app.domain.block.schemas import BlockOut
 
     return BlockOut.model_validate(block).model_dump(mode="json")
 
 
 def _after_commit(session: AsyncSession, channel, frame: dict) -> None:
     """Send ``frame`` to the pages open on ``channel`` once this commits."""
-    from app.domain.agent.announce import SHOW_ONCE_COMMITTED
 
     session.info.setdefault(SHOW_ONCE_COMMITTED, []).append((str(channel), frame))
 
 
 async def _tell_next_step(session: AsyncSession, task: Task) -> None:
     """The task's AI teammate hears that a step landed and it goes on."""
-    from app.domain.agent.harness.prompt import task_next_step_prompt
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
-    from app.domain.notification.models import NotificationType
 
     await record_task_instruction(
         session,

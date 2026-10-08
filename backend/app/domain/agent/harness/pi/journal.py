@@ -13,6 +13,7 @@ the parent chain is a linked list nobody wants to walk on every read.
 """
 
 import json
+import uuid as _uuid
 from datetime import UTC, datetime
 
 from app.domain.agent.harness.driven import journal
@@ -125,7 +126,6 @@ class Journal(journal.Journal):
         and mints a new one. Positions are only comparable inside one
         generation — that is the epoch the platform's owner records compare.
         """
-        import uuid as _uuid
 
         existing = self.recall("generation")
         if existing:

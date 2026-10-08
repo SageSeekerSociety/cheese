@@ -31,6 +31,8 @@ from app.domain.topic.models import Topic, TopicStatus
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.project.protection import branch_protection_of
+from app.domain.review import github_pr
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES,
@@ -44,6 +46,7 @@ from app.domain.review.services._shared import (
     logger,
     notice,
 )
+from app.domain.review.task_landing import delivery_landed
 
 
 def _seen_head(card: AcceptCard, head_sha: str | None, action: str) -> str | None:
@@ -136,6 +139,7 @@ async def _refresh_github_unseen_head(
 
 
 async def _status_client(self: pkg.AcceptService, project_id: uuid.UUID):
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import status_client
 
     return _remote(self, await status_client(project_id, self._session))
@@ -172,7 +176,6 @@ async def _refresh_stale_card(
     connections on one row with one waiting on the other is a hang, not a
     refresh. Every attribute needed later is read before the rollback
     (expired attributes reload with sync IO an AsyncSession cannot do)."""
-    from app.domain.project.protection import branch_protection_of
 
     card_id = card.id
     number = card.pr_number
@@ -222,6 +225,7 @@ async def _app_credentials(
     self: pkg.AcceptService, topic: Topic
 ) -> tuple[_GitHubCredentials | None, str]:
     """The platform App's installation tokens for this project's repo."""
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import tokens_for_project
 
     tokens = await tokens_for_project(topic.project_id, self._session)
@@ -492,8 +496,6 @@ async def _advance_github_card(
         notes.clear(card)
         await self._session.flush()
 
-    from app.domain.review import github_pr
-
     client = await self._status_client(topic.project_id)
     try:
         await self._poll_pr_card(
@@ -529,7 +531,6 @@ async def _mark_task_merged(
 ) -> None:
     if card.task_id is None:
         return
-    from app.domain.review.task_landing import delivery_landed
 
     task = await TaskService(self._session).require_in_room(card.topic_id, card.task_id)
     await delivery_landed(
@@ -546,6 +547,7 @@ async def _app_pr_client(self: pkg.AcceptService, topic: Topic):  # noqa: ANN202
     """The App-token client for this project's upstream, or None when the
     project has no GitHub side at all (no installation, or an upstream that
     is not a GitHub https remote)."""
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import proposal_client
 
     return _remote(self, await proposal_client(topic.project_id, self._session))

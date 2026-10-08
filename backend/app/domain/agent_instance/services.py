@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent_instance.configuration import AgentConfiguration
-from app.domain.agent_instance.models import AgentInstance, NameSource
+from app.domain.agent_instance.configuration import AgentConfiguration, model_choices
+from app.domain.agent_instance.models import AgentInstance, NameSource, OwnAgent
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.library import AgentTypeDef, preset_types
 from app.domain.identity.handles import (
@@ -19,10 +19,12 @@ from app.domain.identity.handles import (
     UNRESOLVED_AGENT_HANDLE,
     agent_instance_handle,
 )
+from app.domain.identity.services import IdentityService
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.services import UsageService
 
 # An instance handle keys a memory pool (``{project}:{handle}``), so it may not
 # contain the separator, and it travels through URLs and prompts.
@@ -245,7 +247,6 @@ class AgentInstanceService:
         """The project's own teammates: every agent but its members' own, which
         belong to a person and are not the project's to configure or default
         to (#2991)."""
-        from app.domain.agent_instance.models import OwnAgent
 
         own = set(
             await self._session.scalars(
@@ -316,7 +317,6 @@ class AgentInstanceService:
         existed before this did gets its identity the next time anything asks —
         no alembic chain to fork, the same way a room's seat migrates itself.
         """
-        from app.domain.identity.services import IdentityService
 
         user = await IdentityService(self._session).ensure_instance_agent_user(
             instance.id, instance.display_name
@@ -342,7 +342,6 @@ class AgentInstanceService:
     ) -> None:
         if config.model is None:
             return
-        from app.domain.agent_instance.configuration import model_choices
 
         project = await self._session.get(Project, project_id)
         if project is None:
@@ -353,7 +352,6 @@ class AgentInstanceService:
         )
         if choice is None:
             raise ValidationError(say("modelUnavailable"))
-        from app.domain.usage.services import UsageService
 
         access = await UsageService(self._session).model_access(project.team_id)
         if not access.allows(choice["tier"]):

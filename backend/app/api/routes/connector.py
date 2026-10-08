@@ -40,6 +40,7 @@ from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
 from app.common.auth import AccessClaims, verify_access_token
+from app.core import background
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
@@ -104,9 +105,6 @@ _recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
 
 
 async def recover_business_state(device_id: str) -> None:
-    # deferred-import: tests patch this name on app.core.background
-    from app.core.background import spawn
-
     # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
 
@@ -115,13 +113,13 @@ async def recover_business_state(device_id: str) -> None:
     # behind the queue below: a revoke made while the machine was away is in
     # force on it only once this lands. And not behind the session-owner check:
     # every backend may send it, since the set is replaced whole on the machine.
-    spawn(
+    background.spawn(
         push_grants_on_connect(async_session_factory, device_hub, device_id),
         name="local grants device reconnect",
     )
     # Whether its owner's own Claude Code is logged in for the platform: only
     # the machine knows, and a session of it is placed by the answer.
-    spawn(
+    background.spawn(
         owner_login.refresh_on_connect(async_session_factory, device_hub, device_id),
         name="claude login device reconnect",
     )
@@ -159,16 +157,13 @@ async def _recover_business_state(device_id: str) -> None:
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
     # Restore screen ownership before cleanup looks for sessions to close.
-    # deferred-import: tests patch this name on app.core.background
-    from app.core.background import spawn
-
     # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
 
     # deferred-import: tests patch this name on app.domain.topic.retire
     from app.domain.topic.retire import sweep_retired_storage
 
-    spawn(
+    background.spawn(
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
         name="cleanup device reconnect",
     )
@@ -176,14 +171,14 @@ async def _recover_business_state(device_id: str) -> None:
     # deferred-import: tests patch this name on app.domain.room_task.checkouts
     from app.domain.room_task.checkouts import remove_closed_checkouts
 
-    spawn(
+    background.spawn(
         remove_closed_checkouts(async_session_factory, device_id=device_id),
         name="closed task checkouts device reconnect",
     )
     # Rooms from before rooms had an executor are told their files are kept
     # before anything archives them (`agent/device_storage.py`).
 
-    spawn(
+    background.spawn(
         keep_device_room_files(async_session_factory, device_id),
         name="kept room files device reconnect",
     )

@@ -42,6 +42,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import NoticeText, say
+from app.domain.team.services import team_service
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.models import ComputeGrant, GrantSource, Plan, PlanWindowUse
 from app.domain.usage.repositories import UsageRepository
@@ -238,7 +239,6 @@ async def terms_of(session: AsyncSession, plan_keys: Iterable[str]) -> dict:
 
 async def team_terms(session: AsyncSession, team_id: int) -> Terms:
     """The terms of the plan a team is on."""
-    from app.domain.team.services import team_service
 
     team = await team_service(session).get_team(team_id)
     key = team.plan_key if team is not None else "free"
@@ -258,7 +258,6 @@ class Payer:
 
 async def payer_for_person(session: AsyncSession, user_id: int) -> Payer:
     """A call a person makes outside any project: their personal team pays."""
-    from app.domain.team.services import team_service
 
     team = await team_service(session).ensure_personal_team(user_id)
     terms = (await terms_of(session, [team.plan_key]))[team.plan_key]
@@ -269,7 +268,6 @@ async def payers_for_projects(
     session: AsyncSession, projects: list
 ) -> dict[uuid.UUID, Payer]:
     """Each project's payer: its team, whoever in the room made the call."""
-    from app.domain.team.services import team_service
 
     teams = await team_service(session).get_teams_by_ids(
         sorted({p.team_id for p in projects})
@@ -288,6 +286,7 @@ async def payers_for_projects(
 
 
 async def payer_for_project(session: AsyncSession, project_id: uuid.UUID) -> Payer:
+    # deferred-import: tests replace this name on app.domain.project.services
     from app.domain.project.services import ProjectService
 
     project = await ProjectService(session).get_or_404(project_id)
@@ -857,6 +856,7 @@ class Ledger:
         credits_total: float,
     ) -> ComputeGrant:
         """A task's credits for one project, spendable only there."""
+        # deferred-import: tests replace this name on app.domain.project.services
         from app.domain.project.services import ProjectService
 
         project = await ProjectService(self._session).get_or_404(project_id)

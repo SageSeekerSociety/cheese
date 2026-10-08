@@ -26,13 +26,16 @@ import uuid
 from datetime import UTC, datetime
 from typing import Protocol
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.sentences import NoticeText, error_frame, say
 from app.domain.agent import attachments, turn_inputs
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
 from app.domain.agent.live_work import HookWorkState, LiveWork
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.nonce import nonce_in
+from app.domain.agent.pending_messages import nudge_messages
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
     TURN_TIMEOUT_MESSAGE,
@@ -76,10 +79,20 @@ from app.domain.agent.service import (
     proves_output,
 )
 from app.domain.agent.step_output import without_output
-from app.domain.agent.turn_inputs import bind, mark_session_for_turn, transition
+from app.domain.agent.turn_inputs import (
+    AgentSeatOwner,
+    bind,
+    mark_session_for_turn,
+    transition,
+)
+from app.domain.agent_session.models import AgentSession
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.room_task.place import PlaceResolver
 from app.domain.run_record import service as run_records
+from app.domain.usage.credits import (
+    CREDITS_EXHAUSTED_META,
+    credits_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -300,10 +313,6 @@ async def _drop_takeover_marks(
     cancelled between commit and cleanup is finished by the next replay,
     because the closed row plus the recorded id is the whole predicate.
     """
-    from sqlalchemy import select
-
-    from app.domain.agent.models import AgentTurn
-    from app.domain.agent.turn_inputs import AgentSeatOwner
 
     async with sessions() as session:
         owner = await session.get(AgentSeatOwner, (topic_id, seat, generation))
@@ -375,9 +384,6 @@ async def _bind_user_entry(
                 # either already moved (we see it and refuse) or waits for us
                 # (FB-56 P2-1 — a read alone, even in this transaction, would
                 # race the next write under READ COMMITTED).
-                from sqlalchemy import select
-
-                from app.domain.agent_session.models import AgentSession
 
                 current = await session.scalar(
                     select(AgentSession.resume_token)
@@ -663,10 +669,6 @@ async def _consume_hook_event(
                 # — "Invalid API key" — is wrong advice for a spent
                 # balance. Repeat the platform's own line, with the reason
                 # the credits give now, rather than Claude Code's text.
-                from app.domain.usage.credits import (
-                    CREDITS_EXHAUSTED_META,
-                    credits_event,
-                )
 
                 policy = await service.work_policy(topic_id)
                 line = credits_event((policy or {}).get("credits_exhausted"))
@@ -840,7 +842,6 @@ async def close_on_stop(service, topic_id: uuid.UUID, turn_id: uuid.UUID) -> Non
     message queued for the same seat. The Stop can land after the turn's
     completion and its idle frame, whose own nudges then found the interval
     still open, so the queue is looked at once more here."""
-    from app.domain.agent.pending_messages import nudge_messages
 
     await service._close_open_turns(topic_id, turn_id)
     nudge_messages(service, topic_id)

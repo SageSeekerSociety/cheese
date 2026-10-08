@@ -17,6 +17,7 @@ from app.domain.project.models import (
     ProjectMember,
     excluded_project_ids,
 )
+from app.domain.task.models import Task
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.user.models import User, UserProfile
 
@@ -315,7 +316,6 @@ class ProjectRepository:
         project names the 赛题 it was created from, so the board is a join and
         not a four-level traversal through a parallel hierarchy (#370).
         """
-        from app.domain.task.models import Task
 
         stmt = (
             select(Project.id)
@@ -335,7 +335,6 @@ class ProjectRepository:
         A course needs the rows themselves — who each one belongs to and which
         team it is — so this is the same join returning the projects.
         """
-        from app.domain.task.models import Task
 
         stmt = (
             select(Project)
@@ -377,6 +376,7 @@ class ProjectRepository:
         it outranks the exclusion, and a roster row is the explicit grant that
         lifts it (``MemberRepository.add``).
         """
+        # deferred-import: TeamUserRelation is bound at the top of this module already
         from app.domain.team.models import TeamUserRelation
 
         claims = []

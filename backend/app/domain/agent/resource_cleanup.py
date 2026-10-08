@@ -4,6 +4,7 @@
 # macOS's own 3.9 among them, which cannot evaluate `dict | None`.
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import runpy
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -129,6 +131,7 @@ def lock(file) -> None:
     """flock(LOCK_EX). This file arrives on stdin and cannot load portable.py
     for the Windows lock, so it carries the same one."""
     if sys.platform == "win32":
+        # deferred-import: Windows-only module; absent on other platforms
         import msvcrt
 
         while True:
@@ -452,8 +455,6 @@ def keep_room_files(home: Path, executor: dict | None, url: str, resource: str):
     `url` (presigned by the platform). Links are stored as links. Returns the
     archive's size and MD5, which the platform holds against what the bucket
     reports, or None when the home has no such files."""
-    import hashlib
-    import urllib.request
 
     room = kept_room_files(home, executor)
     if room is None:

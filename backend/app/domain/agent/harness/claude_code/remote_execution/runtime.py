@@ -12,6 +12,7 @@ the protocol is the same one. What else differs on Windows is in portable.py.
 
 from __future__ import annotations
 
+import argparse
 import base64
 import contextlib
 import functools
@@ -391,6 +392,7 @@ class Executor:
         self.db_lock = threading.Lock()
         self.context_fs_entries = {}
         # Socket clients load this module without opening the service database.
+        # deferred-import: socket clients load this without the service database
         import sqlite3
 
         self.db = sqlite3.connect(
@@ -2028,7 +2030,6 @@ def bridge(state, server, *, call=None):
 
 
 def main():
-    import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["start", "serve", "bridge", "request", "stop"])

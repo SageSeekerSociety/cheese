@@ -31,7 +31,10 @@ from app.domain.topic.models import Topic, TopicStatus
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.project.protection import branch_protection_of
+from app.domain.review import github_pr
 from app.domain.review import services as pkg
+from app.domain.review.github_pr import GitHubPRRateLimited
 from app.domain.review.services._shared import (
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
@@ -85,7 +88,6 @@ async def mark_ready(
     client = await self._app_pr_client(topic)
     if client is None:
         return {"ready": False, "reason": "这个项目没有绑定 GitHub"}
-    from app.domain.review.github_pr import GitHubPRRateLimited
 
     try:
         view = await client.pr_view(task.pr_number)
@@ -210,8 +212,8 @@ async def push_fix(
     )
     cards = [c for c in cards if c.pr_number is not None]
     if drop_dependency:
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
-        from app.domain.review import github_pr
 
         task = await TaskService(self._session).get(place_id)
         if task is None or task.pr_number is None:
@@ -263,8 +265,6 @@ async def push_fix(
     creds, reason = await self._pr_poll_credentials(card, topic)
     if creds is None:
         return {"pushed": False, "reason": f"拿不到可用的 GitHub 凭据：{reason}"}
-
-    from app.domain.review import github_pr
 
     client = await self._status_client(topic.project_id)
     try:
@@ -383,7 +383,6 @@ async def merge_despite_checks(
     已经不在了、或者卡面压根没显示过任何版本的时候，这个签名就落到了别的东西
     上。
     """
-    from app.domain.project.protection import branch_protection_of
 
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending or card.pr_merged_at is not None:
@@ -465,6 +464,7 @@ async def _override_github_checks(
     who = await identity.attribution(
         self._session, topic, card=card, decided_by=decided_by
     )
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
 
     if who.author:

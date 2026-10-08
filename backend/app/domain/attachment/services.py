@@ -1,3 +1,4 @@
+import asyncio
 import mimetypes
 from typing import Any, BinaryIO
 
@@ -64,8 +65,6 @@ class AttachmentService:
             final_type = attachment_type
         else:
             final_type = detect_attachment_type(content_type).value
-
-        import asyncio
 
         # One file's ceiling, judged here and nowhere else: this method is the
         # single door bytes take into the attachment table (the generic

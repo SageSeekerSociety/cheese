@@ -177,6 +177,7 @@ async def record_mentions(
 async def _calls_own(
     session: AsyncSession, instance_id: uuid.UUID, author: str
 ) -> bool:
+    # deferred-import: tests replace this name on app.domain.agent_instance.own
     from app.domain.agent_instance.own import owner_of
 
     owner = await owner_of(session, instance_id)

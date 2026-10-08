@@ -18,6 +18,8 @@ only honest when it would.
 
 from dataclasses import dataclass
 
+from app.core.config import settings as deployment_settings
+from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.device.supply import Visibility, default_visibility
@@ -134,6 +136,7 @@ def compute_listings(
     # presence) — the honest `available` flag. Per-project when the caller knows the
     # context; else the global 'any device online'.
     if device_online is None:
+        # deferred-import: tests replace this name on app.domain.agent.device_hub
         from app.domain.agent.device_hub import device_hub
 
         device_online = bool(device_hub.online_device_ids())
@@ -198,8 +201,6 @@ def compute_default_name(
     question can only ever disagree, so there is one.
     """
     if settings is None:
-        from app.core.config import settings as deployment_settings
-
         settings = deployment_settings
     return COMPUTE_CLOUD if cloud_provisionable(settings) else COMPUTE_DEVICE
 
@@ -357,7 +358,6 @@ def subscription_model_alias(mid: str | None) -> str:
     for m, _l, _d, alias, _dflt, _t in _SUB_MODELS:
         if m == mid:
             return alias
-    from app.core.errors import ValidationError
 
     raise ValidationError(say("marketUnknownSubscriptionModel", model=repr(mid)))
 

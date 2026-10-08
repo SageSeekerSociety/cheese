@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 if sys.platform != "win32":
     import fcntl
@@ -82,6 +83,7 @@ def lock(file):
     """flock(LOCK_EX). This file arrives on stdin before any release is on disk,
     so it cannot load portable.py for the Windows lock; this is the same one."""
     if sys.platform == "win32":
+        # deferred-import: Windows-only module; absent on other platforms
         import msvcrt
 
         while True:
@@ -397,6 +399,7 @@ def executor_state(home, stack, sandboxed):
         # the kernel resolved when it was opened. A room that turns a
         # directory above it into a link afterwards is not stopped here as it
         # is on Linux; on a person's own Mac the other rooms are theirs too.
+        # deferred-import: POSIX-only module; absent on Windows
         import fcntl
 
         named = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
@@ -486,7 +489,10 @@ def binary(owner, api):
                 remember(destination, record)
                 return str(destination)
     # Warm room preparation needs neither download handling nor TLS setup.
+    # deferred-import: warm-room prep needs no download or TLS handling
     import platform
+
+    # deferred-import: warm-room prep needs no download or TLS handling
     from urllib.request import urlopen
 
     architecture = {
@@ -970,7 +976,6 @@ def loopback_ports(env):
     """The machine's loopback ports a sandbox must reach as its own: the
     backend's, where the machine reaches it through a loopback forward
     (`machine_address.device_api_base`), and the preview tunnel's beside it."""
-    from urllib.parse import urlsplit
 
     ports = []
     for name in ("CHEESE_API", "CHEESE_PREVIEW_URL"):

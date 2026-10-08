@@ -29,6 +29,13 @@ from pathlib import Path
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import background
+from app.domain.agent import resource_cleanup
+from app.domain.agent_session.models import AgentSession
+from app.domain.conversation.services import of_room, room_column
+from app.domain.room_task.models import Task, TaskStatus
+from app.domain.topic.models import Topic, TopicStatus
+
 logger = logging.getLogger("cheesex.room_task.checkouts")
 
 # Removing checkouts of a few GB each, after one `lsof` over all of them.
@@ -59,12 +66,8 @@ async def remove_closed_checkouts(
     """Ask each machine holding a lease of ``room_id`` (or every lease on
     ``device_id``) to remove its closed tasks' checkouts; answer how many
     went and how many were kept."""
-    from app.domain.agent import resource_cleanup
+    # deferred-import: tests replace this name on app.domain.agent.device_hub
     from app.domain.agent.device_hub import device_hub
-    from app.domain.agent_session.models import AgentSession
-    from app.domain.conversation.services import of_room, room_column
-    from app.domain.room_task.models import Task, TaskStatus
-    from app.domain.topic.models import Topic, TopicStatus
 
     # (device, work resource) -> (project, room). An archived room's own
     # cleanup removes its whole home; this leaves it to that.
@@ -148,8 +151,6 @@ def after_close(db: AsyncSession, room_id: uuid.UUID) -> None:
     room's closed checkouts. Every place that closes a task calls this; a
     close that is rolled back runs it at the next commit instead, which
     removes nothing that is not closed."""
-    from app.core.background import spawn
-
     pending = db.info.setdefault("closed_task_rooms", set())
     if room_id in pending:
         return
@@ -159,7 +160,7 @@ def after_close(db: AsyncSession, room_id: uuid.UUID) -> None:
 
     def committed(_session) -> None:
         pending.discard(room_id)
-        spawn(
+        background.spawn(
             remove_closed_checkouts(factory, room_id=room_id),
             name="closed task checkouts",
         )

@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.delivery.addressing import Addressed, Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.discussion.models import DiscussableModelType
@@ -161,7 +161,6 @@ class DiscussionService:
                 "Resource discussion not found",
                 data={"type": "discussion", "id": discussion_id},
             )
-        from app.core.errors import ForbiddenError
 
         if entity.sender_id != user_id:
             raise ForbiddenError("Only the author can update this discussion")

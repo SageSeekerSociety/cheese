@@ -17,10 +17,12 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.project.models import Project
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -64,6 +66,7 @@ def work_interval_is_over():
     the turn models on the delivery side would close a domain cycle (C3 in
     backend/.importlinter).
     """
+    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
     from app.domain.agent.runtime import AgentTurnRepository
 
     return AgentTurnRepository.interval_is_over(
@@ -115,8 +118,7 @@ async def record_task_instruction(
     id, which is what the runner runs a turn in, and the agent is the one working
     the task (its own pick, else its room's) — the one that answers there.
     """
-    from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.project.models import Project
+    # deferred-import: Topic is bound at the top of this module already
     from app.domain.topic.models import Topic
 
     project = await session.get(Project, task.project_id)
@@ -231,6 +233,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 )
             )
         await session.commit()
+    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
     from app.domain.agent.runtime import addressed_to_agent
 
     for delivery_id, attempt, topic_id, instance_id, seat, content in claimed:

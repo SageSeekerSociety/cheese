@@ -34,6 +34,9 @@ from app.domain.block.models import (
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import is_task
+from app.domain.delivery.agent import dispatch_pending, record_task_instruction
+from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.notification.models import NotificationType
 from app.domain.room_task.services import TaskService
 
 if TYPE_CHECKING:
@@ -104,8 +107,6 @@ async def edit_message(
             block.conversation_id, _said(notice), blocks=[notice.id]
         )
     if relayed:
-        from app.domain.delivery.agent import dispatch_pending
-
         await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return payload
 
@@ -155,9 +156,6 @@ async def _tell_the_card(
 ) -> None:
     """What the owner says in a task reaches the task's own session; an edit
     goes the same way, saying it is one."""
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
-    from app.domain.notification.models import NotificationType
 
     task = await TaskService(session).get(task_id)
     if task is None:

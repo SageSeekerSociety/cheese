@@ -17,6 +17,20 @@ from sqlalchemy import or_, select
 
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
+from app.domain.agent.platform_notices import (
+    EVENT_ACCEPT_DONE,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    notice,
+)
+from app.domain.delivery.agent import dispatch_pending
+from app.domain.project.models import ProjectForge
+from app.domain.review import pr_publish
+from app.domain.review.models import AcceptCard
+from app.domain.review.pr_publish import sweep_draft_prs
+from app.domain.review.task_landing import delivery_landed
+from app.domain.room_task.models import Task, TaskStatus
+from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger("cheesex.review.pr_poll")
 
@@ -46,7 +60,10 @@ async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) 
     an armed auto-merge card whose rules are satisfied
     (`AcceptService.advance_pr_card`). One DB transaction per card so one card's
     failure can't roll back another's progress."""
+    # deferred-import: tests replace this name on app.api.deps
     from app.api.deps import get_work_runner
+
+    # deferred-import: tests replace this name on app.domain.review.services
     from app.domain.review.services import AcceptService
 
     sessions = chat.session_factory
@@ -80,22 +97,15 @@ async def poll_uncarded_task_prs(
     chat: ChatService, project_id: uuid.UUID | None = None
 ) -> dict:
     """Record task PRs merged on the forge without an accept card."""
+    # deferred-import: tests replace this name on app.domain.agent.announce
     from app.domain.agent.announce import announce
-    from app.domain.agent.platform_notices import (
-        EVENT_ACCEPT_DONE,
-        SEVERITY_INFO,
-        WHO_PLATFORM,
-        notice,
-    )
+
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import (
         background_quota,
         proposal_client,
         quota_serves_background,
     )
-    from app.domain.review.models import AcceptCard
-    from app.domain.review.task_landing import delivery_landed
-    from app.domain.room_task.models import Task, TaskStatus
-    from app.domain.topic.models import Topic, TopicStatus
 
     global _uncarded_task_cursor
     sessions = chat.session_factory
@@ -250,6 +260,7 @@ async def _note_card_poll_crashed(
     Best-effort by construction: if even this write fails, the log line above is
     still there and the poll loop keeps going.
     """
+    # deferred-import: tests replace this name on app.domain.review.services
     from app.domain.review.services import AcceptService
 
     try:
@@ -267,7 +278,6 @@ async def open_draft_prs(chat: ChatService) -> dict:
     The observation and every reason it is an observation rather than a hook
     live in `pr_publish.sweep_draft_prs`; this is only the clock.
     """
-    from app.domain.review import pr_publish
 
     result = dict(await pr_publish.sweep_draft_prs(chat.session_factory))
     await deliver_dependency_notices(chat)
@@ -276,8 +286,8 @@ async def open_draft_prs(chat: ChatService) -> dict:
 
 async def deliver_dependency_notices(chat: ChatService) -> None:
     """Dispatch committed task-parent intent through the delivery ledger."""
+    # deferred-import: tests replace this name on app.api.deps
     from app.api.deps import get_work_runner
-    from app.domain.delivery.agent import dispatch_pending
 
     await dispatch_pending(chat.session_factory, chat=chat, runner=get_work_runner())
 
@@ -286,8 +296,6 @@ async def forge_repository_changed(
     chat: ChatService, kind: str, repo: str, project_id: str | None = None
 ) -> None:
     """One repository moved — from a relayed forge event, or from a reconnect."""
-    from app.domain.project.models import ProjectForge
-    from app.domain.review.pr_publish import sweep_draft_prs
 
     sessions = chat.session_factory
     query = select(ProjectForge.project_id).where(

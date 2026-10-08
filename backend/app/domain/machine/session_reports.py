@@ -7,12 +7,15 @@ Read-only. What changes a session's machine is ``session_work``.
 
 from sqlalchemy import select
 
+from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.services import of_rooms, room_column
 from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.session_work import _agent_name, _visibility_of, presentation
 from app.domain.project.services import ProjectService
+from app.domain.room_task.models import Task
+from app.domain.topic.models import Topic, TopicStatus
 
 
 async def session_machines(db, topic, task_id=None) -> list[dict]:
@@ -61,7 +64,6 @@ async def _placed_sessions(db, project_id):
     A session that has not started working has no machine and is left out:
     the project default decides where it goes.
     """
-    from app.domain.topic.models import Topic, TopicStatus
 
     rows = await db.execute(
         select(AgentSession, Topic)
@@ -136,7 +138,6 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
     room, not per session, so a session whose room is mid-turn counts as
     working: a bulk switch skips it rather than take its machine away mid-turn.
     """
-    from app.domain.agent.models import AgentTurn
 
     placed = [
         (row, topic)
@@ -156,7 +157,6 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
             )
         )
     )
-    from app.domain.room_task.models import Task
 
     out = []
     for row, topic in sorted(placed, key=lambda pair: pair[0].updated_at, reverse=True):

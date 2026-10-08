@@ -21,10 +21,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import select as _select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, own_calls, own_limit
 from app.domain.agent.announce import answer_questions
@@ -89,6 +90,7 @@ from app.domain.agent.hook_stream import (
     _turn_failure_notice,  # noqa: F401
     _with_log,  # noqa: F401
 )
+from app.domain.agent.input_registration import confirm_receipt, input_registrar
 
 # 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
 # 几张 note 表……）收在 `live_work.py` 那片叶子里，`ChatService.live` 是它唯一
@@ -120,6 +122,11 @@ from app.domain.agent.mentions import (
     announce_mentions,
     person_mentions,
     project_refs_text,
+)
+from app.domain.agent.pending_messages import (
+    finish_work,
+    finish_work_termination,
+    nudge_messages,
 )
 from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
@@ -166,6 +173,7 @@ from app.domain.agent.queries import (
 )
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.recovery import SessionRecovery
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.room.turn import RoomTurns, _is_dm, room_roster
@@ -186,6 +194,7 @@ from app.domain.agent.room_events import (
     _turn_changeset,
     post_system_event,
 )
+from app.domain.agent.seat_admission import seat_admission
 from app.domain.agent.service import (
     AgentCompacting,
     AgentEvent,
@@ -197,11 +206,13 @@ from app.domain.agent.service import (
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
 from app.domain.agent.turn_usage import record_turn_usage, reported_usage
 from app.domain.agent.work_policy import work_policy
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
     memory_pool,
 )
+from app.domain.agent_session.models import AgentSession as _AS
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import (
@@ -221,6 +232,7 @@ from app.domain.delivery.input_identity import (
     WorkCompletion,
     WorkTermination,
 )
+from app.domain.delivery.mention import record_mentions
 from app.domain.delivery.receipts import (
     complete_work_inputs,
     terminate_work_inputs,
@@ -239,7 +251,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.thread.services import conversation_inputs
+from app.domain.thread.services import answered_in, conversation_inputs
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -377,7 +389,6 @@ class ChatService(SessionRecovery, RoomTurns):
         """
         if recipient_handle is not None:
             return recipient_handle
-        from app.domain.agent_instance.models import AgentInstance
 
         async with self._sessions() as session:
             instance_id = recipient_instance_id
@@ -417,7 +428,6 @@ class ChatService(SessionRecovery, RoomTurns):
         work_id: uuid.UUID,
         seat_handle: str,
     ) -> AsyncIterator[None]:
-        from app.domain.agent.seat_admission import seat_admission
 
         async with seat_admission(self.live.seat_lock_for(topic_id, seat_handle)):
             self.live.mark_turn_active(topic_id, work_id)
@@ -585,8 +595,6 @@ class ChatService(SessionRecovery, RoomTurns):
 
         recipient_handle = None
         if recipient_instance_id is not None:
-            from app.domain.agent_instance.models import AgentInstance
-
             async with self._sessions() as session:
                 instance = await session.get(AgentInstance, recipient_instance_id)
                 if instance is None or not instance.is_active:
@@ -925,7 +933,6 @@ class ChatService(SessionRecovery, RoomTurns):
         probe_unread: bool = False,
         fence_delivery: bool = False,
     ) -> InputRegistrar:
-        from app.domain.agent.input_registration import input_registrar
 
         return input_registrar(
             self._sessions,
@@ -941,13 +948,11 @@ class ChatService(SessionRecovery, RoomTurns):
         No in-memory candidate is needed. Commit failure propagates so the same
         journal input is retried, even by a newly reconstructed ChatService.
         """
-        from app.domain.agent.input_registration import confirm_receipt
 
         await confirm_receipt(self._sessions, self.live, receipt)
 
     async def confirm_work_completion(self, completion: WorkCompletion) -> None:
         """Settle a journaled completion without process-local work context."""
-        from app.domain.agent.pending_messages import finish_work
 
         await finish_work(self, completion, complete_work_inputs)
 
@@ -959,7 +964,6 @@ class ChatService(SessionRecovery, RoomTurns):
         ``completed_at`` and consumes blocks. This one only frees the seat so a
         new input can be taken.
         """
-        from app.domain.agent.pending_messages import finish_work_termination
 
         await finish_work_termination(self, termination, terminate_work_inputs)
 
@@ -1088,9 +1092,8 @@ class ChatService(SessionRecovery, RoomTurns):
         """End the one open interval the Stop names (FB-56). Never raises — a
         Stop that cannot update the bookkeeping must still land the message it
         carries. An id that names no live row closes nothing."""
+        # deferred-import: UTC is bound at the top of this module already
         from datetime import UTC, datetime
-
-        from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
@@ -1106,7 +1109,6 @@ class ChatService(SessionRecovery, RoomTurns):
         """Was `turn_id` ever stamped refused-for-credits by admission? What
         the turn's own end (`StopFailure`) reads to decide whose wording —
         the platform's or Claude Code's — the room gets."""
-        from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
@@ -1221,9 +1223,6 @@ class ChatService(SessionRecovery, RoomTurns):
                     # guard in `hook_stream._bind_user_entry` holds the same
                     # lock while it validates and mutates, so the two sides of
                     # a session change serialize on the row itself (FB-56 P2-1).
-                    from sqlalchemy import select as _select
-
-                    from app.domain.agent_session.models import AgentSession as _AS
 
                     await session.execute(
                         _select(_AS.id)
@@ -1275,7 +1274,6 @@ class ChatService(SessionRecovery, RoomTurns):
             # The agent has said what it understood: the moment to check the
             # name a task got from its opening line (room_task/naming.py).
             naming.nudge(topic_id, "turn")
-            from app.domain.agent.pending_messages import nudge_messages
 
             nudge_messages(self, topic_id)
 
@@ -1315,6 +1313,7 @@ class ChatService(SessionRecovery, RoomTurns):
     async def thread_replied(self, conversation_id: uuid.UUID) -> None:
         """A message landed in ``conversation_id``: when that is a 支线, its
         channel's main line shows the 支线 grown."""
+        # deferred-import: tests replace this name on app.domain.agent.staleness
         from app.domain.agent.staleness import announce_stale
 
         room, _inner, thread = await self._conversation_place(conversation_id)
@@ -1370,8 +1369,8 @@ class ChatService(SessionRecovery, RoomTurns):
         Returns None if the place is gone or the bookkeeping write fails; the
         event that triggered this still lands, exactly as it did before.
         """
+        # deferred-import: tests replace this name on app.api.deps
         from app.api.deps import get_work_runner
-        from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
@@ -1501,7 +1500,6 @@ class ChatService(SessionRecovery, RoomTurns):
         label. It lands after the interval exists, so the row carries this
         turn's exact seat and route — what death evidence is matched against,
         never a room-level guess."""
-        from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
@@ -1536,6 +1534,7 @@ class ChatService(SessionRecovery, RoomTurns):
         platform_unsolicited: bool,
     ) -> None:
         """Persist and broadcast one event (hook_stream.py)."""
+        # deferred-import: tests replace this name on app.api.deps
         from app.api.deps import get_work_runner
 
         return await _consume_hook_event(
@@ -1565,7 +1564,6 @@ class ChatService(SessionRecovery, RoomTurns):
         prompt, so the batch went unstamped and every later turn re-sent it.
         Undelivered prompts stay out: the session never heard them.
         """
-        from app.domain.agent.repositories import AgentTurnRepository
 
         handle = state.agent_instance_handle
         if handle is None:
@@ -1884,8 +1882,6 @@ class ChatService(SessionRecovery, RoomTurns):
                 if len(agent_handles) > 1:
                     # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
                     # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
-                    from app.domain.delivery.mention import record_mentions
-                    from app.domain.thread.services import answered_in
 
                     await record_mentions(
                         session,
@@ -2114,8 +2110,6 @@ class ChatService(SessionRecovery, RoomTurns):
                 ):
                     previous = await idem.stored_result(session, publication_key)
                     if previous is None or previous["input"] != publication_input:
-                        from app.core.errors import ConflictError
-
                         raise ConflictError("request_id was used for another message")
                     return previous["block"]
             if known_ids and await blocks.has_any_eid(topic_id, known_ids):

@@ -14,8 +14,11 @@ from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.models import AgentInstance, NameSource, OwnAgent
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.user.models import User
+from app.domain.user.services import faces_by_handle, user_by_handle
 
 #: The project setting that lets members bring their own agent in. On unless a
 #: manager turns it off: a project whose content must not leave through a
@@ -138,7 +141,6 @@ async def ensure_own_agent(
     the project lets members bring their own and the owner has logged it in on
     a machine. None when either is not so. ``harness`` is the registry's name
     for Claude Code, passed in because this package sits below the registry."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     existing = await db.scalar(
         select(AgentInstance)
@@ -184,7 +186,6 @@ async def ensure_for_member(
     """Bring a member's own Claude Code into the project they are looking at,
     made on read like an agent's identity (`ensure_identity`): it follows its
     owner, so a project they join has it the next time they look."""
-    from app.domain.user.services import user_by_handle
 
     user = await user_by_handle(db, handle)
     if user is None:
@@ -196,7 +197,6 @@ async def ensure_for_member(
 async def owner_of(db: AsyncSession, instance_id: uuid.UUID) -> tuple[str, str] | None:
     """The handle and nickname of whoever this agent belongs to, or None when
     it is the project's own."""
-    from app.domain.user.models import User
 
     owned = await owned_instance(db, instance_id)
     if owned is None:
@@ -270,7 +270,6 @@ async def may_chat_with(
 async def listing(db: AsyncSession, project_id: uuid.UUID, is_online) -> list[dict]:
     """The members' own agents a project has, for the people who manage it:
     whose each one is, and on which of its owner's machines it can run."""
-    from app.domain.user.models import User
 
     rows = []
     for instance, owner_user_id in await owned_in_project(db, project_id):
@@ -306,7 +305,6 @@ async def listing(db: AsyncSession, project_id: uuid.UUID, is_online) -> list[di
 
 async def _nickname(db: AsyncSession, handle: str) -> str:
     """What a person is called: their nickname, else their handle."""
-    from app.domain.user.services import faces_by_handle
 
     name, _avatar = (await faces_by_handle(db, [handle])).get(handle, (None, None))
     return name or handle
