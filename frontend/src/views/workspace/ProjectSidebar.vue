@@ -146,6 +146,22 @@ function onPressTopic(topicId: string) {
   })
 }
 
+// 总览/资料库那一行（`TopicRailPinnedRows`）：按下去就下这一页的代码。传过来的是
+// 路由名（`PROJECT_PAGES` 的 key），落点和选中态读的是同一个名字。
+function onPressPage(name: string) {
+  prefetchNow({ router, to: { name, params: { projectId: props.projectId } } })
+}
+
+// 任务行（侧栏那两个 `TopicRailTaskRow` 的位置）：和话题行一样两段都要——任务页的
+// 代码，和它所在那个房间最新一页消息。
+function onPressTask(task: { roomId: string; taskId: string }) {
+  prefetchNow({
+    router,
+    to: { name: 'workspace-task', params: { projectId: props.projectId, topicId: task.roomId, taskId: task.taskId } },
+    topicId: task.roomId,
+  })
+}
+
 // 新建频道在「浏览频道」那一页（先起名再建），命令面板里这一条去那里。
 useCommands(() => [
   {
@@ -203,6 +219,8 @@ useCommands(() => [
       @browse-channels="browseChannels"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
+      @press-page="onPressPage"
+      @press-task="onPressTask"
       @leave-topic="cancelPrefetch"
       @select-docs="openDocs"
       @retry="store.reloadTopics()"
