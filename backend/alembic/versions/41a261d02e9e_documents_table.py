@@ -40,6 +40,7 @@ Create Date: 2026-10-04
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -143,42 +144,14 @@ def _create_journal_triggers() -> None:
     """)
 
 
-def _lock_all(tables: str) -> None:
-    """Hold every table this migration touches before it writes anything, or
-    none of them: each attempt takes them all at once without waiting
-    (`NOWAIT`), and one that cannot is undone whole and tried again shortly.
-    Waiting with some held, the migration could hold what a live request needs
-    while it waits on that request: a deadlock, which Postgres settles by
-    killing one of them. Holding nothing while it waits, it never blocks
-    anyone until it has everything."""
-    op.execute(f"""
-        DO $$
-        DECLARE attempts integer := 0;
-        BEGIN
-            LOOP
-                BEGIN
-                    LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE NOWAIT;
-                    EXIT;
-                EXCEPTION WHEN lock_not_available THEN
-                    attempts := attempts + 1;
-                    IF attempts >= 1200 THEN
-                        RAISE;
-                    END IF;
-                    PERFORM pg_sleep(0.05);
-                END;
-            END LOOP;
-        END
-        $$
-    """)
-
-
 def upgrade() -> None:
     # The backend this deploy replaces is still serving while this runs. That
     # includes the tables the foreign keys below point at, since adding or
     # dropping one locks its target too.
-    _lock_all(
+    with_lock_retries(
         "topics, projects, living_doc_locks, blocks, living_doc_versions,"
-        " living_doc_operations, living_doc_states, tasks"
+        " living_doc_operations, living_doc_states, tasks",
+        nowait=True,
     )
     # The triggers would refuse the backfills below; they come back at the end,
     # on the new tables.

@@ -500,6 +500,10 @@ fi
 # POSIX-only from here: the connector's tmux joins argv with spaces and
 # re-parses through /bin/sh (dash on Debian/Ubuntu) — bashisms die silently.
 REAL_HOME="$HOME"
+# The connector's own programs first, as on its own PATH (the Python it placed,
+# the tmux it found): this script runs in a login shell, and macOS's login
+# profile (path_helper) puts /usr/bin back in front, where python3 is 3.9.
+[ -z "${{CHEESE_RUNTIME_PATH:-}}" ] || export PATH="$CHEESE_RUNTIME_PATH:$PATH"
 # Bash exposes this clock without spawning date. Other shells skip diagnostics.
 # Append across relaunches; only phase names and timestamps enter this file.
 cheese_launch_phase() {{

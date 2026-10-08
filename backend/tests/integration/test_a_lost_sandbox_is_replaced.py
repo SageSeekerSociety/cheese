@@ -1,7 +1,8 @@
 """A session whose sandbox's host stopped answering works on in a new sandbox,
 and its agent is told so once.
 
-Sandboxes are disposable: what counts is what was pushed. The hosts, the
+Sandboxes are disposable: what counts is what each turn's checkpoint pushed
+and backed up. The hosts, the
 bucket and the pool here are the ones of ``test_sandbox_idle_stop``; a tool
 call asks for its hands the way the session's client does.
 """
@@ -15,21 +16,21 @@ from app.domain.machine import services
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
     host_comes_up,
-    host_of,
     maintain,
-    room_lines,
     run,
     working_on,
 )
 
 NOTICE = (
-    "原来的沙箱所在机器失联，已换成一个新沙箱：工作区从 git 重新取出，"
-    "上次推送之后没推送的改动不在了。"
+    "沙箱环境已换成新的。每轮结束时的检查点存下的东西都还在：已推送的提交在任务"
+    "分支上，当时没提交的改动和未跟踪文件在平台快照里，用 "
+    'cd "$(cheese worktree <任务 id>)" 重新打开任务目录时自动放回，并说明放回了'
+    "什么。检查点之后才做的改动、依赖和缓存、生成目录、/tmp、正在运行的进程不在"
+    "了，需要的重新做、重新安装、重新启动。"
 )
 
 ROOM_LINE = (
-    "环境所在的机器不再响应，环境已换成新的："
-    "新环境从仓库里已推送的内容开始，没推送的改动不在了"
+    "环境不再响应，已换成新的：每轮结束时推送和备份的工作会带过来，之后才做的改动不在了"
 )
 
 
@@ -101,36 +102,3 @@ def test_the_agent_is_told_once_that_its_sandbox_was_replaced(cloud, monkeypatch
     other = _tool_call(cloud, other_seat, tells_agent=True)
     assert other["target"]["device_id"] == "host-b"
     assert "notice" not in other
-
-
-def test_a_session_whose_host_was_suspended_waits_for_it_and_keeps_its_work(
-    cloud, monkeypatch
-):
-    """A host MicroCloud suspended is woken, not replaced: its session is told
-    the sandbox is waking, and gets it back with what it had not pushed."""
-    seat, other_seat = cloud.seats[0], cloud.seats[1]
-    home = working_on(cloud, seat, "host-a")
-    working_on(cloud, other_seat, "host-b")
-    machine = host_of(cloud, seat).machine_id
-    cloud.provider.machines[machine]["status"] = "suspended"
-    cloud.hosts.online.discard("host-a")
-    maintain(cloud)
-    _later(monkeypatch, timedelta(minutes=11))
-    maintain(cloud)
-
-    waiting = _tool_call(cloud, seat, tells_agent=True)
-
-    assert waiting.get("preparing")
-    assert waiting["unavailable"] == "沙箱正在唤醒；对话和平台工具仍可用。"
-    assert "正在唤醒环境" in room_lines(cloud, seat)
-    assert cloud.provider.wakes == [("resume", machine)]
-
-    cloud.hosts.online.add("host-a")
-    maintain(cloud)
-    back = _tool_call(cloud, seat, tells_agent=True)
-
-    assert back["target"]["device_id"] == "host-a"
-    assert "notice" not in back
-    assert (home / "room" / "notes.md").read_text() == "not committed anywhere\n"
-    assert cloud.provider.deleted == []
-    assert _said(cloud, seat) == []

@@ -261,6 +261,8 @@ def test_installing_a_release_over_a_silent_executor_is_refused(tmp_path, monkey
     env = {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"}
     payload = payload_for(project, resource, env, sandbox=False, platform_machine=False)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    # This test holds the lock for good, so the stop would wait all of its time.
+    monkeypatch.setenv("CHEESE_EXECUTOR_STOP_TRIES", "5")
     state = (
         tmp_path / ".cheese/home" / str(project) / str(resource) / ".cheese/executor"
     )

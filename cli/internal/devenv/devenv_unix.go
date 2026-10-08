@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
+	"github.com/SageSeekerSociety/cheese/cli/internal/runtimepath"
 )
 
 // minimum is the oldest Python the session's runner runs on (it uses StrEnum).
@@ -52,10 +53,7 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	if err := ensureTool(ctx, strings.TrimRight(base, "/"), root, platform, python, log); err != nil {
 		return fmt.Errorf("python: %w", err)
 	}
-	current := os.Getenv("PATH")
-	if !strings.HasPrefix(current, bin+":") {
-		os.Setenv("PATH", bin+":"+current)
-	}
+	runtimepath.Put(bin)
 	return nil
 }
 

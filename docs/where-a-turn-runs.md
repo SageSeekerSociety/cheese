@@ -34,7 +34,7 @@ The remaining sections describe ordinary work topics and their selected compute 
 
 设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装；整台云虚拟机还要运维配了虚拟机的规格（`MICROCLOUD_VM_OFFERING_ID`），没配时选不到。
 
-整台云虚拟机走的还是 Cloud 那条执行路（`cloud_provider.py`），区别在落点：`HostPool.place` 不往宿主机上放沙箱，而是为这条会话开一台虚拟机（`CloudHost.whole_machine`），不从预热池领，不放别的会话。它和宿主机一起算进平台的容量上限（`CLOUD_POOL_MAX_HOSTS`）。规格只有一种（`CLOUD_VM_CORES` / `CLOUD_VM_MEMORY_MB` / `CLOUD_VM_DISK_GB`，默认 4 核、8 GB、40 GB），记在虚拟机那一行上，连同为哪个项目开的；按「规格 × 时长」收费时从释放那一处（`services._vm_released`）读。虚拟机在三种时候删：房间换走并且推送成功、房间清理删掉了会话目录、会话闲置 `CLOUD_VM_IDLE_RELEASE_S`（默认 30 分钟，闲置的定义和沙箱相同：房间没在跑任务，会话最后一次工具调用和房间最后一轮结束都在这之前）。闲置释放前先像换机器一样推送（`machine/cloud_vm.py`），推不上去就留着，十分钟后再试；会话下一次要用时再开一台新的，要等几分钟。
+整台云虚拟机走的还是 Cloud 那条执行路（`cloud_provider.py`），区别在落点：`HostPool.place` 不往宿主机上放沙箱，而是为这条会话开一台虚拟机（`CloudHost.whole_machine`），不从预热池领，不放别的会话。它和宿主机一起算进平台的容量上限（`CLOUD_POOL_MAX_HOSTS`）。规格只有一种（`CLOUD_VM_CORES` / `CLOUD_VM_MEMORY_MB` / `CLOUD_VM_DISK_GB`，默认 4 核、8 GB、40 GB），记在虚拟机那一行上，连同为哪个项目开的；按「规格 × 时长」收费时从释放那一处（`services._vm_released`）读。虚拟机在三种时候删：房间换走、房间清理删掉了会话目录、会话闲置 `CLOUD_VM_IDLE_RELEASE_S`（默认 30 分钟，闲置的定义和沙箱相同：房间没在跑任务，会话最后一次工具调用和房间最后一轮结束都在这之前）。闲置释放前先像换机器一样做一次尽力而为的 checkpoint（`machine/cloud_vm.py`），推没推上去都释放；会话下一次要用时再开一台新的，要等几分钟。
 
 These choices select the ordinary room's execution machine. Claude Code runs on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
 
@@ -233,12 +233,8 @@ that it must finish confirmation first. Once deletion is claimed, reopening allo
 a new resource UUID and drops only obsolete session-resume pointers. Published Git
 branches, platform memory, room messages and task records remain. Old cleanup commands
 keep their original UUID and parked backend worktree path; they cannot target the
-replacement. On a cloud host, cleanup removes the room's directories; a session
-home archived to the bucket is deleted from there once the host that wrote
-the archive found everything in it pushed. An archive holding unpushed work
-keeps cleanup pending before the claim, and unarchiving restores the home
-from it. The host itself is the pool's,
-and the pool releases it once it runs no sandbox and no home is left on it.
+replacement. On a cloud host, cleanup removes the room's directories. The host
+itself is the pool's, and the pool releases it once no sandbox is left on it.
 A session's whole cloud VM is released by the next pool sweep once cleanup has removed
 its directory.
 Reopening restores no transcripts: the new generation starts new sessions, and a

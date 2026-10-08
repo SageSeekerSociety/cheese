@@ -40,6 +40,7 @@ from app.api.deps import (
 from app.api.routes import assistant as route
 from app.api.routes import llm_proxy
 from app.core.config import settings
+from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant.models import AssistantMessage
 from app.domain.feature_stats import pricing
@@ -262,7 +263,11 @@ class Gateway:
 
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
-        threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+        # A short poll so closing the server at teardown does not wait out the
+        # default half second.
+        threading.Thread(
+            target=self._httpd.serve_forever, args=(0.01,), daemon=True
+        ).start()
 
     def close(self) -> None:
         self.release.set()
@@ -302,7 +307,11 @@ class Relay:
 
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
-        threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
+        # A short poll so closing the server at teardown does not wait out the
+        # default half second.
+        threading.Thread(
+            target=self._httpd.serve_forever, args=(0.01,), daemon=True
+        ).start()
 
     def close(self) -> None:
         self._httpd.shutdown()
@@ -314,6 +323,9 @@ def gateway(client, monkeypatch: pytest.MonkeyPatch, tmp_path):
     monkeypatch.setattr(settings, "llm_gateway_admin_base", gw.url)
     monkeypatch.setattr(settings, "llm_gateway_admin_key", "sk-master")
     monkeypatch.setattr(settings, "anthropic_base_url", gw.url)
+    # A start waiting for a full host looks again, and checks whether it was
+    # stopped, at this interval; a second per look is what a person waits.
+    monkeypatch.setattr(host_module, "GIVE_UP_CHECK_S", 0.05)
     pricing.forget()
     # Answers settle on sessions of their own, after the response.
     for module in (route, llm_proxy):
@@ -675,9 +687,15 @@ def test_a_refused_question_leaves_nothing_in_the_list(client, gateway):
     assert listed.json()["data"]["conversations"] == []
 
 
-def test_an_answer_that_fails_says_so_with_its_sentence_key(client, gateway):
+def test_an_answer_that_fails_says_so_with_its_sentence_key(
+    client, gateway, monkeypatch
+):
     """The panel says the failure in its reader's language, from the key the
     stream's ``error`` event carries beside the Chinese sentence."""
+    from app.domain.agent.personal import session as personal
+
+    # pi still retries the failing gateway three times, without the pauses.
+    monkeypatch.setattr(personal, "RETRY_BASE_DELAY_MS", 0)
     me = _auth(client, "asker")
     conversation = _start(client, _task(client), me)
     gateway.failing = True
@@ -758,7 +776,7 @@ def test_a_question_waits_for_a_full_host_and_is_then_answered(client, gateway):
 def test_a_host_full_for_too_long_says_so(client, gateway, monkeypatch):
     from app.domain.agent.personal import session as personal
 
-    monkeypatch.setattr(personal, "HOST_WAIT_S", 1.5)
+    monkeypatch.setattr(personal, "HOST_WAIT_S", 0.3)
     me = _auth(client, "asker")
     conversation = _start(client, _task(client), me)
     _people(gateway, FullHost(float("inf")))

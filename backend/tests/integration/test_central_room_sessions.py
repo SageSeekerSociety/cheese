@@ -164,7 +164,11 @@ def channel(client, monkeypatch):
             }
         ),
     )
-    executor = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
+    # No test here reconnects a host it took offline, so the grace a real start
+    # gives a reloading connector would only be waited out.
+    executor = DeviceChannel(
+        hub=hub, session_factory=client.test_request_factory, reconnect_grace_s=0.1
+    )
     executor.precheck = AsyncMock(
         return_value=Placement("executor", 1, "agent", rented=True)
     )
@@ -1013,7 +1017,11 @@ def center_room(client, monkeypatch):
     starts the room's next turn there, offering its conversation to resume."""
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub = CenterHub()
-    executor = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
+    # No test here reconnects a host it took offline, so the grace a real start
+    # gives a reloading connector would only be waited out.
+    executor = DeviceChannel(
+        hub=hub, session_factory=client.test_request_factory, reconnect_grace_s=0.1
+    )
     central: Any = CentralChannel(executor)
     central._device_api_base = AsyncMock(return_value="http://central-api")
 
