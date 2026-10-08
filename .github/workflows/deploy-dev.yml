@@ -2,7 +2,7 @@ name: Deploy (dev/test box)
 # The commit a run releases. For a build-completed event the run's own head SHA
 # is main's tip when the event fired, which can be a later commit than the one
 # whose images it deploys; .claude/scripts/pr-watch.sh reads this name instead.
-run-name: Deploy ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+run-name: Deploy ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
 
 # Continuous deployment to the cheese dev/test box (cheese-dev-env1-app,
 # 192.168.16.5). The box is on ghg's private network with no public inbound, so
@@ -45,6 +45,18 @@ on:
         description: Release this commit, whose images were just rebuilt, like an automatic deploy (check images, Required CI and the running version)
         type: string
         default: ""
+      ref:
+        # The rollback entry: dispatch the workflow on main and name the commit
+        # to release here. A bare commit SHA is not a legal `--ref` for
+        # `gh workflow run` (No ref found), so naming the commit in the ref
+        # input is the only way to release one without first creating a ref for
+        # it. Like any other manual dispatch it is an explicit release or
+        # rollback: it takes the skip=false path below, so the
+        # "keep automatic deployments from going backwards" guard does not
+        # block it. Leave empty for the dispatch ref's own HEAD.
+        description: "Release the commit this names (tag, branch or SHA) instead of the dispatch ref; a manual release or rollback"
+        type: string
+        default: ""
   workflow_run:
     workflows: ["Build and Push Docker Image"]
     types: [completed]
@@ -73,7 +85,7 @@ jobs:
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           REBUILT: ${{ inputs.rebuilt }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ -z "${REBUILT:-}" ]; then
@@ -86,7 +98,7 @@ jobs:
       - name: Fail when this commit will not be deployed
         if: steps.check.outputs.ready != 'true'
         env:
-          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
         run: |
           live="$(curl -fsS --max-time 10 https://okcheese.com/api/version | jq -r '.data.sha // empty')" || true
           reason="its image build or Required CI has no successful latest attempt"
@@ -100,7 +112,7 @@ jobs:
       - name: Say which newer commit releases this one
         if: steps.check.outputs.superseded != ''
         env:
-          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           NEWER: ${{ steps.check.outputs.superseded }}
         run: |
           echo "Not deployed \`$CANDIDATE_SHA\` on its own: \`$NEWER\`, newer on main, is ready and its deploy run releases both." >> "$GITHUB_STEP_SUMMARY"
@@ -160,7 +172,7 @@ jobs:
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           REBUILT: ${{ inputs.rebuilt }}
         run: |
           # A manual dispatch is an explicit release or rollback, including a
@@ -187,7 +199,7 @@ jobs:
         with:
           # workflow_run checks out the DEFAULT branch unless told otherwise, so
           # pin the exact commit whose images were just built.
-          ref: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
 
       # A docs commit can include queued code changes relative to the running
@@ -439,7 +451,7 @@ jobs:
       - name: Say which commit dev runs
         if: always()
         env:
-          CANDIDATE_SHA: ${{ inputs.rebuilt || github.event.workflow_run.head_sha || github.sha }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
           SKIP: ${{ steps.release.outputs.skip }}
           OUTCOME: ${{ job.status }}
         run: |
