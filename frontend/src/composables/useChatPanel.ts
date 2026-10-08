@@ -834,8 +834,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   // 一段话从哪一行开始、哪一行是同一段的续话、发件箱那几条接在谁后面：规则在
-  // lib/chatGrouping.ts，这里只回答「上面有没有插进别的行」——「已派出」标记和新
-  // 消息线都会把一段话切断。
+  // lib/chatGrouping.ts，这里只回答「上面有没有插进别的行」——新消息线会把一段话切断。
   const runEdges = computed(() =>
     visible.value.map((cur, i) =>
       runEdgeBetween(visible.value[i - 1], cur, {
