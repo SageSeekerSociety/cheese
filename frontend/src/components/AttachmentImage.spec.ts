@@ -1,18 +1,34 @@
+import { defineComponent, provide, reactive } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
 import { setLocale } from '@/i18n'
+
+import AttachmentImage from './AttachmentImage.vue'
 
 const attachmentImageUrl = vi.fn()
 
-vi.mock('../api', () => ({
-  attachmentImageUrl: (...args: unknown[]) => attachmentImageUrl(...args),
-}))
+/** 字节从哪儿来由外壳注入（`lib/attachmentSource.ts`），这一颗只认注入口。这里在树根上
+ *  做 App.vue 做的同一件事，接的还是上面那杆桩；要画文档的两条路这份测试用不着。 */
+const SOURCE = {
+  imageUrl: (...args: unknown[]) => attachmentImageUrl(...args) as Promise<string>,
+  documentPdf: () => Promise.reject(new Error('这一份测试不画文档')),
+  fileBytes: () => Promise.reject(new Error('这一份测试不画文档')),
+}
 
-import AttachmentImage from './AttachmentImage.vue'
+/** 包一层只为注入：参数挂在一个 reactive 上，改它就是改参数（换一张图那一条要用）。 */
+const Host = defineComponent({
+  props: { state: { type: Object, required: true } },
+  setup() {
+    provide(ATTACHMENT_SOURCE, SOURCE)
+  },
+  template: '<AttachmentImage v-bind="state" />',
+  components: { AttachmentImage },
+})
 
 let created: string[] = []
 let revoked: string[] = []
@@ -36,12 +52,16 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function mount(props: Record<string, unknown>) {
-  return render(AttachmentImage, {
-    props: { topicId: 'topic-a', path: 'uploads/a/图.png', ...props },
-    // 缩略图加载不出来时画的 <v-icon> 需要一个 Vuetify 实例才认得出来。
-    global: { plugins: [createVuetify({ components, directives })] },
-  })
+function mount(props: Record<string, unknown> = {}) {
+  const state = reactive({ topicId: 'topic-a', path: 'uploads/a/图.png', ...props })
+  return {
+    state,
+    ...render(Host, {
+      props: { state },
+      // 缩略图加载不出来时画的 <v-icon> 需要一个 Vuetify 实例才认得出来。
+      global: { plugins: [createVuetify({ components, directives })] },
+    }),
+  }
 }
 
 // These assertions read the Chinese copy; the English rendering is checked in its own case.
@@ -71,10 +91,11 @@ it('uses the file name as alt text so a picture that never loads still says what
 it('gives the previous picture back when the message is edited to another one', async () => {
   attachmentImageUrl.mockResolvedValueOnce('blob:image-1').mockResolvedValueOnce('blob:image-2')
 
-  const { container, rerender } = mount({})
+  const { container, state } = mount({})
   await waitFor(() => expect(container.querySelector('img')!.getAttribute('src')).toBe('blob:image-1'))
 
-  await rerender({ topicId: 'topic-a', path: 'uploads/a/另一张.png' })
+  // 消息被改成另一张图：参数换了，组件认出来这是新的一张。
+  state.path = 'uploads/a/另一张.png'
 
   await waitFor(() => expect(container.querySelector('img')!.getAttribute('src')).toBe('blob:image-2'))
   // object URL 是页面持有的内存，不还就一直留着。

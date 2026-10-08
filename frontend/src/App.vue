@@ -282,8 +282,10 @@ import { pendingSudo } from '@/utils/sudo'
 
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
+import { provideAttachmentSource } from '@/composables/useAttachmentSource'
 import { providePageChrome } from '@/composables/usePageChrome'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { providePublicVisitor } from '@/composables/usePublicVisitor'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
 import { useSessionRestore } from '@/composables/useSessionRestore'
@@ -376,11 +378,14 @@ const workspace = useWorkspaceStore()
 const titleManager = usePageTitle()
 const store = usePageTitleStore()
 
-// 外壳给内容区注入的两样东西：人名 chip 的名册（lib/userRefDirectory.ts）和页头的
-// 面包屑与操作区（lib/pageChrome.ts）。组件只认注入口，没人注入时各有兜底，所以
-// 它们能离开外壳单独挂起来。
+// 外壳给内容区注入的四样东西：人名 chip 的名册（lib/userRefDirectory.ts）、页头的
+// 面包屑与操作区（lib/pageChrome.ts）、公共页要的登录状态（lib/publicVisitor.ts）、
+// 附件字节从哪儿取（lib/attachmentSource.ts）。组件只认注入口，没人注入时各有兜底，
+// 所以它们能离开外壳单独挂起来。
 provideUserRefDirectory()
 providePageChrome()
+providePublicVisitor()
+provideAttachmentSource()
 
 router.isReady().then(async () => {
   const updateDocumentTitle = () => {

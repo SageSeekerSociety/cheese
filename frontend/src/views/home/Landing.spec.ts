@@ -14,6 +14,7 @@ import Download from './Download.vue'
 import Landing from './Landing.vue'
 import Solutions from './Solutions.vue'
 
+import { providePublicVisitor } from '@/composables/usePublicVisitor'
 import i18n, { resolveInitialLocale, setLocale } from '@/i18n'
 import HomeRoutes from '@/router/home'
 import AccountService from '@/services/account'
@@ -80,8 +81,11 @@ async function mount(path = '/') {
     ],
   })
   await router.push(path)
+  // 右上角那颗入口（「开始使用」/「进入工作台」）看的是外壳注入的登录状态，公共页
+  // 自己不读 services/account（`lib/publicVisitor.ts`）。这棵树根上做的正是 App.vue
+  // 做的那件事：所以下面改 AccountService.loggedIn，那一颗会跟着换。
   const view = render(
-    { template: '<router-view />' },
+    { setup() { providePublicVisitor() }, template: '<router-view />' },
     { global: { plugins: [router, createVuetify({ components, directives })] } }
   )
   return { ...view, router }
