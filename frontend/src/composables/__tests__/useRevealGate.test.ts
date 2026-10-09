@@ -5,7 +5,7 @@ import type { App, Ref } from 'vue'
 import { createApp, defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { useQuery, VueQueryPlugin } from '@tanstack/vue-query'
+import { useQuery } from '@tanstack/vue-query'
 
 import { holdRevealGate, holdRevealUntil, provideRevealGate } from '../useRevealGate'
 
@@ -110,7 +110,7 @@ describe('useRevealGate', () => {
     let revealed!: Ref<boolean>
     const Section = defineComponent({
       setup() {
-        const read = useQuery({ queryKey: ['gate', 'k'], queryFn: () => answer.promise })
+        const read = useQuery({ queryKey: ['gate', 'k'], queryFn: () => answer.promise }, queryClient)
         holdRevealUntil(() => !read.isPending.value)
         return () => h('section')
       },
@@ -123,7 +123,6 @@ describe('useRevealGate', () => {
         },
       })
     )
-    app.use(VueQueryPlugin, { queryClient })
     apps.push(app)
     app.mount(document.createElement('div'))
     expect(revealed.value).toBe(false)
@@ -141,7 +140,6 @@ describe('useRevealGate', () => {
         },
       })
     )
-    again.use(VueQueryPlugin, { queryClient })
     apps.push(again)
     again.mount(document.createElement('div'))
     expect(revealedAgain.value).toBe(true)

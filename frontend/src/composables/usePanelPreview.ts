@@ -213,14 +213,21 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     )
   }
 
-  // 首屏用手边那一份（30 秒内问过的）；轮询时只认几秒内的：再旧就现问。
-  const PREVIEW_STALE_MS = 30_000
-  const SHARED_POINTER_MS = 4_000
+  // 一秒内刚问过的指针算数，再旧就现问。比最快那一档轮询（2 秒）短：断线时按 2 秒问的
+  // 那几次每一次都得是真的问。
+  const SHARED_POINTER_MS = 1_000
 
-  async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
+  // 一次刷新正在跑时又有人要（收工、指针换了）：不丢，等这一次跑完再问一次。定时轮询
+  // 不算：下一次轮询本来就会来。
+  let rereadWanted = false
+
+  async function load(opts: { silent?: boolean; reload?: boolean; poll?: boolean } = {}) {
     if (props.path) return loadFile(props.path, opts)
     // Metadata polling must not cancel an explicit refresh's pending grant.
-    if (opts.silent && !opts.reload && (loading.value || refreshing.value)) return
+    if (opts.silent && !opts.reload && (loading.value || refreshing.value)) {
+      if (!opts.poll) rereadWanted = true
+      return
+    }
     const tid = props.topicId
     const pid = props.projectId
     if (!tid || !pid) return
@@ -231,11 +238,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     try {
       let art: PreviewInfo | null
       try {
-        // 首屏这一次（非 silent）先要那份「已经在手边的答案」：路由守卫可能已经替这个
-        // 房间先问过指针，或者那一条还在飞——别把又一轮网络压在「面板挂载之后」的临界
-        // 路径上。轮询 / 收工重取（silent）要的是最新：面板的指针轮询几秒前刚问过的就
-        // 用那一份，两处轮询同时开着时只问一次（`queries/room`）。
-        art = await readPreview(tid, opts.silent ? SHARED_POINTER_MS : PREVIEW_STALE_MS)
+        // 正在问的那一次（路由守卫替这个房间先起的头、面板的指针轮询）还没回来就等它
+        // （`queries/room`）。首屏和定时轮询还认几秒内刚问到的那一份：别把又一轮网络压在
+        // 「面板挂载之后」的临界路径上，两处轮询同时开着时也只问一次。收工重取、点了
+        // 「重新载入」要的是此刻的，现问。
+        const recent = (opts.poll || !opts.silent) && !opts.reload
+        art = await readPreview(tid, recent ? SHARED_POINTER_MS : 0)
       } catch (e) {
         if (!stillCurrent()) return
         previewUrl.value = null
@@ -402,6 +410,10 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       if (stillCurrent()) {
         loading.value = false
         refreshing.value = false
+        if (rereadWanted) {
+          rereadWanted = false
+          void load({ silent: true })
+        }
       }
     }
   }
@@ -482,7 +494,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     const epoch = pollEpoch
     refreshTimer = setTimeout(async () => {
       if (epoch !== pollEpoch) return
-      if (!document.hidden) await load({ silent: true })
+      if (!document.hidden) await load({ silent: true, poll: true })
       if (epoch === pollEpoch) schedulePoll()
     }, nextPollDelayMs())
   }

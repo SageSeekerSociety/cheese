@@ -9,7 +9,6 @@ import type { ProjectSkill, ProjectSkillContent, ProjectSkillRevision, SkillImpo
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { getProject } from '../api'
 import {
   addProjectSkill,
   confirmProjectSkill,
@@ -31,7 +30,9 @@ import SkillDetailDrawer from '@/components/skills/SkillDetailDrawer.vue'
 import SkillEditDialog from '@/components/skills/SkillEditDialog.vue'
 import SkillImportDialog from '@/components/skills/SkillImportDialog.vue'
 import i18n, { t } from '@/i18n'
+import { queryClient } from '@/lib/queryClient'
 import { useDialog } from '@/plugins/dialog'
+import { projectQuery } from '@/queries/project'
 
 /** 过了这个数，芝士不再主动提议新的（后端 `PROPOSAL_LIMIT`）；人加不拦，只提一句。 */
 const CROWDED = 20
@@ -63,7 +64,10 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const [listed, project] = await Promise.all([listProjectSkills(projectId), getProject(projectId)])
+    const [listed, project] = await Promise.all([
+      listProjectSkills(projectId),
+      queryClient.fetchQuery(projectQuery(projectId)),
+    ])
     if (props.projectId !== projectId) return
     skills.value = listed.data
     canImport.value = project.can_manage_members === true

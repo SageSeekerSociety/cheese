@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, watch } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
+import { useQuery } from '@tanstack/vue-query'
 
 import { provideTopicMemory } from '@/composables/useTopicMemory'
 
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { trackNavigations } from '@/lib/navigationProgress'
+import { queryClient } from '@/lib/queryClient'
 import { warmPagesWhenIdle } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/queries/project'
@@ -76,10 +77,22 @@ onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 // 后台时不问，切回来时过期了的再问一次（lib/queryClient）。
 const POLL_MS = 30_000
 const me = myHandle()
-useQuery(computed(() => ({ ...topicsQuery(props.projectId), refetchInterval: POLL_MS })))
-useQuery(computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me, refetchInterval: POLL_MS })))
-useQuery(computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me, refetchInterval: POLL_MS })))
-useQuery(computed(() => ({ ...notifyLevelsQuery(props.projectId), refetchInterval: POLL_MS })))
+useQuery(
+  computed(() => ({ ...topicsQuery(props.projectId), refetchInterval: POLL_MS })),
+  queryClient
+)
+useQuery(
+  computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me, refetchInterval: POLL_MS })),
+  queryClient
+)
+useQuery(
+  computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me, refetchInterval: POLL_MS })),
+  queryClient
+)
+useQuery(
+  computed(() => ({ ...notifyLevelsQuery(props.projectId), refetchInterval: POLL_MS })),
+  queryClient
+)
 
 // 这个框架底下这几页的代码，趁空闲先下下来：侧栏那一行「总览/资料库」、侧栏和总览
 // 里的任务行，点下去就是它们。按页名热，因为框架这一层拿不到每一页的地址参数

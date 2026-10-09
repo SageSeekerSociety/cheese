@@ -24,6 +24,7 @@ import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_typ
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
@@ -31,15 +32,7 @@ import { useAccountLookup } from '@/composables/useAccountLookup'
 import { provideRevealGate } from '@/composables/useRevealGate'
 import { useRowMenu } from '@/composables/useRowMenu'
 
-import {
-  ApiError,
-  getProject,
-  inviteExternalMember,
-  listProjectAgents,
-  listProjectInvitations,
-  removeProjectMember,
-  revokeInvitation,
-} from '@/api'
+import { ApiError, inviteExternalMember, listProjectInvitations, removeProjectMember, revokeInvitation } from '@/api'
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
@@ -56,7 +49,9 @@ import { t } from '@/i18n'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
+import { queryClient } from '@/lib/queryClient'
 import { myHandle } from '@/me'
+import { agentsQuery, projectQuery } from '@/queries/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 defineOptions({ name: 'ProjectMembersView' })
@@ -80,15 +75,12 @@ watch(
 const me = computed(() => myHandle())
 const project = computed(() => store.projects.find((p) => p.id === props.projectId) ?? null)
 const ownerHandle = computed<string>(() => String(project.value?.owner_handle ?? ''))
-const canManage = ref(false)
-watch(
-  () => props.projectId,
-  async (id) => {
-    canManage.value = false
-    canManage.value = (await getProject(id)).can_manage_members === true
-  },
-  { immediate: true }
+// 我管不管这个项目的成员：和工作区别处读同一份项目（`queries/project`）。
+const projectRead = useQuery(
+  computed(() => projectQuery(props.projectId)),
+  queryClient
 )
+const canManage = computed(() => projectRead.data.value?.can_manage_members === true)
 
 function unreadWith(handle: string): number {
   return store.privateUnreadMap?.[handle] ?? 0
@@ -101,21 +93,17 @@ function countLabel(n: number): string {
 
 // AI 队友这一段读的是队友列表，不是名册上那几行：私聊地址、未读键和「默认」那颗标
 // 问的都是队友本身，名册行给不出来。停用的队友不列。
-const teammates = ref<ProjectAgent[]>([])
+// 拿不到就不显示这一段，名册不该被一个可选接口拖垮。
+const agentsRead = useQuery(
+  computed(() => agentsQuery(props.projectId)),
+  queryClient
+)
+const teammates = computed<ProjectAgent[]>(() => (agentsRead.data.value ?? []).filter((a) => a.is_active))
 const releaseTeammates = gate.hold()
 watch(
-  () => props.projectId,
-  async (pid) => {
-    teammates.value = []
-    try {
-      const rows = (await listProjectAgents(pid)).data
-      if (props.projectId !== pid) return
-      teammates.value = rows.filter((a) => a.is_active)
-    } catch {
-      // 拿不到就不显示这一段，名册不该被一个可选接口拖垮。
-    } finally {
-      releaseTeammates()
-    }
+  () => agentsRead.isPending.value,
+  (pending) => {
+    if (!pending) releaseTeammates()
   },
   { immediate: true }
 )

@@ -10,6 +10,9 @@
 //   副本。一次标过期会作废正在路上的旧请求再重读，所以晚回来的旧结果盖不掉新的。
 //
 // 换了人登录（`services/account.ts`）整份清空：这里装的全是上一个人看得到的东西。
+//
+// 只有这一个实例，读的地方直接把它传给 `useQuery`（第二个参数），不靠组件树注入：
+// store 和不在组件里调用的组合函数也是这样读的。
 import { QueryClient } from '@tanstack/vue-query'
 
 export const queryClient = new QueryClient({

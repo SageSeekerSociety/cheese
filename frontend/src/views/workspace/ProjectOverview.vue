@@ -22,6 +22,7 @@ import {
   renameProjectArtifact,
 } from '@/api'
 import { memberName } from '@/lib/agentNames'
+import { queryClient } from '@/lib/queryClient'
 import { prefetchNow } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { overviewQuery, progressQuery } from '@/queries/project'
@@ -38,9 +39,18 @@ const store = useWorkspaceStore()
 // 清空成一片骨架；切回标签页时过期了的再取一次。没读到过的才是 null，画面据此不写
 // 「0」和「暂无」。一次网络抖动不该让「谁在做什么」变空：读失败时留着上一次的。只要
 // 还在进行的：总览画的是进行中的事。
-const overview = useQuery(computed(() => overviewQuery(props.projectId)))
-const recent = useQuery(computed(() => progressQuery(props.projectId)))
-const work = useQuery(computed(() => openProjectTasksQuery(props.projectId)))
+const overview = useQuery(
+  computed(() => overviewQuery(props.projectId)),
+  queryClient
+)
+const recent = useQuery(
+  computed(() => progressQuery(props.projectId)),
+  queryClient
+)
+const work = useQuery(
+  computed(() => openProjectTasksQuery(props.projectId)),
+  queryClient
+)
 holdRevealUntil(() => !overview.isPending.value && !recent.isPending.value && !work.isPending.value)
 // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
 watch(

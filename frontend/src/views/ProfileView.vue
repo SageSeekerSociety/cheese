@@ -23,15 +23,15 @@ import type {
 import type { ActivityWeek } from '@/lib/activityYear'
 
 import { computed, onActivated, ref, watch } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
+import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { holdRevealUntil } from '@/composables/useRevealGate'
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -45,9 +45,9 @@ import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
 import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { teammateName } from '@/lib/agentNames'
+import { patchQuery, queryClient } from '@/lib/queryClient'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
-import { patchQuery } from '@/lib/queryClient'
 import { myHandle } from '@/me'
 
 defineOptions({ name: 'ProfileView' })
@@ -86,7 +86,8 @@ const page = useQuery(
       ])
       return { profile, member, recent }
     },
-  }))
+  })),
+  queryClient
 )
 holdRevealUntil(() => !page.isPending.value)
 // 保活着的页面回到前台（App.vue 的 keptAlivePages）：离开期间过期了就再问一次。
@@ -223,12 +224,17 @@ async function forget(note: ProfileUnderstanding) {
   const at = notes?.findIndex((n) => n.id === note.id) ?? -1
   if (at < 0) return
   const withNotes = (change: (notes: ProfileUnderstanding[]) => ProfileUnderstanding[]) =>
-    patchQuery<Page>(key, (held) => ({ ...held, profile: { ...held.profile, understanding: change(held.profile.understanding ?? []) } }))
+    patchQuery<Page>(key, (held) => ({
+      ...held,
+      profile: { ...held.profile, understanding: change(held.profile.understanding ?? []) },
+    }))
   await withNotes((list) => list.filter((n) => n.id !== note.id))
   try {
     await deleteUnderstanding(note.id)
   } catch {
-    await withNotes((list) => (list.some((n) => n.id === note.id) ? list : [...list.slice(0, at), note, ...list.slice(at)]))
+    await withNotes((list) =>
+      list.some((n) => n.id === note.id) ? list : [...list.slice(0, at), note, ...list.slice(at)]
+    )
     toast.error(t('users.profile.notes.deleteFailed'))
   }
 }

@@ -5,13 +5,15 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { getPrivateChat, listProjectAgents } from '@/api'
+import { getPrivateChat } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
 import { t } from '@/i18n'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentHandleOf } from '@/lib/dm'
+import { queryClient } from '@/lib/queryClient'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
+import { agentsQuery } from '@/queries/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -85,7 +87,7 @@ async function load() {
 // 就打不开。
 async function loadAgentName(pid: string, handle: string) {
   try {
-    const found = (await listProjectAgents(pid)).data.find((a) => a.handle === handle)
+    const found = (await queryClient.fetchQuery(agentsQuery(pid))).find((a) => a.handle === handle)
     if (props.projectId === pid && agentHandle.value === handle) {
       agentRow.value = found ?? null
     }

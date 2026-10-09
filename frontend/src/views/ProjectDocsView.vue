@@ -93,7 +93,8 @@ const docs = useQuery(
       }
       return payload
     },
-  }))
+  })),
+  queryClient
 )
 holdRevealUntil(() => !docs.isPending.value)
 // 保活着的页面回到前台（App.vue 的 keptAlivePages）：离开期间过期了就再问一次。

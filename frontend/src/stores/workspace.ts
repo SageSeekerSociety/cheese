@@ -93,7 +93,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const me = computed(() => myHandle())
   const hasProject = computed(() => !!projectId.value)
 
-  const projectsRead = useQuery(projectsQuery(), queryClient)
+  // 进了项目、或者哪一页要了（`refreshProjects`）才读：没打开任何项目时 store 不替谁去问。
+  const projectsWanted = ref(false)
+  const projectsRead = useQuery(
+    computed(() => ({ ...projectsQuery(), enabled: hasProject.value || projectsWanted.value })),
+    queryClient
+  )
   const projects = computed<Project[]>(() => projectsRead.data.value ?? [])
   // 「清单问过了」——成功、失败、还是空清单，都算问过。它和 `projects.length > 0`
   // 是两件事：后者只知道「手上有货」，前者的意思是「不会再变了，可以据此做决定了」。
@@ -269,8 +274,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   )
 
-  // 这个项目本身：名字、所有者、我管不管成员（`projectQuery`）。
-  const projectRead = useQuery(computed(() => ({ ...projectQuery(pid.value), enabled: hasProject.value })), queryClient)
+  // 这个项目本身（`projectQuery`）。只在它归档了时才要：归档了的项目不在 `projects` 那份
+  // 清单里，名字和所有者得从这一份读。
+  const projectRead = useQuery(
+    computed(() => ({ ...projectQuery(pid.value), enabled: hasProject.value && accessDenied.value === 'archived' })),
+    queryClient
+  )
   const openedProject = computed<Project | null>(() => projectRead.data.value ?? null)
 
   const rootTopic = computed<Topic | null>(() => topics.value.find((t) => t.kind === 'root') ?? null)
@@ -305,8 +314,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       return false
     }
     accessDenied.value = null
-    await Promise.all([refreshProjects(), queryClient.invalidateQueries({ queryKey: keys.project(id) })])
+    await Promise.all([refreshProjectList(), queryClient.invalidateQueries({ queryKey: keys.project(id) })])
     return true
+  }
+
+  /** 项目清单变了（新建、归档、转交、退出），或者这一页要用它：再读一次。 */
+  function refreshProjectList(): Promise<void> {
+    projectsWanted.value = true
+    return refreshProjects()
   }
 
   function refreshTopics(): Promise<void> {
@@ -551,7 +566,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     setChatPct,
     setPanelPref,
     reportError,
-    refreshProjects,
+    refreshProjects: refreshProjectList,
     refreshMembers,
     refreshTopics,
     reloadTopics,

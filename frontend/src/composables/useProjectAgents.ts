@@ -20,12 +20,12 @@ import {
   getProjectDefaultModel,
   isEndpointMissing,
   listAgentTypes,
-  listProjectAgents,
   setProjectDefaultAgent,
 } from '@/api'
 import { t } from '@/i18n'
 import { patchQuery, queryClient } from '@/lib/queryClient'
 import { keys } from '@/queries/keys'
+import { agentsQuery } from '@/queries/project'
 
 interface AgentsPayload {
   agents: ProjectAgent[]
@@ -55,7 +55,7 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
           loadError: null,
         }
         try {
-          payload.agents = (await listProjectAgents(id)).data
+          payload.agents = await queryClient.fetchQuery({ ...agentsQuery(id), staleTime: 0 })
         } catch (e) {
           if (isEndpointMissing(e)) payload.backendMissing = true
           else payload.loadError = e instanceof Error ? e.message : t('work.projectSettings.agents.loadFailed')
@@ -76,7 +76,8 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
         payload.models = modelList
         return payload
       },
-    }))
+    })),
+    queryClient
   )
   holdRevealUntil(() => !read.isPending.value)
   const data = read.data

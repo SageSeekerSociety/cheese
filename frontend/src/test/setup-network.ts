@@ -1,12 +1,9 @@
-import { VueQueryPlugin } from '@tanstack/vue-query'
-import { config } from '@vue/test-utils'
 import { afterEach, expect } from 'vitest'
 
 import { queryClient } from '@/lib/queryClient'
 
-// 组件读服务器数据都经过同一个 QueryClient（lib/queryClient.ts）：每个挂载的组件都
-// 装上它，每个用例结束清空，上一个用例读到的东西不会被下一个当成缓存先画出来。
-config.global.plugins.push([VueQueryPlugin, { queryClient }])
+// 服务器数据的缓存（lib/queryClient.ts）是模块级的：每个用例结束清空，上一个用例读到
+// 的东西不会被下一个当成缓存先画出来。
 afterEach(() => {
   queryClient.clear()
 })

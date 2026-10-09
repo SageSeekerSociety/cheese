@@ -285,9 +285,6 @@ importers:
       '@vue/eslint-config-typescript':
         specifier: ^14.6.0
         version: 14.6.0(eslint-plugin-vue@9.33.0(eslint@9.32.0(jiti@2.5.1)))(eslint@9.32.0(jiti@2.5.1))(typescript@5.9.2)
-      '@vue/test-utils':
-        specifier: 2.4.6
-        version: 2.4.6
       '@vue/tsconfig':
         specifier: ^0.9.1
         version: 0.9.1(typescript@5.9.2)(vue@3.5.18(typescript@5.9.2))

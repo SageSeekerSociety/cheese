@@ -348,10 +348,11 @@ import {
   reorderProjects,
   saveProjectOrder,
 } from '@/lib/projectOrder'
+import { queryClient } from '@/lib/queryClient'
 import { myHandle } from '@/me'
-import { projectsQuery, refreshProjects } from '@/queries/projects'
 import { NotificationsApi } from '@/network/api/notifications'
 import { TeamsApi } from '@/network/api/teams'
+import { projectsQuery, refreshProjects } from '@/queries/projects'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
@@ -459,7 +460,10 @@ const hasSidebar = computed(() => currentRoute.matched.some((record) => record.c
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
 // (话题/群聊/doc/agent)。两端各拿到哪些格子由 Navigation/destinations.ts 说了算。
 // 冷打开时上一次的清单从本标签页的存储里先拿出来（lib/queryPersist），rail 当场就有。
-const projectsRead = useQuery(computed(() => ({ ...projectsQuery(), enabled: AccountService.loggedIn })))
+const projectsRead = useQuery(
+  computed(() => ({ ...projectsQuery(), enabled: AccountService.loggedIn })),
+  queryClient
+)
 const cxProjects = computed<Project[]>(() => (AccountService.loggedIn ? projectsRead.data.value ?? [] : []))
 
 // 「项目清单问完了」——成功、失败都算问过（和 workspace store 里那个同名标志一个

@@ -478,7 +478,8 @@ const openTasksRead = useQuery(
   computed(() => {
     const roomId = props.topic?.id ?? ''
     return { ...openRoomTasksQuery(roomId), enabled: !!roomId && !props.taskId }
-  })
+  }),
+  queryClient
 )
 const threads = computed<{ open: number }>(() => ({
   open: (openTasksRead.data.value?.data ?? []).filter((r) => r.status === 'open').length,

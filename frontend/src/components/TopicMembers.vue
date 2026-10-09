@@ -56,7 +56,10 @@ const emit = defineEmits<{
 
 // 切回来过的房间先画上次那份名册，背后再重取（`queries/room`）。骨架只在手上什么
 // 都没有时出：有上次那份就照着它画，回来了原地换。
-const roster = useQuery(computed(() => roomMembersQuery(props.topicId)))
+const roster = useQuery(
+  computed(() => roomMembersQuery(props.topicId)),
+  queryClient
+)
 const members = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
 const loading = computed(() => roster.isPending.value && !roster.isError.value)
 const busy = ref(false)
@@ -84,7 +87,8 @@ watch(
 // 读，所以进房间这一下没必要挤在首屏前 —— 推到浏览器空下来再问，标记晚一点补上。
 const machinesWanted = ref(false)
 const machinesRead = useQuery(
-  computed(() => ({ ...computeProfileQuery(props.topicId), enabled: machinesWanted.value && !!props.topicId }))
+  computed(() => ({ ...computeProfileQuery(props.topicId), enabled: machinesWanted.value && !!props.topicId })),
+  queryClient
 )
 const machines = computed<TopicComputeProfile | null>(() => machinesRead.data.value ?? null)
 const machinesError = computed(() =>

@@ -21,6 +21,7 @@ import { isExternalMember } from '../../../lib/externalMembers'
 import { isAvatarKnownFailed, rememberAvatarFailure } from '../../../utils/avatarFailures'
 import { getAvatarUrl } from '../../../utils/materials'
 
+import { queryClient } from '@/lib/queryClient'
 import { roomMembersQuery } from '@/queries/room'
 
 export function useRoomRoster(options: {
@@ -48,7 +49,8 @@ export function useRoomRoster(options: {
     computed(() => {
       const id = options.topic()?.id ?? ''
       return { ...roomMembersQuery(id), enabled: !!id }
-    })
+    }),
+    queryClient
   )
   const rosterLoaded = computed(() => !!options.topic() && roster.data.value !== undefined)
   const roomMembers = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])

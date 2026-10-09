@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { ApiError } from '@/api'
 import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
-import { patchQuery } from '@/lib/queryClient'
+import { patchQuery, queryClient } from '@/lib/queryClient'
 import { myHandle } from '@/me'
 import { keys } from '@/queries/keys'
 import { computeProfileQuery, roomTaskQuery } from '@/queries/room'
@@ -27,7 +27,8 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     computed(() => {
       const id = opts.taskId() ?? ''
       return { ...roomTaskQuery(id), enabled: !!id }
-    })
+    }),
+    queryClient
   )
   const task = computed<RoomTask | null>(() => read.data.value ?? null)
   const loading = computed(() => !!opts.taskId() && read.isPending.value)
@@ -167,9 +168,12 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     computed(() => {
       const id = task.value?.id ?? ''
       return { ...computeProfileQuery(id), enabled: !!id && machineWanted.value }
-    })
+    }),
+    queryClient
   )
-  const machine = computed<TopicComputeProfile | null>(() => (machineWanted.value ? machineRead.data.value ?? null : null))
+  const machine = computed<TopicComputeProfile | null>(() =>
+    machineWanted.value ? machineRead.data.value ?? null : null
+  )
   const machineError = computed(() => machineWanted.value && machineRead.isError.value)
   async function loadMachine() {
     if (!task.value) return

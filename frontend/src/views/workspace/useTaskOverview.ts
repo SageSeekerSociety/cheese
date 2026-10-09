@@ -7,6 +7,7 @@ import { computed, ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getTaskRelated, retryTaskOpening } from '@/api/tasks'
+import { queryClient } from '@/lib/queryClient'
 import { roomProgressQuery } from '@/queries/room'
 
 /** 芝士在干活时，清单多久重取一次。 */
@@ -41,7 +42,8 @@ export function useTaskOverview(opts: {
         refetchInterval: CHECKLIST_EVERY_MS,
         staleTime: 0,
       }
-    })
+    }),
+    queryClient
   )
   // 上一轮留下的那份清单不算：说的是那时候在做的事。只认这一轮开始之后问到的。
   const since = ref(0)

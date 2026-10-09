@@ -30,7 +30,8 @@ export function useChannelPins(opts: {
     computed(() => {
       const id = opts.channelId() ?? ''
       return { ...pinsQuery(id), enabled: !!id && opts.seen() }
-    })
+    }),
+    queryClient
   )
   // 小图钉是装饰：读不到就先不画，下次频道说置顶变了时再读。
   const pinnedIds = computed<ReadonlySet<string>>(() => new Set((read.data.value ?? []).map((p) => p.block.id)))

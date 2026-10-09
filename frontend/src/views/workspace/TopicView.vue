@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, ChatAttachment, Topic, TopicMemberRow } from '@/cx_types'
+import type { AgentControlState, Block, ChatAttachment, TopicMemberRow } from '@/cx_types'
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
 import { useChannelThreads } from '@/composables/useChannelThreads'
@@ -148,7 +148,6 @@ function jumpTo(blockId: string) {
 // ---- 支线 ----
 // 主线上一条消息的支线：有就打开，没有就先开一条。概览里「支线」那一格读同一份清单。
 const channelThreads = useChannelThreads(() => (props.taskId ? null : props.topicId))
-void channelThreads.load()
 function showThread(threadId: string) {
   channelThreads.markSeen(threadId)
   void router.push({
@@ -195,7 +194,6 @@ useEscapeLayer(
 )
 
 const AUTHOR = myHandle()
-
 
 // ---- 任务页 ----
 // 页头、概览、能不能说话都读这一份；对话和面板的其余几格按任务的 id 自己读。
@@ -295,8 +293,7 @@ onUnmounted(() => cancelRouteWarm?.())
 // The list is still on its way, so "not found" is not yet a fact. Neither is it
 // one while this id is being asked about directly — the path a deep link takes.
 const resolving = computed(
-  () =>
-    !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || placeResolving.value)
+  () => !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || placeResolving.value)
 )
 
 function openTopic(topicId: string) {
@@ -531,7 +528,10 @@ const unreadOnOpen = store.unreadMap[props.topicId]?.messages ?? 0
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
 // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。名册抽屉里加了人、
 // 移了人，这份当场重读：刚请进来的队友在「现场」那一格也要叫得出名字。
-const rosterRead = useQuery(computed(() => roomMembersQuery(props.topicId)))
+const rosterRead = useQuery(
+  computed(() => roomMembersQuery(props.topicId)),
+  queryClient
+)
 const roomMembers = computed<TopicMemberRow[]>(() => rosterRead.data.value?.data ?? [])
 // 任务那一栏「做这件事的队友」能挑的几位：这间房名册上的 AI 队友。换的时候后端也只认
 // 名册上那个座位，所以给的就是名册。

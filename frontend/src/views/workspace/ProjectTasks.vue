@@ -17,6 +17,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { newTask } from '@/commands/topicActions'
 import { memberName } from '@/lib/agentNames'
 import { liveTasks } from '@/lib/board'
+import { queryClient } from '@/lib/queryClient'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { closedProjectTasksQuery, openProjectTasksQuery } from '@/queries/tasks'
@@ -30,7 +31,10 @@ const router = useRouter()
 const store = useWorkspaceStore()
 
 // 和侧栏、项目总览同一份：刚读过就直接画，任务变了（房间里的通知）就重读。
-const openRead = useQuery(computed(() => openProjectTasksQuery(props.projectId)))
+const openRead = useQuery(
+  computed(() => openProjectTasksQuery(props.projectId)),
+  queryClient
+)
 const tasks = computed<RoomTask[]>(() => openRead.data.value?.data ?? [])
 const loading = computed(() => openRead.isPending.value && !openRead.isError.value)
 
@@ -43,7 +47,8 @@ const closedRead = useInfiniteQuery(
   computed(() => ({
     ...closedProjectTasksQuery(props.projectId, { channel: channelId.value, whose: whose.value }),
     enabled: closed.value,
-  }))
+  })),
+  queryClient
 )
 const closedTasks = computed<RoomTask[]>(() => closedRead.data.value?.pages.flatMap((page) => page.data) ?? [])
 const closedCounts = computed<Record<TaskFilter, number> | null>(() => closedRead.data.value?.pages[0]?.counts ?? null)

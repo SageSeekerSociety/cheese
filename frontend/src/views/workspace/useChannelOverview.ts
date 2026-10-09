@@ -28,19 +28,27 @@ export function useChannelOverview(opts: {
   // 概览画的是还开着的，加上最近做完的几件：已经做完的是开着的十几倍，不整份读。只要
   // 任务本身（limit: 0），不看任何一个块。任务列表是概览的一块；读不到就先空着，下一次
   // 动静会再读。
-  const openRead = useQuery(computed(() => ({ ...openRoomTasksQuery(channel()), enabled: !!opts.channelId() })))
+  const openRead = useQuery(
+    computed(() => ({ ...openRoomTasksQuery(channel()), enabled: !!opts.channelId() })),
+    queryClient
+  )
   const doneRead = useQuery(
     computed(() => ({
       ...roomTasksQuery(channel(), { limit: 0, status: 'closed', latest: RECENT_DONE }),
       enabled: !!opts.channelId(),
-    }))
+    })),
+    queryClient
   )
   const tasks = computed<RoomTask[]>(() => [...(openRead.data.value?.data ?? []), ...(doneRead.data.value?.data ?? [])])
-  const pinsRead = useQuery(computed(() => ({ ...pinsQuery(channel()), enabled: !!opts.channelId() })))
+  const pinsRead = useQuery(
+    computed(() => ({ ...pinsQuery(channel()), enabled: !!opts.channelId() })),
+    queryClient
+  )
   const pins = computed<ChannelPin[]>(() => pinsRead.data.value ?? [])
   /** 综合里还有项目总览：概览里只读地显示开头，要改就整份打开。 */
   const overviewRead = useQuery(
-    computed(() => ({ ...overviewQuery(opts.projectId()), enabled: !!opts.channelId() && opts.general() }))
+    computed(() => ({ ...overviewQuery(opts.projectId()), enabled: !!opts.channelId() && opts.general() })),
+    queryClient
   )
   const overview = computed<PanelDocument | null>(() => {
     const id = opts.general() ? overviewRead.data.value?.id : null

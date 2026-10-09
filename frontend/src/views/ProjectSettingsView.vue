@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
 import { useProjectAddress } from '@/composables/useProjectAddress'
@@ -10,7 +11,6 @@ import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
-import { getProject } from '@/api'
 import { handOverChannel, listChannels, stepIntoChannel } from '@/api/channels'
 import { diagnoseRoomEnvironment } from '@/api/environment'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -36,8 +36,10 @@ import ProjectExportSection from '@/components/settings/ProjectExportSection.vue
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
+import { queryClient } from '@/lib/queryClient'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import { myHandle } from '@/me'
+import { projectQuery } from '@/queries/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目设置（`/projects/<id>/settings/<栏>`）。盖在整个窗口上的一层（SettingsOverlay），
@@ -62,19 +64,11 @@ const project = computed(() => workspace.projects.find((p) => p.id === props.pro
 const projectName = computed(() => project.value?.name ?? '')
 const ownsProject = computed(() => !!project.value?.owner_handle && project.value.owner_handle === myHandle())
 // 我管不管这个项目：「频道」一栏只给管项目的人（后端动手时按同一条规则再判一次）。
-const managesProject = ref(false)
-watch(
-  () => props.projectId,
-  (id) => {
-    managesProject.value = false
-    void getProject(id)
-      .then((row) => {
-        if (id === props.projectId) managesProject.value = row.can_manage_members === true
-      })
-      .catch(() => undefined)
-  },
-  { immediate: true }
+const projectRead = useQuery(
+  computed(() => projectQuery(props.projectId)),
+  queryClient
 )
+const managesProject = computed(() => projectRead.data.value?.can_manage_members === true)
 
 const {
   loading,

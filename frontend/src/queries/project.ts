@@ -3,7 +3,7 @@
 // 每一份的读法只写在这里。轮询由看着它的那一处加（`ProjectShell` 每 30 秒问一次未读和
 // 清单），写操作和推送通过下面这几个函数改缓存，不各存副本。
 import type { TopicNotifySetting, TopicUnread } from '@/api'
-import type { ListPayload, Project, ProjectMemberRow, Topic } from '@/cx_types'
+import type { ListPayload, Project, ProjectAgent, ProjectMemberRow, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
 import { computed, reactive, type Ref } from 'vue'
@@ -15,6 +15,7 @@ import {
   getTopic,
   getTopicNotifyLevels,
   getTopicUnread,
+  listProjectAgents,
   listProjectMembers,
   listTopics,
 } from '@/api'
@@ -40,6 +41,14 @@ export function projectQuery(projectId: string) {
       rememberProjects([project])
       return project
     },
+  })
+}
+
+/** 项目的 AI 队友（含停用的）：私聊的地址和标题、成员页那一段、设置里那一节都读它。 */
+export function agentsQuery(projectId: string) {
+  return queryOptions({
+    queryKey: keys.projectAgents(projectId),
+    queryFn: async (): Promise<ProjectAgent[]> => (await listProjectAgents(projectId)).data,
   })
 }
 

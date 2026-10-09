@@ -12,6 +12,7 @@ import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
+import { queryClient } from '@/lib/queryClient'
 import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
@@ -61,7 +62,8 @@ const tasksRead = useQuery(
   computed(() => ({
     ...openProjectTasksQuery(props.projectId),
     refetchInterval: props.page ? false : TASKS_REFRESH_MS,
-  }))
+  })),
+  queryClient
 )
 const tasks = computed<RoomTask[]>(() => tasksRead.data.value?.data ?? [])
 const railTasks = computed(() => railTasksByChannel(tasks.value, myHandle()))

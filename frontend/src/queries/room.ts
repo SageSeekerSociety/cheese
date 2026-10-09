@@ -3,11 +3,13 @@
 import type { Block, ListPayload, PreviewInfo, RoomTask, TopicMemberRow, TopicProgress } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
 import type { TopicComputeProfile } from '@/types/compute'
+import type { ThreadRow } from '@/types/threads'
 
 import { queryOptions } from '@tanstack/vue-query'
 
 import { getPreview, getProgress, getTask, getTopicComputeProfile, listRoomTasks, listTopicMembers } from '@/api'
 import { listPins } from '@/api/pins'
+import { listThreads } from '@/api/threads'
 import { queryClient } from '@/lib/queryClient'
 import { keys } from '@/queries/keys'
 
@@ -32,6 +34,17 @@ export function pinsQuery(roomId: string) {
   return queryOptions({
     queryKey: keys.roomPins(roomId),
     queryFn: (): Promise<ChannelPin[]> => listPins(roomId),
+  })
+}
+
+/** 频道的支线，最近有回复的在前：概览里那一格和主线消息下面那一行读同一份。 */
+export function threadsQuery(roomId: string) {
+  return queryOptions({
+    queryKey: keys.roomThreads(roomId),
+    queryFn: async (): Promise<ThreadRow[]> => {
+      const rows = await listThreads(roomId, 100)
+      return Array.isArray(rows) ? rows : []
+    },
   })
 }
 
@@ -118,7 +131,8 @@ function tasksIn(data: unknown): RoomTask[] {
   if ('pages' in data && Array.isArray(data.pages)) return data.pages.flatMap(tasksIn)
   if ('data' in data && Array.isArray(data.data)) return data.data as RoomTask[]
   // 对话的窗口：每一块带着它那几件（`GET /topics/{id}/blocks` 的 `tasks`）。
-  if ('blocks' in data && Array.isArray(data.blocks)) return (data.blocks as Block[]).flatMap((block) => block.tasks ?? [])
+  if ('blocks' in data && Array.isArray(data.blocks))
+    return (data.blocks as Block[]).flatMap((block) => block.tasks ?? [])
   return []
 }
 
