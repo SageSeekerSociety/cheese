@@ -506,9 +506,7 @@ def test_a_tasks_message_naming_another_teammate_gets_its_turn(client):
         ),
         "a message a task held never got its turn",
     )
-    assert _heard(channel, task, "跑一下测试") != _heard(
-        channel, task, "编一下文档"
-    )
+    assert _heard(channel, task, "跑一下测试") != _heard(channel, task, "编一下文档")
 
 
 def test_terminal_evidence_closes_rows_even_with_zero_recovered(client):
