@@ -54,7 +54,6 @@ from app.domain.agent.gateway import LlmGateway
 # 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
 # 搬走，不再是 `ChatService` 的属性。
 from app.domain.agent.gateway_usage import (
-    OWN_ROUTE,
     _gateway_project_env,
     _model_kwargs,
     _schedule_deferred_drain,
@@ -113,12 +112,8 @@ from app.domain.agent.mentions import (
     project_refs_text,
 )
 from app.domain.agent.platform_notices import (
-    EVENT_TURN_FAILED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
     delivery_checking_notice,
     delivery_fallback_notice,
-    notice,
 )
 from app.domain.agent.prewarm import SeatPrewarm
 from app.domain.agent.profiles import ProfileRegistry
@@ -130,10 +125,7 @@ from app.domain.agent.prompt import (
     _PROGRESS_MARK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _REPLAY_NOTICE_AT,  # noqa: F401
     _REPLAY_NOTICE_EVERY,  # noqa: F401
-    _addressed_to,
     _compaction_notice,  # noqa: F401 — 测试仍从 chat.py 导它
-    _is_pending_input,  # noqa: F401
-    _pending_input_blocks,
     _progress_lines,  # noqa: F401
     _prompt_topic_refs,  # noqa: F401
     live_inputs,
@@ -172,7 +164,6 @@ from app.domain.agent.room_events import (
 from app.domain.agent.service import (
     AgentCompacting,
     AgentEvent,
-    AgentResult,
     AgentRetrying,
     AgentToolResult,
     AgentUsage,
@@ -180,6 +171,7 @@ from app.domain.agent.service import (
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
 from app.domain.agent.turn.intake.assistant import AssistantMessages
+from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.agent.turn.intake.events import (
     _persist_change_summary,
     _persist_room_event,
@@ -193,10 +185,12 @@ from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 # 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
+from app.domain.agent.turn.state.inputs import _pending_input_blocks
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.steps.send import SendEffects
+from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn.store.events import _mark_step_failed, _record_step_output
-from app.domain.agent.turn_usage import record_turn_usage, reported_usage
+from app.domain.agent.turn_usage import record_turn_usage
 from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import (
     AgentInstanceService,
@@ -209,7 +203,6 @@ from app.domain.block.models import (
     AuthorType,
     Block,
     BlockKind,
-    prompted_turn,
 )
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -398,6 +391,26 @@ class ChatService(SessionRecovery):
         return AssistantMessages(self._sessions, self.live, room_roster)
 
     @property
+    def turn_completion(self) -> TurnCompletion:
+        # Composition only: actual stop SQL/commit belongs to the store; gateway
+        # scheduling and session/compute affinity remain owned by this root.
+        return TurnCompletion(
+            self._sessions,
+            gateway_enabled=self._gateway is not None,
+            charge_spend=self.charge_turn_spend,
+            defer_drain=self._schedule_deferred_drain,
+            effects=CompletionEffects(
+                complete_inputs=complete_work_inputs,
+                record_usage=record_turn_usage,
+                own_waiting=own_limit.after_turn,
+            ),
+            post_event=self.post_system_event,
+            room_of_conversation=self._room_of_conversation,
+            turn_changeset=self._turn_changeset,
+            persist_summary=self._persist_change_summary,
+        )
+
+    @property
     def human_messages(self) -> HumanMessages:
         return HumanMessages(self._sessions, self.thread_replied)
 
@@ -517,7 +530,7 @@ class ChatService(SessionRecovery):
             is_resume or nudge_event is not None or not names_a_person(author)
         )
         # 平台指令那一档：`TurnPreparation.converse` 保证指令不被待读消息挤掉。
-        #重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
+        # 重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
         # 一段话重新递上来，两边都拼就是同一句说两遍。
         platform_turn = platform_wrote_this and not is_resume
         # Record the arrival-time state before persistence and acknowledgements.
@@ -1596,158 +1609,6 @@ class ChatService(SessionRecovery):
             result_text_seen,
             platform_unsolicited,
         )
-
-    async def _delivered_unread(
-        self, session: AsyncSession, state: HookWorkState
-    ) -> list[uuid.UUID]:
-        """This agent's inputs that a delivered prompt carried and no Stop has
-        stamped yet.
-
-        A clean Stop means the session got through every prompt written into it,
-        so these are read — whichever turn fed them. `state.pending_ids` cannot
-        answer that alone: it lives in this process, and a backend replaced
-        mid-turn hands the session's Stop to a process that never saw the
-        prompt, so the batch went unstamped and every later turn re-sent it.
-        Undelivered prompts stay out: the session never heard them.
-        """
-        from app.domain.agent.repositories import AgentTurnRepository
-
-        handle = state.agent_instance_handle
-        if handle is None:
-            return []
-        history = await BlockRepository(session).turn_history(state.topic_id)
-        fed = {
-            block.id: turn
-            for block in _pending_input_blocks(history)
-            if (turn := prompted_turn(block)) is not None
-            and _addressed_to(block, handle)
-        }
-        delivered = await AgentTurnRepository(session).delivered(set(fed.values()))
-        return [block_id for block_id, turn in fed.items() if turn in delivered]
-
-    async def _forget_room_claims(self, topic_id: uuid.UUID) -> None:
-        """A session failed and this process holds no turn for it — the
-        backend was replaced before the session produced anything here. Which
-        agent's batch it was is unknown, so every delivered claim in the room
-        is withdrawn: the cost is a replay, never a lost message."""
-        try:
-            async with self._sessions() as session:
-                blocks = BlockRepository(session)
-                history = await blocks.turn_history(topic_id)
-                await blocks.forget_prompted_turn(
-                    [
-                        block.id
-                        for block in _pending_input_blocks(history)
-                        if prompted_turn(block) is not None
-                    ]
-                )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — the failure notice matters more
-            logger.exception("could not withdraw delivered claims (topic=%s)", topic_id)
-
-    async def _close_hook_work(
-        self, state: HookWorkState, result: AgentResult
-    ) -> list[dict]:
-        """Commit accounting and prompt consumption after the session stops."""
-        usage = reported_usage(state.route, result)
-        # One row PER MODEL, never one lump: a gateway-routed turn's spend can
-        # cover several models in one drain, and collapsing them under
-        # `settings.agent_model` is exactly how mimo disappeared from `by_model`.
-        usages: list[AgentUsage] = []
-        if self._gateway is not None and state.route == "gateway":
-            drained = await self.charge_turn_spend(
-                state.project_id, state.topic_id, state.work_id
-            )
-            if drained:
-                usages = drained
-            else:
-                # Both the turn-end drain and its settle retry saw nothing.
-                # LiteLLM batch-writes spend logs, so "nothing yet" is not
-                # "nothing" — land it in the background rather than hold the
-                # turn open or write the spend off. This is the ONLY place the
-                # numbers exist: an interactive session reports no usage of its
-                # own, which is why `usage` is None here in the first place.
-                self._schedule_deferred_drain(
-                    state.project_id, state.topic_id, state.work_id
-                )
-        elif usage is not None:
-            usages = [usage]
-
-        action_frames: list[dict] = []
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            # Exact native completion locks its input rows before touching blocks.
-            # A synthetic error or an identity-less result cannot release a hold.
-            if (
-                not result.is_error
-                and result.input_work_completed
-                and result.session_id
-                and result.harness
-                and result.agent_handle == state.acting_agent
-            ):
-                await complete_work_inputs(
-                    session,
-                    project_id=state.project_id,
-                    conversation_id=state.topic_id,
-                    recipient_handle=result.agent_handle,
-                    harness=result.harness,
-                    native_session_id=result.session_id,
-                    work_id=state.work_id,
-                )
-            await record_turn_usage(
-                session,
-                state,
-                usages,
-                gateway_charged=state.route == "gateway" and self._gateway is not None,
-            )
-            # What this session was fed, including by a process that is gone.
-            # Settled either way: a failed session must also drop the batches
-            # an earlier process fed it, or a later clean Stop would read them
-            # as heard — and a self-started turn's own set is always empty.
-            fed = list(
-                state.pending_ids | set(await self._delivered_unread(session, state))
-            )
-            if result.is_error:
-                await blocks.forget_prompted_turn(fed)
-            elif result.harness is None:
-                # Non-native providers do not register NativeInput batches.
-                await blocks.mark_consumed(fed, state.work_id)
-            waiting = (
-                await own_limit.after_turn(session, state, result)
-                if state.route == OWN_ROUTE
-                else None
-            )
-            await session.commit()
-        if waiting is not None:
-            await self.post_system_event(
-                state.topic_id,
-                waiting,
-                state.work_id,
-                meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
-            )
-
-        # A task's changes are its branch's, shown on the task; the room's
-        # change summary reads the room's checkout.
-        _room, inner_id = await self._room_of_conversation(state.topic_id)
-        changeset = (
-            await self._turn_changeset(
-                state.project_id,
-                state.topic_id,
-                None if state.known_commits is None else await state.known_commits,
-            )
-            if inner_id is None
-            else None
-        )
-        if changeset is not None:
-            payload = await self._persist_change_summary(
-                project_id=state.project_id,
-                topic_id=state.topic_id,
-                turn_id=state.work_id,
-                changeset=changeset,
-            )
-            if payload is not None:
-                action_frames.append({"type": "event_block", "block": payload})
-        return action_frames
 
     async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None

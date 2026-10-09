@@ -71,6 +71,7 @@ from app.domain.agent.service import (
 from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn.intake.assistant import AssistantMessages
+from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.agent.turn.intake.events import (
     _persist_subagent_result,
     _persist_tool_event,
@@ -135,11 +136,8 @@ class _HookStream(Protocol):
         self, topic_id: uuid.UUID, turn_id: uuid.UUID
     ) -> None: ...
 
-    async def _close_hook_work(
-        self, state: HookWorkState, result: AgentResult
-    ) -> list[dict]: ...
-
-    async def _forget_room_claims(self, topic_id: uuid.UUID) -> None: ...
+    @property
+    def turn_completion(self) -> TurnCompletion: ...
 
     async def _set_hook_activity(
         self,
@@ -696,7 +694,7 @@ async def _consume_hook_event(
                 # Its commits are the turn's that read it, which reports them.
                 state.known_commits = None
             try:
-                for close_frame in await service._close_hook_work(state, event):
+                for close_frame in await service.turn_completion.close(state, event):
                     await broker.publish(str(topic_id), close_frame)
             except Exception:
                 logger.exception(
@@ -714,7 +712,7 @@ async def _consume_hook_event(
                     # anywhere else to drop the marks it left in the runner.
                     work_runner.close_turn_the_session_started(turn_id)
         elif event.is_error and event.taken_into is None:
-            await service._forget_room_claims(topic_id)
+            await service.turn_completion.forget_claims(topic_id)
         if event.taken_into is not None:
             # The room was told when the turn that read it ended.
             return

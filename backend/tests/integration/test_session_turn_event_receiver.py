@@ -203,14 +203,16 @@ async def test_open_and_publish_are_awaited_before_output_and_close_notification
         assert other_runner.recent_work()[0]["status"] == "running"
 
         closing, allow_close = asyncio.Event(), asyncio.Event()
-        close = chat._close_hook_work
+        from app.domain.agent.turn.intake.completion import TurnCompletion
 
-        async def waiting_close(state, result):
+        close = TurnCompletion.close
+
+        async def waiting_close(completion, state, result):
             closing.set()
             await allow_close.wait()
-            return await close(state, result)
+            return await close(completion, state, result)
 
-        monkeypatch.setattr(chat, "_close_hook_work", waiting_close)
+        monkeypatch.setattr(TurnCompletion, "close", waiting_close)
         consuming = asyncio.create_task(
             _consume(chat, project, topic, work, AgentResult(text="", session_id=None))
         )

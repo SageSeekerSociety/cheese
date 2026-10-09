@@ -30,8 +30,6 @@ from app.domain.agent.harness.prompt import (
 )
 from app.domain.agent.mcp_notice import unconnected_mcp
 from app.domain.agent.prompt import (
-    _addressed_to,
-    _pending_input_blocks,
     _pending_platform_notices,
     _platform_preamble,
     _replay_notice,
@@ -58,6 +56,7 @@ from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.session_host.contract import Image
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
+from app.domain.agent.turn.state.inputs import _addressed_to, _pending_input_blocks
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent.turn.steps.prepared import PreparedSend
 from app.domain.agent.turn.steps.send import SendEffects, send_prepared

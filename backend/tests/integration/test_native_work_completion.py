@@ -107,8 +107,8 @@ def test_only_exact_clean_native_work_releases_its_registered_batch(client, case
         chat = ChatService.__new__(ChatService)
         chat._sessions, chat._gateway = factory, None
         chat.live = LiveWork()
-        await chat._close_hook_work(state, result)
-        await chat._close_hook_work(state, result)
+        await chat.turn_completion.close(state, result)
+        await chat.turn_completion.close(state, result)
         async with factory() as session:
             remaining = await held_blocks(
                 session,
@@ -134,7 +134,7 @@ def test_only_exact_clean_native_work_releases_its_registered_batch(client, case
             async with factory() as session:
                 await BlockRepository(session).mark_consumed(list(ids), uuid.uuid4())
                 await session.commit()
-            await chat._close_hook_work(state, result)
+            await chat.turn_completion.close(state, result)
             async with factory() as session:
                 assert (
                     await held_blocks(
@@ -185,7 +185,7 @@ def test_completion_commit_abort_rolls_back_release_and_consumption_together(cli
         event.listen(Session, "before_commit", fail_commit)
         try:
             with pytest.raises(DBAPIError):
-                await chat._close_hook_work(state, result)
+                await chat.turn_completion.close(state, result)
         finally:
             event.remove(Session, "before_commit", fail_commit)
         assert aborted == [True]
@@ -194,7 +194,7 @@ def test_completion_commit_abort_rolls_back_release_and_consumption_together(cli
             assert row.released_block_ids == []
             blocks = list(await session.scalars(select(Block).where(Block.id.in_(ids))))
             assert all(consumed_turn(block) is None for block in blocks)
-        await chat._close_hook_work(state, result)
+        await chat.turn_completion.close(state, result)
         async with factory() as session:
             assert (
                 await held_blocks(

@@ -59,6 +59,20 @@ async def count_prompt_attempt(
     return await BlockRepository(session).bump_prompt_attempts(block_ids, turn_id)
 
 
+async def withdraw_prompt_claims(
+    session: AsyncSession, block_ids: list[uuid.UUID]
+) -> None:
+    """Drop a failed prompt's claims without committing or consuming its inputs."""
+    await BlockRepository(session).forget_prompted_turn(block_ids)
+
+
+async def consume_prompt(
+    session: AsyncSession, block_ids: list[uuid.UUID], turn_id: uuid.UUID
+) -> None:
+    """Consume a non-native prompt in the encompassing stop transaction."""
+    await BlockRepository(session).mark_consumed(block_ids, turn_id)
+
+
 async def fail_step(
     session: AsyncSession, block_id: uuid.UUID, error: str
 ) -> Block | None:
