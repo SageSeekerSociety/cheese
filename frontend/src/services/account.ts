@@ -7,6 +7,7 @@ import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale } from '@/i18n'
 import { clearBlockCache } from '@/lib/blockCache'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
+import { clearHeldTasks } from '@/lib/heldTasks'
 import { clearPageCache } from '@/lib/pageCache'
 import { resetPreviewPointerCache } from '@/lib/previewPointer'
 import { resetRoomLink } from '@/lib/roomLink'
@@ -81,6 +82,7 @@ function storedUserId(): number | undefined {
 function clearRoomCaches(): void {
   clearBlockCache()
   clearTopicPanelCache()
+  clearHeldTasks()
   resetPreviewPointerCache()
   resetRoomLink()
 }

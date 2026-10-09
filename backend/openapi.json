@@ -21558,7 +21558,7 @@
           "projects"
         ],
         "summary": "List Project Tasks",
-        "description": "Every thread in the project, each with the card it currently rides on.\n\n`status` keeps only threads in that state. The sidebar polls for the open\nones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per\nread.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
+        "description": "Every thread in the project, each with the card it currently rides on.\n\n`status` keeps only threads in that state. The sidebar polls for the open\nones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per\nread.\n\nWith `limit` (and a `status`) it is a page instead, of the threads that\nmost recently moved: the closed ones only grow, and the all-tasks page\nscrolls through them rather than reading them whole. A page can be narrowed\nto one `channel` and to `whose` the threads are to the reader (`mine`: they\nown it; `helping`: they are among its contributors; `others`: neither).\n`next` is the cursor to pass as `before` for the page after; `counts` says\nhow many there are in all and by whose, for the same status and channel.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
         "operationId": "list_project_tasks_projects__project_id__tasks_get",
         "parameters": [
           {
@@ -21589,6 +21589,78 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Channel"
+            }
+          },
+          {
+            "name": "whose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "mine",
+                    "helping",
+                    "others"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Whose"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 200,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
             }
           },
           {
@@ -40607,7 +40679,7 @@
           "topics"
         ],
         "summary": "List Topic Blocks",
-        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)\n\nFilters narrow the timeline inside the paging, so a page holds `limit` rows\nof what was asked for and `has_more` counts the same set (filtering a page\nafterwards returns fewer rows and pages through holes):\n\n- `kind` (repeatable): only these kinds of block;\n- `author`: only blocks signed by this handle;\n- `shown=true`: only what the room's conversation shows\n  (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only\n  what it keeps out of the room (an agent's steps, notices for an agent).\n\nCursors still name any block of the conversation, shown or not.",
+        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)\n\nFilters narrow the timeline inside the paging, so a page holds `limit` rows\nof what was asked for and `has_more` counts the same set (filtering a page\nafterwards returns fewer rows and pages through holes):\n\n- `kind` (repeatable): only these kinds of block;\n- `author`: only blocks signed by this handle;\n- `shown=true`: only what the room's conversation shows\n  (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only\n  what it keeps out of the room (an agent's steps, notices for an agent).\n\nCursors still name any block of the conversation, shown or not.\n\nEach block carries what a reader draws with it, so the page is whole on its\nown: `reactions`, the 支线 under a main-line message (`thread`), a routine's\nrun (`routine_run`), and `tasks` — the tasks made from a message, under it,\nand the task a room-line row says began there (`room_task_rows`), as the\nroom's task list has them.",
         "operationId": "list_topic_blocks_topics__topic_id__blocks_get",
         "parameters": [
           {
@@ -43731,7 +43803,7 @@
           "topics"
         ],
         "summary": "List Room Tasks",
-        "description": "This room's threads — every piece of work in it, each with its own\nconversation.\n\nThe room's own line is `/blocks` beside this; nothing appears in both, and\ntogether they are everything said in the room. That separation is the whole\nreason a task no longer needs a room of its own: the thread is a key on the\nblock, not a second row in `topics`.\n\nAuthorized exactly like `/blocks`, and for the same reason — this carries\nconversation, so holding a topic id must not be enough to read it.\n\n`limit` caps EACH thread at its newest N blocks; with none, every thread\ncomes back whole (agents read this to review history, and a silent default\nwindow would truncate them with no way to notice).\n\nThat default is inherited from `/blocks`, and it costs more here: this fans\nout over a room's whole history of work, and a long-lived room already\nholds close to two hundred of them. No cap is imposed because an invented\nnumber truncates silently — the exact failure the neighbouring default\nexists to avoid — but a caller rendering a room should be passing `limit`,\nand whoever builds that view should decide what it is.\n\n`limit=0` is the roster shape: every thread, none of their conversation. A\nclient drawing a rail or an overview wants the threads themselves and never\nreads a block; asking for `limit=1` made it download one message per thread\nto throw away. 0 is spelled rather than inferred from a separate flag\nbecause it is the same knob — \"newest zero blocks each\" — and it skips the\nblock query entirely instead of filtering its result.\n\n条件请求：侧栏画一次 rail 就要整份清单，而一个房间这里有 ~1317 条活、`limit=0`\n也有 1 MB 上下。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回\n304、空 body —— 切页面时「没有新东西」不再重传这一份。",
+        "description": "This room's threads — every piece of work in it, each with its own\nconversation.\n\nNarrowed, a page reads only the tasks it draws instead of the whole room:\n\n- `status=open|closed`;\n- `ids`: these tasks (the ones a message names);\n- `blocks`: the tasks these blocks carry — made from one of them, or named\n  by one of them as the task that began there (`task_created`, `split`);\n- `branch=true`: tasks with a branch of their own;\n- `latest=N`: the newest N, newest first — by when they closed with\n  `status=closed`, by when they were created otherwise.\n\n`ids` and `blocks` together return a task matching either.\n\nThe room's own line is `/blocks` beside this; nothing appears in both, and\ntogether they are everything said in the room. That separation is the whole\nreason a task no longer needs a room of its own: the thread is a key on the\nblock, not a second row in `topics`.\n\nAuthorized exactly like `/blocks`, and for the same reason — this carries\nconversation, so holding a topic id must not be enough to read it.\n\n`limit` caps EACH thread at its newest N blocks; with none, every thread\ncomes back whole (agents read this to review history, and a silent default\nwindow would truncate them with no way to notice).\n\nThat default is inherited from `/blocks`, and it costs more here: this fans\nout over a room's whole history of work, and a long-lived room already\nholds close to two hundred of them. No cap is imposed because an invented\nnumber truncates silently — the exact failure the neighbouring default\nexists to avoid — but a caller rendering a room should be passing `limit`,\nand whoever builds that view should decide what it is.\n\n`limit=0` is the roster shape: every thread, none of their conversation. A\nclient drawing a rail or an overview wants the threads themselves and never\nreads a block; asking for `limit=1` made it download one message per thread\nto throw away. 0 is spelled rather than inferred from a separate flag\nbecause it is the same knob — \"newest zero blocks each\" — and it skips the\nblock query entirely instead of filtering its result.\n\n条件请求：侧栏画一次 rail 就要整份清单，而一个房间这里有 ~1317 条活、`limit=0`\n也有 1 MB 上下。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回\n304、空 body —— 切页面时「没有新东西」不再重传这一份。",
         "operationId": "list_room_tasks_topics__topic_id__tasks_get",
         "parameters": [
           {
@@ -43760,6 +43832,95 @@
                 }
               ],
               "title": "Limit"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "closed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ids"
+            }
+          },
+          {
+            "name": "blocks",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "maxItems": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Blocks"
+            }
+          },
+          {
+            "name": "branch",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Branch"
+            }
+          },
+          {
+            "name": "latest",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 50,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Latest"
             }
           },
           {

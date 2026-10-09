@@ -163,11 +163,13 @@ function keepFile(block: Block) {
 function nameOf(handle: string): string {
   return panel.refMaps.mentionNames[handle] || handle
 }
-// 频道里每件任务的那张卡：挂在它出自的那条消息下面，或者是「新建了任务」那一条。
+// 频道里每件任务的那张卡：挂在它出自的那条消息下面，或者是「新建了任务」那一条。认得
+// 的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
+const knownTasks = computed(() => [...panel.roomTasks.known.value.values()])
 const taskLines = computed(
-  () => new Map(panel.roomTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
+  () => new Map(knownTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
 )
-const taskOrigins = computed(() => tasksByOrigin(panel.roomTasks.value))
+const taskOrigins = computed(() => tasksByOrigin(knownTasks.value))
 function taskOf(taskId: string): TaskLine | null {
   return taskLines.value.get(taskId) ?? null
 }
@@ -201,7 +203,6 @@ const {
   contentRef,
   dayLabels,
   unreadAnchorId,
-  splitMarkers,
   runEdges,
   outboxEdge,
   pendingBlock,
@@ -404,7 +405,6 @@ defineExpose({ send, linkDown, submitQuestion })
           :hidden-rows="hiddenRows"
           :day-labels="dayLabels"
           :unread-anchor-id="unreadAnchorId"
-          :split-markers="splitMarkers"
           :run-edges="runEdges"
           :arrived="arrived"
           :delivered="delivered"

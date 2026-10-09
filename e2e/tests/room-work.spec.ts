@@ -102,7 +102,8 @@ test.describe("房间里的任务", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     // 只按住接口那一次：页面自己的地址也是 /projects/{id}/tasks，按住它页面就打不开。
-    await page.route(`**/api/projects/${projectId}/tasks`, async (route) => {
+    // 按路径认，不管查询串：页面读的是还在进行的那些（`?status=open`）。
+    await page.route((url) => url.pathname === `/api/projects/${projectId}/tasks`, async (route) => {
       await gate;
       await route.continue();
     });

@@ -19,6 +19,7 @@ from app.api.deps import (
 )
 from app.api.message_effects import announce_edited_message
 from app.api.response import ok, page
+from app.api.room_task_rows import tasks_under_blocks
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
 from app.core.db import get_db
@@ -474,6 +475,7 @@ async def list_topic_blocks(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
     before: uuid.UUID | None = None,
     after: uuid.UUID | None = None,
@@ -513,13 +515,19 @@ async def list_topic_blocks(
       what it keeps out of the room (an agent's steps, notices for an agent).
 
     Cursors still name any block of the conversation, shown or not.
+
+    Each block carries what a reader draws with it, so the page is whole on its
+    own: `reactions`, the 支线 under a main-line message (`thread`), a routine's
+    run (`routine_run`), and `tasks` — the tasks made from a message, under it,
+    and the task a room-line row says began there (`room_task_rows`), as the
+    room's task list has them.
     """
     if sum(c is not None for c in (before, after, around)) > 1:
         raise ValidationError(say("cursorOneAnchor"))
     if limit is None and (after is not None or around is not None):
         raise ValidationError(say("cursorNeedsLimit"))
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
 
     async def cursor_of(block_id: uuid.UUID | None) -> Block | None:
@@ -591,9 +599,21 @@ async def list_topic_blocks(
         if place.inner_id is None
         else {}
     )
+    # The tasks made from these messages, and the ones these rows say began:
+    # the page draws their cards without reading the room's whole task list.
+    carried = await tasks_under_blocks(
+        db,
+        chat,
+        actor,
+        room_id=place.room_id,
+        project_id=place.project_id,
+        blocks=blocks,
+    )
     items = []
     for b in blocks:
         item = BlockOut.model_validate(b).model_dump(mode="json")
+        if b.id in carried:
+            item["tasks"] = carried[b.id]
         if b.id in reactions:
             item["reactions"] = reactions[b.id]
         if b.id in threads:

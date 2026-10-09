@@ -7,11 +7,13 @@
 // 只在首页「待办」一处。十四天没动静的收进最底下的「已停滞」，点开才列出来。
 //
 // 筛选：谁的（全部 / 我负责的 / 我协作的 / 其他人的）、哪个频道、看已关闭的。数据和
-// 去处都由容器 ProjectTasks 给。
+// 去处都由容器 ProjectTasks 给。进行中的是整份，在这里分组、筛选、数；已关闭的只会越
+// 积越多，容器一页一页读（服务端筛好、数好），这里往下滚到底时要下一页（`more`）。
+import type { TaskFilter } from '@/api/tasks'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { BoardColumn, RoomTask } from '@/cx_types'
 
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -34,18 +36,30 @@ const props = defineProps<{
   me: string
   loading: boolean
   failed: boolean
+  /** 已关闭的那一页页读到的（服务端已按频道、谁的筛好，最近有动静的在前）。 */
+  closedTasks: RoomTask[]
+  /** 已关闭的一共几件，按谁的分；还没读到是 null。 */
+  closedCounts: Record<TaskFilter, number> | null
+  closedHasMore: boolean
+  /** 正在读下一页、或下一页读失败了。 */
+  closedLoading: boolean
+  closedFailed: boolean
 }>()
+
+/** 看哪一边：进行中的，还是已关闭的。 */
+const closed = defineModel<boolean>('closed', { default: false })
+/** 谁的。 */
+const whose = defineModel<TaskFilter>('whose', { default: 'all' })
 
 const emit = defineEmits<{
   (e: 'open-task', task: RoomTask): void
   (e: 'new-task'): void
   (e: 'retry'): void
   (e: 'pick-channel', channelId: string | null): void
+  /** 已关闭的往下滚到底了：要下一页。 */
+  (e: 'more'): void
 }>()
 
-type Whose = 'all' | 'mine' | 'helping' | 'others'
-const whose = ref<Whose>('all')
-const closed = ref(false)
 const stalledOpen = ref(false)
 
 const channelTitle = computed(() => new Map(props.channels.map((c) => [c.id, c.title])))
@@ -54,21 +68,40 @@ const isOpen = (task: RoomTask) => task.status === 'open' && task.presentation.c
 const inChannel = computed(() =>
   props.channelId ? props.tasks.filter((task) => task.room_id === props.channelId) : props.tasks
 )
-const inView = computed(() => inChannel.value.filter((task) => isOpen(task) !== closed.value))
-const belongs: Record<Whose, (task: RoomTask) => boolean> = {
+const inView = computed(() => inChannel.value.filter(isOpen))
+const belongs: Record<TaskFilter, (task: RoomTask) => boolean> = {
   all: () => true,
   mine: (task) => task.owner_handle === props.me,
   helping,
   others: (task) => task.owner_handle !== props.me && !helping(task),
 }
-const counts = computed(() => ({
-  all: inView.value.length,
-  mine: inView.value.filter(belongs.mine).length,
-  helping: inView.value.filter(belongs.helping).length,
-  others: inView.value.filter(belongs.others).length,
-}))
+const counts = computed<Record<TaskFilter, number> | null>(() =>
+  closed.value
+    ? props.closedCounts
+    : {
+        all: inView.value.length,
+        mine: inView.value.filter(belongs.mine).length,
+        helping: inView.value.filter(belongs.helping).length,
+        others: inView.value.filter(belongs.others).length,
+      }
+)
 const moved = (task: RoomTask) => Date.parse(task.last_activity_at ?? task.updated_at) || 0
-const shown = computed(() => inView.value.filter(belongs[whose.value]).sort((a, b) => moved(b) - moved(a)))
+const shown = computed(() =>
+  closed.value ? props.closedTasks : inView.value.filter(belongs[whose.value]).sort((a, b) => moved(b) - moved(a))
+)
+
+// 已关闭的滚到最底下那一行露出来时要下一页。
+const sentinel = ref<HTMLElement | null>(null)
+let observer: IntersectionObserver | undefined
+watch(sentinel, (el) => {
+  observer?.disconnect()
+  if (!el || typeof IntersectionObserver === 'undefined') return
+  observer = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) emit('more')
+  })
+  observer.observe(el)
+})
+onBeforeUnmount(() => observer?.disconnect())
 
 const ORDER: BoardColumn[] = ['needs_you', 'delivering', 'building', 'not_started']
 const groups = computed(() =>
@@ -79,7 +112,7 @@ const groups = computed(() =>
 )
 const stalled = computed(() => shown.value.filter((task) => task.stalled))
 
-const filters: { id: Whose; label: string }[] = [
+const filters: { id: TaskFilter; label: string }[] = [
   { id: 'all', label: t('work.channelTasks.all') },
   { id: 'mine', label: t('work.channelTasks.mine') },
   { id: 'helping', label: t('work.channelTasks.helping') },
@@ -130,7 +163,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
         >
           {{ f.label }}
           <!-- 任务还没读到（或读失败）时不写数：那时的 0 不是真的 0。 -->
-          <span v-if="!loading && !failed" class="tasks__count">{{ counts[f.id] }}</span>
+          <span v-if="!loading && !failed && counts" class="tasks__count">{{ counts[f.id] }}</span>
         </button>
       </div>
       <span class="tasks__spacer" />
@@ -180,7 +213,8 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
         class="tasks__group"
       >
         <h2 class="tasks__group-head">
-          {{ columnLabel(group.column as BoardColumn) }} <span class="tasks__count">{{ group.tasks.length }}</span>
+          {{ columnLabel(group.column as BoardColumn) }}
+          <span class="tasks__count">{{ closed ? counts?.[whose] ?? '' : group.tasks.length }}</span>
         </h2>
         <ul class="tasks__list">
           <li v-for="task in group.tasks" :key="task.id">
@@ -211,6 +245,16 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           </li>
         </ul>
       </section>
+
+      <div v-if="closed && closedFailed" class="tasks__empty t-body c-muted" role="alert">
+        {{ t('work.channelTasks.loadFailed') }}
+        <button type="button" class="tasks__retry" @click="emit('more')">
+          {{ t('work.roomMachine.retry') }}
+        </button>
+      </div>
+      <div v-else-if="closed && closedHasMore" ref="sentinel" class="tasks__more" data-testid="tasks-more">
+        <v-progress-circular v-if="closedLoading" indeterminate size="16" width="2" />
+      </div>
 
       <section v-if="!closed && stalled.length" class="tasks__group" data-testid="tasks-stalled">
         <button
@@ -288,6 +332,12 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
 .tasks__count {
   color: var(--faint);
   font-weight: 400;
+}
+.tasks__more {
+  display: flex;
+  justify-content: center;
+  min-height: 32px;
+  padding: 8px 0;
 }
 .tasks__empty {
   display: flex;

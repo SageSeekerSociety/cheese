@@ -8,16 +8,14 @@
 //
 // AI 队友的一条回复上点「查看过程」，这一栏换成那一轮的现场，「返回支线」回来。支线的
 // 对话只是藏起来，连接和滚动位置都还在。
-import type { Block, ProjectMemberRow, Topic } from '@/cx_types'
+import type { Block, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 import type { Thread } from '@/types/threads'
 
 import { computed, ref, watch } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { useRoomTasks } from '@/composables/useRoomTasks'
-
-import { ApiError } from '@/api'
+import { ApiError, listRoomTasks } from '@/api'
 import { getThread } from '@/api/threads'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
@@ -30,7 +28,7 @@ import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { t } from '@/i18n'
 import { isAgentBlock } from '@/lib/authorship'
 import { replySnippet } from '@/lib/blockDisplay'
-import { taskLine, tasksByOrigin } from '@/lib/channelTasks'
+import { taskLine } from '@/lib/channelTasks'
 import { renderPlain } from '@/lib/renderMessage'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -59,8 +57,20 @@ const emit = defineEmits<{
 }>()
 
 const store = useWorkspaceStore()
-// 从这条支线（和它挂着的那条消息）出来的任务，和频道主线上那几张卡是同一份。
-const { tasks: roomTasks, reload: reloadTasks } = useRoomTasks(() => props.room.id)
+// 从这条支线挂着的那条消息拆出去的任务，和频道主线上那条消息下面的卡是同一份：只读
+// 这一条带着的（`blocks=`），不读整个频道的。
+const madeHere = ref<RoomTask[]>([])
+async function loadTasks() {
+  const room = props.room.id
+  const rootId = root.value?.id
+  if (!rootId) return
+  try {
+    const listed = await listRoomTasks(room, { limit: 0, blocks: [rootId] })
+    if (props.room.id === room && root.value?.id === rootId) madeHere.value = listed.data
+  } catch {
+    // 卡片是装饰：读不到就照旧画上一份，任务再变时再读。
+  }
+}
 const viewer = computed(() => currentUserName.value ?? myHandle())
 // 正在看哪一轮的过程；null 是在看支线本身。
 const processTurn = ref<string | null>(null)
@@ -112,10 +122,19 @@ const subtitle = computed(() => {
 const rootTime = computed(() =>
   root.value ? new Date(root.value.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
 )
+watch(
+  () => root.value?.id,
+  () => {
+    madeHere.value = []
+    void loadTasks()
+  },
+  { immediate: true }
+)
 const tasks = computed(() => {
   const id = root.value?.id
-  const made = id ? tasksByOrigin(roomTasks.value).get(id) ?? [] : []
-  return made.map((task) => taskLine(task, viewer.value, nameOf))
+  return madeHere.value
+    .filter((task) => task.upgraded_from_block_id === id)
+    .map((task) => taskLine(task, viewer.value, nameOf))
 })
 
 function toTask() {
@@ -129,7 +148,7 @@ function toTask() {
 // 有人在支线里回话、芝士答完：概览那一格和主线上那一行由频道自己的 `threads` 刷新，
 // 这里只需要在任务变了之后重读一次从这里出来的任务。
 function onState(resource: string) {
-  if (resource === 'topics') void reloadTasks()
+  if (resource === 'topics') void loadTasks()
 }
 </script>
 

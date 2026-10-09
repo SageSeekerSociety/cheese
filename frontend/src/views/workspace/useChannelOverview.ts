@@ -9,6 +9,8 @@ import { ref, watch } from 'vue'
 import { listRoomTasks } from '@/api'
 import { listPins, unpinBlock } from '@/api/pins'
 import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
+import { RECENT_DONE } from '@/lib/channelTasks'
+import { fetchOpenTasks } from '@/lib/topicPanelCache'
 
 export function useChannelOverview(opts: {
   /** 正看着的频道；任务页上是 null，什么都不读。 */
@@ -30,9 +32,13 @@ export function useChannelOverview(opts: {
     const id = opts.channelId()
     if (!id) return
     try {
-      // limit: 0 —— 概览只要支线本身，不看任何一个块。
-      const listed = await listRoomTasks(id, { limit: 0 })
-      if (opts.channelId() === id) tasks.value = listed.data
+      // 概览画的是还开着的，加上最近做完的几件：已经做完的是开着的十几倍，不整份读。
+      // 只要任务本身（limit: 0），不看任何一个块。
+      const [open, done] = await Promise.all([
+        fetchOpenTasks(id, { fresh: true }),
+        listRoomTasks(id, { limit: 0, status: 'closed', latest: RECENT_DONE }),
+      ])
+      if (opts.channelId() === id) tasks.value = [...open.data, ...done.data]
     } catch {
       // 任务列表是概览的一块；读不到就先空着，下一次动静会再读。
     }

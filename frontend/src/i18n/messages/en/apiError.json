@@ -835,6 +835,8 @@
   "noPublishedSite": "There's no published site yet",
   "cursorOneAnchor": "Use only one of before, after, or around at a time",
   "cursorNeedsLimit": "after and around must be used with limit",
+  "taskPageNeedsStatus": "limit must be used with status: a page is of open or of closed tasks",
+  "taskPageCursorInvalid": "This page position is not recognised; read again from the first page",
   "sinceAfterUntil": "since can't be later than until",
   "bodyRequired": "body can't be empty",
   "archiveSignIn": "Sign in to archive",

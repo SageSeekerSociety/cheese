@@ -17,7 +17,7 @@ vi.mock('@/api', () => ({
 import {
   cachedTopicPanel,
   clearTopicPanelCache,
-  fetchRoomTasks,
+  fetchOpenTasks,
   fetchTopicMembers,
   fetchTopicProgress,
 } from './topicPanelCache'
@@ -48,13 +48,13 @@ describe('话题面板缓存', () => {
     expect(cachedTopicPanel('progress', 't2')).toBeUndefined()
   })
 
-  it('同一个话题的派出的活同时只发一条，且只要每条最新的一块', async () => {
+  it('同一个话题还开着的活同时只发一条，只要开着的、不带对话', async () => {
     const d = deferred<ReturnType<typeof page>>()
     listRoomTasks.mockReturnValue(d.promise)
-    const a = fetchRoomTasks('t1')
-    const b = fetchRoomTasks('t1')
+    const a = fetchOpenTasks('t1')
+    const b = fetchOpenTasks('t1')
     expect(listRoomTasks).toHaveBeenCalledTimes(1)
-    expect(listRoomTasks).toHaveBeenCalledWith('t1', { limit: 0 })
+    expect(listRoomTasks).toHaveBeenCalledWith('t1', { limit: 0, status: 'open' })
     d.settle(page(2))
     expect(await a).toBe(await b)
   })
@@ -107,17 +107,17 @@ describe('话题面板缓存', () => {
     try {
       const before = deferred<ReturnType<typeof page>>()
       listRoomTasks.mockReturnValueOnce(before.promise)
-      void fetchRoomTasks('t1')
+      void fetchOpenTasks('t1')
       await vi.advanceTimersByTimeAsync(500)
       listRoomTasks.mockResolvedValue(page(2))
-      const a = fetchRoomTasks('t1', { fresh: true })
-      const b = fetchRoomTasks('t1', { fresh: true })
+      const a = fetchOpenTasks('t1', { fresh: true })
+      const b = fetchOpenTasks('t1', { fresh: true })
       expect(listRoomTasks).toHaveBeenCalledTimes(2)
       expect(await a).toBe(await b)
       before.settle(page(1))
       await vi.advanceTimersByTimeAsync(0)
       // 旧的那条后回来，也不覆盖新的。
-      expect(cachedTopicPanel('roomTasks', 't1')?.data).toHaveLength(2)
+      expect(cachedTopicPanel('openTasks', 't1')?.data).toHaveLength(2)
     } finally {
       vi.useRealTimers()
     }

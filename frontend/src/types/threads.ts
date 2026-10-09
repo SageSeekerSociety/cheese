@@ -1,5 +1,5 @@
 // 支线：主线上一条消息下面的回复，自成一段对话。
-import type { Block } from '../cx_types'
+import type { Block, RoomTask } from '../cx_types'
 
 /** 支线里最后说的一句：谁、说了什么（前两行够用的长度）、什么时候。 */
 export interface ThreadReply {
@@ -64,5 +64,13 @@ export interface ThreadActivityFrame {
 declare module '../cx_types' {
   interface Block {
     thread?: ThreadSummary | null
+  }
+}
+
+// `GET /topics/{频道}/blocks` 在一块上带着它那几件任务：从这条消息拆出去的，或者这一行
+// 说在这里开始的那一件（composables/useTimelineTasks）。
+declare module '../cx_types' {
+  interface Block {
+    tasks?: RoomTask[]
   }
 }

@@ -105,17 +105,19 @@ vi.mock('@/components/WorkPanel.vue', () => ({
 
 import TopicView from './TopicView.vue'
 
-import { fetchRoomTasks } from '@/lib/topicPanelCache'
+import { clearHeldTasks, holdTasks } from '@/lib/heldTasks'
 
 const View = TopicView as unknown as Component
 
 beforeEach(() => {
   query = {}
+  clearHeldTasks()
 })
 
 describe('在频道里换一件任务', () => {
   it('清单里已有的那一件马上画出来，不等它自己那一读', async () => {
-    await fetchRoomTasks('t1')
+    // 那一件在别处读到过（侧栏、频道概览、对话栏里的卡）。
+    holdTasks([listed as never])
     const view = render(View, {
       props: { projectId: 'p1', topicId: 't1', taskId: 'k1' },
       global: { plugins: [createVuetify({ components, directives })] },
@@ -126,7 +128,8 @@ describe('在频道里换一件任务', () => {
   })
 
   it('清单里没有的那一件，等它自己那一读', async () => {
-    await fetchRoomTasks('t1')
+    // 那一件在别处读到过（侧栏、频道概览、对话栏里的卡）。
+    holdTasks([listed as never])
     const view = render(View, {
       props: { projectId: 'p1', topicId: 't1', taskId: 'k1' },
       global: { plugins: [createVuetify({ components, directives })] },
