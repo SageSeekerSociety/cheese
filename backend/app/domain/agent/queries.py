@@ -33,6 +33,7 @@ from app.domain.agent.platform_notices import (
     memory_changed_notice,
     notice,
 )
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AGENT_NOTICE_META_KEY, AuthorType, BlockKind
@@ -52,6 +53,7 @@ from app.domain.run_record.service import record as keep_record
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.services import UsageService
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +217,6 @@ async def _gateway_budget_target(
     gateway must not be told one at all (no price knob, or the project is
     unmetered). Reading it belongs to the READ path: a caller that finds the
     key's budget already in step has nothing to write and nothing to lock."""
-    from app.domain.usage.services import UsageService
 
     credits = await UsageService(session).project_credits(project_id)
     return credits["gateway_budget_usd"]
@@ -316,6 +317,7 @@ async def _private_room(
     （`get_or_create_private` 先找后建，同一个人打开的是同一间）。"""
     if not owner:
         return None
+    # deferred-import: tests replace this name on app.domain.topic.services
     from app.domain.topic.services import TopicService
 
     topic = await TopicService(session).get_or_create_private(
@@ -424,7 +426,7 @@ async def instance_of_handle(
 ) -> uuid.UUID | None:
     """The agent instance *agent_handle* names in the project *place_id* is in,
     or None when no instance carries it."""
-    from app.domain.agent_instance.models import AgentInstance
+    # deferred-import: PlaceResolver is bound at the top of this module already
     from app.domain.room_task.place import PlaceResolver
 
     async with session_factory() as session:

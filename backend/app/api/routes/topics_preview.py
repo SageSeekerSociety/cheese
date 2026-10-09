@@ -42,6 +42,7 @@ import uuid
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.preview_host import preview_origin
 from app.api.response import ok
 from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
 from app.core.config import settings
@@ -72,7 +73,6 @@ async def get_preview(
     art = await BlockRepository(db).latest_artifact(place.conversation_id)
     if art is None:
         return ok(None)
-    from app.api.preview_host import preview_origin
 
     if art.mime_type == ARTIFACT_MIME["app"]:
         # Knocked on LIVE, through the tunnel, every time the panel asks. A

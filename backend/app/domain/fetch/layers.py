@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
+from curl_cffi import CurlOpt
+from curl_cffi import requests as cffi
 
 from app.domain.fetch import guard
 from app.domain.fetch.extract import substantive_length, to_markdown
@@ -175,8 +177,6 @@ async def rung_impersonated(url: str, timeout: float = 25.0) -> Attempt:
     start = loop.time()
 
     def _get(target: str, address: str) -> tuple[int, str, str | None]:
-        from curl_cffi import CurlOpt
-        from curl_cffi import requests as cffi
 
         host, port = guard._target(target)
         r = cffi.get(

@@ -15,7 +15,9 @@ if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "context":
 import argparse
 import base64
 import contextlib
+import ctypes
 import functools
+import hashlib
 import io
 import json
 import logging
@@ -26,8 +28,11 @@ import shutil
 import signal
 import stat
 import subprocess
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +49,18 @@ if __package__:
         session_path,
         session_servers,
         stat_file_on_the_machine,
+    )
+    from app.domain.agent.harness.claude_code.remote_execution.context_service import (
+        serve,
+    )
+    from app.domain.agent.harness.claude_code.remote_execution.release import (
+        allow_native_tools,
+        carry_transcripts,
+        forget_touched_skills,
+        hook_module,
+        link_forwarded_user_context,
+        platform_tool_names,
+        touch_skills,
     )
     from app.domain.agent.harness.claude_code.remote_execution.shell_stop import (
         CAUGHT,
@@ -74,6 +91,16 @@ else:
     # a file loaded by path has not.
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from context_service import serve
+    from release import (
+        allow_native_tools,
+        carry_transcripts,
+        forget_touched_skills,
+        hook_module,
+        link_forwarded_user_context,
+        platform_tool_names,
+        touch_skills,
+    )
     from shell_stop import CAUGHT, KILL, current_target, deliver_stop, start_watcher
 
 PINNED_VERSION = "2.1.282"
@@ -162,12 +189,6 @@ def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) 
     """The plugin a room's session is started with: the function hook that runs
     its tools where the project is (`proxy.js`), and the Stop hook that keeps a
     turn from ending while a person in the room is unanswered (`reply`)."""
-    if __package__:
-        from .release import hook_module
-    else:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from release import hook_module
-
     (plugin / ".claude-plugin").mkdir(parents=True, exist_ok=True)
     (plugin / "hooks").mkdir(exist_ok=True)
     (plugin / ".claude-plugin/plugin.json").write_text(
@@ -239,10 +260,11 @@ def prepare(
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     if target.get("kind") == "private":
         if __package__:
+            # deferred-import: private scratch requires fcntl, absent on Windows
             from .private import ensure
         else:
+            # deferred-import: private scratch requires fcntl, absent on Windows
             from private import ensure
-
         ensure(target, directory, os.environ)
     if target.get("kind") == "deferred" and target["workspace"] != DEFERRED_WORKSPACE:
         target = _take_leased_machine(target)
@@ -272,11 +294,6 @@ def prepare(
     home.mkdir(exist_ok=True)
     config = Path(config_override) if config_override else directory / "config"
     config.mkdir(exist_ok=True)
-    if __package__:
-        from .release import forget_touched_skills
-    else:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from release import forget_touched_skills
 
     # What an earlier session process reached is not this one's: it starts
     # offering a subdirectory's skills only once it reaches them itself, and
@@ -302,12 +319,6 @@ def prepare(
         if not unavailable:
             workspace = Path(info["workspace"])
     if seen != placeholder:
-        if __package__:
-            from .release import carry_transcripts
-        else:
-            sys.path.insert(0, str(Path(__file__).parent))
-            from release import carry_transcripts
-
         carry_transcripts(config, placeholder, seen)
     target = dict(
         target,
@@ -359,14 +370,13 @@ def prepare(
         token_path.chmod(0o600)
     if forwarded:
         context_tree = sync_context(target_path, context_tree)
-    # Imported here rather than at module scope, like `link_forwarded_user_context`
-    # below: the prompt-hook entry point at the top of this file returns before any
-    # of it, and the shell prefix runs this file from a directory its siblings need
-    # not share.
+    # Deferred, not lifted with its siblings above: a test replaces `mount_state`
+    # on the `release` module, so this reads it through the import each time.
     if __package__:
+        # deferred-import: tests replace mount_state on the release module
         from .release import MOUNT_LIVE, mount_state, release_mount
     else:
-        sys.path.insert(0, str(Path(__file__).parent))
+        # deferred-import: tests replace mount_state on the release module
         from release import MOUNT_LIVE, mount_state, release_mount
 
     mount_log = directory / "forwarded-project.log"
@@ -395,12 +405,6 @@ def prepare(
             detail = mount_log.read_text()[-1000:] if mount_log.exists() else ""
             raise RuntimeError("Forwarded project mount failed: " + detail)
     if forwarded or unavailable:
-        if __package__:
-            from .release import link_forwarded_user_context
-        else:
-            sys.path.insert(0, str(Path(__file__).parent))
-            from release import link_forwarded_user_context
-
         link_forwarded_user_context(
             directory,
             config,
@@ -409,12 +413,6 @@ def prepare(
             Path(__file__).parent,
             view=workspace,
         )
-    if __package__:
-        from .release import allow_native_tools, platform_tool_names
-    else:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from release import allow_native_tools, platform_tool_names
-
     platform_tools = platform_tool_names(cheese_source().read_text())
     plugin = write_plugin(directory / "plugin", target, platform_tools, target_path)
     settings = json.loads(json.dumps(base_settings or {}))
@@ -627,8 +625,6 @@ def _take_leased_machine(target):
 
 
 def sync_context(target_path, supplied_tree=None):
-    import base64
-    import hashlib
 
     target = json.loads(Path(target_path).read_text())
     if target.get("kind") not in {"private", "unavailable"}:
@@ -656,12 +652,6 @@ def sync_context(target_path, supplied_tree=None):
                 # A session already running: the skills, commands, agents and
                 # rules the project has now are the ones linked into its
                 # config dir. (`prepare` links them itself, once mounted.)
-                if __package__:
-                    from .release import link_forwarded_user_context
-                else:
-                    sys.path.insert(0, str(Path(__file__).parent))
-                    from release import link_forwarded_user_context
-
                 link_forwarded_user_context(
                     Path(target_path).parent,
                     target["central_config"],
@@ -1130,7 +1120,6 @@ def _place(seen, view, root):
     directory it does not own. The user namespace maps this user to itself,
     so files keep their owner, and the capabilities it grants end at exec.
     """
-    import ctypes
 
     libc = ctypes.CDLL(None, use_errno=True)
 
@@ -1413,12 +1402,6 @@ def reached_skills(target_path, target, args):
     """A file tool reached a file on the executor: the session offers what
     Claude Code offers once one has (`release.touch_skills`). The tool's own
     result stands whatever happens here."""
-    if __package__:
-        from .release import touch_skills
-    else:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from release import touch_skills
-
     path = args.get("file_path") or args.get("notebook_path")
     if not isinstance(path, str) or "session_workspace" not in target:
         return
@@ -1436,14 +1419,6 @@ def reached_skills(target_path, target, args):
 
 
 def transport(config, target_path):
-    import threading
-    from concurrent.futures import ThreadPoolExecutor
-    from importlib.machinery import SourceFileLoader
-
-    if __package__:
-        from .context_service import serve
-    else:
-        from context_service import serve
 
     client = RemoteClient(config)
     cheese = SourceFileLoader(
@@ -1833,27 +1808,27 @@ def main():
         transport(config, args.config)
     elif args.mode == "release":
         if __package__:
+            # deferred-import: private scratch requires fcntl, absent on Windows
             from .private import release
         else:
+            # deferred-import: private scratch requires fcntl, absent on Windows
             from private import release
-
         release(config)
     elif args.mode == "bridge":
         # Remote servers and a type's own, whose definition rides each call.
         remote = set(session_servers(config)) - set(config.get("mcp_servers", []))
         if config.get("kind") == "device" or args.args[0] in remote:
             if __package__:
+                # deferred-import: runtime loads POSIX primitives and hashes its source
                 from .runtime import bridge
             else:
+                # deferred-import: runtime loads POSIX primitives and hashes its source
                 from runtime import bridge
-
             bridge(None, args.args[0], call=RemoteClient(config).call)
         else:
             command = RemoteClient(config).command("bridge", args.args[0])
             run_in_place(command)
     elif args.mode == "checkpoint":
-        import hashlib
-
         payload = json.load(sys.stdin)
         transcript = Path(payload["transcript_path"])
         identifier = hashlib.sha256(

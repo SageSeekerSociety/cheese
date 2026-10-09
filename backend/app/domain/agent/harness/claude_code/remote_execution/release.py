@@ -6,6 +6,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -63,6 +64,7 @@ def release_mount(path):
 
 
 def sources():
+    # deferred-import: this file also runs on the machine, with no `app` package
     from app.domain.agent import executor_transport
 
     directory = Path(__file__).parent
@@ -325,12 +327,14 @@ class _Locked:
     def __enter__(self):
         self.stream = self.path.open("a")
         if sys.platform == "win32":
+            # deferred-import: only imported under a sys.platform branch
             import runpy
 
             # The Windows lock shipped beside this file, as runtime.py loads it.
             portable = runpy.run_path(str(Path(__file__).with_name("portable.py")))
             portable["lock"](self.stream)
         else:
+            # deferred-import: POSIX-only module; absent on Windows
             import fcntl
 
             fcntl.flock(self.stream, fcntl.LOCK_EX)
@@ -365,7 +369,6 @@ def _split_outside_braces(value):
 
 
 def _expand_braces(value):
-    import re
 
     done, pending = [], [value]
     while pending:
@@ -400,7 +403,6 @@ def path_patterns(values):
 
 
 def _pattern(pattern):
-    import re
 
     negate = pattern.startswith("!")
     if negate:
@@ -478,7 +480,6 @@ def _skills_in(entries, parent):
 
 def _without_paths(text):
     """SKILL.md's text with its frontmatter's `paths` taken out."""
-    import re
 
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":

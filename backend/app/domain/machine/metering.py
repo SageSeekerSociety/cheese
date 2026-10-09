@@ -32,9 +32,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent.models import AgentTurn
 from app.domain.conversation.services import of_rooms, room_column
 from app.domain.machine.models import GONE, CloudHost, CloudHostHome
-from app.domain.usage.compute import SANDBOX, ComputeMeter, hourly_price
+from app.domain.usage.compute import SANDBOX, VM, ComputeMeter, hourly_price, vm_spec
+from app.domain.usage.services import UsageService
 
 logger = logging.getLogger("cheese.machine.metering")
 
@@ -70,7 +72,6 @@ def vm_subject(host_id: uuid.UUID) -> str:
 async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int, int]:
     """A whole VM runs from its creation to its release, billed to the
     project it was created for."""
-    from app.domain.usage.compute import VM, vm_spec
 
     hosts = list(
         await session.scalars(
@@ -166,8 +167,6 @@ async def unpaid_sandboxes(session: AsyncSession) -> list:
     """The running sandboxes whose project's payer has no credits left and
     whose room runs no turn: those to destroy. Asked at most every
     ``CREDIT_CHECK``. Commits."""
-    from app.domain.agent.models import AgentTurn
-    from app.domain.usage.services import UsageService
 
     global _checked_at
     now = datetime.now(UTC)

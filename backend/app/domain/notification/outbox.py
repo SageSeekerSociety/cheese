@@ -182,10 +182,12 @@ async def drain_channel(sessions, *, channel, batch_size, max_attempts):
         failure = None
         try:
             if channel == "email":
+                # deferred-import: cycle notification.maintenance -> notification.outbox
                 from app.domain.notification.maintenance import send_email
 
                 await send_email(sessions, payload)
             else:
+                # deferred-import: tests patch app.domain.notification.push_delivery
                 from app.domain.notification.push_delivery import send_push
 
                 counts["expired"] += await send_push(sessions, payload)

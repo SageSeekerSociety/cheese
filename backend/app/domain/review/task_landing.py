@@ -23,10 +23,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say
 from app.domain.agent.harness.prompt import task_next_step_prompt, task_summary_prompt
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.schemas import BlockOut
+from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.notification.models import NotificationType
+from app.domain.project.models import Project
 from app.domain.review.landing_models import TaskLanding
 from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.thread.services import open_thread
+from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
 
@@ -122,12 +132,6 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
 
 
 async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
-    from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.block.models import AuthorType, Block, BlockKind
-    from app.domain.identity.handles import agent_instance_handle
-    from app.domain.project.models import Project
-    from app.domain.thread.services import open_thread
-    from app.domain.topic.models import Topic, TopicStatus
 
     if task.upgraded_from_block_id is None:
         return
@@ -168,7 +172,6 @@ async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
 
 
 def _out(block) -> dict:
-    from app.domain.block.schemas import BlockOut
 
     return BlockOut.model_validate(block).model_dump(mode="json")
 
@@ -178,9 +181,6 @@ async def tell_agent(
 ) -> None:
     """The task's AI teammate hears ``content`` on its next turn. ``closes``:
     the task closes when that turn ends."""
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
-    from app.domain.notification.models import NotificationType
 
     payload: dict[str, object] = {
         "projectId": str(task.project_id),

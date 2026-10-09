@@ -14,6 +14,7 @@ from app.domain.review.models import (
     DeliverableKind,
 )
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.presentation import card_waits_on_reviewer
 from app.domain.topic.models import Topic, TopicStatus
 
 
@@ -283,7 +284,6 @@ class AcceptCardRepository:
         """
         if not topic_ids:
             return {}
-        from app.domain.room_task.presentation import card_waits_on_reviewer
 
         stmt = select(AcceptCard).where(
             AcceptCard.topic_id.in_(topic_ids),

@@ -14,6 +14,8 @@
 `main.py` 的 `_route_label`：拿带 UUID 的原始路径当标签，等于给每条反馈建一条时间序列。
 """
 
+from app.core import net_io
+from app.core import route_metrics as rm
 from app.core.loop_lag import lag_status
 
 #: 看板上列几条。按 p95 从大到小排，取前这么多个 —— 这一类的读法是「哪一条最慢」，
@@ -34,8 +36,6 @@ def performance_snapshot(
     `None`）。老调用点仍可传 `int`，那一种只报 `routes_registered` 的计数、不生成
     空行 —— 「有样本的路」和「画出来几条」也因此不再需要两个字段。
     """
-    from app.core import net_io
-    from app.core import route_metrics as rm
 
     observed = {(r["method"].upper(), r["route"]): r for r in rm.snapshot()}
 

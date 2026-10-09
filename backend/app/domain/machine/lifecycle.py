@@ -45,8 +45,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.agent import execution, resource_cleanup
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import LOST_KEY, AgentSession
-from app.domain.machine import sandbox_home
+from app.domain.machine import metering, sandbox_home
 from app.domain.machine.models import CloudHost, CloudHostHome
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
 from app.domain.machine.repositories import CloudHostRepository
@@ -111,7 +112,6 @@ class SandboxLifecycle:
         self._hub = hub or device_hub
 
     async def sweep(self) -> dict[str, int]:
-        from app.domain.machine import metering
 
         destroyed = await self.destroy_idle()
         for home in await metering.unpaid_sandboxes(self._session):
@@ -129,7 +129,6 @@ class SandboxLifecycle:
         unfinished; returns how many were destroyed."""
         now = datetime.now(UTC)
         idle_for = timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
-        from app.domain.agent.models import AgentTurn
 
         # A turn running in the conversation the home's session works in, or
         # one that ended within the idle time, keeps that sandbox up. Not the
@@ -206,7 +205,6 @@ class SandboxLifecycle:
     ) -> datetime | None:
         """Since when the session has been idle for at least ``idle_for``, or
         None while it is not."""
-        from app.domain.agent.models import AgentTurn
 
         if home.session_id is None:
             return home.active_at
@@ -269,6 +267,7 @@ class SandboxLifecycle:
         """Destroy one sandbox: idle for ``idle``, or, with ``idle`` None,
         because its project's credits ran out (``metering.unpaid_sandboxes``)
         or an earlier removal did not finish."""
+        # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
         if room_id is not None:

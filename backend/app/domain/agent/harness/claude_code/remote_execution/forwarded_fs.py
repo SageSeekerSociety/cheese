@@ -8,9 +8,11 @@ directory only while that directory exists here.
 
 import base64
 import errno
+import json
 import os
 import stat
 import sys
+from pathlib import Path
 
 
 class ForwardedProject:
@@ -234,10 +236,11 @@ class ForwardedProject:
 
 
 def mount(target_path, mountpoint):
-    import json
-    from pathlib import Path
 
+    # deferred-import: deferred: bare name
     from client import RemoteClient
+
+    # deferred-import: fusepy needs libfuse, which is not installed everywhere
     from fuse import FUSE, Operations
 
     target_path = Path(target_path)

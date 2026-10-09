@@ -5,6 +5,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.answers.models import Answer, AnswerFavorite, AnswerQueryLog
+from app.domain.discussion.models import DiscussableModelType, Discussion
 from app.domain.questions.models import Attitude, VoteType
 
 
@@ -213,7 +214,6 @@ class AnswerRepository:
         return int(result.scalar_one() or 0)
 
     async def count_comments(self, answer_id: int) -> int:
-        from app.domain.discussion.models import DiscussableModelType, Discussion
 
         stmt = select(func.count(Discussion.id)).where(
             Discussion.model_type == DiscussableModelType.ANSWER.value,

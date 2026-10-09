@@ -30,6 +30,9 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
     from app.domain.review.github_pr import PullRequestStatus
 
+from urllib.parse import urlsplit
+
+from app.domain.project.protection import branch_protection_of
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _ACCEPT_NO_BRANCH_PREFIX,
@@ -163,8 +166,8 @@ async def _pr_repo_of(
     """(owner, repo) the card's PR lives in — from the card when recorded,
     else resolved from the project's upstream and backfilled onto the card
     (pr_publish records only pr_number/pr_url at filing time)."""
-    from urllib.parse import urlsplit
 
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, renamed_from
 
     binding = await binding_for_project(topic.project_id, self._session)
@@ -225,6 +228,7 @@ async def _sync_task_dependency_target(
     *,
     drop_dependency: bool = False,
 ) -> bool:
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import default_branch
 
     if (
@@ -271,11 +275,12 @@ async def _pr_verdict(
     the poller's event table reads facts the verdict may have folded away:
     a conflicted PR is `dirty` no matter what its checks say, but a red
     check on it is still 芝士's to fix and must still reach it)."""
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import default_branch
-    from app.domain.project.protection import branch_protection_of
 
     project = await self._projects.get(topic.project_id)
     protection = branch_protection_of(project)
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
     binding = await binding_for_project(topic.project_id, self._session)
@@ -393,7 +398,6 @@ async def _dismiss_stale_accept(
 
     通知投给验收人和**被作废的那几票的主人**：重新投一次只有投票的人能做，
     而这句话已经点了他们的名字。"""
-    from app.domain.project.protection import branch_protection_of
 
     project = await self._projects.get(topic.project_id)
     if not branch_protection_of(project).dismiss_stale:

@@ -112,13 +112,20 @@ def test_one_runner_holds_a_state_directory(tmp_path):
         second.claim()
 
 
-def test_a_program_run_in_place_ends_the_way_it_ended(tmp_path):
-    script = (
-        "import runpy, sys\n"
+@pytest.mark.parametrize("posix_locks", [True, False])
+def test_a_program_run_in_place_ends_the_way_it_ended(tmp_path, posix_locks):
+    script = "import runpy, sys\n"
+    if not posix_locks:
+        # Launching a program does not need the private scratch container's
+        # POSIX locks, which are absent on Windows.
+        script += "sys.modules['fcntl'] = None\n"
+    script += (
         # As on the machine, where it runs from its own directory.
         f"sys.path.insert(0, {str(CLIENT.parent)!r})\n"
         f"helper = runpy.run_path({str(CLIENT)!r})\n"
         "helper['run_in_place']([sys.executable, '-c', 'raise SystemExit(7)'])\n"
     )
-    finished = subprocess.run([sys.executable, "-c", script], timeout=60)
-    assert finished.returncode == 7
+    finished = subprocess.run(
+        [sys.executable, "-c", script], timeout=60, capture_output=True, text=True
+    )
+    assert finished.returncode == 7, finished.stderr

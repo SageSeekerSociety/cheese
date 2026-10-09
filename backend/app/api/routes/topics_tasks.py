@@ -43,6 +43,7 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.agent.compute_configs import choice_for_owner, works_tasks_of
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
@@ -52,6 +53,8 @@ from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.living_doc.services import Documents
+from app.domain.machine import session_work
+from app.domain.machine.session_reports import devices_held_by
 from app.domain.mentions import canonicalize_refs
 from app.domain.review.task_landing import tell_origin
 from app.domain.room_task import binding, presentation
@@ -538,9 +541,6 @@ async def _move_off_former_owners_computer(db, actor, place, task, owner) -> Non
     """A person's own computer works only that person's tasks: before a task
     changes hands, it moves to a computer its new owner may use, pushing its
     work first. A push that fails leaves the task with its owner and says why."""
-    from app.domain.agent.compute_configs import choice_for_owner, works_tasks_of
-    from app.domain.machine import session_work
-    from app.domain.machine.session_reports import devices_held_by
 
     room = await TopicService(db).get_or_404(place.room_id)
     project = await ProjectRepository(db).get(place.project_id)

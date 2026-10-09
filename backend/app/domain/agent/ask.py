@@ -12,6 +12,7 @@ from app.domain.agent.announce import instance_of_seat, notify_question
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.questions import parse_questions, post_questions
+from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import names_a_person
 
 
@@ -65,7 +66,6 @@ async def _who_started_the_open_turn(session, place, seat) -> str | None:
 
 async def publish_answered(conversation_id, questions) -> None:
     """Show the room what each question now records, once that is committed."""
-    from app.domain.block.schemas import BlockOut
 
     for question in questions:
         await get_broker().publish(

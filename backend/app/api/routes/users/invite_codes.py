@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     pass
 
 from app.api.routes.users._common import CreateInviteCodeRequest
+from app.domain.invite.services import InviteCodeService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -56,7 +57,6 @@ async def list_invite_codes(
     admin_handle: PlatformAdminDep,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from app.domain.invite.services import InviteCodeService
 
     service = InviteCodeService(session)
     codes = await service.list_codes()
@@ -92,7 +92,6 @@ async def create_invite_code(
     admin_handle: PlatformAdminDep,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from app.domain.invite.services import InviteCodeService
 
     service = InviteCodeService(session)
     invite = await service.create_code(
@@ -122,7 +121,6 @@ async def deactivate_invite_code(
     admin_handle: PlatformAdminDep,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from app.domain.invite.services import InviteCodeService
 
     service = InviteCodeService(session)
     await service.deactivate_code(code_id)

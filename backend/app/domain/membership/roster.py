@@ -17,13 +17,16 @@ agent 在项目里列不出另一个 agent——结论 12 那句「不同 handle
 import uuid
 from dataclasses import dataclass, replace
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_instance.own import owned_in_project
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.services import ProjectService
+from app.domain.user.models import User
 
 
 @dataclass(frozen=True)
@@ -214,10 +217,6 @@ async def _owners_of_own_agents(
     session: AsyncSession, project_id: uuid.UUID
 ) -> dict[uuid.UUID, str]:
     """Which of the project's agents are members' own, and whose."""
-    from sqlalchemy import select
-
-    from app.domain.agent_instance.own import owned_in_project
-    from app.domain.user.models import User
 
     owned = await owned_in_project(session, project_id)
     if not owned:

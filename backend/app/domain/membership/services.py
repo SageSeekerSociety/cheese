@@ -18,8 +18,14 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.authz.policy import can_manage_project_members
+from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.identity.actor import Actor
+from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import InvitationRepository, MemberRepository
+from app.domain.membership.roster import roster
+from app.domain.membership.schemas import InvitationOut
+from app.domain.notification.models import NotificationType
 from app.domain.project.models import (
     InvitationStatus,
     Project,
@@ -27,7 +33,9 @@ from app.domain.project.models import (
     ProjectMember,
 )
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.services import team_service
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import user_by_handle
 
 
 async def _reject_execution_identity(session: AsyncSession, handle: str) -> None:
@@ -46,7 +54,6 @@ async def _reject_execution_identity(session: AsyncSession, handle: str) -> None
     去看 handle 长得像不像（``cheese-<话题hex>`` 是派生格式，不是契约）。解析不出用
     户的 handle 一律放行——脚本和测试夹具会加这种，它们不是 agent。
     """
-    from app.domain.identity.services import IdentityService
 
     if await IdentityService(session).is_agent(handle):
         raise ValidationError(say("agentNotProjectMember"))
@@ -84,8 +91,6 @@ class MemberService:
         return await self._team_admin(project, handle)
 
     async def _team_admin(self, project: Project, handle: str) -> bool:
-        from app.domain.team.services import team_service
-        from app.domain.user.services import user_by_handle
 
         user = await user_by_handle(self._session, handle)
         if user is None:
@@ -128,7 +133,6 @@ class MemberService:
         """
         await self._ensure_project(project_id)
         await self.require_manager(project_id, actor)
-        from app.domain.identity.services import IdentityService
 
         if not await IdentityService(self._session).is_agent(user_handle):
             raise ValidationError(say("peopleJoinByInvite"))
@@ -215,8 +219,6 @@ class MemberService:
             await self._repo.exclude(project_id=project_id, user_handle=actor.handle)
 
     async def _on_team(self, project: Project, actor: Actor) -> bool:
-        from app.domain.team.services import team_service
-        from app.domain.user.services import user_by_handle
 
         user_id = actor.user_id
         if user_id is None:
@@ -269,7 +271,6 @@ class InvitationService:
         ``ProjectMemberExclusion`` 清掉（``MemberRepository.add``），这就是回来的
         那条路。
         """
-        from app.domain.membership.roster import roster
 
         return any(m.handle == handle for m in await roster(self._session, project_id))
 
@@ -317,10 +318,6 @@ class InvitationService:
         the notification itself, and is settled once the invitation is
         (``_settle_notification``).
         """
-        from app.domain.delivery.addressing import Event, Hand, address
-        from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
-        from app.domain.notification.models import NotificationType
-        from app.domain.user.services import user_by_handle
 
         payload: dict = {
             "project": {"type": "project", "id": str(project.id)},
@@ -355,7 +352,6 @@ class InvitationService:
         都够不着，自己配不出来。少了它，界面上只能显示「有人邀请你加入一个项目」
         ——一句让人没法决定接不接受的话。
         """
-        from app.domain.membership.schemas import InvitationOut
 
         row = InvitationOut.model_validate(invitation).model_dump(mode="json")
         project = await self._projects.get(invitation.project_id)
@@ -427,8 +423,8 @@ class InvitationService:
         Answered or withdrawn, it is marked read and records how it ended, so it
         no longer offers to accept an invitation that has no answer left.
         """
+        # deferred-import: tests replace this name on app.domain.delivery.ledger
         from app.domain.delivery.ledger import event_id_for, settle
-        from app.domain.notification.models import NotificationType
 
         await settle(
             self._session,

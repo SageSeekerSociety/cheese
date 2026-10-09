@@ -26,6 +26,7 @@ router」，同一个文件里的第二个 `APIRouter` 会被静默丢掉，理�
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
@@ -106,7 +107,6 @@ def _http_endpoints(app) -> list[tuple[str, str]]:
     跳过 `HEAD`（它和 GET 是同一个处理器，两行说的是同一件事）和 `OPTIONS`。
     FastAPI 自带的 `/openapi.json`、`/docs` 也列出来 —— 这一页的全部意义就是不漏。
     """
-    from fastapi.routing import APIRoute
 
     def walk(node) -> list[APIRoute]:
         if isinstance(node, APIRoute):

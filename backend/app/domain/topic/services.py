@@ -47,6 +47,7 @@ from app.domain.living_doc.services import Documents
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import (
     PLACEHOLDER_TITLE,
@@ -56,6 +57,9 @@ from app.domain.room_task.models import (
 )
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.team.models import TeamMemberRole
+from app.domain.team.services import team_service
+from app.domain.thread.models import Thread
 from app.domain.topic.models import (
     NotifyLevel,
     RoomCleanup,
@@ -72,6 +76,7 @@ from app.domain.topic.repositories import (
     Unread,
 )
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import usernames_by_ids
 
 
 @overload
@@ -194,6 +199,7 @@ class TopicService:
         Always an answer: a project is created with its 芝士, so the agent a new
         room starts with is a saved row with an identity of its own.
         """
+        # deferred-import: agent_instance_handle already bound at the top of this module
         from app.domain.identity.handles import agent_instance_handle
 
         return agent_instance_handle((await self.resolve_agent(topic)).instance_id)
@@ -324,10 +330,8 @@ class TopicService:
         Read lazily — only when the rungs above came up empty — so an ordinary
         topic-create still costs no extra query.
         """
+        # deferred-import: tests replace this name on app.domain.project.services
         from app.domain.project.services import ProjectService
-        from app.domain.team.models import TeamMemberRole
-        from app.domain.team.services import team_service
-        from app.domain.user.services import usernames_by_ids
 
         team_id = await ProjectService(self._session).team_for_project(project_id)
         if team_id is None:
@@ -706,7 +710,6 @@ class TopicService:
         # 孤儿卡修复 (2026-08-10): 归档必须同时终结这个话题上还没决议的验收卡。
         # 一张骑着 PR 的卡不是"停着"——轮询器每 60 秒还在拿 GitHub 凭据跟进它。
         # 去向与理由见 review/archive.py 的模块 docstring。
-        from app.domain.review.archive import close_cards_for_archived_topic
 
         overview_room = await self._where_said(topic)
         await close_cards_for_archived_topic(
@@ -850,7 +853,6 @@ class TopicService:
     async def _main_line_message(self, block: Block) -> uuid.UUID:
         """The main-line message ``block`` is under: itself, or the message its
         支线 hangs under. A task from either shows under that message."""
-        from app.domain.thread.models import Thread
 
         thread = await self._session.get(Thread, block.conversation_id)
         return thread.root_block_id if thread is not None else block.id

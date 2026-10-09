@@ -27,6 +27,7 @@ from app.domain.agent.device_storage import (
     room_files_upload_url,
 )
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
@@ -144,7 +145,6 @@ async def _device_action(
 
 
 async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[dict]:
-    from app.domain.agent_session.models import AgentSession
 
     resource_ids = {str(operation.resource_id)}
     resource_ids.update(

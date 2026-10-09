@@ -7,9 +7,14 @@ import math
 import os
 import select
 import shlex
+import socket
 import subprocess
+import sys
+import threading
 import time
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 
 # How long a request waits out a platform endpoint that is not listening.
@@ -324,8 +329,6 @@ def dial_runner(path: str, timeout: float):
     """The runner holding this session, at the socket it gave the session
     (`SESSION_SOCKET`). On Windows that names the file holding the runner's
     loopback port and the token it wants before a request (`driven/runner.py`)."""
-    import socket
-    import sys
 
     if sys.platform == "win32":
         with open(path) as named:
@@ -353,7 +356,6 @@ def register_project_hooks(config, hooks):
     session's hooks changed. A target with no settings of its own (Codex: the
     executor runs the hooks around its calls) has nothing to change.
     """
-    from pathlib import Path
 
     target_file = config.get("target_file")
     if not config.get("central_config") or not target_file:
@@ -424,8 +426,6 @@ def session_servers(target: dict) -> list[str]:
 
 class RemoteClient:
     def __init__(self, config, *, shared_connection=False):
-        import threading
-        from types import SimpleNamespace
 
         self.config = config
         self.transport = SimpleNamespace() if shared_connection else threading.local()
@@ -503,7 +503,10 @@ class RemoteClient:
     def connection(self):
         # Shell forwarding exits before creating a client; keep its startup
         # independent of HTTP, TLS and proxy discovery imports.
+        # deferred-import: shell forwarding exits before a client is made
         import http.client
+
+        # deferred-import: shell forwarding exits before a client is made
         from urllib.request import getproxies, proxy_bypass
 
         if getattr(self.transport, "connection", None) is not None:
@@ -921,8 +924,6 @@ class RemoteClient:
                         )
             target_file = self.config.get("target_file")
             if target_file and changed_lease:
-                from pathlib import Path
-
                 tree = self.call("context_fs", {"operation": "tree"})
                 if tree.get("unsupported_imports") or tree.get("unsupported_paths"):
                     raise RuntimeError(

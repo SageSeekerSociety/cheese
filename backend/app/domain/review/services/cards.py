@@ -36,6 +36,8 @@ from app.domain.topic.models import Topic, TopicStatus
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.membership.roster import roster
+from app.domain.project.protection import branch_protection_of
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _ALEMBIC_VERSIONS_DIR,
@@ -53,6 +55,7 @@ from app.domain.review.services._shared import (
     approvals_required_of,
     notice,
 )
+from app.domain.task.teaching import protocol_for_task
 
 
 async def _topic_or_404(self: pkg.AcceptService, topic_id: uuid.UUID) -> Topic:
@@ -179,6 +182,7 @@ async def create_card(
     blocking = next((c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None)
     if blocking is not None:
         raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
+    # deferred-import: tests replace this name on app.domain.repository.forge_files
     from app.domain.repository.forge_files import ProjectFiles
 
     comparison = await ProjectFiles(
@@ -295,6 +299,7 @@ async def _warn_about_a_second_pending_migration(
     Best-effort throughout: a git read that fails, or a room that won't take
     the message, must never stop someone filing a card.
     """
+    # deferred-import: tests replace this name on app.domain.repository.forge_files
     from app.domain.repository.forge_files import ProjectFiles
 
     async def migrations(task_id: uuid.UUID) -> list[str]:
@@ -666,7 +671,6 @@ async def _render(
         }
     # 绿了自动合 (#718)：开了 auto_merge_allowed 的项目，验收人可以在
     # BLOCKED / BEHIND 时布防。
-    from app.domain.project.protection import branch_protection_of
 
     data["auto_merge"] = {
         "allowed": (
@@ -708,8 +712,8 @@ async def _enforce_protocol(
     `project_task_links` chain it replaced pointed at a 题目 hierarchy that
     had no way to be created.
     """
+    # deferred-import: Task is bound at the top of this module already
     from app.domain.task.models import Task
-    from app.domain.task.teaching import protocol_for_task
 
     project = await self._projects.get(topic.project_id)
     task_id = getattr(project, "external_task_id", None) if project else None
@@ -723,7 +727,6 @@ async def _enforce_protocol(
         return
     # The condition asks for someone from outside the team to sign off: an
     # external member of this project.
-    from app.domain.membership.roster import roster
 
     outside = {
         m.handle

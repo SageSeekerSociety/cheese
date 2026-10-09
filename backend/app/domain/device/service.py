@@ -41,6 +41,7 @@ from app.domain.device.repository import (
     TopicDevice,
     Visibility,
 )
+from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import default_visibility
 
 logger = logging.getLogger(__name__)
@@ -458,6 +459,5 @@ def device_service_for_session(session) -> DeviceService:
     The repository import is deferred so importing the service module does not
     drag SQLAlchemy's mapper configuration in behind it.
     """
-    from app.domain.device.sql_repository import SqlDeviceRepository
 
     return DeviceService(SqlDeviceRepository(session))

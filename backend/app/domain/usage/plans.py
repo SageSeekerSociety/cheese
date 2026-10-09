@@ -17,12 +17,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
+from app.domain.team.models import DEFAULT_PLAN_KEY
+from app.domain.team.services import team_service
 from app.domain.usage.ledger import Ledger, month_of
 from app.domain.usage.models import (
     ComputeGrant,
     CreditAdminAudit,
     GrantSource,
     Plan,
+)
+from app.domain.user.services import (
+    faces_by_handle,
+    search_accounts,
+    usernames_by_ids,
+    users_by_handle,
 )
 
 #: The fields of a plan an administrator may change.
@@ -153,8 +161,6 @@ class PlanService:
     async def plans(self) -> list[dict]:
         """Every plan, with how many teams are on it and whether new teams start
         on it."""
-        from app.domain.team.models import DEFAULT_PLAN_KEY
-        from app.domain.team.services import team_service
 
         rows = await self._session.execute(select(Plan).order_by(Plan.rank, Plan.key))
         counts = await team_service(self._session).teams_per_plan()
@@ -216,8 +222,6 @@ class PlanService:
 
     async def delete_plan(self, *, handle: str, key: str) -> None:
         """Delete a plan no team is on. The plan new teams start on stays."""
-        from app.domain.team.models import DEFAULT_PLAN_KEY
-        from app.domain.team.services import team_service
 
         plan = await self._plan(key)
         if key == DEFAULT_PLAN_KEY:
@@ -231,7 +235,6 @@ class PlanService:
         await self._audit(handle, "plan.delete", key, before, None)
 
     async def set_team_plan(self, *, handle: str, team_id: int, key: str) -> dict:
-        from app.domain.team.services import team_service
 
         team = await team_service(self._session).get_team(team_id)
         if team is None:
@@ -259,7 +262,6 @@ class PlanService:
     ) -> dict:
         """Issue a team credits by hand, as an administrator does once a
         purchase has been paid for outside the platform."""
-        from app.domain.team.services import team_service
 
         if await team_service(self._session).get_team(team_id) is None:
             raise NotFoundError(say("teamNotFoundById", team_id=team_id))
@@ -291,13 +293,6 @@ class PlanService:
         """The console's list: every team with its plan, this period's plan
         pack, and the packs it may still spend. ``plan_key`` and ``personal``
         narrow it before it is paged."""
-        from app.domain.team.services import team_service
-        from app.domain.user.services import (
-            faces_by_handle,
-            search_accounts,
-            usernames_by_ids,
-            users_by_handle,
-        )
 
         owner_ids: list[int] = []
         if query and query.strip():
@@ -349,8 +344,6 @@ class PlanService:
     async def team(self, team_id: int) -> dict:
         """One team as the console opens it: its plan, this period, and every
         pack it may still spend."""
-        from app.domain.team.services import team_service
-        from app.domain.user.services import faces_by_handle, usernames_by_ids
 
         teams_svc = team_service(self._session)
         team = await teams_svc.get_team(team_id)
@@ -390,7 +383,6 @@ class PlanService:
                 CreditAdminAudit.target == target,
                 CreditAdminAudit.action.like("team.%"),
             )
-        from app.domain.user.services import faces_by_handle
 
         rows = (
             (

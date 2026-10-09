@@ -25,7 +25,11 @@ from app.domain.team.repositories import (
 )
 from app.domain.team.services import TeamService
 from app.domain.team.summary import team_summary
-from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.repositories import (
+    UserProfileRepository,
+    UserRealNameRepository,
+    UserRepository,
+)
 
 # Number of admin / member examples to surface alongside the count, mirroring
 # the Kotlin TeamService implementation (PageRequest.of(0, 3)).
@@ -689,8 +693,6 @@ async def get_team_members(
     # Compute allMembersVerified: check real-name status for each member
     all_verified: bool | None = None
     if queryRealNameStatus:
-        from app.domain.user.repositories import UserRealNameRepository
-
         realname_repo = UserRealNameRepository(session=db)
         member_user_ids = [rel.user_id for rel in relations]
         all_verified = True
@@ -943,6 +945,7 @@ async def add_team_member_entry(
     if team is None:
         raise NotFoundError("Team not found")
 
+    # deferred-import: tests patch this name on app.domain.team.services
     from app.domain.team.services import check_team_locking_status
 
     await check_team_locking_status(db, team_id)

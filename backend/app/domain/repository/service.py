@@ -9,6 +9,7 @@
 """
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -21,6 +22,7 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
+from app.domain.agent.skills import RESERVED_SKILL_NAMES
 
 logger = logging.getLogger("cheesex.repository")
 
@@ -293,8 +295,6 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     skill here (= ~/.claude/skills, the user source) — one mount holds both the
     session and the skill, with no host settings leaking in — and stages the
     `cheese` CLI at bin/cheese for the container to mount over its baked copy."""
-    import os
-    import shutil
 
     d = (
         Path(settings.workspace_root) / ".sessions" / str(project_id) / topic_id.hex[:8]
@@ -323,10 +323,8 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
 
 def _sync_project_skills(skills_dst: Path, project_id: uuid.UUID) -> None:
     """The project's confirmed skills beside the platform's; deleted ones go."""
-    import json
-    import shutil
 
-    from app.domain.agent.skills import RESERVED_SKILL_NAMES
+    # deferred-import: tests replace this name on app.domain.project_skill.service
     from app.domain.project_skill.service import mirror_root
 
     source = mirror_root(project_id)
@@ -355,7 +353,6 @@ def _stage_cheese_cli(session: Path) -> None:
     """Refresh <session>/bin/cheese from this build's copy. Best-effort: a stale
     CLI is bad, but failing a turn over it is worse — the container still has its
     baked copy to fall back on."""
-    import shutil
 
     if not _CLI_SRC.is_file():
         return
@@ -370,7 +367,6 @@ def _stage_cheese_cli(session: Path) -> None:
 
 
 def _loosen(path: str, mode: int) -> None:
-    import os
 
     try:
         os.chmod(path, mode)
