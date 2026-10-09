@@ -1,6 +1,6 @@
 import type { ListPayload, RoomTask, Topic } from '../cx_types'
 
-import { request, requestConditional } from './http'
+import { readSince, request } from './http'
 
 // `last_activity_at` = 最后活动时间 (the topic's newest block). `updated_at` is
 // the row's own mtime and does NOT move when a block lands — it is kept only
@@ -8,32 +8,17 @@ import { request, requestConditional } from './http'
 export type TopicSortField = 'last_activity_at' | 'updated_at' | 'title'
 export type TopicSortOrder = 'asc' | 'desc'
 
-// 上一次读到的话题清单和它的 ETag，按请求路径记着。侧栏每 30s 轮询一次，一份 448
-// 个话题的清单有近 300KB：服务端答「没变」（304）时把手里这同一个 payload 原样交回，
-// 调用方的 `topics.value = payload.data` 就是一次同引用的赋值 —— Vue 的 ref setter
-// 见到同一个对象会跳过触发（不解析、不换数组、不重画）。变了才落新的一份。
-const topicListCache = new Map<string, { etag: string | null; payload: ListPayload<Topic> }>()
-
+// 一份 448 个话题的清单有近 300KB，侧栏每 30 秒问一次：`previous` 是手上那一份，
+// 服务端答「没变」（304）时原样交回它，不解析、不换对象、不重画（见 `readSince`）。
 export function listTopics(
   projectId: string,
-  opts?: { sort?: TopicSortField; order?: TopicSortOrder }
+  opts?: { sort?: TopicSortField; order?: TopicSortOrder },
+  previous?: ListPayload<Topic>
 ): Promise<ListPayload<Topic>> {
   const q = new URLSearchParams({ project_id: projectId })
   if (opts?.sort) q.set('sort', opts.sort)
   if (opts?.order) q.set('order', opts.order)
-  const path = `/topics?${q.toString()}`
-  const cached = topicListCache.get(path)
-  // 带上上一次那版 ETag 去问。服务端算出的一模一样就回 304（见后端 list_topics）。
-  return requestConditional<ListPayload<Topic>>(path, cached?.etag ?? null).then((result) => {
-    if (result.notModified) {
-      if (cached) return cached.payload
-      // 304 但手里没留底（比如刚重启、缓存已清）：退回一次无条件读，别把空手当没变。
-      return request<ListPayload<Topic>>(path)
-    }
-    if (!result.data) throw new Error('empty topic list response')
-    topicListCache.set(path, { etag: result.etag, payload: result.data })
-    return result.data
-  })
+  return readSince<ListPayload<Topic>>(`/topics?${q.toString()}`, previous)
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */

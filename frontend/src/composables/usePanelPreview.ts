@@ -19,7 +19,6 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import {
   attachmentRawUrl,
   downloadFile,
-  getPreview,
   readPreviewFile,
   requestPreviewSession,
   uploadAttachment,
@@ -27,7 +26,7 @@ import {
 import { useDocumentBytes, useDocumentPage } from '../lib/documentBytes'
 import { sameDocumentIdentity } from '../lib/documentIdentity'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, pageViewOf, suffixOf, webMimeOf } from '../lib/fileKind'
-import { warmPreviewPointer } from '../lib/previewPointer'
+import { readPreview } from '../queries/room'
 import { roomFileDestination } from '../lib/previewSession'
 
 import { useDocumentRevisions } from './useDocumentRevisions'
@@ -214,6 +213,10 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     )
   }
 
+  // 首屏用手边那一份（30 秒内问过的）；轮询时只认几秒内的：再旧就现问。
+  const PREVIEW_STALE_MS = 30_000
+  const SHARED_POINTER_MS = 4_000
+
   async function load(opts: { silent?: boolean; reload?: boolean } = {}) {
     if (props.path) return loadFile(props.path, opts)
     // Metadata polling must not cancel an explicit refresh's pending grant.
@@ -229,11 +232,10 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       let art: PreviewInfo | null
       try {
         // 首屏这一次（非 silent）先要那份「已经在手边的答案」：路由守卫可能已经替这个
-        // 房间先问过指针（lib/previewPointer.ts），或者那一条还在飞——别把又一轮网络
-        // 压在「面板挂载之后」的临界路径上。手边没有才自己问。轮询 / 收工重取
-        // （silent）要的是最新，一律现问。
-        const warm = opts.silent ? undefined : warmPreviewPointer(tid)
-        art = warm ? await warm : await getPreview(tid)
+        // 房间先问过指针，或者那一条还在飞——别把又一轮网络压在「面板挂载之后」的临界
+        // 路径上。轮询 / 收工重取（silent）要的是最新：面板的指针轮询几秒前刚问过的就
+        // 用那一份，两处轮询同时开着时只问一次（`queries/room`）。
+        art = await readPreview(tid, opts.silent ? SHARED_POINTER_MS : PREVIEW_STALE_MS)
       } catch (e) {
         if (!stillCurrent()) return
         previewUrl.value = null

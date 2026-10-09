@@ -2,17 +2,17 @@
 // 由凭据说，后端按「频道创建者或项目管理员」放行（加人、移出、说明），加入和退出
 // 只认本人。
 //
-// 名册变了都喊一声（`lib/topicRosterChanges.ts`）：对话栏手上那份名册是另外拉的，
-// 不喊它就一直是旧的——刚加进来的人 @ 不出来。读名册（`listTopicMembers`）留在
-// `api.ts`，它走那里的房间读去重。
+// 名册变了就把缓存里那份名册标过期（`queries/room`）：房间头部、对话栏的 @ 候选、
+// 成员面板读的都是它，不标的话刚加进来的人 @ 不出来。
 import type { Topic, TopicMemberRow } from '../cx_types'
 
 import { request } from '../api'
-import { announceTopicRosterChange } from '../lib/topicRosterChanges'
+import { queryClient } from '../lib/queryClient'
+import { keys } from '../queries/keys'
 
 function rosterWrite<T>(topicId: string, write: Promise<T>): Promise<T> {
   return write.then((result) => {
-    announceTopicRosterChange(topicId)
+    void queryClient.invalidateQueries({ queryKey: keys.roomMembers(topicId) })
     return result
   })
 }

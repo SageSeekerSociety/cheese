@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
@@ -9,6 +10,8 @@ import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { trackNavigations } from '@/lib/navigationProgress'
 import { warmPagesWhenIdle } from '@/lib/routePrefetch'
+import { myHandle } from '@/me'
+import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/queries/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -51,7 +54,7 @@ watch(
 
 watch(
   () => props.projectId,
-  (id) => void store.openProject(id),
+  (id) => store.openProject(id),
   { immediate: true }
 )
 
@@ -69,13 +72,15 @@ onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 
 // 实时性: poll unread badges so messages landing in OTHER topics light up
 // without a manual refresh. The same tick refreshes the topic list, so the
-// sidebar's 芝士还在跑 呼吸点 fades for topics you are not watching too.
-let pollTimer: number | undefined
-function refreshVisible() {
-  if (document.visibilityState === 'hidden') return
-  void store.refreshUnread()
-  void store.refreshTopics()
-}
+// sidebar's 芝士还在跑 呼吸点 fades for topics you are not watching too. 标签页在
+// 后台时不问，切回来时过期了的再问一次（lib/queryClient）。
+const POLL_MS = 30_000
+const me = myHandle()
+useQuery(computed(() => ({ ...topicsQuery(props.projectId), refetchInterval: POLL_MS })))
+useQuery(computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me, refetchInterval: POLL_MS })))
+useQuery(computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me, refetchInterval: POLL_MS })))
+useQuery(computed(() => ({ ...notifyLevelsQuery(props.projectId), refetchInterval: POLL_MS })))
+
 // 这个框架底下这几页的代码，趁空闲先下下来：侧栏那一行「总览/资料库」、侧栏和总览
 // 里的任务行，点下去就是它们。按页名热，因为框架这一层拿不到每一页的地址参数
 //（另一个话题、另一个任务），也不该为了预热编一份出来（见 routePrefetch 的 warmPage）。
@@ -88,15 +93,11 @@ let startIdleWarm: number | undefined
 let stopIdleWarm: (() => void) | undefined
 
 onMounted(() => {
-  pollTimer = window.setInterval(refreshVisible, 30_000)
-  document.addEventListener('visibilitychange', refreshVisible)
   startIdleWarm = window.setTimeout(() => {
     stopIdleWarm = warmPagesWhenIdle(router, IDLE_WARM_PAGES)
   }, IDLE_WARM_DELAY_MS)
 })
 onUnmounted(() => {
-  document.removeEventListener('visibilitychange', refreshVisible)
-  if (pollTimer !== undefined) window.clearInterval(pollTimer)
   if (startIdleWarm !== undefined) window.clearTimeout(startIdleWarm)
   stopIdleWarm?.()
 })

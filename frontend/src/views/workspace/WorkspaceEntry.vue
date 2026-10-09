@@ -6,9 +6,7 @@ import { useDisplay } from 'vuetify'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import { t } from '@/i18n'
-import { loadCachedProjects } from '@/lib/projectCache'
 import { DEFAULT_SHELL, shellFor } from '@/lib/shell'
-import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectSidebar from '@/views/workspace/ProjectSidebar.vue'
 
@@ -38,14 +36,12 @@ const legacyTopic = computed(() => (route.query.topic ? String(route.query.topic
 // 第一屏落哪由**这个项目的壳**说了算（default 壳说：项目总览）。所以这里等的不再是
 // 话题列表，而是**壳**——两件事，前一版把它们混成了一件，因为那时第一屏是个常量。
 //
-// 壳跟着项目行来，而项目行有快慢两种到货方式：这个浏览器上次已经见过这个项目时
-// 是**同步**的（projectCache，App.vue 读的是同一份），从没见过时得等清单回来。
+// 壳跟着项目行来，而项目行有快慢两种到货方式：这个标签页上次已经见过这个项目时
+// 清单当场就在（lib/queryPersist 存的那份），从没见过时得等清单回来。
 // 所以下面分成「知道了」和「等到了」两问：前者立刻跳，后者等清单落定再跳，落定时
 // 还是没有这个项目（不是我的项目、或者清单压根加载失败）就按 default 跳——今天
 // 的行为，不能因为壳层让谁卡在这一屏。
-const shell = computed(
-  () => shellFor(loadCachedProjects(myHandle()), props.projectId) ?? shellFor(store.projects, props.projectId)
-)
+const shell = computed(() => shellFor(store.projects, props.projectId))
 const shellSettled = computed(() => shell.value !== null || store.projects.length > 0 || store.projectsSettled)
 
 watch(

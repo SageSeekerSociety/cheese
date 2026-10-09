@@ -5,13 +5,15 @@ import type { RouteLocationRaw, RouteRecordRaw } from 'vue-router'
  *  根路由守卫用它，会话恢复层（components/common/SessionRestoreGate.vue）也用它
  *  ——弱网下恢复成功时首屏那次导航早就结束了，得把这份决定重走一遍。 */
 export async function landingForMember(): Promise<RouteLocationRaw> {
-  const [{ listProjects }, { workspaceProject }, { lastOpenedProjectId }] = await Promise.all([
-    import('@/api'),
+  const [{ queryClient }, { projectsQuery }, { workspaceProject }, { lastOpenedProjectId }] = await Promise.all([
+    import('@/lib/queryClient'),
+    import('@/queries/projects'),
     import('@/components/common/Navigation/destinations'),
     import('@/stores/workspace'),
   ])
   try {
-    const projects = (await listProjects()).data
+    // 和左边栏读的是同一份：刚读过就不再问。
+    const projects = await queryClient.fetchQuery(projectsQuery())
     const projectId = workspaceProject(projects, null, lastOpenedProjectId())
     if (projectId) return { name: 'workspace-project', params: { projectId } }
   } catch {

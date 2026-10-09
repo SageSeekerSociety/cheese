@@ -1,6 +1,6 @@
 // The HTTP transport every endpoint in `api.ts` rides on: the auth header, the
 // GET retry/backoff, the read budget, and the conditional-GET plumbing (see
-// `requestConditional`). Split out of `api.ts`, which was long past its size cap
+// `readSince`). Split out of `api.ts`, which was long past its size cap
 // and had stopped having one reason to change — this half knows about HTTP and
 // tokens, not about topics, projects or artifacts.
 import type { ApiEnvelope } from '../cx_types'
@@ -198,20 +198,6 @@ export async function refreshNow(): Promise<void> {
   await refreshSession()
 }
 
-// Room chrome, chat and the work panel request the same roster/task summary
-// on mount. Share only pending reads; the next refresh always goes to the server.
-const pendingRoomReads = new Map<string, Promise<unknown>>()
-export function roomRead<T>(path: string): Promise<T> {
-  const key = `${authToken()}:${path}`
-  const pending = pendingRoomReads.get(key)
-  if (pending) return pending as Promise<T>
-  const started = request<T>(path).finally(() => {
-    if (pendingRoomReads.get(key) === started) pendingRoomReads.delete(key)
-  })
-  pendingRoomReads.set(key, started)
-  return started
-}
-
 /** 这个文件里的每个端点都过它。飞书那一块在 `api/feishu.ts`，也用这一个（见那儿的说明）。 */
 export function request<T>(path: string, init?: RequestInit): Promise<T> {
   if ((init?.method ?? 'GET').toUpperCase() !== 'GET') return performRequest<T>(path, init)
@@ -236,7 +222,6 @@ function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
  *  (null when the server did not send one). `request<T>` throws the tag away. */
 async function performRequestFull<T>(path: string, init?: RequestInit): Promise<{ data: T; etag: string | null }> {
   const method = (init?.method ?? 'GET').toUpperCase()
-  if (method !== 'GET') pendingRoomReads.clear()
   await ensureFreshToken()
   // A 401 is retried once, for ANY method, after forcing a refresh — see
   // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
@@ -266,7 +251,7 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
     }
     if (res.status === 304) {
       // Only reachable for a caller that sent `If-None-Match` (see
-      // `requestConditional`). A 304 has no body, so this must come before
+      // `readSince`). A 304 has no body, so this must come before
       // `readJson`, which would choke on the empty stream.
       throw new NotModified(res.headers?.get?.('ETag') ?? null)
     }
@@ -333,41 +318,37 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
-    if (method !== 'GET') pendingRoomReads.clear()
-    return { data: envelope.data, etag: res.headers?.get?.('ETag') ?? null }
+      return { data: envelope.data, etag: res.headers?.get?.('ETag') ?? null }
   }
 }
 
-/** The result of a conditional GET: either a fresh `data` (with the `etag` to ask
- *  with next time), or `notModified` for a 304 — the caller's copy is current, so
- *  there is nothing to parse, assign, or re-render. */
-export interface ConditionalResult<T> {
-  notModified: boolean
-  data: T | null
-  etag: string | null
-}
+// 条件请求问到的版本号，挂在它那一份数据上：数据被缓存丢掉，版本号跟着没了。
+const etags = new WeakMap<object, string>()
 
-/** A GET that asks the server "has this changed since `etag`?".
+/** A GET that asks the server "has this changed since `previous`?".
  *
- *  Sends `If-None-Match` and turns a 304 into `{ notModified: true }` instead of an
- *  error. `cache: 'no-store'` keeps the decision in THIS code rather than in the
- *  browser's HTTP cache, which would answer the 304 transparently with a stored copy
- *  and make "nothing changed" indistinguishable from "here is the body again" — the
- *  whole point is to skip the parse and the store write on an unchanged poll. */
-export function requestConditional<T>(path: string, etag: string | null): Promise<ConditionalResult<T>> {
-  const headers: Record<string, string> = etag ? { 'If-None-Match': etag } : {}
+ *  `previous` is the copy the caller holds (the query cache's current data). Its
+ *  ETag goes out as `If-None-Match`; a 304 hands `previous` itself back, so an
+ *  unchanged poll costs no parse, no new object and no re-render. Without a
+ *  `previous` (first read, cache cleared) it is an ordinary read.
+ *
+ *  `cache: 'no-store'` keeps the decision in THIS code rather than in the
+ *  browser's HTTP cache, which would answer the 304 transparently with a stored
+ *  copy and make "nothing changed" indistinguishable from "here is the body
+ *  again". */
+export function readSince<T extends object>(path: string, previous: T | undefined): Promise<T> {
+  const etag = previous ? etags.get(previous) : undefined
   return withinBudget(async (signal) => {
     try {
       const { data, etag: next } = await performRequestFull<T>(path, {
-        headers,
+        headers: etag ? { 'If-None-Match': etag } : {},
         cache: 'no-store',
         signal,
       })
-      return { notModified: false, data, etag: next }
+      if (next) etags.set(data, next)
+      return data
     } catch (error) {
-      if (error instanceof NotModified) {
-        return { notModified: true, data: null, etag: error.etag ?? etag }
-      }
+      if (error instanceof NotModified && previous) return previous
       throw error
     }
   }, READ_BUDGET_MS)

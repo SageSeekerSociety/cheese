@@ -3,10 +3,11 @@
 import type { TodoItem } from '@/cx_types'
 import type { TaskRelated } from '@/types/taskOrigin'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
 import { getTaskRelated, retryTaskOpening } from '@/api/tasks'
-import { fetchTopicProgress } from '@/lib/topicPanelCache'
+import { roomProgressQuery } from '@/queries/room'
 
 /** 芝士在干活时，清单多久重取一次。 */
 const CHECKLIST_EVERY_MS = 5000
@@ -30,34 +31,30 @@ export function useTaskOverview(opts: {
     }
   }
 
-  // 清单只在这一轮跑着的时候有：它说的是「此刻在做哪一步」。
-  const checklist = ref<TodoItem[]>([])
-  let timer: ReturnType<typeof setInterval> | undefined
-  async function loadChecklist() {
-    const id = opts.taskId()
-    if (!id) return
-    try {
-      const progress = await fetchTopicProgress(id, { fresh: true })
-      if (opts.taskId() === id && opts.working()) checklist.value = progress.items ?? []
-    } catch {
-      // 同上。
-    }
-  }
-  watch(
-    () => [opts.taskId(), opts.working()] as const,
-    ([id, working]) => {
-      clearInterval(timer)
-      timer = undefined
-      if (!id || !working) {
-        checklist.value = []
-        return
+  // 清单只在这一轮跑着的时候有：它说的是「此刻在做哪一步」。跑着时每 5 秒问一次。
+  const progress = useQuery(
+    computed(() => {
+      const id = opts.taskId() ?? ''
+      return {
+        ...roomProgressQuery(id),
+        enabled: !!id && opts.working(),
+        refetchInterval: CHECKLIST_EVERY_MS,
+        staleTime: 0,
       }
-      void loadChecklist()
-      timer = setInterval(() => void loadChecklist(), CHECKLIST_EVERY_MS)
+    })
+  )
+  // 上一轮留下的那份清单不算：说的是那时候在做的事。只认这一轮开始之后问到的。
+  const since = ref(0)
+  watch(
+    () => opts.working(),
+    (working) => {
+      if (working) since.value = Date.now()
     },
     { immediate: true }
   )
-  onBeforeUnmount(() => clearInterval(timer))
+  const checklist = computed<TodoItem[]>(() =>
+    opts.working() && progress.dataUpdatedAt.value >= since.value ? progress.data.value?.items ?? [] : []
+  )
 
   watch(
     () => opts.taskId(),

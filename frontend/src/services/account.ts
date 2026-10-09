@@ -4,15 +4,12 @@ import type { User } from '@/types/users'
 import { computed, ref } from 'vue'
 
 import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale } from '@/i18n'
-import { clearBlockCache } from '@/lib/blockCache'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
-import { clearHeldTasks } from '@/lib/heldTasks'
-import { clearPageCache } from '@/lib/pageCache'
-import { resetPreviewPointerCache } from '@/lib/previewPointer'
+import { queryClient } from '@/lib/queryClient'
+import { forgetPersistedQueries } from '@/lib/queryPersist'
 import { resetRoomLink } from '@/lib/roomLink'
 import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
-import { clearTopicPanelCache } from '@/lib/topicPanelCache'
 import { UserApi } from '@/network/api/users'
 import { disablePush } from '@/services/webPush'
 import { resetFeedbackCaches } from '@/stores/feedback'
@@ -62,8 +59,9 @@ function storedUserId(): number | undefined {
  *   建键，请求头不进键，后端也没发 `Vary` —— 所以 `GET /api/projects` 全浏览器只
  *   有一份。它是 NetworkFirst、五秒拿不到响应就回退缓存，于是一次慢请求会把上一
  *   个人的数据画到这个人屏幕上。
- * - **页面缓存**住在内存里，下一个人打开总览会先看到上一个人的项目名，然后才被
- *   后台刷新盖掉 —— 那一眼已经泄露了。
+ * - **服务器数据的缓存**（lib/queryClient）住在内存里，项目清单还在本标签页存了一份：
+ *   下一个人打开总览会先看到上一个人的项目名，然后才被后台刷新盖掉 —— 那一眼已经
+ *   泄露了。
  * - **反馈那三份**（stores/feedback.ts 的公开列表 / 我的反馈 / 详情）也都是「同一
  *   台机器上的下一个人会先看到」的那种：其中「我的反馈」和详情是**按人**的，公开
  *   列表虽然不是私密数据，但它记着这个人刚翻过哪一页。
@@ -77,20 +75,16 @@ function storedUserId(): number | undefined {
  * 认不出新身份时（OAuth 回调只给令牌，用户信息随后才拉）当作换了人：那条路径只在
  * 一次全新的登录里走到，宁可多清一次。
  */
-/** 话题里的几份内存缓存：消息窗口、工作面板的进度/成员/派出的活、预览指针，都是这个人的房间内容；
- *  还有这个页面的房间连接，连着的是上一个人看着的那些房间。 */
-function clearRoomCaches(): void {
-  clearBlockCache()
-  clearTopicPanelCache()
-  clearHeldTasks()
-  resetPreviewPointerCache()
+/** 这个人看得到的服务器数据，和这个页面的房间连接（连着的是上一个人看着的那些房间）。 */
+function forgetServerData(): void {
+  queryClient.clear()
+  forgetPersistedQueries()
   resetRoomLink()
 }
 
 export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next: number | undefined): boolean {
   if (previous !== undefined && next !== undefined && previous === next) return false
-  clearPageCache()
-  clearRoomCaches()
+  forgetServerData()
   // 反馈那三份：不按人分，而且其中两份装的就是「按人」的东西。
   resetFeedbackCaches()
   // 输入框草稿也带着上一个人的话（lib/composerDrafts.ts），而且它的键里只有话题
@@ -410,11 +404,9 @@ export class AccountService {
     if (typeof caches !== 'undefined') {
       void caches.delete(API_CACHE).catch(() => {})
     }
-    // 同理，页面缓存住在内存里，退出登录不清就还在：下一个人打开总览会先看到上
-    // 一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。
-    clearPageCache()
-    // 话题里那几份同理。
-    clearRoomCaches()
+    // 同理，服务器数据的缓存住在内存里，退出登录不清就还在：下一个人打开总览会先
+    // 看到上一个人的项目名，然后才被后台刷新盖掉——那一眼已经泄露了。
+    forgetServerData()
     // 反馈那三份同理，而且它们更直接：「我的反馈」和详情装的就是这个人自己那几条。
     resetFeedbackCaches()
     // 输入框草稿同样：它是 localStorage 里的一句半句话，属于上一个人。

@@ -9,7 +9,7 @@
 // 没有闸的地方（页面没提供），占闸是空操作，组件照旧自己加载自己显示。
 import type { InjectionKey, Ref } from 'vue'
 
-import { computed, getCurrentInstance, inject, onBeforeUnmount, provide, ref } from 'vue'
+import { computed, getCurrentInstance, inject, onBeforeUnmount, provide, ref, watch } from 'vue'
 
 type Release = () => void
 
@@ -49,4 +49,15 @@ export function holdRevealGate(): Release {
   const release = gate.hold()
   onBeforeUnmount(release)
   return release
+}
+
+/** 在 setup 里调用：占住所在页面的闸，直到 `settled()` 为真（这一页要的数据第一次到了，或者没取到）。 */
+export function holdRevealUntil(settled: () => boolean): void {
+  if (settled()) return
+  const release = holdRevealGate()
+  const stop = watch(settled, (done) => {
+    if (!done) return
+    release()
+    stop()
+  })
 }

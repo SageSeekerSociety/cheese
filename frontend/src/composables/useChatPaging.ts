@@ -13,7 +13,7 @@ import type { Topic } from '../cx_types'
 import { nextTick, ref, watch } from 'vue'
 
 import { ApiError, listBlocks } from '../api'
-import { setCachedWindow } from '../lib/blockCache'
+import { setCachedWindow } from '../queries/blocks'
 import { PAGE_SIZE, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
 import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
 

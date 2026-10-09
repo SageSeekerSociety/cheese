@@ -10,15 +10,18 @@ import type { TopicComputeProfile } from '../types/compute'
 import type { MenuAction } from './common/menuAction'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
-import { addTopicMember, getTopicComputeProfile, removeTopicMember } from '../api'
+import { addTopicMember, removeTopicMember } from '../api'
 import { useRowMenu } from '../composables/useRowMenu'
 import { t } from '../i18n'
 import { memberName } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { whenIdle } from '../lib/idle'
-import { cachedTopicPanel, fetchTopicMembers } from '../lib/topicPanelCache'
+import { queryClient } from '../lib/queryClient'
+import { keys } from '../queries/keys'
+import { computeProfileQuery, roomMembersQuery } from '../queries/room'
 import { getAvatarUrl } from '../utils/materials'
 
 import AdaptiveMenu from './common/AdaptiveMenu.vue'
@@ -51,31 +54,21 @@ const emit = defineEmits<{
   (e: 'manager', name: string | null): void
 }>()
 
-// 切回来过的房间先画上次那份名册，背后再重取（lib/topicPanelCache.ts）。
-const members = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
-const loading = ref(false)
+// 切回来过的房间先画上次那份名册，背后再重取（`queries/room`）。骨架只在手上什么
+// 都没有时出：有上次那份就照着它画，回来了原地换。
+const roster = useQuery(computed(() => roomMembersQuery(props.topicId)))
+const members = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
+const loading = computed(() => roster.isPending.value && !roster.isError.value)
 const busy = ref(false)
 const error = ref('')
 const open = ref(false)
 const addHandle = ref<string | null>(null)
 
-async function load() {
-  if (!props.topicId) return
-  // 骨架只在手上什么都没有时出：有上次那份（缓存、或刚改过名册之后的重取）就照着它
-  // 画，回来了原地换。
-  loading.value = !members.value.length
-  error.value = ''
-  try {
-    const payload = await fetchTopicMembers(props.topicId)
-    members.value = payload.data
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.room.roster.loadFailed')
-  } finally {
-    loading.value = false
-  }
-}
-
-void load()
+const loadError = computed(() =>
+  roster.error.value ? roster.error.value.message || t('work.room.roster.loadFailed') : ''
+)
+// 改名册那一下没成，压过「名册没读到」：那是此刻手上这一下的结果。
+const shownError = computed(() => error.value || loadError.value)
 
 watch(
   members,
@@ -86,27 +79,24 @@ watch(
   { immediate: true }
 )
 
-// 工作电脑：一次读回房间这一项和每个会话在哪台机器上。
-const machines = ref<TopicComputeProfile | null>(null)
-const machinesError = ref('')
-async function loadMachines() {
-  if (!props.topicId) return
-  machinesError.value = ''
-  try {
-    machines.value = await getTopicComputeProfile(props.topicId)
-  } catch (e) {
-    machinesError.value = e instanceof Error ? e.message : t('work.roomMachine.loadFailed')
-  }
+// 工作电脑：一次读回房间这一项和每个会话在哪台机器上（和任务页负责人那一格同一份）。
+// 它只喂两处：名册展开后的那一行，和页头那个「能访问整台机器」的标记。名册一展开就
+// 读，所以进房间这一下没必要挤在首屏前 —— 推到浏览器空下来再问，标记晚一点补上。
+const machinesWanted = ref(false)
+const machinesRead = useQuery(
+  computed(() => ({ ...computeProfileQuery(props.topicId), enabled: machinesWanted.value && !!props.topicId }))
+)
+const machines = computed<TopicComputeProfile | null>(() => machinesRead.data.value ?? null)
+const machinesError = computed(() =>
+  machinesRead.error.value ? machinesRead.error.value.message || t('work.roomMachine.loadFailed') : ''
+)
+function loadMachines() {
+  if (!machinesWanted.value) machinesWanted.value = true
+  else void queryClient.invalidateQueries({ queryKey: keys.roomComputeProfile(props.topicId) })
 }
 let cancelIdleLoad: (() => void) | null = null
 onMounted(() => {
-  // 工作电脑这一项只喂两处：名册展开后的那一行，和页头那个「能访问整台机器」的标记。
-  // 名册一展开（下面的 watch）会立刻读一次，所以进房间这一下没必要挤在首屏前 —— 推到
-  // 浏览器空下来再问，标记晚一点补上，读到的仍是同一份。
-  const tid = props.topicId
-  cancelIdleLoad = whenIdle(() => {
-    if (props.topicId === tid) void loadMachines()
-  })
+  cancelIdleLoad = whenIdle(() => (machinesWanted.value = true))
   window.addEventListener('project-compute-updated', loadMachines)
 })
 onBeforeUnmount(() => {
@@ -114,7 +104,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('project-compute-updated', loadMachines)
 })
 watch(open, (value) => {
-  if (value) void loadMachines()
+  if (value) loadMachines()
 })
 watch(
   () => (machines.value?.visibility.machine_access ? t('work.roomMachine.wholeMachineNotice') : null),
@@ -191,7 +181,8 @@ async function guard<T>(fn: () => Promise<T>): Promise<void> {
   error.value = ''
   try {
     await fn()
-    await load()
+    // 写名册的那一下已经把名册标过期了（api/topicMembers），这里等新的一份回来再收起。
+    await roster.refetch()
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('work.room.roster.failed')
   } finally {
@@ -254,11 +245,11 @@ async function onRemove(handle: string) {
         <span class="roster__count">{{ countLabel }}</span>
       </div>
 
-      <div v-if="error" class="roster__error">{{ error }}</div>
+      <div v-if="shownError" class="roster__error">{{ shownError }}</div>
 
       <LoadingSkeleton v-if="loading" variant="roster" />
       <BaseEmptyState
-        v-else-if="!members.length && !error"
+        v-else-if="!members.length && !shownError"
         size="inline"
         class="roster__empty"
         :title="t('work.room.roster.empty')"

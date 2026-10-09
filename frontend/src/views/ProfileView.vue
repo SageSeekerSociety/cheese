@@ -22,13 +22,14 @@ import type {
 } from '@/cx_types'
 import type { ActivityWeek } from '@/lib/activityYear'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onActivated, ref, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { useCachedResource } from '@/composables/useCachedResource'
+import { holdRevealUntil } from '@/composables/useRevealGate'
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 import { usePageTitle } from '@/composables/usePageTitle'
 
@@ -46,6 +47,7 @@ import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear
 import { teammateName } from '@/lib/agentNames'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
+import { patchQuery } from '@/lib/queryClient'
 import { myHandle } from '@/me'
 
 defineOptions({ name: 'ProfileView' })
@@ -69,19 +71,35 @@ interface Page {
   recent: ProfileTopic[] | null
 }
 
-const { data, loading, error, refresh } = useCachedResource(
-  () => (props.projectId ? `profile:${props.projectId}:${props.handle}` : `profile:${props.handle}`),
-  async (): Promise<Page> => {
-    const [profile, member, recent] = await Promise.all([
-      getUserProfile(props.handle),
-      props.projectId ? getMemberSummary(props.projectId, props.handle).catch(() => null) : Promise.resolve(null),
-      getUserTopics(props.handle, { limit: RECENT_TOPICS })
-        .then((r) => r.topics)
-        .catch(() => null),
-    ])
-    return { profile, member, recent }
-  }
+// 回到看过的主页先照着上一次的画，背后重取（lib/queryClient）。
+const pageKey = computed(() => ['user', props.handle, 'profile', props.projectId ?? null] as const)
+const page = useQuery(
+  computed(() => ({
+    queryKey: pageKey.value,
+    queryFn: async (): Promise<Page> => {
+      const [profile, member, recent] = await Promise.all([
+        getUserProfile(props.handle),
+        props.projectId ? getMemberSummary(props.projectId, props.handle).catch(() => null) : Promise.resolve(null),
+        getUserTopics(props.handle, { limit: RECENT_TOPICS })
+          .then((r) => r.topics)
+          .catch(() => null),
+      ])
+      return { profile, member, recent }
+    },
+  }))
 )
+holdRevealUntil(() => !page.isPending.value)
+// 保活着的页面回到前台（App.vue 的 keptAlivePages）：离开期间过期了就再问一次。
+onActivated(() => {
+  if (page.isStale.value) void page.refetch()
+})
+const data = page.data
+// 只在没有任何内容可画时转圈、报错；有内容时背后那次没取到就照常显示。
+const loading = page.isPending
+const error = computed(() => (page.data.value ? null : page.error.value))
+function refresh() {
+  void page.refetch()
+}
 
 const profile = computed(() => data.value?.profile ?? null)
 const member = computed(() => data.value?.member ?? null)
@@ -200,16 +218,17 @@ function topicDot(status: string): string {
 
 // 先从列表里拿掉，再去删；服务器不肯就放回原处。
 async function forget(note: ProfileUnderstanding) {
+  const key = pageKey.value
   const notes = data.value?.profile.understanding
-  if (!notes) return
-  const at = notes.findIndex((n) => n.id === note.id)
+  const at = notes?.findIndex((n) => n.id === note.id) ?? -1
   if (at < 0) return
-  notes.splice(at, 1)
+  const withNotes = (change: (notes: ProfileUnderstanding[]) => ProfileUnderstanding[]) =>
+    patchQuery<Page>(key, (held) => ({ ...held, profile: { ...held.profile, understanding: change(held.profile.understanding ?? []) } }))
+  await withNotes((list) => list.filter((n) => n.id !== note.id))
   try {
     await deleteUnderstanding(note.id)
   } catch {
-    const now = data.value?.profile.understanding
-    if (now && !now.some((n) => n.id === note.id)) now.splice(Math.min(at, now.length), 0, note)
+    await withNotes((list) => (list.some((n) => n.id === note.id) ? list : [...list.slice(0, at), note, ...list.slice(at)]))
     toast.error(t('users.profile.notes.deleteFailed'))
   }
 }

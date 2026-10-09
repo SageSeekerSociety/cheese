@@ -6,6 +6,7 @@ import type { CardPhase } from '@/lib/topicState'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -30,13 +31,13 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
-import { heldTask } from '@/lib/heldTasks'
+import { queryClient } from '@/lib/queryClient'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
-import { cachedTopicPanel, fetchTopicMembers } from '@/lib/topicPanelCache'
-import { onTopicRosterChange } from '@/lib/topicRosterChanges'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
+import { roomRowQuery, usePlace } from '@/queries/project'
+import { refreshTasks, roomMembersQuery } from '@/queries/room'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
@@ -121,11 +122,18 @@ function backToRoom() {
 // and the project overview on 综合's overview (reload what 芝士 maintained).
 const activityTick = ref(0)
 
+// URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
+const { place: selectedTopic, resolving: placeResolving } = usePlace(
+  computed(() => store.projectId),
+  computed(() => props.topicId),
+  computed(() => store.topics)
+)
+
 // 频道概览：置顶、任务、综合的项目总览。
 const channelOverview = useChannelOverview({
   channelId: () => (props.taskId ? null : props.topicId),
   projectId: () => props.projectId,
-  general: () => store.placeById(props.topicId)?.kind === 'root',
+  general: () => selectedTopic.value?.kind === 'root',
   tick: () => activityTick.value,
   reportError: (e) => store.reportError(e, t('work.channel.pins.unpinFailed')),
 })
@@ -188,8 +196,6 @@ useEscapeLayer(
 
 const AUTHOR = myHandle()
 
-// URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
-const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId))
 
 // ---- 任务页 ----
 // 页头、概览、能不能说话都读这一份；对话和面板的其余几格按任务的 id 自己读。
@@ -212,7 +218,7 @@ let placeOpened = false
 watch(
   () => props.taskId,
   (taskId) => {
-    taskPage.reset((taskId && heldTask(taskId)) || null)
+    taskPage.reset()
     void taskPage.load()
     if (placeOpened) store.markRead(taskId ?? props.topicId)
   },
@@ -290,7 +296,7 @@ onUnmounted(() => cancelRouteWarm?.())
 // one while this id is being asked about directly — the path a deep link takes.
 const resolving = computed(
   () =>
-    !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || store.isResolvingPlace(props.topicId))
+    !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || placeResolving.value)
 )
 
 function openTopic(topicId: string) {
@@ -444,9 +450,8 @@ function handleStateChanged(resource: string, id?: string) {
     // 清单（400 多个话题近 300KB）。没指名（老后端、或没带 id 的调用点）退回整块重取。
     if (id) void store.refreshTopicRow(id)
     else void store.refreshTopics()
-    store.noteTasksChanged()
+    void refreshTasks(props.topicId, props.projectId)
     if (props.taskId) void taskPage.load(true)
-    else void channelOverview.loadTasks()
   } else if (resource === 'pins') void channelOverview.loadPins()
   else if (resource === 'accept') reloadAccept()
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
@@ -455,7 +460,7 @@ function handleStateChanged(resource: string, id?: string) {
   else if (resource === 'skills') chatColumn.value?.reloadSkills()
   // 任务开始、交付、关闭：任务页跟着变，侧栏那几行也是。
   else if (resource === 'tasks') {
-    store.noteTasksChanged()
+    void refreshTasks(props.topicId, props.projectId)
     if (props.taskId) void taskPage.load(true)
   }
   // 频道里有支线长了一条：概览里「支线」那一格跟着变（主线上那一行对话栏自己换）。
@@ -524,7 +529,10 @@ const unreadOnOpen = store.unreadMap[props.topicId]?.messages ?? 0
 // 友一个规矩：署作者，不署「这个房间的那位」——一个房间可以先后交给两个队友。
 // 那一格自己不拉名册，所以在这里拉一次传下去。AI 队友的名字和对话栏同一个出处
 // （`agentNames`）：已经不在这间房里的队友，项目名册上还叫得出。
-const roomMembers = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
+// 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。名册抽屉里加了人、
+// 移了人，这份当场重读：刚请进来的队友在「现场」那一格也要叫得出名字。
+const rosterRead = useQuery(computed(() => roomMembersQuery(props.topicId)))
+const roomMembers = computed<TopicMemberRow[]>(() => rosterRead.data.value?.data ?? [])
 // 任务那一栏「做这件事的队友」能挑的几位：这间房名册上的 AI 队友。换的时候后端也只认
 // 名册上那个座位，所以给的就是名册。
 const roomAgents = computed<TopicMemberRow[]>(() => roomMembers.value.filter((m) => m.agent))
@@ -532,22 +540,6 @@ const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
 }))
-async function loadMemberNames() {
-  try {
-    roomMembers.value = (await fetchTopicMembers(props.topicId)).data
-  } catch {
-    // 名册拉不到，现场那一格就按 handle 署名——比空白好，也比报错好。
-  }
-}
-void loadMemberNames()
-
-// 名册抽屉里加了人、移了人，这份跟着重拉：刚请进来的队友在「现场」那一格也要叫得出名字。
-onUnmounted(
-  onTopicRosterChange((topicId) => {
-    if (topicId === props.topicId) void loadMemberNames()
-  })
-)
-
 // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
 // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
 // 等于对每一条支线都白打一次会 404 的请求。
@@ -556,8 +548,8 @@ onUnmounted(
 // task's page in its channel instead of saying the room is gone.
 const redirecting = ref(false)
 async function openPlace() {
-  await store.loadPlace(props.topicId)
-  if (store.placeById(props.topicId)) {
+  if (!selectedTopic.value) await queryClient.fetchQuery(roomRowQuery(props.topicId)).catch(() => null)
+  if (selectedTopic.value) {
     placeOpened = true
     store.markRead(conversationId.value)
     return

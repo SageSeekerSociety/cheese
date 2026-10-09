@@ -23,7 +23,7 @@ import type { BlockWindow } from '../lib/blockPaging'
 import type { RoomStateFrame } from '../types/roomSocket'
 
 import { ensureFreshToken, listBlocks } from '../api'
-import { setCachedWindow } from '../lib/blockCache'
+import { setCachedWindow } from '../queries/blocks'
 import { applyLiveChanges, PAGE_SIZE } from '../lib/blockPaging'
 import { resyncTail } from '../lib/tailResync'
 

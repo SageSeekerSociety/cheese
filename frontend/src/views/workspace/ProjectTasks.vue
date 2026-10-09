@@ -8,18 +8,18 @@
 import type { TaskFilter } from '@/api/tasks'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useInfiniteQuery, useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { pageProjectTasks } from '@/api/tasks'
 import { newTask } from '@/commands/topicActions'
 import { memberName } from '@/lib/agentNames'
 import { liveTasks } from '@/lib/board'
-import { readProjectTasks } from '@/lib/projectTasks'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
+import { closedProjectTasksQuery, openProjectTasksQuery } from '@/queries/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectTasksView from '@/views/workspace/ProjectTasksView.vue'
 
@@ -29,91 +29,41 @@ const route = useRoute()
 const router = useRouter()
 const store = useWorkspaceStore()
 
-const tasks = ref<RoomTask[]>([])
-const loading = ref(true)
-const failed = ref(false)
-
-async function load() {
-  const pid = props.projectId
-  failed.value = false
-  try {
-    const listed = await readProjectTasks(pid, { maxAgeMs: 2_000, open: true })
-    if (props.projectId === pid) tasks.value = listed.data
-  } catch (e) {
-    // 401/403 不是「没读出来」：登录没了，或者人已经不在这个项目里。重试换不来别的
-    // 答案，交给整页那一屏（ProjectAccessNotice），它给的是去登录的路。
-    if (props.projectId === pid && !store.noteAccess(e)) failed.value = true
-  } finally {
-    if (props.projectId === pid) loading.value = false
-  }
-}
-onMounted(load)
-watch(
-  () => props.projectId,
-  () => {
-    loading.value = true
-    tasks.value = []
-    void load()
-  }
-)
+// 和侧栏、项目总览同一份：刚读过就直接画，任务变了（房间里的通知）就重读。
+const openRead = useQuery(computed(() => openProjectTasksQuery(props.projectId)))
+const tasks = computed<RoomTask[]>(() => openRead.data.value?.data ?? [])
+const loading = computed(() => openRead.isPending.value && !openRead.isError.value)
 
 const channelId = computed(() => (typeof route.query.channel === 'string' ? route.query.channel : null))
 
 // ---- 已关闭的，一页一页 ----
-const CLOSED_PAGE = 50
 const closed = ref(false)
 const whose = ref<TaskFilter>('all')
-const closedTasks = ref<RoomTask[]>([])
-const closedCounts = ref<Record<TaskFilter, number> | null>(null)
-const closedNext = ref<string | null>(null)
-const closedHasMore = ref(false)
-const closedLoading = ref(false)
-const closedFailed = ref(false)
-// 筛选一换，之前在飞的那一页就作废。
-let closedRead = 0
+const closedRead = useInfiniteQuery(
+  computed(() => ({
+    ...closedProjectTasksQuery(props.projectId, { channel: channelId.value, whose: whose.value }),
+    enabled: closed.value,
+  }))
+)
+const closedTasks = computed<RoomTask[]>(() => closedRead.data.value?.pages.flatMap((page) => page.data) ?? [])
+const closedCounts = computed<Record<TaskFilter, number> | null>(() => closedRead.data.value?.pages[0]?.counts ?? null)
+const closedHasMore = computed(() => closedRead.hasNextPage.value)
+const closedLoading = computed(() => closedRead.isFetching.value)
+const closedFailed = computed(() => closedRead.isError.value)
 
-async function readClosed(first: boolean) {
-  if (!first && (closedLoading.value || !closedHasMore.value)) return
-  const mine = ++closedRead
-  const pid = props.projectId
-  closedLoading.value = true
-  closedFailed.value = false
-  try {
-    const page = await pageProjectTasks(pid, {
-      status: 'closed',
-      limit: CLOSED_PAGE,
-      before: first ? null : closedNext.value,
-      channel: channelId.value,
-      whose: whose.value === 'all' ? null : whose.value,
-    })
-    if (mine !== closedRead) return
-    closedTasks.value = first ? page.data : [...closedTasks.value, ...page.data]
-    closedCounts.value = page.counts
-    closedNext.value = page.next
-    closedHasMore.value = page.has_more
-  } catch (e) {
-    if (mine === closedRead && !store.noteAccess(e)) closedFailed.value = true
-  } finally {
-    if (mine === closedRead) closedLoading.value = false
-  }
-}
+// 401/403 不是「没读出来」：登录没了，或者人已经不在这个项目里。重试换不来别的答案，
+// 交给整页那一屏（ProjectAccessNotice），它给的是去登录的路。
+const denied = (e: Error | null) => !!e && store.noteAccess(e)
+watch(() => openRead.error.value, denied)
+watch(() => closedRead.error.value, denied)
+const failed = computed(() => openRead.isError.value && !store.accessDenied)
+
 // 下一页没读成时，「重试」就是再读一次这一页。
 function moreClosed() {
-  if (closedFailed.value) closedHasMore.value = true
-  void readClosed(false)
+  if (closedRead.isFetchingNextPage.value) return
+  if (closedRead.isError.value && !closedRead.data.value) void closedRead.refetch()
+  else void closedRead.fetchNextPage()
 }
-watch(
-  () => [closed.value, whose.value, channelId.value, props.projectId] as const,
-  ([showClosed]) => {
-    closedTasks.value = []
-    closedCounts.value = null
-    closedNext.value = null
-    closedHasMore.value = false
-    closedFailed.value = false
-    closedRead += 1
-    if (showClosed) void readClosed(true)
-  }
-)
 function pickChannel(id: string | null) {
   const query = { ...route.query }
   if (id) query.channel = id
@@ -167,7 +117,7 @@ function create() {
     :avatars="avatars"
     :me="myHandle()"
     :loading="loading || (closed && closedCounts === null && !closedFailed)"
-    :failed="failed || (closed && closedFailed && !closedTasks.length)"
+    :failed="failed || (closed && closedFailed && !closedTasks.length && !store.accessDenied)"
     :closed-tasks="closedTasks"
     :closed-counts="closedCounts"
     :closed-has-more="closedHasMore"
@@ -175,7 +125,7 @@ function create() {
     :closed-failed="closedFailed"
     @open-task="openTask"
     @new-task="create"
-    @retry="closed ? moreClosed() : load()"
+    @retry="closed ? moreClosed() : openRead.refetch()"
     @pick-channel="pickChannel"
     @more="moreClosed"
   />

@@ -40,6 +40,7 @@ import router from './router'
 import i18n from '@/i18n'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
+import { persistProjectList } from '@/lib/queryPersist'
 // Plugins
 import { registerPlugins } from '@/plugins'
 import vuetify from '@/plugins/vuetify'
@@ -47,6 +48,9 @@ import AccountService from '@/services/account'
 import { watchForStaleBuild } from '@/services/staleBuild'
 
 AccountService.init()
+
+// 上次的项目清单先放回缓存，左边栏冷打开时当场就有。
+persistProjectList()
 
 // In the desktop app the frame is not selectable text and has no browser menu.
 behaveAsDesktopApp()

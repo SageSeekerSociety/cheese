@@ -4,11 +4,15 @@ import type { RoomTask, TopicMemberRow } from '@/cx_types'
 import type { TopicComputeProfile } from '@/types/compute'
 
 import { computed, ref } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
-import { ApiError, getTopicComputeProfile } from '@/api'
-import { closeTask, compareDocumentVersions, getTask, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
+import { ApiError } from '@/api'
+import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
+import { patchQuery } from '@/lib/queryClient'
 import { myHandle } from '@/me'
+import { keys } from '@/queries/keys'
+import { computeProfileQuery, roomTaskQuery } from '@/queries/room'
 
 export interface TaskComparison {
   before: string
@@ -17,44 +21,38 @@ export interface TaskComparison {
 
 export function useTaskPage(opts: { taskId: () => string | undefined; people: () => TopicMemberRow[] }) {
   const ME = myHandle()
-  const task = ref<RoomTask | null>(null)
-  const loading = ref(false)
-  const loadError = ref<string | null>(null)
+  // 别处已经读过这一件（侧栏、任务清单、对话里那一块带着的）就先照着它画，读回来再原地
+  // 换——不先清空成一个转圈（`queries/room`）。
+  const read = useQuery(
+    computed(() => {
+      const id = opts.taskId() ?? ''
+      return { ...roomTaskQuery(id), enabled: !!id }
+    })
+  )
+  const task = computed<RoomTask | null>(() => read.data.value ?? null)
+  const loading = computed(() => !!opts.taskId() && read.isPending.value)
+  const loadError = computed<string | null>(() => {
+    const e = read.error.value
+    if (!e || read.data.value) return null
+    return e instanceof ApiError && e.status === 404 ? t('work.task.notFound') : t('work.task.loadFailed')
+  })
 
-  // 改动落下的次数。一次读在改动之前发出、在它之后才回来，带回来的是改之前的样子：
-  // 刚点的「关闭」会被它盖回「进行中」，等下一次读才又跳回来。所以读发出之后有改动
-  // 落下，这次读就不算数——改动的回答本身就是更新的那一份。
-  let written = 0
+  /** 改动的回答就是更新的那一份：直接写进去。正在路上的那次读是改之前发出的，作废。 */
   function apply(changed: RoomTask) {
-    written += 1
-    // 改的时候人已经换到别的任务上去了：回答是那一件的，不往这一件上写。
-    if (task.value?.id === changed.id) task.value = { ...task.value, ...changed }
+    void patchQuery<RoomTask>(keys.roomTask(changed.id), (held) => ({ ...held, ...changed }))
   }
 
-  async function load(silent = false) {
-    const id = opts.taskId()
-    const seen = written
-    if (!id) return
-    if (!silent) loading.value = true
-    loadError.value = null
-    try {
-      const payload = await getTask(id)
-      if (opts.taskId() === id && seen === written) task.value = payload
-    } catch (e) {
-      if (opts.taskId() !== id) return
-      loadError.value = e instanceof ApiError && e.status === 404 ? t('work.task.notFound') : t('work.task.loadFailed')
-    } finally {
-      if (opts.taskId() === id) loading.value = false
-    }
+  /**
+   * 再读一次这件任务。`changed`：刚有了会改变它的事（推送说任务变了、一轮做完），正在
+   * 路上的那次读是那之前发出的，作废另读；否则正在读的那一次还没回来就等它。
+   */
+  async function load(changed = false) {
+    if (opts.taskId()) await read.refetch({ cancelRefetch: changed })
   }
 
-  /** 换到另一件任务。`seed` 是别处已经读过的那一行（频道的任务清单）：先照着它画，
-   *  读回来再原地换——不先清空成一个转圈。 */
-  function reset(seed: RoomTask | null = null) {
-    task.value = seed
-    loadError.value = null
-    machine.value = null
-    machineError.value = false
+  /** 换到另一件任务：上一件的报错、比较、电脑都不带过来。 */
+  function reset() {
+    machineWanted.value = false
     comparing.value = false
     comparison.value = null
     startError.value = null
@@ -163,17 +161,20 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     }
   }
 
-  // ---- 做它的电脑：负责人那一格点开时才读 ----
-  const machine = ref<TopicComputeProfile | null>(null)
-  const machineError = ref(false)
+  // ---- 做它的电脑：负责人那一格点开时才读（和房间名册里那一行同一份）----
+  const machineWanted = ref(false)
+  const machineRead = useQuery(
+    computed(() => {
+      const id = task.value?.id ?? ''
+      return { ...computeProfileQuery(id), enabled: !!id && machineWanted.value }
+    })
+  )
+  const machine = computed<TopicComputeProfile | null>(() => (machineWanted.value ? machineRead.data.value ?? null : null))
+  const machineError = computed(() => machineWanted.value && machineRead.isError.value)
   async function loadMachine() {
     if (!task.value) return
-    machineError.value = false
-    try {
-      machine.value = await getTopicComputeProfile(task.value.id)
-    } catch {
-      machineError.value = true
-    }
+    if (!machineWanted.value) machineWanted.value = true
+    else await machineRead.refetch()
   }
 
   // ---- 与开始时相比 ----

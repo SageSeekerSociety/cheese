@@ -276,6 +276,7 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
+import { useQuery } from '@tanstack/vue-query'
 
 import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
@@ -308,7 +309,7 @@ import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
-import { type AppVersion, createProject, getAppVersion, listProjects } from '@/api'
+import { type AppVersion, createProject, getAppVersion } from '@/api'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
@@ -340,7 +341,6 @@ import { landBootSplash } from '@/lib/desktopSplash'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { pageMotion } from '@/lib/pageMotion'
 import { randomTeammateName } from '@/lib/projectAgents'
-import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import {
   applyProjectOrder,
   type DropEdge,
@@ -349,6 +349,7 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
+import { projectsQuery, refreshProjects } from '@/queries/projects'
 import { NotificationsApi } from '@/network/api/notifications'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
@@ -430,9 +431,9 @@ function endPageMotion(event: AnimationEvent) {
   if (event.target === contentRef.value) contentRef.value?.classList.remove(...MOTION_CLASSES)
 }
 
-// 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
-// useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
-// 面看到的是一屏永远不再刷新的旧数据。
+// 名字来自各自组件里的 defineOptions({ name })。保活的页面回到前台时数据不会因为
+// 重新挂载而重取，所以这两页各自在 onActivated 里把过期的那份再问一次，不然回到
+// 页面看到的是一屏永远不再刷新的旧数据。
 const keptAlivePages = ['ProjectDocsView', 'ProfileView']
 
 // 确认身份的弹窗第一次被要用时才加载：大多数会话从不需要它
@@ -457,12 +458,16 @@ const hasSidebar = computed(() => currentRoute.matched.some((record) => record.c
 // Fusion merge (C): 项目来自我们的后端 (/api/projects)，在桌面 rail 上一个项目
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
 // (话题/群聊/doc/agent)。两端各拿到哪些格子由 Navigation/destinations.ts 说了算。
-const cxProjects = ref<Project[]>(loadCachedProjects(myHandle()))
+// 冷打开时上一次的清单从本标签页的存储里先拿出来（lib/queryPersist），rail 当场就有。
+const projectsRead = useQuery(computed(() => ({ ...projectsQuery(), enabled: AccountService.loggedIn })))
+const cxProjects = computed<Project[]>(() => (AccountService.loggedIn ? projectsRead.data.value ?? [] : []))
 
 // 「项目清单问完了」——成功、失败都算问过（和 workspace store 里那个同名标志一个
 // 意思）。第 1 步引导据此说「这个人一个项目都还没有」，不拿「手上是空的」当答案：
 // 冷启动时缓存本来就是空的，用它会先给老用户冒一句「从这里开一个项目」再收回去。
-const cxProjectsSettled = ref(false)
+// 失败也算问完了：这时候 rail 上确实一个项目都没有，和「这个人还没有项目」在界面上
+// 是同一件事——新建项目那条路本来也照常摆着。没登录的人没有清单，也算问完了。
+const cxProjectsSettled = computed(() => !AccountService.loggedIn || projectsRead.isFetched.value)
 
 // 服务端那份清单是 created_at desc，rail 画的是这个人自己拖出来的顺序。两者分开
 // 存：拖过之后再刷新项目列表，排法不会被服务端的顺序盖掉。
@@ -475,30 +480,18 @@ function reorderRail(movedId: string, targetId: string, edge: DropEdge) {
   saveProjectOrder(myHandle(), next)
 }
 
-async function loadCxProjects() {
-  // Public visitors have no project list; a 401 here would interrupt the landing page.
-  if (!AccountService.loggedIn) {
-    cxProjects.value = []
-    cxProjectsSettled.value = true
-    return
-  }
-  try {
-    cxProjects.value = (await listProjects()).data
-    saveCachedProjects(myHandle(), cxProjects.value)
-  } catch {
-    // 一次性提示：之前是一条常驻的 snackbar，现在并进全局 toast（§3.11）。
+// 一次性提示：之前是一条常驻的 snackbar，现在并进全局 toast（§3.11）。
+watch(
+  () => projectsRead.error.value,
+  (error) => {
+    if (!error) return
     const message = cxProjects.value.length ? t('work.projectList.stale') : t('work.projectList.unavailable')
     toast.warning(message, {
       duration: 8000,
-      action: { label: t('work.newProject.retry'), onClick: () => void loadCxProjects() },
+      action: { label: t('work.newProject.retry'), onClick: () => void projectsRead.refetch() },
     })
-  } finally {
-    // 失败也算问完了：这时候 rail 上确实一个项目都没有，和「这个人还没有项目」在界
-    // 面上是同一件事——新建项目那条路本来也照常摆着。
-    cxProjectsSettled.value = true
   }
-}
-onMounted(loadCxProjects)
+)
 
 // 首屏先画外壳（左栏），内容区等第一个路由画好再露出来。路由的懒加载 chunk 还没
 // 到的时候，项目侧栏也还没注册，内容区先按没有侧栏的宽度画出来，侧栏一到整块内容
@@ -556,19 +549,7 @@ onMounted(async () => {
 watch(
   () => workspace.projectId,
   (id) => {
-    if (id && !cxProjects.value.some((p) => p.id === id)) void loadCxProjects()
-  }
-)
-
-// The workspace store reads the same list after something changed it from inside
-// a project — archived, unarchived, handed over. Take its answer instead of
-// showing the rail's older copy until the next reload.
-watch(
-  () => workspace.projects,
-  (list) => {
-    if (!workspace.projectsSettled) return
-    cxProjects.value = list
-    saveCachedProjects(myHandle(), list)
+    if (id && AccountService.loggedIn && !cxProjects.value.some((p) => p.id === id)) void refreshProjects()
   }
 )
 
@@ -592,7 +573,7 @@ watch(
     // 排法是按 handle 存的，所以换了人就得换一份读进来——否则新登录的人看到的是
     // 上一个人的排法，直到下一次整页刷新。
     projectOrder.value = loadProjectOrder(myHandle())
-    void loadCxProjects()
+    if (AccountService.loggedIn) void projectsRead.refetch()
   }
 )
 
@@ -837,7 +818,7 @@ async function confirmNewProject() {
       newProjectAgentName.value.trim(),
       newProjectId.value
     )
-    await loadCxProjects()
+    await refreshProjects()
     newProjectDialog.value = false
     if (newProjectForgeKind.value === 'github_app') {
       router.push(`/projects/${project.id}/settings/repository`)

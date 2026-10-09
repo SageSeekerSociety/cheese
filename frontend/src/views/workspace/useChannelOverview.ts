@@ -4,13 +4,15 @@ import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
 
-import { ref, watch } from 'vue'
+import { computed, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
-import { listRoomTasks } from '@/api'
-import { listPins, unpinBlock } from '@/api/pins'
-import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
+import { unpinBlock } from '@/api/pins'
 import { RECENT_DONE } from '@/lib/channelTasks'
-import { fetchOpenTasks } from '@/lib/topicPanelCache'
+import { patchQuery, queryClient } from '@/lib/queryClient'
+import { keys } from '@/queries/keys'
+import { overviewQuery } from '@/queries/project'
+import { openRoomTasksQuery, pinsQuery, roomTasksQuery } from '@/queries/room'
 
 export function useChannelOverview(opts: {
   /** 正看着的频道；任务页上是 null，什么都不读。 */
@@ -22,67 +24,40 @@ export function useChannelOverview(opts: {
   tick: () => number
   reportError: (e: unknown) => void
 }) {
-  const tasks = ref<RoomTask[]>([])
-  const pins = ref<ChannelPin[]>([])
-  const overview = ref<PanelDocument | null>(null)
-  /** 项目总览现在写着什么：概览里只读地显示开头，要改就整份打开。 */
-  const overviewText = ref('')
-
-  async function loadTasks() {
-    const id = opts.channelId()
-    if (!id) return
-    try {
-      // 概览画的是还开着的，加上最近做完的几件：已经做完的是开着的十几倍，不整份读。
-      // 只要任务本身（limit: 0），不看任何一个块。
-      const [open, done] = await Promise.all([
-        fetchOpenTasks(id, { fresh: true }),
-        listRoomTasks(id, { limit: 0, status: 'closed', latest: RECENT_DONE }),
-      ])
-      if (opts.channelId() === id) tasks.value = [...open.data, ...done.data]
-    } catch {
-      // 任务列表是概览的一块；读不到就先空着，下一次动静会再读。
-    }
-  }
-  async function loadPins() {
-    const id = opts.channelId()
-    if (!id) return
-    try {
-      const listed = await listPins(id)
-      if (opts.channelId() === id) pins.value = listed
-    } catch {
-      // 同上。
-    }
-  }
-  async function loadOverview() {
-    if (!opts.general()) {
-      overview.value = null
-      overviewText.value = ''
-      return
-    }
-    try {
-      const { id } = await getProjectOverview(opts.projectId())
-      overview.value = { id, projectId: opts.projectId(), title: '' }
-      overviewText.value = await getDocumentText(id)
-    } catch {
-      overview.value = null
-      overviewText.value = ''
-    }
-  }
-
-  watch(
-    () => [opts.channelId(), opts.general()] as const,
-    ([id]) => {
-      tasks.value = []
-      pins.value = []
-      if (!id) return
-      void loadTasks()
-      void loadPins()
-      void loadOverview()
-    },
-    { immediate: true }
+  const channel = () => opts.channelId() ?? ''
+  // 概览画的是还开着的，加上最近做完的几件：已经做完的是开着的十几倍，不整份读。只要
+  // 任务本身（limit: 0），不看任何一个块。任务列表是概览的一块；读不到就先空着，下一次
+  // 动静会再读。
+  const openRead = useQuery(computed(() => ({ ...openRoomTasksQuery(channel()), enabled: !!opts.channelId() })))
+  const doneRead = useQuery(
+    computed(() => ({
+      ...roomTasksQuery(channel(), { limit: 0, status: 'closed', latest: RECENT_DONE }),
+      enabled: !!opts.channelId(),
+    }))
   )
+  const tasks = computed<RoomTask[]>(() => [...(openRead.data.value?.data ?? []), ...(doneRead.data.value?.data ?? [])])
+  const pinsRead = useQuery(computed(() => ({ ...pinsQuery(channel()), enabled: !!opts.channelId() })))
+  const pins = computed<ChannelPin[]>(() => pinsRead.data.value ?? [])
+  /** 综合里还有项目总览：概览里只读地显示开头，要改就整份打开。 */
+  const overviewRead = useQuery(
+    computed(() => ({ ...overviewQuery(opts.projectId()), enabled: !!opts.channelId() && opts.general() }))
+  )
+  const overview = computed<PanelDocument | null>(() => {
+    const id = opts.general() ? overviewRead.data.value?.id : null
+    return id ? { id, projectId: opts.projectId(), title: '' } : null
+  })
+  const overviewText = computed(() => (opts.general() ? overviewRead.data.value?.text ?? '' : ''))
+
+  function loadTasks() {
+    const id = opts.channelId()
+    if (id) void queryClient.invalidateQueries({ queryKey: keys.roomTasks(id) })
+  }
+  function loadPins() {
+    const id = opts.channelId()
+    if (id) void queryClient.invalidateQueries({ queryKey: keys.roomPins(id) })
+  }
   watch(opts.tick, () => {
-    if (opts.general()) void loadOverview()
+    if (opts.general()) void queryClient.invalidateQueries({ queryKey: keys.projectOverview(opts.projectId()) })
   })
 
   async function unpin(blockId: string) {
@@ -90,7 +65,7 @@ export function useChannelOverview(opts: {
     if (!id) return
     try {
       await unpinBlock(id, blockId)
-      pins.value = pins.value.filter((p) => p.block.id !== blockId)
+      await patchQuery<ChannelPin[]>(keys.roomPins(id), (held) => held.filter((p) => p.block.id !== blockId))
     } catch (e) {
       opts.reportError(e)
     }
