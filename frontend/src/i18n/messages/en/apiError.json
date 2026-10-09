@@ -992,6 +992,7 @@
   "reviewCommentTooLong": "The comment is too long",
   "reviewCommentEmpty": "The comment is empty",
   "reviewCommentBadLines": "The comment's line numbers are invalid",
+  "reviewCommentBadPlace": "The comment's location in the file is invalid",
   "reviewCommentNotSendable": "One of the comments to send can't be sent. Refresh and try again",
   "reviewCommentOutcomeUnknown": "The last round of comments has no comment {id}",
   "reviewCommentSignIn": "Sign in to comment",

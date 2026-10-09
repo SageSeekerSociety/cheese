@@ -15,7 +15,6 @@
     "blocks.conversation_id",
     "blocks.project_id",
     "blocks.reply_to",
-    "blocks.upgraded_to_topic_id",
     "cloud_host_homes.host_id",
     "cloud_host_homes.project_id",
     "cloud_host_homes.topic_id",

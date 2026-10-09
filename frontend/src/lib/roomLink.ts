@@ -12,7 +12,8 @@
 // - 订阅帧带着此刻的 token：连接可以一直开着，而 token 中途会换；一个房间该按页面现在
 //   拿着的身份来认，不是连上那一刻的。
 // - 服务端回 `subscribed` 才算这个房间连上（`onopen`）：那之后房间里落下的每一帧它都
-//   听得见，这之前发的消息的回显会丢。
+//   听得见，这之前发的消息的回显会丢。它还说了订阅生效那一刻房间里最新的一条
+//   （`newest`），比那条更新的都会推过来；手里没有那条的房间要自己补读一次。
 // - 服务端回 `closed`（拒绝、读得太慢被断开）只结束这一个房间。
 // - 连接本身断了，每个房间都收到一次 `onclose`，各自按自己的退避重新订阅；第一个回来
 //   的订阅把连接重新打开。
@@ -28,6 +29,8 @@ const CLOSED = 3
 
 export interface RoomChannel {
   readyState: number
+  /** 订阅生效那一刻房间里最新的一条；`null` 是房间还空着，`undefined` 是没说。 */
+  newest?: string | null
   onopen: (() => void) | null
   onmessage: ((event: { data: string }) => void) | null
   onclose: (() => void) | null
@@ -56,6 +59,7 @@ function linkUrl(): string {
 
 class Channel implements RoomChannel {
   readyState = 0
+  newest?: string | null
   onopen: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
   onclose: (() => void) | null = null
@@ -161,6 +165,7 @@ class Link {
     for (const room of rooms as Channel[]) {
       if (rest.type === 'subscribed') {
         room.readyState = OPEN
+        room.newest = typeof rest.newest === 'string' || rest.newest === null ? rest.newest : undefined
         room.onopen?.()
       } else if (rest.type === 'closed') {
         this.rooms.delete(room.topic)

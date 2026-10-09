@@ -36,6 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
+from app.core.live_frames import show_once_committed
 from app.core.sentences import notice_message
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
@@ -152,11 +153,6 @@ async def announce(
     return block
 
 
-#: `session.info` 里的一格：这个会话落下、提交之后要当场推给页面的那几行，各带
-#: 它所在那段对话的频道。推送本身在 broker 那一侧（`runtime`），这里只记下来。
-SHOW_ONCE_COMMITTED = "notices_shown_once_committed"
-
-
 def _show_once_committed(session: AsyncSession, block: Block) -> None:
     """让开着这段对话的页面当场看见这一行，而不是等下一次刷新。
 
@@ -169,9 +165,7 @@ def _show_once_committed(session: AsyncSession, block: Block) -> None:
         "type": "event_block",
         "block": BlockOut.model_validate(block).model_dump(mode="json"),
     }
-    session.info.setdefault(SHOW_ONCE_COMMITTED, []).append(
-        (str(block.conversation_id), frame)
-    )
+    show_once_committed(session, block.conversation_id, frame)
 
 
 async def notify_question(

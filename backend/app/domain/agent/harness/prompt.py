@@ -684,7 +684,48 @@ def task_next_step_prompt(*, title: str, task_id) -> str:
         f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
         "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
-        "这一步是最后一步时 completes_task 填 true。"
+        "这一步做完任务目标就全部达成时 completes_task 填 true，"
+        "还有没做完的就填 false，并在交付说明里写下一步做什么。"
+    )
+
+
+def task_summary_prompt(*, title: str) -> str:
+    """What a task's agent is told when its last delivery lands: one turn to
+    write the task up, after which the task closes."""
+    return (
+        f"任务「{title}」的最后一次交付已经采纳并合并，这一轮结束后任务关闭。"
+        "这一轮只做两件事：\n"
+        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
+        "「结果」写最终做成了什么；「留下的问题」只写和任务目标无关、这次没有处理的发现，"
+        "没有就删掉这一节；过程中被推翻的计划删掉。\n"
+        "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
+        "留下的问题逐条列出。"
+        "没什么可补的，只写一句结果。\n"
+        "不要改动文件，不要提交审阅，不要关闭任务。"
+    )
+
+
+def main_checks_failed_prompt(
+    *, title: str, task_id, sha: str, failed: list[tuple[str, str]], reopened: bool
+) -> str:
+    """What a task's agent is told when a check its merge broke fails on the
+    default branch."""
+    checks = "\n".join(f"- {name} {url}".rstrip() for name, url in failed)
+    told = (
+        f"任务「{title}」合并到默认分支的提交 {sha[:12]} 上，下面的检查未通过，"
+        f"而它们在合并前的那个提交上是通过的：\n{checks}\n"
+    )
+    if not reopened:
+        return told + (
+            "看失败日志找到原因，把修复放进这一步一起交付。"
+            "确认是偶发失败、和这次改动无关的，在任务里说明理由。"
+        )
+    return told + (
+        "任务已重新打开。从项目最新的代码修复："
+        f'先执行 cd "$(cheese worktree {task_id})"，'
+        "看失败日志找到原因再改，修好后用 cheese_accept_request 递交付，"
+        "completes_task 填 true。确认是偶发失败、和这次改动无关的，"
+        "在任务里说明理由，然后用 cheese_close_task 关闭任务，不提交改动。"
     )
 
 

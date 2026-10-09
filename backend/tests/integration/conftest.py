@@ -421,6 +421,8 @@ class RoomSocket:
         self._ws = ws
         self.topic_id = str(topic_id)
         self._held: list[dict] = []
+        #: The `subscribed` frame, once the subscription is acknowledged.
+        self.subscribed: dict | None = None
 
     def _next(self) -> dict:
         if self._held:
@@ -455,6 +457,7 @@ class RoomSocket:
             if frame.get("topic") not in (self.topic_id, None):
                 continue
             if frame.get("type") == "subscribed":
+                self.subscribed = frame
                 return self
             self._held.append(frame)
             if frame.get("type") == "closed":

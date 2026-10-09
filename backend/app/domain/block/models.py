@@ -33,6 +33,7 @@ from app.domain.block.indexed_rows import (
     MACHINE_EVENT_ROWS,
     QUESTION_ROWS,
     QUEUED_MESSAGE_ROWS,
+    SHOWN_ROWS,
     UNANSWERED_ROWS,
 )
 from app.domain.common import Timestamps, UuidPk
@@ -179,6 +180,16 @@ class Block(UuidPk, Timestamps, Base):
     # whole history.
     __table_args__ = (
         Index("ix_blocks_conversation_created_at", "conversation_id", "created_at"),
+        # The conversation as the room shows it, newest first: a room opens on
+        # one page of it. Without the predicate in the index, a page of 50 shown
+        # rows reads past the thousands of steps stored between them.
+        Index(
+            "ix_blocks_shown",
+            "conversation_id",
+            "created_at",
+            "id",
+            postgresql_where=SHOWN_ROWS,
+        ),
         # 未读: count, per conversation, the messages someone else wrote after
         # the reader's cursor. Its only selective predicate lives elsewhere, so
         # without this the planner read the whole table — every 30 seconds, for
@@ -259,14 +270,6 @@ class Block(UuidPk, Timestamps, Base):
             "conversation_id",
             postgresql_where=COALESCED_ROWS,
         ),
-        # Deleting a room sets `upgraded_to_topic_id` to NULL on the blocks
-        # that link to it, and finding them read the whole table without this.
-        # A handful of blocks ever carry one, hence partial.
-        Index(
-            "ix_blocks_upgraded_to_topic_id",
-            "upgraded_to_topic_id",
-            postgresql_where=text("upgraded_to_topic_id IS NOT NULL"),
-        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -317,12 +320,6 @@ class Block(UuidPk, Timestamps, Base):
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Citations: which topics / PRs / files this block leans on.
     refs: Mapped[list[str]] = mapped_column(JSON, default=list)
-
-    # If this block was upgraded into its own topic (spec §6.1), the original
-    # position becomes a live link to the new topic.
-    upgraded_to_topic_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
-    )
 
 
 class BlockReaction(UuidPk, Base):

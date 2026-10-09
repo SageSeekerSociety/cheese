@@ -16,7 +16,8 @@ link that is already up.
 Protocol:
   connect → /api/rooms/live?token=<session token>   (required)
   client → {"type":"subscribe","topic":id,"token":<session token>}
-         ← {"type":"subscribed","topic":id}, then that room's frames
+         ← {"type":"subscribed","topic":id,"newest":<block id>|null}, then
+           that room's frames
   client → {"type":"unsubscribe","topic":id}
   client → {"type":"ping","topic":id}  →  server → {"type":"pong","topic":id}
   client → {"type":"typing","topic":id} / {..., "active":false}
@@ -33,6 +34,12 @@ running here and who is busy. The opening `turn_active` / `activity_snapshot`
 are sent only when something is going on, so a client cannot tell "nobody is
 busy" from "not told yet" by them. A client that resubscribes keeps what it was
 showing and asks; the answer is what it reconciles against.)
+(`newest` is the newest block the room shows once the subscription is
+registered — what its pages read, `GET /topics/{id}/blocks?shown=true`.
+A client reads the room's history over HTTP, and a block stored after that
+read but before the subscription was registered reaches it by neither path; a
+client that does not hold `newest` reads the room's tail again. Anything stored
+after `newest` is published to this subscription.)
 (The ping is the browser's liveness probe: a socket can sit OPEN for minutes
 after its path stopped carrying frames, so the client asks every few seconds
 and replaces the link when no answer comes.)
@@ -82,6 +89,8 @@ from app.domain.agent.realtime.subscriber_queue import (
 )
 from app.domain.agent.turn_adoption import adopt, open_turns_on, watch_books
 from app.domain.authz.policy import refuse_unauthenticated_chat
+from app.domain.block.queries import newest_block_id
+from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 
 router = APIRouter(tags=["chat"])
@@ -237,7 +246,7 @@ class _Room:
             # already means "this connection hears everything from here on, and
             # is allowed to".
             async with broker.subscribe(topic, replay=True) as queue:
-                refusal, open_turns, card = await self._authorise(chat_service)
+                refusal, open_turns, card, newest = await self._authorise(chat_service)
                 if refusal is not None:
                     code, message = refusal
                     _log.info("chat_ws_refused", code=code, topic=topic)
@@ -250,7 +259,7 @@ class _Room:
                 # turn_finished queued — the client is never left "working".
                 adopt(broker, topic, open_turns)
                 active_turn_ids = broker.active_turn_ids(topic)
-                await tagged({"type": "subscribed"})
+                await tagged({"type": "subscribed", "newest": newest})
                 if active_turn_ids:
                     await tagged(
                         {
@@ -289,7 +298,10 @@ class _Room:
             forget(self)
 
     async def _authorise(self, chat_service):
-        """(refusal, open turns, task card) for this subscription's credential."""
+        """(refusal, open turns, task card, newest block id) for this
+        subscription's credential. Called after the subscription is registered,
+        so the newest block it reads is a line: everything after it is
+        published to this subscription."""
         async with chat_service.session_factory() as auth_session:
             resolver = ActorResolver(
                 session=auth_session, bearer=self.token or None, cheese_token=""
@@ -299,7 +311,7 @@ class _Room:
                 actor, token_presented=bool(self.token)
             )
             if refusal is not None:
-                return refusal, [], None
+                return refusal, [], None, None
             # A task is a conversation of its own, on a channel of its own:
             # everything its turns publish goes out on the task id. Whoever may
             # watch it is whoever may enter its room, found through the task;
@@ -313,7 +325,7 @@ class _Room:
                         actor, project_id=project_id, topic_id=room_id
                     )
                 except ForbiddenError as exc:
-                    return ("forbidden", exc.args[0]), [], card
+                    return ("forbidden", exc.args[0]), [], card, None
             self.handle = actor.handle
             self.room_id = room_id if card is None else None
             # The turns still running here, as the database has them. The
@@ -321,7 +333,18 @@ class _Room:
             # the process, so a turn started before it, or on the other
             # container while both ran, is missing from it though its agent is
             # still at work.
-            return None, await open_turns_on(auth_session, self.topic_id), card
+            place = await PlaceResolver(auth_session).conversation(self.topic_id)
+            newest = (
+                await newest_block_id(auth_session, place.conversation_id)
+                if place is not None
+                else None
+            )
+            return (
+                None,
+                await open_turns_on(auth_session, self.topic_id),
+                card,
+                newest,
+            )
 
     async def _relay(self, queue: SubscriberQueue, tagged) -> None:
         while True:

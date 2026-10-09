@@ -131,7 +131,7 @@ describe('chat recovery after history errors', () => {
     expect(sockets).toHaveLength(2)
   })
 
-  it('a topic’s first connect does not resync the doc; a reconnect does', async () => {
+  it('a topic’s first connect does not resync what the room announces; a reconnect does', async () => {
     // The connect-time doc resync exists for a doc saved while DISCONNECTED. On a
     // topic's first connect the doc panel is already loading the room fresh, so
     // emitting it would only make the panel re-read /docs + /doc/history that it
@@ -146,7 +146,29 @@ describe('chat recovery after history errors', () => {
     await vi.advanceTimersByTimeAsync(1000)
     sockets[1].onopen?.()
     await flushPromises()
-    expect(view.emitted('state-changed'), 'a reconnect catches up the doc').toEqual([['doc']])
+    // What the room announced while the socket was down is gone: everything it
+    // announces is treated as changed once, its own row by the room's id.
+    const caught = view.emitted('state-changed') as unknown[][]
+    expect(caught.map((args) => args[0])).toEqual(
+      expect.arrayContaining(['doc', 'pins', 'accept', 'feedback', 'skills', 'threads', 'topics'])
+    )
+    expect(caught).toContainEqual(['topics', expect.any(String)])
+  })
+
+  it('a task page that reconnects names its channel’s row, not the task', async () => {
+    const room = { id: crypto.randomUUID(), project_id: 'p', title: 'Recovery', kind: 'topic' } as Topic
+    const view = render(ChatPanel as unknown as Component, {
+      props: { topic: room, conversationId: 'task-1', showComposer: false },
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
+    })
+    await flushPromises()
+    sockets[0].onopen?.()
+    sockets[0].onclose?.()
+    await vi.advanceTimersByTimeAsync(1000)
+    sockets[1].onopen?.()
+    await flushPromises()
+
+    expect(view.emitted('state-changed')).toContainEqual(['topics', room.id])
   })
 
   it('does not retry a forbidden history response', async () => {
@@ -483,4 +505,61 @@ it('editing a message that failed to send puts its text back in the box and take
   sockets[1].onopen?.()
   await flushPromises()
   expect(sends()).toHaveLength(1)
+})
+
+// 读历史走 HTTP，之后落下的走 socket。一条消息落在「读」和「订阅生效」之间，两头都
+// 不会带它来；订阅确认时服务端说了那一刻最新的是哪条，手里没有就补读一次。
+describe('a message that lands between the read and the subscription', () => {
+  function message(id: string, content: string): Block {
+    return {
+      id,
+      project_id: 'p',
+      conversation_id: 'c',
+      kind: 'message',
+      author_type: 'participant',
+      author: 'someone',
+      content,
+      created_at: new Date().toISOString(),
+    } as unknown as Block
+  }
+  function page(blocks: Block[]) {
+    return {
+      data: blocks,
+      has_more: false,
+      total: blocks.length,
+      oldest_id: blocks[0]?.id ?? null,
+      has_newer: false,
+      newest_id: blocks.at(-1)?.id ?? null,
+    }
+  }
+
+  it('is read once the room is subscribed', async () => {
+    const before = message('m1', '读之前就在的')
+    const between = message('m2', '读完才落下的')
+    vi.mocked(listBlocks)
+      .mockResolvedValueOnce(page([before]))
+      .mockResolvedValueOnce(page([before, between]))
+    const view = mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 'm2' })
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenCalledTimes(2)
+    expect(view.container.textContent).toContain('读完才落下的')
+    expect(sockets).toHaveLength(1)
+  })
+
+  it('is not looked for when the room already holds the newest message', async () => {
+    vi.mocked(listBlocks).mockResolvedValueOnce(page([message('m1', '只有这一条')]))
+    mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 'm1' })
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenCalledTimes(1)
+  })
 })

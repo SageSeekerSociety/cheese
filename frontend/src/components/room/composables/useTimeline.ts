@@ -28,7 +28,8 @@ export type Landing = 'shown' | 'held' | 'known' | 'above'
 
 /**
  * `renders` 说一块落进这段时画不画得出来。房间里那些不露面的块（`in_room:false` 的
- * 事件、前端错误、不在白名单里的）画不出任何一行，却和消息一样占窗口额度：上限一满，
+ * 事件、不在白名单里的）画不出任何一行——读回来的页服务端已经筛掉了它们，socket 推
+ * 来的帧里照样有（现场要读）。装进来却和消息一样占窗口额度：上限一满，
  * 它们会被当成「最新的一截」收进背后，让「回到最新」换上一屏什么都看不见的块，把最新
  * 那条看得见的消息挤丢。所以只把画得出来的块装进窗口，上限数的就是画得出来的那些。
  * 缺省是都画（站内转录等自己带块的地方不受影响）。
@@ -155,21 +156,14 @@ export function useTimeline(options: TimelineOptions = {}) {
     if (newestHeld) newestHeld = { ...newestHeld, blocks: newestHeld.blocks.filter((m) => m.id !== id) }
   }
 
-  /**
-   * 往上翻到的那一页拼到显示的这一段顶上。回这一页**多画出来**了几行（`renders` 过掉、
-   * 又不在窗口里的那些）：最新那一带几乎全是 `in_room:false` 的回合事件时，整页可能一行
-   * 都画不出来（回 0），调用方据此知道该接着往回读——不然这一页没让任何东西长高，就没有
-   * 下一次滚动事件，翻页停在那儿。见 composables/useChatPaging 的补窗。
-   */
-  function prepend(older: Block[], more: boolean): number {
-    const before = messages.value.length
+  /** 往上翻到的那一页拼到显示的这一段顶上。 */
+  function prepend(older: Block[], more: boolean): void {
     const next = prependOlder(current(), older.filter(renders), more)
     messages.value = next.blocks
     hasMore.value = next.hasMore
     // 游标记这一页（原始的）最老那条：不露面的块进了窗口的只有前面那几个，但更早
     // 的块是在它们上面。拿窗口里最老的那条当游标会把不露面那一段反复问一遍。
     if (older.length) oldestId = older[0].id
-    return next.blocks.length - before
   }
 
   /**

@@ -27,7 +27,16 @@ vi.mock('vuetify', async (importOriginal) => ({
 
 vi.mock('@/components/TopicSidebar.vue', async () => {
   const { defineComponent, h } = await import('vue')
-  return { default: defineComponent({ setup: () => () => h('nav', { 'data-testid': 'topic-list' }) }) }
+  return {
+    default: defineComponent({
+      inheritAttrs: false,
+      // 每个频道下面挂着几件还在进行的任务：侧栏用的就是这一份。
+      setup:
+        (_props, { attrs }) =>
+        () =>
+          h('nav', { 'data-testid': 'topic-list', 'data-totals': JSON.stringify(attrs['room-task-totals'] ?? {}) }),
+    }),
+  }
 })
 vi.mock('@/views/workspace/ProjectShell.vue', async () => {
   const { RouterView } = await import('vue-router')
@@ -59,12 +68,20 @@ const store = reactive({
 })
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
-const reads = vi.hoisted(() => ({ count: 0, closedToo: false }))
+const reads = vi.hoisted(() => ({
+  count: 0,
+  closedToo: false,
+  // 为真时读不马上回来，答复排在 `answers` 里由测试决定先后。
+  hold: false,
+  answers: [] as Array<(rows: unknown[]) => void>,
+}))
 vi.mock('@/api/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/tasks')>()),
   listProjectTasks: async (_projectId: string, opts: { open?: boolean } = {}) => {
     reads.count += 1
     if (!opts.open) reads.closedToo = true
+    if (reads.hold)
+      return new Promise((resolve) => reads.answers.push((rows) => resolve({ data: rows, total: rows.length })))
     return { data: [], total: 0 }
   },
 }))
@@ -94,6 +111,8 @@ async function openProject(projectId: string) {
 beforeEach(() => {
   reads.count = 0
   reads.closedToo = false
+  reads.hold = false
+  reads.answers = []
   visibility = 'visible'
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => visibility })
   vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
@@ -136,6 +155,40 @@ describe('侧栏的任务清单什么时候重读', () => {
     visibility = 'visible'
     document.dispatchEvent(new Event('visibilitychange'))
     await settle()
+    expect(reads.count).toBe(2)
+  })
+
+  it('任务变了就重读，哪怕上一次读还没回来；晚回来的那一份不盖掉新的', async () => {
+    await openProject('p-changed')
+    reads.hold = true
+    // 一次例行的读发出去了，还没回来；它带回来的是任务变之前的样子。
+    vi.advanceTimersByTime(31_000)
+    await settle()
+    expect(reads.count).toBe(2)
+
+    store.tasksChanged += 1
+    await settle()
+    expect(reads.count).toBe(3)
+
+    const open = { id: 'k1', room_id: 'topic-a', status: 'open', presentation: { column: 'building' } }
+    const [before, after] = reads.answers
+    after([])
+    await settle()
+    before([open])
+    await settle()
+
+    expect(screen.getByTestId('topic-list').dataset.totals).toBe('{}')
+  })
+
+  it('同一次改动连着说了几遍，只重读一次', async () => {
+    await openProject('p-burst')
+    reads.hold = true
+    store.tasksChanged += 1
+    store.tasksChanged += 1
+    await settle()
+    store.tasksChanged += 1
+    await settle()
+
     expect(reads.count).toBe(2)
   })
 })

@@ -8,6 +8,7 @@ them; a sent comment is part of the record and changes only by what 芝士 repor
 about it.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ForbiddenError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.repository.forge_files import ProjectFiles
-from app.domain.review import comment_anchor
+from app.domain.review import comment_anchor, comment_place, document_anchor
 from app.domain.review.comment_models import (
     ReviewComment,
     ReviewCommentOutcome,
@@ -113,7 +114,11 @@ class ReviewCommentService:
         files = ProjectFiles(self._session, task.project_id, task.id)
         contents: dict[str, str | None] = {}
         found: dict[uuid.UUID, int | None] = {}
+        documents = [c for c in moved if comment_place.kind_of(c.path) != "line"]
+        found.update(await self._document_anchors(files, documents))
         for comment in moved:
+            if comment.id in found:
+                continue
             if comment.path not in contents:
                 try:
                     read = await files.text(comment.path, "committed")
@@ -126,6 +131,34 @@ class ReviewCommentService:
                 if content is not None
                 else None
             )
+        return found
+
+    async def _document_anchors(
+        self, files: ProjectFiles, comments: list[ReviewComment]
+    ) -> dict[uuid.UUID, int | None]:
+        """Whether what each comment on a document points at is still there.
+
+        A page number moves as text is added above it and only a renderer could
+        say where to, so a comment keeps its page while the words it quoted are
+        still in the document, and loses it when they are gone. A cell keeps its
+        address while its sheet is there."""
+        raws: dict[str, bytes | None] = {}
+        found: dict[uuid.UUID, int | None] = {}
+        for comment in comments:
+            if comment.path not in raws:
+                try:
+                    raws[comment.path] = (await files.raw(comment.path, "committed"))[0]
+                except Exception:  # noqa: BLE001 — a file gone from the version
+                    raws[comment.path] = None
+            raw = raws[comment.path]
+            there = raw is not None and await asyncio.to_thread(
+                document_anchor.still_there,
+                raw,
+                comment.path,
+                comment.place,
+                comment.line_text,
+            )
+            found[comment.id] = comment.line_start if there else None
         return found
 
     async def write(
@@ -141,6 +174,7 @@ class ReviewCommentService:
         body: str,
         suggestion: str | None,
         parent_id: uuid.UUID | None,
+        place: str = "",
     ) -> ReviewComment:
         task = await self._task(task_id)
         await self._may_write(task, author)
@@ -162,13 +196,24 @@ class ReviewCommentService:
                 raise NotFoundError(say("reviewCommentNotFound"))
             # A reply sits under its comment, so it takes the comment's place.
             path, line_start, line_end = parent.path, parent.line_start, parent.line_end
-            line_text, commit_sha, suggestion = (
+            line_text, commit_sha, suggestion, place = (
                 parent.line_text,
                 parent.commit_sha,
                 None,
+                parent.place,
             )
-        if line_start < 1 or line_end < line_start:
-            raise UnprocessableEntityError(say("reviewCommentBadLines"))
+        place, line_start, line_end = comment_place.settle(
+            path, line_start, line_end, place
+        )
+        if commit_sha is None:
+            # The version the comment was written on, which a later delivery is
+            # compared against (`document_compare`).
+            try:
+                commit_sha = await ProjectFiles(
+                    self._session, task.project_id, task.id
+                ).revision()
+            except Exception:  # noqa: BLE001 — a comment does not wait on the forge
+                commit_sha = None
         comment = ReviewComment(
             task_id=task.id,
             author_handle=author,
@@ -176,6 +221,7 @@ class ReviewCommentService:
             line_start=line_start,
             line_end=line_end,
             line_text=line_text,
+            place=place,
             commit_sha=commit_sha,
             body=body,
             suggestion=suggestion,
@@ -309,6 +355,7 @@ def describe(comment: ReviewComment, anchor: dict[uuid.UUID, int | None]) -> dic
         "line_start": comment.line_start,
         "line_end": comment.line_end,
         "line_text": comment.line_text,
+        "place": comment.place,
         "current_line": current,
         "body": comment.body,
         "suggestion": comment.suggestion,
@@ -323,12 +370,7 @@ def describe(comment: ReviewComment, anchor: dict[uuid.UUID, int | None]) -> dic
 
 
 def _where(comment: ReviewComment) -> str:
-    lines = (
-        f"{comment.line_start}"
-        if comment.line_end == comment.line_start
-        else f"{comment.line_start}-{comment.line_end}"
-    )
-    return f"{comment.path}:{lines}"
+    return comment_place.spoken(comment.path, comment.place)
 
 
 async def instruction(session: AsyncSession, rows: list[ReviewComment]) -> str:
@@ -345,7 +387,8 @@ async def instruction(session: AsyncSession, rows: list[ReviewComment]) -> str:
         )
     }
     out = [
-        f"附带 {len(rows)} 条批注，行号是你交上来的那一版里的。逐条处理；重新递卡时用 "
+        f"附带 {len(rows)} 条批注，位置（行号、页、单元格）是你交上来的那一版里的。"
+        "逐条处理；重新递卡时用 "
         "comment_outcomes 逐条说明处理了没有、怎么处理的（没处理的写为什么）："
     ]
     for row in rows:
@@ -354,6 +397,13 @@ async def instruction(session: AsyncSession, rows: list[ReviewComment]) -> str:
         if parent is not None:
             said = f"，你上次说：{parent.outcome_note}" if parent.outcome_note else ""
             head += f"（回复上一轮的批注「{parent.body}」{said}）"
+        if comment_place.kind_of(row.path) != "line" and row.line_text:
+            quote = (
+                row.line_text
+                if len(row.line_text) <= 200
+                else row.line_text[:200] + "…"
+            )
+            head += f"（指的是「{quote}」）"
         out.append(f"{head}：{row.body}" if row.body else head)
         if row.suggestion is not None:
             out.append(f"  修改建议，把这几行改成：\n```\n{row.suggestion}\n```")

@@ -78,6 +78,12 @@ const {
   docError,
   docRendererMissing,
   revs,
+  canCompare,
+  comparing,
+  comparison,
+  comparisonLoading,
+  comparisonError,
+  toggleCompare,
   // 动作
   loadAll,
   selectFile,
@@ -161,6 +167,11 @@ defineExpose({ openFile })
     :open-document-type="openDocumentType"
     :revision-path="revisionPath"
     :revs="revs"
+    :can-compare="canCompare"
+    :comparing="comparing"
+    :comparison="comparison"
+    :comparison-loading="comparisonLoading"
+    :comparison-error="comparisonError"
     :open-raw-url="openRawUrl"
     :collapsed-dirs="collapsedDirs"
     :reveal-tick="revealTick"
@@ -182,6 +193,7 @@ defineExpose({ openFile })
     @overwrite="overwriteFile"
     @resolve-merge="resolveMerge"
     @cancel-merge="cancelMerge"
+    @toggle-compare="toggleCompare"
     @reload="reloadOpenFile"
     @view-changed="setView"
     @draft-changed="setDraft"

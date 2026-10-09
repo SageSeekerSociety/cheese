@@ -9,6 +9,10 @@ import type { DocReviewRequest } from '../lib/docReview'
 import type { OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
 
+/** What a room announces with a `state` frame (`state-changed` below), besides its
+ *  own row (`topics`, which names the room). */
+export const ANNOUNCED = ['doc', 'pins', 'accept', 'feedback', 'skills', 'threads'] as const
+
 /** The events this panel surfaces to whoever owns the address it is rendered at. */
 // Surface AI activity so the parent can refresh the living doc / topic list
 // without a manual reload (spec §7.1 实时联动). `turn-done` fires when a turn

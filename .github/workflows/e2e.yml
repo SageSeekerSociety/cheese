@@ -154,9 +154,13 @@ jobs:
       - name: Point uv at a per-job venv
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
 
+      # --frozen, as every other `uv sync` in CI carries: without it uv is free
+      # to re-resolve, so this job could install a set the lockfile does not
+      # name and pass or fail on something the branch never chose. This was the
+      # one `uv sync` in .github/workflows that had no lock flag.
       - name: Install backend deps
         working-directory: backend
-        run: uv sync --all-extras
+        run: uv sync --frozen --all-extras
 
       - name: Run migrations
         working-directory: backend

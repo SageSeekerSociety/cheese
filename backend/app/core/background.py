@@ -468,7 +468,7 @@ def periodic_jobs(
             lambda: remind_quiet_tasks(sessions),
         ),
         # 合并态轮询 (#718): mirrors pending PR cards' merge state — PR CI
-        # → merge → deploy workflow → archive.
+        # → merge.
         PeriodicRunner(
             "pr poll",
             settings.accept_pr_poll_interval_s,
@@ -478,6 +478,14 @@ def periodic_jobs(
             "task pr poll",
             settings.accept_pr_poll_interval_s,
             lambda: pr_poll.poll_uncarded_task_prs(chat),
+        ),
+        # A task's merge, watched on the default branch for a while: the checks
+        # there and a deployment that includes it (`review.landing_watch`).
+        # Also closes a finished task whose summary turn never came.
+        PeriodicRunner(
+            "landing watch",
+            settings.accept_pr_poll_interval_s,
+            lambda: pr_poll.watch_landings(chat),
         ),
         # 有东西就有 PR (#718 拍板①): a batch's draft PR opens at its first
         # commit, and the platform can only OBSERVE that commit (a 分身 commits

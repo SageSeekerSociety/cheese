@@ -25,7 +25,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.project.models import ProjectForge
-from app.domain.review import pr_publish
+from app.domain.review import landing_watch, pr_publish
 from app.domain.review.models import AcceptCard
 from app.domain.review.task_landing import delivery_landed
 from app.domain.room_task.models import Task, TaskStatus
@@ -113,9 +113,11 @@ async def poll_uncarded_task_prs(
         .join(Topic, Topic.id == Task.room_id)
         .where(
             Task.pr_number.is_not(None),
-            # A delivery that landed and closed the task is done with; an open
+            # A delivery that landed and closed the task is done with, and so
+            # is one whose task is being written up before it closes; an open
             # task's earlier steps landed on PRs it no longer holds.
             or_(Task.delivered_head.is_(None), Task.status == TaskStatus.open),
+            Task.closing_since.is_(None),
             Topic.status != TopicStatus.archived,
             ~select(AcceptCard.id)
             .where(
@@ -172,6 +174,7 @@ async def poll_uncarded_task_prs(
                     task is None
                     or task.pr_number != number
                     or (task.status != TaskStatus.open and task.delivered_head)
+                    or task.closing_since is not None
                 ):
                     continue
                 if await session.scalar(
@@ -215,6 +218,12 @@ async def poll_uncarded_task_prs(
                 "uncarded task PR poll failed for %s", task_id, exc_info=True
             )
     return {"tasks_checked": checked, "tasks_merged": merged, "errors": errors}
+
+
+async def watch_landings(chat: ChatService) -> dict:
+    """Merged task PRs, watched on the default branch for a while: the checks
+    there and a deployment that includes them (`landing_watch`)."""
+    return await landing_watch.watch_landings(chat)
 
 
 def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:

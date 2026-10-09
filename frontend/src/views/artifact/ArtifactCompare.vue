@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 两版之间改了什么。
 //
-// 文档按段给：改了几个字的一段只标那几个字，整段新加、整段删掉的各算各的，没改的
-// 段不列。代码和别的文本给一张改动文件清单，点开哪一个看哪一个。比不出逐字差异的
+// Word、表格、幻灯片按读者的单位比（段落、单元格、页），和「改动」里用的是同一个
+// 组件。代码和别的文本给一张改动文件清单，点开哪一个看哪一个。比不出逐字差异的
 // （二进制、太大）说清楚为什么，直接把两版并排摆出来——那时候能看的只有这个。
 import type { ArtifactComparison, ArtifactVersion } from '@/api'
+import type { OfficeComparison } from '@/types/reviewComment'
 
 import { computed, ref, watch } from 'vue'
 
@@ -14,8 +15,8 @@ import { noteText } from './notes'
 import { compareArtifactVersions } from '@/api'
 import ArtifactVersionPreview from '@/components/ArtifactVersionPreview.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import OfficeCompare from '@/components/review/OfficeCompare.vue'
 import { t } from '@/i18n'
-import { paragraphDiff } from '@/lib/paragraphDiff'
 
 const props = defineProps<{
   projectId: string
@@ -69,21 +70,19 @@ watch(
   { immediate: true }
 )
 
+/** 一份 Word、表格或幻灯片：按段落、单元格、页比出来的那一份。 */
+const office = computed(() => {
+  const c = comparison.value
+  if (c?.kind !== 'file') return null
+  return (c.files[0] as { office?: OfficeComparison | null } | undefined)?.office ?? null
+})
+
 /** 交出去的是文件、却一行差异都给不出（二进制、太大）。 */
 const sideOnly = computed(
   () =>
     comparison.value?.kind === 'unavailable' ||
-    (comparison.value?.kind === 'file' && comparison.value.files.every((file) => file.diff === null))
+    (comparison.value?.kind === 'file' && !office.value && comparison.value.files.every((file) => file.diff === null))
 )
-
-/** 一份文档：按段给。 */
-const document = computed(() => {
-  const c = comparison.value
-  if (c?.kind !== 'file' || c.note !== null) return null
-  const file = c.files[0]
-  if (!file?.diff || file.note !== 'document') return null
-  return paragraphDiff(file.diff)
-})
 
 const fileNote = computed(() => noteText(comparison.value?.files[0]?.note))
 
@@ -150,45 +149,14 @@ const modes = computed(() => [
         <p v-if="comparison.kind === 'unavailable'" class="t-meta c-faint">
           {{ t('tasks.artifactComparison.unavailable') }}
         </p>
-        <p v-else-if="fileNote && !document" class="t-meta c-faint">{{ fileNote }}</p>
+        <p v-else-if="fileNote && !office" class="t-meta c-faint">{{ fileNote }}</p>
         <div v-if="beforeVersion && afterVersion" class="compare__side">
           <ArtifactVersionPreview :project-id="projectId" :artifact-id="artifactId" :version="beforeVersion" />
           <ArtifactVersionPreview :project-id="projectId" :artifact-id="artifactId" :version="afterVersion" />
         </div>
       </template>
 
-      <template v-else-if="document">
-        <div class="compare__summary t-body">
-          <span>{{ t('tasks.artifact.paragraphsChanged', { n: document.changed }) }}</span>
-          <span>{{ t('tasks.artifact.paragraphsAdded', { n: document.added }) }}</span>
-          <span>{{ t('tasks.artifact.paragraphsRemoved', { n: document.removed }) }}</span>
-          <span class="t-meta c-faint compare__summary-note">{{ t('tasks.artifactComparison.document') }}</span>
-        </div>
-        <ol class="compare__paragraphs">
-          <li v-for="(paragraph, index) in document.paragraphs" :key="index" class="compare__paragraph">
-            <div class="t-meta c-faint">
-              {{
-                paragraph.kind === 'added'
-                  ? t('tasks.artifact.paragraphNew', { n: paragraph.at })
-                  : paragraph.kind === 'removed'
-                    ? t('tasks.artifact.paragraphGone', { n: paragraph.at })
-                    : t('tasks.artifact.paragraph', { n: paragraph.at })
-              }}
-            </div>
-            <p v-if="paragraph.kind === 'changed'" class="t-body compare__text">
-              <template v-for="(segment, s) in paragraph.segments" :key="s">
-                <ins v-if="segment.kind === 'add'">{{ segment.text }}</ins>
-                <del v-else-if="segment.kind === 'del'">{{ segment.text }}</del>
-                <template v-else>{{ segment.text }}</template>
-              </template>
-            </p>
-            <p v-else-if="paragraph.kind === 'added'" class="t-body compare__text compare__text--added">
-              {{ paragraph.text }}
-            </p>
-            <p v-else class="t-body compare__text compare__text--removed">{{ paragraph.text }}</p>
-          </li>
-        </ol>
-      </template>
+      <OfficeCompare v-else-if="office" :comparison="office" />
 
       <template v-else>
         <p v-if="comparison.note" class="t-meta c-faint">{{ noteText(comparison.note) }}</p>
@@ -231,66 +199,6 @@ const modes = computed(() => [
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
-}
-.compare__summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px 20px;
-  padding: 12px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
-.compare__summary-note {
-  margin-left: auto;
-}
-.compare__paragraphs {
-  display: flex;
-  flex-direction: column;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
-.compare__paragraph {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 16px 20px;
-}
-.compare__paragraph + .compare__paragraph {
-  border-top: 1px solid var(--line);
-}
-.compare__text {
-  margin: 0;
-  color: var(--text);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
-.compare__text ins {
-  background: var(--ok-wash);
-  color: var(--ok-ink);
-  text-decoration: none;
-}
-.compare__text del {
-  background: var(--danger-wash);
-  color: var(--danger-ink);
-}
-.compare__text--added {
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  background: var(--ok-wash);
-  color: var(--ok-ink);
-}
-.compare__text--removed {
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  background: var(--danger-wash);
-  color: var(--danger-ink);
-  text-decoration: line-through;
 }
 .compare__links {
   display: flex;
