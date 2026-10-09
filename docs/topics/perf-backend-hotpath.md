@@ -418,8 +418,8 @@ CREATE INDEX ix_probe_unread ON blocks (topic_id, kind, task_id, created_at) INC
 `total = await repo.count_for_topic(topic_id)`（`<&backend/app/api/routes/topics.py>` 第 386 行）
 是 2.94 ms，占这个接口 SQL 总时间（7.7 ms）的 **38%**，而且是唯一随话题历史线性增长的部分。
 
-**这个 `total` 前端一个字都没读。** 消费方只有 `<&frontend/src/lib/blockCache.ts>`
-第 68–70 行，它取的是 `payload.data` / `payload.has_more`；`BlockPage` 类型
+**这个 `total` 前端一个字都没读。** 消费方只有 `<&frontend/src/query/blocks.ts>`
+的 `newestBlocksQuery`，它取的是 `payload.data` / `payload.has_more`；`BlockPage` 类型
 （`<&frontend/src/api.ts>` 第 997–1000 行）在 `ListPayload` 之外只声明了
 `has_more` 和 `oldest_id`。全仓库 grep 不到任何读 blocks 页 `total` 的地方。
 翻页靠的是 `has_more` + `oldest_id` 游标，压根不需要总数。

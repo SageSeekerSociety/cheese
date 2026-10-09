@@ -15,7 +15,7 @@
 
 **读之前必须先记住这条形态差异**：AO 的前端和后端在同一台机器上，RTT ≈ 0，首屏是 `file://` 本地读盘。它做的很多事跟「网络慢」无关，抄之前必须先问「这条在跨公网的场景下还成立吗」。multica 是跟我们同构的 Web SaaS，参考价值更高。
 
-两个项目**都**用 TanStack Query 作为数据层（`multica: packages/web/package.json` 依赖 `@tanstack/react-query`；`AO: frontend/package.json` 同）。我们用 Vue 3 + Pinia + axios，没有对应的库，所以下面每条「数据层机制」在建议一节都要单独算迁移成本。
+两个项目**都**用 TanStack Query 作为数据层（`multica: packages/web/package.json` 依赖 `@tanstack/react-query`；`AO: frontend/package.json` 同）。我们是 Vue 3 + Pinia，写这份对照时没有对应的库；之后工作区的数据层换成了 `@tanstack/vue-query`（见 <&docs/manual/dev/architecture.md> 的「数据层」）。
 
 ---
 
@@ -524,17 +524,17 @@
 - **抄不抄**：**抄模式，不抄库。** 挑 1–2 个真正高频的动作（最可能是「标记已读」——它直接影响未读红点这个用户天天看的东西）手写一遍三段式，不要为此引入 TanStack Query。
 - **为什么**：迁移成本不对称。TanStack Query 有 Vue 版本（`@tanstack/vue-query`），但把 Pinia + axios 的取数全量迁过去是一次跨整个前端的重构，而我们现在还没证明「数据层缺失」是卡顿的主因（`docs/topics/perf-lag-diagnosis.md` 的实测还没出）。手写一个 `markRead` 的乐观翻转是几十行、影响面可控；**先用最贵的那一个动作验证收益，再决定要不要付库的成本**。特别提醒 `cancelQueries` 那一步——手写时最容易漏的就是它，漏了会表现为「点了已读，红点闪一下又回来」。
 
-## 6. 失效/重取的并发闸：把 AO 那套「每 key 一条在飞 + 一条排队 + 不取消在飞请求」抄进 blockCache
+## 6. 失效/重取的并发闸：把 AO 那套「每 key 一条在飞 + 一条排队 + 不取消在飞请求」抄过来
 
 - **他们的做法**：`agent-orchestrator: frontend/src/renderer/lib/event-transport.ts:66-85` 的 `refreshes` map——每个 query key 最多一条在飞、一条排队（用一个 `dirty` 标志表示「跑完还要再跑一次」），并且 `invalidateQueries(..., { cancelRefetch: false })` 明确**不取消**已经在跑的请求；外加 `:19` 的 150ms 批处理窗口，把「一次用户操作引发的一串 CDC 事件」压成一次重取。multica 那边的对应物是结构性的：图片预览只挂两个预取组件把并发钉死在 2（`multica: packages/views/editor/image-sequence-context.tsx:202-215`）。
-- **我们现状**：`frontend/src/lib/blockCache.ts` 已经有 2 条并发闸和后台刷新——**方向是对的，我们不是从零开始。**
+- **我们现状**：已抄。后台预取 2 条并发闸在 `frontend/src/query/blocks.ts`；「一条在飞 + 一条排队、不作废在飞的」是 `frontend/src/query/client.ts` 的 `refreshQueries`，推送和刷新都走它。合并窗口没抄：排在后面的那一次本来就把一串变化压成了一次。
 - **抄不抄**：**抄两个细节：①「一条在飞 + 一条排队」的 dirty 标志；②合并窗口。** 不抄整体架构（它是围绕 TanStack Query 的 `invalidateQueries` 写的）。
 - **为什么**：全局 2 条并发闸解决的是「别打爆后端」，但解决不了「同一个话题被连续 5 个事件触发 5 次重取」。dirty 标志用一个布尔值就把 N 次压成 2 次（当前这次 + 收尾一次），代码量极小。`cancelRefetch: false` 那条更是一句话的经验：**取消一条跑到一半的请求，等于把已经花掉的等待时间扔了**——这在跨公网的我们身上比在 AO 身上更值钱。
 
 ## 7. 虚拟滚动：只在「实测到长列表冻结」之后再上，且要为「精确定位」留一条平铺路径
 
 - **他们的做法**：multica 全面用 react-virtuoso（聊天、泳道、看板列、issue 时间线），触发原因写得很实在——500 条评论的 issue 用普通 `.map` 会冻结页面数秒，因为每张 CommentCard 挂载时都要跑 markdown 解析 + 代码高亮（`multica: packages/views/issues/components/issue-detail.tsx:3336-3340`）。但它同时保留了**平铺模式**：深链定位到某条评论、或页内 Cmd+F 时不虚拟化，理由是「虚拟化和精确落点的契约根本对立（估算高度 vs 真实高度）」（`:3364-3367`）。AO 反而**几乎不虚拟化**（唯一一处在 diff 视图 `agent-orchestrator: frontend/src/renderer/components/WorkspaceDiffView.tsx:236`），靠 200 条/页的分页 + `useMemo` + 对超大内容硬截断（`lib/mermaid-diagram.ts:40` 的 `MAX_DIAGRAM_CHARS = 20_000`）撑住。
-- **我们现状**：`blockCache.ts` 按窗口缓存消息，虚拟滚动情况本文档未核实。
+- **我们现状**：`frontend/src/query/blocks.ts` 按窗口缓存消息，虚拟滚动情况本文档未核实。
 - **抄不抄**：**先抄 AO 的「硬截断超大内容」（便宜、立刻见效），虚拟滚动等实测数据出来再说。**
 - **为什么**：AO 是活证据——**不虚拟化也可以不卡**，只要每页有上限、单条渲染成本有上限。虚拟滚动是有代价的（滚动位置恢复、跳转定位、Cmd+F 全都会变复杂，multica 为此专门开了第二条平铺路径），在没测出「长列表挂载确实是我们的瓶颈」之前上它，是拿确定的复杂度换不确定的收益。而「一条 100KB 的消息被当图表渲染会挂起时间线」这种硬截断，是几行代码的防御。
 
