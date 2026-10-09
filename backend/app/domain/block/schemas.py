@@ -27,6 +27,9 @@ class BlockOut(BaseModel):
 
     id: uuid.UUID
     conversation_id: uuid.UUID
+    # Its place in the order the conversation's blocks were stored (`Block.seq`):
+    # a page that missed some asks for those after the largest it holds.
+    seq: int
     kind: BlockKind
     author_type: AuthorType
     author: str

@@ -23,8 +23,10 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 import uuid
 from collections.abc import Iterable
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.block.indexed_rows import SHOWN_ROWS
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -103,13 +105,14 @@ async def latest_preview(
     return BlockOut.model_validate(block) if block is not None else None
 
 
-async def newest_block_id(db: AsyncSession, conversation_id: uuid.UUID) -> str | None:
-    """The id of the newest block the room shows in this conversation, by the
-    same order and filter its pages use (`shown`); None for an empty one."""
-    tail = await BlockRepository(db).page_for_topic(
-        conversation_id, limit=1, shown=True
+async def newest_shown_seq(db: AsyncSession, conversation_id: uuid.UUID) -> int | None:
+    """The number (`Block.seq`) of the last block stored in this conversation
+    that the room shows (`shown`); None for one that shows nothing yet."""
+    return await db.scalar(
+        select(func.max(Block.seq)).where(
+            Block.conversation_id == conversation_id, SHOWN_ROWS
+        )
     )
-    return str(tail.items[-1].id) if tail.items else None
 
 
 async def weeklies_for_project(

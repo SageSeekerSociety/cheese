@@ -16,7 +16,7 @@ link that is already up.
 Protocol:
   connect → /api/rooms/live?token=<session token>   (required)
   client → {"type":"subscribe","topic":id,"token":<session token>}
-         ← {"type":"subscribed","topic":id,"newest":<block id>|null,
+         ← {"type":"subscribed","topic":id,"newest":<block seq>|null,
             "room":<snapshot>|null}, then that room's frames
   client → {"type":"unsubscribe","topic":id}
   client → {"type":"ping","topic":id}  →  server → {"type":"pong","topic":id}
@@ -24,7 +24,16 @@ Protocol:
   client → {"type":"sync","topic":id}  →  server → {"type":"room_state", ...}
   server → user_block / reaction / tool / todo / state / event_block /
            assistant_block / live / activity / activity_snapshot / error / done
+  client → {"type":"subscribe","topic":"project:<id>","token":<session token>}
+         ← {"type":"subscribed","topic":"project:<id>"}, then
+           {"type":"state","resource":...,"id":<room>,"topic":"project:<id>"}
+  client → {"type":"unsubscribe","topic":"project:<id>"} / {"type":"ping", ...}
 Every frame the server sends about a room carries that room's id as `topic`.
+(`project:<id>` is the project's channel list and unread marks: which of them
+changed and in which room, so a page reads that again when, and only when, it
+changed (`project_feed.py`). Any member of the project may watch it; a room
+only its people see is named to them alone. It is refused like a room, with
+the same codes.)
 (Typing is the one thing a client says here, and it is not written: it is
 member activity — who is busy in this room right now, a person composing or an
 agent with a turn running (`agent/realtime/activity.py`) — and it lives only in
@@ -34,12 +43,15 @@ running here and who is busy. The opening `turn_active` / `activity_snapshot`
 are sent only when something is going on, so a client cannot tell "nobody is
 busy" from "not told yet" by them. A client that resubscribes keeps what it was
 showing and asks; the answer is what it reconciles against.)
-(`newest` is the newest block the room shows once the subscription is
-registered — what its pages read, `GET /topics/{id}/blocks?shown=true`.
-A client reads the room's history over HTTP, and a block stored after that
-read but before the subscription was registered reaches it by neither path; a
-client that does not hold `newest` reads the room's tail again. Anything stored
-after `newest` is published to this subscription.)
+(`newest` is the number (`seq`) of the last block stored that the room shows,
+once the subscription is registered — what its pages read,
+`GET /topics/{id}/blocks?shown=true`. A client reads the room's history over
+HTTP, and a block stored after that read but before the subscription was
+registered reaches it by neither path; a client whose blocks stop short of
+`newest` reads those stored after the last it holds (`?stored_after=`).
+Anything stored after `newest` is published to this subscription. A number and
+not a block, because a block can be dated before blocks stored ahead of it: the
+newest by date says nothing about one that arrived late.)
 (`room` is the room as it stood once the subscription was registered — its
 roster, tasks, pins, threads, proposal cards; a task's own row, origin and
 review comments — each piece shaped like the route that serves it
@@ -89,6 +101,7 @@ from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sentences import error_frame
 from app.domain.agent.chat import ChatService
+from app.domain.agent.project_feed import PREFIX, watched_by
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.realtime.subscriber_queue import (
     SubscriberOverflow,
@@ -96,7 +109,7 @@ from app.domain.agent.realtime.subscriber_queue import (
 )
 from app.domain.agent.turn_adoption import adopt, open_turns_on, watch_books
 from app.domain.authz.policy import refuse_unauthenticated_chat
-from app.domain.block.queries import newest_block_id
+from app.domain.block.queries import newest_shown_seq
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 
@@ -154,6 +167,17 @@ async def rooms_live(
         if room is not None:
             room.task.cancel()
 
+    projects: dict[str, _Project] = {}
+
+    def forget_project(project: "_Project") -> None:
+        if projects.get(project.address) is project:
+            del projects[project.address]
+
+    def drop_project(address: str) -> None:
+        project = projects.pop(address, None)
+        if project is not None:
+            project.task.cancel()
+
     try:
         # A send that finds the peer gone closes the socket on our side and is
         # swallowed by `send` above, so nothing raises: the next read is what
@@ -163,6 +187,25 @@ async def rooms_live(
         while websocket.application_state == WebSocketState.CONNECTED:
             payload = await websocket.receive_json()
             kind = payload.get("type") if isinstance(payload, dict) else None
+            address = str(payload.get("topic") or "") if kind else ""
+            if address.startswith(PREFIX):
+                if kind == "subscribe":
+                    drop_project(address)
+                    try:
+                        project = _Project(address, str(payload.get("token") or ""))
+                    except ValueError:
+                        await send({"type": "error", "message": "not a project"})
+                        continue
+                    project.task = asyncio.create_task(
+                        project.watch(chat_service, broker, send, forget_project),
+                        name=f"project feed {address}",
+                    )
+                    projects[address] = project
+                elif kind == "unsubscribe":
+                    drop_project(address)
+                elif kind == "ping":
+                    await send({"type": "pong", "topic": address})
+                continue
             try:
                 topic_id = uuid.UUID(str(payload.get("topic")))
             except (AttributeError, ValueError):
@@ -215,7 +258,9 @@ async def rooms_live(
         pass
     finally:
         tasks = [room.task for room in rooms.values()]
+        tasks += [project.task for project in projects.values()]
         rooms.clear()
+        projects.clear()
         for task in tasks:
             task.cancel()
         for task in tasks:
@@ -307,11 +352,11 @@ class _Room:
             forget(self)
 
     async def _authorise(self, chat_service):
-        """(refusal, open turns, task card, newest block id, room snapshot) for
-        this subscription's credential. Called after the subscription is
-        registered, so what it reads is a line: the newest block and the room as
-        the snapshot has it, with everything after them published to this
-        subscription."""
+        """(refusal, open turns, task card, newest shown block's number, room
+        snapshot) for this subscription's credential. Called after the
+        subscription is registered, so what it reads is a line: the newest block
+        and the room as the snapshot has it, with everything after them
+        published to this subscription."""
         async with chat_service.session_factory() as auth_session:
             resolver = ActorResolver(
                 session=auth_session, bearer=self.token or None, cheese_token=""
@@ -345,7 +390,7 @@ class _Room:
             # still at work.
             place = await PlaceResolver(auth_session).conversation(self.topic_id)
             newest = (
-                await newest_block_id(auth_session, place.conversation_id)
+                await newest_shown_seq(auth_session, place.conversation_id)
                 if place is not None
                 else None
             )
@@ -384,3 +429,66 @@ class _Room:
                 await tagged({"type": "closed", "code": 1013})
                 return
             await tagged(frame)
+
+
+class _Project:
+    """A project watched on a connection: what changed in its rooms
+    (`project_feed`), for its channel list and unread marks."""
+
+    def __init__(self, address: str, token: str) -> None:
+        self.address = address
+        self.project_id = uuid.UUID(address.removeprefix(PREFIX))
+        self.token = token
+        self.task: asyncio.Task[None]
+        #: The member watching, once the subscription is authorised.
+        self.handle: str | None = None
+
+    async def watch(self, chat_service, broker, send, forget) -> None:
+        async def tagged(frame: dict) -> None:
+            await send({**frame, "topic": self.address})
+
+        try:
+            # Registered before it is acknowledged, as a room is: a change made
+            # after the client hears `subscribed` reaches it. The client reads
+            # the project's lists once it does, so a change made before is in
+            # what it reads.
+            watched_by(chat_service.session_factory)
+            async with broker.subscribe(self.address) as queue:
+                refusal = await self._authorise(chat_service)
+                if refusal is not None:
+                    code, message = refusal
+                    _log.info("chat_ws_refused", code=code, topic=self.address)
+                    await tagged(error_frame(message, type="error", code=code))
+                    await tagged({"type": "closed"})
+                    return
+                await tagged({"type": "subscribed"})
+                while True:
+                    frame = await queue.get()
+                    if isinstance(frame, SubscriberOverflow):
+                        await tagged({"type": "closed", "code": 1013})
+                        return
+                    # A room only its people see is named to them alone.
+                    audience = frame.get("audience")
+                    if audience is not None and self.handle not in audience:
+                        continue
+                    await tagged({k: v for k, v in frame.items() if k != "audience"})
+        finally:
+            forget(self)
+
+    async def _authorise(self, chat_service) -> tuple[str, str] | None:
+        async with chat_service.session_factory() as auth_session:
+            resolver = ActorResolver(
+                session=auth_session, bearer=self.token or None, cheese_token=""
+            )
+            actor = await resolver.resolve(project_id=self.project_id)
+            refusal = refuse_unauthenticated_chat(
+                actor, token_presented=bool(self.token)
+            )
+            if refusal is not None:
+                return refusal
+            try:
+                await resolver.authorize_project(actor, project_id=self.project_id)
+            except ForbiddenError as exc:
+                return ("forbidden", exc.args[0])
+            self.handle = actor.handle
+            return None

@@ -52,6 +52,7 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt
+from app.domain.agent.project_feed import UNREAD, tell_project_once_committed
 from app.domain.agent.staleness import announce_stale
 from app.domain.conversation.services import room_of
 from app.domain.room_task.schemas import TaskOut
@@ -136,6 +137,8 @@ async def project_mark_all_read(
         requested=None, project_id=project_id, allow_anonymous=False
     )
     marked = await TopicService(db).mark_all_read(project_id, recipient)
+    for topic_id in marked:
+        tell_project_once_committed(db, topic_id, UNREAD, only={recipient})
     return ok({"topic_ids": [str(topic_id) for topic_id in marked]})
 
 

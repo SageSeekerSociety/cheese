@@ -508,18 +508,20 @@ it('editing a message that failed to send puts its text back in the box and take
 })
 
 // 读历史走 HTTP，之后落下的走 socket。一条消息落在「读」和「订阅生效」之间，两头都
-// 不会带它来；订阅确认时服务端说了那一刻最新的是哪条，手里没有就补读一次。
+// 不会带它来；订阅确认时服务端说了那一刻最后存进来的是几号，手里没到那个号就把之后
+// 存进来的补读一次。
 describe('a message that lands between the read and the subscription', () => {
-  function message(id: string, content: string): Block {
+  function message(id: string, seq: number, content: string, at = new Date()): Block {
     return {
       id,
+      seq,
       project_id: 'p',
       conversation_id: 'c',
       kind: 'message',
       author_type: 'participant',
       author: 'someone',
       content,
-      created_at: new Date().toISOString(),
+      created_at: at.toISOString(),
     } as unknown as Block
   }
   function page(blocks: Block[]) {
@@ -534,29 +536,68 @@ describe('a message that lands between the read and the subscription', () => {
   }
 
   it('is read once the room is subscribed', async () => {
-    const before = message('m1', '读之前就在的')
-    const between = message('m2', '读完才落下的')
+    const before = message('m1', 1, '读之前就在的')
+    const between = message('m2', 2, '读完才落下的')
     vi.mocked(listBlocks)
       .mockResolvedValueOnce(page([before]))
-      .mockResolvedValueOnce(page([before, between]))
+      .mockResolvedValueOnce(page([between]))
     const view = mountPanel()
     await flushPromises()
 
-    Object.assign(sockets[0], { newest: 'm2' })
+    Object.assign(sockets[0], { newest: 2 })
     sockets[0].onopen?.()
     await flushPromises()
 
-    expect(listBlocks).toHaveBeenCalledTimes(2)
+    expect(listBlocks).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ storedAfter: 1 }))
     expect(view.container.textContent).toContain('读完才落下的')
     expect(sockets).toHaveLength(1)
   })
 
+  it('is found though it is dated before what the room already shows', async () => {
+    // 芝士的一条回答记的是它开始写的时刻，写完才存：排在已经显示的那条前面。
+    const shown = message('m1', 1, '已经显示的', new Date('2026-10-09T10:00:05Z'))
+    const late = message('m2', 2, '早就开始写的回答', new Date('2026-10-09T10:00:00Z'))
+    vi.mocked(listBlocks)
+      .mockResolvedValueOnce(page([shown]))
+      .mockResolvedValueOnce(page([late]))
+    const view = mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 2 })
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    const text = view.container.textContent ?? ''
+    expect(text).toContain('早就开始写的回答')
+    expect(text.indexOf('早就开始写的回答')).toBeLessThan(text.indexOf('已经显示的'))
+  })
+
+  it('is still looked for when 芝士 is working and its steps keep arriving', async () => {
+    // 不露面的步骤块号更大，但房间的页面读不到它们：不算「手里已经到这个号了」。
+    let resolve!: (value: ReturnType<typeof page>) => void
+    vi.mocked(listBlocks)
+      .mockReturnValueOnce(new Promise((done) => (resolve = done)))
+      .mockResolvedValueOnce(page([message('m2', 2, '读完才落下的')]))
+    const view = mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 2 })
+    sockets[0].onopen?.()
+    const step = { ...message('s3', 3, 'ran tests'), kind: 'event', meta: { in_room: false, tool: 'Bash' } }
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'event_block', block: step }) })
+    resolve(page([message('m1', 1, '读之前就在的')]))
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ storedAfter: 1 }))
+    expect(view.container.textContent).toContain('读完才落下的')
+  })
+
   it('is not looked for when the room already holds the newest message', async () => {
-    vi.mocked(listBlocks).mockResolvedValueOnce(page([message('m1', '只有这一条')]))
+    vi.mocked(listBlocks).mockResolvedValueOnce(page([message('m1', 1, '只有这一条')]))
     mountPanel()
     await flushPromises()
 
-    Object.assign(sockets[0], { newest: 'm1' })
+    Object.assign(sockets[0], { newest: 1 })
     sockets[0].onopen?.()
     await flushPromises()
 

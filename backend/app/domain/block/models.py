@@ -12,8 +12,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Enum,
+    FetchedValue,
     ForeignKey,
     Index,
     String,
@@ -173,6 +175,10 @@ def prompted_turn(block: "Block") -> uuid.UUID | None:
 
 class Block(UuidPk, Timestamps, Base):
     __tablename__ = "blocks"
+    # `seq` is given by the database on insert; RETURNING brings it back with the
+    # flush, where a later read of the attribute would otherwise lazy-load it
+    # past an await.
+    __mapper_args__ = {"eager_defaults": True}
     # (conversation_id, created_at) serves every "this conversation's blocks,
     # newest first" question: the timeline pages, and the MAX(created_at)
     # behind a conversation's 最后活动时间 — which the sidebar sorts on, so it
@@ -190,13 +196,24 @@ class Block(UuidPk, Timestamps, Base):
             "id",
             postgresql_where=SHOWN_ROWS,
         ),
+        # A conversation's blocks in the order they were stored: "after n" for a
+        # page catching up, and no two blocks with one number.
+        Index("ix_blocks_conversation_seq", "conversation_id", "seq", unique=True),
         # 未读: count, per conversation, the messages someone else wrote after
-        # the reader's cursor. Its only selective predicate lives elsewhere, so
-        # without this the planner read the whole table — every 30 seconds, for
-        # every open tab. INCLUDE(author) rather than a key column because
-        # `author <> me` is only ever tested for inequality; carrying it in the
-        # leaf is what makes the scan index-ONLY. `created_at` IS a key column:
-        # the cursor comparison ranges on it.
+        # the reader's cursor, which is a block number (`TopicReadState`). Its
+        # only selective predicate lives elsewhere, so without this the planner
+        # reads the whole table for every open tab. INCLUDE(author) rather than
+        # a key column because `author <> me` is only ever tested for
+        # inequality; carrying it in the leaf is what makes the scan index-ONLY.
+        Index(
+            "ix_blocks_conversation_kind_seq",
+            "conversation_id",
+            "kind",
+            "seq",
+            postgresql_include=["author"],
+        ),
+        # The same count against a time, the cursor the release before this one
+        # reads while a deploy replaces it. Goes with `last_read_at`.
         Index(
             "ix_blocks_conversation_kind_created",
             "conversation_id",
@@ -281,6 +298,15 @@ class Block(UuidPk, Timestamps, Base):
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE")
     )
+    # Where this block stands among its conversation's, in the order they were
+    # stored: 1, 2, 3 … A page that lost its connection asks for what came
+    # "after n", and a read cursor is one of these. The database numbers each
+    # insert one past the largest in its conversation, under a lock held to
+    # commit (trigger `blocks_numbered`), so writers in one conversation are
+    # numbered in the order they commit. Not the order a room shows: that is
+    # `created_at`, which a caller may date earlier than now
+    # (`BlockRepository.create`).
+    seq: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
 
     kind: Mapped[BlockKind] = mapped_column(
         Enum(BlockKind, native_enum=False, length=16),

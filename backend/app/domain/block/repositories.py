@@ -848,8 +848,15 @@ class BlockRepository:
         whole_room: uuid.UUID | None = None,
         also: Collection[uuid.UUID] = (),
         shown: bool | None = None,
+        stored_after: int | None = None,
     ) -> BlockPage:
         """The newest `limit` blocks, or a page before/after a cursor.
+
+        ``stored_after`` reads the blocks stored after the one numbered so
+        (`Block.seq`), in the order they were stored: what a page that holds
+        everything up to that number has not seen. Not the same as ``after``,
+        which goes by date: a block dated before the cursor but stored after it
+        is in this page and not in that one.
 
         ``whole_room`` reads every conversation of that room instead of one —
         its main line, its 支线 and its tasks — for a search that has to find
@@ -918,18 +925,21 @@ class BlockRepository:
             stmt = stmt.where(
                 tuple_(Block.created_at, Block.id) > (after.created_at, after.id)
             )
+        if stored_after is not None:
+            stmt = stmt.where(Block.seq > stored_after)
         # One row past the window tells us whether more blocks remain, without
         # a second COUNT query.
-        order = (
-            (Block.created_at, Block.id)
-            if after is not None
-            else (Block.created_at.desc(), Block.id.desc())
-        )
+        if stored_after is not None:
+            order: tuple = (Block.seq,)
+        elif after is not None:
+            order = (Block.created_at, Block.id)
+        else:
+            order = (Block.created_at.desc(), Block.id.desc())
         stmt = stmt.order_by(*order).limit(limit + 1)
         rows = list((await self._session.scalars(stmt)).all())
         has_more = len(rows) > limit
         rows = rows[:limit]
-        if after is None:
+        if after is None and stored_after is None:
             rows.reverse()  # callers render oldest-first, same as list_for_topic
         return BlockPage(items=rows, has_more=has_more)
 

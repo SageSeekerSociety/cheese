@@ -69,6 +69,7 @@ import i18n, { t } from '@/i18n'
 import { cachedWindow, readNewestBlocks, setCachedWindow } from '@/query/blocks'
 import { roomChanged } from '@/query/changes'
 import { refreshTopicRow } from '@/query/project'
+import { checklistMissed, checklistPushed } from '@/query/room'
 import { settleRoom } from '@/query/snapshot'
 
 // The panel and its host have to agree on the event list, so it lives on its own
@@ -137,7 +138,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const tail = useRoomTail({
     roomId: () => place()?.id,
     reading: () => history.reading(),
-    catchUp: (roomId) => void resync.catchUp(roomId),
+    catchUp: (roomId, after) => void resync.catchUp(roomId, after),
   })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
@@ -230,6 +231,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       if (reconnect) {
         const brought: ReadonlySet<string> = room ? SNAPSHOT_RESOURCES : new Set()
         for (const resource of ANNOUNCED) if (!brought.has(resource)) announce(resource)
+        if (here) void checklistMissed(here.id)
         if (!room) announce('topics', channel?.id)
         else {
           // 房间这一行不在快照里；任务在，时间线上各块带着的那几件照旧重读。
@@ -288,7 +290,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // a block must never show up twice (现场不能错).
   function pushBlock(b: Block) {
     history.note(b.id, b)
-    tail.hold(b.id)
+    tail.hold(b)
     const landing = timeline.append(b)
     if (landing === 'known' || landing === 'above' || history.reading() || b.author === AUTHOR) return
     if (b.kind === 'artifact') emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
@@ -331,6 +333,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // row in place (the frame carries the block's full fresh aggregate).
         applyReactions(frame.block_id, frame.reactions)
         break
+      case 'todo':
+        if (place()) checklistPushed(place()!.id, frame.items)
+        break
       case 'state':
         // A platform resource changed: what the cache holds of it goes stale
         // (`query/changes`), and the parent refreshes whatever else it draws.
@@ -348,7 +353,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // 已经在时间线上的一行变了：原地换掉，不追加第二行。
         timeline.replace(frame.block)
         history.note(frame.block.id, frame.block)
-        tail.hold(frame.block.id)
+        tail.hold(frame.block)
         toSite(frame.block)
         break
       }
@@ -481,7 +486,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       const fresh = await readNewestBlocks(room.id, { restart: !entering })
       // Only apply if still the active topic (avoid race on fast switching).
       if (!stillHere()) return
-      for (const block of fresh.blocks) tail.hold(block.id)
+      for (const block of fresh.blocks) tail.hold(block)
       // Blocks that landed while we were away append at the tail; if the user
       // was parked at the bottom, follow them so the newest message is visible
       // without a manual scroll. Compared on the LAST id, not on length: the
@@ -679,7 +684,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     timeline,
     runRecords,
     settle: (b: Block) => settleOutbox(b),
-    noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b.id)),
+    noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b)),
     readEnded: () => tail.check(),
     scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
     socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },

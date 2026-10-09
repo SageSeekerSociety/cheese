@@ -40679,7 +40679,7 @@
           "topics"
         ],
         "summary": "List Topic Blocks",
-        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)\n\nFilters narrow the timeline inside the paging, so a page holds `limit` rows\nof what was asked for and `has_more` counts the same set (filtering a page\nafterwards returns fewer rows and pages through holes):\n\n- `kind` (repeatable): only these kinds of block;\n- `author`: only blocks signed by this handle;\n- `shown=true`: only what the room's conversation shows\n  (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only\n  what it keeps out of the room (an agent's steps, notices for an agent).\n\nCursors still name any block of the conversation, shown or not.\n\nEach block carries what a reader draws with it, so the page is whole on its\nown: `reactions`, the 支线 under a main-line message (`thread`), a routine's\nrun (`routine_run`), and `tasks` — the tasks made from a message, under it,\nand the task a room-line row says began there (`room_task_rows`), as the\nroom's task list has them.",
+        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)\n- `?limit=N&stored_after=<seq>` → the N blocks stored next after the one\n  numbered so, in the order they were stored: what a page holding\n  everything up to that number missed (the rooms socket's `newest`).\n  `has_newer` says more were stored after them.\n\nFilters narrow the timeline inside the paging, so a page holds `limit` rows\nof what was asked for and `has_more` counts the same set (filtering a page\nafterwards returns fewer rows and pages through holes):\n\n- `kind` (repeatable): only these kinds of block;\n- `author`: only blocks signed by this handle;\n- `shown=true`: only what the room's conversation shows\n  (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only\n  what it keeps out of the room (an agent's steps, notices for an agent).\n\nCursors still name any block of the conversation, shown or not.\n\nEach block carries what a reader draws with it, so the page is whole on its\nown: `reactions`, the 支线 under a main-line message (`thread`), a routine's\nrun (`routine_run`), and `tasks` — the tasks made from a message, under it,\nand the task a room-line row says began there (`room_task_rows`), as the\nroom's task list has them.",
         "operationId": "list_topic_blocks_topics__topic_id__blocks_get",
         "parameters": [
           {
@@ -40812,6 +40812,23 @@
                 }
               ],
               "title": "Shown"
+            }
+          },
+          {
+            "name": "stored_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stored After"
             }
           }
         ],
@@ -41448,122 +41465,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Record Weekly Topics  Topic Id  Weekly Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/read": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Mark Topic Read",
-        "description": "已读位: bump the caller's read cursor on a room or on one of its tasks\n(opening either clears its unread badge, Feishu-style). ``topic_id`` is\nthe conversation's id; the door is its room's.\n\nThe cursor is per person, so whose it is comes from the verified\ncredential — ``handle`` in the body is only an assertion checked against\nit (it used to BE the identity, letting anyone move anyone's cursor).",
-        "operationId": "mark_topic_read_topics__topic_id__read_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Body"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Mark Topic Read Topics  Topic Id  Read Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/notify-level": {
-      "put": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Set Topic Notify Level",
-        "description": "这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO\n时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。",
-        "operationId": "set_topic_notify_level_topics__topic_id__notify_level_put",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Body"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Set Topic Notify Level Topics  Topic Id  Notify Level Put"
                 }
               }
             }
@@ -43358,6 +43259,122 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Preview File Topics  Topic Id  Preview File Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/read": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Mark Topic Read",
+        "description": "已读位: bump the caller's read cursor on a room or on one of its tasks\n(opening either clears its unread badge, Feishu-style). ``topic_id`` is\nthe conversation's id; the door is its room's.\n\nThe cursor is per person, so whose it is comes from the verified\ncredential — ``handle`` in the body is only an assertion checked against\nit (it used to BE the identity, letting anyone move anyone's cursor).",
+        "operationId": "mark_topic_read_topics__topic_id__read_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Mark Topic Read Topics  Topic Id  Read Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/notify-level": {
+      "put": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Set Topic Notify Level",
+        "description": "这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO\n时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。",
+        "operationId": "set_topic_notify_level_topics__topic_id__notify_level_put",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Topic Notify Level Topics  Topic Id  Notify Level Put"
                 }
               }
             }

@@ -3,7 +3,7 @@
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from functools import lru_cache
 
 from app.domain.agent.realtime.activity import LIVE_ONLY, RoomActivity
@@ -42,6 +42,10 @@ class InProcessBroker:
         self._last_activity_at: dict[str, float] = {}
         self._replay_size = replay_size
         self._max_subscriber_bytes = max_subscriber_bytes
+        #: Called with a channel when it starts having a turn in flight or stops:
+        #: what a project's channel list shows as 芝士 at work there. Kept across
+        #: `reset`, since whoever listens registered once.
+        self.busy_changed: list[Callable[[str], None]] = []
 
     def reset(self) -> None:
         """Drop all buffered frames + subscriptions. The broker is a process-wide
@@ -69,7 +73,10 @@ class InProcessBroker:
         for turn_id, started, agent in turns:
             if turn_id in self._active.get(channel, ()):
                 continue
+            went_busy = not self._active.get(channel)
             self._active.setdefault(channel, set()).add(turn_id)
+            if went_busy:
+                self._busy_changed(channel)
             self._active_since.setdefault((channel, turn_id), started)
             taken.append((turn_id, agent))
             if agent:
@@ -97,7 +104,10 @@ class InProcessBroker:
         if kind == "turn_started":
             turn_id = str(frame.get("turn_id") or "")
             if turn_id:
+                went_busy = not self._active.get(channel)
                 self._active.setdefault(channel, set()).add(turn_id)
+                if went_busy:
+                    self._busy_changed(channel)
                 self._active_since.setdefault((channel, turn_id), time.time())
                 if agent := frame.get("agent"):
                     followed += self.activity.turn_started(channel, turn_id, str(agent))
@@ -126,11 +136,27 @@ class InProcessBroker:
                     self._active.pop(channel, None)
                     self._buffer.pop(channel, None)
                     self._last_activity_at.pop(channel, None)
+                    self._busy_changed(channel)
 
         self._fan_out(channel, frame)
         for change in followed:
             for to, extra in self.activity.told(channel, change):
                 self._fan_out(to, extra)
+
+    def _busy_changed(self, channel: str) -> None:
+        for listener in self.busy_changed:
+            try:
+                listener(channel)
+            except Exception:
+                logger.exception("broker_busy_listener_failed channel=%s", channel)
+
+    def has_subscribers(self, channel: str) -> bool:
+        """Whether anyone is listening on this channel in this process."""
+        return bool(self._subs.get(channel))
+
+    def any_subscribed(self, prefix: str) -> bool:
+        """Whether anyone is listening on a channel whose name starts so."""
+        return any(channel.startswith(prefix) for channel in self._subs)
 
     def _fan_out(self, channel: str, frame: Frame) -> None:
         if subs := self._subs.get(channel):

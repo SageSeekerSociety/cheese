@@ -3,7 +3,7 @@
 A room, a task and a 支线 are each a conversation, and the things that belong to one —
 what is said in it, an agent's session, its turns and spend, its progress —
 point here (``conversation_id``) rather than at whichever table the
-conversation lives in. A row holds only who the conversation is: its id
+conversation lives in. A row holds who the conversation is: its id
 (the room's, the task's or the 支线's own), its project and its kind. Everything
 each says about itself stays in ``topics``, ``tasks`` or ``threads``.
 
@@ -16,7 +16,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey
+from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -41,3 +41,7 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # The numbers (`Block.seq`) kept for the blocks the conversation held before
+    # numbering began: those are 1 … seq_floor, and every block stored since
+    # numbers itself above them (migration ``0dd66b328211``).
+    seq_floor: Mapped[int] = mapped_column(BigInteger, server_default="0")

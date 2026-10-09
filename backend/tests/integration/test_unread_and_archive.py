@@ -108,6 +108,39 @@ def test_topic_unread_counts_and_read_cursor(client):
     assert _unread(client, project_id, "user-1")[topic_id]["messages"] == 1
 
 
+def test_a_message_stored_after_the_read_is_unread_whatever_its_date(client):
+    """芝士's message is dated when it began and stored once the step after it
+    arrives. Read the room in between and the reader has not seen it: it counts,
+    though its date is before the moment they read."""
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    project_id, topic_id = _create_project_and_topic(client)
+    _add_member(client, project_id, "user-1")
+    _seed_message(client, project_id, topic_id, "cheese")
+    r = client.post(
+        f"/topics/{topic_id}/read", json={}, headers=session_auth_headers("user-1")
+    )
+    assert r.status_code == 200, r.text
+    assert topic_id not in _unread(client, project_id, "user-1")
+
+    async def _late() -> None:
+        async with client.test_factory() as session:
+            await BlockRepository(session).add(
+                project_id=uuid.UUID(project_id),
+                conversation_id=uuid.UUID(topic_id),
+                author="cheese",
+                author_type=AuthorType.participant,
+                content="早就开始写、这会儿才写完的回答",
+                kind=BlockKind.message,
+                created_at=datetime.now(UTC) - timedelta(minutes=1),
+            )
+            await session.commit()
+
+    asyncio.run(_late())
+    assert _unread(client, project_id, "user-1")[topic_id]["messages"] == 1
+
+
 def test_mark_read_requires_a_verified_caller(client):
     # The handle used to be required in the body BECAUSE it was the identity;
     # now identity comes from the credential, so the missing piece is a login.

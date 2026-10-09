@@ -49,6 +49,7 @@ CARD_KEYS = {
     "refs",
     "reply_to",
     "conversation_id",
+    "seq",
     "turn_id",
 }
 

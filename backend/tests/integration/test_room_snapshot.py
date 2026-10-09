@@ -9,6 +9,7 @@ The sidebar does not read the whole project's tasks either: each channel's row
 in the topic list carries the caller's tasks under it and how many are underway.
 """
 
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     join_project_team,
     open_task,
@@ -78,6 +79,8 @@ def test_a_channel_opens_with_what_its_routes_say(client):
 def test_a_task_opens_with_its_own_row_origin_and_review_comments(client):
     room = _room(client, _project(client))
     task = open_task(client, room, "整理周报模板")
+    # The task's first turn writes its row as it goes; compare once it is done.
+    wait_work_idle()
 
     with room_socket(client, task["id"], "alice") as ws:
         snapshot = ws.subscribed["room"]

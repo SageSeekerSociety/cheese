@@ -14,6 +14,7 @@ from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
+from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.repositories import AgentBindingRepository
@@ -112,6 +113,8 @@ async def add_topic_member(
         topic_id=topic_id, handle=body.handle, actor=who.handle
     )
     await db.commit()
+    # A private channel appears in the list of whoever was brought in.
+    await tell_project(topic_id, TOPICS)
     return ok(TopicMemberOut.model_validate(member).model_dump(mode="json"))
 
 
@@ -131,4 +134,6 @@ async def remove_topic_member(
     )
     await db.commit()
     await chat.dismiss(topic_id, handle)
+    # A private channel leaves the list of whoever was taken out.
+    await tell_project(topic_id, TOPICS, also={handle})
     return ok({"deleted": True})

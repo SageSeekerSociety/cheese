@@ -12,8 +12,8 @@
 // - 订阅帧带着此刻的 token：连接可以一直开着，而 token 中途会换；一个房间该按页面现在
 //   拿着的身份来认，不是连上那一刻的。
 // - 服务端回 `subscribed` 才算这个房间连上（`onopen`）：那之后房间里落下的每一帧它都
-//   听得见，这之前发的消息的回显会丢。它还说了订阅生效那一刻房间里最新的一条
-//   （`newest`），比那条更新的都会推过来；手里没有那条的房间要自己补读一次。还带着
+//   听得见，这之前发的消息的回显会丢。它还说了订阅生效那一刻房间里最后存进来的那一条
+//   的编号（`newest`），比它晚的都会推过来；手里没到那个号的房间要自己补读一次。还带着
 //   那一刻房间的样子（`room`，见 query/snapshot）：之后来的帧都比它新。
 // - 服务端回 `closed`（拒绝、读得太慢被断开）只结束这一个房间。
 // - 连接本身断了，每个房间都收到一次 `onclose`，各自按自己的退避重新订阅；第一个回来
@@ -32,8 +32,8 @@ const CLOSED = 3
 
 export interface RoomChannel {
   readyState: number
-  /** 订阅生效那一刻房间里最新的一条；`null` 是房间还空着，`undefined` 是没说。 */
-  newest?: string | null
+  /** 订阅生效那一刻房间里最后存进来的那一条的编号（`Block.seq`）；`null` 是房间还空着，`undefined` 是没说。 */
+  newest?: number | null
   /** 订阅生效那一刻房间的样子；`null` 是这一次没读成。 */
   room?: RoomSnapshot | null
   onopen: (() => void) | null
@@ -64,7 +64,7 @@ function linkUrl(): string {
 
 class Channel implements RoomChannel {
   readyState = 0
-  newest?: string | null
+  newest?: number | null
   room?: RoomSnapshot | null
   onopen: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
@@ -171,7 +171,7 @@ class Link {
     for (const room of rooms as Channel[]) {
       if (rest.type === 'subscribed') {
         room.readyState = OPEN
-        room.newest = typeof rest.newest === 'string' || rest.newest === null ? rest.newest : undefined
+        room.newest = typeof rest.newest === 'number' || rest.newest === null ? rest.newest : undefined
         room.room = (rest.room as RoomSnapshot | null | undefined) ?? null
         room.onopen?.()
       } else if (rest.type === 'closed') {

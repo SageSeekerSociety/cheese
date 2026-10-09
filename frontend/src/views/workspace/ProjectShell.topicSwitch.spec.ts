@@ -51,6 +51,8 @@ const pendingB = vi.hoisted(() => ({
 }))
 
 // 聊天栏底部的技能提议卡也会读一次；这里没有提议。
+// 项目推送在 query/projectFeed.spec 里测；这里的页面不需要那条连接。
+vi.mock('@/query/projectFeed', () => ({ useProjectFeed: () => {} }))
 vi.mock('@/api/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/tasks')>()),
 }))

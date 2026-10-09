@@ -28,7 +28,7 @@ import { expectRoom } from '@/query/snapshot'
 const sockets: TestSocket[] = []
 class TestSocket {
   readyState = 1
-  newest: string | null = null
+  newest: number | null = null
   room: unknown = null
   onopen: (() => void) | null = null
   onclose: (() => void) | null = null

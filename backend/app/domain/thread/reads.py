@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable
 
 from sqlalchemy import (
+    BigInteger,
     DateTime,
     String,
     Uuid,
@@ -39,7 +40,7 @@ _reads = table(
     "topic_read_states",
     column("topic_id", Uuid),
     column("user_handle", String),
-    column("last_read_at", DateTime(timezone=True)),
+    column("last_read_seq", BigInteger),
 )
 _tasks = table(
     "tasks",
@@ -261,8 +262,8 @@ async def _unread(
             Block.author_type == AuthorType.participant,
             ~agent_handle_column(Block.author),
             or_(
-                _reads.c.last_read_at.is_(None),
-                Block.created_at > _reads.c.last_read_at,
+                _reads.c.last_read_seq.is_(None),
+                Block.seq > _reads.c.last_read_seq,
             ),
         )
         .distinct()
