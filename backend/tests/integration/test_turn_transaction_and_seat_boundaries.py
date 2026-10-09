@@ -33,12 +33,10 @@ class HeldSeats(StubChannel):
         self.writes: list[tuple[uuid.UUID, str]] = []
         self.written = asyncio.Event()
 
-    def arrive(self, topic_id, message, *, agent=None):
+    def emit_turn(self, topic_id, prompt, reply, *, agent=None):
         assert agent is not None
         self.writes.append((topic_id, agent))
         self.starts(topic_id, agent=agent)
-        content = message["message"]["content"]
-        prompt = content if isinstance(content, str) else content[0]["text"]
         self.acknowledges(topic_id, prompt, agent=agent)
         self.written.set()
 
@@ -52,7 +50,13 @@ async def a_conversation(factory, *, two_seats=False):
         )
         members = TopicMemberService(session)
         first = (await members.agent_handles(room.id))[0]
+        first_agent = await AgentInstanceService(session).for_seat_handle(
+            project, first
+        )
+        assert first_agent is not None
+        first_actor = first_agent.handle
         second = None
+        second_actor = None
         if two_seats:
             other = await AgentInstanceService(session).create(
                 project_id=project.id,
@@ -61,10 +65,11 @@ async def a_conversation(factory, *, two_seats=False):
                 display_name="Second",
             )
             second = agent_instance_handle(other.id)
+            second_actor = other.handle
             await members.ensure_agent_seat(room.id, second)
         conversation = await thread_in(session, room)
         await session.commit()
-    return conversation, first, second
+    return conversation, first, second, first_actor, second_actor
 
 
 async def until_frame(queue, kind, *, turn_id=None):
@@ -83,7 +88,7 @@ async def test_human_commit_precedes_echo_and_real_execution(
     business_db_factory, tmp_path, monkeypatch, commit
 ):
     factory = business_db_factory
-    conversation, first, _ = await a_conversation(factory)
+    conversation, first, _, first_actor, _ = await a_conversation(factory)
     reached = asyncio.Event()
     release = asyncio.Event()
     text = f"<@{first}> boundary-{uuid.uuid4()}"
@@ -122,6 +127,10 @@ async def test_human_commit_precedes_echo_and_real_execution(
     real_publish = broker.publish
 
     async def observe_publish(channel, frame):
+        if channel == str(conversation) and frame["type"] == "user_block":
+            async with factory() as observer:
+                row = await observer.get(Block, uuid.UUID(frame["block"]["id"]))
+                assert row is not None and row.content == text
         await real_publish(channel, frame)
         if channel == str(conversation):
             published.append(frame["type"])
@@ -150,7 +159,7 @@ async def test_human_commit_precedes_echo_and_real_execution(
             assert browser.empty()
             assert screen.writes == []
             assert preparation_calls == []
-            assert runner.active_work_count == 0
+            assert runner.active_work_count() == 0
             # The writer holds its connection; this read has a separate one.
             async with factory() as observer:
                 assert (
@@ -176,7 +185,7 @@ async def test_human_commit_precedes_echo_and_real_execution(
                 assert browser.empty()
                 assert screen.writes == []
                 assert preparation_calls == []
-                assert runner.active_work_count == 0
+                assert runner.active_work_count() == 0
                 async with factory() as observer:
                     assert (
                         await observer.scalar(
@@ -194,7 +203,7 @@ async def test_human_commit_precedes_echo_and_real_execution(
             async with factory() as observer:
                 assert (await observer.get(Block, block_id)).content == text
             await asyncio.wait_for(screen.written.wait(), HANG_S)
-            assert screen.writes == [(conversation, screen.writes[0][1])]
+            assert screen.writes == [(conversation, first_actor)]
             async with factory() as observer:
                 interval = await observer.get(AgentTurn, block_id)
                 assert interval is not None and interval.stopped_at is None
@@ -218,7 +227,12 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
     business_db_factory, tmp_path
 ):
     factory = business_db_factory
-    conversation, first, second = await a_conversation(factory, two_seats=True)
+    conversation, first, second, first_actor, second_actor = await a_conversation(
+        factory, two_seats=True
+    )
+    assert second is not None and second_actor is not None
+    assert first != second
+    assert first_actor != second_actor
     screen = HeldSeats()
     broker = get_broker()
     runner = AgentWorkRunner(broker)
@@ -268,7 +282,11 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                 )
                 other_before = await observer.get(AgentTurn, second_turn)
                 assert other_before.stopped_at is None
-            first_seat, second_seat = screen.writes[0][1], screen.writes[1][1]
+            assert screen.writes == [
+                (conversation, first_actor),
+                (conversation, second_actor),
+            ]
+            first_seat, second_seat = first_actor, second_actor
             screen.says(conversation, "first output", agent=first_seat)
             screen.stops(conversation, "first output", agent=first_seat)
             await until_frame(browser, "turn_finished", turn_id=first_turn)
@@ -290,8 +308,8 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                 frame["type"] == "turn_started" and frame["turn_id"] == str(second_turn)
                 for frame in replayed
             )
-            assert not any(
-                frame["type"] == "turn_started" and frame["turn_id"] == str(first_turn)
+            assert any(
+                frame["type"] == "turn_finished" and frame["turn_id"] == str(first_turn)
                 for frame in replayed
             )
             screen.says(conversation, "second still works", agent=second_seat)
