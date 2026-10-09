@@ -30,9 +30,9 @@ covers:
 |---|---|---|---|
 | [领域分层](#backend) | 72 个领域包有 395 条跨包边，40 个包在同一个环里，双向依赖 46 对 | 七层，跨层只向下；同层无环；「让高层去做事」只走事件 | `.importlinter` 的 C1–C3，加一条分层契约 |
 | [函数内导入](#deferred-imports) | 850 条，没有一条写明原因 | 没写原因的为 0 | `backend/scripts/check_deferred_imports.py` |
-| [变更推送](#realtime) | 手写 `announce_stale`，只说「某类资源变了」；断线只补消息 | 同一事务记变更，带序号推送，断线按游标补发 | 「不许新增 `announce_stale`」守卫，之后是「面板读到的模型都有变更映射」 |
+| [变更推送](#realtime) | 写入后手写通知（`announce_stale`、`tell_project`），只说哪样变了，前端重读；漏写没有检查 | 写入钩子按一张映射表在提交后推，没有手写的通知 | 「不许新增 `announce_stale`」守卫，之后是「面板读到的模型都有变更映射」 |
 | [工作租约与后台任务](#work) | 工作租约是一个 JSON 列，按各进程自己的时钟判过期；一把全局锁下跑 29 个周期任务 | 租约是一张表，四条带条件的 SQL 领取回收；周期任务按任务各自租；全局锁最后退役 | 租约写入只经一个模块；周期任务逐个迁出的清单 |
-| [前端数据层](#frontend-data) | 四份手写缓存、两套请求栈 | 一个查询缓存，按变更帧就地合并；请求类型由后端声明生成 | 缓存、轮询、请求栈各一道「只许减少」的守卫 |
+| [前端数据层](#frontend-data) | 四份手写缓存、两套请求栈 | 一个查询缓存，推送说哪样变了就重读哪样；请求类型由后端声明生成 | 缓存、轮询、请求栈各一道「只许减少」的守卫 |
 | [前端组件分级](#frontend-components) | D 级 98 个（其中 5 个只因注释里写了 `vue-router` 被误判，第 1 步已修正），场景 debt 77 个，组件边界违规 24 处 | `components/` 下没有 C、D；debt 和边界违规为 0 | `lint:scenes`、`lint:boundary` |
 
 ## 后端：七层，只向下依赖 {#backend}
@@ -100,7 +100,7 @@ app/domain/<包>/
 
 1. 路由只调领域的公开面。C2 今天只禁路由碰别包的 `models`，终点是连 `repository` 一起禁。
 2. 跨包的 ORM `relationship()` 改成只留外键列；跨包的联表查询放进拥有主表的那个包的 `queries.py`，或者第 7 层。用 import-linter 的 `protected` 契约把每个包的 `models` 限给本包。
-3. 事件在写入方的同一个事务里落表（见[变更推送](#realtime)），订阅方在提交之后处理，处理器必须幂等。Sentry 的跨域 outbox 和 Saleor 的「事务里的事件推迟到提交后」是同一个做法。
+3. 事件在写入方的同一个事务里落表，订阅方在提交之后处理，处理器必须幂等。Sentry 的跨域 outbox 和 Saleor 的「事务里的事件推迟到提交后」是同一个做法。
 
 ### `agent` 包拆成什么 {#agent-split}
 
@@ -130,69 +130,43 @@ app/domain/<包>/
 - 为躲环而写的那一类，随分层契约的冻结条目一起还：环解开，它就能上提。
 - 没有直接用 ruff 的 `PLC0415`：ruff 没有基线，接入就要在几百处各加一个不说原因的 `noqa`。基线降到 0 之后换成 `PLC0415`，`noqa` 后面写原因。
 
-## 变更推送：同一事务记账，按序号补发 {#realtime}
+## 变更推送：写入时登记，提交后推失效帧 {#realtime}
 
-终点是：每次写入在同一个事务里记一行「什么对象变成了什么样」，提交后分到一个单调的序号，按订阅范围推给在线连接；浏览器带着游标重连，缺的从库里补，补不齐就让前端把在看的数据全部重取。
+终点是：每次写入经 SQLAlchemy 的钩子自动登记「哪样东西在哪里变了」，提交之后按一张映射表推给订阅了的连接；回滚的不推。帧里不带数据，前端收到就重读变了的那一份。断线期间的变化不补发：重连就是重新订阅，订上时把在看的几样整份读一遍，消息按每段对话的序号补读。
 
-今天在写入之后手工调 `announce_stale(room_id, 资源名)`（`backend/app/domain/agent/staleness.py:18`，29 处），发一帧 `{"type":"state","resource":...}`，前端整类重取；`topics` 的调用点另外带上变的那一行的 `id`，前端就只重读那一行。项目框架（频道清单、未读、提醒档位）的变化推给订了这个项目的页面（`agent/project_feed.py`）：一条消息存进库、房间那一行变了、一轮开始或结束都会推，只说哪样在哪个房间变了；只有自己人看得见的房间只告诉里面的人。消息有每段对话自己的序号（`blocks.seq`，数据库在插入时按提交先后给号），订阅确认时说出最后一条的号，前端缺了就按号补读（`GET /topics/{id}/blocks?stored_after=`），已读位置也是这个号。缺口有三个：漏调就不刷新，没有检查；断线重放只缓存在跑轮次的帧（`agent/realtime/broker.py` 的 `_buffer`，每频道 512 帧，轮次结束即清）；消息以外的帧没有序号，前端不知道自己缺了什么。
+今天在写入之后手工调 `announce_stale(room_id, 资源名)`（`backend/app/domain/agent/staleness.py:18`，29 处），发一帧 `{"type":"state","resource":...}`，前端重读那一类；`topics` 的调用点另外带上变的那一行的 `id`，前端就只重读那一行。项目框架（频道清单、未读、提醒档位）的变化推给订了这个项目的页面（`agent/project_feed.py`）：一条消息存进库、房间那一行变了、一轮开始或结束都会推，只说哪样在哪个房间变了；只有自己人看得见的房间只告诉里面的人。缺口在漏调：一处写完忘了通知，那一份就不刷新，没有检查会发现。
 
-两块现成的样板：`review/live.py` 用 SQLAlchemy 的 after_commit 自动发采纳卡更新；`/notifications/live`（`backend/app/api/routes/notifications_live.py:100`）是「客户端报游标、服务端从库补发、25 秒心跳」，那一拍心跳还会拿游标和库里最新的通知比一次，补上发版期另一个后端槽位提交、本进程没被唤醒的那条。后者的游标是通知行的 `id`，有下面说的缺号问题，扩成变更流时要换成 `seq`，并兼容旧客户端手里的游标。
+两块现成的样板，用的是终点的做法：`review/live.py` 在 `after_flush` 里记下变了的采纳卡、`after_commit` 之后推；`agent/project_feed.py` 用同样两个钩子，一条消息不论从哪条路径存进库都会推给项目。
 
-### 变更日志 {#change-log}
+### 写入钩子和映射表 {#write-hooks}
 
-```
-change_log
-  id         bigserial           插入顺序，只用来排队
-  seq        bigint null         可见顺序，提交后由分配器填；游标用它
-  project_id uuid
-  topic_id   uuid null           订阅过滤
-  entity     text                room_task | accept_card | topic | member | pin | thread | ...
-  entity_id  text
-  op         text                upsert | delete | invalidate
-  data       jsonb null          upsert 时是这个对象和查看者无关的字段
-  created_at timestamptz
-```
-
-- **谁写**：两个钩子在同一个事务里插入变更行，`seq` 留空。ORM 的 `after_flush` 管按对象的写；`do_orm_execute` 管 `update(Model)`、`insert(...).on_conflict_do_update` 这类批量写，今天这类写有约 180 处（`review/live.py` 就漏了 `poll_claim.py` 里的两处 `update(AcceptCard)`）。再加一道守卫：对映射过的表做 Core 写，要么经过钩子，要么显式记变更。
-- **`data` 只放和查看者无关的字段**：`TopicOut` 里的 `can_manage`、`joined`、`awaits_me` 按调用者算，`activity`、`waits` 每次查询才算（`topic/schemas.py:60`）。这些字段不进变更行：要么扇出时按连接算，要么那个对象发 `invalidate`。
-- **为什么要两个号**：Postgres 的序列按 `nextval` 的先后分配，不按提交的先后。事务 A 先取到 10 后提交、事务 B 取到 11 先提交，客户端先见 11 把游标推过去，10 就永远收不到。
-- **谁填 `seq`**：分配器在一个事务里先取 `pg_advisory_xact_lock(分配器)`，再给所有已提交、`seq` 为空的行按 `id` 顺序编号：`seq = 当前最大 seq + row_number() OVER (ORDER BY id)`。锁只在分配器之间互斥，不挡业务写入；任何副本都可以跑分配器，由提交后的唤醒触发。用 `row_number()` 而不是在 `UPDATE ... ORDER BY` 里调 `nextval`，是因为后者不保证按 `id` 的顺序取号。用事务级锁而不是会话级锁：会话级锁在查询被取消时不释放，连接回池后锁还挂着（multica 的迁移 272 记过这个坑）。
-- **怎么到每个副本**：分配完发一条 `NOTIFY`，只带新的最大号（`NOTIFY` 本身在提交后才投递）。每个持有连接的副本 `LISTEN`，按号从表里读，再按连接的订阅范围过滤推送。
-- **保留多久**：7 天。游标早于保留窗口时回 `resync`。
-
-| 分配做法 | 结论 |
-|---|---|
-| **分配器之间用事务级 advisory lock 互斥，`row_number()` 编号** | **选它**。不挡写入，任何副本都能跑，发版交接期间推送不停 |
-| 挂在全局锁下的单个分配器 | 不选。发版时新进程要等旧进程放锁（`main.py:161`），这段时间所有推送停 |
-| 业务写入时取同一把锁串行 | 不选。所有写事务在 flush 到 commit 之间排队 |
-| 不要分配器，用 `xid8` 和 `pg_snapshot_xmin` 判断「更早的都已提交」 | 不选。任何一个长事务（迁移、慢查询）都会卡住全部推送 |
+- **谁记**：`after_flush` 看这次写了哪些行（新增、改动、删除），按映射表把「推给谁、哪样变了」记在会话上；`after_commit` 推出去，`after_rollback` 扔掉。只看写了什么，不看是哪个接口写的，新加的写入路径不用记得通知。
+- **映射表**：一张表一行，写了哪张表的行 → 推给谁（房间、项目、只给某个人）→ 帧里的 `resource`。面板读一样新东西，就在表里加一行。
+- **批量写**：`update(Model)`、`insert(...).on_conflict_do_update` 这类语句不进 `after_flush` 的行列表，今天约 180 处（`review/live.py` 就漏了 `poll_claim.py` 里的两处 `update(AcceptCard)`）。`do_orm_execute` 看语句写的是哪张表，映射表里有的照样登记；再加一道守卫：对映射过的表做 Core 写，要么经过钩子，要么显式登记。
+- **帧不带数据**：频道清单那一行带着读的人自己的任务，未读按人算，`TopicOut` 里的 `can_manage`、`joined`、`awaits_me` 也按调用者算（`topic/schemas.py:60`），一帧发给所有人带不了这些。帧只说哪样变了，每个页面按自己的身份读，读的是变了的那一份（频道清单只读那一行）。
+- **不用表上的触发器加 `LISTEN` / `NOTIFY`**：触发器连原始 SQL 都抓得到，但映射写成 SQL，每改一次是一个迁移；「只告诉房间里的人」还得回到后端判断，一样东西分在两处。
 
 ### 帧和协议 {#realtime-frames}
 
 房间连接和项目订阅用同一种帧：
 
 ```jsonc
-// 客户端连上后第一帧，形状和 /notifications/live 一致
-{"after": 104233}                     // 取自最近一次 GET 的 X-Change-Seq；没有就 null
-// 服务端
-{"type": "hello", "seq": 104240}      // 当前头部，随后补发 (after, 104240]
-{"type": "change", "seq": 104235, "entity": "room_task", "id": "…", "op": "upsert", "topic_id": "…", "data": {…}}
-{"type": "change", "seq": 104236, "entity": "topic", "id": "…", "op": "delete"}
-{"type": "change", "seq": 104237, "entity": "files", "id": "<topic_id>", "op": "invalidate"}
-{"type": "resync", "seq": 104240}     // 游标太旧或补发超上限：前端把在看的数据全部重取
+// 哪样在哪里变了；id 是那一样里的一行时，只重读这一行
+{"type": "state", "resource": "topics", "id": "<topic_id>"}
+// 订阅生效：那一刻房间的样子，和最后一条显示出来的消息的号
+{"type": "subscribed", "topic": "…", "newest": 1834, "room": {…}}
 ```
 
-- **GET 带 `X-Change-Seq`**：读之前的最大 `seq`。前端丢掉不大于快照号的帧，不需要「先暂存、后重放」的队列。
-- **写请求的响应也带 `X-Change-Seq`**：前端乐观更新后，等流追上这个号再结束等待，不再补一次 GET。
-- **项目订阅**：页面在房间连接上订阅 `project:<id>`，收到这个项目里和它有关的变更，按「这个人能看见的话题」过滤（今天推的是失效帧，见上）。
-- **旧帧**：`{"type":"state","resource":R}` 在迁移期间照发，前端当成对一组查询的 `invalidate`；带 `id` 时那个 `id` 是 R 里的一行，只重读它。
-- **运行中**：频道列表的「运行中」由 `runtime.AgentWorkRunner.running_topic_ids()`读本进程内存。终点是轮次状态在库里，「运行中」是一个查询，它的变化也是一条变更。
-- **流式帧不走变更日志**：一轮正在输出的文字量大、只对在看的人有用，不落库。今天 `InProcessBroker` 只在本进程扇出（`agent/realtime/broker.py`）；轮次可以在任意副本跑之后，它需要一条跨副本的扇出（Redis pub/sub，或 `NOTIFY` 带轮次号），这是[全局锁退役](#ownership-retire)的前提之一。
+- **订上时对齐**：房间连接的 `subscribed` 帧带着房间快照（`api/room_snapshot.py`）和 `newest`；项目订阅每次连上把四样各读一次。重连就是重新订阅，断线期间漏掉的帧不用补。
+- **消息按号补读**：`blocks.seq` 是每段对话自己的号，数据库插入时给：先取这段对话的事务级 advisory lock，再取索引上的最大号加一，所以号的先后就是提交的先后。前端手里最大的号小于 `newest` 就读 `GET /topics/{id}/blocks?stored_after=`。已读位置也是这个号。
+- **项目订阅**：页面在房间连接上订阅 `project:<id>`，收到频道清单的哪一行、未读、私聊未读、提醒档位变了；只有自己人看得见的房间只告诉里面的人。
+- **运行中**：频道列表的「运行中」由 `runtime.AgentWorkRunner.running_topic_ids()`读本进程内存。终点是轮次状态在库里，「运行中」是一个查询，它的变化也经写入钩子推出。
+- **流式帧不走写入钩子**：一轮正在输出的文字量大、只对在看的人有用，不落库。今天 `InProcessBroker` 只在本进程扇出（`agent/realtime/broker.py`）；轮次可以在任意副本跑之后，它需要一条跨副本的扇出（Redis pub/sub，或 `NOTIFY` 带轮次号），这是[全局锁退役](#ownership-retire)的前提之一。
 
 | 方案 | 结论 |
 |---|---|
-| A. 保留「某类资源变了」的失效帧，只补序号和补发 | 不选。每次变更仍是整类重取，房间越大越贵 |
-| **B. 变更日志：和查看者无关的字段推整行，其余 `invalidate`** | **选它**。参照 Linear 同步引擎的整行 delta 加全局序号、Zulip 的「补不齐就整体重来」、Mattermost 断线后按资源重取、我们自己 `/notifications/live` 的游标补发 |
+| **A. 失效帧，前端重读变了的那一份；消息每段对话一个序号** | **选它**。帧不随查看者变，权限只在读的时候判；重连即重新订阅，不要补发队列。代价是每次变更多一次读，读的是变了的那一行时很小 |
+| B. 变更日志：全局序号，和查看者无关的字段推整行，断线按游标补发 | 不选。多一张表、一个给号的分配器、一套 `hello` / `resync` 协议；按查看者算的字段仍要另读。我们的读已经按行，省下的那一次读不值这些 |
 | C. 逻辑复制 / CDC（读 WAL 推变更） | 不选。按行做权限过滤要在复制流之外重写一遍，运维面多一个常驻组件 |
 
 ## 工作租约与后台任务：表里的行，按条件领取 {#work}
@@ -291,9 +265,9 @@ CREATE INDEX ON session_work_leases (claim_until) WHERE claim IS NOT NULL;
 | **B. Postgres 里按行租约：会话租约表、周期任务租约、轮次租约** | **选它**。不加基础设施；领取和业务写入在同一个事务里；状态能直接查。multica、Hatchet、procrastinate 都是这个形状 |
 | C. Celery 加 Redis（dify 的做法） | 不选。排工作和业务写入分在两个系统里，要么丢要么重复；定时器 beat 只能起一个实例，单点还在 |
 
-## 前端：一个查询缓存，按变更合并 {#frontend}
+## 前端：一个查询缓存，按推送重读 {#frontend}
 
-前端的终点是：服务端数据只经一个查询缓存（`@tanstack/vue-query`）取和存，变更帧按实体就地合并进去；请求只走一套传输层，类型由后端声明的 OpenAPI 生成；页面读路由、调组合函数，组件只吃 props 和事件。
+前端的终点是：服务端数据只经一个查询缓存（`@tanstack/vue-query`）取和存，推送说哪样变了就重读缓存里那一份；请求只走一套传输层，类型由后端声明的 OpenAPI 生成；页面读路由、调组合函数，组件只吃 props 和事件。
 
 ### 目录 {#frontend-tree}
 
@@ -301,7 +275,7 @@ CREATE INDEX ON session_work_leases (claim_until) WHERE claim IS NOT NULL;
 frontend/src/
   api/          传输层 http.ts（鉴权、重试、条件 GET、刷新令牌）＋按资源的薄封装
   api/schema.gen.ts   由 /api/openapi.json 生成的类型，不手改
-  query/        QueryClient、查询键表、变更帧的应用（changes.ts）、各资源的 queryOptions
+  query/        QueryClient、查询键表、推送帧的应用（changes.ts）、各资源的 queryOptions
   features/<域>/ 该域的组合函数（包 useQuery / useMutation）、乐观更新、域内客户端状态
   views/        路由容器：读路由、调 features、渲染同目录的 <页面>View.vue
   components/   只吃 props 和事件的组件（含各 *View.vue）
@@ -318,7 +292,7 @@ frontend/src/
 
 - **一个 QueryClient**：换了人登录或退出时，每一份退回「没读过」，看着它的地方还连着，新的人的令牌到手后屏幕上那几份重读（`services/account.ts`）。项目清单另存一份在 sessionStorage（`query/persist.ts`），冷打开时左边栏当场就有。
 - **不可变更新**：本地写一律 `patchQuery(key, old => 新值)`：先作废正在路上的那次读，再改缓存。「改之前发出去的读把刚改的盖回去」靠它挡住，不再各处手写版本号。
-- **推送进缓存**：`state` 帧经一个入口（`query/changes.ts`）按键让对应几份再读一次；正在读的那次回来之后再读一次，一串帧只多读一次（`refreshQueries`）。缓存里没有的（采纳卡、提案卡、文档）由页面自己接。终点是按实体就地 `upsert` / `delete`，要等变更带序号（迁移第 3b、4d 步）。
+- **推送进缓存**：`state` 帧经一个入口（`query/changes.ts`）按键让对应几份再读一次；正在读的那次回来之后再读一次，一串帧只多读一次（`refreshQueries`）。缓存里没有的（采纳卡、提案卡、文档）由页面自己接。
 - **进房间不再逐块读**：房间连接上的 `subscribed` 帧带着订阅生效那一刻房间的样子（`room`：名册、任务、置顶、支线、提议卡；任务还有它自己、相关、审阅意见），每一块和它自己那个接口回的一样（后端 `api/room_snapshot.py`）。打开房间的导航出发时记下「快照要来」，这几格的读先等它（`query/snapshot.ts`）；之后的帧都比快照新。采纳卡和预览不在里面：读它们要等外部服务。
 - **侧栏不读整个项目的任务**：频道清单的每一行带着挂在它下面的任务（`my_tasks`：和我有关的几件，加进行中的总数），任务变了重读那一行。
 - **KeepAlive 里的页面停下观察**：保活页面的查询把 `enabled` 绑到页面在不在屏幕上（`composables/usePageActive.ts`）。
@@ -356,22 +330,20 @@ frontend/src/
 | 2d | 租约写入收口：10 处写入收进一个 `lease_store`，带状态转移表；`claim_until` 改用数据库 `now()`；守卫：写 `work_lease` 只许经过它 | 1 |
 | 2e | 交接（`hand_over()`）停周期任务前强制刷一次 backend error flush；`periodic_job_runs` 加 `run_by`、`run_until`，`PeriodicRunner` 加「只在持锁进程跑」的开关 | 1 |
 | 3a | 分层契约：每个包都分好层，越界的边冻结 | 2a |
-| 3b | `change_log`、两个写钩子和 Core 写守卫、分配器、`after` / `hello` / `resync` 协议，GET 和写响应带 `X-Change-Seq`；先给房间连接 | 2b |
+| 3b | 写入钩子：`after_flush` 和 `do_orm_execute` 登记、`after_commit` 推，一张映射表，Core 写守卫；29 个 `announce_stale` 和项目推送的手写调用全部换成映射，守卫变成「面板读到的模型都有映射」 | 2b |
 | 3c | 已合并：`state` 帧经 `query/changes.ts` 按键失效 | 2c |
 | 3d | 建 `session_work_leases`，从 JSON 回填，双写，对账任务跑一周 | 2d |
 | 3e | A 类周期任务逐个迁出全局锁，每个一个 PR；再是 B 类 | 2e |
 | 4a | `agent` 拆出 `preview`、`device`；断开 `gateway` 对 `agent` 内部的引用后拆出 `gateway` | 3a |
 | 4b | 轮次状态进库：「运行中」和孤儿判断改成查询；`running_topic_ids()` 退场 | 2b |
-| 4c | 已合并：项目推送取代两处 30 秒轮询（房间连接上订阅 `project:<id>`，推失效帧）；消息每段对话一个序号（`blocks.seq`），断线按号补读，已读位置也是这个号。推变更帧等 3b、4d | 2c |
-| 4d | 热点实体（房间任务、采纳卡、话题列表、成员）推和查看者无关的字段，前端就地合并 | 3b、3c |
+| 4c | 已合并：项目推送取代两处 30 秒轮询（房间连接上订阅 `project:<id>`，推失效帧）；消息每段对话一个序号（`blocks.seq`），断线按号补读，已读位置也是这个号 | 2c |
 | 4e | 租约切写：领取、续约、完成、回收改用四条 SQL，JSON 只作镜像 | 3d |
 | 5a | 异常基类已合并；`room/turn.py` 接一轮的运行，`live_work.py` 持有现场状态；`session_turn_events.py` 声明由调用方等待的会话轮次事件接口，API 构造时显式注入同一运行器，`chat.py` 不再导入 `app.api.deps`。其余 `chat.py` / `runtime.py` 职责继续分段拆出 | 4a、4b |
 | 5b | 租约切读：11 处 JSON 路径查询改成联表，停写 JSON，最后删列 | 4e，且 4e 已发版 |
 | 6 | 全局锁退役：会话订阅租约、托管事件监听租约、闸门认领、流式帧跨副本扇出，D 类迁出，删 `core/ownership.py` | 4b、5b、3e |
-| 7 | 29 个 `announce_stale` 逐个换成写钩子映射；守卫变成「面板读到的模型都有映射」 | 3b |
-| 8 | 路由补响应模型，按资源分批 | 2b |
-| 9 | 生成类型，合并请求栈，删 `network/`、搬空 `api.ts` | 8、2c |
-| 10 | 跨包 `relationship()` 改外键列，「让高层去做事」的调用改成事件，逐条还分层契约的冻结条目 | 3a |
+| 7 | 路由补响应模型，按资源分批 | 2b |
+| 8 | 生成类型，合并请求栈，删 `network/`、搬空 `api.ts` | 7、2c |
+| 9 | 跨包 `relationship()` 改外键列，「让高层去做事」的调用改成事件，逐条还分层契约的冻结条目 | 3a |
 
 ## 完成标准 {#done}
 
@@ -382,7 +354,7 @@ frontend/src/
 | 领域分层 | 分层契约和 C3 的冻结条目都是 0；领域包之间没有强连通分量 | `cd backend && uv run lint-imports`；看板上的强连通分量大小 |
 | 函数内导入 | 基线文件里每个文件都是 0，换成 ruff `PLC0415` | `uv run python scripts/check_deferred_imports.py` |
 | 路由边界 | C2 扩到 `repository` 后冻结条目为 0；每个路由都声明响应模型 | `lint-imports`；响应模型守卫 |
-| 变更推送 | 后端没有 `announce_stale`；面板读到的每个模型在映射表里；断线重连后不用整页刷新就能对齐 | 守卫测试；端到端测试：断网期间改数据，重连后列表一致 |
+| 变更推送 | 后端没有手写的推送调用（`announce_stale`、`tell_project`）；面板读到的每个模型在映射表里；断线重连后不用整页刷新就能对齐 | 守卫测试；端到端测试：断网期间改数据，重连后列表一致 |
 | 运行态 | 没有任何请求从进程内存回答「谁在跑」 | 守卫测试；起两个后端进程，任一个答「运行中」结果相同 |
 | 工作租约 | `agent_sessions` 上没有 `work_lease` 列；租约的时间判断全在 SQL 里 | 列不存在；守卫：Python 里不出现和 `claim_until` 比较的 `datetime.now` |
 | 后台任务 | `core/ownership.py` 删除；两个副本同时跑，没有重复副作用 | 文件不存在；双进程集成测试 |
