@@ -348,10 +348,16 @@ class TaskService:
         """「开始」：written once, with who reviews its changes and what its
         document said at that moment.
 
-        The reviewer is the one named here, else the project's default. It is
-        written now rather than read back from the setting when changes are
+        The reviewer is the one named here, else the project's default, else the
+        task's own owner — whoever asked for the work is who it goes back to for
+        review, which is what happens anyway in a project that names nobody. It
+        is written now rather than read back from the setting when changes are
         submitted: the setting can change, and who a task was handed to for
         review is a fact about the moment it started.
+
+        The owner comes last on purpose: a project that took the trouble to name
+        a default reviewer means it, and this ladder must not quietly re-route
+        that work to whoever happened to open the task.
         """
 
         if task.started_at is not None:
@@ -361,6 +367,7 @@ class TaskService:
             (reviewer_handle or "").strip()
             or task.reviewer_handle
             or branch_protection_of(project).default_reviewer
+            or task.owner_handle
         )
         if not reviewer:
             raise UnprocessableEntityError(say("reviewerRequired"))

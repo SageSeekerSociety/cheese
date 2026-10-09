@@ -288,7 +288,6 @@ def test_a_plain_member_does_not_manage_a_channel(client):
     assert _join(client, tid, "bob").status_code == 200
     assert _row(client, p["id"], tid, "bob")["can_manage"] is False
 
-    assert _rename(client, tid, "bob", "改个名").status_code == 403
     assert _describe(client, tid, "bob", "说明").status_code == 403
     assert (
         client.post(
@@ -304,6 +303,20 @@ def test_a_plain_member_does_not_manage_a_channel(client):
     )
     row = _row(client, p["id"], tid, "alice")
     assert (row["title"], row["description"], row["status"]) == ("前端", None, "active")
+
+
+def test_anyone_in_a_channel_renames_it(client):
+    """Which channel is called what is the room's own business, so renaming
+    takes no more than being in it — a plain member renames it without being
+    its creator or a project manager. The rest of the channel's settings stay
+    management's (the test above)."""
+    p = _project(client)
+    tid = _channel(client, p["id"], by="alice")
+    assert _join(client, tid, "bob").status_code == 200
+    assert _row(client, p["id"], tid, "bob")["can_manage"] is False
+
+    assert _rename(client, tid, "bob", "改个名").status_code == 200
+    assert _row(client, p["id"], tid, "alice")["title"] == "改个名"
 
 
 # ---- handing work to someone puts them in the channel ------------------------

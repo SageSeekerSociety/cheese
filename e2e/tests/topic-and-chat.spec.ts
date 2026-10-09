@@ -6,7 +6,7 @@ test.describe('Topics and chat', () => {
     await apiLogin(page);
   });
 
-  // 新建频道在「浏览频道」那一页：先起名，建好就打开它，侧栏上多出这一行。
+  // 从「浏览频道」建：先起名，建好就打开它，侧栏上多出这一行。
   test('creating a channel from 浏览频道 opens it in the sidebar', async ({ page }) => {
     const rows = await openFirstProject(page);
     const before = await rows.count();
@@ -14,6 +14,21 @@ test.describe('Topics and chat', () => {
 
     await page.goto(`/projects/${projectId}/channels`);
     await page.getByRole('button', { name: '新建频道' }).first().click();
+    const name = `e2e 频道 ${Date.now()}`;
+    await page.getByLabel('频道名称').fill(name);
+    await page.locator('.v-overlay').getByRole('button', { name: '新建频道' }).click();
+
+    await expect(page).toHaveURL(/\/channels\/\d+$/);
+    await expect(rows).toHaveCount(before + 1);
+    await expect(page.locator('.topic-row.is-active')).toContainText(name);
+  });
+
+  // 侧栏「频道」标题右边那颗 ＋：点它就地在侧栏弹对话框，不跳「浏览频道」那一页。
+  test('the ＋ beside 频道 creates a channel without leaving the project', async ({ page }) => {
+    const rows = await openFirstProject(page);
+    const before = await rows.count();
+
+    await page.getByTestId('new-channel-entry').click();
     const name = `e2e 频道 ${Date.now()}`;
     await page.getByLabel('频道名称').fill(name);
     await page.locator('.v-overlay').getByRole('button', { name: '新建频道' }).click();

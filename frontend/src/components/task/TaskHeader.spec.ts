@@ -167,6 +167,38 @@ describe('任务页头', () => {
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
   })
 
+  it('开始前负责人挑这次由谁审阅，挑的人跟着「开始」发出去', async () => {
+    const { container, start } = mount()
+    await openDetails(container)
+    const select = document.querySelector<HTMLSelectElement>('[data-testid="task-reviewer"] select')!
+    expect(select).not.toBeNull()
+    // 空的那一档是「默认」：后端按项目默认审阅人 → 这件事的负责人落定，
+    // 所以项目没配就是自己审自己，点「开始」不再被拦下来补选。
+    expect([...select.options].map((o) => o.value)).toEqual(['', 'bob', 'carol'])
+    await fireEvent.update(select, 'bob')
+    await fireEvent.click(container.querySelector('[data-testid="task-start"]')!)
+    expect(start).toHaveBeenCalledWith('bob')
+  })
+
+  it('开始之后审阅人定下来了，只读', async () => {
+    const { container } = mount({
+      started_at: '2026-10-05T01:00:00Z',
+      started_by: 'alice',
+      reviewer_handle: 'bob',
+    })
+    await openDetails(container)
+    const row = document.querySelector('[data-testid="task-reviewer"]')!
+    expect(row).not.toBeNull()
+    expect(row.querySelector('select')).toBeNull()
+  })
+
+  it('不是负责人：开始前没有可挑的，这一行也不画（还没定下来，没什么可说）', async () => {
+    me = 'bob'
+    const { container } = mount()
+    await openDetails(container)
+    expect(document.querySelector('[data-testid="task-reviewer"]')).toBeNull()
+  })
+
   it('负责人在任务信息里看得到工作电脑，也能更换', async () => {
     const { container, loadMachine } = mount()
     await openDetails(container)

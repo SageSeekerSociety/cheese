@@ -77,10 +77,9 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
       icon: 'mdi-login-variant',
       run: () => void store.setJoined(topic.id, true),
     })
-  // 改名、归档只给管这个频道的人：创建者和项目管理员。
-  if (!topic.can_manage) return actions
   if (topic.status === 'archived') {
-    // 已归档的不再改名，只剩「取消归档」。
+    // 已归档的不再改名，只剩「取消归档」——而取消归档是管理权范围内的事。
+    if (!topic.can_manage) return actions
     actions.push({
       id: 'topic.unarchive',
       title: t('work.room.menu.unarchive'),
@@ -89,7 +88,11 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
     })
     return actions
   }
+  // 改名：项目里谁都能改。频道叫什么是用它的这些人一起定的事，不是创建者一个人的；
+  // 后端那一侧同样只认「你能进这个频道」（`topics_title.py`）。
   actions.push({ id: 'topic.rename', title: t('work.room.menu.rename'), icon: 'mdi-pencil-outline', run: on.rename })
+  // 归档、取消归档只给管这个频道的人：创建者和项目管理员。
+  if (!topic.can_manage) return actions
   actions.push({
     id: 'topic.archive',
     title: t('work.room.menu.archive'),
