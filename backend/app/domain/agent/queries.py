@@ -102,18 +102,34 @@ async def _session_agent(
     what was said to the one actually working.
     """
     if agent_handle:
-        try:
-            return agents.resolved(await agents.for_handle(project, agent_handle))
-        except NotFoundError:
-            seated = await agents.for_seat_handle(project, agent_handle)
-            if seated is not None:
-                return seated
-            logger.warning(
-                "session agent %r is not in project %s; using the room's",
-                agent_handle,
-                project.id,
-            )
+        named = await _named_teammate(agents, project, agent_handle)
+        if named is not None:
+            return named
+        logger.warning(
+            "session agent %r is not in project %s; using the room's",
+            agent_handle,
+            project.id,
+        )
     return await agents.for_topic(topic, project)
+
+
+async def _named_teammate(
+    agents: AgentInstanceService, project: Project, handle: str | None
+) -> ResolvedAgent | None:
+    """The saved teammate ``handle`` names, by its own name or by the seat it
+    acts under.
+
+    None when it names no teammate of this project: a person, the shared
+    ``cheese`` seat, a room-derived seat of a room that no longer says which
+    agent sits there, or nobody. ``for_handle`` raises for a name it does not
+    know, which is the point — reading an unknown name as the default teammate
+    would answer as somebody else."""
+    if not handle:
+        return None
+    try:
+        return agents.resolved(await agents.for_handle(project, handle))
+    except NotFoundError:
+        return await agents.for_seat_handle(project, handle)
 
 
 async def session_agent_in_room(
@@ -140,14 +156,16 @@ async def conversation_seat(
     """Who answers in a conversation, and the seat it authors under.
 
     In a room it is the agent the message named (or the room's), seated on the
-    room's roster. In a task it is the task's own agent, which need not sit on
-    the room's roster: only the owner talks to it. None for a conversation that
-    no longer exists."""
+    room's roster. In a task it is the teammate the message named — every
+    message in a task is addressed, so the one it @-ed takes the turn there too
+    — and otherwise the task's own agent, which need not sit on the room's
+    roster: only the owner talks to it. None for a conversation that no longer
+    exists."""
     place = await PlaceResolver(session).conversation(conversation_id)
     if place is None:
         return None
     if place.task is not None:
-        agent = await _agent_at(session, place)
+        agent = await _agent_at(session, place, handle)
         return agent, agent_instance_handle(agent.instance_id)
     agent = await session_agent_in_room(session, place.room_id, handle)
     if agent is None:
@@ -155,14 +173,28 @@ async def conversation_seat(
     return agent, await _acting_handle(session, place.room_id, agent)
 
 
-async def _agent_at(session: AsyncSession, place: Place) -> ResolvedAgent:
+async def _agent_at(
+    session: AsyncSession, place: Place, handle: str | None = None
+) -> ResolvedAgent:
     """Which agent works in *place*: the teammate a task was given, else the
-    room's — which is the project's unless the room has its own."""
+    room's — which is the project's unless the room has its own.
+
+    ``handle`` is the teammate a message named, for the callers that have one:
+    the seat a message is delivered to is the one it was addressed to, in a task
+    as in a room. Only the wake path passes it — a turn assembles for the task's
+    own agent when the message names nobody, and admission seeds its recipient
+    from that same answer. Without it a message a task held for the busy seat of
+    a teammate the task was not given is refused by the resume scan forever
+    (``seat_has_other_agent``), while the live turn, which resolves the named
+    instance, serves the same message: the two have to agree."""
     project = await ProjectRepository(session).get(place.project_id)
     if project is None:
         raise NotFoundError("Project not found")
     agents = AgentInstanceService(session)
     if place.task is not None:
+        named = await _named_teammate(agents, project, handle)
+        if named is not None:
+            return named
         return await agents.for_task(project, place.room, place.task.agent_handle)
     return await agents.for_topic(place.room, project)
 
