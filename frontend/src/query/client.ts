@@ -69,9 +69,12 @@ const queued = new Map<string, Promise<void>>()
 
 function start(query: Query): Promise<void> {
   const hash = query.queryHash
-  const read = queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true }).finally(() => {
-    if (running.get(hash) === read) running.delete(hash)
-  })
+  // 不作废别人刚发出的读：走到这里时它不在读，之后才发出去的读都在这次变化之后。
+  const read = queryClient
+    .invalidateQueries({ queryKey: query.queryKey, exact: true }, { cancelRefetch: false })
+    .finally(() => {
+      if (running.get(hash) === read) running.delete(hash)
+    })
   running.set(hash, read)
   return read
 }

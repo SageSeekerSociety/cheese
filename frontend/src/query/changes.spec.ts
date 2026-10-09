@@ -67,6 +67,14 @@ describe('房间这一行变了', () => {
 })
 
 describe('任务变了', () => {
+  it('「房间这一行变了」也说任务清单变了（建、改名、关）：任务清单作废', async () => {
+    queryClient.setQueryData(keys.projectTopics('p1'), { data: [topic('a', '名')], total: 1 })
+    queryClient.setQueryData(keys.projectOpenTasks('p1'), { data: [], total: 0 })
+    getTopic.mockResolvedValue(topic('a', '名'))
+    await roomChanged({ room: 'a', project: 'p1', resource: 'topics', id: 'a' })
+    expect(queryClient.getQueryState(keys.projectOpenTasks('p1'))?.isInvalidated).toBe(true)
+  })
+
   it('房间和项目的任务清单、每一件任务本身都作废', async () => {
     queryClient.setQueryData(keys.roomTaskList('a', { status: 'open' }), { data: [], total: 0 })
     queryClient.setQueryData(keys.projectOpenTasks('p1'), { data: [], total: 0 })

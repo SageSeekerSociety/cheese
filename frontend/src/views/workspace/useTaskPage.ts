@@ -38,9 +38,14 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     return e instanceof ApiError && e.status === 404 ? t('work.task.notFound') : t('work.task.loadFailed')
   })
 
-  /** 改动的回答就是更新的那一份：直接写进去。正在路上的那次读是改之前发出的，作废。 */
-  function apply(changed: RoomTask) {
-    void patchQuery<RoomTask>(keys.roomTask(changed.id), (held) => ({ ...held, ...changed }))
+  /**
+   * 改动的回答就是更新的那一份，整行：直接写进去。正在路上的那次读是改之前发出的，
+   * 作废。第一次读还没回来时（页面先照着清单里那一行画的）也写：这一行就是此刻的样子。
+   */
+  async function apply(changed: RoomTask) {
+    const key = keys.roomTask(changed.id)
+    await queryClient.cancelQueries({ queryKey: key, exact: true })
+    queryClient.setQueryData<RoomTask>(key, (held) => ({ ...held, ...changed }))
   }
 
   /**
@@ -78,7 +83,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     starting.value = true
     startError.value = null
     try {
-      apply(await startTask(task.value.id, reviewer))
+      await apply(await startTask(task.value.id, reviewer))
     } catch (e) {
       startError.value = e instanceof ApiError && e.message ? e.message : t('work.task.startFailed')
     } finally {
@@ -92,7 +97,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value) return false
     actionError.value = null
     try {
-      apply(await closeTask(task.value.id, conclusion.trim() || undefined))
+      await apply(await closeTask(task.value.id, conclusion.trim() || undefined))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -103,7 +108,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value) return false
     actionError.value = null
     try {
-      apply(await reopenTask(task.value.id))
+      await apply(await reopenTask(task.value.id))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -114,7 +119,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value || !owner) return false
     actionError.value = null
     try {
-      apply(await updateTask(task.value.id, { owner_handle: owner }))
+      await apply(await updateTask(task.value.id, { owner_handle: owner }))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -128,7 +133,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value || !name) return false
     actionError.value = null
     try {
-      apply(await renameTask(task.value.id, name))
+      await apply(await renameTask(task.value.id, name))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -141,7 +146,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value) return false
     actionError.value = null
     try {
-      apply(await updateTask(task.value.id, { contributor_handles: handles }))
+      await apply(await updateTask(task.value.id, { contributor_handles: handles }))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -154,7 +159,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value) return false
     actionError.value = null
     try {
-      apply(await updateTask(task.value.id, { agent_handle: handle }))
+      await apply(await updateTask(task.value.id, { agent_handle: handle }))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')

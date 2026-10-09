@@ -14,6 +14,8 @@ vi.mock('@/api/tasks', async () => ({
 import { useTaskPage } from './useTaskPage'
 
 import { closeTask, getTask } from '@/api/tasks'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 const task = (status: string): RoomTask => ({ id: 'k1', status, owner_handle: 'alice' }) as unknown as RoomTask
 // 改动的回答写进缓存、晚回来的读落地，都在当前这一轮之后：等它们都落定再看。
@@ -59,4 +61,21 @@ it('改动之后才发出的读照常算数', async () => {
   await settle()
 
   expect(page.task.value?.status).toBe('open')
+})
+
+it('第一次读还没回来就关闭（页面先照着清单里那一行画的）：关闭留在屏幕上，晚回来的读不撤销它', async () => {
+  queryClient.setQueryData(keys.projectOpenTasks('p1'), { data: [task('open')], total: 1 })
+  let answer!: (t: RoomTask) => void
+  vi.mocked(getTask).mockReturnValueOnce(new Promise((res) => (answer = res)))
+  const page = useTaskPage({ taskId: () => 'k1', people: () => [] })
+  await settle()
+  expect(page.task.value?.status).toBe('open')
+
+  vi.mocked(closeTask).mockResolvedValueOnce(task('closed'))
+  expect(await page.close('做完了')).toBe(true)
+  expect(page.task.value?.status).toBe('closed')
+  answer(task('open'))
+  await settle()
+
+  expect(page.task.value?.status).toBe('closed')
 })
