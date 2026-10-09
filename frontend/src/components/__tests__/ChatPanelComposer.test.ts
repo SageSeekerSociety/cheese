@@ -285,6 +285,66 @@ describe('对话栏自己的输入栏', () => {
     expect(queryByText('跟芝士说第一句话')).toBeNull()
   })
 
+  // 支线和任务页里的对话栏拿的也是项目本体这只房间。清单在那里各画一份、各按自己
+  // 那条对话判，同一张清单就在三处各说各的（dev，2026-10-09）。
+  it('draws the start checklist on the project’s own line, not in its 支线 or tasks', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const elsewhere = render(ChatPanel, {
+      props: {
+        topic: { ...topic('checklist-line'), kind: 'root' },
+        conversationId: 'thread-of-checklist-line',
+        showComposer: true,
+        hideHeader: true,
+        members,
+      },
+      global: { plugins: [vuetify, i18n, attachments] },
+    })
+    await flush()
+    expect(elsewhere.queryByText('开始清单')).toBeNull()
+    elsewhere.unmount()
+
+    const { rerender, findByText } = mountPanel({}, 'checklist-line')
+    await rerender({ topic: { ...topic('checklist-line'), kind: 'root' } })
+    await flush()
+    expect(await findByText('开始清单')).toBeTruthy()
+  })
+
+  it('counts a reply from the teammate in a 支线 as having talked to it', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listBlocks).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'm3',
+          conversation_id: 'checklist-thread',
+          kind: 'message',
+          content: '帮我列一下报名表要哪些字段',
+          author: 'alice',
+          author_type: 'participant',
+          created_at: '2026-10-09T10:00:00Z',
+          thread: {
+            id: 'thread-1',
+            room_id: 'checklist-thread',
+            root_block_id: 'm3',
+            reply_count: 1,
+            last_reply_at: '2026-10-09T10:01:00Z',
+            last_reply: null,
+            participants: ['alice', 'cheese-topica'],
+            tasks: [],
+          },
+        } as never,
+      ],
+      total: 1,
+      has_more: false,
+      oldest_id: 'm3',
+      has_newer: false,
+      newest_id: null,
+    })
+    const { rerender, findByText } = mountPanel({}, 'checklist-thread')
+    await rerender({ topic: { ...topic('checklist-thread'), kind: 'root' } })
+    await flush()
+    expect((await findByText('跟芝士说第一句话')).classList).toContain('gs__label--done')
+  })
+
   it('previews a document and sends its uploaded path', async () => {
     const api = await import('../../api')
     vi.mocked(api.uploadAttachment).mockResolvedValue({
