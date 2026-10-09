@@ -803,6 +803,15 @@ check asks each port for `/_internal/edge-health`, which the dev front door
 answers with 404 itself, so the check covers the tunnel and the front door
 without depending on an application rollout.
 
+Neither of those saves a request already on its way down a tunnel that stalls:
+it hangs until ssh gives the line up, about 20 s, and then fails with 502. So
+reads (`GET`, `HEAD`) go through their own `reverse_proxy` with a 10 s
+`response_header_timeout`. A read with no response headers by then counts as a
+failure, marks that tunnel down for `fail_duration`, and is retried on the other
+one within `lb_try_duration` (15 s, longer than the timeout or no retry is left
+to make). Writes keep the original block with no header timeout: Caddy does not
+retry them, so a timeout would only cut off a slow write.
+
 Each tunnel also still forwards `127.0.0.1:18443` (tunnel B: `18444`) to
 api-front's TLS listener `127.0.0.1:18443`, which terminates TLS on the dev
 box. No public traffic uses it. The watchdog below probes through it, and
