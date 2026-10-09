@@ -92,6 +92,11 @@ tasks:
     desc: Check grade-A components are in the preview catalog (python ratchet, check only)
     cmds:
       - pnpm run lint:catalog
+  lint:scene-debt:
+    desc: Check child edges, route reads and legacy network imports only shrink
+    deps: [install]
+    cmds:
+      - pnpm run lint:scene-debt
   typecheck:
     desc: Run vue-tsc type check
     deps: [install]
@@ -120,6 +125,7 @@ tasks:
       - task: lint:check
       - task: lint:boundary
       - task: lint:scenes
+      - task: lint:scene-debt
       - task: lint:catalog
       - task: lint:style
       - task: typecheck

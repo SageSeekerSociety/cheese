@@ -46,6 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # The debt gate compares candidate baseline sets to the merge base.
+          fetch-depth: 0
           # Nothing below pushes, and the lockfile has zero git: specifiers, so
           # there is no reason to leave the token in .git/config while
           # dependencies' install scripts run.
@@ -139,6 +141,14 @@ jobs:
       # --self-test`, which repo-guards.yml runs in its Guards self-test step.
       - name: Scenes (standalone-ratchet)
         run: pnpm run lint:scenes
+
+      # Freeze exact child edges, debt-page route reads and legacy imports.
+      # Updating or hand-expanding the baseline cannot accept new debt.
+      - name: Scene debt (three downward-only sets)
+        run: pnpm run lint:scene-debt
+
+      - name: Scene debt rule self-tests
+        run: python3 ../.claude/scripts/scene-debt-ratchet.py --self-test
 
       # The catalog ratchet: every component under src/ (src/views/demo/
       # excluded) that renders from props alone — grade A, the same grade the

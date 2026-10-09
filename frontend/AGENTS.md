@@ -155,6 +155,40 @@ Whether a standalone-ready scene is in the preview site is not this check's
 question: every grade-A component, scene or not, must be catalogued or pending —
 see `pnpm run lint:catalog` under "The component preview site" above.
 
+## Existing scene debt only loses dependencies
+
+`pnpm run lint:scene-debt` checks three exact sets in
+`scene-debt-baseline.json`; `pnpm run lint:scene-debt:update` only removes
+entries, and refuses to write if any set gained an entry. CI also compares the
+baseline to the approved merge base, so hand-adding an exemption fails too.
+
+- **Non-A child edges:** a router-reached non-A page that is not a verified
+  container, paired with each non-A `.vue` it value-imports and actually
+  renders. Static tags, `defineAsyncComponent` bindings and imported targets
+  referenced by dynamic `:is` selectors count. Selector declarations are followed
+  conservatively: every imported candidate counts, not just today's branch.
+  Repeated tags count once; unused imports, comments and attribute examples do not. Replacing one child with a different child is new debt,
+  even when the count stays the same. The scene grader and container rule are
+  shared with `lint:scenes`; panels and unrouted sibling views are not pages.
+- **useRoute calls:** those debt pages calling `useRoute` in scripts or template
+  expressions, including renamed and namespace imports. Shadowed local functions
+  do not count. This set does not inventory every other router API. Use the router's `props` mapping for parameters; keeping
+  a data-fetching container's route read is allowed by this page-debt check.
+- **Legacy network imports:** production `.vue`/`.ts`/`.js`/`.tsx`/`.jsx`
+  source files importing `src/network`, including files within that stack,
+  type-only imports, re-exports and literal dynamic imports. Specs and type
+  declaration files are excluded. Alias and relative spellings are the same
+  dependency. History is frozen per importer file, not per import statement;
+  a new file uses `@/api` or a domain module, never `@/network`.
+
+The scanner uses Vue's SFC parser and TypeScript's parser/binder; missing dependencies, invalid
+source and unreadable baselines are exit 2 (cannot judge), never a pass. Its
+unit tests run under `pnpm run test:ratchet`; the gate's functional self-tests
+run in CI's frontend check. The same three records appear in ratchet snapshots.
+
+Sources for the migration shape: [Vue Router props](https://router.vuejs.org/guide/essentials/passing-props.html)
+and [ESLint restricted imports](https://eslint.org/docs/latest/rules/no-restricted-imports).
+
 ## Caps and conventions
 
 - Files under `src/` over **1000 lines** may not grow; 19 are already there and
@@ -164,7 +198,7 @@ see `pnpm run lint:catalog` under "The component preview site" above.
 - `pnpm run lint` is the read-only ESLint (the writer is `lint:fix`); never gate
   on the writing form. Design tokens and the two themes have their own ratchet —
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).
-- `task fe:check` runs lint, boundaries, scenes, catalog, style, typecheck, unit tests and build.
+- `task fe:check` runs lint, boundaries, scenes, scene debt, catalog, style, typecheck, unit tests and build.
 - A dev server may already be running on 3001/3002 in this worktree; do not
   restart one you did not start.
 - A new page under `src/views/admin/features/`: the chart components take props

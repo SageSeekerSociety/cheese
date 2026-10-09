@@ -103,6 +103,25 @@ CHECKS: tuple[Check, ...] = (
             ".claude/scripts/ratchet_report.py",
         ),
     ),
+    *(Check(
+        id=check_id,
+        area=SCENES if kind != "network" else BOUNDARY,
+        argv=("python", ".claude/scripts/scene-debt-ratchet.py", "--kind", kind, "--json"),
+        rules=(
+            ".claude/scripts/scene-debt-ratchet.py",
+            ".claude/scripts/test_scene_debt_ratchet.py",
+            ".claude/scripts/scene-ratchet.py",
+            ".claude/scripts/frontend_grade.py",
+            ".claude/scripts/ratchet_report.py",
+            "frontend/scripts/scene-debt-scan.mjs",
+            "frontend/package.json",
+            "frontend/pnpm-lock.yaml",
+        ),
+    ) for kind, check_id in (
+        ("children", "scene-non-a-children"),
+        ("routes", "scene-use-route"),
+        ("network", "legacy-network"),
+    )),
     Check(
         id="catalog-ratchet",
         area=SCENES,
@@ -527,6 +546,10 @@ def fingerprint(
 #: The #2205 review found four such files, which is why the registry is now
 #: checked against the checkers instead of being trusted.
 NOT_A_RULE: dict[str, dict[str, str]] = {
+    **{check_id: {
+        "frontend/scene-debt-baseline.json": "baseline: exact child, route and network debt sets",
+        "frontend/scene-baseline.json": "baseline: the scene rule's frozen ready and debt sets",
+    } for check_id in ("scene-non-a-children", "scene-use-route", "legacy-network")},
     "scene-ratchet": {
         "frontend/scene-baseline.json": "baseline: the frozen scene debt",
     },
