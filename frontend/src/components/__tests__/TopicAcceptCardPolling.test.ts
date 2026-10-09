@@ -16,6 +16,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAcceptCards = vi.fn()
 
+// 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
+vi.mock('@/api/reviewComments', () => ({
+  listReviewComments: vi.fn(async () => ({ comments: [] })),
+  writeReviewComment: vi.fn(),
+  editReviewComment: vi.fn(),
+  deleteReviewComment: vi.fn(),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -118,7 +125,7 @@ describe('待采纳的卡会自己跟上后端', () => {
   it('后端收敛成可合并之后，不用刷新页面就能采纳', async () => {
     getAcceptCards.mockResolvedValue({ data: [pendingCard(JUST_LANDED)], has_more: false })
     const { container } = render(TopicAcceptCard, {
-      props: { topicId: 't1', topicStatus: 'active' },
+      props: { topicId: 't1', taskId: 'k1', topicStatus: 'active' },
       global: { plugins: [createVuetify({ components, directives }), i18n] },
     })
     await flush()
@@ -136,7 +143,7 @@ describe('待采纳的卡会自己跟上后端', () => {
   it('轮询期间正在写的退回理由不会被抹掉', async () => {
     getAcceptCards.mockResolvedValue({ data: [pendingCard(SETTLED)], has_more: false })
     const { container, getByText } = render(TopicAcceptCard, {
-      props: { topicId: 't1', topicStatus: 'active' },
+      props: { topicId: 't1', taskId: 'k1', topicStatus: 'active' },
       global: { plugins: [createVuetify({ components, directives }), i18n] },
     })
     await flush()

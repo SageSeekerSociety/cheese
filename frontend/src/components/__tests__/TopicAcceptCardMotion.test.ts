@@ -16,6 +16,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getAcceptCards = vi.fn()
 
+// 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
+vi.mock('@/api/reviewComments', () => ({
+  listReviewComments: vi.fn(async () => ({ comments: [] })),
+  writeReviewComment: vi.fn(),
+  editReviewComment: vi.fn(),
+  deleteReviewComment: vi.fn(),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -89,7 +96,7 @@ function mount() {
   const Host = defineComponent(() => {
     const box = ref<{ reload: () => Promise<void> } | null>(null)
     reload = () => box.value!.reload()
-    return () => h(TopicAcceptCard, { ref: box, topicId: 't1', topicStatus: 'active' })
+    return () => h(TopicAcceptCard, { ref: box, topicId: 't1', taskId: 'k1', topicStatus: 'active' })
   })
   // transition: false —— Vue Test Utils 默认把 <Transition> 换成一个什么都不做的桩，
   // 这份用例要看的正是它挂上去的类名。

@@ -11,6 +11,13 @@ const getAcceptCards = vi.fn()
 const reassignCard = vi.fn()
 const acceptCard = vi.fn()
 
+// 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
+vi.mock('@/api/reviewComments', () => ({
+  listReviewComments: vi.fn(async () => ({ comments: [] })),
+  writeReviewComment: vi.fn(),
+  editReviewComment: vi.fn(),
+  deleteReviewComment: vi.fn(),
+}))
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
@@ -51,7 +58,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function host(props: { topicId: string; topicStatus: string }) {
+function host(props: { topicId: string; topicStatus: string; taskId?: string }) {
   let api!: ReturnType<typeof useAcceptCard>
   render(
     defineComponent(() => {
@@ -73,7 +80,7 @@ beforeEach(() => {
 describe('useAcceptCard keeps the card while it re-reads', () => {
   it('an action re-reads without blanking the card, and unchanged cards keep their object', async () => {
     getAcceptCards.mockResolvedValue({ data: [card(), card({ id: 'old', status: 'accepted' })] })
-    const api = host(reactive({ topicId: 't1', topicStatus: 'active' }))
+    const api = host(reactive({ topicId: 't1', taskId: 'k1', topicStatus: 'active' }))
     await flush()
     const before = api.pendingCard.value
     const accepted = api.acceptedCard.value
@@ -95,7 +102,7 @@ describe('useAcceptCard keeps the card while it re-reads', () => {
 
   it('switching topics clears the old topic’s cards at once', async () => {
     getAcceptCards.mockResolvedValue({ data: [card()] })
-    const props = reactive({ topicId: 't1', topicStatus: 'active' })
+    const props = reactive({ topicId: 't1', taskId: 'k1', topicStatus: 'active' })
     const api = host(props)
     await flush()
     expect(api.pendingCard.value).not.toBeNull()
@@ -109,7 +116,7 @@ describe('useAcceptCard keeps the card while it re-reads', () => {
 
   it('a re-read that comes back after a newer one does not overwrite it', async () => {
     getAcceptCards.mockResolvedValue({ data: [card()] })
-    const api = host(reactive({ topicId: 't1', topicStatus: 'active' }))
+    const api = host(reactive({ topicId: 't1', taskId: 'k1', topicStatus: 'active' }))
     await flush()
 
     const slow = deferred<{ data: AcceptCard[] }>()
@@ -125,7 +132,7 @@ describe('useAcceptCard keeps the card while it re-reads', () => {
   })
   it('a decided card does not keep a half-written return note open', async () => {
     getAcceptCards.mockResolvedValue({ data: [card()] })
-    const api = host(reactive({ topicId: 't1', topicStatus: 'active' }))
+    const api = host(reactive({ topicId: 't1', taskId: 'k1', topicStatus: 'active' }))
     await flush()
     api.showRejectInput.value = true
     api.rejectNote.value = 'half typed'
@@ -138,7 +145,7 @@ describe('useAcceptCard keeps the card while it re-reads', () => {
 
   it('switching topics closes the void and force-merge forms', async () => {
     getAcceptCards.mockResolvedValue({ data: [card()] })
-    const props = reactive({ topicId: 't1', topicStatus: 'active' })
+    const props = reactive({ topicId: 't1', taskId: 'k1', topicStatus: 'active' })
     const api = host(props)
     await flush()
     api.showVoidInput.value = true
@@ -149,5 +156,17 @@ describe('useAcceptCard keeps the card while it re-reads', () => {
     await flush()
     expect([api.showVoidInput.value, api.voidNote.value]).toEqual([false, ''])
     expect([api.showForceMergeInput.value, api.forceMergeReason.value]).toEqual([false, ''])
+  })
+})
+
+describe('a channel has no card of its own', () => {
+  it('answers「没有卡」at once without asking the server, and a reload does not ask either', async () => {
+    const api = host(reactive({ topicId: 't1', topicStatus: 'active' }))
+    await flush()
+    expect(api.loaded.value).toBe(true)
+    expect(api.pendingCard.value).toBeNull()
+
+    await api.reload()
+    expect(getAcceptCards).not.toHaveBeenCalled()
   })
 })
