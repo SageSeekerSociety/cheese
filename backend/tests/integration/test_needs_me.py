@@ -10,6 +10,8 @@
 - 一个任务在不在等**看的这个人**，由服务端说：侧栏的点只对被等的那个人亮。
 - 平台自己开的那一轮里问在活里的题没点谁的名：等它的是这条活的人（负责人和协作者）
   —— 和「待办」、投递同一份名单（`Task.people`）。
+- 题还没答，负责人就点了「开始」：开始就是他说讨论够了，之前问的题不再让任务停在
+  「待回答」；开始之后再问的题照样算。
 - 好几天没人动的任务：三天提醒负责人一次，十四天算「已停滞」；在等别人审阅或回答
   的不算。
 """
@@ -25,7 +27,7 @@ from app.domain.room_task.presentation import NeedsYou
 from app.domain.room_task.services import TaskService
 from app.domain.task_quiet.sweep import remind_quiet_tasks
 from app.domain.topic.models import Topic, TopicStatus
-from tests.ask_fixtures import active_ask
+from tests.ask_fixtures import active_ask, wait_turn_idle
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
@@ -394,3 +396,74 @@ def test_a_task_waiting_on_a_review_is_not_called_quiet(client):
     assert _project_tasks(client, project, "alice")[str(task)]["stalled"] is False
     client.portal.call(remind_quiet_tasks, client.test_factory)
     assert _quiet_notices(client, "alice") == []
+
+
+def _ask(client, stub_hooks, monkeypatch, task: str) -> None:
+    with active_ask(
+        client, stub_hooks, monkeypatch, task, platform_turn=True
+    ) as headers:
+        r = client.post(
+            f"/topics/{task}/asks",
+            json={
+                "questions": [
+                    {
+                        "question": "预算按哪个口径统计",
+                        "options": [{"text": "按部门"}, {"text": "按项目"}],
+                    }
+                ]
+            },
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+
+
+def _shown(client, task: str) -> dict:
+    r = client.get(f"/topics/{task}/task", headers=session_auth_headers("alice"))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["presentation"]
+
+
+def test_starting_a_task_with_its_questions_unanswered_starts_it(
+    client, stub_hooks, monkeypatch
+):
+    """芝士的题还没答，负责人选好审阅人点了「开始」：任务就是开始了。
+
+    页头、频道的任务卡、项目的任务列表写的都是进行中那一列，不是「待回答」；题也不再
+    挂在负责人的待办上。
+    """
+    project = _project(client)
+    channel = _channel(client, project)
+    task = open_task(client, channel, owner="alice", start=False)["id"]
+    _ask(client, stub_hooks, monkeypatch, task)
+    assert _shown(client, task)["phrase"] == NeedsYou.awaiting_answer
+
+    r = client.post(
+        f"/topics/{task}/start",
+        json={"reviewer_handle": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["presentation"]["column"] == "building"
+    wait_turn_idle(client, task)
+
+    assert _shown(client, task)["column"] == "building"
+    row = _project_tasks(client, project, "alice")[task]
+    assert row["presentation"]["column"] == "building"
+    assert row["awaits_me"] is False
+    assert all(item.get("taskId") != task for item in _mine(client, "alice"))
+
+
+def test_a_question_asked_after_the_start_still_waits_for_its_answer(
+    client, stub_hooks, monkeypatch
+):
+    project = _project(client)
+    channel = _channel(client, project)
+    task = open_task(client, channel, owner="alice", reviewer="alice")["id"]
+    wait_turn_idle(client, task)
+
+    _ask(client, stub_hooks, monkeypatch, task)
+
+    assert _shown(client, task)["phrase"] == NeedsYou.awaiting_answer
+    row = _project_tasks(client, project, "alice")[task]
+    assert row["presentation"]["phrase"] == NeedsYou.awaiting_answer
+    assert row["awaits_me"] is True
