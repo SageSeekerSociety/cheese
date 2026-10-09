@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, own_calls, own_limit
-from app.domain.agent.announce import answer_questions
+from app.domain.agent.announce import answer_questions, instance_of_seat
 from app.domain.agent.ask import publish_answered
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.compute import ComputePool
@@ -1816,6 +1816,7 @@ class ChatService(SessionRecovery, RoomTurns):
             # from. Drop the edge, keep the message: losing the thread link is
             # recoverable, refusing the send is not.
             reply_uuid = _parse_uuid(reply_to)
+            reply_author: str | None = None
             if reply_uuid is not None:
                 parent = await blocks.get(reply_uuid)
                 if parent is None or parent.conversation_id != place.conversation_id:
@@ -1825,6 +1826,8 @@ class ChatService(SessionRecovery, RoomTurns):
                         reply_to,
                     )
                     reply_uuid = None
+                else:
+                    reply_author = parent.author
             if content:
                 content, roster = mentions.content, mentions.roster
                 # WHICH agent was addressed, not merely whether one was. The
@@ -1844,6 +1847,22 @@ class ChatService(SessionRecovery, RoomTurns):
                     # A seat still under the room-derived handle names no
                     # instance, and that seat IS the agent the room points at,
                     # so the recipient resolved above is already the right one.
+                elif reply_author is not None and reply_author in (
+                    await TopicMemberService(session).agent_handles(topic.id)
+                ):
+                    # 回谁的消息，就是对着谁说的。任务房间里每条消息都默认点名
+                    # 任务那位（上面那个 `mentioned`），于是「回另一位队友的提问」
+                    # 「点它卡上的选项」——两条路都只是回一句话——仍然落到任务那
+                    # 位身上，提问的那位收不到答案。回复目标坐在房里时改指它；
+                    # 显式 @ 了别人时以上一条为准。人发的消息不在此列：那条默认
+                    # 归房间，回复它不改变什么。
+                    named = await instance_of_seat(
+                        session, topic.project_id, reply_author
+                    )
+                    if named is not None:
+                        recipient["instance_id"] = str(named.id)
+                        recipient["handle"] = named.handle
+                        recipient["mentioned"] = True
                 refused = await own_calls.refused(session, project, recipient, author)
                 user_block = await blocks.add(
                     project_id=topic.project_id,
