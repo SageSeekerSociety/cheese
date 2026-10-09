@@ -18,7 +18,7 @@ import * as esbuild from 'esbuild'
 import { marked } from 'marked'
 import { SECTIONS, DEV, REDIRECTS, HIGHLIGHTS } from './src/structure.mjs'
 import { esc, docHref, docPage, changelogPage, changelogFeed, downloadPage, devGatePage, redirectPage, notFoundPage, ic } from './src/render.mjs'
-import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed, registerSource, registerArchFacts, ciSelections } from './src/demos.mjs'
+import { DEMO_FENCES, renderDemo, demoText, replaceFences, countFences, registerDataset, registerEmbed, registerSource, registerArchFacts, registerUiStrings, registerAgentAvatar, ciSelections } from './src/demos.mjs'
 import { homePage } from './src/home.mjs'
 import { BASE, SITE, PLATFORM } from './src/where.mjs'
 import { selectSuites } from './src/ci-scope.mjs'
@@ -35,6 +35,11 @@ for (const f of fs.readdirSync(SCENES).filter((f) => f.endsWith('.json'))) {
   registerEmbed(f.replace(/\.json$/, ''), JSON.parse(fs.readFileSync(path.join(SCENES, f), 'utf8')).steps.map((s) => s.label))
 }
 
+// The product's own interface strings, which a `demo-panel` must quote exactly.
+const UI_STRINGS = path.join(REPO, 'frontend/src/i18n/messages/zh-CN')
+const leaves = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
+registerUiStrings(fs.readdirSync(UI_STRINGS).filter((f) => f.endsWith('.json')).flatMap((f) => leaves(JSON.parse(fs.readFileSync(path.join(UI_STRINGS, f), 'utf8')))))
+
 const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: 'Asia/Shanghai' } })
 const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1) }
 const rel = (p) => path.relative(REPO, p).split(path.sep).join('/')
@@ -47,6 +52,8 @@ const hash = (buf) => crypto.createHash('sha256').update(buf).digest('hex').slic
 // right on either theme. Proportions are brand.md §4's, set in the stylesheet.
 const BRAND = path.join(REPO, 'frontend/src/assets')
 const LOGO_SVG = fs.readFileSync(path.join(BRAND, 'logo.svg'), 'utf8')
+// The same file `asset('logo', …)` writes below, named by the same hash: 芝士's face in a demo-panel.
+registerAgentAvatar(`${BASE}/assets/logo-${hash(LOGO_SVG)}.svg`)
 const inlineSvg = (file, cls) => fs.readFileSync(path.join(BRAND, file), 'utf8').trim()
   .replace('<svg xmlns="http://www.w3.org/2000/svg" ', `<svg class="${cls}" aria-hidden="true" fill="currentColor" `).replace(/ role="img" aria-label="[^"]*"/, '')
 const LOCKUP = `<span class="brand-lockup">${inlineSvg('logo-plain.svg', 'brand-lockup-mark')}${inlineSvg('brand/wordmark-zh.svg', 'brand-lockup-word')}</span>`
@@ -93,10 +100,13 @@ const INFO = ic('info')
 // Page blocks a tutorial is built from, besides the demos (docs/manual/dev/docs-site.md#blocks):
 //   :::steps … :::   each `###` heading inside starts one numbered step
 //   :::cards … :::   a list of `- [title](/page#id)：one line` becomes link cards
+//   :::before … :::  what the reader needs before starting, in a grey box under the lede
+//   :::walk … :::    a numbered list and a `demo-panel` with `walk: true`: the panel
+//                    shows the screen after each step, and the steps drive it
 //   ```prompt        a message to send to 芝士, with a copy button
-//   > [!TIP] / > [!NOTE] / > [!WARNING]   a callout of that kind; a plain `>` is a note
+//   > [!TIP] / > [!IMPORTANT] / > [!WARNING] / > [!NOTE]   a callout of that kind; a plain `>` is a note
 // The `:::` lines are dropped from the text version, so a model reads plain Markdown.
-const CONTAINERS = ['steps', 'cards']
+const CONTAINERS = ['steps', 'cards', 'before', 'walk']
 marked.use({
   extensions: [{
     name: 'container',
@@ -118,6 +128,22 @@ marked.use({
         if (!parts.length) throw new Error(':::steps needs a ### heading per step')
         return `${intro}<ol class="steps">${parts.map((x) => `<li class="step">${x}</li>`).join('')}</ol>`
       }
+      if (token.kind === 'before') return `<div class="before">${this.parser.parse(token.tokens)}</div>`
+      if (token.kind === 'walk') {
+        const body = token.tokens.filter((t) => t.type !== 'space')
+        const list = body[0]
+        const fence = body[1]
+        if (body.length !== 2 || list.type !== 'list' || !list.ordered || fence.type !== 'code' || fence.lang !== 'demo-panel') throw new Error(':::walk holds a numbered list and then one ```demo-panel with «walk: true»')
+        const panel = this.parser.parse([fence])
+        const beats = Number(/data-beats="(\d+)"/.exec(panel)[1])
+        if (!panel.includes('data-walk-panel')) throw new Error('the ```demo-panel in a :::walk needs «walk: true»')
+        if (beats !== list.items.length) throw new Error(`:::walk has ${list.items.length} steps but its panel has ${beats} frames after the first — one frame per step`)
+        const items = list.items.map((it, i) => {
+          const one = it.tokens.length === 1 && it.tokens[0].type === 'text' && it.tokens[0].tokens
+          return `<li data-walk-step="${i + 1}">${one ? this.parser.parseInline(it.tokens[0].tokens) : this.parser.parse(it.tokens)}</li>`
+        }).join('')
+        return `<div class="walk" data-walk><ol class="walk-list">${items}</ol><div class="walk-panel">${panel}</div></div>`
+      }
       const list = token.tokens.find((t) => t.type === 'list')
       if (!list || token.tokens.some((t) => t.type !== 'list' && t.type !== 'space')) throw new Error(':::cards holds one list: - [title](/page#id)：one line')
       return `<div class="doc-cards">${list.items.map((item) => {
@@ -131,7 +157,9 @@ marked.use({
     },
   }],
 })
-const CALLOUT = { TIP: ['tip', 'bulb', '提示'], NOTE: ['note', 'info', '说明'], WARNING: ['warn', 'warn', '注意'] }
+const CALLOUT = { TIP: ['tip', 'bulb', '提示'], IMPORTANT: ['important', 'info', '重要'], NOTE: ['note', 'info', '说明'], WARNING: ['warn', 'warn', '注意'] }
+// More than this many on a page and none of them stands out.
+const MAX_CALLOUTS = 3
 
 function renderMarkdown(md, { file }) {
   const toc = []
@@ -160,7 +188,9 @@ function renderMarkdown(md, { file }) {
     const src = href.startsWith('/') ? `${BASE}${href}` : href
     return `<figure><div class="shot"><img src="${esc(src)}" alt="${esc(text)}" loading="lazy"></div>${text ? `<figcaption>${esc(text)}</figcaption>` : ''}</figure>`
   }
+  let callouts = 0
   renderer.blockquote = function ({ text, tokens }) {
+    if (collecting) callouts++
     const m = /^\[!(\w+)\][ \t]*\n?/.exec(text)
     if (!m) return `<div class="callout note">${INFO}<div>${this.parser.parse(tokens)}</div></div>`
     if (!CALLOUT[m[1]]) throw new Error(`unknown callout «[!${m[1]}]» — the kinds are ${Object.keys(CALLOUT).join(', ')}`)
@@ -178,6 +208,7 @@ function renderMarkdown(md, { file }) {
   renderer.table = function (token) { return `<div class="table-wrap">${marked.Renderer.prototype.table.call(this, token)}</div>` }
   let html
   try { html = marked.parse(md, { renderer }) } catch (e) { fail(`${file}: ${e.message}`) }
+  if (callouts > MAX_CALLOUTS) fail(`${file}: ${callouts} callouts; a page has at most ${MAX_CALLOUTS}, or none of them stands out`)
   const fences = countFences(md)
   if (fences !== demos) fail(`${file}: ${fences} demo fences in the source but ${demos} expanded — the renderer only sees a fence at the top level`)
   let lede = ''
