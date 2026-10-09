@@ -58,6 +58,16 @@ const base: Routine = {
   output_dir: '周报',
   trigger: 'schedule',
   trigger_text: '每周周一 09:00（Asia/Shanghai）',
+  i18n: {
+    trigger_text: {
+      key: 'routineTriggerWeekly',
+      params: {
+        days: { list: [{ key: 'routineWeekdayMon', params: {} }], quoted: false },
+        time: '09:00',
+        timezone: 'Asia/Shanghai',
+      },
+    },
+  },
   spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
   timezone: 'Asia/Shanghai',
   state: 'active',
@@ -84,6 +94,16 @@ function buttons(container: Element): string[] {
 }
 
 describe('一条规则这一行', () => {
+  it('changes the trigger language on an already rendered row, not its timezone or clock', async () => {
+    const { container } = mount(base)
+    expect(container.textContent).toContain('每周周一 09:00（Asia/Shanghai）')
+    setLocale('en')
+    await waitFor(() => {
+      expect(container.textContent).toContain('Every Monday at 09:00 (Asia/Shanghai)')
+      expect(container.textContent).not.toContain('每周周一')
+    })
+  })
+
   it('右键这一行：弹出行里那几样操作', async () => {
     const { container } = mount(base)
     await fireEvent.contextMenu(container.querySelector('.routine-row')!, { clientX: 20, clientY: 40 })

@@ -170,6 +170,8 @@ class RequiredCITest(unittest.TestCase):
             ".claude/scripts/frontend_grade.py",
             ".claude/scripts/catalog-ratchet.py",
             ".claude/scripts/scene-ratchet.py",
+            ".claude/scripts/scene-debt-ratchet.py",
+            ".claude/scripts/test_scene_debt_ratchet.py",
             ".claude/scripts/ratchet_report.py",
         ):
             with self.subTest(path=path):
