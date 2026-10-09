@@ -13,6 +13,8 @@ import SubmitFeedbackDialog from './SubmitFeedbackDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 import { useFeedbackStore } from '@/stores/feedback'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -77,7 +79,9 @@ const formOpen = ref(false)
  *  这里发出去的卡已经不在「还活着」的那份里了，但它此刻正翻成一张凭证摆在屏幕上 ——
  *  那张凭证留着，直到人离开这个页面。 */
 async function load() {
-  const live = await store.loadProposals(props.topicId)
+  // 只有进房间时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
+  const topic = props.topicId
+  const live = await fromSnapshot(keys.roomFeedbackProposals(topic), () => store.loadProposals(topic))
   const sentHere = proposals.value.filter(
     (p) => submitted.value[p.block_id] && !live.some((l) => l.block_id === p.block_id)
   )

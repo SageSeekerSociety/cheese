@@ -227,6 +227,15 @@ class TaskService:
         absent."""
         return await self._repo.open_counts(room_ids)
 
+    async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """How many tasks each of these rooms has underway (open, and not being
+        written up after its last merge); a room with none is absent."""
+        return await self._repo.underway_counts(room_ids)
+
+    async def underway_with(self, room_ids: list[uuid.UUID], person: str) -> list[Task]:
+        """The tasks underway in these rooms that ``person`` owns or helps on."""
+        return await self._repo.underway_with(room_ids, person)
+
     async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """Every piece of work this room has dispatched, oldest first.
 

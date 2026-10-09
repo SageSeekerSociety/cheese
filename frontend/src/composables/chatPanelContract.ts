@@ -13,6 +13,10 @@ import type { MemberActivityLine } from '../lib/memberActivity'
  *  own row (`topics`, which names the room). */
 export const ANNOUNCED = ['doc', 'pins', 'accept', 'feedback', 'skills', 'threads'] as const
 
+/** Of those, what a subscription's room snapshot puts straight into the cache
+ *  (`query/snapshot`): a reconnect that brought a snapshot need not re-read them. */
+export const SNAPSHOT_RESOURCES: ReadonlySet<string> = new Set(['pins', 'threads'])
+
 /** The events this panel surfaces to whoever owns the address it is rendered at. */
 // Surface AI activity so the parent can refresh the living doc / topic list
 // without a manual reload (spec §7.1 实时联动). `turn-done` fires when a turn

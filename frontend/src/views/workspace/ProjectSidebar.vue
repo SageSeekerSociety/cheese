@@ -4,7 +4,6 @@ import type { RoomTask } from '@/cx_types'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { useQuery } from '@tanstack/vue-query'
 
 import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
@@ -12,11 +11,7 @@ import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
-import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
-import { myHandle } from '@/me'
-import { queryClient } from '@/query/client'
-import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 
@@ -54,24 +49,18 @@ const activeAllTasks = computed(() =>
   route.name === 'project-tasks' && typeof route.query.channel === 'string' ? route.query.channel : null
 )
 
-// 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和全部任务、项目
-// 总览读同一份。任务变了（新建、开始、关闭）房间会收到通知，那时这份当场作废重读；
-// 另外常驻的这一份每 30 秒问一次（看不见的标签页不问）。手机上的整页那份不另起轮询。
-const TASKS_REFRESH_MS = 30_000
-const tasksRead = useQuery(
-  computed(() => ({
-    ...openProjectTasksQuery(props.projectId),
-    refetchInterval: props.page ? false : TASKS_REFRESH_MS,
-  })),
-  queryClient
+// 每个频道里和我有关的几条任务，挂在频道那一行下面：频道清单的每一行自己带着
+// （`my_tasks`：最多几件和我有关的，加这个频道进行中的总数），侧栏不读整个项目的任务。
+// 任务变了，房间推来的帧会把那一行重读一次（query/changes）。
+const roomTasks = computed<Record<string, RoomTask[]>>(() =>
+  Object.fromEntries(
+    store.topics.filter((topic) => topic.my_tasks?.shown.length).map((topic) => [topic.id, topic.my_tasks!.shown])
+  )
 )
-const tasks = computed<RoomTask[]>(() => tasksRead.data.value?.data ?? [])
-const railTasks = computed(() => railTasksByChannel(tasks.value, myHandle()))
-const roomTasks = computed(() =>
-  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.shown]))
-)
-const roomTaskTotals = computed(() =>
-  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.total]))
+const roomTaskTotals = computed<Record<string, number>>(() =>
+  Object.fromEntries(
+    store.topics.filter((topic) => topic.my_tasks?.open).map((topic) => [topic.id, topic.my_tasks!.open])
+  )
 )
 function openAllTasks(channelId: string) {
   void router.push({ name: 'project-tasks', params: { projectId: props.projectId }, query: { channel: channelId } })

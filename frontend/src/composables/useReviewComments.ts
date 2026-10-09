@@ -12,6 +12,8 @@ import { computed, ref, watch } from 'vue'
 
 import { deleteReviewComment, editReviewComment, listReviewComments, writeReviewComment } from '@/api/reviewComments'
 import { myHandle } from '@/me'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 
 export interface ReviewCommentsHost {
   taskId: () => string | null | undefined
@@ -65,7 +67,8 @@ export function useReviewComments(host: ReviewCommentsHost) {
       return
     }
     try {
-      const res = await listReviewComments(task)
+      // 只有进任务时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
+      const res = await fromSnapshot(keys.taskReviewComments(task), () => listReviewComments(task))
       if (mine === seq) items.value = res.comments
     } catch {
       // 读不到就先不摆：「改动」本身照常看得了。

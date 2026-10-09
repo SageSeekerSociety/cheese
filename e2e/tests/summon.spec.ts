@@ -9,13 +9,6 @@ import { api, apiLogin, openFirstProject } from './helpers';
 
 async function openFirstTopic(page: Page) {
   const rows = await openFirstProject(page);
-  // 房间名册是另一条 HTTP 请求，比输入框可用要晚。它到之前，@ 补全名单里坐着的是
-  // **项目**那位共用的芝士（房间自己那位还不在名单上），此刻写进正文的 @ 指的是另
-  // 一个 handle。这里等它到齐再动手，等的是「这条测试要测的东西已经就位」，不是
-  // 拿一个 sleep 去掩盖时序——那个窗口本身另说（见话题文档）。
-  const rosterLoaded = page.waitForResponse(
-    (r) => /\/topics\/[^/]+\/members(\?|$)/.test(r.url()) && r.ok()
-  );
   // 进项目落在项目总览，所以要显式打开一个话题。
   await rows.first().click();
   // 先等聊天区挂出来再等输入框：话题这条路由把 tiptap 那一堆拖进来，冷启动的
@@ -25,7 +18,9 @@ async function openFirstTopic(page: Page) {
   const composer = page.locator('.composer-input textarea').first();
   // 输入框要等这个话题的 WS 连上才可用。
   await expect(composer).toBeEnabled({ timeout: 20_000 });
-  await rosterLoaded;
+  // 房间名册到了，「交给」按钮才开（名册没到时写进正文的 @ 会指错人，见最后一条）。
+  // 名册随订阅的房间快照一起来，等的是「这条测试要测的东西已经就位」。
+  await expect(page.locator('.summon-btn')).toBeEnabled({ timeout: 15_000 });
   return composer;
 }
 
@@ -111,9 +106,10 @@ test.describe('把消息交给芝士', () => {
   // 点下去，写进正文的曾经是**项目**那位共用的芝士（`<@cheese>`）——消息照发、房间
   // 照样醒，但时间线上那条消息里的 @ 指的是另一个身份，而它自己写着「叫了它」。
   //
-  // 名册是另一条 HTTP 请求，平时几百毫秒就跑完，肉眼撞不上。这条把它扣住不答，
-  // 把那个窗口拉到能测的长度——测的是「名册没到时按钮关着」这句话真的成立，以及
-  // 名册一到，@ 的就是这个房间那位。
+  // 名册平时随订阅的房间快照一起到，肉眼撞不上这个窗口。这条把快照从订阅的回答里
+  // 拿掉（快照没读成时就是这样：前端退回去单独问名册），再把那一次问扣住不答，把窗口
+  // 拉到能测的长度——测的是「名册没到时按钮关着」这句话真的成立，以及名册一到，@ 的
+  // 就是这个房间那位。
   test('房间名册没到时按钮是关着的；到了以后 @ 的是这个房间那位', async ({ page }) => {
     const projects = (await api(page, 'get', '/projects')).data as { id: string }[];
     const project = projects[0];
@@ -135,6 +131,15 @@ test.describe('把消息交给芝士', () => {
     await page.route(`**/topics/${topic.id}/members*`, async (route) => {
       await held;
       await route.continue();
+    });
+    await page.routeWebSocket(/\/rooms\/live/, (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((message) => server.send(message));
+      server.onMessage((message) => {
+        const frame = JSON.parse(String(message));
+        if (frame.type === 'subscribed') frame.room = null;
+        ws.send(JSON.stringify(frame));
+      });
     });
 
     await page.goto(`/projects/${project.id}/topics/${topic.id}`);

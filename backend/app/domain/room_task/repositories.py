@@ -93,6 +93,35 @@ class TaskRepository:
         )
         return {room: n for room, n in (await self._session.execute(stmt)).all()}
 
+    async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """How many tasks each of these rooms has underway: open and not in the
+        window where a merged task is being written up before it closes. A room
+        with none is absent."""
+        if not room_ids:
+            return {}
+        stmt = (
+            select(Task.room_id, func.count(Task.id))
+            .where(
+                Task.room_id.in_(room_ids),
+                Task.status == TaskStatus.open,
+                Task.closing_since.is_(None),
+            )
+            .group_by(Task.room_id)
+        )
+        return {room: n for room, n in (await self._session.execute(stmt)).all()}
+
+    async def underway_with(self, room_ids: list[uuid.UUID], person: str) -> list[Task]:
+        """The tasks underway in these rooms that ``person`` owns or helps on."""
+        if not room_ids:
+            return []
+        stmt = select(Task).where(
+            Task.room_id.in_(room_ids),
+            Task.status == TaskStatus.open,
+            Task.closing_since.is_(None),
+            or_(Task.owner_handle == person, self._whose("helping", person)),
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
     async def list_for_room(
         self,
         room_id: uuid.UUID,

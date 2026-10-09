@@ -8,7 +8,9 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { getTaskRelated, retryTaskOpening } from '@/api/tasks'
 import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 import { roomProgressQuery } from '@/query/room'
+import { fromSnapshot } from '@/query/snapshot'
 
 /** 芝士在干活时，清单多久重取一次。 */
 const CHECKLIST_EVERY_MS = 5000
@@ -25,7 +27,8 @@ export function useTaskOverview(opts: {
     const id = opts.taskId()
     if (!id) return
     try {
-      const got = await getTaskRelated(id)
+      // 只有进任务时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
+      const got = await fromSnapshot(keys.taskRelated(id), () => getTaskRelated(id))
       if (opts.taskId() === id) related.value = got
     } catch {
       // 相关是背景信息，拿不到就不画。

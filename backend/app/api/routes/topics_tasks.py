@@ -19,6 +19,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
@@ -52,6 +53,7 @@ from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.own import may_work_for
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
 from app.domain.machine import session_work
 from app.domain.machine.session_reports import devices_held_by
@@ -131,6 +133,37 @@ async def list_room_tasks(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    items = await room_task_items(
+        db,
+        chat,
+        actor,
+        topic,
+        limit=limit,
+        status=status,
+        ids=ids,
+        blocks=blocks,
+        branch=branch,
+        latest=latest,
+    )
+    return conditional_json(ok(page(items, len(items))), if_none_match)
+
+
+async def room_task_items(
+    db: AsyncSession,
+    chat: ChatService,
+    actor: Actor,
+    topic,
+    *,
+    limit: int | None = None,
+    status: Literal["open", "closed"] | None = None,
+    ids: list[uuid.UUID] | None = None,
+    blocks: list[uuid.UUID] | None = None,
+    branch: bool = False,
+    latest: int | None = None,
+) -> list[dict]:
+    """A room's tasks as `GET /topics/{id}/tasks` lists them (see there for what
+    each option keeps); also the `tasks` of the room snapshot a subscription
+    opens with (`room_snapshot`). The caller has authorised the reader."""
     named: set[uuid.UUID] | None = set(ids) if ids is not None else None
     if blocks is not None:
         lines = await BlockRepository(db).many(blocks)
@@ -138,7 +171,7 @@ async def list_room_tasks(
             task_id for line in lines if (task_id := named_task(line)) is not None
         }
     threads = await TaskService(db).threads_for_room(
-        topic_id,
+        topic.id,
         limit=limit,
         status=status,
         ids=named,
@@ -146,8 +179,7 @@ async def list_room_tasks(
         with_branch=branch,
         latest=latest,
     )
-    items = await task_rows(db, chat, actor, topic.project_id, threads)
-    return conditional_json(ok(page(items, len(items))), if_none_match)
+    return await task_rows(db, chat, actor, topic.project_id, threads)
 
 
 @router.get("/{topic_id}/task")
@@ -161,6 +193,13 @@ async def get_task(
     404 for a room's own conversation. What is said in it is read like any
     conversation's (`/topics/{task}/blocks`)."""
     place, _actor, task = await task_conversation(db, resolver, topic_id)
+    return ok(await task_page_row(db, chat, place, task))
+
+
+async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dict:
+    """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
+    snapshot a subscription to it opens with. The caller has authorised the
+    reader."""
     cards = await AcceptCardRepository(db).latest_by_task([task.id])
     out = await _task_out(db, chat, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
@@ -183,7 +222,7 @@ async def get_task(
         }
     )
     out["opening"] = await _opening(db, task)
-    return ok(out)
+    return out
 
 
 async def _opening(db, task) -> str | None:
@@ -203,8 +242,14 @@ async def task_related(
     """Where the task came from and what was put on the table there
     (`task_origin.py`): what its page shows as 相关."""
     _place, _actor, task = await task_conversation(db, resolver, topic_id)
+    return ok(await related_of(db, task))
+
+
+async def related_of(db: AsyncSession, task) -> dict:
+    """Where a task came from and what it was given, as its page's 相关 shows
+    it; also the `related` of a task's room snapshot."""
     origin, blocks = await discussion(db, task)
-    return ok({"origin": origin, "materials": materials(blocks)})
+    return {"origin": origin, "materials": materials(blocks)}
 
 
 @router.post("/{topic_id}/opening")

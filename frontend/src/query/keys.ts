@@ -45,6 +45,13 @@ export const keys = {
   roomPins: (roomId: string) => ['room', roomId, 'pins'] as const,
   roomThreads: (roomId: string) => ['room', roomId, 'threads'] as const,
   roomComputeProfile: (roomId: string) => ['room', roomId, 'compute-profile'] as const,
+  /** 这段对话里还活着的反馈提案卡。 */
+  roomFeedbackProposals: (roomId: string) => ['room', roomId, 'feedback-proposals'] as const,
+  /** 这个房间里 AI 队友提议、还在等人的技能。 */
+  roomSkillProposals: (roomId: string) => ['room', roomId, 'skill-proposals'] as const,
+  /** 任务从哪来、带着什么（任务页的「相关」）。 */
+  taskRelated: (taskId: string) => ['room', taskId, 'related'] as const,
+  taskReviewComments: (taskId: string) => ['room', taskId, 'review-comments'] as const,
   /** 对话最新的那一页：打开房间先画它，预取也是取它。 */
   roomNewestBlocks: (roomId: string) => ['room', roomId, 'blocks', 'newest'] as const,
 }

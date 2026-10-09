@@ -21,11 +21,15 @@ function invalidate(queryKey: readonly unknown[]): Promise<void> {
   return refreshQueries({ queryKey })
 }
 
-/** 任务变了（建、改名、开始、交付、关闭、换人）：房间和项目的任务清单、每一件任务本身。 */
-function tasksChanged(room: string, project: string | null): Promise<unknown> {
+/**
+ * 任务变了（建、改名、开始、交付、关闭、换人）：房间和项目的任务清单、每一件任务本身，
+ * 和频道清单里这一行（侧栏挂在它下面的那几件，`my_tasks`）。
+ */
+function tasksChanged(room: string, project: string | null, row = true): Promise<unknown> {
   return Promise.all([
     invalidate(keys.roomTasks(room)),
     project ? invalidate(keys.projectTasks(project)) : null,
+    project && row ? refreshTopicRow(project, room) : null,
     refreshQueries({ predicate: (query) => query.queryKey[0] === 'room' && query.queryKey[2] === 'task' }),
   ])
 }
@@ -38,7 +42,8 @@ export function roomChanged({ room, project, resource, id }: RoomChange): Promis
     case 'topics':
       return Promise.all([
         project ? (id ? refreshTopicRow(project, id) : invalidate(keys.projectTopics(project))) : null,
-        tasksChanged(room, project),
+        // 这一行刚才已经重读了；没指名就是整份清单在重读。
+        tasksChanged(room, project, false),
       ])
     case 'tasks':
       return tasksChanged(room, project)
