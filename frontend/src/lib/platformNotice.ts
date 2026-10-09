@@ -513,6 +513,16 @@ function foldKey(block: Block): string | null {
   return eventType || null
 }
 
+/**
+ * 说「这件任务在这里开始」的那种行（`task_created`、更早的 `split`）：它画成那件任务的
+ * 卡，一行一件。两件都是没起名时新建的，正文一字不差（「创建了任务「新任务」」），按
+ * 正文折就把后一件的卡整张吞了。
+ */
+function startsTask(block: Block): boolean {
+  const action = meta(block)?.action
+  return action === 'task_created' || action === 'split'
+}
+
 /** 时间线上的一行：要渲染的块，以及被折进它的那一串。 */
 export interface NoticeRow {
   block: Block
@@ -526,7 +536,7 @@ export interface NoticeRow {
  * 两条折叠规则并存：
  *  1. content 全等 —— 老规则，管住 `编辑了文档` 这类一模一样的连发。只对**两边都
  *     没有 detail** 的事件生效：淡行和动作行没有展开区，把带原话的那条折进去就
- *     真丢了；
+ *     真丢了；新建任务的行也不折，每一行是一件任务的卡；
  *  2. 同 `meta.event_type` —— 新规则，管住失败类事件。它们带时间、耗时、HTTP 码，
  *     content 永远不相等，规则 1 从来没在它们身上生效过。折进来的每一条原话都摆
  *     在展开区里，一条不少。
@@ -555,7 +565,8 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
     if (prevBlock && prevBlock.kind === 'event' && showsInRoom(prevBlock)) {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
-      const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)
+      const bothPlain =
+        !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail) && !startsTask(block) && !startsTask(prevBlock)
       // 平台替一轮写的通知署名都是 system：是哪位队友的那一轮在 `seat` 上，两位的
       // 并成一行，后一位的就署成了前一位。
       const sameAuthor =

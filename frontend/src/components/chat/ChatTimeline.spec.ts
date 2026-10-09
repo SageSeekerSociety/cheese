@@ -2,6 +2,7 @@
 // row it happened on.
 import type { Component } from 'vue'
 import type { Block } from '../../cx_types'
+import type { TaskLine } from '../../lib/channelTasks'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -129,5 +130,37 @@ describe('screen readers hear newly arrived messages, once each', () => {
     const quiet = other.container.querySelector('[data-testid="chat-live"]')!
     await other.rerender({ rows: collapseNotices([...BLOCKS, said('e', 'old')]), arrived: new Set() })
     expect(quiet.textContent).toBe('')
+  })
+})
+
+describe('each task made on its own in the channel keeps its own card', () => {
+  // Both made before anyone named them, so the line the platform writes is word for word the same.
+  function created(id: string, taskId: string, at: string): Block {
+    return {
+      id,
+      conversation_id: 't',
+      kind: 'event',
+      author_type: 'system',
+      author: 'system',
+      content: '<@lin> 创建了任务「新任务」，由 <@lin> 负责',
+      created_at: at,
+      meta: { platform: true, action: 'task_created', task_id: taskId },
+    } as Block
+  }
+  function card(id: string, title: string): TaskLine {
+    return { id, title, owner: 'lin', creator: 'lin', status: '待你审阅', tone: 'mine', accepted: null, at: '' }
+  }
+
+  it('two tasks created one after the other by the same person show two cards', () => {
+    const tasks = new Map([
+      ['t3', card('t3', 'Fix the login redirect')],
+      ['t4', card('t4', 'Draft the release notes')],
+    ])
+    const blocks = [created('n3', 't3', '2026-10-09T22:27:21Z'), created('n4', 't4', '2026-10-09T23:19:45Z')]
+    const rows = collapseNotices(blocks)
+    mount({ rows, runEdges: rows.map(() => 'start'), taskOf: (id: string) => tasks.get(id) ?? null })
+    const posts = screen.getAllByTestId('task-created-post')
+    expect(posts.map((post) => post.getAttribute('data-row-id'))).toEqual(['n3', 'n4'])
+    expect(screen.getByText('Draft the release notes')).toBeTruthy()
   })
 })
