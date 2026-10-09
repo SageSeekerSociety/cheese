@@ -16,8 +16,8 @@ link that is already up.
 Protocol:
   connect → /api/rooms/live?token=<session token>   (required)
   client → {"type":"subscribe","topic":id,"token":<session token>}
-         ← {"type":"subscribed","topic":id,"newest":<block id>|null}, then
-           that room's frames
+         ← {"type":"subscribed","topic":id,"newest":<block id>|null,
+            "room":<snapshot>|null}, then that room's frames
   client → {"type":"unsubscribe","topic":id}
   client → {"type":"ping","topic":id}  →  server → {"type":"pong","topic":id}
   client → {"type":"typing","topic":id} / {..., "active":false}
@@ -40,6 +40,12 @@ A client reads the room's history over HTTP, and a block stored after that
 read but before the subscription was registered reaches it by neither path; a
 client that does not hold `newest` reads the room's tail again. Anything stored
 after `newest` is published to this subscription.)
+(`room` is the room as it stood once the subscription was registered — its
+roster, tasks, pins, threads, proposal cards; a task's own row, origin and
+review comments — each piece shaped like the route that serves it
+(`room_snapshot.py`). Like `newest`, it is a line: anything that changes after
+it is published to this subscription. Null when it could not be read; the
+client then reads the pieces itself.)
 (The ping is the browser's liveness probe: a socket can sit OPEN for minutes
 after its path stopped carrying frames, so the client asks every few seconds
 and replaces the link when no answer comes.)
@@ -78,6 +84,7 @@ from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service
+from app.api.room_snapshot import room_snapshot
 from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sentences import error_frame
@@ -246,7 +253,9 @@ class _Room:
             # already means "this connection hears everything from here on, and
             # is allowed to".
             async with broker.subscribe(topic, replay=True) as queue:
-                refusal, open_turns, card, newest = await self._authorise(chat_service)
+                refusal, open_turns, card, newest, room = await self._authorise(
+                    chat_service
+                )
                 if refusal is not None:
                     code, message = refusal
                     _log.info("chat_ws_refused", code=code, topic=topic)
@@ -259,7 +268,7 @@ class _Room:
                 # turn_finished queued — the client is never left "working".
                 adopt(broker, topic, open_turns)
                 active_turn_ids = broker.active_turn_ids(topic)
-                await tagged({"type": "subscribed", "newest": newest})
+                await tagged({"type": "subscribed", "newest": newest, "room": room})
                 if active_turn_ids:
                     await tagged(
                         {
@@ -298,10 +307,11 @@ class _Room:
             forget(self)
 
     async def _authorise(self, chat_service):
-        """(refusal, open turns, task card, newest block id) for this
-        subscription's credential. Called after the subscription is registered,
-        so the newest block it reads is a line: everything after it is
-        published to this subscription."""
+        """(refusal, open turns, task card, newest block id, room snapshot) for
+        this subscription's credential. Called after the subscription is
+        registered, so what it reads is a line: the newest block and the room as
+        the snapshot has it, with everything after them published to this
+        subscription."""
         async with chat_service.session_factory() as auth_session:
             resolver = ActorResolver(
                 session=auth_session, bearer=self.token or None, cheese_token=""
@@ -311,7 +321,7 @@ class _Room:
                 actor, token_presented=bool(self.token)
             )
             if refusal is not None:
-                return refusal, [], None, None
+                return refusal, [], None, None, None
             # A task is a conversation of its own, on a channel of its own:
             # everything its turns publish goes out on the task id. Whoever may
             # watch it is whoever may enter its room, found through the task;
@@ -325,7 +335,7 @@ class _Room:
                         actor, project_id=project_id, topic_id=room_id
                     )
                 except ForbiddenError as exc:
-                    return ("forbidden", exc.args[0]), [], card, None
+                    return ("forbidden", exc.args[0]), [], card, None, None
             self.handle = actor.handle
             self.room_id = room_id if card is None else None
             # The turns still running here, as the database has them. The
@@ -344,7 +354,19 @@ class _Room:
                 await open_turns_on(auth_session, self.topic_id),
                 card,
                 newest,
+                await self._snapshot(auth_session, chat_service, actor),
             )
+
+    async def _snapshot(self, session, chat_service, actor) -> dict | None:
+        """The room as it is now (`room_snapshot`), read after the subscription
+        is registered. A room that cannot be read whole still opens: the client
+        asks for each piece itself, as it would without a snapshot."""
+        try:
+            return await room_snapshot(session, chat_service, actor, self.topic_id)
+        except Exception:
+            _log.exception("chat_ws_snapshot_failed", topic=str(self.topic_id))
+            await session.rollback()
+            return None
 
     async def _relay(self, queue: SubscriberQueue, tagged) -> None:
         while True:

@@ -20,6 +20,7 @@ from app.api.deps import (
 from app.api.message_effects import announce_edited_message
 from app.api.response import ok, page
 from app.api.room_task_rows import tasks_under_blocks
+from app.api.routes.projects import rail_tasks
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
 from app.core.db import get_db
@@ -293,6 +294,7 @@ async def list_topics(
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
@@ -307,7 +309,9 @@ async def list_topics(
     only moves when the topic's own fields change.
 
     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
-    this is the endpoint the sidebar lists from.
+    this is the endpoint the sidebar lists from — and the tasks the sidebar
+    hangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never
+    reads the whole project's tasks for the few that are the caller's.
 
     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
@@ -343,20 +347,24 @@ async def list_topics(
     waits = await MemberWaits(db).for_rooms(
         [t.id for t in topics], now=now, stuck_rooms=_stuck_on_checks(live)
     )
+    rails = await rail_tasks(db, chat, actor, [t.id for t in topics])
     items = [
-        _topic_out(
-            t,
-            running_ids,
-            last_activity,
-            relevance,
-            cards,
-            now,
-            managed,
-            asked,
-            asks_me,
-            activity=broker.activity.snapshot(str(t.id)),
-            waits=waits.get(t.id),
-        )
+        {
+            **_topic_out(
+                t,
+                running_ids,
+                last_activity,
+                relevance,
+                cards,
+                now,
+                managed,
+                asked,
+                asks_me,
+                activity=broker.activity.snapshot(str(t.id)),
+                waits=waits.get(t.id),
+            ),
+            "my_tasks": rails[t.id],
+        }
         for t in topics
     ]
     return conditional_json(ok(page(items, total)), if_none_match)
@@ -410,6 +418,7 @@ async def get_topic(
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
     """One room's header.
@@ -449,19 +458,23 @@ async def get_topic(
     waits = await MemberWaits(db).for_rooms(
         [topic.id], now=datetime.now(UTC), stuck_rooms=_stuck_on_checks(live)
     )
+    rails = await rail_tasks(db, chat, actor, [topic.id])
     return ok(
-        _topic_out(
-            topic,
-            runner.running_topic_ids(),
-            last_activity,
-            relevance,
-            cards,
-            managed_ids=managed,
-            asked=asked,
-            asks_me=_asks_me(asked, _viewer(actor)),
-            activity=broker.activity.snapshot(str(topic.id)),
-            waits=waits.get(topic.id),
-        )
+        {
+            **_topic_out(
+                topic,
+                runner.running_topic_ids(),
+                last_activity,
+                relevance,
+                cards,
+                managed_ids=managed,
+                asked=asked,
+                asks_me=_asks_me(asked, _viewer(actor)),
+                activity=broker.activity.snapshot(str(topic.id)),
+                waits=waits.get(topic.id),
+            ),
+            "my_tasks": rails[topic.id],
+        }
     )
 
 
