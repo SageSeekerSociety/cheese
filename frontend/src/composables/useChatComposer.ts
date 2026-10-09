@@ -22,7 +22,7 @@ import { useEventListener } from '@vueuse/core'
 
 import { editMessage, summonAgent } from '../api'
 import { uploaded, usePendingAttachments } from '../lib/attachments'
-import { isAgentBlock } from '../lib/authorship'
+import { isAgentBlock, isAgentHandle } from '../lib/authorship'
 import { replySnippet } from '../lib/blockDisplay'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { frozenQuote } from '../lib/quotedContext'
@@ -173,6 +173,12 @@ export function useChatComposer(deps: ChatComposerDeps) {
   // 那是它干活的过程，不是它对这个人开过口。
   const startersRetired = computed(() =>
     blocks.value.some((b) => isAgentBlock(b) && (b.kind === 'message' || b.kind === 'attachment'))
+  )
+
+  // 「开始清单」问的是这个房间：芝士在主线上开过口，或者在挂在主线上的哪条支线里回
+  // 过话，都算。只看主线的话，一个只在支线里跟它说过话的人，清单永远说他还没开口。
+  const agentHasSpoken = computed(
+    () => startersRetired.value || blocks.value.some((b) => !!b.thread?.participants.some(isAgentHandle))
   )
 
   // 这个人往房间里放过东西没有——「开始清单」里「把材料放进来」那一步的判据之一
@@ -371,7 +377,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
     starterPrompts,
     showStarters,
     // 「开始清单」读的两条房间内判据：芝士开过口没有、这个人放过材料没有。
-    agentHasSpoken: startersRetired,
+    agentHasSpoken,
     roomHasAttachment,
     startDraft,
     pendingAtts,

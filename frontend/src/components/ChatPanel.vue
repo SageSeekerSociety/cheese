@@ -302,10 +302,13 @@ const { skipped: guideSkipped, skip: skipGuide } = useStartGuide()
 // 那一行。所以下面直接吃 `gettingStartedSteps` 找第一条没做的，不另算一遍——两张
 // 东西于是永远说同一件事。清单卡做完两件必做的就退场，气泡还要把「接仓库」「请同
 // 事」这两步带下去，所以它的场子不跟着卡走，见 `alsoProbe`。
-const guideOn = computed(
-  () =>
-    !guideSkipped.value && !!props.topic?.project_id && props.topic.kind === 'root' && props.topic.status !== 'archived'
+// 项目本体自己的那一栏才算：支线和任务页里的对话栏拿的也是这只房间（`topic` 是
+// root），但它们是房间里的别的对话。在那里再画一份，每一份按自己那条对话判「说
+// 过话没有」，同一张清单在三处各说各的。
+const onProjectLine = computed(
+  () => !props.conversationId && props.topic?.kind === 'root' && props.topic.status !== 'archived'
 )
+const guideOn = computed(() => !guideSkipped.value && !!props.topic?.project_id && onProjectLine.value)
 
 const {
   visible: showGettingStarted,
@@ -313,7 +316,7 @@ const {
   dismiss: dismissGettingStarted,
 } = useGettingStarted({
   projectId: () => props.topic?.project_id ?? null,
-  on: () => props.topic?.kind === 'root' && props.topic.status !== 'archived',
+  on: () => onProjectLine.value,
   agentHasSpoken: () => agentHasSpoken.value,
   roomHasAttachment: () => roomHasAttachment.value,
   members: () => props.members,
