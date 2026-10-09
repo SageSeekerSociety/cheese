@@ -7,15 +7,18 @@ from datetime import UTC, datetime
 from typing import Literal, overload
 
 from sqlalchemy import (
+    DateTime,
     Text,
     Uuid,
     and_,
     any_,
     bindparam,
     cast,
+    column,
     func,
     or_,
     select,
+    table,
     text,
     true,
     tuple_,
@@ -47,6 +50,12 @@ from app.domain.block.models import (
 )
 from app.domain.conversation.services import of_room
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
+
+# When a task's owner pressed 「开始」. A bare table: ``room_task`` depends on
+# this domain.
+_tasks = table(
+    "tasks", column("id", Uuid), column("started_at", DateTime(timezone=True))
+)
 
 
 @dataclass(frozen=True)
@@ -496,7 +505,8 @@ class BlockRepository:
         判据是 #1084 定的那一条：**最近一条提问消息没有作答记录**。不需要新增
         存储，因为回答本来就记在提问那一块上（`meta.answer_log`，答过它的每一句
         回话）。取「最近一条」而不是「有没有任何一条」：已回答的旧提问不该让这段
-        对话长期停留在待处理。
+        对话长期停留在待处理。任务的负责人点了「开始」，在那之前问的题也不再算：
+        开始就是他说这件事讨论够了。
 
         等谁也记在那一块上（`meta.asked`，提问那一刻写下的）。None 是「这道题指不
         到具体的人」。只关心停没停的调用方照样拿它做 `in`。走 `ix_blocks_questions`。
@@ -553,6 +563,25 @@ class BlockRepository:
                 # leaves those rows alone — see `e5a1c7d3b284`).
                 continue
             rows.append((place_id, meta, at, asker, block_id))
+        if not rows:
+            return {}
+        # 「开始」 is the owner saying the task is discussed enough: what was asked
+        # in it before then no longer holds it, so a started task reads 已开始 /
+        # 运行中 rather than 待回答 until a question is asked after it.
+        started: dict[uuid.UUID, datetime] = {
+            task_id: at
+            for task_id, at in (
+                await self._session.execute(
+                    select(_tasks.c.id, _tasks.c.started_at).where(
+                        _tasks.c.id.in_([place_id for place_id, *_ in rows]),
+                        _tasks.c.started_at.is_not(None),
+                    )
+                )
+            ).all()
+        }
+        rows = [
+            row for row in rows if row[0] not in started or row[2] > started[row[0]]
+        ]
         if not rows:
             return {}
         # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
