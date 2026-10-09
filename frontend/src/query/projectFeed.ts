@@ -27,6 +27,12 @@ interface FeedFrame {
 }
 
 const REFUSALS = new Set(['auth_required', 'auth_expired', 'forbidden'])
+/**
+ * 未读每来一条消息就变，一个说话正热闹的项目里，每个开着的页面跟着每条消息问一次
+ * 不值得：两次读之间至少隔这么久，这期间来的帧并成之后的一次。
+ */
+const UNREAD_EVERY_MS = 2_000
+const PACED = new Set(['unread', 'private_unread'])
 const HEARTBEAT_INTERVAL_MS = 15_000
 const HEARTBEAT_TIMEOUT_MS = 10_000
 const MAX_RETRY_MS = 30_000
@@ -67,6 +73,26 @@ export function useProjectFeed(projectId: Ref<string>, me: string | null): void 
   let refused = false
   let heartbeat: ReturnType<typeof setInterval> | null = null
   let pongTimer: ReturnType<typeof setTimeout> | null = null
+  const lastRead = new Map<string, number>()
+  const later = new Map<string, ReturnType<typeof setTimeout>>()
+
+  /** 未读这两样按 `UNREAD_EVERY_MS` 的节奏读，别的来一帧读一次。 */
+  function changed(id: string, frame: FeedFrame) {
+    const resource = frame.resource ?? ''
+    if (!PACED.has(resource)) {
+      void projectChanged(id, me, frame)
+      return
+    }
+    if (later.has(resource)) return
+    const wait = (lastRead.get(resource) ?? 0) + UNREAD_EVERY_MS - Date.now()
+    const read = () => {
+      later.delete(resource)
+      lastRead.set(resource, Date.now())
+      if (projectId.value === id) void projectChanged(id, me, frame)
+    }
+    if (wait <= 0) read()
+    else later.set(resource, setTimeout(read, wait))
+  }
 
   function stopHeartbeat() {
     if (heartbeat) clearInterval(heartbeat)
@@ -78,6 +104,8 @@ export function useProjectFeed(projectId: Ref<string>, me: string | null): void 
   function close() {
     if (retryTimer) clearTimeout(retryTimer)
     retryTimer = null
+    for (const timer of later.values()) clearTimeout(timer)
+    later.clear()
     stopHeartbeat()
     const open = channel
     channel = null
@@ -124,7 +152,7 @@ export function useProjectFeed(projectId: Ref<string>, me: string | null): void 
       if (pongTimer) clearTimeout(pongTimer)
       pongTimer = null
       if (frame.type === 'error' && frame.code && REFUSALS.has(frame.code)) refused = true
-      else if (frame.type === 'state') void projectChanged(id, me, frame)
+      else if (frame.type === 'state') changed(id, frame)
     }
     ws.onclose = () => {
       if (channel !== ws) return

@@ -129,6 +129,20 @@ describe('项目推送', () => {
     scope.stop()
   })
 
+  it('消息一条接一条地来：未读不跟着每一条问，几秒里的并成一次', async () => {
+    serve()
+    const { scope, channel } = await watchProject()
+    vi.useFakeTimers()
+    api.getTopicUnread.mockClear()
+
+    for (let i = 0; i < 10; i += 1) tell(channel, { resource: 'unread', id: 'b' })
+    await vi.advanceTimersByTimeAsync(2_500)
+
+    expect(api.getTopicUnread).toHaveBeenCalledTimes(2)
+    scope.stop()
+    vi.useRealTimers()
+  })
+
   it('不是这个项目的人：被拒之后不再重连', async () => {
     serve()
     const { scope, channel } = await watchProject()
