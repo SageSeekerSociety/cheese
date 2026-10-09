@@ -5,7 +5,6 @@ import base64
 import json
 import os
 import re
-import shutil
 import signal
 import socket
 import subprocess
@@ -853,11 +852,11 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     helpers.mkdir()
     source = Path(central.__file__)
     copied_helper = helpers / source.name
-    shutil.copyfile(source, copied_helper)
-    shutil.copyfile(source.with_name("proxy.js"), helpers / "proxy.js")
-    shutil.copyfile(source.with_name("shell_stop.py"), helpers / "shell_stop.py")
-    shutil.copyfile(central.cheese_source(), helpers / "cheese.py")
-    shutil.copyfile(executor_transport.__file__, helpers / "executor_transport.py")
+    # Stage what a release really puts beside the client, not the handful of
+    # files this used to need: the standalone client imports its siblings at
+    # import time, so a missing one exits 1 before the prefix can route anything.
+    for name, content in release.sources().items():
+        (helpers / name).write_text(content)
     monkeypatch.setattr(central, "__file__", str(copied_helper))
     target = json.loads((tmp_path / "central.json").read_text())
     command = "cat > 'hook receipt.txt'; printf '%s' 'quoted * ? [value]'"
