@@ -6057,6 +6057,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/getting-started": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Getting Started
+         * @description 「开始清单」里要问服务端的那一条：这个人在项目里跟 AI 队友说上过话没有。
+         *
+         *     说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问
+         *     （`block.queries.talked_with_agent`）。问的是调用者自己。
+         */
+        get: operations["project_getting_started_projects__project_id__getting_started_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/memory": {
         parameters: {
             query?: never;
@@ -14355,6 +14378,30 @@ export interface components {
             source?: string | null;
             /** Page */
             page?: string | null;
+        };
+        /**
+         * GettingStartedOut
+         * @description 「开始清单」要服务端回答的那一条（`GET /projects/{id}/getting-started`）。
+         */
+        GettingStartedOut: {
+            /** Talked */
+            talked: boolean;
+        };
+        /** GettingStartedOutEnvelope */
+        GettingStartedOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["GettingStartedOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** GrantCreate */
         GrantCreate: {
@@ -28881,6 +28928,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    project_getting_started_projects__project_id__getting_started_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GettingStartedOutEnvelope"];
                 };
             };
             /** @description Validation Error */

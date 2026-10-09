@@ -23,13 +23,15 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 import uuid
 from collections.abc import Iterable
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.domain.block.indexed_rows import SHOWN_ROWS
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.identity.handles import agent_handle_column
 
 
 async def message_reply_target(
@@ -156,3 +158,32 @@ async def reaction_summaries_for_blocks(
     same session so their effects and these summaries commit together.
     """
     return await BlockRepository(db).reactions_for_blocks(block_ids)
+
+
+async def talked_with_agent(
+    session: AsyncSession, project_id: uuid.UUID, handle: str
+) -> bool:
+    """这个人在项目里跟 AI 队友说上过话没有：「开始清单」第一步的判据。
+
+    说上话 = 某一段对话里他说过一句，AI 队友也说过一句（消息或附件）。哪一段都
+    算 —— 频道主线、支线、任务里的对话、私聊。频道那一栏只看得见自己的主线和挂
+    在上面的支线，任务对话里的来回它读不到，所以这一步只能在这里按整个项目问。
+
+    只看他自己说过话的那些对话，所以答案不会透出他看不见的房间里有什么。
+    """
+    agent = aliased(Block)
+    agent_spoke = exists().where(
+        agent.conversation_id == Block.conversation_id,
+        agent.kind.in_((BlockKind.message, BlockKind.attachment)),
+        agent.author_type == AuthorType.participant,
+        agent_handle_column(agent.author),
+    )
+    query = select(
+        exists().where(
+            Block.project_id == project_id,
+            Block.author == handle,
+            Block.kind == BlockKind.message,
+            agent_spoke,
+        )
+    )
+    return bool(await session.scalar(query))

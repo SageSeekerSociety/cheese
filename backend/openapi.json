@@ -21748,6 +21748,50 @@
         }
       }
     },
+    "/projects/{project_id}/getting-started": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Project Getting Started",
+        "description": "「开始清单」里要问服务端的那一条：这个人在项目里跟 AI 队友说上过话没有。\n\n说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问\n（`block.queries.talked_with_agent`）。问的是调用者自己。",
+        "operationId": "project_getting_started_projects__project_id__getting_started_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GettingStartedOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/memory": {
       "post": {
         "tags": [
@@ -55587,6 +55631,56 @@
           "message"
         ],
         "title": "FrontendErrorIn"
+      },
+      "GettingStartedOut": {
+        "properties": {
+          "talked": {
+            "type": "boolean",
+            "title": "Talked"
+          }
+        },
+        "type": "object",
+        "required": [
+          "talked"
+        ],
+        "title": "GettingStartedOut",
+        "description": "「开始清单」要服务端回答的那一条（`GET /projects/{id}/getting-started`）。"
+      },
+      "GettingStartedOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/GettingStartedOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "GettingStartedOutEnvelope"
       },
       "GrantCreate": {
         "properties": {

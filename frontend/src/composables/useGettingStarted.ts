@@ -2,8 +2,8 @@
 // 真的开起来了。
 //
 // 每一步「做没做」都从别处的真实状态推出来，不落字段、不加迁移，也不记「看过
-// 没有」：这个房间里芝士开过口没有、这个人往项目里放过材料没有、代码仓库接上没
-// 有、名册上有没有第二个人。两件必做的都做完，这张卡自己就没有存在的理由了。
+// 没有」：这个人在项目里跟芝士说上过话没有（这一栏看得见的加上服务端答的）、这
+// 个人往项目里放过材料没有、代码仓库接上没有、名册上有没有第二个人。两件必做的都做完，这张卡自己就没有存在的理由了。
 //
 // 唯一落盘的是右上角那一下「不再提示」——那是一个人的选择，不是项目的数据，所以
 // 放在他自己这台机器上（localStorage），不占数据库。
@@ -11,7 +11,7 @@ import type { ProjectMemberRow } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { getForgeConnection } from '../api'
+import { getForgeConnection, getGettingStarted } from '../api'
 import { listProjectLibrary } from '../lib/libraryApi'
 import { myHandle } from '../me'
 
@@ -26,7 +26,10 @@ export interface GettingStartedOptions {
   projectId: () => string | null
   /** 只有项目本体上才有这份清单，别的话题不画。 */
   on: () => boolean
-  /** 芝士在这个房间里开过口（人跟它说上话了吗）。 */
+  /**
+   * 这一栏自己看得见的：芝士在这里开过口。看不见的那部分（任务对话里的来回）由
+   * 服务端答，见 `talkedElsewhere`。
+   */
   agentHasSpoken: () => boolean
   /** 这个人往这个房间里放过附件。 */
   roomHasAttachment: () => boolean
@@ -62,6 +65,8 @@ export function useGettingStarted(opts: GettingStartedOptions) {
   const dismissed = ref(false)
   const libraryCount = ref<number | null>(null)
   const forgeConnected = ref<boolean | null>(null)
+  /** 服务端说他在项目里别的对话里跟芝士说上过话没有；还没问到是 null。 */
+  const talkedElsewhere = ref<boolean | null>(null)
 
   // 换项目（或第一次拿到 project_id）就重新读一遍：上一条关掉的记录、上一个项目
   // 取到的资料库和仓库状态都不能跟着过来。
@@ -71,11 +76,12 @@ export function useGettingStarted(opts: GettingStartedOptions) {
       dismissed.value = readDismissed(pid)
       libraryCount.value = null
       forgeConnected.value = null
+      talkedElsewhere.value = null
     },
     { immediate: true }
   )
 
-  const talkDone = computed(() => opts.agentHasSpoken())
+  const talkDone = computed(() => opts.agentHasSpoken() || talkedElsewhere.value === true)
   // 材料两条路都算数：直接拖进这个房间，或者放进项目资料库。房间里那份本地就知
   // 道，所以只在「房间里还没有附件」时才去问资料库——大部分人是在房间里给的。
   const materialsDone = computed(() => opts.roomHasAttachment() || (libraryCount.value ?? 0) > 0)
@@ -101,6 +107,7 @@ export function useGettingStarted(opts: GettingStartedOptions) {
   const probesOn = computed(() => visible.value || (opts.alsoProbe?.() ?? false))
   const needsLibrary = computed(() => probesOn.value && !opts.roomHasAttachment() && libraryCount.value === null)
   const needsForge = computed(() => probesOn.value && forgeConnected.value === null)
+  const needsTalk = computed(() => probesOn.value && !opts.agentHasSpoken() && talkedElsewhere.value !== true)
 
   async function loadLibrary() {
     const pid = projectId.value
@@ -112,6 +119,18 @@ export function useGettingStarted(opts: GettingStartedOptions) {
       // 问不到就照「还没有」算：这一步显示成没做，人去资料库看一眼也不吃亏，
       // 比整张卡消失强。
       if (projectId.value === pid) libraryCount.value = 0
+    }
+  }
+
+  async function loadTalk() {
+    const pid = projectId.value
+    if (!pid) return
+    try {
+      const state = await getGettingStarted(pid)
+      if (projectId.value === pid) talkedElsewhere.value = state.talked
+    } catch {
+      // 问不到就照这一栏自己看到的算。
+      if (projectId.value === pid) talkedElsewhere.value = false
     }
   }
 
@@ -137,6 +156,16 @@ export function useGettingStarted(opts: GettingStartedOptions) {
     needsForge,
     (on) => {
       if (on) void loadForge()
+    },
+    { immediate: true }
+  )
+
+  // 说话这一条会在别处发生：人去任务里跟芝士聊完再回到这一栏，得重新问一次。所以
+  // 除了第一次要读，每次回到这一栏（`on` 由假变真）时，还没做完就再问。
+  watch(
+    [needsTalk, () => opts.on()] as const,
+    ([need, on], [wasNeed, wasOn]) => {
+      if (need && (!wasNeed || (on && !wasOn))) void loadTalk()
     },
     { immediate: true }
   )
