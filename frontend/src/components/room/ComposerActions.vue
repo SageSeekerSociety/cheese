@@ -45,6 +45,8 @@ const props = defineProps<{
   canRemind?: boolean
   /** 窄屏：清单、提醒收进一颗 ⋯。 */
   collapseExtras?: boolean
+  /** 新用户引导能指这颗回形针（见 RoomComposer 的 `guided`）。 */
+  guided?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -153,7 +155,7 @@ const summonText = computed(() => ({
     <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
            时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
     <BaseButton
-      v-guide-anchor="'composer-attach'"
+      v-guide-anchor="guided ? 'composer-attach' : ''"
       kind="ghost"
       class="composer-icon"
       icon="mdi-paperclip"

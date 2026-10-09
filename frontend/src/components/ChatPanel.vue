@@ -557,6 +557,7 @@ defineExpose({ send, linkDown, submitQuestion })
           :agent-seat="agentSeat"
           :agent-name="agentName"
           :always-summon="alwaysSummon"
+          :guided="onProjectLine"
           :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
           :atts="pendingAtts"
           :atts-uploading="attsUploading"

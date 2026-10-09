@@ -309,6 +309,38 @@ describe('对话栏自己的输入栏', () => {
     expect(await findByText('开始清单')).toBeTruthy()
   })
 
+  // 支线开着时页面上有两只输入框。引导只画在项目本体那一栏，它要指的也得是那一栏的
+  // 输入框——不能因为支线那只后挂上来，圈就套到旁边去（dev，2026-10-09）。
+  it('points the start guide at the project line’s composer while a 支线 is open', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const room = { ...topic('guide-anchor-line'), kind: 'root' as const }
+    const main = render(ChatPanel, {
+      props: { topic: room, showComposer: true, hideHeader: true, members },
+      global: { plugins: [vuetify, i18n, attachments] },
+    })
+    await flush()
+    const thread = render(ChatPanel, {
+      props: {
+        topic: room,
+        conversationId: 'thread-of-guide-anchor-line',
+        inThread: true,
+        showComposer: true,
+        hideHeader: true,
+        members,
+      },
+      global: { plugins: [vuetify, i18n, attachments] },
+    })
+    await flush()
+
+    const { guideAnchor } = await import('../../composables/useStartGuide')
+    for (const name of ['composer-input', 'composer-attach']) {
+      expect(main.container.contains(guideAnchor(name)), name).toBe(true)
+      expect(thread.container.contains(guideAnchor(name)), name).toBe(false)
+    }
+    thread.unmount()
+    main.unmount()
+  })
+
   it('counts a reply from the teammate in a 支线 as having talked to it', async () => {
     const api = await import('../../api')
     vi.mocked(api.listBlocks).mockResolvedValueOnce({
