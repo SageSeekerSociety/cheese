@@ -54,7 +54,7 @@ async def a_conversation(factory, *, two_seats=False):
             project, first
         )
         assert first_agent is not None
-        first_actor = first_agent.handle
+        first_actor = agent_instance_handle(first_agent.instance_id)
         second = None
         second_actor = None
         if two_seats:
@@ -65,7 +65,7 @@ async def a_conversation(factory, *, two_seats=False):
                 display_name="Second",
             )
             second = agent_instance_handle(other.id)
-            second_actor = other.handle
+            second_actor = agent_instance_handle(other.id)
             await members.ensure_agent_seat(room.id, second)
         conversation = await thread_in(session, room)
         await session.commit()
