@@ -51,7 +51,6 @@ import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
-import { placeSplitMarkers } from '../lib/splitMarkers'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
@@ -64,7 +63,7 @@ import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
 import { applyRoomState, useRoomResync } from './useRoomResync'
-import { useRoomTasks } from './useRoomTasks'
+import { useTimelineTasks } from './useTimelineTasks'
 
 import i18n, { t } from '@/i18n'
 
@@ -222,7 +221,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       if (reconnect) {
         for (const resource of ANNOUNCED) emit('state-changed', resource)
         emit('state-changed', 'topics', topic()?.id)
-        void reloadRoomTasks()
+        void roomTasks.refresh()
       }
       tail.subscribed(newest)
       // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
@@ -312,12 +311,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
       case 'state':
         // A platform resource changed → parent refreshes that panel live.
         // The clickable record of the action is a persisted event_block (below).
-        if (frame.resource === 'topics' || frame.resource === 'tasks') void reloadRoomTasks()
+        if (frame.resource === 'topics' || frame.resource === 'tasks') void roomTasks.refresh()
         emit('state-changed', frame.resource, frame.id)
         break
       case 'event_block':
         // A persisted, clickable action card (doc/topics/...) for this turn.
         pushBlock(frame.block)
+        roomTasks.landed(frame.block)
         toSite(frame.block)
         autoScroll()
         break
@@ -737,7 +737,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     touchOnly,
     toggleTime: rowActions.toggleTime,
     rows: () => rows.value,
-    roomTasks: () => roomTasks.value,
+    isTask: (id: string) => roomTasks.known.value.has(id),
     emit,
   })
 
@@ -753,34 +753,24 @@ export function useChatPanel(opts: ChatPanelOptions) {
     unreadAnchorId.value = unreadAnchorBlock(rows.value, unreadOnOpen(), AUTHOR)
   }
 
-  // 「已派出」标记 (issue #314): 本房间派出去的活，在时间线上它被派出去的那个时刻
-  // 标一行，点进去就是那条支线。库里没有这行 —— split 不往房间主线写任何 block，所
-  // 以位置只能由支线的 created_at 现算（lib/splitMarkers.ts 说明了它能标什么、标不
-  // 了什么）。
-  //
-  // 单独拉一次而不是从 topicList 里挑：一件活不再是话题树上的一个节点，话题列表里
-  // 根本没有它了。`limit: 0` 是因为标记只要支线本身，不要它们的对话。
-  const { tasks: roomTasks, reload: reloadRoomTasks } = useRoomTasks(() => topic()?.id)
+  // 对话栏画得出来的那几件任务跟着各块一起来（useTimelineTasks），不读整个房间的清单。
+  const roomTasks = useTimelineTasks({
+    roomId: () => topic()?.id,
+    blocks: visible,
+    topicIds: () => new Set(topicList().map((t) => t.id)),
+    replace: (block) => timeline.replace(block),
+  })
 
   // <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的
   // chip 只会写「#话题」。
   watch(
-    [() => topicList(), roomTasks],
+    [() => topicList(), roomTasks.known],
     ([ts, tasks]) => {
       for (const k of Object.keys(topicTitles)) delete topicTitles[k]
       for (const t of ts) topicTitles[t.id] = topicTitle(t)
-      for (const t of tasks) topicTitles[t.id] = taskTitle(t)
+      for (const t of tasks.values()) topicTitles[t.id] = taskTitle(t)
     },
     { immediate: true, deep: true }
-  )
-
-  // 「从这里拆出了一个任务」只画在房间的对话里：任务自己的对话里没有拆出去这回事。
-  const splitMarkers = computed(() =>
-    placeSplitMarkers(place()?.id === topic()?.id ? roomTasks.value : [], {
-      blocks: visible.value,
-      hasMore: hasMore.value,
-      hasNewer: hasNewer.value,
-    })
   )
 
   // 某一轮那位队友。认不出是谁的轮次，房间里只坐着一位时只能是它；坐着几位时不猜：
@@ -844,22 +834,20 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   // 一段话从哪一行开始、哪一行是同一段的续话、发件箱那几条接在谁后面：规则在
-  // lib/chatGrouping.ts，这里只回答「上面有没有插进别的行」——「已派出」标记和新
-  // 消息线都会把一段话切断。
+  // lib/chatGrouping.ts，这里只回答「上面有没有插进别的行」——新消息线会把一段话切断。
   const runEdges = computed(() =>
     visible.value.map((cur, i) =>
       runEdgeBetween(visible.value[i - 1], cur, {
-        broken: splitMarkers.value.before.has(cur.id) || cur.id === unreadAnchorId.value,
+        broken: cur.id === unreadAnchorId.value,
       })
     )
   )
-  const typing = useTypingPreview({ topic, hasNewer, outbox, visible, splitMarkers, arrived, delivered }) // 队友正在写的那条
+  const typing = useTypingPreview({ topic, hasNewer, outbox, visible, arrived, delivered }) // 队友正在写的那条
   function outboxEdge(index: number): RunEdge {
     if (index > 0) return 'cont'
     const last = visible.value.at(-1)
     return outboxEdgeAfter(last, {
       mine: !!last && isMine(last),
-      brokenAbove: splitMarkers.value.tail.length > 0,
     })
   }
 
@@ -937,7 +925,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom,
     dayLabels,
     unreadAnchorId,
-    splitMarkers,
     runEdges,
     outboxEdge,
     pendingBlock,

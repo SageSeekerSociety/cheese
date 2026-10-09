@@ -18,7 +18,7 @@ vi.mock('../api/messages', () => ({ postChatMessage: vi.fn() }))
 
 import type { ChatMessageBody } from '../cx_types'
 
-import { ApiError, listBlocks } from '../api'
+import { ApiError, listBlocks, listRoomTasks } from '../api'
 import { postChatMessage } from '../api/messages'
 
 import ChatPanel from './ChatPanel.vue'
@@ -561,5 +561,55 @@ describe('a message that lands between the read and the subscription', () => {
     await flushPromises()
 
     expect(listBlocks).toHaveBeenCalledTimes(1)
+  })
+})
+
+// 卡跟着它所在的那一块来；频道说任务变了，对话栏只按窗口里那几块重读，卡在原处改口。
+describe('a task card when the channel says its tasks changed', () => {
+  it('re-reads the tasks of the blocks on screen, not the whole channel, and updates the card in place', async () => {
+    const task = {
+      id: 'k1',
+      project_id: 'p',
+      room_id: 'r',
+      title: '整理周报',
+      status: 'open',
+      created_at: '2026-08-11T09:04:31Z',
+      updated_at: '2026-08-11T09:04:31Z',
+      presentation: { column: 'building', phrase: 'running' },
+    }
+    const row = {
+      id: 'e1',
+      project_id: 'p',
+      conversation_id: 'r',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content: '张衡 创建了任务「整理周报」',
+      meta: { platform: true, action: 'task_created', task_id: 'k1' },
+      created_at: '2026-08-11T09:04:31Z',
+      tasks: [task],
+    } as unknown as Block
+    vi.mocked(listBlocks).mockResolvedValue({
+      data: [row],
+      has_more: false,
+      total: 1,
+      oldest_id: 'e1',
+      has_newer: false,
+      newest_id: 'e1',
+    })
+    const view = mountPanel()
+    await flushPromises()
+    sockets[0].onopen?.()
+    const done = { ...task, status: 'closed', presentation: { column: 'done', phrase: 'completed' } }
+    vi.mocked(listRoomTasks).mockResolvedValue({ data: [done], total: 1 } as never)
+
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'state', resource: 'tasks' }) })
+    await flushPromises()
+
+    expect(listRoomTasks).toHaveBeenCalledWith(expect.any(String), { limit: 0, blocks: ['e1'] })
+    const status = view.container.querySelector<HTMLElement>(
+      '[data-testid="task-card"][data-task-id="k1"] [data-testid="task-card-status"]'
+    )
+    expect(status?.dataset.tone).toBe('done')
   })
 })

@@ -15,7 +15,7 @@ import guard and `.importlinter` see no new edges.
 
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
@@ -25,6 +25,7 @@ from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
 from app.api.response import ok, page
+from app.api.room_task_rows import named_task, task_rows
 from app.api.routes.topics import (
     AcceptCardRepository,
     BlockRepository,
@@ -49,7 +50,6 @@ from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.own import may_work_for
-from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.living_doc.services import Documents
@@ -74,10 +74,27 @@ async def list_room_tasks(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
     limit: Annotated[int | None, Query(ge=0, le=500)] = None,
+    status: Annotated[Literal["open", "closed"] | None, Query()] = None,
+    ids: Annotated[list[uuid.UUID] | None, Query()] = None,
+    blocks: Annotated[list[uuid.UUID] | None, Query(max_length=200)] = None,
+    branch: bool = False,
+    latest: Annotated[int | None, Query(ge=1, le=50)] = None,
     if_none_match: Annotated[str | None, Header()] = None,
 ) -> Response:
     """This room's threads — every piece of work in it, each with its own
     conversation.
+
+    Narrowed, a page reads only the tasks it draws instead of the whole room:
+
+    - `status=open|closed`;
+    - `ids`: these tasks (the ones a message names);
+    - `blocks`: the tasks these blocks carry — made from one of them, or named
+      by one of them as the task that began there (`task_created`, `split`);
+    - `branch=true`: tasks with a branch of their own;
+    - `latest=N`: the newest N, newest first — by when they closed with
+      `status=closed`, by when they were created otherwise.
+
+    `ids` and `blocks` together return a task matching either.
 
     The room's own line is `/blocks` beside this; nothing appears in both, and
     together they are everything said in the room. That separation is the whole
@@ -114,82 +131,22 @@ async def list_room_tasks(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    threads = await TaskService(db).threads_for_room(topic_id, limit=limit)
-    # The card each thread rides on, in ONE query for the whole room (the same
-    # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
-    # 人验收" are indistinguishable on screen — both are quiet — and the room
-    # overview would have to ask per thread to tell them apart.
-    thread_ids = [t.id for t, _ in threads]
-    cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
-    asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
-    # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
-    landed: dict[uuid.UUID, list] = {}
-    for accepted_card in await AcceptCardRepository(db).accepted_for_tasks(thread_ids):
-        if accepted_card.task_id is not None:
-            landed.setdefault(accepted_card.task_id, []).append(accepted_card)
-    # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
-    # `tasks` 上没有一列存它。
-    spent = await UsageRepository(db).last_model_by_task(thread_ids)
-    # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
-    # 构造几百遍。
-    project = await ProjectRepository(db).get(topic.project_id)
-    choices = binding.catalog(project.settings if project else None)
-    running = await running_tasks(chat, db, [t for t, _ in threads])
-    # 每件任务最后说的一句：频道概览上的「最新进展」。
-    said = await BlockRepository(db).last_messages(thread_ids)
-    now = datetime.now(UTC)
-    items = []
-    for task, blocks in threads:
-        card = cards.get(task.id)
-        shown = presentation.task_presentation(
-            presentation.facts_for_task(
-                task,
-                card,
-                running=task.id in running,
-                awaiting_answer=task.id in asked,
-            ),
-            now=now,
-        )
-        waiting = presentation.waiting_on(
-            shown,
-            running=task.id in running,
-            owner=task.owner_handle,
-            reviewer=card.reviewer_handle if card is not None else None,
-            asked=asked.get(task.id),
-        )
-        accepted = landed.get(task.id, [])
-        items.append(
-            {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
-                # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
-                "model": presentation.card_model(
-                    task, spent=spent.get(task.id), choices=choices
-                ),
-                # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
-                "presentation": shown.as_dict(),
-                # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
-                "waiting_on": waiting,
-                "awaits_me": waiting is not None and waiting == actor.handle,
-                "accepted_count": len(accepted),
-                "last_accepted_pr": accepted[-1].pr_number if accepted else None,
-                "blocks": [
-                    BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
-                ],
-                "last_message": BlockOut.model_validate(said[task.id]).model_dump(
-                    mode="json"
-                )
-                if task.id in said
-                else None,
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
-            }
-        )
+    named: set[uuid.UUID] | None = set(ids) if ids is not None else None
+    if blocks is not None:
+        lines = await BlockRepository(db).many(blocks)
+        named = (named or set()) | {
+            task_id for line in lines if (task_id := named_task(line)) is not None
+        }
+    threads = await TaskService(db).threads_for_room(
+        topic_id,
+        limit=limit,
+        status=status,
+        ids=named,
+        origins=blocks,
+        with_branch=branch,
+        latest=latest,
+    )
+    items = await task_rows(db, chat, actor, topic.project_id, threads)
     return conditional_json(ok(page(items, len(items))), if_none_match)
 
 

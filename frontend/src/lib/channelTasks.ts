@@ -95,3 +95,6 @@ export function tasksByOrigin(tasks: readonly RoomTask[]): Map<string, RoomTask[
   }
   return under
 }
+
+/** 频道概览「最近做完」那一栏有几件：概览只读这么多已经做完的。 */
+export const RECENT_DONE = 3

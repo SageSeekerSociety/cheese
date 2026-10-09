@@ -3,6 +3,7 @@
 // 所在的房间决定。列出、新建任务和 AI 的提议挂在房间下。
 import type { ListPayload, RoomTask } from '../cx_types'
 
+import { holdTasks } from '../lib/heldTasks'
 import { shareInFlight } from '../lib/inflight'
 
 import { authToken, request, requestConditional } from './http'
@@ -33,6 +34,7 @@ function readTaskList(path: string): Promise<ListPayload<RoomTask>> {
       }
       if (!result.data) throw new Error('empty task list response')
       taskListCache.set(path, { etag: result.etag, payload: result.data })
+      holdTasks(result.data.data)
       return result.data
     })
   })
@@ -46,16 +48,67 @@ export function listProjectTasks(projectId: string, opts: { open?: boolean } = {
   return readTaskList(opts.open ? `${path}?status=open` : path)
 }
 
-/** Tasks in this room, each with its own branch and delivery. */
+/** 「全部任务」里谁的：我负责的、我协助的、别人的。 */
+export type Whose = 'mine' | 'helping' | 'others'
+/** 「全部任务」那一排筛选：全部，或其中一种谁的。 */
+export type TaskFilter = 'all' | Whose
+
+export interface ProjectTaskPage extends ListPayload<RoomTask> {
+  has_more: boolean
+  /** 下一页的游标：传给 `before`。 */
+  next: string | null
+  /** 同一状态、同一频道下一共几件，按谁的分。 */
+  counts: Record<'all' | Whose, number>
+}
+
+// 项目里某一种状态的活，一页一页读：最近有动静的在前。已经结束的只会越积越多，「全部
+// 任务」往下滚到哪读到哪，不整份读。频道、谁的都在服务端筛，计数也是服务端数的。
+export function pageProjectTasks(
+  projectId: string,
+  opts: {
+    status: 'open' | 'closed'
+    limit: number
+    before?: string | null
+    channel?: string | null
+    whose?: Whose | null
+  }
+): Promise<ProjectTaskPage> {
+  const q = new URLSearchParams({ status: opts.status, limit: String(opts.limit) })
+  if (opts.before) q.set('before', opts.before)
+  if (opts.channel) q.set('channel', opts.channel)
+  if (opts.whose) q.set('whose', opts.whose)
+  return request<ProjectTaskPage>(`/projects/${encodeURIComponent(projectId)}/tasks?${q.toString()}`).then((page) => {
+    holdTasks(page.data)
+    return page
+  })
+}
+
+/** Tasks in this room, each with its own branch and delivery — narrowed to what
+ *  the caller draws (`GET /topics/{id}/tasks` says what each option keeps). */
 export function listRoomTasks(
   roomId: string,
-  // 每条支线最多带回多少块对话。画 rail、画概览的调用方一个块都不看，所以取 0 ——
-  // 后端对 0 直接跳过取块的那一次查询，整份清单只剩支线本身。不传的话后端会把房间里
-  // 每条支线的全部历史都吐回来（它自己的 docstring 说明了为什么没有默认上限）。
-  opts?: { limit?: number }
+  opts?: {
+    // 每条支线最多带回多少块对话。画卡片、画概览的调用方一个块都不看，所以取 0 ——
+    // 后端对 0 直接跳过取块的那一次查询。不传的话后端会把每条支线的全部历史都吐回来
+    // （它自己的 docstring 说明了为什么没有默认上限）。
+    limit?: number
+    status?: 'open' | 'closed'
+    /** 最新的几件：已结束的按结束时间，否则按新建时间，新的在前。 */
+    latest?: number
+    ids?: string[]
+    /** 这几块带着的任务：从它们拆出去的，或它们说在这里开始的。 */
+    blocks?: string[]
+    /** 只要有自己分支的。 */
+    branch?: boolean
+  }
 ): Promise<ListPayload<RoomTask>> {
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
+  if (opts?.status) q.set('status', opts.status)
+  if (opts?.latest != null) q.set('latest', String(opts.latest))
+  for (const id of opts?.ids ?? []) q.append('ids', id)
+  for (const id of opts?.blocks ?? []) q.append('blocks', id)
+  if (opts?.branch) q.set('branch', 'true')
   const query = q.toString() ? `?${q.toString()}` : ''
   return readTaskList(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }

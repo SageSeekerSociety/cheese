@@ -899,7 +899,6 @@ export const CHAT_ROWS: RoomRow[] = [...rows(0), ...rows(1)]
 const CHAT_BASE = {
   topic: CHAT_TOPIC,
   unreadAnchorId: null,
-  splitMarkers: { before: new Map(), tail: [] },
   arrived: new Set<string>(),
   older: new Set<string>(),
   delivered: new Set<string>(),

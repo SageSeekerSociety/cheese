@@ -2,6 +2,10 @@
 // 全部任务（容器）：读地址里的频道筛选、取项目的任务和名册、去任务页、新建任务都在
 // 这里，画面在同目录的 ProjectTasksView。频道下面那一行「全部任务」进来时地址上带着
 // `?channel=`，筛选已经选好那个频道。
+//
+// 进行中的整份读（和侧栏、项目总览同一份）；已关闭的只会越积越多，一页一页读，换筛选
+// 就从第一页重读。
+import type { TaskFilter } from '@/api/tasks'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -9,6 +13,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { pageProjectTasks } from '@/api/tasks'
 import { newTask } from '@/commands/topicActions'
 import { memberName } from '@/lib/agentNames'
 import { liveTasks } from '@/lib/board'
@@ -32,7 +37,7 @@ async function load() {
   const pid = props.projectId
   failed.value = false
   try {
-    const listed = await readProjectTasks(pid, { maxAgeMs: 2_000 })
+    const listed = await readProjectTasks(pid, { maxAgeMs: 2_000, open: true })
     if (props.projectId === pid) tasks.value = listed.data
   } catch (e) {
     // 401/403 不是「没读出来」：登录没了，或者人已经不在这个项目里。重试换不来别的
@@ -53,6 +58,62 @@ watch(
 )
 
 const channelId = computed(() => (typeof route.query.channel === 'string' ? route.query.channel : null))
+
+// ---- 已关闭的，一页一页 ----
+const CLOSED_PAGE = 50
+const closed = ref(false)
+const whose = ref<TaskFilter>('all')
+const closedTasks = ref<RoomTask[]>([])
+const closedCounts = ref<Record<TaskFilter, number> | null>(null)
+const closedNext = ref<string | null>(null)
+const closedHasMore = ref(false)
+const closedLoading = ref(false)
+const closedFailed = ref(false)
+// 筛选一换，之前在飞的那一页就作废。
+let closedRead = 0
+
+async function readClosed(first: boolean) {
+  if (!first && (closedLoading.value || !closedHasMore.value)) return
+  const mine = ++closedRead
+  const pid = props.projectId
+  closedLoading.value = true
+  closedFailed.value = false
+  try {
+    const page = await pageProjectTasks(pid, {
+      status: 'closed',
+      limit: CLOSED_PAGE,
+      before: first ? null : closedNext.value,
+      channel: channelId.value,
+      whose: whose.value === 'all' ? null : whose.value,
+    })
+    if (mine !== closedRead) return
+    closedTasks.value = first ? page.data : [...closedTasks.value, ...page.data]
+    closedCounts.value = page.counts
+    closedNext.value = page.next
+    closedHasMore.value = page.has_more
+  } catch (e) {
+    if (mine === closedRead && !store.noteAccess(e)) closedFailed.value = true
+  } finally {
+    if (mine === closedRead) closedLoading.value = false
+  }
+}
+// 下一页没读成时，「重试」就是再读一次这一页。
+function moreClosed() {
+  if (closedFailed.value) closedHasMore.value = true
+  void readClosed(false)
+}
+watch(
+  () => [closed.value, whose.value, channelId.value, props.projectId] as const,
+  ([showClosed]) => {
+    closedTasks.value = []
+    closedCounts.value = null
+    closedNext.value = null
+    closedHasMore.value = false
+    closedFailed.value = false
+    closedRead += 1
+    if (showClosed) void readClosed(true)
+  }
+)
 function pickChannel(id: string | null) {
   const query = { ...route.query }
   if (id) query.channel = id
@@ -97,17 +158,25 @@ function create() {
 
 <template>
   <ProjectTasksView
+    v-model:closed="closed"
+    v-model:whose="whose"
     :tasks="live"
     :channels="channels"
     :channel-id="channelId"
     :names="names"
     :avatars="avatars"
     :me="myHandle()"
-    :loading="loading"
-    :failed="failed"
+    :loading="loading || (closed && closedCounts === null && !closedFailed)"
+    :failed="failed || (closed && closedFailed && !closedTasks.length)"
+    :closed-tasks="closedTasks"
+    :closed-counts="closedCounts"
+    :closed-has-more="closedHasMore"
+    :closed-loading="closedLoading"
+    :closed-failed="closedFailed"
     @open-task="openTask"
     @new-task="create"
-    @retry="load"
+    @retry="closed ? moreClosed() : load()"
     @pick-channel="pickChannel"
+    @more="moreClosed"
   />
 </template>

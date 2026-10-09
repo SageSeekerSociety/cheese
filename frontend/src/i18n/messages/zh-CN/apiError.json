@@ -834,6 +834,8 @@
   "noPublishedSite": "暂无已发布的网站",
   "cursorOneAnchor": "before、after、around 一次只能用一个",
   "cursorNeedsLimit": "after 和 around 要和 limit 一起用",
+  "taskPageNeedsStatus": "limit 要和 status 一起用：分页读的是进行中或已结束中的一种",
+  "taskPageCursorInvalid": "这一页的位置认不出来，请从第一页重新读",
   "sinceAfterUntil": "since 不能晚于 until",
   "bodyRequired": "body 不能为空",
   "archiveSignIn": "归档需要登录",

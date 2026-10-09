@@ -39,7 +39,6 @@ function mount(overrides: Record<string, unknown> = {}) {
       rows,
       dayLabels: new Map(),
       unreadAnchorId: null,
-      splitMarkers: { before: new Map(), tail: [] },
       runEdges: rows.map((_, i) => (i ? 'cont' : 'start')),
       arrived: new Set(),
       delivered: new Set(),

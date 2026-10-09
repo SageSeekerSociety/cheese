@@ -1,6 +1,7 @@
 """Task services — reading a room's threads, and the trees they work on."""
 
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -180,6 +181,46 @@ class TaskService:
         does not explicitly begin, commit or roll back.
         """
         return await self._repo.last_block_at_for_tasks(task_ids)
+
+    async def page_in_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+        whose: str | None,
+        me: str,
+        limit: int,
+        before: tuple[datetime, uuid.UUID] | None,
+    ) -> tuple[list[tuple[Task, datetime]], bool]:
+        """One page of the project's tasks, as `TaskRepository.page_for_project`
+        reads it."""
+        return await self._repo.page_for_project(
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            whose=whose,
+            me=me,
+            limit=limit,
+            before=before,
+        )
+
+    async def counts_in_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+        me: str,
+    ) -> dict[str, int]:
+        """The project's tasks counted by whose they are, as
+        `TaskRepository.counts_for_project` counts them."""
+        return await self._repo.counts_for_project(
+            project_id, rooms=rooms, status=status, channel=channel, me=me
+        )
 
     async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many open tasks each of these rooms has; a room with none is
@@ -453,7 +494,15 @@ class TaskService:
         task.workspace_name = f"task_{task.id.hex[:8]}"
 
     async def threads_for_room(
-        self, room_id: uuid.UUID, *, limit: int | None = None
+        self,
+        room_id: uuid.UUID,
+        *,
+        limit: int | None = None,
+        status: str | None = None,
+        ids: Collection[uuid.UUID] | None = None,
+        origins: Collection[uuid.UUID] | None = None,
+        with_branch: bool = False,
+        latest: int | None = None,
     ) -> list[tuple[Task, list[Block]]]:
         """Every thread in this room, each with its conversation, oldest first.
 
@@ -473,8 +522,18 @@ class TaskService:
         A caller drawing a roster never reads a block, and the block query is
         the one that costs — the whole room's history, or a window function
         over it. Skipped outright rather than run and discarded.
+
+        The other keywords narrow which threads, as `TaskRepository.list_for_room`
+        says.
         """
-        tasks = await self._repo.list_for_room(room_id)
+        tasks = await self._repo.list_for_room(
+            room_id,
+            status=status,
+            ids=ids,
+            origins=origins,
+            with_branch=with_branch,
+            latest=latest,
+        )
         conversations = (
             {}
             if limit == 0

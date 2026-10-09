@@ -16,7 +16,6 @@ import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
-import type { SplitMarker } from '../../lib/splitMarkers'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -58,7 +57,6 @@ const props = defineProps<{
   hiddenRows?: number
   dayLabels: Map<string, string>
   unreadAnchorId: string | null
-  splitMarkers: { before: Map<string, SplitMarker[]>; tail: SplitMarker[] }
   runEdges: RunEdge[]
   arrived: Set<string>
   delivered: Set<string>
@@ -209,7 +207,7 @@ const noticeCont = computed(() =>
     const agent = agentOf(row.block, row.notice)
     const before = agentOf(prev.block, prev.notice)
     if (!agent || !before || agent.name !== before.name || agent.handle !== before.handle) return false
-    if (props.splitMarkers.before.has(row.block.id) || row.block.id === props.unreadAnchorId) return false
+    if (row.block.id === props.unreadAnchorId) return false
     if (dayKey(prev.block.created_at) !== dayKey(row.block.created_at)) return false
     return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
   })
@@ -409,21 +407,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             <v-icon size="12">mdi-arrow-down</v-icon>
             {{ t('work.room.chat.newMessagesBelow') }}
           </TimelineMark>
-          <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
-               这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻
-               上。它不是消息，但会像 event 一样把消息分组打断。 -->
-          <template v-for="marker in splitMarkers.before.get(m.id) ?? []" :key="marker.taskId">
-            <TaskCreatedPost
-              v-if="taskOf?.(marker.taskId)"
-              :task="taskOf!(marker.taskId)!"
-              :creator="taskOf!(marker.taskId)!.creator"
-              :creator-name="(nameOf ?? String)(taskOf!(marker.taskId)!.creator ?? '')"
-              :owner-name="ownerName(taskOf!(marker.taskId)!)"
-              :avatar="avatarOf(taskOf!(marker.taskId)!.creator ?? '')"
-              :time="fmtTime(marker.createdAt)"
-              @open="emit('open-card', $event)"
-            />
-          </template>
           <TaskCreatedPost
             v-if="createdTasks[i]"
             :class="{ 'tl-arrive': arrived.has(m.id) }"
@@ -549,21 +532,6 @@ function emitOutboxLeave(el: Element, done: () => void) {
             </div>
           </div>
         </template>
-      </template>
-
-      <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还
-             没人说过话的那些支线。 -->
-      <template v-for="marker in splitMarkers.tail" :key="marker.taskId">
-        <TaskCreatedPost
-          v-if="taskOf?.(marker.taskId)"
-          :task="taskOf!(marker.taskId)!"
-          :creator="taskOf!(marker.taskId)!.creator"
-          :creator-name="(nameOf ?? String)(taskOf!(marker.taskId)!.creator ?? '')"
-          :owner-name="ownerName(taskOf!(marker.taskId)!)"
-          :avatar="avatarOf(taskOf!(marker.taskId)!.creator ?? '')"
-          :time="fmtTime(marker.createdAt)"
-          @open="emit('open-card', $event)"
-        />
       </template>
 
       <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,

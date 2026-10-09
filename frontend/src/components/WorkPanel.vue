@@ -37,7 +37,7 @@ import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
 import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
-import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
+import { cachedTopicPanel, fetchOpenTasks } from '../lib/topicPanelCache'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
@@ -480,12 +480,11 @@ async function pollThreads(opts: { fresh?: boolean } = {}) {
   const roomId = props.topic?.id
   if (!roomId || props.taskId) return
   // Show the count from last time (e.g. switching back to a room) while the fresh one loads.
-  const cached = cachedTopicPanel('roomTasks', roomId)
+  const cached = cachedTopicPanel('openTasks', roomId)
   if (cached) countThreads(cached.data)
   try {
-    // 只取支线本身（`fetchRoomTasks` 走 `limit: 0`），不带对话：这里只是为了数一
-    // 数有几条开着，带对话就是整段历史。和频道概览、对话栏共用同一条读法。
-    const rows = (await fetchRoomTasks(roomId, opts)).data
+    // 只取开着的活本身，不带对话：这里只是为了数一数有几条开着。和频道概览共用同一条读法。
+    const rows = (await fetchOpenTasks(roomId, opts)).data
     if (props.topic?.id === roomId) countThreads(rows)
   } catch {
     // A failed poll is not a state — same rule as the two polls above.

@@ -168,6 +168,13 @@ class BlockRepository:
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
 
+    async def many(self, block_ids: Collection[uuid.UUID]) -> list[Block]:
+        """These blocks, those that exist, in no particular order."""
+        if not block_ids:
+            return []
+        stmt = select(Block).where(Block.id.in_(list(block_ids)))
+        return list((await self._session.scalars(stmt)).all())
+
     async def contents(self, block_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
         """{block id: 正文} —— 一次查完。"""
         if not block_ids:

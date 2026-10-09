@@ -22,6 +22,7 @@ import {
   getForgeConnection,
   getGitDiff,
   listFiles,
+  listRoomTasks,
   readFile,
   workspaceFileRawUrl,
   writeFile,
@@ -32,7 +33,6 @@ import { parseDiffLines, splitDiffByFile } from '../lib/diff'
 import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
 import { placeKind } from '../lib/reviewPlace'
-import { fetchRoomTasks } from '../lib/topicPanelCache'
 
 import { useDocumentRevisions } from './useDocumentRevisions'
 import { useTopicMemory } from './useTopicMemory'
@@ -81,15 +81,19 @@ export function usePanelChanges(props: PanelChangesProps) {
     return requestedSource.value ?? (task.card?.status === 'pending' ? 'committed' : 'live')
   })
 
-  async function loadTasks(opts: { fresh?: boolean } = {}) {
+  // 只读看着的这一件（它的分支、状态、卡），不读整个房间的任务清单。
+  async function loadTasks() {
     const room = props.topicId
+    const taskId = selectedTask.value
     const request = ++taskRequest
     if (!room) return
     taskLoadError.value = null
     try {
-      const tasks = await fetchRoomTasks(room, opts)
+      const task = taskId
+        ? (await listRoomTasks(room, { limit: 0, ids: [taskId] })).data.find((row) => row.id === taskId)
+        : undefined
       if (request !== taskRequest) return
-      taskRow.value = tasks.data.find((row) => row.id === selectedTask.value && !!row.branch_name)
+      taskRow.value = task?.branch_name ? task : undefined
       tasksLoaded.value = true
     } catch (error) {
       if (request === taskRequest) {
@@ -610,7 +614,7 @@ export function usePanelChanges(props: PanelChangesProps) {
   // the drawer used ("opening the tool loads it"). One surface now, so both halves
   // load together — the tree cannot mark what the diff has not told it yet. ----
   async function loadAll(opts: { silent?: boolean; fresh?: boolean } = {}) {
-    await loadTasks({ fresh: opts.fresh })
+    await loadTasks()
     if (taskLoadError.value) return
     void checkRepo()
     if (noRepo.value) return

@@ -30,6 +30,7 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
+import { heldTask } from '@/lib/heldTasks'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { cachedTopicPanel, fetchTopicMembers } from '@/lib/topicPanelCache'
 import { onTopicRosterChange } from '@/lib/topicRosterChanges'
@@ -211,8 +212,7 @@ let placeOpened = false
 watch(
   () => props.taskId,
   (taskId) => {
-    const listed = taskId ? cachedTopicPanel('roomTasks', props.topicId)?.data : undefined
-    taskPage.reset(listed?.find((row) => row.id === taskId) ?? null)
+    taskPage.reset((taskId && heldTask(taskId)) || null)
     void taskPage.load()
     if (placeOpened) store.markRead(taskId ?? props.topicId)
   },

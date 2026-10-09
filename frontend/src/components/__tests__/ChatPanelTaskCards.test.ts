@@ -5,7 +5,8 @@
  *
  * 2026-08-11 09:04 一件活被拆到子话题，父话题这边**什么都没变**，于是房间照着自己那
  * 份清单又做了一遍同一件事（issue #314）：主线上看得见「这件事已经有任务了」是这里要
- * 钉住的。挂真实的 ChatPanel、喂真实的消息和任务列表、从 DOM 上读结果。
+ * 钉住的。卡跟着它所在的那一块来（`/blocks` 每块带着 `tasks`），对话栏不读整个频道的
+ * 任务清单。挂真实的 ChatPanel、喂真实的消息、从 DOM 上读结果。
  */
 import type { RoomTask, Topic } from '../../cx_types'
 import type { ChannelTask } from '../../lib/channelTasks'
@@ -30,7 +31,7 @@ vi.mock('../../api', async () => {
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
-    // 一件活不再是话题列表里的一行，标记要从房间的支线里读。
+    // 只在补读时问：按块（`blocks`）或按 id（`ids`）。
     listRoomTasks: (...a: unknown[]) => listRoomTasks(...a),
     // 面板打开时顺手要的东西 —— 安静地给空答案。
     attachmentRawUrl: () => '',
@@ -94,12 +95,33 @@ function work(
   }
 }
 
+/** 「某某创建了任务」那一行：说这件任务在这里开始，带着它。 */
+function created(roomId: string, id: string, createdAt: string, task: ChannelTask | null) {
+  return {
+    ...message(roomId, id, createdAt, `张衡 创建了任务「${task?.title ?? ''}」`),
+    kind: 'event',
+    author: 'system',
+    author_type: 'platform' as const,
+    meta: { platform: true, action: 'task_created', task_id: task?.id ?? 'gone' },
+    tasks: task ? [task] : [],
+  }
+}
+
 async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-function mountPanel(topic: Topic, tasks: RoomTask[]) {
-  listRoomTasks.mockResolvedValue({ data: tasks, total: tasks.length })
+/** 后端那份任务（补读时按 id、按块回答）：这几件。 */
+function mountPanel(topic: Topic, tasks: RoomTask[] = []) {
+  listRoomTasks.mockImplementation(async (_room: string, opts: { ids?: string[]; blocks?: string[] } = {}) => {
+    const rows = tasks.filter(
+      (task) =>
+        (opts.ids ?? []).includes(task.id) ||
+        (opts.blocks ?? []).includes(task.upgraded_from_block_id ?? '') ||
+        (opts.blocks ?? []).length > 0
+    )
+    return { data: rows, total: rows.length }
+  })
   const vuetify = createVuetify({ components, directives })
   return render(ChatPanel, {
     props: { topic, topicList: [topic] },
@@ -146,32 +168,37 @@ beforeEach(() => {
 })
 
 describe('频道主线上的任务卡', () => {
-  it('单独新建的任务，卡落在新建的那一刻，夹在前后两条消息之间', async () => {
+  it('单独新建的任务，卡在说它开始的那一行，夹在前后两条消息之间', async () => {
     const id = freshRoom()
+    const task = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')
     listBlocks.mockResolvedValue({
       data: [
         message(id, 'b1', '2026-08-11T09:00:00Z', '这轮要做三项'),
+        created(id, 'e1', '2026-08-11T09:04:31Z', task),
         message(id, 'b2', '2026-08-11T09:30:00Z', '第 2 项我来'),
       ],
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
+    const { container } = mountPanel(room(id))
     await flush()
 
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1', 'b2'])
     expect(card(container, 'sub-1').textContent).toContain('进度层与记忆落地')
+    // 卡跟着那一行来：没有去读整个频道的任务清单。
+    expect(listRoomTasks).not.toHaveBeenCalled()
   })
 
   // 一件任务不是地点：它没有 /topics/<id> 那一页，点它是在这个频道里打开那件任务。
   it('点卡 = 在这个频道里打开那件任务', async () => {
     const id = freshRoom()
+    const task = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')
     listBlocks.mockResolvedValue({
-      data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工')],
+      data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工'), created(id, 'e1', '2026-08-11T09:04:31Z', task)],
       has_more: false,
     })
 
-    const { container, emitted } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
+    const { container, emitted } = mountPanel(room(id))
     await flush()
 
     await fireEvent.click(card(container, 'sub-1'))
@@ -180,31 +207,18 @@ describe('频道主线上的任务卡', () => {
     expect(emitted()['open-topic']).toBeUndefined()
   })
 
-  it('刚新建、之后频道里还没人说话 —— 卡排在最后一条消息下面', async () => {
-    const id = freshRoom()
-    listBlocks.mockResolvedValue({
-      data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工')],
-      has_more: false,
-    })
-
-    const { container } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
-    await flush()
-
-    expect(timelineOrder(container)).toEqual(['b1', 't:sub-1'])
-  })
-
   it('任务做完了，卡在原处改口', async () => {
     const id = freshRoom()
-    listBlocks.mockResolvedValue({
-      data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工')],
-      has_more: false,
-    })
-
     const done = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', {
       status: 'closed',
       presentation: { column: 'done', phrase: 'completed' },
     })
-    const { container } = mountPanel(room(id), [done])
+    listBlocks.mockResolvedValue({
+      data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工'), created(id, 'e1', '2026-08-11T09:04:31Z', done)],
+      has_more: false,
+    })
+
+    const { container } = mountPanel(room(id))
     await flush()
 
     expect(status(container, 'sub-1').dataset.tone).toBe('done')
@@ -213,16 +227,16 @@ describe('频道主线上的任务卡', () => {
 
   it('任务在等人审阅时，卡上说在等谁', async () => {
     const id = freshRoom()
-    listBlocks.mockResolvedValue({
-      data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工')],
-      has_more: false,
-    })
-
     const waiting = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', {
       presentation: { column: 'needs_you', phrase: 'awaiting_review' },
       waiting_on: 'linxiao',
     })
-    const { container } = mountPanel(room(id), [waiting])
+    listBlocks.mockResolvedValue({
+      data: [message(id, 'b1', '2026-08-11T09:00:00Z', '开工'), created(id, 'e1', '2026-08-11T09:04:31Z', waiting)],
+      has_more: false,
+    })
+
+    const { container } = mountPanel(room(id))
     await flush()
 
     expect(status(container, 'sub-1').dataset.tone).toBe('waiting')
@@ -236,7 +250,7 @@ describe('频道主线上的任务卡', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [])
+    const { container } = mountPanel(room(id))
     await flush()
 
     expect(container.querySelectorAll('[data-testid="task-card"]')).toHaveLength(0)
@@ -246,18 +260,19 @@ describe('频道主线上的任务卡', () => {
   // 一条消息可以出好几件任务：都挂在那条消息下面，主线上不在别处再记一笔。
   it('从一条消息出来的任务都挂在它下面，不在主线别处再出现', async () => {
     const id = freshRoom()
+    const made = [
+      work(id, 'sub-1', '表单字段精简', '2026-08-11T09:04:31Z', { upgraded_from_block_id: 'b1' }),
+      work(id, 'sub-2', '学号格式校验', '2026-08-11T09:20:00Z', { upgraded_from_block_id: 'b1' }),
+    ]
     listBlocks.mockResolvedValue({
       data: [
-        message(id, 'b1', '2026-08-11T09:00:00Z', '报名表单太长了'),
+        { ...message(id, 'b1', '2026-08-11T09:00:00Z', '报名表单太长了'), tasks: made },
         message(id, 'b2', '2026-08-11T10:00:00Z', '好'),
       ],
       has_more: false,
     })
 
-    const { container, emitted } = mountPanel(room(id), [
-      work(id, 'sub-1', '表单字段精简', '2026-08-11T09:04:31Z', { upgraded_from_block_id: 'b1' }),
-      work(id, 'sub-2', '学号格式校验', '2026-08-11T09:20:00Z', { upgraded_from_block_id: 'b1' }),
-    ])
+    const { container, emitted } = mountPanel(room(id))
     await flush()
 
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1', 't:sub-2', 'b2'])
@@ -269,20 +284,24 @@ describe('频道主线上的任务卡', () => {
   it('正文里 <#活的id> 写出活的标题，点下去打开那张卡；<#话题id> 仍然打开话题', async () => {
     const id = freshRoom()
     listBlocks.mockResolvedValue({
-      data: [message(id, 'b1', '2026-08-11T09:10:00Z', '见 <#sub-1>，另见 <#' + id + '>')],
+      data: [
+        message(id, 'b1', '2026-08-11T09:10:00Z', '见 <#00000000-0000-4000-8000-000000000001>，另见 <#' + id + '>'),
+      ],
       has_more: false,
     })
 
-    const { container, emitted } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
+    // 那件活不在窗口里：按 id 问一次才知道它叫什么。
+    const task = work(id, '00000000-0000-4000-8000-000000000001', '进度层与记忆落地', '2026-08-11T09:04:31Z')
+    const { container, emitted } = mountPanel(room(id), [task])
     await flush()
 
     const chips = Array.from(container.querySelectorAll<HTMLElement>('.topic-ref'))
-    const taskChip = chips.find((c) => c.dataset.topic === 'sub-1')!
+    const taskChip = chips.find((c) => c.dataset.topic === task.id)!
     expect(taskChip.textContent).toBe('#进度层与记忆落地')
     await fireEvent.click(taskChip)
     await fireEvent.click(chips.find((c) => c.dataset.topic === id)!)
 
-    expect(emitted()['open-card']).toEqual([['sub-1']])
+    expect(emitted()['open-card']).toEqual([[task.id]])
     expect(emitted()['open-topic']).toEqual([[id]])
   })
 
@@ -300,15 +319,11 @@ describe('频道主线上的任务卡', () => {
       has_more: false,
     })
 
-    const { getByText, emitted } = mountPanel(room(id), [])
+    const { getByText, emitted } = mountPanel(room(id))
     await flush()
 
     await fireEvent.click(getByText('查看任务'))
 
     expect(emitted()['open-card']).toEqual([['sub-1']])
   })
-
-  // 「窗口上面还有没加载的历史时，落在窗口之前的标记先不显示」这条只在
-  // splitMarkers.spec.ts 里测：那种状态下面板会自己往回翻页把视口填满，而 happy-dom
-  // 里所有元素高度都是 0、永远填不满，于是翻页停不下来 —— 挂真实组件测不了它。
 })

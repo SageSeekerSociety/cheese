@@ -64,6 +64,11 @@ function mount(tasks: RoomTask[], extra: Record<string, unknown> = {}) {
       me: 'alice',
       loading: false,
       failed: false,
+      closedTasks: [],
+      closedCounts: null,
+      closedHasMore: false,
+      closedLoading: false,
+      closedFailed: false,
       ...extra,
     },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -117,4 +122,24 @@ it('任务还没读到时，筛选上不写「0」', () => {
   const chips = Array.from(view.container.querySelectorAll('.tasks__chips button')).map((el) => el.textContent ?? '')
   expect(chips.length).toBeGreaterThan(0)
   for (const chip of chips) expect(chip).not.toMatch(/\d/)
+})
+
+// 已关闭的只会越积越多：容器一页一页读（服务端筛好、数好），画面画它给的那一页。
+it('看已关闭的：列的是读回来的那一页，筛选上写的是一共几件', async () => {
+  const done = task({
+    id: 'd1',
+    title: '做完的',
+    status: 'closed',
+    presentation: { column: 'done', phrase: 'completed' },
+  })
+  const view = mount([], {
+    closed: true,
+    closedTasks: [done],
+    closedCounts: { all: 120, mine: 40, helping: 3, others: 77 },
+    closedHasMore: true,
+  })
+
+  expect(titles(view)).toEqual(['做完的'])
+  expect(view.container.textContent).toContain('120')
+  expect(view.getByTestId('tasks-more')).toBeTruthy()
 })

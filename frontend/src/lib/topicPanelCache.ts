@@ -1,4 +1,4 @@
-// 工作面板那几份「每个话题一份」的数据：进度清单、话题成员、房间派出去的活。
+// 工作面板那几份「每个话题一份」的数据：进度清单、话题成员、房间里还开着的活。
 //
 // 实测切进一个话题时，这几份各要 400–700ms，面板在这段时间里是空的或在转圈，而人
 // 刚刚才看过它们。这里用的是 `blockCache.ts` / `pageCache.ts` 已经验证过的那一招：
@@ -19,8 +19,8 @@ import { onTopicRosterChange } from './topicRosterChanges'
 export interface TopicPanelData {
   progress: TopicProgress
   members: ListPayload<TopicMemberRow>
-  /** `listRoomTasks(id, { limit: 0 })`：只带支线本身，不带对话。 */
-  roomTasks: ListPayload<RoomTask>
+  /** 还开着的活（`status: 'open'`），只带活本身，不带对话。 */
+  openTasks: ListPayload<RoomTask>
 }
 export type TopicPanelKind = keyof TopicPanelData
 
@@ -99,8 +99,8 @@ onTopicRosterChange((topicId) => {
   inflight.delete(`members:${topicId}`)
 })
 
-export function fetchRoomTasks(topicId: string, opts: FetchOpts = {}): Promise<TopicPanelData['roomTasks']> {
-  return fetchTopicPanel('roomTasks', topicId, () => listRoomTasks(topicId, { limit: 0 }), opts)
+export function fetchOpenTasks(topicId: string, opts: FetchOpts = {}): Promise<TopicPanelData['openTasks']> {
+  return fetchTopicPanel('openTasks', topicId, () => listRoomTasks(topicId, { limit: 0, status: 'open' }), opts)
 }
 
 /** 退出登录时调用：上一个人的房间数据不能留给下一个人。测试之间也用它擦干净。 */

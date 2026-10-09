@@ -13,8 +13,15 @@ const markRead = vi.fn()
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ markRead }) }))
 const getThread = vi.fn()
 vi.mock('@/api/threads', () => ({ getThread: (id: string) => getThread(id) }))
+// 频道里的任务（后端那份）：支线面板只问它挂着的那条消息带着的（`blocks`）。
 const roomTasks = ref<RoomTask[]>([])
-vi.mock('@/composables/useRoomTasks', () => ({ useRoomTasks: () => ({ tasks: roomTasks, reload: vi.fn() }) }))
+vi.mock('@/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api')>()),
+  listRoomTasks: vi.fn(async (_room: string, opts: { blocks?: string[] } = {}) => {
+    const rows = roomTasks.value.filter((task) => (opts.blocks ?? []).includes(task.upgraded_from_block_id ?? ''))
+    return { data: rows, total: rows.length }
+  }),
+}))
 
 import ThreadPane from './ThreadPane.vue'
 

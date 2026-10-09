@@ -86,7 +86,6 @@ export interface TypingView {
   hasNewer: Ref<boolean>
   outbox: Ref<Outgoing[]>
   visible: ComputedRef<Block[]>
-  splitMarkers: ComputedRef<{ tail: unknown[] }>
   /** 时间线的入场动画集合：替下预览的那条消息不再入场一次，而是从淡的那一档恢复。 */
   arrived: Set<string>
   delivered: Set<string>
@@ -192,7 +191,7 @@ export function useTypingPreview(view: TypingView) {
     return previews.value.map((p, i) => {
       const block = previewBlock(p, room.id)
       const edge = runEdgeBetween(prev, block, {
-        broken: i === 0 && (queued || view.splitMarkers.value.tail.length > 0),
+        broken: i === 0 && queued,
       })
       prev = block
       return { block, edge }
