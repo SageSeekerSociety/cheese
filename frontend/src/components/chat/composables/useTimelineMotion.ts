@@ -10,8 +10,6 @@ import type { Ref } from 'vue'
 
 import { nextTick, reactive, ref, watch } from 'vue'
 
-import { scrollBehavior } from '@/utils/motion'
-
 export interface TimelineMotionDeps {
   atBottom: Ref<boolean>
   hasNewer: Ref<boolean>
@@ -19,12 +17,13 @@ export interface TimelineMotionDeps {
   unseen: Ref<string[]>
   /** Outbox rows leaving because their text went back to the composer. */
   editing: Set<string>
-  scrollRef: Ref<HTMLElement | null>
+  /** Pin the pane to its bottom (useChatScroll): it keeps following while rows below take their real height. */
+  scrollToBottom: () => void
   backToNewest: () => void
 }
 
 export function useTimelineMotion(deps: TimelineMotionDeps) {
-  const { atBottom, hasNewer, unseen, editing, scrollRef, backToNewest } = deps
+  const { atBottom, hasNewer, unseen, editing, scrollToBottom, backToNewest } = deps
 
   // 此刻才进来的那几条消息（不是打开房间时读出来的历史）。它们进来时淡入一下：新
   // 消息落在底部，这一下说的是「刚来的是这条」；读历史时演，一屏同时浮上来几十条，
@@ -42,10 +41,14 @@ export function useTimelineMotion(deps: TimelineMotionDeps) {
   watch(atBottom, (bottom) => {
     if (bottom && !hasNewer.value) unseen.value = []
   })
+  // 落点交给滚动那一层钉住，不自己滚到「此刻的 scrollHeight」：下面那些从没上过屏
+  // 的行还按估计高度占位（room-row.css 的 content-visibility），一渲染就变高，自己
+  // 滚过去的那一下停在旧的底部，离最新一条还差好几屏。钉住之后容器每变高一次，
+  // useChatScroll 的 ResizeObserver 就跟到新的底部。
   function jumpToUnseen() {
     const first = unseen.value[0]
     if (hasNewer.value) backToNewest()
-    else scrollRef.value?.scrollTo({ top: scrollRef.value.scrollHeight, behavior: scrollBehavior() })
+    else scrollToBottom()
     unseen.value = []
     if (first) flash(first)
   }
