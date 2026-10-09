@@ -21,8 +21,8 @@
 //
 // A demo is a few beats (at most four). Every part is on screen from beat 0
 // unless it says `at:`, and stays unless it says `until:`; `press: n` marks the
-// part's button as the thing pressed to get to beat n. A composer is the
-// exception: it is always there, and its `at:` is when its `type:` is typed. The prerendered HTML is
+// part's button as the thing pressed to get to beat n. A composer that types
+// is the exception: it is always there, and its `at:` is when its `type:` is typed. The prerendered HTML is
 // the LAST beat — the result — so a reader without JavaScript, with reduced
 // motion, or who never scrolls it into view still sees the outcome. The browser
 // side (src/panel-window.mjs) rewinds it to beat 0 when it first comes into
@@ -61,6 +61,12 @@ const KINDS = {
   // The acceptance item: a one-line row (`title`, `status`, `button`) or the
   // opened card (`ok`, `who`, `note`, `actions`).
   card: { need: [], text: ['title', 'note', 'pressing'], ui: ['status', 'button', 'ok', 'who'], list: ['files', 'actions'] },
+  // A task hanging under the message it came from: name, owner, status.
+  task: { need: ['title'], text: ['title', 'who'], ui: ['owner', 'status'], list: [] },
+  // The bar above the composer while a delivery waits: 「待你审阅」 and its buttons.
+  review: { need: ['text', 'actions'], text: ['pressing'], ui: ['text'], list: ['actions'] },
+  // The 「这次交付」 card in the 「改动」 tab.
+  delivery: { need: ['label', 'title'], text: ['title'], ui: ['label', 'ok', 'focus'], list: ['items'] },
   // A grey bar where the composer was (「任务已关闭」).
   notice: { need: ['text'], text: [], ui: ['text', 'button'], list: [] },
   checklist: { need: ['title', 'items'], text: ['done'], ui: ['title'], list: ['items'] },
@@ -100,11 +106,11 @@ export function panelSpec(spec, where, fail) {
       if (!(p.button || p.pressing)) fail(at, '«press» needs the «button» (or, on a card, «pressing») it presses')
       if (p.press <= (p.at || 0)) fail(at, '«press» is the beat the press leads to, after the part is on screen')
     }
-    if (p.kind === 'composer' && p.type && p.press === undefined) fail(at, 'a composer that types needs «press»: the beat it is sent on')
+    if (p.kind === 'composer' && p.type && p.press === undefined && p.until === undefined) fail(at, 'a composer that types needs «press» or «until»: the beat it is sent on')
     const out = { ...p, at: p.at || 0 }
     for (const f of k.list) if (p[f] !== undefined) out[f] = listOf(p[f])
     for (const f of k.ui) for (const label of (k.list.includes(f) ? out[f] : p[f] === undefined ? [] : [p[f]])) uiCheck(String(label), at, fail)
-    if (p.kind === 'card' && p.pressing && ![...(out.actions || []), p.button].includes(p.pressing)) fail(at, `«pressing: ${p.pressing}» is not one of the card's «actions»`)
+    if ((p.kind === 'card' || p.kind === 'review') && p.pressing && ![...(out.actions || []), p.button].includes(p.pressing)) fail(at, `«pressing: ${p.pressing}» is not one of the card's «actions»`)
     return out
   })
   if (!parts.length) fail(where, 'a panel needs «parts»')
@@ -135,8 +141,8 @@ function avatar(who, agent) {
 const button = (label, p, cls = 'dp-btn') => `<span class="${cls}"${p.press !== undefined && (!p.pressing || p.pressing === label) ? ` data-press="${p.press}"` : ''}>${esc(label)}</span>`
 
 function partHtml(p, cfg) {
-  // A composer is always on screen; its `at` is when the typing starts.
-  const a = p.kind === 'composer' ? '' : attrs(p, cfg.beats)
+  // A composer that types is always on screen; its `at` is when the typing starts.
+  const a = p.kind === 'composer' && p.type ? '' : attrs(p, cfg.beats)
   switch (p.kind) {
     case 'bars': {
       const lines = Math.max(1, Math.min(3, p.lines || 2))
@@ -160,7 +166,7 @@ function partHtml(p, cfg) {
     case 'tabs':
       return `<div class="dp-tabs"${a}>${p.items.map((x) => `<span${x === p.active ? ' class="on"' : ''}>${esc(x)}</span>`).join('')}</div>`
     case 'composer':
-      return `<div class="dp-composer"${a}><span class="dp-input">${p.type ? `<span class="dp-typed" data-at="${p.at}" data-until="${p.press}" data-type hidden>${esc(p.type)}</span>` : ''}<span class="dp-ph">${esc(p.placeholder)}</span></span>${p.button ? button(p.button, p, 'dp-btn dp-btn-quiet') : ''}</div>`
+      return `<div class="dp-composer"${a}><span class="dp-input">${p.type ? `<span class="dp-typed" data-at="${p.at}" data-until="${p.press ?? p.until}" data-type hidden>${esc(p.type)}</span>` : ''}<span class="dp-ph">${esc(p.placeholder)}</span></span>${p.button ? button(p.button, p, 'dp-btn dp-btn-quiet') : ''}</div>`
     case 'head':
       return `<div class="dp-head"${a}><span class="dp-title">${p.room ? `<span class="dp-room"># ${esc(p.room)} /</span>` : ''}${esc(p.title)}</span>${p.status ? `<span class="dp-chip">${esc(p.status)}</span>` : ''}<span class="dp-head-end">${p.owner ? `<span class="dp-owner">${avatar(p.who || '你', cfg.agent)}${esc(p.owner)}</span>` : ''}${p.note ? `<span class="dp-note">${esc(p.note)}</span>` : ''}${p.button ? button(p.button, p, p.plain === true ? 'dp-btn' : 'dp-btn dp-btn-primary') : ''}</span></div>`
     case 'files':
@@ -175,6 +181,14 @@ function partHtml(p, cfg) {
       const open = p.ok || p.who || p.note || files || actions
       return `<div class="dp-card${open ? ' dp-card-open' : ''}"${a}>${p.ok ? `<div class="dp-card-ok">${ic('check')}${esc(p.ok)}</div>` : ''}${p.who ? `<div class="dp-card-who">${esc(p.who)}</div>` : ''}${p.note ? `<p class="dp-card-note">${esc(p.note)}</p>` : ''}${files ? `<ul class="dp-files">${files}</ul>` : ''}${actions ? `<div class="dp-actions">${actions}</div>` : ''}${row}</div>`
     }
+    case 'task':
+      return `<div class="dp-task"${a}>${ic('check')}<b>${esc(p.title)}</b>${p.owner ? `<span class="dp-task-owner">${esc(p.owner)}</span>` : ''}${p.status ? `<span class="dp-task-status">${esc(p.status)}</span>` : ''}</div>`
+    case 'review': {
+      const last = p.actions.length - 1
+      return `<div class="dp-review"${a}><span class="dp-review-dot" aria-hidden="true"></span><b>${esc(p.text)}</b><span class="dp-review-go">${p.actions.map((x, i) => button(x, p, i === last ? 'dp-btn dp-btn-primary' : 'dp-btn')).join('')}</span></div>`
+    }
+    case 'delivery':
+      return `<div class="dp-delivery"${a}><span class="dp-delivery-label">${esc(p.label)}</span><b>${esc(p.title)}</b>${p.ok ? `<span class="dp-card-ok">${ic('git')}${esc(p.ok)}</span>` : ''}${p.items ? `<div class="dp-focus">${p.focus ? `<span>${esc(p.focus)}</span>` : ''}<ol>${p.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></div>` : ''}</div>`
     case 'notice':
       return `<div class="dp-notice"${a}><span>${esc(p.text)}</span>${p.button ? `<span class="dp-notice-go">${esc(p.button)}</span>` : ''}</div>`
     case 'checklist': {
@@ -194,7 +208,7 @@ function fileRows(files) {
 
 // The window: a header row (a head part replaces it), a feed that fills from the
 // bottom like the product's conversation, and a dock for the composer and cards.
-const DOCK = ['composer', 'card', 'notice']
+const DOCK = ['composer', 'card', 'notice', 'review']
 // Under the header, above the feed.
 const TOP = ['strip', 'tabs']
 
@@ -227,6 +241,9 @@ function partText(p) {
     case 'strip': return `「${p.text}」${p.label ? `，「${p.label}」` : ''}`
     case 'doc': return `文档：${p.headings.join('、')}`
     case 'tabs': return `右侧切到「${p.active}」`
+    case 'task': return `消息下方出现任务「${p.title}」${p.owner ? `，${p.owner}` : ''}${p.status ? `，「${p.status}」` : ''}`
+    case 'review': return `输入框上方：「${p.text}」，按钮 ${p.actions.map((x) => `「${x}」`).join('')}`
+    case 'delivery': return `「${p.label}」：${p.title}${p.ok ? `，「${p.ok}」` : ''}${p.items ? `；${p.focus ? `${p.focus}：` : ''}${p.items.join('；')}` : ''}`
     case 'files': return `改动的文件：${p.files.join('、')}`
     case 'composer': return p.type ? `在输入框里写「${p.type}」` : ''
     case 'head': return `页头：${p.room ? `# ${p.room} / ` : ''}${p.title}${p.status ? `，状态「${p.status}」` : ''}${p.note ? `，「${p.note}」` : ''}`

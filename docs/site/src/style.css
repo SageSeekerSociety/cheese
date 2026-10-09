@@ -3095,6 +3095,106 @@ body.dragging .dock-resize::after {
 }
 
 /* Parts the walk frames use. */
+.dp-task {
+  display: flex;
+  margin: -8px 0 0 38px;
+  padding: 7px 10px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  align-items: center;
+  gap: 8px;
+}
+
+.dp-task .ico {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.dp-task b {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dp-task-status {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.dp-review {
+  display: flex;
+  min-height: 44px;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  align-items: center;
+  gap: 8px;
+}
+
+.dp-review b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dp-review-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+  flex: none;
+}
+
+.dp-review-go {
+  display: flex;
+  margin-left: auto;
+  gap: 6px;
+}
+
+.dp-delivery {
+  display: flex;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dp-delivery-label {
+  color: var(--muted);
+}
+
+.dp-delivery b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.dp-delivery .dp-card-ok {
+  font-weight: 500;
+}
+
+.dp-focus {
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--fill);
+  border-radius: var(--radius-md);
+}
+
+.dp-focus > span {
+  color: var(--muted);
+}
+
+.demo-panel .dp-focus ol {
+  margin-top: 2px;
+  padding-left: 18px;
+}
+
 .dp-changes {
   padding: 10px 12px;
   border: 1px solid var(--line);

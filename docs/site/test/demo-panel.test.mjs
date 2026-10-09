@@ -129,7 +129,7 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     eq(w.querySelectorAll('[data-walk-step]').length, Number(w.querySelector('[data-walk-panel]').dataset.beats), `walk ${i + 1}: one frame per step`)
     ok(!w.querySelector('figcaption, [data-dp-replay], input[type=range], progress'), `walk ${i + 1}: no caption, no replay, no progress bar — the steps are all of it`)
   })
-  ok(restWalk[0].includes('运行中') && restWalk[0].includes('芝士这一轮的清单'), `walk 1 rests on 芝士 running with its checklist: ${restWalk[0]}`)
+  ok(restWalk[0].includes('已开始') && restWalk[0].includes('芝士这一轮的清单'), `walk 1 rests on the started task with its checklist: ${restWalk[0]}`)
   ok(restWalk[1].includes('已采纳') && restWalk[1].includes('任务已关闭'), `walk 2 rests on 已采纳 and 任务已关闭: ${restWalk[1]}`)
 
   // Reduced motion: nothing walks by itself, the last screen stays; a click switches.
@@ -139,9 +139,10 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     await sleep(200)
     const ws = [...w.document.querySelectorAll('[data-walk]')]
     ws.forEach((x, i) => eq(seen(x.querySelector('[data-walk-panel]')), restWalk[i], `walk ${i + 1} under reduced motion`))
-    ws[0].querySelector('[data-walk-step="2"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }))
-    eq(onStep(ws[0]), '2', 'reduced motion: clicking step 2 highlights it')
-    ok(seen(ws[0].querySelector('[data-walk-panel]')).includes('芝士正在整理'), 'reduced motion: and shows the task page with the 概览 being written')
+    ws[0].querySelector('[data-walk-step="1"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }))
+    eq(onStep(ws[0]), '1', 'reduced motion: clicking step 1 highlights it')
+    const f1 = seen(ws[0].querySelector('[data-walk-panel]'))
+    ok(f1.includes('讨论中') && f1.includes('目标'), `reduced motion: and shows the task page with its document, not yet started: ${f1}`)
   }
 
   // Walking through once, then a click.
@@ -151,16 +152,16 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     await sleep(150)
     const ws = [...w.document.querySelectorAll('[data-walk]')]
     const p0 = ws[0].querySelector('[data-walk-panel]')
-    ok(seen(p0).includes('1 条回复') && !seen(p0).includes('运行中'), `walk 1 starts on the screen before step 1: ${seen(p0)}`)
+    ok(seen(p0).includes('1 条回复') && !seen(p0).includes('已开始'), `walk 1 starts on the screen before step 1: ${seen(p0)}`)
     eq(onStep(ws[0]), '', 'no step is highlighted before step 1 starts')
     ok(await until(() => onStep(ws[0]) === '1', 3000), 'walk 1 highlights step 1')
-    ok(await until(() => onStep(ws[0]) === '5' && seen(p0) === restWalk[0], 40000), 'walk 1 ends on step 5 with the last screen')
+    ok(await until(() => onStep(ws[0]) === '3' && seen(p0) === restWalk[0], 40000), 'walk 1 ends on step 3 with the last screen')
     await sleep(4000)
-    eq(onStep(ws[0]), '5', 'and stops there')
+    eq(onStep(ws[0]), '3', 'and stops there')
     const p1 = ws[1].querySelector('[data-walk-panel]')
     ws[1].querySelector('[data-walk-step="1"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }))
     eq(onStep(ws[1]), '1', 'clicking a step highlights it')
-    ok(await until(() => seen(p1).includes('signup.md') && seen(p1).includes('改动') && !seen(p1).includes('已采纳'), 5000), `clicking step 1 of walk 2 shows the 改动 file list: ${seen(p1)}`)
+    ok(await until(() => seen(p1).includes('审阅重点') && seen(p1).includes('改动') && !seen(p1).includes('已采纳'), 5000), `clicking step 1 of walk 2 shows this delivery in 改动: ${seen(p1)}`)
   }
 }
 
