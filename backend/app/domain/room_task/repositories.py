@@ -122,6 +122,26 @@ class TaskRepository:
         )
         return list((await self._session.execute(stmt)).scalars().all())
 
+    async def tasks_of_rooms(
+        self, room_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, uuid.UUID]:
+        """{还有事的活: 它所在的房间} —— 和 `threads_of_rooms` 同一个形状。
+
+        一个频道那一格认的是它全部的对话（`topics._awaiting_an_answer` 把它的任务和
+        支线一起算），所以调用方要的是「这些房间里有哪些活」，不是活本身。「还有事」
+        取的是和 `underway_counts` 同一个判据：开着、且还没进收尾窗口。
+        """
+        if not room_ids:
+            return {}
+        rows = await self._session.execute(
+            select(Task.id, Task.room_id).where(
+                Task.room_id.in_(room_ids),
+                Task.status == TaskStatus.open,
+                Task.closing_since.is_(None),
+            )
+        )
+        return {task_id: room_id for task_id, room_id in rows}
+
     async def list_for_room(
         self,
         room_id: uuid.UUID,

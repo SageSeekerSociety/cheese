@@ -148,12 +148,19 @@ async def _awaiting_an_answer(
     db: AsyncSession, room_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, str | None]:
     """Which channels wait on an answer, and from whom: their own line's
-    question, or one 芝士 asked in one of their 支线."""
-    thread_rooms = await threads_of_rooms(db, room_ids)
-    found = await BlockRepository(db).awaiting_an_answer([*room_ids, *thread_rooms])
+    question, or one 芝士 asked in one of their tasks or 支线.
+
+    一个频道那一格认的是它全部的对话 —— 它自己那条线、它的任务、它的支线（决策请求
+    走的是同一条规矩，`notification/repositories.decision_topic_ids`）：芝士在一条活
+    里问的那道题，题落在那条活自己的线上，可这个频道也在等那个人回答。少了任务这一
+    头，人就看得见「有一条待办」而侧栏一处都不亮。
+    """
+    inner_rooms = await threads_of_rooms(db, room_ids)
+    inner_rooms.update(await TaskService(db).tasks_of_rooms(room_ids))
+    found = await BlockRepository(db).awaiting_an_answer([*room_ids, *inner_rooms])
     return {
         place: who
-        for place, who in onto_rooms(found, thread_rooms).items()
+        for place, who in onto_rooms(found, inner_rooms).items()
         if place in room_ids
     }
 

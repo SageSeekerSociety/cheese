@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Final
 
 from app.core.config import settings
+from app.domain.notification.push import push_link
 
 #: `frontend/src/style.css` 的 token，浅色 / 深色两套。见模块说明为什么写死。
 _LIGHT: Final = {
@@ -117,17 +118,16 @@ def _clip(text: str, limit: int) -> str:
 
 
 def email_link(payload: dict[str, Any]) -> str:
-    """按钮把人送到哪儿：指得到房间就是那个房间，指不到就是收件箱。
+    """按钮把人送到哪儿：**那条消息在的那条会话** —— 一个任务、一条支线，或频道自己
+    那条线；指不到就是收件箱。
 
-    和推送是同一条规则（`push.push_link`），加上两样：邮件里要能点开的绝对地址；芝
-    士的提问带上 `?block=`，落下去就是那条提问，而不是房间最新那几条（房间页认这个
-    参数，站内通知的链接也这么带）。
+    和推送是同一条规则（`push.push_link`），这里就是它，加上邮件要的两样：能点开的绝
+    对地址；芝士的提问带上 `?block=`，落下去就是那条提问，而不是房间最新那几条（房间
+    页认这个参数，站内通知的链接也这么带）。落点是频道而消息在任务或支线里时，那个
+    `?block=` 在频道主线上找不到 —— 人点开只看到「这条消息已不存在」。
     """
     base = settings.frontend_url.rstrip("/")
-    project_id, topic_id = payload.get("projectId"), payload.get("topicId")
-    if not (project_id and topic_id):
-        return f"{base}/inbox"
-    link = f"{base}/projects/{project_id}/topics/{topic_id}"
+    link = f"{base}{push_link(payload)}"
     block_id = payload.get("blockId")
     return f"{link}?block={block_id}" if block_id else link
 

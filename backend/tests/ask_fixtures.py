@@ -31,6 +31,22 @@ def agent_credential(project, topic, seat) -> dict[str, str]:
     }
 
 
+def conversation_project(client, conversation) -> str:
+    """The project of the conversation a seat works in.
+
+    A room is read as `/topics/{id}`; a task is NOT (`GET /topics/{task}`
+    deliberately 404s — a task is read as `/topics/{task}/task`). A question
+    asked inside a task is the same shape of thing as one asked in a room, so
+    the fixtures here have to reach either.
+    """
+    r = client.get(f"/topics/{conversation}")
+    if r.status_code == 200:
+        return r.json()["data"]["project_id"]
+    r = client.get(f"/topics/{conversation}/task")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["project_id"]
+
+
 @contextmanager
 def active_ask(
     client,
@@ -49,7 +65,7 @@ def active_ask(
     difference the question's addressee turns on.
     """
     seat = seat or room_agent_seat(client, topic)
-    project = client.get(f"/topics/{topic}").json()["data"]["project_id"]
+    project = conversation_project(client, topic)
     started = threading.Event()
 
     def held(tid, prompt, reply, *, agent=None):
@@ -111,7 +127,7 @@ def question_row(client, topic, *, seat=None, author=None, **extra):
     """
     seat = seat or room_agent_seat(client, topic)
     author = author or seat
-    project = client.get(f"/topics/{topic}").json()["data"]["project_id"]
+    project = conversation_project(client, topic)
     question = extra.pop("question", "分页方案选哪个？")
     meta = {
         "options": [{"text": "cursor"}, {"text": "pageStart"}],

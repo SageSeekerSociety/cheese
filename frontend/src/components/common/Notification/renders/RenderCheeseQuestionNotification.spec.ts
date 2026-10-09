@@ -57,13 +57,15 @@ it('an answered question says what was chosen, not that it is still waiting', ()
 // `?block=`，房间页拿它把人停在提问那条消息上（`TopicView` 读 route.query.block，对话
 // 栏按它把窗口开到那儿）。这条钉的是「那个 id 真的走到了地址里」——一个查询串名字写
 // 错，链接照样"看起来像个链接"，点开却落在房间末尾。
-it('clicking a question in the inbox opens the room at the question itself', async () => {
+async function clickInTheInbox(extra: Record<string, string>) {
   const Blank = defineComponent({ render: () => h('div') })
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: Blank },
       { path: '/p/:projectId/t/:topicId', name: 'workspace-topic', component: Blank },
+      { path: '/p/:projectId/tasks/:taskId', name: 'workspace-task', component: Blank },
+      { path: '/p/:projectId/t/:topicId/threads/:threadId', name: 'workspace-thread', component: Blank },
     ],
   })
   await router.push('/')
@@ -72,7 +74,7 @@ it('clicking a question in the inbox opens the room at the question itself', asy
 
   const view = render(NotificationItem, {
     props: {
-      notification: question({ blockId: 'block-42' }),
+      notification: question(extra),
       onMarkAsRead,
       onDelete: vi.fn(),
     },
@@ -82,9 +84,37 @@ it('clicking a question in the inbox opens the room at the question itself', asy
   // 带链接的那一版要等渲染器把内容交上来才出现。
   await waitFor(() => expect(view.container.querySelector('.v-list-item--link')).not.toBeNull())
   await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  return { router, onMarkAsRead }
+}
+
+it('clicking a question in the inbox opens the room at the question itself', async () => {
+  const { router, onMarkAsRead } = await clickInTheInbox({ blockId: 'block-42' })
 
   await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-topic'))
   expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', topicId: 't1' })
   expect(router.currentRoute.value.query.block).toBe('block-42')
   expect(onMarkAsRead).toHaveBeenCalledWith(1)
+})
+
+// 芝士在任务里问的题：那条消息在任务自己的线上，频道主线上没有它。落回频道的话，房间
+// 页按 `?block=` 找那条消息找不到，人只看到一句「这条消息已不存在」—— 实况就是这条。
+it('a question asked in a task opens that task, not its channel', async () => {
+  const { router } = await clickInTheInbox({ blockId: 'block-42', taskId: 'task-9' })
+
+  await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-task'))
+  expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', taskId: 'task-9' })
+  expect(router.currentRoute.value.query.block).toBe('block-42')
+})
+
+// 支线里问的那道题同理：那条消息在那条支线的线上。
+it('a question asked in a 支线 opens that 支线', async () => {
+  const { router } = await clickInTheInbox({ blockId: 'block-42', threadId: 'thread-7' })
+
+  await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-thread'))
+  expect(router.currentRoute.value.params).toMatchObject({
+    projectId: 'p1',
+    topicId: 't1',
+    threadId: 'thread-7',
+  })
+  expect(router.currentRoute.value.query.block).toBe('block-42')
 })
