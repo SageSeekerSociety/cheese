@@ -18,6 +18,12 @@ It is not an update of a counter row: a statement that inserts many blocks into
 one conversation would rewrite that row once per block, and each rewrite walks
 the versions before it (16,000 blocks took 6.6 s that way, 0.9 s this way).
 
+The trigger reads the largest number with sequential scans turned off. Its plan
+is made once per connection from the statistics of that moment, and on a table
+analyzed while nearly empty the planner picks a scan of the whole table, which
+every block then repeats: 33,000 blocks inserted at once took 37 s that way
+and 0.5 s through the index.
+
 The blocks a conversation already holds are numbered 1 … n by `5f1b7d54bffa`
 in the order rooms show them. `seq_floor` keeps those n numbers for them: a
 block stored before they are filled in still numbers itself above n. Counting
@@ -50,7 +56,7 @@ def upgrade() -> None:
     """)
     op.execute(f"""
         CREATE FUNCTION block_numbered() RETURNS trigger
-        LANGUAGE plpgsql AS $$
+        LANGUAGE plpgsql SET enable_seqscan = off AS $$
         BEGIN
             PERFORM pg_advisory_xact_lock(
                 {NUMBERING_LOCK}, hashtext(NEW.conversation_id::text)
