@@ -18,7 +18,9 @@ from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
 from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
+from app.core.sentences import say
 from app.core.storage import generate_storage_key, get_storage_backend
 from app.db.session import get_db
 from app.domain.materials.repositories import MaterialRepository
@@ -56,7 +58,14 @@ async def upload_material(
     if type not in VALID_TYPES:
         raise BadRequestError(f"Invalid type: {type}")
 
-    file_content = await file.read()
+    # 素材的上限与附件同口径（`settings.attachment_max_bytes`，默认 100MB）：先限读，
+    # 读回来超了就直接拒，别把整份 body 读进内存再判。多读的那一个字节用来区分
+    # 「刚好到上限」和「超了」，读到的长度也只到这里。
+    file_content = await file.read(settings.attachment_max_bytes + 1)
+    if len(file_content) > settings.attachment_max_bytes:
+        raise UnprocessableEntityError(
+            say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
+        )
     file_name = file.filename or "unnamed"
     file_mime = file.content_type or "application/octet-stream"
 
