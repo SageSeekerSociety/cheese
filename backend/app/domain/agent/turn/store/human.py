@@ -78,7 +78,8 @@ async def persist_human_message(
     *,
     prepare: Callable[[AsyncSession, Place, str, str], Awaitable[HumanPreparation]],
     refuse: Callable[
-        [AsyncSession, HumanPreparation, dict, str], Awaitable[CallAdmission]
+        [AsyncSession, Place, HumanPreparation, dict, str, str | None],
+        Awaitable[CallAdmission],
     ],
     record_effects: HumanEffects,
     topic_id: uuid.UUID,
@@ -160,6 +161,7 @@ async def persist_human_message(
         # from. Drop the edge, keep the message: losing the thread link is
         # recoverable, refusing the send is not.
         reply_uuid = _parse_uuid(reply_to)
+        reply_author: str | None = None
         if reply_uuid is not None:
             parent = await message_reply_target(session, reply_uuid)
             if parent is None or parent.conversation_id != place.conversation_id:
@@ -169,9 +171,15 @@ async def persist_human_message(
                     reply_to,
                 )
                 reply_uuid = None
+            else:
+                # 回谁的话就是对着谁说的：被回复的那条的作者定这一句的收件人
+                # （#3210），由 `refuse` 认。
+                reply_author = parent.author
         if content:
             content = prepared.content
-            admission = await refuse(session, prepared, recipient, author)
+            admission = await refuse(
+                session, place, prepared, recipient, author, reply_author
+            )
             user_block = await append_output(
                 session,
                 project_id=topic.project_id,
