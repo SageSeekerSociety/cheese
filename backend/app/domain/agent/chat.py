@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, own_calls, own_limit
-from app.domain.agent.announce import answer_questions, instance_of_seat
+from app.domain.agent.announce import answer_questions, recipient_of_message
 from app.domain.agent.ask import publish_answered
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.compute import ComputePool
@@ -241,11 +241,7 @@ from app.domain.delivery.receipts import (
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
-from app.domain.identity.handles import (
-    looks_like_agent_handle,
-    names_a_person,
-    recipient_seat,
-)
+from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.policy import gate
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
@@ -1781,30 +1777,7 @@ class ChatService(SessionRecovery, RoomTurns):
             mentions = await person_mentions(
                 session, topic, content, agent, dm=_is_dm(topic)
             )
-            agent_handles, by_seat = mentions.agent_handles, mentions.by_seat
-            # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
-            # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
-            # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
-            # 服务端算（I13），所以这里自己认下私聊这一档。
-            #
-            # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的私聊
-            # 也是私聊，而它没有 agent 可点名 —— 认成「点了名」就等于把芝士叫进两
-            # 个人的私密对话里说话。对面是谁只有名册一个出处（`private_seats`，
-            # 它答的 owner 那一席恒是人，所以只看 peer）；名册不是恰好两席时它答
-            # None，这条消息就不点名，和这间房其余各处的退路同向。
-            seats = (
-                await TopicMemberService(session).private_seats(topic.id)
-                if _is_dm(topic)
-                else None
-            )
-            recipient = {
-                "instance_id": str(agent.instance_id),
-                "handle": agent.handle,
-                # In a task the owner talks to its agent and nobody else, so
-                # every message is addressed to it, as in a private chat with one.
-                "mentioned": place.task is not None
-                or (seats is not None and looks_like_agent_handle(seats[1])),
-            }
+            agent_handles = mentions.agent_handles
             anchor_id: uuid.UUID | None = None
             answered: list[Block] = []
             attribution_id = turn_id
@@ -1828,41 +1801,19 @@ class ChatService(SessionRecovery, RoomTurns):
                     reply_uuid = None
                 else:
                     reply_author = parent.author
+            # 收件人是谁、这条消息点了谁的名：判据都在 `recipient_of_message`
+            # 那一处（@、回复目标、私聊、任务各一档），这里只落一次结果。
+            recipient, addressed = await recipient_of_message(
+                session,
+                topic,
+                agent=agent,
+                mentions=mentions,
+                reply_author=reply_author,
+                in_task=place.task is not None,
+                dm=_is_dm(topic),
+            )
             if content:
                 content, roster = mentions.content, mentions.roster
-                # WHICH agent was addressed, not merely whether one was. The
-                # flag alone left `handle`/`instance_id` naming whoever the room
-                # pointed at, so @-ing the second teammate ran the first one's
-                # turn. A room holds members; the one addressed answers, exactly
-                # as for a person.
-                addressed = next(
-                    (h for h in agent_handles if f"<@{h}>" in content), None
-                )
-                if addressed is not None:
-                    recipient["mentioned"] = True
-                    named = by_seat.get(addressed)
-                    if named is not None:
-                        recipient["instance_id"] = str(named.id)
-                        recipient["handle"] = named.handle
-                    # A seat still under the room-derived handle names no
-                    # instance, and that seat IS the agent the room points at,
-                    # so the recipient resolved above is already the right one.
-                elif reply_author is not None and reply_author in (
-                    await TopicMemberService(session).agent_handles(topic.id)
-                ):
-                    # 回谁的消息，就是对着谁说的。任务房间里每条消息都默认点名
-                    # 任务那位（上面那个 `mentioned`），于是「回另一位队友的提问」
-                    # 「点它卡上的选项」——两条路都只是回一句话——仍然落到任务那
-                    # 位身上，提问的那位收不到答案。回复目标坐在房里时改指它；
-                    # 显式 @ 了别人时以上一条为准。人发的消息不在此列：那条默认
-                    # 归房间，回复它不改变什么。
-                    named = await instance_of_seat(
-                        session, topic.project_id, reply_author
-                    )
-                    if named is not None:
-                        recipient["instance_id"] = str(named.id)
-                        recipient["handle"] = named.handle
-                        recipient["mentioned"] = True
                 refused = await own_calls.refused(session, project, recipient, author)
                 user_block = await blocks.add(
                     project_id=topic.project_id,
