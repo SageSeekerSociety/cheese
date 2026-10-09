@@ -298,6 +298,7 @@ class _Room:
             # already means "this connection hears everything from here on, and
             # is allowed to".
             async with broker.subscribe(topic, replay=True) as queue:
+                read_at = broker.books_read()
                 refusal, open_turns, card, newest, room = await self._authorise(
                     chat_service
                 )
@@ -311,7 +312,7 @@ class _Room:
                 # A turn that starts after this has its turn_started queued; one
                 # that ends while the turn_active frame is in flight has its
                 # turn_finished queued — the client is never left "working".
-                adopt(broker, topic, open_turns)
+                adopt(broker, topic, open_turns, read_at=read_at)
                 active_turn_ids = broker.active_turn_ids(topic)
                 await tagged({"type": "subscribed", "newest": newest, "room": room})
                 if active_turn_ids:
