@@ -341,7 +341,7 @@ _BASELINE: dict[str, int] = {
     "app/core/storage.py": 1,
     "app/device_connection_app.py": 8,
     "app/domain/agent/announce.py": 1,
-    "app/domain/agent/chat.py": 4,
+    "app/domain/agent/chat.py": 2,
     "app/domain/agent/cli_worker.py": 6,
     "app/domain/agent/clone.py": 1,
     "app/domain/agent/compute.py": 1,
