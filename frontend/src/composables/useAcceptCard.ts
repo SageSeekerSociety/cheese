@@ -284,17 +284,20 @@ export function useAcceptCard(props: AcceptCardHost) {
     const tid = props.topicId
     const task = props.taskId
     if (!tid) return
+    // 卡只递在任务上，频道自己没有卡。按频道问回来的是它下面所有任务的卡（一个热闹的
+    // 频道两三兆），读来也全要扔掉，所以不读，直接答「没有」。
+    if (!task) {
+      acceptCards.value = []
+      loaded.value = true
+      return
+    }
     const seq = ++requested
     try {
-      // A task's cards are read through the task's own conversation.
-      const [payload] = await Promise.all([getAcceptCards(task ?? tid), alongside?.catch(() => undefined)])
+      const [payload] = await Promise.all([getAcceptCards(task), alongside?.catch(() => undefined)])
       if (props.topicId !== tid || props.taskId !== task || seq < applied) return
       applied = seq
       const first = !loaded.value
-      acceptCards.value = reconcile(
-        acceptCards.value,
-        payload.data.filter((card) => (props.taskId ? card.task_id === props.taskId : !card.task_id))
-      )
+      acceptCards.value = reconcile(acceptCards.value, payload.data)
       loaded.value = true
       // 这个话题第一次读到的卡本来就在，不演入场；之后再出现、再收走的才演。
       if (first) void nextTick(() => (animate.value = true))

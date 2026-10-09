@@ -17,6 +17,13 @@ const getAcceptCards = vi.fn()
 const voidCard = vi.fn()
 const rejectCard = vi.fn()
 
+// 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
+vi.mock('@/api/reviewComments', () => ({
+  listReviewComments: vi.fn(async () => ({ comments: [] })),
+  writeReviewComment: vi.fn(),
+  editReviewComment: vi.fn(),
+  deleteReviewComment: vi.fn(),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -85,7 +92,7 @@ async function mountWith(cards: AcceptCard[]) {
   getAcceptCards.mockResolvedValue({ data: cards, has_more: false })
   const vuetify = createVuetify({ components, directives })
   const utils = render(AcceptPage, {
-    props: { topicId: 't1', topicStatus: 'active' },
+    props: { topicId: 't1', taskId: 'k1', topicStatus: 'active' },
     global: { plugins: [vuetify, i18n] },
   })
   await flush()
