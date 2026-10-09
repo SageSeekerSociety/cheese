@@ -14,7 +14,6 @@
     "app/core/errors.py": 1,
     "app/core/storage.py": 2,
     "app/device_connection_app.py": 1,
-    "app/domain/agent/harness/claude_code/remote_execution/client.py": 24,
     "app/main.py": 28
   }
 }
