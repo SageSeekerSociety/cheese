@@ -20,7 +20,14 @@ export interface BlockPage extends ListPayload<Block> {
 
 export function listBlocks(
   topicId: string,
-  opts?: { limit?: number; before?: string; after?: string; around?: string }
+  opts?: {
+    limit?: number
+    before?: string
+    after?: string
+    around?: string
+    /** 编号（`seq`）在这之后存进来的，按存进来的先后：手里到这个号为止的页面漏了的那些。 */
+    storedAfter?: number
+  }
 ): Promise<BlockPage> {
   // 对话栏只读房间里显示的那些：一个干着活的房间，块大多是队友干活的步骤（现场读
   // 它们，走 socket 和 `/transcript`），不筛的话一页里多半没有一行画得出来。
@@ -29,6 +36,7 @@ export function listBlocks(
   if (opts?.before) q.set('before', opts.before)
   if (opts?.after) q.set('after', opts.after)
   if (opts?.around) q.set('around', opts.around)
+  if (opts?.storedAfter !== undefined) q.set('stored_after', String(opts.storedAfter))
   const qs = q.toString()
   const query = qs ? `?${qs}` : ''
   const path = `/topics/${encodeURIComponent(topicId)}/blocks${query}`

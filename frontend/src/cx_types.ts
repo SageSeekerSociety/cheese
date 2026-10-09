@@ -174,12 +174,11 @@ export interface Block {
   author_type: AuthorType
   author: string
   content: string
-  // 双树 + 引用 (spec §5): conversation tree, document tree, citations, and the
-  // live link an upgraded block points to.
+  // Its place in the order the conversation's blocks were stored: a page that
+  // missed some asks for those after the largest it holds. Absent on a message
+  // this page is still sending.
+  seq?: number
   reply_to?: string | null
-  struct_parent?: string | null
-  node_type?: string | null
-  struct_order?: number | null
   anchor_quote?: string | null
   // Render-by-type: mimeType of an artifact block (set on kind=artifact).
   mime_type?: string | null

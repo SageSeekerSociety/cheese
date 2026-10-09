@@ -29,8 +29,8 @@ export function useRoomSocket(options: {
   onFrame: (frame: WsServerFrame) => void
   /** 刚连上：链路又通了，断线期间没送出去的消息可以再走一次。`reconnect` 为真表示这
    * 是同一间房断了又连回来的重连，而不是进这间房的第一次连接。`newest` 是订阅生效那
-   * 一刻房间里最新的一条，`room` 是那一刻房间的样子（见 lib/roomLink）。 */
-  onOpen: (reconnect: boolean, newest: string | null | undefined, room: RoomSnapshot | null | undefined) => void
+   * 一刻房间里最后存进来的那一条的编号，`room` 是那一刻房间的样子（见 lib/roomLink）。 */
+  onOpen: (reconnect: boolean, newest: number | null | undefined, room: RoomSnapshot | null | undefined) => void
   /** 重连：重新拉一遍历史再开一条新的——断线期间漏掉的消息要补回来。 */
   reconnect: (topicId: string) => void
   /** 房间那条错误横幅。连上要清掉它，断了要在上面写原因。 */

@@ -16,7 +16,7 @@ link that is already up.
 Protocol:
   connect → /api/rooms/live?token=<session token>   (required)
   client → {"type":"subscribe","topic":id,"token":<session token>}
-         ← {"type":"subscribed","topic":id,"newest":<block id>|null,
+         ← {"type":"subscribed","topic":id,"newest":<block seq>|null,
             "room":<snapshot>|null}, then that room's frames
   client → {"type":"unsubscribe","topic":id}
   client → {"type":"ping","topic":id}  →  server → {"type":"pong","topic":id}
@@ -34,12 +34,15 @@ running here and who is busy. The opening `turn_active` / `activity_snapshot`
 are sent only when something is going on, so a client cannot tell "nobody is
 busy" from "not told yet" by them. A client that resubscribes keeps what it was
 showing and asks; the answer is what it reconciles against.)
-(`newest` is the newest block the room shows once the subscription is
-registered — what its pages read, `GET /topics/{id}/blocks?shown=true`.
-A client reads the room's history over HTTP, and a block stored after that
-read but before the subscription was registered reaches it by neither path; a
-client that does not hold `newest` reads the room's tail again. Anything stored
-after `newest` is published to this subscription.)
+(`newest` is the number (`seq`) of the last block stored that the room shows,
+once the subscription is registered — what its pages read,
+`GET /topics/{id}/blocks?shown=true`. A client reads the room's history over
+HTTP, and a block stored after that read but before the subscription was
+registered reaches it by neither path; a client whose blocks stop short of
+`newest` reads those stored after the last it holds (`?stored_after=`).
+Anything stored after `newest` is published to this subscription. A number and
+not a block, because a block can be dated before blocks stored ahead of it: the
+newest by date says nothing about one that arrived late.)
 (`room` is the room as it stood once the subscription was registered — its
 roster, tasks, pins, threads, proposal cards; a task's own row, origin and
 review comments — each piece shaped like the route that serves it
@@ -96,7 +99,7 @@ from app.domain.agent.realtime.subscriber_queue import (
 )
 from app.domain.agent.turn_adoption import adopt, open_turns_on, watch_books
 from app.domain.authz.policy import refuse_unauthenticated_chat
-from app.domain.block.queries import newest_block_id
+from app.domain.block.queries import newest_shown_seq
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 
@@ -307,8 +310,8 @@ class _Room:
             forget(self)
 
     async def _authorise(self, chat_service):
-        """(refusal, open turns, task card, newest block id, room snapshot) for
-        this subscription's credential. Called after the subscription is
+        """(refusal, open turns, task card, newest shown block's number, room
+        snapshot) for this subscription's credential. Called after the subscription is
         registered, so what it reads is a line: the newest block and the room as
         the snapshot has it, with everything after them published to this
         subscription."""
@@ -345,7 +348,7 @@ class _Room:
             # still at work.
             place = await PlaceResolver(auth_session).conversation(self.topic_id)
             newest = (
-                await newest_block_id(auth_session, place.conversation_id)
+                await newest_shown_seq(auth_session, place.conversation_id)
                 if place is not None
                 else None
             )

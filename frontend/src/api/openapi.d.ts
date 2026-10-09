@@ -9523,6 +9523,10 @@ export interface paths {
          *     - `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one
          *     - `?limit=N&around=<block_id>` → that block with about N/2 on each side: a
          *       conversation opened at one message (a search hit, a quoted reply)
+         *     - `?limit=N&stored_after=<seq>` → the N blocks stored next after the one
+         *       numbered so, in the order they were stored: what a page holding
+         *       everything up to that number missed (the rooms socket's `newest`).
+         *       `has_newer` says more were stored after them.
          *
          *     Filters narrow the timeline inside the paging, so a page holds `limit` rows
          *     of what was asked for and `has_more` counts the same set (filtering a page
@@ -9782,53 +9786,6 @@ export interface paths {
          *     `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。
          */
         post: operations["record_weekly_topics__topic_id__weekly_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/read": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Mark Topic Read
-         * @description 已读位: bump the caller's read cursor on a room or on one of its tasks
-         *     (opening either clears its unread badge, Feishu-style). ``topic_id`` is
-         *     the conversation's id; the door is its room's.
-         *
-         *     The cursor is per person, so whose it is comes from the verified
-         *     credential — ``handle`` in the body is only an assertion checked against
-         *     it (it used to BE the identity, letting anyone move anyone's cursor).
-         */
-        post: operations["mark_topic_read_topics__topic_id__read_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/notify-level": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Set Topic Notify Level
-         * @description 这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO
-         *     时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。
-         */
-        put: operations["set_topic_notify_level_topics__topic_id__notify_level_put"];
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -10517,6 +10474,53 @@ export interface paths {
          */
         get: operations["preview_file_topics__topic_id__preview_file_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Topic Read
+         * @description 已读位: bump the caller's read cursor on a room or on one of its tasks
+         *     (opening either clears its unread badge, Feishu-style). ``topic_id`` is
+         *     the conversation's id; the door is its room's.
+         *
+         *     The cursor is per person, so whose it is comes from the verified
+         *     credential — ``handle`` in the body is only an assertion checked against
+         *     it (it used to BE the identity, letting anyone move anyone's cursor).
+         */
+        post: operations["mark_topic_read_topics__topic_id__read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/notify-level": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Topic Notify Level
+         * @description 这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO
+         *     时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。
+         */
+        put: operations["set_topic_notify_level_topics__topic_id__notify_level_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -37641,6 +37645,7 @@ export interface operations {
                 kind?: components["schemas"]["BlockKind"][] | null;
                 author?: string | null;
                 shown?: boolean | null;
+                stored_after?: number | null;
             };
             header?: never;
             path: {
@@ -37990,84 +37995,6 @@ export interface operations {
         };
     };
     record_weekly_topics__topic_id__weekly_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    mark_topic_read_topics__topic_id__read_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_topic_notify_level_topics__topic_id__notify_level_put: {
         parameters: {
             query?: never;
             header?: never;
@@ -39202,6 +39129,84 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_topic_read_topics__topic_id__read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_topic_notify_level_topics__topic_id__notify_level_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

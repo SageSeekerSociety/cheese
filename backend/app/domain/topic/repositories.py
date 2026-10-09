@@ -15,6 +15,7 @@ from sqlalchemy import (
     cast,
     column,
     func,
+    literal,
     or_,
     select,
     table,
@@ -31,6 +32,7 @@ from sqlalchemy.sql.elements import (
 
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.conversation.models import Conversation
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     agent_dm_key,
@@ -529,8 +531,8 @@ class TopicRepository:
             ),
         )
         unseen = or_(
-            TopicReadState.last_read_at.is_(None),
-            Block.created_at > TopicReadState.last_read_at,
+            TopicReadState.last_read_seq.is_(None),
+            Block.seq > TopicReadState.last_read_seq,
         )
 
         def read_state(conversation_id):
@@ -769,8 +771,8 @@ class TopicRepository:
                 # on `conversation_id` already picks.
                 Block.author != user_handle,
                 or_(
-                    TopicReadState.last_read_at.is_(None),
-                    Block.created_at > TopicReadState.last_read_at,
+                    TopicReadState.last_read_seq.is_(None),
+                    Block.seq > TopicReadState.last_read_seq,
                 ),
             )
             .group_by(theirs.member_handle)
@@ -820,8 +822,8 @@ class TopicRepository:
         muted_until: datetime | None = None,
     ) -> None:
         """Set the user's notification level on a channel (upsert). A channel
-        the user never opened gets a cursor at the epoch — the same as no
-        cursor, so muting a channel does not mark it read."""
+        the user never opened gets a cursor at 0 — the same as no cursor, so
+        muting a channel does not mark it read."""
         stmt = select(TopicReadState).where(
             TopicReadState.topic_id == topic_id,
             TopicReadState.user_handle == user_handle,
@@ -833,7 +835,6 @@ class TopicRepository:
                 TopicReadState(
                     topic_id=topic_id,
                     user_handle=user_handle,
-                    last_read_at=datetime(1970, 1, 1, tzinfo=UTC),
                     notify_level=level.value,
                     muted_until=until,
                 )
@@ -846,49 +847,47 @@ class TopicRepository:
     async def mark_read_many(
         self, topic_ids: list[uuid.UUID], user_handle: str
     ) -> None:
-        """Bump the user's read cursor on many topics to now, in one statement
-        (「全部标为已读」). Rows that exist keep their notify level."""
+        """Move the user's read cursor on each of these conversations to its
+        newest block, in one statement (「全部标为已读」). Rows that exist keep
+        their notify level.
+
+        "Newest" is the conversation's counter as committed: a block still being
+        stored gets a larger number and stays unread, which is right, since the
+        reader could not have seen it."""
         if not topic_ids:
             return
         now = datetime.now(UTC)
-        stmt = pg_insert(TopicReadState).values(
+        newest = select(
+            func.gen_random_uuid(),
+            Conversation.id,
+            literal(user_handle),
+            Conversation.last_seq,
+            literal(now),
+            literal(now),
+        ).where(Conversation.id.in_(topic_ids))
+        stmt = pg_insert(TopicReadState).from_select(
             [
-                {
-                    "id": uuid.uuid4(),
-                    "topic_id": topic_id,
-                    "user_handle": user_handle,
-                    "last_read_at": now,
-                    "created_at": now,
-                    "updated_at": now,
-                }
-                for topic_id in topic_ids
-            ]
+                "id",
+                "topic_id",
+                "user_handle",
+                "last_read_seq",
+                "created_at",
+                "updated_at",
+            ],
+            newest,
         )
         await self._session.execute(
             stmt.on_conflict_do_update(
                 index_elements=[TopicReadState.topic_id, TopicReadState.user_handle],
-                set_={"last_read_at": now, "updated_at": now},
+                set_={"last_read_seq": stmt.excluded.last_read_seq, "updated_at": now},
             )
         )
         await self._session.flush()
 
     async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
-        """Bump the user's read cursor on a topic to now (upsert)."""
-        stmt = select(TopicReadState).where(
-            TopicReadState.topic_id == topic_id,
-            TopicReadState.user_handle == user_handle,
-        )
-        state = (await self._session.scalars(stmt)).first()
-        now = datetime.now(UTC)
-        if state is None:
-            self._session.add(
-                TopicReadState(
-                    topic_id=topic_id, user_handle=user_handle, last_read_at=now
-                )
-            )
-        else:
-            state.last_read_at = now
-        await self._session.flush()
+        """Move the user's read cursor on a conversation to its newest block
+        (upsert)."""
+        await self.mark_read_many([topic_id], user_handle)
 
 
 class TopicProgressRepository:

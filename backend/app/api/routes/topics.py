@@ -496,6 +496,7 @@ async def list_topic_blocks(
     kind: Annotated[list[BlockKind] | None, Query()] = None,
     author: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
     shown: bool | None = None,
+    stored_after: Annotated[int | None, Query(ge=0)] = None,
 ) -> dict:
     """The topic's conversation timeline, oldest-first.
 
@@ -516,6 +517,10 @@ async def list_topic_blocks(
     - `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one
     - `?limit=N&around=<block_id>` → that block with about N/2 on each side: a
       conversation opened at one message (a search hit, a quoted reply)
+    - `?limit=N&stored_after=<seq>` → the N blocks stored next after the one
+      numbered so, in the order they were stored: what a page holding
+      everything up to that number missed (the rooms socket's `newest`).
+      `has_newer` says more were stored after them.
 
     Filters narrow the timeline inside the paging, so a page holds `limit` rows
     of what was asked for and `has_more` counts the same set (filtering a page
@@ -535,9 +540,11 @@ async def list_topic_blocks(
     and the task a room-line row says began there (`room_task_rows`), as the
     room's task list has them.
     """
-    if sum(c is not None for c in (before, after, around)) > 1:
+    if sum(c is not None for c in (before, after, around, stored_after)) > 1:
         raise ValidationError(say("cursorOneAnchor"))
-    if limit is None and (after is not None or around is not None):
+    if limit is None and (
+        after is not None or around is not None or stored_after is not None
+    ):
         raise ValidationError(say("cursorNeedsLimit"))
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -579,6 +586,12 @@ async def list_topic_blocks(
         kept = [centre] if await repo.holds(centre, **narrow) else []
         blocks = [*above.items, *kept, *below.items]
         has_more, has_newer = above.has_more, below.has_more
+    elif stored_after is not None:
+        page_result = await repo.page_for_topic(
+            place.conversation_id, limit=limit, stored_after=stored_after, **narrow
+        )
+        blocks = page_result.items
+        has_more, has_newer = True, page_result.has_more
     elif newer_than is not None:
         page_result = await repo.page_for_topic(
             place.conversation_id, limit=limit, after=newer_than, **narrow
@@ -1247,56 +1260,6 @@ async def record_weekly(
     if key is not None:
         await idem.record_result(db, key, out)
     return ok(out)
-
-
-@router.post("/{topic_id}/read")
-async def mark_topic_read(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """已读位: bump the caller's read cursor on a room or on one of its tasks
-    (opening either clears its unread badge, Feishu-style). ``topic_id`` is
-    the conversation's id; the door is its room's.
-
-    The cursor is per person, so whose it is comes from the verified
-    credential — ``handle`` in the body is only an assertion checked against
-    it (it used to BE the identity, letting anyone move anyone's cursor)."""
-    room_id = await room_of(db, topic_id)
-    topic = await TopicService(db).get_or_404(room_id)
-    actor = await resolver.resolve(topic_id=room_id, project_id=topic.project_id)
-    await resolver.authorize_topic(actor, project_id=topic.project_id, topic_id=room_id)
-    handle = await resolver.resolve_recipient(
-        requested=(body.get("handle") or "").strip() or None,
-        project_id=topic.project_id,
-        allow_anonymous=False,
-    )
-    await TopicService(db).mark_read(topic_id, handle)
-    return ok({"topic_id": str(topic_id), "handle": handle})
-
-
-@router.put("/{topic_id}/notify-level")
-async def set_topic_notify_level(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO
-    时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。"""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    handle = await resolver.resolve_recipient(
-        requested=None, project_id=topic.project_id, allow_anonymous=False
-    )
-    level = str(body.get("level") or "")
-    until = _parse_moment(body.get("muted_until"))
-    await TopicService(db).set_notify_level(topic_id, handle, level, until)
-    return ok(
-        {
-            "topic_id": str(topic_id),
-            "level": level,
-            "muted_until": until.isoformat() if until else None,
-        }
-    )
 
 
 @router.post("/{topic_id}/archive")

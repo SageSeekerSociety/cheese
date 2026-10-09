@@ -96,13 +96,13 @@ describe('一个页面一条房间连接', () => {
     expect(links[0].sent.filter((f) => f.type === 'typing')).toEqual([])
   })
 
-  it('确认订阅时，房间知道那一刻最新的一条', async () => {
+  it('确认订阅时，房间知道那一刻最后存进来的是几号', async () => {
     const a = watch('room-a')
-    let newestOnOpen: string | null | undefined
+    let newestOnOpen: number | null | undefined
     a.room.onopen = () => (newestOnOpen = a.room.newest)
     links[0].up()
-    links[0].frame({ type: 'subscribed', topic: 'room-a', newest: 'b-9' })
-    expect(newestOnOpen).toBe('b-9')
+    links[0].frame({ type: 'subscribed', topic: 'room-a', newest: 9 })
+    expect(newestOnOpen).toBe(9)
   })
 
   it('每次订阅带的是此刻的 token', async () => {

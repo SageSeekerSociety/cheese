@@ -137,7 +137,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   const tail = useRoomTail({
     roomId: () => place()?.id,
     reading: () => history.reading(),
-    catchUp: (roomId) => void resync.catchUp(roomId),
+    catchUp: (roomId, after) => void resync.catchUp(roomId, after),
   })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
@@ -288,7 +288,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // a block must never show up twice (现场不能错).
   function pushBlock(b: Block) {
     history.note(b.id, b)
-    tail.hold(b.id)
+    tail.hold(b)
     const landing = timeline.append(b)
     if (landing === 'known' || landing === 'above' || history.reading() || b.author === AUTHOR) return
     if (b.kind === 'artifact') emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
@@ -348,7 +348,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // 已经在时间线上的一行变了：原地换掉，不追加第二行。
         timeline.replace(frame.block)
         history.note(frame.block.id, frame.block)
-        tail.hold(frame.block.id)
+        tail.hold(frame.block)
         toSite(frame.block)
         break
       }
@@ -481,7 +481,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       const fresh = await readNewestBlocks(room.id, { restart: !entering })
       // Only apply if still the active topic (avoid race on fast switching).
       if (!stillHere()) return
-      for (const block of fresh.blocks) tail.hold(block.id)
+      for (const block of fresh.blocks) tail.hold(block)
       // Blocks that landed while we were away append at the tail; if the user
       // was parked at the bottom, follow them so the newest message is visible
       // without a manual scroll. Compared on the LAST id, not on length: the
@@ -679,7 +679,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     timeline,
     runRecords,
     settle: (b: Block) => settleOutbox(b),
-    noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b.id)),
+    noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b)),
     readEnded: () => tail.check(),
     scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
     socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
