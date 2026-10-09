@@ -136,7 +136,7 @@ app/domain/<包>/
 
 今天在写入之后手工调 `announce_stale(room_id, 资源名)`（`backend/app/domain/agent/staleness.py:18`，21 处），发一帧 `{"type":"state","resource":...}`，前端重读那一类；`topics` 的调用点另外带上变的那一行的 `id`，前端就只重读那一行。项目框架（频道清单、未读、提醒档位）的变化推给订了这个项目的页面（`agent/project_feed.py`）：一条消息存进库、房间那一行变了、一轮开始或结束都会推，只说哪样在哪个房间变了；只有自己人看得见的房间只告诉里面的人。缺口在漏调：一处写完忘了通知，那一份就不刷新，没有检查会发现。
 
-三块现成的样板，用的是终点的做法：`review/live.py` 在 `after_flush` 里记下变了的采纳卡、`after_commit` 之后推；`room_task/live.py` 对任务这一行、以及任务里问出或答掉的题做同样的事，推给任务所在的频道和任务自己那段对话；`agent/project_feed.py` 用同样两个钩子，一条消息不论从哪条路径存进库都会推给项目。
+三块现成的样板，用的是终点的做法：`review/live.py` 在 `after_flush` 里记下变了的采纳卡、`after_commit` 之后推；`room_task/live.py` 对任务这一行、任务里问出或答掉的题、以及任务里一轮的开始和结束（轮次区间由 `AgentTurnRepository` 批量写入，flush 钩子看不到，所以由它写入时交给 `turns_moved` 排队）做同样的事，推给任务所在的频道和任务自己那段对话；`agent/project_feed.py` 用同样两个钩子，一条消息不论从哪条路径存进库都会推给项目。
 
 ### 写入钩子和映射表 {#write-hooks}
 

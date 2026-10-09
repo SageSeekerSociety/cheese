@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.domain.agent.models import AgentTurn
+from app.domain.room_task.live import turns_moved
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +78,7 @@ class AgentTurnRepository:
             # A session's own work keeps its id across backend processes: the
             # row an earlier process opened for it is this row, and stays as
             # that process wrote it.
-            await self._session.execute(
+            opened = await self._session.execute(
                 insert(AgentTurn)
                 .values(
                     id=turn_id,
@@ -93,7 +94,10 @@ class AgentTurnRepository:
                     session_id=session_id,
                 )
                 .on_conflict_do_nothing(index_elements=[AgentTurn.id])
+                .returning(AgentTurn.conversation_id)
             )
+            if delivered_at is not None:
+                await turns_moved(self._session, opened.scalars())
             return
         self._session.add(
             AgentTurn(
@@ -110,6 +114,8 @@ class AgentTurnRepository:
                 agent_handle=agent_handle,
             )
         )
+        if delivered_at is not None:
+            await turns_moved(self._session, [conversation_id])
 
     async def mark_delivered(self, turn_id: uuid.UUID, at: datetime) -> None:
         """Stamp the moment the transport accepted this turn's write.
@@ -117,11 +123,13 @@ class AgentTurnRepository:
         Only the first one counts: a re-delivered prompt does not move the
         moment the session first heard the task.
         """
-        await self._session.execute(
+        stamped = await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id == turn_id, AgentTurn.delivered_at.is_(None))
             .values(delivered_at=at)
+            .returning(AgentTurn.conversation_id)
         )
+        await turns_moved(self._session, stamped.scalars())
 
     async def delivered(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these turns had their prompt accepted by the transport."""
@@ -282,11 +290,13 @@ class AgentTurnRepository:
         ids = list(turn_ids)
         if not ids:
             return
-        await self._session.execute(
+        closed = await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
             .values(stopped_at=at)
+            .returning(AgentTurn.conversation_id)
         )
+        await turns_moved(self._session, closed.scalars())
 
     async def still_open(
         self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
@@ -355,7 +365,7 @@ class AgentTurnRepository:
         room's — closes nothing: the owner cannot be located, and guessing a
         scope for it is how a teammate's turn dies.
         """
-        result = await self._session.execute(
+        closed = await self._session.execute(
             update(AgentTurn)
             .where(
                 AgentTurn.id == turn_id,
@@ -367,9 +377,11 @@ class AgentTurnRepository:
                 AgentTurn.delivered_at.is_not(None),
             )
             .values(stopped_at=at)
+            .returning(AgentTurn.conversation_id)
         )
-        # UPDATE returns a CursorResult, which has rowcount at runtime.
-        return result.rowcount or 0  # type: ignore[attr-defined]
+        conversations = list(closed.scalars())
+        await turns_moved(self._session, conversations)
+        return len(conversations)
 
     async def started_at_of(
         self, topic_id: uuid.UUID, turn_ids: Iterable[uuid.UUID]

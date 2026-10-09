@@ -11,8 +11,9 @@ from datetime import UTC, datetime, timedelta
 from app.api.deps import get_chat_service
 from app.domain.review.landing_watch import watch_landings
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.presentation import NeedsYou
-from tests.ask_fixtures import active_ask
+from app.domain.room_task.presentation import Building, NeedsYou
+from tests.ask_fixtures import active_ask, wait_turn_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     new_project,
     open_task,
@@ -45,6 +46,18 @@ def _drain(ws) -> None:
     ws.send_json({"type": "ping"})
     while ws.receive_json()["type"] != "pong":
         pass
+
+
+def _channel_card(client, room: str, task: str) -> dict:
+    """The task as its channel's 支线 pane reads it."""
+    r = client.get(
+        f"/topics/{room}/tasks",
+        params={"limit": 0},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    (row,) = [t for t in r.json()["data"]["data"] if t["id"] == task]
+    return row
 
 
 def _task_read(client, task: str) -> dict:
@@ -136,11 +149,32 @@ def test_a_question_asked_in_a_task_is_heard_in_its_channel(
 
             assert _told(channel, room)
 
-    r = client.get(
-        f"/topics/{room}/tasks",
-        params={"limit": 0},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-    (row,) = [t for t in r.json()["data"]["data"] if t["id"] == task]
-    assert row["presentation"]["phrase"] == NeedsYou.awaiting_answer
+    card = _channel_card(client, room, task)
+    assert card["presentation"]["phrase"] == NeedsYou.awaiting_answer
+
+
+def test_a_turn_starting_and_ending_in_a_task_is_heard_in_its_channel(
+    client, stub_hooks, monkeypatch
+):
+    """The channel's card for a started task flips to 运行中 when a turn in the
+    task reaches its session, and back to 已开始 when the turn ends, without the
+    channel page reloading."""
+    project = new_project(client, owner="alice")
+    room = project["root_topic_id"]
+    task = open_task(client, room, owner="alice")["id"]
+    # Starting the task runs its first turn; the one this test holds comes
+    # after it, or it would be taken into that one.
+    wait_work_idle()
+    wait_turn_idle(client, task)
+
+    with room_socket(client, room, "alice") as channel:
+        _drain(channel)
+        with active_ask(client, stub_hooks, monkeypatch, task, platform_turn=True):
+            assert _told(channel, room)
+            card = _channel_card(client, room, task)
+            assert card["presentation"]["phrase"] == Building.running
+            _drain(channel)
+
+        assert _told(channel, room)
+    card = _channel_card(client, room, task)
+    assert card["presentation"]["phrase"] == Building.started
