@@ -2,6 +2,8 @@
 loudly it may call them.
 
 Both are per person, and whose they are comes from the verified credential.
+Each change is told to the person's other pages on the project
+(`project_feed`): a room read on the phone stops being bold in the browser.
 The module mounts itself: `app.main._discover_routers` includes every
 module-level `APIRouter` under `app.api.routes`.
 """
@@ -13,6 +15,11 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _parse_moment
+from app.domain.agent.project_feed import (
+    NOTIFY_LEVELS,
+    UNREAD,
+    tell_project_once_committed,
+)
 from app.domain.conversation.services import room_of
 from app.domain.topic.services import TopicService
 
@@ -40,6 +47,8 @@ async def mark_topic_read(
         allow_anonymous=False,
     )
     await TopicService(db).mark_read(topic_id, handle)
+    # The reader's other pages (another tab, the phone) clear the mark too.
+    tell_project_once_committed(db, topic_id, UNREAD, only={handle})
     return ok({"topic_id": str(topic_id), "handle": handle})
 
 
@@ -60,6 +69,7 @@ async def set_topic_notify_level(
     level = str(body.get("level") or "")
     until = _parse_moment(body.get("muted_until"))
     await TopicService(db).set_notify_level(topic_id, handle, level, until)
+    tell_project_once_committed(db, topic_id, NOTIFY_LEVELS, UNREAD, only={handle})
     return ok(
         {
             "topic_id": str(topic_id),

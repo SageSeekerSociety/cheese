@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
@@ -13,6 +13,7 @@ import { warmPagesWhenIdle } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/query/project'
+import { useProjectFeed } from '@/query/projectFeed'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -71,28 +72,26 @@ watch(
 )
 onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 
-// 实时性: poll unread badges so messages landing in OTHER topics light up
-// without a manual refresh. The same tick refreshes the topic list, so the
-// sidebar's 芝士还在跑 呼吸点 fades for topics you are not watching too. 标签页在
-// 后台时不问，切回来时过期了的再问一次（query/client）。
-const POLL_MS = 30_000
+// 频道清单、未读、提醒档位：框架这一层一直看着它们。别的房间里有人说话、改了名、
+// 芝士开始或停下，项目推一帧过来，变了的那一份重读（query/projectFeed）。
 const me = myHandle()
 useQuery(
-  computed(() => ({ ...topicsQuery(props.projectId), refetchInterval: POLL_MS })),
+  computed(() => topicsQuery(props.projectId)),
   queryClient
 )
 useQuery(
-  computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me, refetchInterval: POLL_MS })),
+  computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me })),
   queryClient
 )
 useQuery(
-  computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me, refetchInterval: POLL_MS })),
+  computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me })),
   queryClient
 )
 useQuery(
-  computed(() => ({ ...notifyLevelsQuery(props.projectId), refetchInterval: POLL_MS })),
+  computed(() => notifyLevelsQuery(props.projectId)),
   queryClient
 )
+useProjectFeed(toRef(props, 'projectId'), me || null)
 
 // 这个框架底下这几页的代码，趁空闲先下下来：侧栏那一行「总览/资料库」、侧栏和总览
 // 里的任务行，点下去就是它们。按页名热，因为框架这一层拿不到每一页的地址参数

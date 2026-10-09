@@ -12,6 +12,7 @@ reason to change, the frame it writes, while ``runtime`` runs the work — and
 
 import uuid
 
+from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.realtime.subscriber_queue import Frame
 
@@ -36,3 +37,6 @@ async def announce_stale(
     if id is not None:
         frame["id"] = str(id)
     await get_broker().publish(str(room_id), frame)
+    # A room's row changed: the project's channel list shows it too.
+    if resource == TOPICS:
+        await tell_project(id or room_id, TOPICS)

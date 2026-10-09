@@ -15,6 +15,9 @@ from app.core.redis import get_redis_client
 
 # Registers the listener that publishes committed platform notices live.
 from app.domain.agent import live_notices as live_notices
+
+# Registers the listeners that tell a project's pages what changed in it.
+from app.domain.agent import project_feed as project_feed
 from app.domain.agent.chat import ChatService
 from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool, build_compute_pool

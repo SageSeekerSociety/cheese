@@ -27,6 +27,7 @@ from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService, project_refs_text
+from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
@@ -127,6 +128,7 @@ async def create_topic(
     # The caller can configure or enter this room as soon as it gets the ID.
     # Dependency teardown commits after the response, which races that request.
     await db.commit()
+    await tell_project(topic.id, TOPICS)
     return response
 
 
@@ -1278,7 +1280,10 @@ async def archive_topic(
         raise ForbiddenError(say("archiveSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
     topic = await TopicService(db).archive(topic_id, by=actor.handle)
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    out = TopicOut.model_validate(topic).model_dump(mode="json")
+    await db.commit()
+    await tell_project(topic_id, TOPICS)
+    return ok(out)
 
 
 @router.get("/{topic_id}/cleanup")

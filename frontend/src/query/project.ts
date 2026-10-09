@@ -1,7 +1,7 @@
 // 一个项目的频道清单、成员、未读和通知档位：侧栏、头部、@ 候选、私聊列表都读这几份。
 //
-// 每一份的读法只写在这里。轮询由看着它的那一处加（`ProjectShell` 每 30 秒问一次未读和
-// 清单），写操作和推送通过下面这几个函数改缓存，不各存副本。
+// 每一份的读法只写在这里。别处变了由项目推送叫它们重读（`query/projectFeed`），写操作
+// 和推送通过下面这几个函数改缓存，不各存副本。
 import type { TopicNotifySetting, TopicUnread } from '@/api'
 import type { ListPayload, Project, ProjectAgent, ProjectMemberRow, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
@@ -154,8 +154,23 @@ export function patchTopics(projectId: string, change: (rows: Topic[]) => Topic[
   }))
 }
 
+const activity = (topic: Topic) => (topic.last_activity_at ? Date.parse(topic.last_activity_at) : 0)
+
 /**
- * 这一行变了（状态、标题、可见性）。只取这一行，补进清单；清单里没有它就整份重读：
+ * 清单里换上这一行。清单按最后有动静的先后排（`TOPIC_SORT`），这一行刚有人说了话就该
+ * 挪上去：拿出来，放到第一条比它早的前面，其余的次序不动。没有新动静（改名、换状态）
+ * 就原地换。
+ */
+function placed(list: Topic[], row: Topic): Topic[] {
+  const before = list.find((topic) => topic.id === row.id)
+  if (before && activity(before) === activity(row)) return list.map((topic) => (topic.id === row.id ? row : topic))
+  const others = list.filter((topic) => topic.id !== row.id)
+  const at = others.findIndex((topic) => activity(topic) < activity(row))
+  return at < 0 ? [...others, row] : [...others.slice(0, at), row, ...others.slice(at)]
+}
+
+/**
+ * 这一行变了（状态、标题、可见性、最后有动静的时候）。只取这一行，补进清单；清单里没有它就整份重读：
  * 它可能是刚变得对这个人可见、此前根本不在清单里的房间，只补一行补不出来。
  */
 export async function refreshTopicRow(projectId: string, roomId: string): Promise<void> {
@@ -176,7 +191,7 @@ export async function refreshTopicRow(projectId: string, roomId: string): Promis
   }
   const rows = queryClient.getQueryData<ListPayload<Topic>>(keys.projectTopics(projectId))?.data
   if (rows?.some((topic) => topic.id === roomId)) {
-    await patchTopics(projectId, (list) => list.map((topic) => (topic.id === roomId ? row : topic)))
+    await patchTopics(projectId, (list) => placed(list, row))
   } else {
     await queryClient.invalidateQueries({ queryKey: keys.projectTopics(projectId) })
   }

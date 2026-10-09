@@ -1,6 +1,6 @@
 // 一个房间（频道、任务、私聊）围着对话的那几份：名册、进度、进行中的任务、当前预览、
 // 任务房间里那个任务。房间头部、右侧面板、对话栏、@ 候选读的是同一份。
-import type { Block, ListPayload, PreviewInfo, RoomTask, TopicMemberRow, TopicProgress } from '@/cx_types'
+import type { Block, ListPayload, PreviewInfo, RoomTask, TodoItem, TopicMemberRow, TopicProgress } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
 import type { TopicComputeProfile } from '@/types/compute'
 import type { ThreadRow } from '@/types/threads'
@@ -10,7 +10,7 @@ import { queryOptions } from '@tanstack/vue-query'
 import { getPreview, getProgress, getTask, getTopicComputeProfile, listRoomTasks, listTopicMembers } from '@/api'
 import { listPins } from '@/api/pins'
 import { listThreads } from '@/api/threads'
-import { queryClient } from '@/query/client'
+import { queryClient, refreshQueries } from '@/query/client'
 import { keys } from '@/query/keys'
 import { fromSnapshot } from '@/query/snapshot'
 
@@ -56,6 +56,16 @@ export function roomProgressQuery(roomId: string) {
     queryKey: keys.roomProgress(roomId),
     queryFn: (): Promise<TopicProgress> => getProgress(roomId),
   })
+}
+
+/** 芝士写下这一轮的清单，房间连接上推来了（`todo` 帧）：放进缓存，不再去问。 */
+export function checklistPushed(roomId: string, items: TodoItem[]): void {
+  queryClient.setQueryData<TopicProgress>(keys.roomProgress(roomId), { items, updated_at: new Date().toISOString() })
+}
+
+/** 连接断过：断开期间推的清单收不到了，看着它的那处重读一次。 */
+export function checklistMissed(roomId: string): Promise<void> {
+  return refreshQueries({ queryKey: keys.roomProgress(roomId) })
 }
 
 type RoomTaskFilter = NonNullable<Parameters<typeof listRoomTasks>[1]>

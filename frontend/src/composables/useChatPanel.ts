@@ -69,6 +69,7 @@ import i18n, { t } from '@/i18n'
 import { cachedWindow, readNewestBlocks, setCachedWindow } from '@/query/blocks'
 import { roomChanged } from '@/query/changes'
 import { refreshTopicRow } from '@/query/project'
+import { checklistMissed, checklistPushed } from '@/query/room'
 import { settleRoom } from '@/query/snapshot'
 
 // The panel and its host have to agree on the event list, so it lives on its own
@@ -230,6 +231,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       if (reconnect) {
         const brought: ReadonlySet<string> = room ? SNAPSHOT_RESOURCES : new Set()
         for (const resource of ANNOUNCED) if (!brought.has(resource)) announce(resource)
+        if (here) void checklistMissed(here.id)
         if (!room) announce('topics', channel?.id)
         else {
           // 房间这一行不在快照里；任务在，时间线上各块带着的那几件照旧重读。
@@ -330,6 +332,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
         // row in place (the frame carries the block's full fresh aggregate).
         applyReactions(frame.block_id, frame.reactions)
+        break
+      case 'todo':
+        if (place()) checklistPushed(place()!.id, frame.items)
         break
       case 'state':
         // A platform resource changed: what the cache holds of it goes stale
