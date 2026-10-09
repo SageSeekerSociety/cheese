@@ -1,6 +1,16 @@
 import type { Block } from '../../../cx_types'
 
 /**
+ * 房间的页面读得到的那些块：和后端 `indexed_rows.SHOWN_ROWS` 同一条（`?shown=true`），
+ * `newest` 也只数它们。芝士干活时一步一步推来的块不露面，算进手里最大的号会把它撑过
+ * `newest`，正好盖住缝里掉的那一条。
+ */
+const SHOWN_KINDS = new Set(['message', 'attachment', 'artifact', 'event'])
+function shown(block: Block): boolean {
+  return SHOWN_KINDS.has(block.kind) && (block.meta as { in_room?: boolean } | null | undefined)?.in_room !== false
+}
+
+/**
  * 读历史和订阅之间的那道缝。
  *
  * 房间的历史走 HTTP 读，之后落下的走 socket 推。读在订阅生效之前，而一条消息恰好落在
@@ -38,9 +48,9 @@ export function useRoomTail(options: {
       held = 0
       newest = undefined
     },
-    /** 手里有了这一块（读回来的、推来的，不露面的也算）。 */
+    /** 手里有了这一块（读回来的、推来的）；房间的页面读不到的不算。 */
     hold(block: Block) {
-      if (block.seq !== undefined && block.seq > held) held = block.seq
+      if (block.seq !== undefined && block.seq > held && shown(block)) held = block.seq
     },
     /** 订阅确认了，那一刻最后存进来的是 `latest` 号（`undefined`：服务端没说）。 */
     subscribed(latest: number | null | undefined) {

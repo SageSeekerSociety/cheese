@@ -572,6 +572,26 @@ describe('a message that lands between the read and the subscription', () => {
     expect(text.indexOf('早就开始写的回答')).toBeLessThan(text.indexOf('已经显示的'))
   })
 
+  it('is still looked for when 芝士 is working and its steps keep arriving', async () => {
+    // 不露面的步骤块号更大，但房间的页面读不到它们：不算「手里已经到这个号了」。
+    let resolve!: (value: ReturnType<typeof page>) => void
+    vi.mocked(listBlocks)
+      .mockReturnValueOnce(new Promise((done) => (resolve = done)))
+      .mockResolvedValueOnce(page([message('m2', 2, '读完才落下的')]))
+    const view = mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 2 })
+    sockets[0].onopen?.()
+    const step = { ...message('s3', 3, 'ran tests'), kind: 'event', meta: { in_room: false, tool: 'Bash' } }
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'event_block', block: step }) })
+    resolve(page([message('m1', 1, '读之前就在的')]))
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ storedAfter: 1 }))
+    expect(view.container.textContent).toContain('读完才落下的')
+  })
+
   it('is not looked for when the room already holds the newest message', async () => {
     vi.mocked(listBlocks).mockResolvedValueOnce(page([message('m1', 1, '只有这一条')]))
     mountPanel()
