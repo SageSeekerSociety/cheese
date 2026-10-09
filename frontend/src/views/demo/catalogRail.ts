@@ -185,15 +185,16 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     component: TopicRailHeader,
     // 名字连着 ⌄ 是一个按钮，点下去是菜单。
     // 整页形态下这一行填进顶栏（Teleport），另外两个形态里它就在原地。
-    needs: ['vuetify', 'i18n'],
+    needs: ['vuetify', 'i18n', 'router'],
     states: [
       {
         name: '所有者',
-        note: '菜单里是项目文档、总览和资料库之外的几页、项目设置和「转让项目」；成员上挂着私聊未读。',
+        note: '项目名上面一行是它所属的团队，点了去团队的项目列表。菜单里是项目文档、总览和资料库之外的几页、项目设置和「转让项目」；成员上挂着私聊未读。',
         props: {
           page: false,
           column: false,
           projectName: '课程项目',
+          team: { label: '知是', handle: 'zhishi' },
           privateUnreadTotal: 3,
           searchTitle: '搜索（⌘K）',
           menuOpen: false,
@@ -217,6 +218,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           page: false,
           column: false,
           projectName: '别人的项目',
+          team: null,
           privateUnreadTotal: 0,
           searchTitle: '搜索（⌘K）',
           menuOpen: false,
@@ -237,6 +239,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           page: false,
           column: false,
           projectName: '选择项目',
+          team: null,
           privateUnreadTotal: 0,
           searchTitle: '搜索（⌘K）',
           menuOpen: false,
@@ -257,6 +260,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           page: true,
           column: true,
           projectName: '课程项目',
+          team: null,
           privateUnreadTotal: 0,
           searchTitle: '搜索',
           menuOpen: false,
