@@ -212,8 +212,8 @@ class Block(UuidPk, Timestamps, Base):
             "seq",
             postgresql_include=["author"],
         ),
-        # The same count against a time, the cursor the release before this one
-        # reads while a deploy replaces it. Goes with `last_read_at`.
+        # One kind of block in a conversation by time: who spoke first or last
+        # there, what was said since a moment.
         Index(
             "ix_blocks_conversation_kind_created",
             "conversation_id",

@@ -16,7 +16,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey
+from sqlalchemy import DateTime, Enum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -41,7 +41,3 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
-    # The numbers (`Block.seq`) kept for the blocks the conversation held before
-    # numbering began: those are 1 … seq_floor, and every block stored since
-    # numbers itself above them (migration ``0dd66b328211``).
-    seq_floor: Mapped[int] = mapped_column(BigInteger, server_default="0")
