@@ -57,6 +57,7 @@ const members: ProjectMemberRow[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/teams/:handle', name: 'TeamsDetailDefault', component: defineComponent({ setup: () => () => h('div') }) },
     { path: '/:pathMatch(.*)*', name: 'catch-all', component: defineComponent({ setup: () => () => h('div') }) },
   ],
 })
@@ -176,6 +177,53 @@ describe('C1 置顶导航组', () => {
   it('项目头高度走 48px 基线（.sidebar-header）', () => {
     const { container } = mount()
     expect(container.querySelector('.rail-header')?.classList.contains('sidebar-header')).toBe(true)
+  })
+})
+
+describe('项目名上面写着它归哪个团队', () => {
+  const teamLine = (root: Element) => root.querySelector('.rail-header__team')
+
+  it('团队的项目写团队名，点了去团队的项目列表', () => {
+    const { container } = mount({
+      projects: [
+        { id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', team_handle: 'zhishi', team_name: '知是' },
+      ],
+    })
+    expect(teamLine(container)?.textContent?.trim()).toBe('知是')
+    expect(teamLine(container)?.getAttribute('href')).toBe('/teams/zhishi')
+  })
+
+  it('自己名下的项目写「个人」，指向自己那一页', () => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
+    const { container } = mount({
+      projects: [
+        { id: 'p1', name: 'P1', created_at: '', owner_handle: 'linxia', team_handle: 'linxia', team_name: 'linxia' },
+      ],
+    })
+    expect(teamLine(container)?.textContent?.trim()).toBe('个人')
+    expect(teamLine(container)?.getAttribute('href')).toBe('/teams/linxia')
+  })
+
+  // 别人名下的个人项目：那一页只有他本人打得开，所以对被邀请进来的人不画这一行。
+  it('别人名下的项目不画这一行', () => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
+    const { container } = mount({
+      projects: [
+        { id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', team_handle: 'alice', team_name: 'alice' },
+      ],
+    })
+    expect(teamLine(container)).toBeNull()
+  })
+
+  it('点团队名不打开项目菜单', async () => {
+    const { container, baseElement } = mount({
+      projects: [
+        { id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', team_handle: 'zhishi', team_name: '知是' },
+      ],
+    })
+    await fireEvent.click(teamLine(container)!)
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/teams/zhishi'))
+    expect(baseElement.querySelector('.v-overlay--active .v-list-item')).toBeNull()
   })
 })
 

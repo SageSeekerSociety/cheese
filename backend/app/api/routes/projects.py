@@ -76,7 +76,7 @@ from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
 from app.domain.task.services import claim_backs_project
-from app.domain.team.services import team_service
+from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -90,8 +90,8 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
-def _shelled(project: Project, shell: Shell, team_handle: str | None) -> dict:
-    """One project's wire payload, with the 壳 it runs under and its team's handle.
+def _shelled(project: Project, shell: Shell, team: TeamLabel | None) -> dict:
+    """One project's wire payload: the 壳 it runs under, its team's handle and name.
 
     Neither is a column on `Project`, so neither can come from `model_validate`:
     the 壳 is resolved from the project's own settings, its 赛题 and that 赛题's
@@ -102,7 +102,13 @@ def _shelled(project: Project, shell: Shell, team_handle: str | None) -> dict:
     """
     return (
         ProjectOut.model_validate(project)
-        .model_copy(update={"shell": ShellOut.of(shell), "team_handle": team_handle})
+        .model_copy(
+            update={
+                "shell": ShellOut.of(shell),
+                "team_handle": team.handle if team else None,
+                "team_name": team.name if team else None,
+            }
+        )
         .model_dump(mode="json")
     )
 
@@ -110,11 +116,11 @@ def _shelled(project: Project, shell: Shell, team_handle: str | None) -> dict:
 async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict]:
     """Every project's payload, without a query per project."""
     shells = await effective_shells(db, projects)
-    handles = await team_service(db).handles_of(
+    teams = await team_service(db).labels_of(
         {p.team_id for p in projects if p.team_id is not None}
     )
     return [
-        _shelled(p, shells[p.id], handles.get(p.team_id) if p.team_id else None)
+        _shelled(p, shells[p.id], teams.get(p.team_id) if p.team_id else None)
         for p in projects
     ]
 

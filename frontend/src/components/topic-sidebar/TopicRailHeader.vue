@@ -21,6 +21,8 @@ defineProps<{
   /** 两栏（平板）：留在左栏顶上，高度和底线照桌面那一条。 */
   column: boolean
   projectName: string
+  /** 项目名上面那一行：项目归哪个团队，点了进团队的项目列表。null 就不画。 */
+  team: { label: string; handle: string } | null
   /** 有人找你：私聊的未读总数（0 就不画）。 */
   privateUnreadTotal: number
   /** 搜索入口 hover 时说的话（桌面上写快捷键，手机上不写）。 */
@@ -55,7 +57,11 @@ const emit = defineEmits<{
   <Teleport to="#app-bar-slot" :disabled="!page || column">
     <div
       class="sidebar-header rail-header"
-      :class="{ 'rail-header--bar': page && !column, 'rail-header--column': column }"
+      :class="{
+        'rail-header--bar': page && !column,
+        'rail-header--column': column,
+        'rail-header--team': !page && !!team,
+      }"
     >
       <!-- 手机：同一个入口从底部升起一张面板（见父级的 MobileActionSheet）。 -->
       <button
@@ -74,66 +80,76 @@ const emit = defineEmits<{
         <span class="rail-header__name" data-user-content>{{ projectName }}</span>
         <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
       </button>
-      <v-menu v-else location="bottom start">
-        <template #activator="{ isActive, props: menuProps }">
-          <!-- 名字是省略号截断的，title 留着全名。 -->
-          <button
-            v-guide-anchor="'project-menu'"
-            v-bind="menuProps"
-            type="button"
-            class="rail-header__home"
-            :class="{ 'rail-header__home--active': isActive }"
-            :title="projectName"
-            :aria-label="t('work.sidebar.projectMenu')"
-            :disabled="!projectSelected"
-          >
-            <span class="rail-header__name" data-user-content>{{ projectName }}</span>
-            <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
-          </button>
-        </template>
-        <v-list density="compact" nav max-height="60vh">
-          <v-list-item
-            prepend-icon="mdi-file-document-outline"
-            :title="t('navigation.project.docs')"
-            :active="docsActive"
-            @click="emit('select-docs')"
-          />
-          <v-list-item
-            v-for="p in menuPages"
-            :key="p.key"
-            :prepend-icon="p.icon"
-            :title="t(p.label, terms)"
-            :active="routeName === p.key"
-            @click="emit('open-page', p.key)"
-          >
-            <!-- 有人找你：私聊的未读挂在「成员」上。 -->
-            <template v-if="p.key === 'project-members' && privateUnreadTotal > 0" #append>
-              <TopicRailBadge :count="privateUnreadTotal" />
-            </template>
-          </v-list-item>
-          <v-divider class="my-1" />
-          <v-list-item
-            prepend-icon="mdi-cog-outline"
-            :title="t('work.projectSettings.title')"
-            :active="routeName === 'project-settings'"
-            @click="emit('open-page', 'project-settings')"
-          />
-          <!-- 只有转得动的人看得见：必然被拒的按钮比不给更糟。 -->
-          <v-list-item
-            v-if="canTransfer"
-            prepend-icon="mdi-account-arrow-right-outline"
-            :title="t('work.members.transfer')"
-            @click="emit('open-transfer')"
-          />
-          <!-- 另一半：我不是所有者时换「退出项目」。所有者退不掉，只能先把项目交出去。 -->
-          <v-list-item
-            v-if="canLeave"
-            prepend-icon="mdi-exit-to-app"
-            :title="t('work.members.leave')"
-            @click="emit('open-leave')"
-          />
-        </v-list>
-      </v-menu>
+      <div v-else class="rail-header__ident">
+        <!-- 团队名单独是一个链接，不长在项目菜单那颗按钮里：点它去团队，点按钮开菜单。 -->
+        <router-link
+          v-if="team"
+          class="rail-header__team"
+          :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
+          data-user-content
+          >{{ team.label }}</router-link
+        >
+        <v-menu location="bottom start">
+          <template #activator="{ isActive, props: menuProps }">
+            <!-- 名字是省略号截断的，title 留着全名。 -->
+            <button
+              v-guide-anchor="'project-menu'"
+              v-bind="menuProps"
+              type="button"
+              class="rail-header__home"
+              :class="{ 'rail-header__home--active': isActive }"
+              :title="projectName"
+              :aria-label="t('work.sidebar.projectMenu')"
+              :disabled="!projectSelected"
+            >
+              <span class="rail-header__name" data-user-content>{{ projectName }}</span>
+              <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
+            </button>
+          </template>
+          <v-list density="compact" nav max-height="60vh">
+            <v-list-item
+              prepend-icon="mdi-file-document-outline"
+              :title="t('navigation.project.docs')"
+              :active="docsActive"
+              @click="emit('select-docs')"
+            />
+            <v-list-item
+              v-for="p in menuPages"
+              :key="p.key"
+              :prepend-icon="p.icon"
+              :title="t(p.label, terms)"
+              :active="routeName === p.key"
+              @click="emit('open-page', p.key)"
+            >
+              <!-- 有人找你：私聊的未读挂在「成员」上。 -->
+              <template v-if="p.key === 'project-members' && privateUnreadTotal > 0" #append>
+                <TopicRailBadge :count="privateUnreadTotal" />
+              </template>
+            </v-list-item>
+            <v-divider class="my-1" />
+            <v-list-item
+              prepend-icon="mdi-cog-outline"
+              :title="t('work.projectSettings.title')"
+              :active="routeName === 'project-settings'"
+              @click="emit('open-page', 'project-settings')"
+            />
+            <!-- 只有转得动的人看得见：必然被拒的按钮比不给更糟。 -->
+            <v-list-item
+              v-if="canTransfer"
+              prepend-icon="mdi-account-arrow-right-outline"
+              :title="t('work.members.transfer')"
+              @click="emit('open-transfer')"
+            />
+            <!-- 另一半：我不是所有者时换「退出项目」。所有者退不掉，只能先把项目交出去。 -->
+            <v-list-item
+              v-if="canLeave"
+              prepend-icon="mdi-exit-to-app"
+              :title="t('work.members.leave')"
+              @click="emit('open-leave')"
+            />
+          </v-list>
+        </v-menu>
+      </div>
       <!-- 有人找你：私聊的未读。它是主导航上唯一会亮的「有人在等你回话」，跟着菜单
            入口走（菜单里「成员」那一项上也有）。 -->
       <TopicRailBadge v-if="privateUnreadTotal > 0" class="me-1" :count="privateUnreadTotal" />
@@ -254,6 +270,39 @@ const emit = defineEmits<{
 .rail-header__more:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+/* 项目名上面挂着团队名时，两行要放进同一条 48px：上下内距收一点，高度不动，右边
+   顶栏那条线照样接得上。 */
+.rail-header--team {
+  padding-block: 6px;
+}
+.rail-header__ident {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  margin-inline-end: auto;
+}
+.rail-header--team .rail-header__home {
+  margin-inline-end: 0;
+  padding-block: 1px;
+}
+/* 和项目名的左缘对齐（按钮有 8px 内距、往左探 4px）。 */
+.rail-header__team {
+  max-width: 100%;
+  padding-inline-start: 4px;
+  font-size: 12px;
+  line-height: 14px;
+  font-weight: 600;
+  color: var(--faint);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rail-header__team:hover {
+  color: var(--muted);
+  text-decoration: underline;
 }
 .rail-header__caret {
   flex: none;
