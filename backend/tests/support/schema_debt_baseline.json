@@ -255,9 +255,9 @@
   "alembic_check_drift": [
     "add_fk task_access_domain.task_id->task",
     "add_index memory_dream_states.ix_memory_dream_states_project_id",
+    "remove_column conversations.seq_floor",
     "remove_column space.course_modules",
     "remove_column tasks.transcripts_archived_at",
-    "remove_column topic_read_states.last_read_at",
     "remove_column topics.compute_profile",
     "remove_column topics.transcripts_archived_at",
     "remove_constraint agent_bindings.uq_agent_binding_user",
