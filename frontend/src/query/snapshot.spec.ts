@@ -3,11 +3,17 @@ import type { RoomSnapshot } from '@/query/snapshot'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const api = vi.hoisted(() => ({ listTopicMembers: vi.fn(), listPins: vi.fn(), getTask: vi.fn() }))
+const api = vi.hoisted(() => ({
+  listTopicMembers: vi.fn(),
+  listPins: vi.fn(),
+  getTask: vi.fn(),
+  listRoomTasks: vi.fn(),
+}))
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   listTopicMembers: api.listTopicMembers,
   getTask: api.getTask,
+  listRoomTasks: api.listRoomTasks,
 }))
 vi.mock('@/api/pins', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/pins')>()),
@@ -16,7 +22,8 @@ vi.mock('@/api/pins', async (importOriginal) => ({
 
 const { queryClient } = await import('@/query/client')
 const { keys } = await import('@/query/keys')
-const { pinsQuery, roomMembersQuery, roomTaskQuery } = await import('@/query/room')
+const { openRoomTasksQuery, pinsQuery, roomMembersQuery, roomTaskQuery, roomTasksQuery } = await import('@/query/room')
+const { RECENT_DONE } = await import('@/lib/channelTasks')
 const { expectRoom, fromSnapshot, settleRoom } = await import('@/query/snapshot')
 
 const member = (handle: string) => ({ topic_id: 'room', member_handle: handle, role: 'member' })
@@ -48,6 +55,20 @@ describe('进一个频道', () => {
     expect(await pins).toEqual([{ pinned_by: 'alice' }])
     expect(api.listTopicMembers).not.toHaveBeenCalled()
     expect(api.listPins).not.toHaveBeenCalled()
+  })
+
+  it('频道概览要的进行中和最近做完的任务也在快照里', async () => {
+    expectRoom('room', 'room')
+    const open = queryClient.fetchQuery(openRoomTasksQuery('room'))
+    const recent = queryClient.fetchQuery(roomTasksQuery('room', { limit: 0, status: 'closed', latest: RECENT_DONE }))
+    settleRoom('room', 'room', {
+      ...channel(['alice']),
+      tasks: { open: [{ id: 'k1' }], recent: [{ id: 'k0' }] },
+    } as unknown as RoomSnapshot)
+
+    expect((await open).data.map((task) => task.id)).toEqual(['k1'])
+    expect((await recent).data.map((task) => task.id)).toEqual(['k0'])
+    expect(api.listRoomTasks).not.toHaveBeenCalled()
   })
 
   it('订阅没带快照（没读成）：各自去问', async () => {

@@ -22,7 +22,7 @@ export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
   /** 读一次。拉不到就当没有：这张卡是顺路问一句，不该让对话栏报错。 */
   async function load() {
     try {
-      // 进房间那一次，房间快照里带着（query/snapshot）。
+      // 只有进房间时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
       const room = roomId.value
       proposals.value = await fromSnapshot(keys.roomSkillProposals(room), async () =>
         (await listProjectSkills(projectId.value)).data.filter(

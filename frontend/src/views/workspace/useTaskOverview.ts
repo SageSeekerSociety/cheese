@@ -27,7 +27,7 @@ export function useTaskOverview(opts: {
     const id = opts.taskId()
     if (!id) return
     try {
-      // 进任务那一次，房间快照里带着（query/snapshot）。
+      // 只有进任务时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
       const got = await fromSnapshot(keys.taskRelated(id), () => getTaskRelated(id))
       if (opts.taskId() === id) related.value = got
     } catch {

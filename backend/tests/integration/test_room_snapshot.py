@@ -156,3 +156,19 @@ def test_one_topic_carries_the_same_tasks_as_its_row(client):
         _read(client, f"/topics/{room}")["my_tasks"]
         == _sidebar(client, project, "alice")[room]
     )
+
+
+def test_what_changes_after_the_snapshot_arrives_as_a_frame_behind_it(client):
+    room = _room(client, _project(client))
+    said = post_message(client, room, "alice", {"content": "钉住这一条"})
+
+    with room_socket(client, room, "alice") as ws:
+        assert ws.subscribed["room"]["pins"] == []
+        r = client.put(f"/topics/{room}/pins/{said['id']}", headers=ALICE)
+        assert r.status_code == 200, r.text
+        for _ in range(20):
+            frame = ws.receive_json()
+            if frame.get("type") == "state" and frame.get("resource") == "pins":
+                break
+        else:
+            raise AssertionError("the pin never reached the subscription")

@@ -67,7 +67,7 @@ export function useReviewComments(host: ReviewCommentsHost) {
       return
     }
     try {
-      // 进任务那一次，房间快照里带着（query/snapshot）。
+      // 只有进任务时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
       const res = await fromSnapshot(keys.taskReviewComments(task), () => listReviewComments(task))
       if (mine === seq) items.value = res.comments
     } catch {
