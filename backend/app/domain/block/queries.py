@@ -73,6 +73,13 @@ async def output_event_exists(
     return await BlockRepository(session).has_eid(conversation_id, eid)
 
 
+async def turn_action_exists(
+    session: AsyncSession, conversation_id: uuid.UUID, turn_id: uuid.UUID, resource: str
+) -> bool:
+    """Read the durable once-per-action predicate in the writer's transaction."""
+    return await BlockRepository(session).has_action(conversation_id, turn_id, resource)
+
+
 async def any_output_event_exists(
     session: AsyncSession, conversation_id: uuid.UUID, eids: list[str]
 ) -> bool:

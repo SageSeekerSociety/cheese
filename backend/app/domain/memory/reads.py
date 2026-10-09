@@ -14,7 +14,7 @@ agent 自己去读一个文件。整件事成立的前提就是**它会去读**�
 一次**工具调用记录**，三个条件同时成立才算：
 
 1. 工具是 `Read`（`meta.tool`，见 `agent/tool_preview.py` 与
-   `chat._persist_tool_event`）；
+   `turn.intake.events._persist_tool_event`）；
 2. 参数里那个路径在 `.cheese/memory/` 下面（`meta.detail`，**未经剪裁的原文**——
    `meta.arg` 是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录是不准的）；
 3. 那个文件不是 `MEMORY.md`：索引每轮注入，读它不算「翻正文」。

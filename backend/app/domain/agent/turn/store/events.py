@@ -11,11 +11,12 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.sentences import say
 from app.domain.agent.step_output import output_tail
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.output_effects import append_output, fail_step, retain_step_output
-from app.domain.block.queries import output_event_exists
+from app.domain.block.queries import output_event_exists, turn_action_exists
 from app.domain.block.schemas import BlockOut
 
 logger = logging.getLogger("app.domain.agent.room_events")
@@ -93,6 +94,40 @@ async def persist_room_event(
         payload = BlockOut.model_validate(block).model_dump(mode="json")
         await session.commit()
     return payload
+
+
+async def persist_action(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    author: str,
+    resource: str,
+    label: str,
+) -> dict | None:
+    """Commit the room's action card once per kind of action per turn.
+
+    The predicate is read in the write transaction, not a process-local cache,
+    so a backend recovering the turn sees actions already announced.
+    """
+    landed = landing(EventAbout.room, project_id=project_id, room_id=topic_id)
+    async with sessions() as session:
+        if await turn_action_exists(session, topic_id, turn_id, resource):
+            return None
+        block = await append_output(
+            session,
+            project_id=landed.project_id,
+            conversation_id=landed.conversation_id,
+            author=author,
+            author_type=AuthorType.platform,
+            content=say(label, actor=f"<@{author}>"),
+            kind=BlockKind.event,
+            turn_id=turn_id,
+            meta={"platform": True, "action": resource},
+        )
+        await session.commit()
+        return BlockOut.model_validate(block).model_dump(mode="json")
 
 
 async def _mark_step_failed(

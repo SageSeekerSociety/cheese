@@ -75,6 +75,7 @@ from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.agent.turn.intake.events import (
     _persist_subagent_result,
     _persist_tool_event,
+    announce_action,
 )
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.store.events import _mark_step_failed, _record_step_output
@@ -121,8 +122,6 @@ class _HookStream(Protocol):
 
     @property
     def messages(self) -> AssistantMessages: ...
-
-    async def _announce_action(self, state: HookWorkState, resource: str) -> None: ...
 
     async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool: ...
 
@@ -525,7 +524,7 @@ async def _consume_hook_event(
                 state.steps[event.call_id] = uuid.UUID(payload["id"])
         resource = _TOOL_ACTION.get(name)
         if state is not None and resource is not None:
-            await service._announce_action(state, resource)
+            await announce_action(sessions, state, resource)
     elif isinstance(event, AgentStepFailed):
         # It changes a line that is already on the timeline rather than
         # adding one, so it goes out as that line, restated. A step whose

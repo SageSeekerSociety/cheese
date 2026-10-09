@@ -15,11 +15,33 @@ from app.domain.agent.event_lines import (
     _tool_event_meta,
 )
 from app.domain.agent.queries import _agent_handle
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.service import AgentToolResult
 from app.domain.agent.tool_preview import tool_detail, tool_preview, work_subpath
-from app.domain.agent.turn.state.live import LiveWork
-from app.domain.agent.turn.store.events import persist_room_event
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
+from app.domain.agent.turn.store.events import persist_action, persist_room_event
 from app.domain.block.models import AuthorType
+
+_ACTION_LABEL = {"notify": "actionNotify"}
+
+
+async def announce_action(
+    sessions: async_sessionmaker, state: HookWorkState, resource: str
+) -> None:
+    """Publish a turn's room action only after its idempotent write commits."""
+    payload = await persist_action(
+        sessions,
+        project_id=state.project_id,
+        topic_id=state.topic_id,
+        turn_id=state.work_id,
+        author=state.acting_agent,
+        resource=resource,
+        label=_ACTION_LABEL[resource],
+    )
+    if payload is not None:
+        await get_broker().publish(
+            str(state.topic_id), {"type": "event_block", "block": payload}
+        )
 
 
 async def _persist_room_event(

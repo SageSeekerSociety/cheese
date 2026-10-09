@@ -77,11 +77,7 @@ from app.domain.agent.hook_stream import (
     _TOOL_ACTION,  # noqa: F401
     _consume_hook_event,
     _is_out_of_credit,  # noqa: F401 — 搬走的判决，测试仍从 chat.py 导它
-    _keep_note,  # noqa: F401 — 搬走后本文件不用，只是给外部留的导入路径
-    _note_compaction,  # noqa: F401
     _note_reachability,
-    _note_retry,  # noqa: F401
-    _restate_note,  # noqa: F401
     _turn_failure_notice,  # noqa: F401
     _with_log,  # noqa: F401
 )
@@ -139,8 +135,6 @@ from app.domain.agent.queries import (
     _acting_handle,
     _agent_at,
     _agent_handle,
-    _bail_notice,
-    _block_payload,
     _gateway_budget_target,
     _pass_policy_gate,
     _Proposed,
@@ -162,10 +156,7 @@ from app.domain.agent.room_events import (
     post_system_event,
 )
 from app.domain.agent.service import (
-    AgentCompacting,
     AgentEvent,
-    AgentRetrying,
-    AgentToolResult,
     AgentUsage,
 )
 from app.domain.agent.session_turn_events import SessionTurnEvents
@@ -174,9 +165,6 @@ from app.domain.agent.turn.intake.assistant import AssistantMessages
 from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.agent.turn.intake.events import (
     _persist_change_summary,
-    _persist_room_event,
-    _persist_subagent_result,
-    _persist_tool_event,
 )
 from app.domain.agent.turn.intake.human import HumanMessages
 from app.domain.agent.turn.intake.preparation import TurnPreparation
@@ -189,7 +177,6 @@ from app.domain.agent.turn.state.inputs import _pending_input_blocks
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
-from app.domain.agent.turn.store.events import _mark_step_failed, _record_step_output
 from app.domain.agent.turn_usage import record_turn_usage
 from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import (
@@ -198,14 +185,10 @@ from app.domain.agent_instance.services import (
     memory_pool,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import (
-    AuthorType,
     Block,
-    BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -256,11 +239,6 @@ logger = logging.getLogger(__name__)
 # one each announce themselves (EVENT_CARD_FILED / EVENT_CARD_REDESCRIBED), and
 # those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
 # to them is the same fact told twice, worse.
-_ACTION_LABEL = {
-    "notify": "actionNotify",
-}
-
-
 # HTTP statuses worth an automatic re-run: timeouts, throttling, server-side
 # blips. Anything else (or a rejected seat rate-limit) surfaces immediately.
 _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
@@ -1517,37 +1495,6 @@ class ChatService(SessionRecovery):
             } | {turn_id}
         return state
 
-    async def _announce_action(self, state: HookWorkState, resource: str) -> None:
-        """Say in the room what 芝士 just did, the moment it did it — once per
-        kind of action per turn, however many times the turn does it.
-
-        Asked of the room rather than remembered, so a turn another backend
-        picks up halfway does not announce twice, or forget what came before.
-        """
-
-        landed = landing(
-            EventAbout.room, project_id=state.project_id, room_id=state.topic_id
-        )
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            if await blocks.has_action(state.topic_id, state.work_id, resource):
-                return
-            block = await blocks.add(
-                project_id=landed.project_id,
-                conversation_id=landed.conversation_id,
-                author=state.acting_agent,
-                author_type=AuthorType.platform,
-                content=say(_ACTION_LABEL[resource], actor=f"<@{state.acting_agent}>"),
-                kind=BlockKind.event,
-                turn_id=state.work_id,
-                meta={"platform": True, "action": resource},
-            )
-            await session.commit()
-            payload = _block_payload(BlockOut.model_validate(block))
-        await get_broker().publish(
-            str(state.topic_id), {"type": "event_block", "block": payload}
-        )
-
     async def _note_turn_context(
         self,
         turn_id: uuid.UUID,
@@ -1657,81 +1604,6 @@ class ChatService(SessionRecovery):
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         return await _agent_handle(session, topic_id)
 
-    async def _persist_tool_event(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        name: str,
-        tool_input: dict,
-        platform: bool,
-        turn_id: uuid.UUID | None,
-        eid: str | None = None,
-        platform_unsolicited: bool = False,
-        inner_id: uuid.UUID | None = None,
-        author: str | None = None,
-        at: datetime | None = None,
-    ) -> dict | None:
-        return await _persist_tool_event(
-            self._sessions,
-            self.live,
-            project_id=project_id,
-            topic_id=topic_id,
-            name=name,
-            tool_input=tool_input,
-            platform=platform,
-            turn_id=turn_id,
-            eid=eid,
-            platform_unsolicited=platform_unsolicited,
-            inner_id=inner_id,
-            author=author,
-            at=at,
-        )
-
-    async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> dict | None:
-        return await _mark_step_failed(
-            self._sessions,
-            block_id,
-            error,
-        )
-
-    async def _record_step_output(self, block_id: uuid.UUID, text: str) -> dict | None:
-        return await _record_step_output(
-            self._sessions,
-            block_id,
-            text,
-        )
-
-    async def _note_retry(
-        self,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        event: AgentRetrying,
-        *,
-        author: str | None,
-        inner_id: uuid.UUID | None,
-        channel: str,
-    ) -> None:
-        """Say the turn is retrying a failed request (hook_stream.py)."""
-        return await _note_retry(
-            self._sessions,
-            self.live,
-            topic_id,
-            turn_id,
-            event,
-            author=author,
-            inner_id=inner_id,
-            channel=channel,
-        )
-
-    async def _note_compaction(
-        self, turn_id: uuid.UUID, event: AgentCompacting, *, channel: str
-    ) -> None:
-        """Restate the turn's compaction line as over (hook_stream.py)."""
-        return await _note_compaction(
-            self._sessions, self.live, turn_id, event, channel=channel
-        )
-
     async def _note_reachability(
         self,
         project_id: uuid.UUID,
@@ -1749,93 +1621,6 @@ class ChatService(SessionRecovery):
             work_id,
             reachable,
             reason,
-        )
-
-    async def _keep_note(
-        self,
-        notes: dict[uuid.UUID, uuid.UUID],
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        content: str,
-        meta: dict,
-        *,
-        author: str | None,
-        inner_id: uuid.UUID | None,
-        channel: str,
-    ) -> None:
-        """Land the turn's notice of this kind, or restate it (hook_stream.py)."""
-        return await _keep_note(
-            self._sessions,
-            notes,
-            topic_id,
-            turn_id,
-            content,
-            meta,
-            author=author,
-            inner_id=inner_id,
-            channel=channel,
-        )
-
-    async def _restate_note(
-        self, block_id: uuid.UUID, content: str, meta: dict, channel: str
-    ) -> None:
-        """Restate a notice already on the timeline (hook_stream.py)."""
-        return await _restate_note(self._sessions, block_id, content, meta, channel)
-
-    async def _persist_room_event(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        content: str,
-        meta: dict,
-        turn_id: uuid.UUID | None,
-        eid: str | None = None,
-        platform_unsolicited: bool = False,
-        in_room: bool = False,
-        author_type: AuthorType = AuthorType.participant,
-        inner_id: uuid.UUID | None = None,
-        author: str | None = None,
-        at: datetime | None = None,
-    ) -> dict | None:
-        return await _persist_room_event(
-            self._sessions,
-            self.live,
-            project_id=project_id,
-            topic_id=topic_id,
-            content=content,
-            meta=meta,
-            turn_id=turn_id,
-            eid=eid,
-            platform_unsolicited=platform_unsolicited,
-            in_room=in_room,
-            author_type=author_type,
-            inner_id=inner_id,
-            author=author,
-            at=at,
-        )
-
-    async def _persist_subagent_result(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        event: AgentToolResult,
-        turn_id: uuid.UUID | None,
-        eid: str | None = None,
-        platform_unsolicited: bool = False,
-        inner_id: uuid.UUID | None = None,
-    ) -> dict | None:
-        return await _persist_subagent_result(
-            self._sessions,
-            self.live,
-            project_id=project_id,
-            topic_id=topic_id,
-            event=event,
-            turn_id=turn_id,
-            eid=eid,
-            platform_unsolicited=platform_unsolicited,
-            inner_id=inner_id,
         )
 
     async def _turn_changeset(
@@ -1963,23 +1748,6 @@ class ChatService(SessionRecovery):
             project_id,
             topic_id,
             turn_id,
-        )
-
-    async def _bail_notice(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        session: AsyncSession,
-        text: str,
-    ) -> dict:
-        return await _bail_notice(
-            project_id=project_id,
-            topic_id=topic_id,
-            turn_id=turn_id,
-            session=session,
-            text=text,
         )
 
 
