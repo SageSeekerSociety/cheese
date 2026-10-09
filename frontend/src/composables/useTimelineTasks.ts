@@ -16,7 +16,6 @@ import type { Block, RoomTask } from '../cx_types'
 import { computed, reactive, watch } from 'vue'
 
 import { listRoomTasks } from '../api'
-import { holdTasks } from '../lib/heldTasks'
 
 /** 说「这件任务在这里开始」的那种行（`task_created`，和更早的 `split`）指的是哪件。 */
 export function namedTask(block: Block): string | null {
@@ -51,9 +50,6 @@ export function useTimelineTasks(opts: {
     for (const block of opts.blocks.value) for (const task of block.tasks ?? []) all.set(task.id, task)
     return all
   })
-  // 点开其中一件时，任务页先照着这一份画（lib/heldTasks）。
-  watch(known, (all) => holdTasks([...all.values()]))
-
   function carriedBy(block: Block, rows: RoomTask[]): RoomTask[] {
     const named = namedTask(block)
     return rows.filter((task) => task.upgraded_from_block_id === block.id || task.id === named)

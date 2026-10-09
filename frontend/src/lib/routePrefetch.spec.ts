@@ -91,13 +91,13 @@ async function fresh() {
   vi.resetModules()
   const api = await import('@/api')
   const prefetch = await import('./routePrefetch')
-  const cache = await import('./blockCache')
+  const blocks = await import('@/query/blocks')
   return {
     listBlocks: vi.mocked(api.listBlocks),
     markTopicRead: vi.mocked(api.markTopicRead),
     ...prefetch,
-    refreshBlockCache: cache.refreshBlockCache,
-    cachedWindow: cache.cachedWindow,
+    prefetchNewestBlocks: blocks.prefetchNewestBlocks,
+    cachedWindow: blocks.cachedWindow,
   }
 }
 
@@ -170,7 +170,7 @@ describe('hover 预取', () => {
     expect(listBlocks).toHaveBeenCalledWith('t4', expect.anything())
   })
 
-  it('同一个话题预取成功之后不再重复预取', async () => {
+  it('同一个话题刚取过，再停上来不重复取', async () => {
     const { prefetchOnHover, listBlocks } = await fresh()
     listBlocks.mockResolvedValue(page(['b1']))
     const { router } = lazyRouter()
@@ -182,6 +182,21 @@ describe('hover 预取', () => {
     await pointerRests()
 
     expect(listBlocks).toHaveBeenCalledTimes(1)
+  })
+
+  it('取过的那一份放久了，再停上来就再取一次：点进去看到的不是半小时前的样子', async () => {
+    const { prefetchOnHover, listBlocks } = await fresh()
+    listBlocks.mockResolvedValue(page(['b1']))
+    const { router } = lazyRouter()
+    const hover = () => prefetchOnHover({ router, to: { name: 'topic', params: { id: 't1' } }, topicId: 't1' })
+
+    hover()
+    await pointerRests()
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    hover()
+    await pointerRests()
+
+    expect(listBlocks).toHaveBeenCalledTimes(2)
   })
 
   it('同一个页面的代码只下一次', async () => {
@@ -259,14 +274,14 @@ describe('hover 预取', () => {
   })
 
   it('预取排在后台刷新的同一条闸后面，不另开一条', async () => {
-    const { prefetchOnHover, refreshBlockCache, listBlocks } = await fresh()
+    const { prefetchOnHover, prefetchNewestBlocks, listBlocks } = await fresh()
     const held = deferred<BlockPage>()
     listBlocks.mockReturnValue(held.promise)
     const { router } = lazyRouter()
 
-    // 两条闸道先被后台刷新占满
-    void refreshBlockCache('busy-1')
-    void refreshBlockCache('busy-2')
+    // 两条闸道先被后台刷新（未读变多的房间）占满
+    void prefetchNewestBlocks('busy-1', { fresh: true })
+    void prefetchNewestBlocks('busy-2', { fresh: true })
     await vi.advanceTimersByTimeAsync(0)
     expect(listBlocks).toHaveBeenCalledTimes(2)
 
@@ -300,9 +315,17 @@ describe('hover 预取', () => {
     listBlocks.mockResolvedValue(page(['b1']))
     const { router } = lazyRouter()
     const { useWorkspaceStore } = await import('@/stores/workspace')
+    const { seedProject, seedProjects } = await import('@/test/seedQueries')
+    seedProjects([])
+    seedProject('p1', {
+      topics: [],
+      members: [],
+      unread: { t1: { count: 3, new: true, messages: 3 } },
+      privateUnread: {},
+      notifyLevels: {},
+    })
     const store = useWorkspaceStore()
-    store.projectId = 'p1'
-    store.unreadMap = { t1: { count: 3, new: true, messages: 3 } }
+    store.openProject('p1')
 
     prefetchOnHover({ router, to: { name: 'topic', params: { id: 't1' } }, topicId: 't1' })
     await pointerRests()

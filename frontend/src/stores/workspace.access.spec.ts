@@ -27,6 +27,7 @@ vi.mock('@/api', async () => {
 })
 
 import { ApiError } from '@/api'
+import { dropCachesIfSomeoneElseLogsIn } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 beforeEach(() => {
@@ -34,10 +35,15 @@ beforeEach(() => {
   listTopics.mockReset()
 })
 
+async function flush() {
+  for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0))
+}
+
 async function open(failWith: unknown, project = 'p1') {
   listTopics.mockRejectedValue(failWith)
   const store = useWorkspaceStore()
-  await store.openProject(project)
+  store.openProject(project)
+  await flush()
   return store
 }
 
@@ -84,7 +90,10 @@ describe('打不开一个项目的时候', () => {
   it('登录后回到同一个项目，说明撤掉、内容取回来', async () => {
     const store = await open(new ApiError(401, 'Login required to access a project'))
     listTopics.mockResolvedValue({ data: [{ id: 't1', kind: 'root' }] })
-    await store.openProject('p1')
+    // 登录：此前没人登录，算换了人，上一段会话读到的都丢掉。
+    dropCachesIfSomeoneElseLogsIn(undefined, 9)
+    store.openProject('p1')
+    await flush()
     expect(store.accessDenied).toBeNull()
     expect(store.topics.map((t) => t.id)).toEqual(['t1'])
   })
@@ -92,7 +101,8 @@ describe('打不开一个项目的时候', () => {
   it('换一个进得去的项目，说明就撤掉', async () => {
     const store = await open(new ApiError(403, '你不是这个项目的成员，无权查看'))
     listTopics.mockResolvedValue({ data: [] })
-    await store.openProject('p2')
+    store.openProject('p2')
+    await flush()
     expect(store.accessDenied).toBeNull()
   })
 })
@@ -101,7 +111,8 @@ describe('开着的项目页，登录在中途没了', () => {
   async function openFine() {
     listTopics.mockResolvedValue({ data: [{ id: 't1', kind: 'root' }] })
     const store = useWorkspaceStore()
-    await store.openProject('p1')
+    store.openProject('p1')
+    await flush()
     return store
   }
 
@@ -111,6 +122,7 @@ describe('开着的项目页，登录在中途没了', () => {
     const store = await openFine()
     listTopics.mockRejectedValue(new ApiError(401, 'Sign in to open this project'))
     await store.refreshTopics()
+    await flush()
     expect(store.accessDenied).toBe('unauthenticated')
   })
 
@@ -118,6 +130,7 @@ describe('开着的项目页，登录在中途没了', () => {
     const store = await openFine()
     listTopics.mockRejectedValue(new TypeError('Failed to fetch'))
     await store.refreshTopics()
+    await flush()
     expect(store.accessDenied).toBeNull()
     expect(store.topics.map((t) => t.id)).toEqual(['t1'])
   })

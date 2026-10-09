@@ -14,6 +14,7 @@ import AgentFeedbackCard from './AgentFeedbackCard.vue'
 import { dismissFeedbackProposal } from '@/api'
 import i18n, { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 const proposal = {
   block_id: 'b1',
@@ -51,7 +52,15 @@ beforeEach(() => {
 async function mount() {
   const pinia = createPinia()
   setActivePinia(pinia)
-  useWorkspaceStore().members = [{ user_handle: 'cheese-a3689921fba8', name: 'Cedar', agent: true }] as never
+  seedProjects([])
+  seedProject('p1', {
+    topics: [],
+    members: [{ user_handle: 'cheese-a3689921fba8', name: 'Cedar', agent: true }] as never,
+    unread: {},
+    privateUnread: {},
+    notifyLevels: {},
+  })
+  useWorkspaceStore().openProject('p1')
   const view = render(AgentFeedbackCard, {
     props: { topicId: 't1' },
     global: {

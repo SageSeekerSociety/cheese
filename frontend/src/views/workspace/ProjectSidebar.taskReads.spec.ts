@@ -4,8 +4,8 @@
  * 已经旧了。在频道之间切来切去不是理由；看不见的标签页也不该一直读。它只挂还在进行的
  * 任务，也就只要这些：已经关掉的是它们的十几倍。
  *
- * 用的是真的项目框路由、真的 ProjectSidebar 和真的 `readProjectTasks`；只把接口换成
- * 计数的替身。
+ * 用的是真的项目框路由、真的 ProjectSidebar 和真的缓存；「任务变了」走的是房间推送进来的
+ * 那条路（`query/changes`）。只把接口换成计数的替身。
  */
 import { defineComponent, h, reactive, ref } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
@@ -64,7 +64,6 @@ const store = reactive({
   loadingTopics: false,
   unreadMap: {},
   privateUnreadMap: {},
-  tasksChanged: 0,
 })
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
@@ -86,9 +85,21 @@ vi.mock('@/api/tasks', async (importOriginal) => ({
   },
 }))
 
+import { roomChanged } from '@/query/changes'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
 
 let visibility: DocumentVisibilityState = 'visible'
+
+// 浏览器在 document 上发 visibilitychange，一路冒泡到 window。
+function setVisibility(next: DocumentVisibilityState) {
+  visibility = next
+  document.dispatchEvent(new Event('visibilitychange', { bubbles: true }))
+}
+
+// 房间里推来一帧：这个频道的任务变了。
+function tasksChanged(projectId: string) {
+  void roomChanged({ room: 'topic-a', project: projectId, resource: 'tasks' })
+}
 
 async function settle() {
   for (let i = 0; i < 5; i += 1) await Promise.resolve()
@@ -146,19 +157,17 @@ describe('侧栏的任务清单什么时候重读', () => {
     await openProject('p-hidden')
     expect(reads.count).toBe(1)
 
-    visibility = 'hidden'
-    document.dispatchEvent(new Event('visibilitychange'))
+    setVisibility('hidden')
     vi.advanceTimersByTime(5 * 60_000)
     await settle()
     expect(reads.count).toBe(1)
 
-    visibility = 'visible'
-    document.dispatchEvent(new Event('visibilitychange'))
+    setVisibility('visible')
     await settle()
     expect(reads.count).toBe(2)
   })
 
-  it('任务变了就重读，哪怕上一次读还没回来；晚回来的那一份不盖掉新的', async () => {
+  it('一次读还没回来时任务变了：它回来之后再读一次，屏幕上留下的是变了之后的样子', async () => {
     await openProject('p-changed')
     reads.hold = true
     // 一次例行的读发出去了，还没回来；它带回来的是任务变之前的样子。
@@ -166,15 +175,12 @@ describe('侧栏的任务清单什么时候重读', () => {
     await settle()
     expect(reads.count).toBe(2)
 
-    store.tasksChanged += 1
+    tasksChanged('p-changed')
     await settle()
-    expect(reads.count).toBe(3)
-
     const open = { id: 'k1', room_id: 'topic-a', status: 'open', presentation: { column: 'building' } }
-    const [before, after] = reads.answers
-    after([])
-    await settle()
-    before([open])
+    reads.answers[0]([open])
+    await vi.waitFor(() => expect(reads.count).toBe(3))
+    reads.answers[1]([])
     await settle()
 
     expect(screen.getByTestId('topic-list').dataset.totals).toBe('{}')
@@ -183,10 +189,10 @@ describe('侧栏的任务清单什么时候重读', () => {
   it('同一次改动连着说了几遍，只重读一次', async () => {
     await openProject('p-burst')
     reads.hold = true
-    store.tasksChanged += 1
-    store.tasksChanged += 1
+    tasksChanged('p-burst')
+    tasksChanged('p-burst')
     await settle()
-    store.tasksChanged += 1
+    tasksChanged('p-burst')
     await settle()
 
     expect(reads.count).toBe(2)

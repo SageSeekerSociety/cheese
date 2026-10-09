@@ -7,7 +7,7 @@
 import type { Component } from 'vue'
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -21,6 +21,7 @@ import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -339,26 +340,36 @@ describe('行左边那一个槽', () => {
     function withDefaultAgent() {
       const pinia = createPinia()
       setActivePinia(pinia)
-      useWorkspaceStore().members = [
-        member('me', '我'),
-        { user_handle: 'cheese-a1', name: '小芝', agent: true, project_default: true } as ProjectMemberRow,
-      ]
+      // 打开 p1，名册已经读回来。
+      seedProjects([])
+      seedProject('p1', {
+        topics,
+        members: [
+          member('me', '我'),
+          { user_handle: 'cheese-a1', name: '小芝', agent: true, project_default: true } as ProjectMemberRow,
+        ],
+        unread: {},
+        privateUnread: {},
+        notifyLevels: {},
+      })
+      useWorkspaceStore().openProject('p1')
       return pinia
     }
     const failedNow = () => ({ member: null, reason: 'failed', since: new Date().toISOString() })
 
-    it('它一边在干活、房间一边在等一个说不出是谁的成员：这一行只画它一次', () => {
+    it('它一边在干活、房间一边在等一个说不出是谁的成员：这一行只画它一次', async () => {
       const rows = topics.map((t) =>
         t.id === 'a'
           ? ({ ...t, waits: [failedNow()], activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
           : t
       )
       const { container } = mount({ topics: rows }, withDefaultAgent())
+      await nextTick()
       const marks = topicRowFor(container, 'a').querySelectorAll('[data-state]')
       expect(marks.length).toBe(1)
     })
 
-    it('同一位队友在哪一行都是同一种底色', () => {
+    it('同一位队友在哪一行都是同一种底色', async () => {
       const rows = topics.map((t) =>
         t.id === 'a'
           ? ({ ...t, waits: [failedNow()] } as Topic)
@@ -367,6 +378,7 @@ describe('行左边那一个槽', () => {
             : t
       )
       const { container } = mount({ topics: rows }, withDefaultAgent())
+      await nextTick()
       const toneIn = (title: string) =>
         topicRowFor(container, title).querySelector('[data-state] .cheese-avatar')?.getAttribute('data-tone')
       expect(toneIn('b')).toBeTruthy()

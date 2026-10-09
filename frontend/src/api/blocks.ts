@@ -1,7 +1,5 @@
 import type { Block, ListPayload, ReactionAgg } from '../cx_types'
 
-import { shareInFlight } from '../lib/inflight'
-
 import { request } from './http'
 
 // 机构看板 / Space 看板 (eval F3).
@@ -34,14 +32,7 @@ export function listBlocks(
   const qs = q.toString()
   const query = qs ? `?${qs}` : ''
   const path = `/topics/${encodeURIComponent(topicId)}/blocks${query}`
-  // 最新那一页会被两条路同时要：切话题的预取（lib/blockCache 的 refreshBlockCache，
-  // 由 router 起头）和对话面板自己那一条（useChatPanel 一进房间就拉）。第二条跟着在
-  // 飞的那条走，省下一次重复的 GET。
-  //
-  // 只合并最新页（不带游标）：带 before/after/around 的那些是用户翻页翻出来的、每一次
-  // 都对应当下那一段窗口，合并它们没有好处，还会让两个调用方共享同一份数组。
-  const newestPage = !opts?.before && !opts?.after && !opts?.around
-  return newestPage ? shareInFlight(`blocks:${path}`, () => request<BlockPage>(path)) : request<BlockPage>(path)
+  return request<BlockPage>(path)
 }
 
 // Emoji reactions (Slack semantics): toggles (emoji, caller) on a block and

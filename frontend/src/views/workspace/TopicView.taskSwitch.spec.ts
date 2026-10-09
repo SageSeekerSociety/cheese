@@ -50,9 +50,6 @@ vi.mock('@/stores/workspace', () => ({
     chatPct: 50,
     rememberTopic: vi.fn(),
     loadingTopics: false,
-    placeById: () => TOPIC,
-    isResolvingPlace: () => false,
-    loadPlace: vi.fn(),
     markRead: vi.fn(),
     refreshTopics: vi.fn(),
     refreshUnread: vi.fn(),
@@ -64,11 +61,14 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
 // 频道概览的置顶：这几条测试不看它。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
-vi.mock('@/api', () => ({
+vi.mock('@/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api')>()),
   listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
   getRoomEnvironment: vi.fn(async () => ({ state: 'pending' })),
   // 频道的任务清单：进过这个频道，里面这件任务那一行已经读过。
   listRoomTasks: vi.fn(async () => ({ data: [listed], total: 1 })),
+  // 任务的验收卡：这里不看它。
+  getAcceptCards: vi.fn(async () => ({ data: [], total: 0 })),
 }))
 // 任务改动上的审阅评论：这里不看它。
 vi.mock('@/api/reviewComments', async (importOriginal) => ({
@@ -105,19 +105,23 @@ vi.mock('@/components/WorkPanel.vue', () => ({
 
 import TopicView from './TopicView.vue'
 
-import { clearHeldTasks, holdTasks } from '@/lib/heldTasks'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 const View = TopicView as unknown as Component
 
 beforeEach(() => {
   query = {}
-  clearHeldTasks()
 })
+
+// 那一件在别处读到过（这里是侧栏挂着的项目进行中任务）。
+function listedElsewhere() {
+  queryClient.setQueryData(keys.projectOpenTasks('p1'), { data: [listed], total: 1 })
+}
 
 describe('在频道里换一件任务', () => {
   it('清单里已有的那一件马上画出来，不等它自己那一读', async () => {
-    // 那一件在别处读到过（侧栏、频道概览、对话栏里的卡）。
-    holdTasks([listed as never])
+    listedElsewhere()
     const view = render(View, {
       props: { projectId: 'p1', topicId: 't1', taskId: 'k1' },
       global: { plugins: [createVuetify({ components, directives })] },
@@ -128,8 +132,7 @@ describe('在频道里换一件任务', () => {
   })
 
   it('清单里没有的那一件，等它自己那一读', async () => {
-    // 那一件在别处读到过（侧栏、频道概览、对话栏里的卡）。
-    holdTasks([listed as never])
+    listedElsewhere()
     const view = render(View, {
       props: { projectId: 'p1', topicId: 't1', taskId: 'k1' },
       global: { plugins: [createVuetify({ components, directives })] },

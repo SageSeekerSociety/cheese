@@ -9,28 +9,47 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const machines = vi.hoisted(() => ({ get: vi.fn() }))
 
+// 服务端那份房间名册。加人（POST …/members）往里加一行；别的请求照常走（被网络守卫拦下）。
+const ROOM = [
+  { member_handle: 'alice', name: 'Alice', role: 'owner', agent: false, avatar_id: null },
+  { member_handle: 'bob', name: 'Bob', role: 'member', agent: false, avatar_id: null },
+  { member_handle: 'carol', name: 'Carol', role: 'member', agent: false, avatar_id: 77 },
+  { member_handle: 'cheese-t1', name: '芝士', role: 'member', agent: true, avatar_id: null },
+]
+const server = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }))
+
+vi.mock('../api/http', async () => {
+  const actual = await vi.importActual<typeof import('../api/http')>('../api/http')
+  return {
+    ...actual,
+    request: (path: string, init?: RequestInit) => {
+      if (path === '/topics/t1/members' && init?.method === 'POST') {
+        const { handle } = JSON.parse(String(init.body)) as { handle: string }
+        const row = { member_handle: handle, name: handle, role: 'member', agent: false, avatar_id: null }
+        server.rows.push(row)
+        return Promise.resolve(row)
+      }
+      return actual.request(path, init)
+    },
+  }
+})
+
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
     ...actual,
     getTopicComputeProfile: (...args: unknown[]) => machines.get(...args),
-    listTopicMembers: vi.fn(async () => ({
-      data: [
-        { member_handle: 'alice', name: 'Alice', role: 'owner', agent: false, avatar_id: null },
-        { member_handle: 'bob', name: 'Bob', role: 'member', agent: false, avatar_id: null },
-        { member_handle: 'carol', name: 'Carol', role: 'member', agent: false, avatar_id: 77 },
-        { member_handle: 'cheese-t1', name: '芝士', role: 'member', agent: true, avatar_id: null },
-      ],
-      total: 4,
-    })),
+    listTopicMembers: vi.fn(async () => ({ data: server.rows.map((row) => ({ ...row })), total: server.rows.length })),
   }
 })
 
 import { listTopicMembers } from '../api'
 import { setLocale } from '../i18n'
-import { clearTopicPanelCache } from '../lib/topicPanelCache'
 
 import TopicMembers from './TopicMembers.vue'
+
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 // 项目名册一张，队友也在上面（后端合的）：请一个队友进房间和请一个人是同一件事，
 // 所以「添加」那张单子读的就是这一份，不再另外拉一份队友清单拼上去。
@@ -122,6 +141,7 @@ function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComput
 
 beforeEach(() => {
   setLocale('zh-CN')
+  server.rows = ROOM.map((row) => ({ ...row }))
   document.body.innerHTML = ''
   machines.get.mockReset().mockResolvedValue(roomMachines())
 })
@@ -340,15 +360,40 @@ describe('名册上这个话题的工作电脑', () => {
 })
 
 it('回到看过的频道：名册先画上次那份，重取的时候不换成骨架', async () => {
-  clearTopicPanelCache()
   const first = await openRoster()
   expect(document.body.textContent).toContain('Bob')
   first.unmount()
   document.body.innerHTML = ''
 
-  // 这一次的重取一直没回来：屏幕上该是上次那份，不是一片骨架。
+  // 离开之后名册过了新鲜期，回来要重取；这一次的重取一直没回来：屏幕上该是上次那份，
+  // 不是一片骨架。
+  await queryClient.invalidateQueries({ queryKey: keys.roomMembers('t1'), refetchType: 'none' })
   vi.mocked(listTopicMembers).mockImplementationOnce(() => new Promise(() => {}))
   await openRoster()
 
+  expect(listTopicMembers).toHaveBeenLastCalledWith('t1')
   expect(document.body.textContent).toContain('Bob')
+})
+
+it('加一位进来，名册当场多他一行，不用重开房间', async () => {
+  await openRoster()
+  expect(document.body.textContent).not.toContain('dave')
+
+  await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
+  await settle()
+  const dave = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).find((n) =>
+    n.textContent?.includes('Dave')
+  ) as HTMLElement
+  await fireEvent.click(dave)
+  await settle()
+  const add = Array.from(document.querySelectorAll('.roster__add button')).find(
+    (b) => b.textContent?.trim() === '加入'
+  ) as HTMLElement
+  await fireEvent.click(add)
+
+  await waitFor(() =>
+    expect(Array.from(document.querySelectorAll('.roster__item')).some((r) => r.textContent?.includes('dave'))).toBe(
+      true
+    )
+  )
 })

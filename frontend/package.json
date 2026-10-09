@@ -53,6 +53,8 @@
     "@mdi/font": "^7.4.47",
     "@paper-design/shaders": "0.0.81",
     "@simplewebauthn/browser": "^13.1.2",
+    "@tanstack/query-persist-client-core": "5.104.1",
+    "@tanstack/vue-query": "5.104.1",
     "@tiptap/core": "^3.26.1",
     "@tiptap/extension-code-block-lowlight": "^3.26.1",
     "@tiptap/extension-collaboration": "^3.27.3",

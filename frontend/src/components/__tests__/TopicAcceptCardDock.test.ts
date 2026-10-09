@@ -36,6 +36,7 @@ import i18n, { setLocale } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
 import { USER_REF_DIRECTORY } from '@/lib/userRefDirectory'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 let pinia: Pinia
 
@@ -154,6 +155,13 @@ beforeEach(() => {
   rejectCard.mockReset()
 })
 
+/** 打开 p1，它的成员名册已经读回来。 */
+function withMembers(members: object[]) {
+  seedProjects([])
+  seedProject('p1', { topics: [], members: members as never, unread: {}, privateUnread: {}, notifyLevels: {} })
+  useWorkspaceStore().openProject('p1')
+}
+
 describe('横条只说现在在等什么', () => {
   it('交的是什么不在横条上，在「改动」页顶部', async () => {
     const { container } = await mountWith([card({ reviewer_handle: 'bob' })])
@@ -182,7 +190,7 @@ describe('横条只说现在在等什么', () => {
   })
 
   it('等的那个人按显示名写，不按 handle', async () => {
-    useWorkspaceStore().members = [{ user_handle: 'bob', role: 'member', name: 'Bob Chen' }] as never
+    withMembers([{ user_handle: 'bob', role: 'member', name: 'Bob Chen' }])
     const { container } = await mountWith([card({ reviewer_handle: 'bob' })])
     expect(bar(container)).toContain('待 @Bob Chen 审阅')
     expect(bar(container)).not.toContain('@bob')
@@ -210,7 +218,7 @@ describe('横条只说现在在等什么', () => {
   })
 
   it('归档话题上那张已采纳的卡，按显示名写是谁采纳的，留一个撤回入口', async () => {
-    useWorkspaceStore().members = [{ user_handle: 'bob', role: 'member', name: 'Bob Chen' }] as never
+    withMembers([{ user_handle: 'bob', role: 'member', name: 'Bob Chen' }])
     const { container } = await mountWith([card({ status: 'accepted', decided_by: 'bob' })], {
       topicStatus: 'archived',
     })

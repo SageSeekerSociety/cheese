@@ -17,6 +17,7 @@ import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import { useNavigation } from '@/composables/useNavigation'
 
@@ -34,6 +35,8 @@ import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
+import { queryClient } from '@/query/client'
+import { projectQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
@@ -148,7 +151,12 @@ const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
 const managerName = ref<string | null>(null)
-const managesProject = computed(() => store.openedProject?.can_manage_members === true)
+// 我管不管这个项目：详情打开时才问，和工作区别处读同一份项目（`query/project`）。
+const projectRead = useQuery(
+  computed(() => ({ ...projectQuery(props.topic.project_id), enabled: detailsOpen.value })),
+  queryClient
+)
+const managesProject = computed(() => projectRead.data.value?.can_manage_members === true)
 function archiveFromDetails() {
   detailsOpen.value = false
   if (nav) void archiveTopic(props.topic, nav.router)

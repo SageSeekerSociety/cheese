@@ -7,7 +7,7 @@
 //
 // 三档分开写，因为下一步动作不一样：没登录的人要去登录，登录了的人得去要权限，
 // 项目归档了的话，所有者可以把它取消归档，别人只能离开。
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AccessNotice from '@/components/common/AccessNotice.vue'
@@ -22,11 +22,6 @@ const props = defineProps<{ reason: 'unauthenticated' | 'forbidden' | 'archived'
 const store = useWorkspaceStore()
 const isOwner = computed(() => !!store.openedProject?.owner_handle && store.openedProject.owner_handle === myHandle())
 const restoring = ref(false)
-
-// 归档了的项目不在项目清单里，谁是所有者要单独问一句。
-onMounted(() => {
-  if (props.reason === 'archived' && !store.openedProject) void store.loadOpenedProject()
-})
 
 async function restore() {
   restoring.value = true

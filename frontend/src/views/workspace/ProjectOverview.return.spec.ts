@@ -33,8 +33,9 @@ vi.mock('@/api/projectDocuments', () => ({
 vi.mock('@/api/projectProgress', () => ({
   listProjectProgress: vi.fn(() => later({ data: [], total: 0 })),
 }))
-vi.mock('@/lib/projectTasks', () => ({
-  readProjectTasks: vi.fn(() => later({ data: [], total: 0 })),
+vi.mock('@/api/tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/tasks')>()),
+  listProjectTasks: vi.fn(() => later({ data: [], total: 0 })),
 }))
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),

@@ -5,12 +5,13 @@ import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { useCachedResource } from '@/composables/useCachedResource'
+import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import {
   deleteProjectArtifact,
@@ -20,12 +21,12 @@ import {
   publishProjectSite,
   renameProjectArtifact,
 } from '@/api'
-import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
-import { listProjectProgress } from '@/api/projectProgress'
 import { memberName } from '@/lib/agentNames'
-import { readProjectTasks } from '@/lib/projectTasks'
 import { prefetchNow } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
+import { queryClient } from '@/query/client'
+import { overviewQuery, progressQuery } from '@/query/project'
+import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectOverviewView from '@/views/workspace/ProjectOverviewView.vue'
 
@@ -34,56 +35,37 @@ const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const store = useWorkspaceStore()
 
-// 三块各记着上一次读到的那份（`useCachedResource`）：回到这个项目的总览先照着它画，
-// 背后重取，回来了原地换——不先清空成一片骨架。没读到过的才是 null，画面据此不写
-// 「0」和「暂无」。
-const overview = useCachedResource(
-  () => `project-overview:${props.projectId}`,
-  async (key) => {
-    try {
-      const { id } = await getProjectOverview(key.slice('project-overview:'.length))
-      return await getDocumentText(id)
-    } catch {
-      // 读不到就按「还没写」显示：那一块的入口（写一份）仍然在。
-      return ''
-    }
+// 三块都在缓存里：回到这个项目的总览先照着上一次的画，背后重取，回来了原地换——不先
+// 清空成一片骨架；切回标签页时过期了的再取一次。没读到过的才是 null，画面据此不写
+// 「0」和「暂无」。一次网络抖动不该让「谁在做什么」变空：读失败时留着上一次的。只要
+// 还在进行的：总览画的是进行中的事。
+const overview = useQuery(
+  computed(() => overviewQuery(props.projectId)),
+  queryClient
+)
+const recent = useQuery(
+  computed(() => progressQuery(props.projectId)),
+  queryClient
+)
+const work = useQuery(
+  computed(() => openProjectTasksQuery(props.projectId)),
+  queryClient
+)
+holdRevealUntil(() => !overview.isPending.value && !recent.isPending.value && !work.isPending.value)
+// 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
+watch(
+  () => recent.error.value,
+  (e) => {
+    if (e) store.noteAccess(e)
   }
 )
-const recent = useCachedResource(
-  () => `project-progress:${props.projectId}`,
-  async (key) => {
-    try {
-      return (await listProjectProgress(key.slice('project-progress:'.length))).data
-    } catch (e) {
-      // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
-      store.noteAccess(e)
-      throw e
-    }
-  }
-)
-// 一次网络抖动不该让「谁在做什么」变空：读失败时留着上一次的。只要还在进行的：总览画的
-// 就是这些，和侧栏读的是同一份。
-const work = useCachedResource(
-  () => `project-open-tasks:${props.projectId}`,
-  async (key) => (await readProjectTasks(key.slice('project-open-tasks:'.length), { maxAgeMs: 2_000, open: true })).data
-)
-const overviewText = computed(() => overview.data.value ?? null)
+const overviewText = computed(() => overview.data.value?.text ?? null)
 const progress = computed<ProgressItem[] | null>(() => recent.data.value ?? null)
-const progressFailed = computed(() => !!recent.error.value && !store.accessDenied)
-const tasks = computed<RoomTask[] | null>(() => work.data.value ?? null)
+const progressFailed = computed(() => recent.isError.value && !recent.data.value && !store.accessDenied)
+const tasks = computed<RoomTask[] | null>(() => work.data.value?.data ?? null)
 function loadProgress() {
-  void recent.refresh()
+  void recent.refetch()
 }
-
-// 切回这个标签页时补一次：看到的是此刻的项目，不是离开时的。
-function onVisibility() {
-  if (!document.hidden) {
-    void recent.refresh()
-    void work.refresh()
-  }
-}
-onMounted(() => document.addEventListener('visibilitychange', onVisibility))
-onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility))
 
 const projectName = computed(() => store.projects.find((p) => p.id === props.projectId)?.name ?? '')
 const members = computed(() => store.members as ProjectMemberRow[])

@@ -34,8 +34,7 @@ vi.mock('@/views/workspace/ProjectSidebar.vue', pageCode)
 vi.mock('@/views/workspace/TopicView.vue', pageCode)
 
 import { getPreview, listBlocks } from '@/api'
-import { blockCache, setCachedWindow } from '@/lib/blockCache'
-import { resetPreviewPointerCache } from '@/lib/previewPointer'
+import { setCachedWindow } from '@/query/blocks'
 import router from '@/router'
 
 const PROJECT = '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10'
@@ -49,8 +48,6 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.mocked(listBlocks).mockClear()
   vi.mocked(getPreview).mockClear()
-  blockCache.clear()
-  resetPreviewPointerCache()
   signedIn.id = '7'
 })
 
@@ -79,6 +76,13 @@ describe('opening a topic', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(listBlocks).not.toHaveBeenCalled()
   })
+
+  // 任务页读的是任务自己那段对话：消息按任务的 id 取，不是它所在的频道。
+  it('fetches the newest messages of the task itself while the page code is still loading', async () => {
+    const task = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b05'
+    void router.push(`/projects/${PROJECT}/tasks/${task}`)
+    await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(task, expect.anything()), { timeout: 20_000 })
+  }, 30_000)
 
   // 频道没有「预览」那一格（那是任务的，见 WorkPanel 的 CHANNEL_TABS）：打开频道
   // 不替它问「当前预览是哪一份」，问了也没有地方用。

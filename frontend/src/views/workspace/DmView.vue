@@ -5,13 +5,15 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { getPrivateChat, listProjectAgents } from '@/api'
+import { getPrivateChat } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
 import { t } from '@/i18n'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentHandleOf } from '@/lib/dm'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
+import { queryClient } from '@/query/client'
+import { agentsQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -85,7 +87,7 @@ async function load() {
 // 就打不开。
 async function loadAgentName(pid: string, handle: string) {
   try {
-    const found = (await listProjectAgents(pid)).data.find((a) => a.handle === handle)
+    const found = (await queryClient.fetchQuery(agentsQuery(pid))).find((a) => a.handle === handle)
     if (props.projectId === pid && agentHandle.value === handle) {
       agentRow.value = found ?? null
     }
@@ -100,14 +102,6 @@ function handleTurnDone() {
   void store.refreshTopics()
   if (topic.value) store.markDmRead(topic.value.id, props.peer)
   void store.refreshUnread()
-}
-
-function handleStateChanged(resource: string, id?: string) {
-  // 指名了那一行（房间 id）就只重取它，否则退回整份重取 —— 和 TopicView 同一条路。
-  if (resource === 'topics') {
-    if (id) void store.refreshTopicRow(id)
-    else void store.refreshTopics()
-  }
 }
 
 // 私聊是从名册点进来的，所以 ← 回名册。手机上顶栏那颗 ← 走的是路由 meta 的
@@ -150,7 +144,6 @@ function handleMentionClick(handle: string) {
       :show-composer="true"
       @back="backToMembers"
       @turn-done="handleTurnDone"
-      @state-changed="handleStateChanged"
       @mention-click="handleMentionClick"
       @open-topic="openTopic"
     />
