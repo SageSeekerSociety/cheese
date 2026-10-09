@@ -22,6 +22,7 @@ from app.domain.topic.models import Topic
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.project.protection import branch_protection_of
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES,
@@ -59,7 +60,6 @@ async def _reviewer_or_project_default(
     would each hand a real delivery to someone who never agreed to look at
     it, and the card would sit there looking correctly routed.
     """
-    from app.domain.project.protection import branch_protection_of
 
     explicit = (reviewer_handle or "").strip()
     if explicit:

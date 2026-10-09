@@ -19,6 +19,13 @@ from typing import TYPE_CHECKING, Any, Protocol
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import exception_text, say
 from app.domain.agent import turn_inputs
+from app.domain.agent.compute_configs import (
+    bind_room_device_choice,
+    fix_task_choice,
+    machine_policy_call,
+    place_choice,
+    room_choice,
+)
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
     TASK_MACHINE_NOT_STARTED,
@@ -808,8 +815,6 @@ class RoomTurns:
             # 里，不是 `PUT /topics/{id}/compute-profile`。那条路由是人主动去点的
             # 少数情形，它和这里问的是同一个闸门。
             if provider.deferred_work and project is not None and needs_place:
-                from app.domain.agent.compute_configs import place_choice
-
                 conversation = await AgentSessionService(session).ensure(
                     place.conversation_id, agent.handle, harness=wanted_harness
                 )
@@ -842,11 +847,6 @@ class RoomTurns:
                     and not provider.deferred_work
                     and not policy.lets_everything_through
                 ):
-                    from app.domain.agent.compute_configs import (
-                        machine_policy_call,
-                        place_choice,
-                    )
-
                     proposed = await self._pass_policy_gate(
                         session,
                         place.room_id,
@@ -878,10 +878,6 @@ class RoomTurns:
                 and compute_id == "device"
                 and topic.compute_config is None
             ):
-                from app.domain.agent.compute_configs import (
-                    bind_room_device_choice,
-                )
-
                 await bind_room_device_choice(
                     session, topic, project.settings if project else None
                 )
@@ -963,8 +959,6 @@ class RoomTurns:
             # 不租手的一轮身上不钉机器。钉了就是给一段永远不会用到机器的对话记上
             # 一台机器，而这一行本来是给「以后别换机器」用的。
             if needs_place and provider is not None:
-                from app.domain.agent.compute_configs import fix_task_choice
-
                 if await fix_task_choice(session, topic, task, project):
                     await session.commit()
             if needs_place and provider is not None and topic.compute_config is None:
@@ -976,7 +970,6 @@ class RoomTurns:
                 # 房间里每一条会话（现在的和以后进来的）都工作在它算出来的那台机
                 # 器上，所以写下池名而不写整份，后面的每一条都会拿到 标准配置 或
                 # 「哪台空着」，而不是第一条会话被给到的那一份规格或那台机器。
-                from app.domain.agent.compute_configs import room_choice
 
                 topic.compute_config = room_choice(
                     topic, project.settings if project else None

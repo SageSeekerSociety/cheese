@@ -262,6 +262,7 @@ async def _machine_this_room_gets(session: AsyncSession, topic, choice: ComputeC
         return None
     # 局部 import：`device_hub` 拉着连接器那一整套，模块级引它会把这个小模块的
     # import 面铺开一圈。
+    # deferred-import: keeps device_hub's stack off this module
     from app.domain.agent.device_hub import device_hub
 
     devices = sql_device_service(session)

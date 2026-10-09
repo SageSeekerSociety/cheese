@@ -238,6 +238,8 @@ class TaskFacts:
     #: 回答记在提问那一块上，所以这一位不需要新增存储；但它要查一次库，所以和别的
     #: 事实一样从外面喂进来。
     awaiting_answer: bool = False
+    #: 最后一次交付已经合并，AI 队友正在写总结，写完就关闭（`Task.closing_since`）。
+    closing: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +295,7 @@ def facts_for_task(
         running=running,
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
+        closing=task.closing_since is not None,
     )
 
 
@@ -492,7 +495,8 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     三条优先级规矩：
 
     1. **关了就是结束**：最后一次交付被采纳的写「已采纳」，留了结论的写「已完成」，
-       都没有的写「已关闭」。还开着的任务就算采纳过前几步，也还在做。
+       都没有的写「已关闭」。还开着的任务就算采纳过前几步，也还在做；只有最后一步
+       合并后 AI 队友写总结的那一会儿例外，它已经是「已采纳」。
     2. **待回答压过「在跑」**：进程可能还在，但它不会自己往下走了，而看板显示
        「运行中」正是让人不来看的那一句。
     3. **活的事实压过纸面**。`running` 压过验收卡说的一切 —— 卡描述的是它可能马上
@@ -501,6 +505,8 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     `now` 收在签名里是为了和 `room_presentation` 同一个形状。
     """
     del now
+    if facts.closing:
+        return _show(Done.accepted)
     if facts.status == TaskStatus.closed:
         if facts.accepted_at is not None:
             return _show(Done.accepted)

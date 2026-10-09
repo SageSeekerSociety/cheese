@@ -81,6 +81,8 @@ def deployment_harnesses() -> tuple[str, ...]:
     带着 pydantic-settings 和它整棵依赖树，不在归档里——顶上一行 import 就是
     runner 进程起不来。runner 自己从不问这个问题，它被告知自己是谁。
     """
+
+    # deferred-import: runner bundle: core.config is not in the stdlib-only archive
     from app.core.config import settings
 
     configured = [name.strip() for name in settings.agent_harnesses if name.strip()]

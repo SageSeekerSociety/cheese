@@ -31,8 +31,9 @@ router = APIRouter(prefix="/projects", tags=["library"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-#: 资料库页上一次放进来的文件多大为止；和对话里上传附件是同一条线。
-MAX_LIBRARY_UPLOAD_BYTES = 10 * 1024 * 1024
+#: 资料库页上一次放进来的文件多大为止；和对话里上传附件是同一条线，数在
+#: `library.MAX_FILE_BYTES`（落地那一层），这里只借它的名字。
+MAX_LIBRARY_UPLOAD_BYTES = library.MAX_FILE_BYTES
 
 
 class LibraryRoom(BaseModel):

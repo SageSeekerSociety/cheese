@@ -16,9 +16,11 @@ from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.repositories import AgentBindingRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import TopicMemberCreate, TopicMemberOut
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(prefix="/topics", tags=["topic-members"])
 
@@ -29,8 +31,6 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 async def list_topic_members(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.domain.identity.repositories import AgentBindingRepository
-    from app.domain.user.repositories import UserProfileRepository, UserRepository
 
     # A task's id reaches its room's roster, files and documents.
     topic = (await TopicService(db).place_or_404(topic_id)).room

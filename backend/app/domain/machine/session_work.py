@@ -30,15 +30,20 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
+from app.domain.agent.environment_failures import tell_failed
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
 from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_instance.own import owned_by_session
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
+from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.device.supply import (
     Supply,
     Visibility,
@@ -65,13 +70,17 @@ from app.domain.machine.services import (
     CloudPoolFull,
     HostPool,
 )
+from app.domain.notification.models import NotificationType
 from app.domain.policy import gate
 from app.domain.project.environment import EnvironmentConfig, pin_environment
+from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
-from app.domain.topic.models import TopicKind
+from app.domain.team.models import Team
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.usage.compute import ComputeRefused
+from app.domain.user.models import User
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
@@ -181,7 +190,6 @@ async def _session_teammate(db, project, handle: str):
     under, so this asks the same lookup that turns a session back into its
     author when it runs (``for_handle``). None for a handle that names no
     teammate (a room-derived one)."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     try:
         return await AgentInstanceService(db).for_handle(project, handle)
@@ -194,7 +202,6 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
     its saved teammate's, else the one the room falls back to. Beside it,
     whether that is still the name it was born with, which a screen shows in
     its reader's language."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     teammate = await _session_teammate(db, project, handle)
     agent = (
@@ -214,8 +221,6 @@ async def screen_agent_name(
     """The name a screen's agent goes by, the way a room names it (see
     ``_agent_name``). Empty when the screen names no room that still exists;
     the page then shows the handle."""
-    from app.domain.project.models import Project
-    from app.domain.topic.models import Topic
 
     project = await db.get(Project, project_id) if project_id else None
     topic = await db.get(Topic, topic_id) if topic_id else None
@@ -227,7 +232,6 @@ async def screen_agent_name(
 async def _session_author(db, project, handle: str) -> str:
     """The seat the session keyed ``handle`` acts under: its teammate's, or the
     room-derived handle itself, which is its own seat."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     teammate = await _session_teammate(db, project, handle)
     if teammate is None:
@@ -239,8 +243,6 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
     """Who works on each of these devices now: every agent session whose lease
     is there, in a room that is not archived, with its project, room and agent.
     """
-    from app.domain.project.models import Project
-    from app.domain.topic.models import Topic, TopicStatus
 
     out: dict[str, list[dict]] = {device_id: [] for device_id in device_ids}
     if not device_ids:
@@ -277,12 +279,8 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     owner who is a person in that room sees it on the room's roster already
     and is not told.
     """
-    from app.domain.delivery.addressing import Event, Hand, address
-    from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
-    from app.domain.notification.models import NotificationType
-    from app.domain.team.models import Team
+    # deferred-import: tests replace this name on app.domain.topic_membership.services
     from app.domain.topic_membership.services import TopicMemberService
-    from app.domain.user.models import User
 
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
@@ -341,7 +339,6 @@ WORKING = say("switchWhileWorking")
 
 
 async def _room_is_working(db, topic_id) -> bool:
-    from app.domain.agent.models import AgentTurn
 
     running = await db.scalar(
         select(AgentTurn.id)
@@ -989,8 +986,6 @@ async def _attempt(
             return {"unavailable": str(unavailable)}
     approver = project.owner_handle or ""
     if selected is not None:
-        from app.domain.user.models import User
-
         owner = await db.get(User, selected.owner_user_id)
         if owner is not None:
             approver = owner.username
@@ -1311,7 +1306,6 @@ async def _install(
                 if settled.get("state") == "failed":
                     # The people waiting are told where they wait, with the
                     # way to the settings; the teammate is told here.
-                    from app.domain.agent.environment_failures import tell_failed
 
                     line = await tell_failed(
                         db,

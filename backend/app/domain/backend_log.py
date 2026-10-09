@@ -54,6 +54,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import alerting
 from app.core.db import async_session_factory
 from app.core.obs import scrub_secrets
 from app.core.sentences import say
@@ -446,8 +447,6 @@ async def record(
             "GatewayHTTPError",
             "GatewayStreamError",
         ):
-            from app.core import alerting
-
             alerting.send(
                 "模型请求失败",
                 [

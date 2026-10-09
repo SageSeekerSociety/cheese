@@ -39,6 +39,16 @@ from app.core.storage import private_storage
 from app.domain.agent import resource_cleanup
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DEVICE_HOME_ROOT, DEVICE_WORK_ROOT
+from app.domain.agent.platform_notices import (
+    EVENT_ROOM_FILES_KEPT,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    notice,
+)
+from app.domain.agent_session.models import AgentSession
+from app.domain.device.models import DeviceRow
+from app.domain.device.supply import Supply
+from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.models import KeptRoomFiles
 
 
@@ -108,8 +118,6 @@ def _private_bucket():
 async def _place(session, resource_id: str):
     """The conversation whose home this is: the room or task the id names,
     else the one whose session held a lease on it. None when nothing does."""
-    from app.domain.agent_session.models import AgentSession
-    from app.domain.room_task.place import PlaceResolver
 
     places = PlaceResolver(session)
     place = await places.conversation(uuid.UUID(resource_id))
@@ -291,13 +299,8 @@ async def keep_room_files(
 async def _tell(session, row: KeptRoomFiles) -> None:
     """Say once in the conversation that its files are kept, until when, and
     how to get them back."""
+    # deferred-import: tests replace this name on app.domain.agent.announce
     from app.domain.agent.announce import announce
-    from app.domain.agent.platform_notices import (
-        EVENT_ROOM_FILES_KEPT,
-        SEVERITY_WARN,
-        WHO_HUMAN,
-        notice,
-    )
 
     told = await session.scalar(
         select(KeptRoomFiles.id).where(
@@ -328,7 +331,7 @@ async def keep_device_room_files(
     """Look at every home on a self-hosted machine not looked at yet; answers
     how many were. One home that fails is tried again at the next connection
     and does not stop the others."""
-    from app.domain.device.supply import Supply
+    # deferred-import: tests replace this name on app.domain.device.wiring
     from app.domain.device.wiring import sql_device_service
 
     hub = hub or device_hub
@@ -352,7 +355,6 @@ async def keep_device_room_files(
             )
         )
         # A machine no session ever held a lease on has no room's home on it.
-        from app.domain.agent_session.models import AgentSession
 
         worked_on = await session.scalar(
             select(AgentSession.id)
@@ -404,8 +406,6 @@ async def keep_room_files_everywhere(sessions, *, hub=None, storage=None) -> int
     """``keep_device_room_files`` for every connected self-hosted machine; one
     that is not connected is looked at when it connects. Answers how many homes
     were looked at."""
-    from app.domain.device.models import DeviceRow
-    from app.domain.device.supply import Supply
 
     async with sessions() as session:
         device_ids = list(

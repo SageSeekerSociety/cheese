@@ -19,7 +19,16 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-from app.domain.agent.harness import CLAUDE_CODE, HARNESSES, Capability
+from app.domain.agent.harness import (
+    CLAUDE_CODE,
+    HARNESSES,
+    Capability,
+    deployment_harnesses,
+    harness_for,
+    harness_name,
+    harness_on,
+)
+from app.domain.agent.market import compute_default_name
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
@@ -56,7 +65,6 @@ class ComputePool:
         default_name: str,
         owned: "dict[str, RoomSessions] | None" = None,
     ):
-        from app.domain.agent.harness import deployment_harnesses
 
         self._backends = {
             (backend.name, backend.harness): backend for backend in backends
@@ -374,7 +382,6 @@ class ComputePool:
         When none of it runs here, the answer is the project's first pick with
         no backend: the turn says that one is not deployed on this machine.
         """
-        from app.domain.agent.harness import harness_for, harness_on
 
         chosen = harness_on(
             project_settings,
@@ -405,7 +412,6 @@ class ComputePool:
 
         caps/quota/queue routing arrives with ``env_spec`` (design §3
         pick_provider, v2 R9)."""
-        from app.domain.agent.harness import harness_name
 
         machine = provider_id if provider_id in self.machines() else self._default[0]
         return self._backends.get((machine, harness_name(harness)))
@@ -430,11 +436,19 @@ def build_compute_pool(
     executor falls back to. The default now comes from `compute_default_name`,
     the same answer the catalogue marks 默认.
     """
+    # deferred-import: breaks the cycle agent.central_provider -> agent.compute
     from app.domain.agent.central_provider import CentralChannel
+
+    # deferred-import: breaks the cycle agent.device_provider -> agent.compute
     from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.market import compute_default_name
+
+    # deferred-import: breaks the cycle agent.owner_provider -> agent.compute
     from app.domain.agent.owner_provider import OwnerChannel
+
+    # deferred-import: breaks the cycle room.sessions -> agent.compute
     from app.domain.agent.room.sessions import RoomSessions
+
+    # deferred-import: breaks the cycle session_host.host -> agent.compute
     from app.domain.agent.session_host.host import SessionHost
 
     # One liveness policy for every harness (``docs/agent-liveness.md``): the

@@ -11,6 +11,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import say
+from app.domain.task.repositories import TaskMembershipRepository
 from app.domain.team.models import (
     Team,
     TeamMemberRole,
@@ -34,7 +35,6 @@ async def check_team_locking_status(session, team_id: int) -> None:
     where the team is APPROVED in a task with LOCK_ON_APPROVAL policy and the
     completion status is still ongoing. Raises ForbiddenError if locked.
     """
-    from app.domain.task.repositories import TaskMembershipRepository
 
     membership_repo = TaskMembershipRepository(session=session)
     locking_policies = ["LOCK_ON_APPROVAL"]

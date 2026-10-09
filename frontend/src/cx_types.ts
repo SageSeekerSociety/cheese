@@ -265,7 +265,7 @@ export interface RoomTask {
   pr_number?: number | null
   pr_url?: string | null
   delivered_head?: string | null
-  // 最近一次采纳。最后一步采纳后任务关闭；还开着的任务可能已经采纳过前几步。
+  // 最近一次采纳。最后一步采纳后，AI 队友写完总结任务就关闭；还开着的任务可能已经采纳过前几步。
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null

@@ -22,6 +22,7 @@ import uuid
 from datetime import UTC, date, datetime
 from email.message import EmailMessage
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -263,7 +264,6 @@ IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 def _real_addresses(host: str) -> list[IPAddress]:
     """The host's addresses from public DNS over HTTPS, past the local proxy."""
-    import httpx
 
     found: list[IPAddress] = []
     for kind in ("A", "AAAA"):

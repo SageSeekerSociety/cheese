@@ -59,7 +59,7 @@ from app.domain.room_task.services import (
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, thread_opening, threads_of_rooms
-from app.domain.topic.models import Topic
+from app.domain.topic.models import RoomCleanup, Topic
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -1305,7 +1305,6 @@ async def archive_topic(
 async def cleanup_status(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.domain.topic.models import RoomCleanup
 
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)

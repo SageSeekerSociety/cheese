@@ -138,6 +138,7 @@ async def resolve_for_handle(session: Any, handle: str) -> GitIdentity | None:
     service call, not by reaching into its repositories (the ratchet in
     tests/unit/test_domain_import_guard.py). What stays here is the only part
     that is about git: turning an account into an address."""
+    # deferred-import: tests replace this name on app.domain.oauth.services
     from app.domain.oauth.services import get_github_profile_for_handle
 
     if not handle:
@@ -169,6 +170,7 @@ async def _thread(session: Any, task_id: uuid.UUID):
     """The thread row, or None if it cannot be read. Never raises, same rule as
     `_roster_owner`: attribution must not be why a PR fails to open."""
     try:
+        # deferred-import: tests replace this name on app.domain.room_task.services
         from app.domain.room_task.services import TaskService
 
         return await TaskService(session).get(task_id)
@@ -182,6 +184,7 @@ async def _roster_owner(session: Any, topic_id: uuid.UUID) -> str | None:
     raises: attribution must not be the reason a PR fails to open, so a broken
     roster read degrades to "no answer" rather than to an exception."""
     try:
+        # deferred-import: tests replace a name on app.domain.topic_membership.services
         from app.domain.topic_membership.services import TopicMemberService
 
         return await TopicMemberService(session).owner_of(topic_id)
@@ -221,6 +224,7 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
     ]
     if not declared:
         return ()
+    # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     return tuple(
@@ -257,6 +261,7 @@ async def attribution(
 
     Requester coauthorship is an explicit project/deployment policy. Reporter
     and additional contributor roles still come from task declarations."""
+    # deferred-import: tests replace this name on app.domain.topic_membership.services
     from app.domain.topic_membership.services import TopicMemberService
 
     task_id = task_id or getattr(card, "task_id", None)
@@ -294,6 +299,7 @@ async def attribution(
             "could not resolve the work behind topic %s", topic.id, exc_info=True
         )
     coauthors: list[GitIdentity] = []
+    # deferred-import: tests replace this name on app.domain.project.services
     from app.domain.project.services import ProjectService
 
     project = await ProjectService(session).get(topic.project_id)

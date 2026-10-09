@@ -8,6 +8,7 @@ Runs on the machine with the Python the executor runs on, as old as 3.9.
 
 import json
 import os
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -93,7 +94,6 @@ def seccomp_filter(machine=None):
     own `--disable-userns` does this with a sysctl an LXC container cannot
     write. Any other architecture's calls, x32's and i386's on an x86_64
     machine, end the process: the numbers above are only the native ones'."""
-    import struct
 
     arch, denied, clone, unshare = SYSCALLS[machine or os.uname().machine]
     load, equal, above, test, ret = 0x20, 0x15, 0x35, 0x45, 0x06

@@ -1000,5 +1000,6 @@
   "reviewCommentSignIn": "登录后才能写批注",
   "githubReviewPostFailed": "GitHub 拒绝了这次评审（HTTP {status}）：{reply}",
   "reviewCommentSuggestionOnly": "修改建议",
-  "taskFileEditsOverlap": "这个文件在你打开之后又被改过，有和你改的位置重叠的地方，逐处选一个版本"
+  "taskFileEditsOverlap": "这个文件在你打开之后又被改过，有和你改的位置重叠的地方，逐处选一个版本",
+  "fileTooLarge": "文件太大（上限 {mb}MB）"
 }

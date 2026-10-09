@@ -16,11 +16,15 @@ from sqlalchemy import or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
+from app.core.live_frames import show_state_once_committed
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.project.models import Project
+from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -64,6 +68,7 @@ def work_interval_is_over():
     the turn models on the delivery side would close a domain cycle (C3 in
     backend/.importlinter).
     """
+    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
     from app.domain.agent.runtime import AgentTurnRepository
 
     return AgentTurnRepository.interval_is_over(
@@ -115,8 +120,7 @@ async def record_task_instruction(
     id, which is what the runner runs a turn in, and the agent is the one working
     the task (its own pick, else its room's) — the one that answers there.
     """
-    from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.project.models import Project
+    # deferred-import: Topic is bound at the top of this module already
     from app.domain.topic.models import Topic
 
     project = await session.get(Project, task.project_id)
@@ -231,6 +235,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 )
             )
         await session.commit()
+    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
     from app.domain.agent.runtime import addressed_to_agent
 
     for delivery_id, attempt, topic_id, instance_id, seat, content in claimed:
@@ -355,6 +360,12 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                         "automatic replay is withheld"
                     )
                 row.lease_until = None
+                # The turn that writes a finished task up is over, however it
+                # went: the task closes now (`room_task.closing`).
+                if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
+                    closed = await close_after_summary(session, row.conversation_id)
+                    if closed is not None:
+                        show_state_once_committed(session, closed.room_id)
             await session.commit()
 
 

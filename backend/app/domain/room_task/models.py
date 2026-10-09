@@ -272,6 +272,12 @@ class Task(UuidPk, Timestamps, Base):
     accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Its last delivery landed and its AI teammate is writing it up: the task
+    # closes when that turn ends (`room_task.closing`). Shown as accepted
+    # meanwhile; still open, so the turn can run and write the task document.
+    closing_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # When the thread was collapsed. `status == closed` is the flag; this is
     # when — kept apart so "closed" needs no timestamp to be true.
     closed_at: Mapped[datetime | None] = mapped_column(

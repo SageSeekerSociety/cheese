@@ -32,8 +32,11 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ValidationError
+from app.core.live_frames import show_once_committed
 from app.core.sentences import notice_message
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
@@ -42,6 +45,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     WHO_PLATFORM,
 )
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -115,7 +119,6 @@ async def announce(
         return None
     if task_id is not None:
         # A task's conversation, or a 支线's: either way one inside this room.
-        from app.core.errors import ValidationError
 
         inner = await PlaceResolver(session).conversation(task_id)
         if inner is None or inner.inner_id is None or inner.room_id != place.room_id:
@@ -150,11 +153,6 @@ async def announce(
     return block
 
 
-#: `session.info` 里的一格：这个会话落下、提交之后要当场推给页面的那几行，各带
-#: 它所在那段对话的频道。推送本身在 broker 那一侧（`runtime`），这里只记下来。
-SHOW_ONCE_COMMITTED = "notices_shown_once_committed"
-
-
 def _show_once_committed(session: AsyncSession, block: Block) -> None:
     """让开着这段对话的页面当场看见这一行，而不是等下一次刷新。
 
@@ -167,9 +165,7 @@ def _show_once_committed(session: AsyncSession, block: Block) -> None:
         "type": "event_block",
         "block": BlockOut.model_validate(block).model_dump(mode="json"),
     }
-    session.info.setdefault(SHOW_ONCE_COMMITTED, []).append(
-        (str(block.conversation_id), frame)
-    )
+    show_once_committed(session, block.conversation_id, frame)
 
 
 async def notify_question(
@@ -322,7 +318,6 @@ async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
     One `cheese_ask` call sends one notice for all its questions (keyed by the
     first, `meta.notice_id`); it is settled only once none of them is open.
     """
-    from sqlalchemy import select
 
     done = []
     for notice in {(q.meta or {}).get("notice_id") or str(q.id) for q in questions}:
@@ -352,7 +347,6 @@ async def _agent_name(session: AsyncSession, project_id, seat: str) -> str:
 
 async def instance_of_seat(session: AsyncSession, project_id, seat: str):
     """The agent instance behind ``seat`` in this project, or None."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         if agent_instance_handle(instance.id) == seat:

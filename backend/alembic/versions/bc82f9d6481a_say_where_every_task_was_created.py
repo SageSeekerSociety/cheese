@@ -1,7 +1,7 @@
 """Every task started in a room says so on the room's line
 
 Revision ID: bc82f9d6481a
-Revises: f17973b3f7b6
+Revises: 7d3a91c5e2b4
 Create Date: 2026-10-09
 
 A task started in a room (not made from a message) leaves a row on the room's
@@ -31,7 +31,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "bc82f9d6481a"
-down_revision: str | Sequence[str] | None = "f17973b3f7b6"
+down_revision: str | Sequence[str] | None = "7d3a91c5e2b4"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

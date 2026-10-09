@@ -14,7 +14,7 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.core.background import spawn
-from app.domain.agent.announce import SHOW_ONCE_COMMITTED
+from app.core.live_frames import SHOW_ONCE_COMMITTED
 from app.domain.agent.realtime.broker import get_broker
 
 

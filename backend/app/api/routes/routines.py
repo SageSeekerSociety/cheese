@@ -26,14 +26,15 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
-from app.core.sentences import say
+from app.core.sentences import notice_keys, say
 from app.domain.agent_instance.own import may_work_for
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
 from app.domain.routine import service as routines
 from app.domain.routine.models import Routine, RoutineRun
-from app.domain.routine.service import RoutineService, describe_trigger
+from app.domain.routine.service import RoutineService
+from app.domain.routine.trigger import describe_trigger
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -78,7 +79,9 @@ def _iso(value: datetime | None) -> str | None:
 def _routine(
     row: Routine, *, can_manage: bool = False, room_archived: bool = False
 ) -> dict:
+    trigger_text = describe_trigger(row)
     return {
+        **notice_keys(trigger_text=trigger_text),
         "id": str(row.id),
         "can_manage": can_manage,
         "room_archived": room_archived,
@@ -89,7 +92,7 @@ def _routine(
         "context_scope": row.context_scope,
         "output_dir": row.output_dir,
         "trigger": row.trigger,
-        "trigger_text": describe_trigger(row),
+        "trigger_text": trigger_text,
         "spec": row.spec,
         "timezone": row.timezone,
         "state": row.state,
@@ -424,6 +427,7 @@ async def resume_routine(
 async def run_routine_now(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
+    # deferred-import: tests patch this name on app.api.deps
     from app.api.deps import get_chat_service, get_work_runner
 
     row, actor = await _routine_actor(db, resolver, routine_id)

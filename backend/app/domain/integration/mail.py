@@ -12,6 +12,7 @@ import email
 import email.header
 import email.policy
 import imaplib
+import mimetypes
 import re
 import smtplib
 import ssl
@@ -439,7 +440,6 @@ def compose(
 
 
 def _guess(name: str) -> str:
-    import mimetypes
 
     return mimetypes.guess_type(name)[0] or "application/octet-stream"
 

@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block
+from app.domain.identity.handles import names_a_person
+from app.domain.living_doc.services import Documents
+from app.domain.project.models import Project
+from app.domain.project.protection import branch_protection_of
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
@@ -22,6 +26,7 @@ from app.domain.room_task.models import (
 )
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.user.services import user_by_handle
 
 
 class TaskService:
@@ -268,8 +273,6 @@ class TaskService:
         contributor_handles: list[str],
     ) -> None:
         """Record declared human contributions after validating their accounts."""
-        from app.domain.identity.handles import names_a_person
-        from app.domain.user.services import user_by_handle
 
         contributors = list(dict.fromkeys(contributor_handles))
         for handle in contributors + ([reporter_handle] if reporter_handle else []):
@@ -303,7 +306,6 @@ class TaskService:
     async def ensure_document(self, task: Task) -> uuid.UUID:
         """The task's living document, created empty the first time it is
         asked for. The row is locked so two first asks make one document."""
-        from app.domain.living_doc.services import Documents
 
         locked = await self._session.scalar(
             select(Task)
@@ -335,9 +337,6 @@ class TaskService:
         submitted: the setting can change, and who a task was handed to for
         review is a fact about the moment it started.
         """
-        from app.domain.living_doc.services import Documents
-        from app.domain.project.models import Project
-        from app.domain.project.protection import branch_protection_of
 
         if task.started_at is not None:
             raise UnprocessableEntityError(say("taskStartedAlready"))
@@ -417,6 +416,7 @@ class TaskService:
         title_source: TaskTitleSource = TaskTitleSource.human,
     ) -> Task:
         """Record a task's branch; its executor creates the worktree on its machine."""
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
         base = await default_branch(project_id, self._session)
@@ -454,6 +454,7 @@ class TaskService:
         made on a branch of its own, cut from the project's latest code, and
         opens a PR of its own. The machine moves the task's checkout onto it
         (`cheese worktree`), carrying what had not landed."""
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
         task.base_branch = await default_branch(task.project_id, self._session)
@@ -480,6 +481,7 @@ class TaskService:
     async def give_branch(self, task: Task) -> None:
         """The branch a task that arrived without one is worked on, cut from the
         project's default branch like a new task's."""
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
         task.base_branch = await default_branch(task.project_id, self._session)

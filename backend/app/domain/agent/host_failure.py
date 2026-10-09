@@ -125,6 +125,7 @@ async def handle_host_failure(
     try:
         factory = session_factory
         if factory is None:
+            # deferred-import: tests replace this name on app.core.db
             from app.core.db import async_session_factory
 
             factory = async_session_factory
@@ -150,6 +151,7 @@ async def record_host_success(
     try:
         factory = session_factory
         if factory is None:
+            # deferred-import: tests replace this name on app.core.db
             from app.core.db import async_session_factory
 
             factory = async_session_factory

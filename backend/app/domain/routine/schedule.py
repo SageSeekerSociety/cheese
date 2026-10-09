@@ -7,11 +7,10 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.errors import ValidationError
-from app.core.sentences import say
+from app.core.sentences import NoticeText, listing, say
 from app.domain.feedback.triage import MAX_BATCH
 
 FREQS = ("hourly", "daily", "weekly", "monthly")
-WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 
 def zone(name: str) -> ZoneInfo:
@@ -112,22 +111,33 @@ def next_after(spec: dict, tz: str, after: datetime) -> datetime:
     raise ValidationError(say("routineNoNextRun"))
 
 
-def describe(spec: dict, tz: str) -> str:
+def describe(spec: dict, tz: str) -> NoticeText | str:
     when = _describe_moment(spec, tz)
     if when and spec.get("feedback_batch"):
-        return f"{when}，每次附上最多 {spec['feedback_batch']} 条待分诊反馈"
+        return say("routineTriggerFeedback", when=when, count=spec["feedback_batch"])
     return when
 
 
-def _describe_moment(spec: dict, tz: str) -> str:
+def _describe_moment(spec: dict, tz: str) -> NoticeText | str:
     freq = spec.get("freq")
     if freq == "hourly":
-        return f"每小时第 {spec['minute']} 分（{tz}）"
+        return say("routineTriggerHourly", minute=spec["minute"], timezone=tz)
     if freq == "daily":
-        return f"每天 {spec['time']}（{tz}）"
+        return say("routineTriggerDaily", time=spec["time"], timezone=tz)
     if freq == "weekly":
-        days = "、".join(WEEKDAY_NAMES[d] for d in spec["weekdays"])
-        return f"每周{days} {spec['time']}（{tz}）"
+        weekdays = (
+            say("routineWeekdayMon"),
+            say("routineWeekdayTue"),
+            say("routineWeekdayWed"),
+            say("routineWeekdayThu"),
+            say("routineWeekdayFri"),
+            say("routineWeekdaySat"),
+            say("routineWeekdaySun"),
+        )
+        days = listing(weekdays[d] for d in spec["weekdays"])
+        return say("routineTriggerWeekly", days=days, time=spec["time"], timezone=tz)
     if freq == "monthly":
-        return f"每月 {spec['day']} 号 {spec['time']}（{tz}）"
+        return say(
+            "routineTriggerMonthly", day=spec["day"], time=spec["time"], timezone=tz
+        )
     return ""

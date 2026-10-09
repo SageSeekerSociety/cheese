@@ -43,9 +43,11 @@ module-level `APIRouter` under `app.api.routes`, so the declaration below, with
 `APIRouter(prefix="/users", tags=["Users"])`, is all it takes.
 """
 
+import html
 import logging
 from typing import Annotated
 
+import segno
 from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,6 +56,7 @@ from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
+from app.core import email as core_email
 from app.core.config import settings
 from app.core.errors import (
     BadRequestError,
@@ -62,6 +65,7 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.passkey.services import PasskeyService
+from app.domain.user.login_security import TOTPService
 from app.domain.user.services import UserAuthService
 from app.domain.user.trusted_devices import TrustedDeviceService
 
@@ -73,7 +77,6 @@ router = APIRouter(prefix="/users", tags=["Users"])
 def _qr_data_uri(payload: str) -> str:
     """PNG data URI of a QR code (reference contract returns a ready-to-render
     <img src> value alongside the otpauth URL)."""
-    import segno
 
     return segno.make(payload).png_data_uri(scale=5)
 
@@ -97,7 +100,6 @@ async def enable_user_2fa(
     it accepts only the secret the first phase offered, so reaching it at all
     means having re-authenticated.
     """
-    from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can enable 2FA.")
@@ -168,9 +170,6 @@ async def _notify_2fa_disabled(email: str | None, username: str) -> None:
     """
     if not email:
         return
-    import html
-
-    from app.core.email import get_email_sender
 
     subject = "[Cheese] Two-factor authentication was turned off"
     recover_url = f"{settings.frontend_url}/account/recover/password"
@@ -202,7 +201,7 @@ async def _notify_2fa_disabled(email: str | None, username: str) -> None:
         f"password immediately and turn it back on: {recover_url}\n"
     )
     try:
-        await get_email_sender().send(
+        await core_email.get_email_sender().send(
             to=email, subject=subject, body_html=body_html, body_text=body_text
         )
     except Exception:
@@ -228,7 +227,6 @@ async def disable_user_2fa(
     credential moments ago. A live session alone used to be enough, which made
     every other control on this account only as strong as the session cookie.
     """
-    from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can disable 2FA.")
@@ -266,7 +264,6 @@ async def get_user_2fa_status(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can view 2FA status.")
@@ -295,7 +292,6 @@ async def regenerate_backup_codes(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can manage backup codes.")

@@ -20,6 +20,8 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 
+from sqlalchemy import select
+
 from app.core.background import hold
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
@@ -36,6 +38,8 @@ from app.domain.agent.admission import (
     wait_for_host,
 )
 from app.domain.agent.host_failure import handle_host_failure, record_host_success
+from app.domain.agent.initial_admission import admitted_initial
+from app.domain.agent.pending_messages import nudge_messages, resume_messages
 from app.domain.agent.platform_failures import (
     HOST_SCOPED_CODES,
     SUBSCRIPTION_CREDENTIAL_EXPIRED,
@@ -58,6 +62,7 @@ from app.domain.agent.platform_notices import (
     delivery_fallback_notice,
     notice,
 )
+from app.domain.agent.queries import instance_of_handle
 from app.domain.agent.realtime import broker as realtime
 from app.domain.agent.realtime import subscriber_queue
 
@@ -73,12 +78,16 @@ from app.domain.agent.turn_ledger import (
     utcnow,
 )
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
+from app.domain.delivery.agent import dispatch_pending, run_attempt
 from app.domain.delivery.input_identity import InputReconciliationPending
+from app.domain.delivery.mention import mentioned_handles
+from app.domain.delivery.models import Delivery
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.thread.services import answer_place
 from app.domain.topic_membership.services import addressable_seat
+from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -525,8 +534,6 @@ class AgentWorkRunner:
             recipient_instance_id=recipient_instance_id,
         )
         if delivery_id is not None:
-            from app.domain.delivery.agent import run_attempt
-
             work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
         task = asyncio.create_task(
             work,
@@ -660,12 +667,10 @@ class AgentWorkRunner:
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        from app.domain.delivery.mention import mentioned_handles
 
         if len(mentioned_handles(message.get("content") or "")) > 1:
             # 点到的第二位起是账本里的投递（`delivery/mention.py`），已经随消息一起
             # 提交了。现在就派，不等定时扫描那 30 秒：同一条消息点到的几位该一起醒。
-            from app.domain.delivery.agent import dispatch_pending
 
             dispatch = asyncio.create_task(
                 dispatch_pending(
@@ -1000,7 +1005,6 @@ class AgentWorkRunner:
         turn does, and teammates in one room run side by side, so another
         agent's turn neither picks this message up nor holds it back.
         """
-        from app.domain.agent.pending_messages import resume_messages
 
         return await resume_messages(self, chat_service, **scope)
 
@@ -1256,9 +1260,6 @@ class AgentWorkRunner:
         （`dispatch_log.unsettled`）。"""
         async with chat_service.session_factory() as ledger:
             unknown = await dispatch_log.unsettled(ledger, topic_id, since=since)
-            from sqlalchemy import select
-
-            from app.domain.delivery.models import Delivery
 
             delivery_attempts = set(
                 await ledger.scalars(
@@ -1501,7 +1502,6 @@ class AgentWorkRunner:
         any turn nobody named an agent for."""
 
         async def _later() -> None:
-            from app.domain.agent.queries import instance_of_handle
 
             await asyncio.sleep(after_s)
             recipient = (
@@ -1667,7 +1667,6 @@ class AgentWorkRunner:
     ) -> None:
         """Refuse a turn the credits do not admit. A human's message still lands
         (only the AI turn is metered); the platform's own event says why."""
-        from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 
         policy = await chat_service.work_policy(topic_id)
         reason = (policy or {}).get("credits_exhausted")
@@ -1842,8 +1841,6 @@ class AgentWorkRunner:
             return
         lifecycle = {"started": False, "session_owned": False}
         try:
-            from app.domain.agent.initial_admission import admitted_initial
-
             async with admitted_initial(
                 chat_service,
                 topic_id,
@@ -1929,7 +1926,6 @@ class AgentWorkRunner:
             self._live_topics.pop(str(turn_id), None)
             if gate is not None:
                 await gate.release()
-            from app.domain.agent.pending_messages import nudge_messages
 
             nudge_messages(chat_service, topic_id, runner=self)
 
