@@ -15,10 +15,14 @@ import pytest
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.documents import editor
+from app.domain.library import service as library
 from app.domain.textfile import content_version
 from tests.integration.conftest import post_project
 
 SECRET = "test-office-editor-secret"
+# 比默认值小得多，但整 MB：这里量的是那条界线在哪，不是那个数是多少 —— 超限的那几
+# 份字节要真的写出来，压到几 MB 才跑得动。
+CEILING = 4 * 1024 * 1024
 
 
 @pytest.fixture(autouse=True)
@@ -290,3 +294,43 @@ def test_closing_the_editor_after_saving_does_not_leave_a_duplicate(
     assert _current(client, room) == b"cheese changed it afterwards"
     shown = client.get(f"/topics/{room}/shown").json()["data"]["data"]
     assert [row["path"] for row in shown] == ["output/报告.docx"]
+
+
+def test_the_editor_is_told_why_a_document_too_big_was_not_saved(client, monkeypatch):
+    """超限的保存也按编辑器认的形状回话：`{"error": 1, ...}` 带原因，不是它读不懂
+    的 422 —— 那只会让人看到「没保存成功」，看不到为什么。"""
+    project, room = _room(client)
+    _show(client, project, room, b"v1")
+    config = _open(client, room)["config"]
+    monkeypatch.setattr(library, "MAX_FILE_BYTES", CEILING)
+    _fake_editor_result(monkeypatch, b"x" * (CEILING + 1))
+
+    refused = _callback(client, _link_of(config), SAVED)
+
+    assert refused.status_code == 403
+    body = refused.json()
+    assert body["error"] == 1
+    assert "文件太大" in body["message"]
+    # 一个字节也没落地，历史也没多一版。
+    assert _current(client, room) == b"v1"
+    assert [h["seq"] for h in _history(client, room)] == [1]
+
+
+def test_a_file_over_the_ceiling_that_predates_the_gate_is_not_a_baseline(
+    client, monkeypatch
+):
+    """门之前进来的超大文件：它的上一版记不下来（历史也要过这道门），但保存本身照
+    走。若在这里失败，这份文件就再也保存不了了 —— 每次都会先撞上它。"""
+    project, room = _room(client)
+    path = library.room_files_root(project, room) / "output" / "报告.docx"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x" * (CEILING + 1))
+    monkeypatch.setattr(library, "MAX_FILE_BYTES", CEILING)
+
+    saved = _show(client, project, room, b"a smaller draft")
+
+    assert saved.status_code == 200, saved.text
+    assert _current(client, room) == b"a smaller draft"
+    history = _history(client, room)
+    assert [h["seq"] for h in history] == [1]
+    assert history[0]["size"] == len(b"a smaller draft")

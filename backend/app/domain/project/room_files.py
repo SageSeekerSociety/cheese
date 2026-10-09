@@ -164,7 +164,12 @@ async def save_room_file(
             say("fileChangedSinceRead"),
             data={"path": path, "version": now_version, "base_version": base_version},
         )
-    if latest is None and before is not None:
+    # A file that is already here can be over the ceiling: it went in before
+    # the gate existed. The history only holds what the ceiling allows, so that
+    # earlier state is not recorded — the save itself still goes through (its
+    # own bytes face the gate like any other). Failing here instead would leave
+    # such a file impossible to save at all: every attempt would hit this first.
+    if latest is None and before is not None and len(before) <= library.MAX_FILE_BYTES:
         latest = await _record(
             session,
             project_id=project_id,

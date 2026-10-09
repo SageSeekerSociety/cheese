@@ -121,6 +121,13 @@ def _revision_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
 
 
 def write_revision_blob(project_id: uuid.UUID, room_id: uuid.UUID, data: bytes) -> str:
+    """Keep one exact content under its hash — and never past the ceiling.
+
+    A revision is read back as a file, so a byte that could not have gone into
+    the room must not land here either: this is where the history's bytes land,
+    so the ceiling is checked here too (:func:`refuse_oversize`).
+    """
+    refuse_oversize(data)
     digest = hashlib.sha256(data).hexdigest()
     target = _revision_root(project_id, room_id) / digest
     if not target.is_file():

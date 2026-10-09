@@ -22,7 +22,12 @@ from app.api.deps import get_broker
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.block.shown import add_shown_block
 from app.domain.documents import catalogue, editor
@@ -380,6 +385,13 @@ async def editor_saves_file(
             base_version=target.version,
             editor_key=target.key,
         )
+    except UnprocessableEntityError as exc:
+        # Over the ceiling: a refusal, and the editor has to hear why. Left to
+        # itself it arrives as a 422 whose body is not `{"error": 0}` — "not
+        # saved" without a reason. Answer in the shape it reads instead.
+        logger.warning("office editor save refused: %s", exc)
+        await db.rollback()
+        return JSONResponse({"error": 1, "message": str(exc)}, status_code=403)
     except ConflictError:
         # Somebody else saved this file after the editor opened it. Writing
         # over it would drop their change without anyone seeing; dropping this
@@ -389,18 +401,24 @@ async def editor_saves_file(
         mark = f"（{author} 的修改）"
         aside = f"{stem}{mark}.{ext}" if dot else f"{target.path}{mark}"
         await db.rollback()
-        await room_files.save_room_file(
-            db,
-            project_id=target.project_id,
-            room_id=target.room_id,
-            path=aside,
-            data=data,
-            author=author,
-            author_kind="human",
-            source="editor",
-            note=f"保存时 {target.path} 已被别人改过，这一份另存在这里",
-            editor_key=target.key,
-        )
+        try:
+            await room_files.save_room_file(
+                db,
+                project_id=target.project_id,
+                room_id=target.room_id,
+                path=aside,
+                data=data,
+                author=author,
+                author_kind="human",
+                source="editor",
+                note=f"保存时 {target.path} 已被别人改过，这一份另存在这里",
+                editor_key=target.key,
+            )
+        except UnprocessableEntityError as exc:
+            # Same ceiling, same answer — the copy beside it is a file too.
+            logger.warning("office editor save refused: %s", exc)
+            await db.rollback()
+            return JSONResponse({"error": 1, "message": str(exc)}, status_code=403)
         place = await TopicService(db).place_or_404(target.room_id)
         shown = await add_shown_block(
             db,

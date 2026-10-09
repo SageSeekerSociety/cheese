@@ -1,10 +1,11 @@
 """一个文件多大为止，判在**字节落地的那一层**，不在上传那一层的门口。
 
-上限只有一个数（``service.MAX_FILE_BYTES``，默认 10MB），落地只有两处：房间文件走
+上限只有一个数（``service.MAX_FILE_BYTES``，默认 10MB），落地只有三处：房间文件走
 ``service.write_room_file``，资料库走 ``records._put``（``add`` 和 ``replace`` 都从
-这里过）。所以调用方漏判也好、绕开网关直连后端端口也好（``main.py`` 的 OpenAPI
-``servers`` 把「直连后端端口」列为合法入口，``client_max_body_size`` 在那条路上不
-存在），字节一样写不进去。
+这里过），房间文件的每一版历史走 ``service.write_revision_blob`` —— 历史读得回来，
+所以它和房间文件本身是同一道上限。所以调用方漏判也好、绕开网关直连后端端口也好
+（``main.py`` 的 OpenAPI ``servers`` 把「直连后端端口」列为合法入口，
+``client_max_body_size`` 在那条路上不存在），字节一样写不进去。
 
 入口那一侧量两件事：**先限读、再拒**（读回来的长度只到上限多一个字节，不是整份
 body），以及**拒在碰服务之前** —— 两个服务桩是那个「走过去了」的哨兵，真的走到服务
@@ -134,6 +135,39 @@ def test_a_room_file_at_the_ceiling_is_written(
 
     target = (
         Path(tmp_path) / ".room-files" / str(project_id) / str(room_id) / "报告.bin"
+    )
+    assert target.read_bytes() == b"x" * CEILING
+
+
+def test_a_revision_blob_over_the_ceiling_is_refused_and_leaves_no_bytes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """一版历史也是文件：读得回来的字节一样过这道上限。"""
+    monkeypatch.setattr(service, "MAX_FILE_BYTES", CEILING)
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
+    project_id, room_id = uuid.uuid4(), uuid.uuid4()
+
+    with pytest.raises(UnprocessableEntityError) as refused:
+        service.write_revision_blob(project_id, room_id, b"x" * (CEILING + 1))
+
+    assert refused.value.status_code == 422
+    assert refused.value.message.key == "fileTooLarge"
+    root = Path(tmp_path) / ".room-file-history" / str(project_id) / str(room_id)
+    assert list(root.rglob("*")) == []
+
+
+def test_a_revision_blob_at_the_ceiling_is_written(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """界线也是「超过」：正好等于上限的那一版正常留下。"""
+    monkeypatch.setattr(service, "MAX_FILE_BYTES", CEILING)
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
+    project_id, room_id = uuid.uuid4(), uuid.uuid4()
+
+    digest = service.write_revision_blob(project_id, room_id, b"x" * CEILING)
+
+    target = (
+        Path(tmp_path) / ".room-file-history" / str(project_id) / str(room_id) / digest
     )
     assert target.read_bytes() == b"x" * CEILING
 
