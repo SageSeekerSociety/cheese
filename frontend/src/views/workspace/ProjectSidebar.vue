@@ -20,11 +20,16 @@ import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
 // every navigation inside the project (ProjectShell's doc comment says why).
 //
-// Its one rule: EVERY click here is a route change in the content area. Nothing
-// in this file opens something "in place" — that split (some rows swapped the
-// panel, others pushed a full page and took the sidebar with them) was the
-// reason a click's outcome was unpredictable.
-defineOptions({ name: 'ProjectSidebar' })
+// Its one rule: every click here means a route change in the content area. The one
+// thing that opens in place is 新建频道 (`NewChannelDialog`) — that makes a new
+// channel rather than showing a different view of the one you are on, and it is the
+// sidebar's single exception (`.claude/rules/project-sidebar.md`).
+//
+// `inheritAttrs: false`: the router hands this view the whole route params as props,
+// and whatever it does not name by a prop lands here as attrs. This template has two
+// root nodes now, so there is no single element left to inherit them; say so rather
+// than let Vue warn about each one. `SplitListColumn` does the same.
+defineOptions({ name: 'ProjectSidebar', inheritAttrs: false })
 
 // `page`: 手机上话题列表是页面栈的一层，占满内容区（由 WorkspaceEntry 挂起来）。
 // 不带这个 prop 的那份是常驻侧栏——桌面才有，所以手机上它整个不渲染。

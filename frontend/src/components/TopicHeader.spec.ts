@@ -197,13 +197,22 @@ describe('手机上话题头的 ⋯', () => {
     expect(archiveTopic).toHaveBeenCalledWith('topic-1')
   })
 
-  it('不管这个频道的人既不能改名也不能归档', async () => {
+  it('不管这个频道的人能改名，但不能归档', async () => {
     mountHeader({ can_manage: false })
+
+    await openMore()
+    // 改名只要「进得来这个频道」；频道叫什么是用它的人一起定的事。
+    await screen.findByRole('menuitem', { name: '重命名' })
+    expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
+  })
+
+  it('已归档的频道，不管它的人一样动不了', async () => {
+    mountHeader({ status: 'archived', can_manage: false })
 
     await openMore()
     await screen.findByRole('menuitem', { name: '复制链接' })
     expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
-    expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: '取消归档' })).toBeNull()
   })
 
   it('已归档的话题只能取消归档', async () => {

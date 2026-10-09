@@ -81,6 +81,8 @@ const store = reactive({
   loadingTopics: false,
   unreadMap: {},
   privateUnreadMap: {},
+  // 侧栏那颗「新建频道」的 ＋ 只给项目里的人看，外部成员不给。
+  isExternal: () => false,
 })
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 // 侧栏挂在房间下的任务另读一份；这里钉的不是它。
