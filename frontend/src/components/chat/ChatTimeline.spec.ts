@@ -140,7 +140,7 @@ describe('each task made on its own in the channel keeps its own card', () => {
       id,
       conversation_id: 't',
       kind: 'event',
-      author_type: 'system',
+      author_type: 'platform',
       author: 'system',
       content: '<@lin> 创建了任务「新任务」，由 <@lin> 负责',
       created_at: at,
