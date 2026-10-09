@@ -46,6 +46,7 @@ import json
 import os
 import re
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -3512,7 +3513,7 @@ def _sync_task(task_id: str) -> list[str]:
             )
             _tell_room_left_out(admin, data, dropped)
             _once_more_if_transient(
-                lambda: _backup_task_snapshot(worktree, admin, data, head, snapshot)
+                lambda: _backup_task_snapshot(worktree, data, head, snapshot)
             )
             if closed:
                 # Kept, never delivered: what the checkout holds is in the
@@ -3702,7 +3703,25 @@ def _backed_up_already(worktree, task_id, head, snapshot) -> bool:
         return False
 
 
-def _backup_task_snapshot(worktree, admin, data, head, snapshot):
+@contextlib.contextmanager
+def _transient_bundle(stem: str):
+    """Where one bundle lives while it is written, read back and dropped.
+
+    Never inside the git directory it serves: on Windows a checkout sits under
+    a session's home, and the path there plus the ".lock" git appends while
+    writing passes the 260 characters the OS allows, so the write fails with
+    ENOENT and the backup never reaches the platform. The system temp
+    directory is short everywhere, and `mkdtemp` makes the directory private,
+    which a bundle needs: it carries the task's unpushed work until the upload
+    lands."""
+    directory = Path(tempfile.mkdtemp(prefix="cheese-"))
+    try:
+        yield directory / f"{stem}.bundle"
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _backup_task_snapshot(worktree, data, head, snapshot):
     task_id = data["task_id"]
     ref = f"refs/cheese/snapshots/{task_id}"
     base = f"refs/remotes/origin/{data['base']}"
@@ -3719,8 +3738,9 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
     if _backed_up_already(worktree, task_id, head, snapshot):
         return
     _git_task(worktree, "update-ref", ref, snapshot)
-    bundle = admin / f"cheese-snapshot-{snapshot}.bundle"
-    try:
+    # Built afresh on every try: the base moves on, and a bundle kept from a
+    # refused upload went out again unchanged, refused at every turn.
+    with _transient_bundle(f"cheese-snapshot-{snapshot}") as bundle:
         _git_task(worktree, "bundle", "create", str(bundle), ref, *known)
         digest = hashlib.sha256()
         with bundle.open("rb") as stream:
@@ -3738,10 +3758,6 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
                 receipt = json.load(response)["data"]
         if receipt["digest"] != digest.hexdigest():
             raise RuntimeError("Task backup acknowledgement did not match the bundle")
-    finally:
-        # Built afresh on every try: the base moves on, and a bundle kept from
-        # a refused upload went out again unchanged, refused at every turn.
-        bundle.unlink(missing_ok=True)
 
 
 def _recovery_dir(task_id: str, snapshot: dict) -> Path:
@@ -3898,7 +3914,7 @@ def _restore_snapshot(worktree: Path, data: dict) -> bool:
         return True
     task_id = data["task_id"]
     try:
-        told = _apply_snapshot(worktree, admin, data)
+        told = _apply_snapshot(worktree, data)
     except (Exception, SystemExit) as exc:
         print(
             f"[cheese] 任务 {task_id}：没能从平台快照恢复上次没推送的工作（{exc}）。"
@@ -3914,7 +3930,7 @@ def _restore_snapshot(worktree: Path, data: dict) -> bool:
     return True
 
 
-def _apply_snapshot(worktree: Path, admin: Path, data: dict) -> str | None:
+def _apply_snapshot(worktree: Path, data: dict) -> str | None:
     """Restore the task's latest snapshot into `worktree` when it holds work
     the checkout does not, never over work already there; what to tell the
     agent, or None when there is nothing to restore."""
@@ -3934,11 +3950,8 @@ def _apply_snapshot(worktree: Path, admin: Path, data: dict) -> str | None:
     repo = Path(
         _git_task(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir")
     )
-    bundle = admin / f"cheese-restore-{snapshot['id']}.bundle"
-    try:
+    with _transient_bundle(f"cheese-restore-{snapshot['id']}") as bundle:
         _unbundle(repo, bundle, _download_snapshot(task_id, snapshot, bundle))
-    finally:
-        bundle.unlink(missing_ok=True)
     when = _snapshot_time(snapshot)
     work = saved != head
     files = _changed_files(worktree, head, saved) if work else {}
