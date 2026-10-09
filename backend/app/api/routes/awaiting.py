@@ -173,11 +173,16 @@ async def waiting_items(
             now=now,
         )
         card = task_cards.get(task.id)
+        asking = asked.get(task.id)
         addressed = address(
             Event(
                 reviewers=() if card is None else (card.reviewer_handle,),
                 reporter=task.reporter_handle,
-                asked=asked.get(task.id),
+                asked=asking,
+                # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知
+                # 那边同一个名单（`announce.notify_question`）。题根本不在等，就没
+                # 有这一层。
+                asked_also=(task.people if task.id in asked and asking is None else ()),
                 owner=(
                     task.owner_handle
                     if presentation.owner_acts_on(shown, running=task.id in running)

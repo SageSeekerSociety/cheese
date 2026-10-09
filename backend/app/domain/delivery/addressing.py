@@ -107,14 +107,19 @@ def hand_of(column: Column) -> Hand:
 class Event:
     """一条事件，窄到只剩寻址要读的部分：它点了谁的名。
 
-    `reviewers` 是复数而另外几个不是，因为只有验收这一种关系可能同时点到几个人：
-    一张卡有一个验收人，而一条作废了某张批准票的事件还点到投那一票的人 —— 重新投
-    一次这件事只有他能做。其余几种各只有一个人。
+    `reviewers` 和 `asked_also` 是复数，另外几个不是：一张卡有一个验收人，而一条
+    作废了某张批准票的事件还点到投那一票的人 —— 重新投一次这件事只有他能做；一道
+    题问在一条活里、又没落在某个人头上时，等回答的是这条活的几个人。其余几种各只
+    有一个人。
     """
 
     reviewers: tuple[str, ...] = ()
     reporter: str | None = None
     asked: str | None = None
+    #: 和 `asked` 一起等这个回答的人 —— 同一道题、同一个理由（「待你回答」），分成
+    #: 两个字段只因为 `asked` 装得下一个人。一道题问在一条活里、又没落在某个人头上
+    #: 时，等它的是这条活的人：负责人和协作者（`room_task.models.Task.people`）。
+    asked_also: tuple[str, ...] = ()
     #: 任务负责人 —— 只在这一格的下一步在他手上时才点（`presentation.owner_acts_on`）；
     #: 只是任务开着不点。
     owner: str | None = None
@@ -184,6 +189,7 @@ def address(event: Event, next_hand: Hand) -> Addressed:
     seen: set[str] = set()
     for handle, reason in (
         (event.asked, REASON_ASKED),
+        *((h, REASON_ASKED) for h in event.asked_also),
         *((h, REASON_REVIEWER) for h in event.reviewers),
         (event.reporter, REASON_REPORTER),
         (event.owner, REASON_OWNER),

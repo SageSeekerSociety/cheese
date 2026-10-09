@@ -184,6 +184,14 @@ def _asked_where(place: Place) -> dict[str, str]:
     return {}
 
 
+def _people_of_the_task(place: Place) -> tuple[str, ...]:
+    """一道题落在整条活上时等它的那些人：这条活的人（`Task.people`）。
+
+    频道和支线里没有「这条活的人」，那里返回空 —— 题不落在谁头上，就谁也不通知。
+    """
+    return place.task.people if place.task is not None else ()
+
+
 async def notify_question(
     session: AsyncSession,
     *,
@@ -203,8 +211,11 @@ async def notify_question(
     共用一个码，前端就无法区分该按哪一种渲染。
 
     这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：这件事**停在这个问题
-    上了**，在他回答之前没有任何一方能往下走。`asked` 是那个人，None 是「这个问题指
-    不到具体的人」（平台发起的轮次），那就谁也不通知。
+    上了**，在他回答之前没有任何一方能往下走。`asked` 是那个人；None 是「这道题没
+    落在某一个人头上」（平台发起的轮次），这时它落在**整条活**上 —— 等回答的是这条
+    活的人：负责人和协作者（`_people_of_the_task`），一道题问给几个人，就是这几个人
+    各自的待办。频道和支线没有「这条活的人」，那里仍旧谁也不通知：一条多数人不需要
+    处理的通知发给整个名册，代价是他们此后关闭这个渠道。
     """
     await deliver(
         session,
@@ -231,7 +242,14 @@ async def notify_question(
             # id，就是为了这个时刻拿得到。
             occurred_at=block.created_at,
         ),
-        address(Event(asked=asked), Hand.participant),
+        address(
+            # 题落在某一个人头上时就只有他：`asked` 有值，别人不等它。
+            Event(
+                asked=asked,
+                asked_also=() if asked else _people_of_the_task(place),
+            ),
+            Hand.participant,
+        ),
     )
 
 

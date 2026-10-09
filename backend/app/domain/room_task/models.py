@@ -295,3 +295,23 @@ class Task(UuidPk, Timestamps, Base):
         ),
         nullable=True,
     )
+
+    @property
+    def people(self) -> tuple[str, ...]:
+        """This task's people — the owner first, then its contributors.
+
+        A question asked inside a task and landing on no one person waits on
+        them: whose work this is, and who answers for it. Both places that
+        record it read this one list (`agent/announce.py`'s ``notify_question``
+        writes the notification, `api/routes/awaiting.py` the 待办). A channel
+        or 支线 has no such list, so a question there still lands on nobody.
+
+        The owner leads because he is 唯一的主 (``owner_handle``); a contributor
+        who is also the owner, or listed twice, is one person here.
+        """
+        people: list[str] = []
+        for handle in (self.owner_handle, *self.contributor_handles):
+            name = (handle or "").strip()
+            if name and name not in people:
+                people.append(name)
+        return tuple(people)
