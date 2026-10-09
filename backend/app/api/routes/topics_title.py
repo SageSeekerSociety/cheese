@@ -63,10 +63,6 @@ async def set_title(
         )
         out = TaskOut.model_validate(task).model_dump(mode="json")
         await db.commit()
-        await announce_stale(place.room_id, "topics", id=place.room_id)
-        # The task's own page listens on the task's conversation, but the row
-        # that changed is the ROOM's in the sidebar — a task id is not a row.
-        await announce_stale(task.id, "topics", id=place.room_id)
         return ok(out)
     # A channel is renamed by whoever manages it, as the rest of its settings
     # are.

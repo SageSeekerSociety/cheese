@@ -10,8 +10,6 @@ Infrastructure, not a domain: any domain that changes what a page shows queues
 here, and none of them needs the realtime broker to do it.
 """
 
-import uuid
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 #: The `session.info` slot: (channel, frame) pairs to publish after commit.
@@ -21,11 +19,3 @@ SHOW_ONCE_COMMITTED = "notices_shown_once_committed"
 def show_once_committed(session: AsyncSession, channel: object, frame: dict) -> None:
     """Send ``frame`` to the pages open on ``channel`` once this commits."""
     session.info.setdefault(SHOW_ONCE_COMMITTED, []).append((str(channel), frame))
-
-
-def show_state_once_committed(session: AsyncSession, room_id: uuid.UUID) -> None:
-    """Tell the pages open on ``room_id`` that its tasks changed (a sidebar row,
-    a task's status), once this commits."""
-    show_once_committed(
-        session, room_id, {"type": "state", "resource": "topics", "id": str(room_id)}
-    )

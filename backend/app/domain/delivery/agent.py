@@ -16,7 +16,6 @@ from sqlalchemy import or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
-from app.core.live_frames import show_state_once_committed
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
@@ -363,9 +362,7 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                 # The turn that writes a finished task up is over, however it
                 # went: the task closes now (`room_task.closing`).
                 if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
-                    closed = await close_after_summary(session, row.conversation_id)
-                    if closed is not None:
-                        show_state_once_committed(session, closed.room_id)
+                    await close_after_summary(session, row.conversation_id)
             await session.commit()
 
 
