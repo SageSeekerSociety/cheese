@@ -14,7 +14,11 @@ conversation are told when it flushed
 
 - a change to the task's row (started, closed, accepted, renamed, handed over…);
 - a question asked in the task, or an answer recorded on one: what the task
-  reads as (`presentation`, 待回答) turns on its latest question.
+  reads as (`presentation`, 待回答) turns on its latest question;
+- a turn in the task reaching its session or ending (运行中): the turn's
+  interval is written with a bulk `update(AgentTurn)`, which a flush hook does
+  not see, so its writer (`AgentTurnRepository`) queues the frames through
+  `turns_moved` in the same session.
 
 Both frames name the ROOM: the sidebar's row is the room's, and a task id is not
 an address (`GET /topics/{task}` answers 404). A rollback tells nobody. A bulk
@@ -25,8 +29,10 @@ itself (`naming._publish`).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 
 from sqlalchemy import event, inspect, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.live_frames import SHOW_ONCE_COMMITTED
@@ -54,7 +60,9 @@ def _a_question_moved(session: Session, block: Block) -> bool:
     return block in session.new or inspect(block).attrs.meta.history.has_changes()
 
 
-def _tell(session: Session, task_id: uuid.UUID, room_id: uuid.UUID) -> None:
+def _tell(
+    session: Session | AsyncSession, task_id: uuid.UUID, room_id: uuid.UUID
+) -> None:
     frame = {"type": "state", "resource": "topics", "id": str(room_id)}
     queued = session.info.setdefault(SHOW_ONCE_COMMITTED, [])
     for channel in (str(room_id), str(task_id)):
@@ -84,3 +92,17 @@ def _note_tasks(session: Session, _context) -> None:
         )
         for task_id, room_id in rooms:
             _tell(session, task_id, room_id)
+
+
+async def turns_moved(
+    session: AsyncSession, conversations: Iterable[uuid.UUID]
+) -> None:
+    """A turn reached its session, or ended, in these conversations: the ones
+    that are tasks are told once ``session`` commits. Read in ``session``
+    itself, so nothing is left running once its caller is done with it."""
+    ids = set(conversations)
+    if not ids:
+        return
+    rows = await session.execute(select(Task.id, Task.room_id).where(Task.id.in_(ids)))
+    for task_id, room_id in rows:
+        _tell(session, task_id, room_id)

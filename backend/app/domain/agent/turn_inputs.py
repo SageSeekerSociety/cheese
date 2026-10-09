@@ -341,12 +341,7 @@ async def _retire(db: AsyncSession, *, turn_id: uuid.UUID, at: datetime) -> None
     """End the interval. `stopped_at` is the whole of it — never a
     completion, never hook-work accounting."""
 
-    await db.execute(
-        update(AgentTurn)
-        .where(AgentTurn.id == turn_id)
-        .where(AgentTurn.stopped_at.is_(None))
-        .values(stopped_at=at)
-    )
+    await AgentTurnRepository(db).close([turn_id], at)
 
 
 async def ensure_interval_and_input(
