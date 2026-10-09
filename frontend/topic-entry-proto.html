@@ -1,0 +1,1445 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>新建频道入口 · 设计 demo</title>
+    <!--
+      设计 demo（手写单文件，不走 vite）。
+
+      现有的 dashboard-proto / feedback-proto 是「用真组件 + 假数据」跑的，那套要装
+      依赖、起构建；这一份要的是**能点开就能看的设计稿**，所以样式直接照抄
+      src/style.css 的令牌，控件是照着组件的真样式复刻的（.rail-browse、.side-nav
+      的行、.task-notice、NewChannelDialog）。
+
+      它不是产品代码，颜色只从令牌里取，深浅两套都在这里，别拿它当实现。
+    -->
+    <style>
+      /* ===== 设计令牌：照抄 src/style.css，只留这一页用得到的 ===== */
+      :root {
+        color-scheme: light;
+        --ink: #191a1c;
+        --text: #36383c;
+        --muted: #5a5e66;
+        --faint: #747a82;
+        --line: #ecedef;
+        --line-2: #e2e3e6;
+        --fill: #f4f5f7;
+        --fill-2: #eeeff1;
+        --canvas: #f7f8fa;
+        --surface: #ffffff;
+        --raised: #ffffff;
+        --accent: #f57f17;
+        --accent-press: #d96e0a;
+        --accent-ink: #9a5413;
+        --accent-wash: #fdf1e2;
+        --ok-ink: #12703a;
+        --ok-wash: #e8f6ee;
+        --warn: #e8901c;
+        --warn-ink: #8f5406;
+        --warn-wash: #faf0dc;
+        --danger-ink: #b91c1c;
+        --overlay: rgba(25, 26, 28, 0.44);
+        --shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
+        --shadow-2: 0 4px 12px rgba(25, 26, 28, 0.1), 0 12px 32px rgba(25, 26, 28, 0.1);
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --radius-lg: 12px;
+        --radius-pill: 999px;
+        --lh-12: 18px;
+        --lh-14: 20px;
+        --lh-15: 21px;
+        --lh-23: 33px;
+        --dur-quick: 150ms;
+        --dur-base: 220ms;
+        --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+        --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'PingFang SC', 'HarmonyOS Sans SC',
+          'MiSans', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+        --ink: #f3f4f6;
+        --text: #d3d6db;
+        --muted: #aeb4bd;
+        --faint: #888ea0;
+        --line: #2b2e33;
+        --line-2: #3a3e45;
+        --fill: #212429;
+        --fill-2: #282c31;
+        --canvas: #141517;
+        --surface: #1b1d20;
+        --raised: #212429;
+        --accent: #ffa733;
+        --accent-press: #ffbc5e;
+        --accent-ink: #ffc670;
+        --accent-wash: #2e2216;
+        --ok-ink: #6fd9a0;
+        --ok-wash: #14261d;
+        --warn: #f0a94a;
+        --warn-ink: #f7c078;
+        --warn-wash: #2a2114;
+        --danger-ink: #f79490;
+        --overlay: rgba(0, 0, 0, 0.6);
+        --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+        --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: var(--canvas);
+        color: var(--text);
+        font-family: var(--font-sans);
+        font-size: 14px;
+        line-height: var(--lh-14);
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        padding: 0 0 72px;
+      }
+      button {
+        font-family: inherit;
+      }
+      svg {
+        display: block;
+      }
+
+      /* ===== 这一页自己的外壳（不是产品的一部分） ===== */
+      .bar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 24px;
+        background: color-mix(in srgb, var(--canvas) 88%, transparent);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--line);
+      }
+      .bar__t {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .bar__sub {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: var(--lh-12);
+        color: var(--faint);
+      }
+      .bar__spacer {
+        flex: 1 1 auto;
+      }
+      .seg {
+        display: inline-flex;
+        padding: 2px;
+        background: var(--fill);
+        border-radius: var(--radius-pill);
+      }
+      .seg button {
+        height: 26px;
+        padding: 0 12px;
+        font-size: 12px;
+        color: var(--muted);
+        background: none;
+        border: 0;
+        border-radius: var(--radius-pill);
+        cursor: pointer;
+      }
+      .seg button[aria-pressed='true'] {
+        background: var(--surface);
+        color: var(--ink);
+        font-weight: 600;
+        box-shadow: var(--shadow-1);
+      }
+
+      main {
+        max-width: 1080px;
+        padding: 32px 24px 0;
+        margin: 0 auto;
+      }
+      section + section {
+        margin-top: 56px;
+        padding-top: 40px;
+        border-top: 1px solid var(--line);
+      }
+      h2 {
+        margin: 0 0 6px;
+        font-size: 18px;
+        font-weight: 650;
+        line-height: 26px;
+        letter-spacing: -0.01em;
+        color: var(--ink);
+      }
+      h2 .num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        margin-right: 10px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent-ink);
+        background: var(--accent-wash);
+        border-radius: var(--radius-sm);
+        vertical-align: 1px;
+      }
+      .lede {
+        max-width: 62ch;
+        margin: 0 0 20px;
+        font-size: 14px;
+        line-height: 22px;
+        color: var(--muted);
+      }
+      .lede b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .points {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 0;
+        margin: 20px 0 0;
+        list-style: none;
+        max-width: 78ch;
+      }
+      .points li {
+        position: relative;
+        padding-left: 18px;
+        font-size: 14px;
+        line-height: 22px;
+        color: var(--muted);
+      }
+      .points li::before {
+        content: '';
+        position: absolute;
+        top: 8px;
+        left: 2px;
+        width: 6px;
+        height: 6px;
+        border-radius: var(--radius-pill);
+        background: var(--line-2);
+      }
+      .points li b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .points li.no::before {
+        background: var(--warn);
+      }
+      .points li.yes::before {
+        background: var(--accent);
+      }
+
+      /* 舞台：一张「截图」。虚线是设计稿的边，不是产品里的东西。 */
+      .stage {
+        position: relative;
+        padding: 20px;
+        background: var(--fill);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+      }
+      .stage__tag {
+        position: absolute;
+        top: -9px;
+        left: 16px;
+        padding: 1px 8px;
+        font-size: 12px;
+        line-height: 16px;
+        color: var(--muted);
+        background: var(--canvas);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-pill);
+      }
+      .stage__tag--now {
+        color: var(--warn-ink);
+        border-color: var(--warn);
+      }
+      .stage__tag--new {
+        color: var(--accent-ink);
+        border-color: var(--accent);
+      }
+      .stage + .stage {
+        margin-top: 28px;
+      }
+      .pair {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 28px;
+      }
+      @media (min-width: 900px) {
+        .pair {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      /* ===== 复刻的产品外壳 ===== */
+      .app {
+        display: flex;
+        height: 460px;
+        overflow: hidden;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-1);
+      }
+      .app--tall {
+        height: 520px;
+      }
+      .app__rail {
+        display: flex;
+        flex: 0 0 56px;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 0;
+        background: var(--canvas);
+      }
+      .rail-avatar {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--ink);
+        background: var(--fill-2);
+        border-radius: var(--radius-md);
+      }
+      .rail-avatar--on {
+        color: #fff;
+        background: var(--accent);
+      }
+      .app__side {
+        display: flex;
+        flex: 1 1 320px;
+        flex-direction: column;
+        min-width: 0;
+        background: var(--canvas);
+        border-right: 1px solid var(--line);
+      }
+      .app__side--narrow {
+        flex-basis: 280px;
+      }
+      .app__main {
+        display: flex;
+        flex: 1 1 auto;
+        flex-direction: column;
+        min-width: 0;
+        background: var(--surface);
+      }
+
+      /* ---- 侧栏：项目行 ---- */
+      .proj {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .proj__avatar {
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--ink);
+        background: var(--fill-2);
+        border-radius: var(--radius-sm);
+      }
+      .proj__name {
+        overflow: hidden;
+        font-size: 15px;
+        font-weight: 600;
+        line-height: var(--lh-15);
+        color: var(--ink);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .proj__chev {
+        flex: none;
+        color: var(--faint);
+      }
+      .proj__spacer {
+        flex: 1 1 auto;
+      }
+      .iconbtn {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        color: var(--faint);
+        background: none;
+        border: 0;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+      }
+      .iconbtn:hover {
+        color: var(--ink);
+        background: var(--fill-2);
+      }
+
+      /* ---- 侧栏：行 ---- */
+      .side__scroll {
+        flex: 1 1 auto;
+        padding: 4px 0 12px;
+        overflow-y: auto;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: calc(100% - 16px);
+        min-height: 36px;
+        margin-inline: 8px;
+        padding: 0 8px;
+        font-size: 14px;
+        line-height: var(--lh-14);
+        color: var(--text);
+        text-align: left;
+        background: none;
+        border: 0;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: background-color var(--dur-quick) var(--ease-standard);
+      }
+      .row:hover {
+        background: var(--fill-2);
+      }
+      .row.is-active,
+      .row.is-active:hover {
+        background: var(--line-2);
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .row__slot {
+        display: inline-flex;
+        flex: 0 0 16px;
+        align-items: center;
+        justify-content: center;
+        color: var(--faint);
+      }
+      .row.is-active .row__slot {
+        color: var(--muted);
+      }
+      .row__label {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .row__count {
+        flex: none;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 18px;
+        color: var(--accent-ink);
+        text-align: center;
+        background: var(--accent-wash);
+        border-radius: var(--radius-pill);
+      }
+      .row--browse {
+        color: var(--muted);
+      }
+      .row--browse .row__slot {
+        color: var(--faint);
+      }
+
+      /* ---- 侧栏：分组标题（+ 的落点） ---- */
+      .subhead {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 16px 4px;
+      }
+      .subhead__label {
+        flex: 1 1 auto;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: var(--lh-12);
+        letter-spacing: 0.04em;
+        color: var(--faint);
+      }
+      .subhead__add {
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        color: var(--faint);
+        background: none;
+        border: 0;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition:
+          color var(--dur-quick) var(--ease-standard),
+          background-color var(--dur-quick) var(--ease-standard);
+      }
+      .subhead__add:hover,
+      .subhead__add:focus-visible {
+        color: var(--accent-ink);
+        background: var(--accent-wash);
+      }
+      /* 现状那一版：把「本该有 ＋」的那个空位圈出来 */
+      .ghost-add {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        color: var(--line-2);
+        border: 1px dashed var(--warn);
+        border-radius: var(--radius-sm);
+      }
+      .ghost-add.mark {
+        box-shadow: 0 0 0 2px var(--warn-wash);
+      }
+
+      /* ---- 内容区 ---- */
+      .page-head {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .page-head__t {
+        font-size: 15px;
+        font-weight: 600;
+        line-height: var(--lh-15);
+        color: var(--ink);
+      }
+      .page-head__spacer {
+        flex: 1 1 auto;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 32px;
+        padding: 0 12px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+      }
+      .btn--primary {
+        color: #fff;
+        background: var(--accent);
+        border-color: var(--accent);
+      }
+      :root[data-theme='dark'] .btn--primary {
+        color: #1b1d20;
+      }
+      .page-body {
+        flex: 1 1 auto;
+        padding: 20px;
+        overflow: hidden;
+      }
+      .msg {
+        display: flex;
+        gap: 10px;
+        padding: 10px 0;
+      }
+      .msg__avatar {
+        display: flex;
+        flex: none;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--ink);
+        background: var(--fill-2);
+        border-radius: var(--radius-pill);
+      }
+      .msg__body {
+        min-width: 0;
+      }
+      .msg__who {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .msg__when {
+        margin-left: 6px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--faint);
+      }
+      .msg__text {
+        margin-top: 2px;
+        font-size: 14px;
+        line-height: 22px;
+        color: var(--text);
+      }
+      .browse-list {
+        display: flex;
+        flex-direction: column;
+        margin-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+      .browse-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 11px 2px;
+        border-bottom: 1px solid var(--line);
+      }
+      .browse-row__main {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      .browse-row__name {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .browse-row__meta {
+        margin-top: 1px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: var(--lh-12);
+        color: var(--faint);
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        height: 20px;
+        padding: 0 8px;
+        font-size: 12px;
+        line-height: 18px;
+        color: var(--muted);
+        background: var(--fill);
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius-pill);
+      }
+      .chip--warn {
+        color: var(--warn-ink);
+        background: var(--warn-wash);
+        border-color: var(--warn-wash);
+      }
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 16px 8px;
+      }
+      .empty-state__t {
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      /* ---- 任务页头 ---- */
+      .task-head {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        padding: 0 12px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+      }
+      .crumb {
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .crumb b {
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .task-notice {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 16px;
+        font-family: var(--font-mono);
+        font-size: 12px;
+        line-height: var(--lh-12);
+        color: var(--warn-ink);
+        background: var(--warn-wash);
+        border-bottom: 1px solid var(--line);
+      }
+      .task-notice__pick {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .task-notice__select {
+        padding: 2px 8px;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius-sm);
+      }
+      .task-meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        font-size: 13px;
+        color: var(--muted);
+        border-bottom: 1px solid var(--line);
+      }
+      .task-meta__k {
+        color: var(--faint);
+      }
+      .task-meta b {
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .me-chip {
+        display: inline-flex;
+        align-items: center;
+        height: 20px;
+        padding: 0 8px;
+        font-size: 12px;
+        color: var(--ok-ink);
+        background: var(--ok-wash);
+        border-radius: var(--radius-pill);
+      }
+
+      /* ---- 弹窗 ---- */
+      .modal {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: var(--overlay);
+      }
+      .app[data-dialog='open'] .modal {
+        display: flex;
+      }
+      .dialog {
+        width: min(400px, 86%);
+        padding: 0;
+        overflow: hidden;
+        background: var(--raised);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-2);
+      }
+      .dialog__head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 16px 16px 8px;
+      }
+      .dialog__title {
+        flex: 1 1 auto;
+        font-size: 18px;
+        font-weight: 600;
+        line-height: var(--lh-18, 26px);
+        color: var(--ink);
+      }
+      .dialog__body {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding: 4px 16px 16px;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .field__label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .field__input {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 40px;
+        padding: 0 12px;
+        font-size: 14px;
+        color: var(--text);
+        background: var(--surface);
+        border: 1px solid var(--line-2);
+        border-radius: var(--radius-md);
+      }
+      .field__input--focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-wash);
+      }
+      .field__prefix {
+        color: var(--faint);
+      }
+      .field__area {
+        height: 64px;
+        align-items: flex-start;
+        padding: 10px 12px;
+        color: var(--faint);
+      }
+      .check {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+      }
+      .check__box {
+        flex: none;
+        width: 18px;
+        height: 18px;
+        margin-top: 1px;
+        border: 1.5px solid var(--line-2);
+        border-radius: 4px;
+      }
+      .check__t {
+        font-size: 14px;
+        color: var(--text);
+      }
+      .check__hint {
+        margin-top: 2px;
+        font-size: 12px;
+        line-height: var(--lh-12);
+        color: var(--faint);
+      }
+      .dialog__foot {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 12px 16px;
+        background: var(--fill);
+        border-top: 1px solid var(--line);
+      }
+      .dialog__foot .btn {
+        background: var(--surface);
+      }
+      .dialog__foot .btn--primary {
+        background: var(--accent);
+      }
+      .dialog__foot .btn--off {
+        color: var(--faint);
+        cursor: default;
+      }
+
+      /* ---- 标注 ---- */
+      .mark {
+        position: relative;
+        z-index: 1;
+        border-radius: var(--radius-sm);
+        box-shadow: 0 0 0 2px var(--accent);
+      }
+      .mark::after {
+        content: attr(data-mark);
+        position: absolute;
+        top: -22px;
+        right: -4px;
+        padding: 1px 7px;
+        font-size: 11px;
+        font-weight: 600;
+        line-height: 16px;
+        color: #fff;
+        white-space: nowrap;
+        background: var(--accent);
+        border-radius: var(--radius-pill);
+      }
+      :root[data-theme='dark'] .mark::after {
+        color: #1b1d20;
+      }
+      .mark--now {
+        box-shadow: 0 0 0 2px var(--warn);
+      }
+      .mark--now::after {
+        background: var(--warn);
+      }
+      .mark--below::after {
+        top: auto;
+        bottom: -22px;
+      }
+
+      /* ---- 手机 ---- */
+      .phone {
+        width: 320px;
+        margin: 0 auto;
+        padding: 10px;
+        background: var(--fill-2);
+        border-radius: 28px;
+      }
+      .phone__screen {
+        display: flex;
+        flex-direction: column;
+        height: 560px;
+        overflow: hidden;
+        background: var(--surface);
+        border-radius: 20px;
+      }
+      .m-appbar {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 10px;
+        height: 56px;
+        padding: 0 8px 0 4px;
+        border-bottom: 1px solid var(--line);
+      }
+      .m-appbar__t {
+        flex: 1 1 auto;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      .m-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 44px;
+        padding: 0 16px;
+        font-size: 15px;
+        line-height: var(--lh-15);
+        color: var(--text);
+        text-align: left;
+        background: none;
+        border: 0;
+        cursor: pointer;
+      }
+      .m-row.is-active {
+        background: var(--line-2);
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .m-subhead {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 16px 4px;
+      }
+      .m-subhead__label {
+        flex: 1 1 auto;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--faint);
+      }
+      .m-subhead__add {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        color: var(--accent-ink);
+        background: var(--accent-wash);
+        border: 0;
+        border-radius: var(--radius-md);
+      }
+
+      /* 点 ＋ 之后的那一步：把弹窗单独摆出来，静态也看得见 */
+      .dialog-stage {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 300px;
+        background: var(--fill-2);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+      }
+      .dialog-stage .dialog {
+        box-shadow: var(--shadow-2);
+      }
+
+      /* 窄屏（在手机上看这份稿）：桌面稿按原宽度横向滚，不把侧栏压扁 */
+      @media (max-width: 860px) {
+        .stage {
+          overflow-x: auto;
+        }
+        .app {
+          min-width: 720px;
+        }
+      }
+
+      .note {
+        max-width: 78ch;
+        padding: 12px 16px;
+        margin-top: 20px;
+        font-size: 13px;
+        line-height: 20px;
+        color: var(--muted);
+        background: var(--fill);
+        border-left: 3px solid var(--line-2);
+        border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      }
+      .note b {
+        color: var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="bar">
+      <span class="bar__t">新建频道入口 · 设计 demo</span>
+      <span class="bar__sub">知是 · 2026-10-09 · 设计稿，非实现</span>
+      <span class="bar__spacer"></span>
+      <div class="seg" role="group" aria-label="主题">
+        <button type="button" id="theme-light" aria-pressed="true">浅色</button>
+        <button type="button" id="theme-dark" aria-pressed="false">深色</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- ============ 1. 现状 ============ -->
+      <section>
+        <h2><span class="num">1</span>现状：建一个频道，要先离开侧栏</h2>
+        <p class="lede">
+          侧栏里「频道」这一组没有新建入口，唯一的路是列表最底下那行<b>浏览频道</b>，跳到另一页，再点页头右上角的按钮。
+          两步，而且第一步藏在滚动区域的末尾。
+        </p>
+
+        <div class="stage">
+          <span class="stage__tag stage__tag--now">现状</span>
+          <div class="app">
+            <div class="app__rail"><span class="rail-avatar rail-avatar--on">综</span><span class="rail-avatar">前</span></div>
+            <div class="app__side">
+              <div class="proj">
+                <span class="proj__avatar">综</span><span class="proj__name">综合</span>
+                <svg class="proj__chev" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5l4 4 4-4" /></svg>
+                <span class="proj__spacer"></span>
+                <button class="iconbtn" aria-label="项目菜单"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4" /><circle cx="8" cy="8" r="1.4" /><circle cx="13" cy="8" r="1.4" /></svg></button>
+              </div>
+              <div class="side__scroll">
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1.4" /><rect x="9" y="2" width="5" height="5" rx="1.4" /><rect x="2" y="9" width="5" height="5" rx="1.4" /><rect x="9" y="9" width="5" height="5" rx="1.4" /></svg></span><span class="row__label">总览</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3 2.5h7.5a1 1 0 011 1v9a1 1 0 01-1 1H3z" /><path d="M5.5 2.5v11" /></svg></span><span class="row__label">资料库</span></div>
+                <div class="subhead">
+                  <span class="subhead__label">频道</span>
+                  <span class="ghost-add mark mark--now mark--below" data-mark="这里本该有个 ＋" aria-hidden="true"></span>
+                </div>
+                <div class="row is-active"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">综合</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">前端</span><span class="row__count">2</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">设备与机器</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">答疑</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">办公能力</span></div>
+                <div class="row mark mark--now mark--below" data-mark="入口在这里">
+                  <span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2L13.5 13.5" /></svg></span>
+                  <span class="row__label">浏览频道</span>
+                </div>
+              </div>
+            </div>
+            <div class="app__main">
+              <div class="page-head">
+                <span class="page-head__t">浏览频道</span>
+                <span class="page-head__spacer"></span>
+                <button class="btn btn--primary mark" data-mark="第二步：在这儿建">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9" /></svg>
+                  新建频道
+                </button>
+              </div>
+              <div class="page-body">
+                <div class="browse-list" style="margin-top: 0; border-top: 0">
+                  <div class="browse-row">
+                    <div class="browse-row__main">
+                      <span class="browse-row__name"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg>前端</span>
+                      <div class="browse-row__meta">已加入 · 6 人 · 2 件进行中</div>
+                    </div>
+                  </div>
+                  <div class="browse-row">
+                    <div class="browse-row__main">
+                      <span class="browse-row__name"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="7" width="9" height="6" rx="1.2" /><path d="M5.5 7V5a2.5 2.5 0 015 0v2" /></svg>办公能力</span>
+                      <div class="browse-row__meta">私密 · 4 人</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stage">
+          <span class="stage__tag stage__tag--now">现状</span>
+          <div class="app app--tall" style="height: 200px">
+            <div class="app__side app__side--narrow">
+              <div class="proj"><span class="proj__avatar">综</span><span class="proj__name">综合</span><span class="proj__spacer"></span></div>
+              <div class="side__scroll">
+                <div class="subhead"><span class="subhead__label">频道</span></div>
+                <div class="row is-active"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">综合</span></div>
+              </div>
+            </div>
+            <div class="app__main">
+              <div class="task-head">
+                <span class="crumb"># 综合 / <b>新任务</b></span>
+                <span class="chip">讨论中</span>
+                <span class="page-head__spacer"></span>
+                <button class="btn btn--primary" style="height: 28px">开始</button>
+                <button class="btn" style="height: 28px">概览</button>
+              </div>
+              <div class="task-notice">
+                <span>需要指定由谁审阅，或在项目设置中设置默认审阅的人</span>
+                <label class="task-notice__pick">
+                  <span>审阅人</span>
+                  <span class="task-notice__select" style="border-color: var(--accent)">蔡松洋 ▾</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <ul class="points">
+          <li class="no"><b>入口两步、还埋在末尾</b>：侧栏 →「浏览频道」页 → 页头按钮。频道少的时候没人记得住它在哪。</li>
+          <li class="no"><b>同一件事有两个说法</b>：「浏览频道」这个名字是给「找/加入别人建的频道」用的，把新建也塞进去，找和建混在一起了。</li>
+          <li class="no"><b>建完还得手选审阅人</b>：没配项目默认审阅时，点「开始」会被拒，页头才顶出一条橙色告警让人补选。</li>
+        </ul>
+      </section>
+
+      <!-- ============ 2. 建议：频道入口 ============ -->
+      <section>
+        <h2><span class="num">2</span>建议一：频道这一组的标题右侧，常驻一个 ＋</h2>
+        <p class="lede">
+          ＋ 就放在「频道」标题右边，<b>常驻可见、不藏在 hover 里</b>，点一下就地弹出新建对话框——不再跳页。
+          原来的「浏览频道」行照旧，只管找和加入。
+        </p>
+
+        <div class="stage">
+          <span class="stage__tag stage__tag--new">建议 · 点侧栏「频道」右边的 ＋</span>
+          <div class="app" id="demo-app">
+            <div class="app__rail"><span class="rail-avatar rail-avatar--on">综</span><span class="rail-avatar">前</span></div>
+            <div class="app__side">
+              <div class="proj">
+                <span class="proj__avatar">综</span><span class="proj__name">综合</span>
+                <svg class="proj__chev" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5l4 4 4-4" /></svg>
+                <span class="proj__spacer"></span>
+                <button class="iconbtn" aria-label="项目菜单"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4" /><circle cx="8" cy="8" r="1.4" /><circle cx="13" cy="8" r="1.4" /></svg></button>
+              </div>
+              <div class="side__scroll">
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1.4" /><rect x="9" y="2" width="5" height="5" rx="1.4" /><rect x="2" y="9" width="5" height="5" rx="1.4" /><rect x="9" y="9" width="5" height="5" rx="1.4" /></svg></span><span class="row__label">总览</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3 2.5h7.5a1 1 0 011 1v9a1 1 0 01-1 1H3z" /><path d="M5.5 2.5v11" /></svg></span><span class="row__label">资料库</span></div>
+                <div class="subhead">
+                  <span class="subhead__label">频道</span>
+                  <button class="subhead__add mark mark--below" data-dialog-open data-mark="新建频道" aria-label="新建频道" title="新建频道">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9" /></svg>
+                  </button>
+                </div>
+                <div class="row is-active"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">综合</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">前端</span><span class="row__count">2</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">设备与机器</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">答疑</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">办公能力</span></div>
+                <div class="row row--browse">
+                  <span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2L13.5 13.5" /></svg></span>
+                  <span class="row__label">浏览频道</span>
+                </div>
+              </div>
+            </div>
+            <div class="app__main">
+              <div class="page-head">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color: var(--faint)"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg>
+                <span class="page-head__t">综合</span>
+                <span class="page-head__spacer"></span>
+                <button class="btn" style="height: 28px">新建任务</button>
+              </div>
+              <div class="page-body">
+                <div class="msg">
+                  <span class="msg__avatar">蔡</span>
+                  <div class="msg__body">
+                    <div><span class="msg__who">蔡松洋</span><span class="msg__when">17:21</span></div>
+                    <div class="msg__text">现在项目中新建话题的位置特别不明显，需要设计。</div>
+                  </div>
+                </div>
+                <div class="msg">
+                  <span class="msg__avatar" style="background: var(--agent-tone-1, #22324f); color: #fff7ea">芝</span>
+                  <div class="msg__body">
+                    <div><span class="msg__who">芝士</span><span class="msg__when">17:22</span></div>
+                    <div class="msg__text">我把 ＋ 放到「频道」标题右边，点一下就地弹窗建，不再跳页。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 弹窗 -->
+            <div class="modal" data-dialog-close>
+              <div class="dialog" role="dialog" aria-label="新建频道">
+                <div class="dialog__head">
+                  <span class="dialog__title">新建频道</span>
+                  <button class="iconbtn" data-dialog-close aria-label="关闭"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8" /></svg></button>
+                </div>
+                <div class="dialog__body">
+                  <div class="field">
+                    <span class="field__label">频道名称</span>
+                    <span class="field__input field__input--focus"><span class="field__prefix">#</span>设计评审</span>
+                  </div>
+                  <div class="field">
+                    <span class="field__label">频道说明（选填）</span>
+                    <span class="field__input field__area">这个频道用来做什么</span>
+                  </div>
+                  <div class="check">
+                    <span class="check__box"></span>
+                    <span>
+                      <span class="check__t">设为私密频道</span>
+                      <span class="check__hint">只有频道里的人能看到其中的消息和任务。</span>
+                    </span>
+                  </div>
+                </div>
+                <div class="dialog__foot">
+                  <button class="btn" data-dialog-close>取消</button>
+                  <button class="btn btn--primary">新建频道</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stage">
+          <span class="stage__tag stage__tag--new">点 ＋ 之后</span>
+          <div class="dialog-stage">
+            <div class="dialog" role="img" aria-label="新建频道对话框">
+              <div class="dialog__head">
+                <span class="dialog__title">新建频道</span>
+                <button class="iconbtn" aria-label="关闭">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+                </button>
+              </div>
+              <div class="dialog__body">
+                <div class="field">
+                  <span class="field__label">频道名称</span>
+                  <span class="field__input field__input--focus"><span class="field__prefix">#</span>设计评审</span>
+                </div>
+                <div class="field">
+                  <span class="field__label">频道说明（选填）</span>
+                  <span class="field__input field__area">这个频道用来做什么</span>
+                </div>
+                <div class="check">
+                  <span class="check__box"></span>
+                  <span>
+                    <span class="check__t">设为私密频道</span>
+                    <span class="check__hint">只有频道里的人能看到其中的消息和任务。</span>
+                  </span>
+                </div>
+              </div>
+              <div class="dialog__foot">
+                <button class="btn">取消</button>
+                <button class="btn btn--primary">新建频道</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <ul class="points">
+          <li class="yes"><b>一步到位</b>：不离开当前页面，弹出的是现有的「新建频道」对话框，字段和行为都不变。</li>
+          <li class="yes"><b>位置固定、不随频道数跑</b>：分组标题永远在，频道再多也在同一个地方。</li>
+          <li class="yes"><b>和「浏览频道」分工清楚</b>：＋ 是「我要开一个」，浏览频道是「我要找/加入别人的」。</li>
+          <li><b>动静小</b>：常驻但安静（--faint 的 16px 图标，hover 才亮成琥珀），不跟频道抢视觉。</li>
+        </ul>
+      </section>
+
+      <!-- ============ 3. 审阅人 ============ -->
+      <section>
+        <h2><span class="num">3</span>建议二：新建任务时，审阅人默认就是建它的人</h2>
+        <p class="lede">
+          建任务的人自己就是负责人，<b>默认也当审阅人</b>，页头不再顶那条橙色告警。想换人，在「概览」里改一次就是。
+        </p>
+
+        <div class="pair">
+          <div class="stage">
+            <span class="stage__tag stage__tag--now">现状</span>
+            <div class="app" style="height: 220px">
+              <div class="app__main">
+                <div class="task-head">
+                  <span class="crumb"># 综合 / <b>新任务</b></span>
+                  <span class="chip">讨论中</span>
+                  <span class="page-head__spacer"></span>
+                  <button class="btn btn--primary" style="height: 28px">开始</button>
+                  <button class="btn" style="height: 28px">概览</button>
+                </div>
+                <div class="task-notice">
+                  <span>需要指定由谁审阅，或在项目设置中设置默认审阅的人</span>
+                  <label class="task-notice__pick">
+                    <span>审阅人</span>
+                    <span class="task-notice__select" style="border-color: var(--accent)">蔡松洋 ▾</span>
+                  </label>
+                </div>
+                <div class="page-body" style="color: var(--faint)">…</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stage">
+            <span class="stage__tag stage__tag--new">建议</span>
+            <div class="app" style="height: 220px">
+              <div class="app__main">
+                <div class="task-head">
+                  <span class="crumb"># 综合 / <b>新任务</b></span>
+                  <span class="chip">讨论中</span>
+                  <span class="page-head__spacer"></span>
+                  <button class="btn btn--primary" style="height: 28px">开始</button>
+                  <button class="btn" style="height: 28px">概览</button>
+                </div>
+                <div class="task-meta">
+                  <span class="task-meta__k">负责</span><b>蔡松洋</b>
+                  <span class="task-meta__k">审阅</span><b>蔡松洋</b>
+                  <span class="me-chip">默认</span>
+                </div>
+                <div class="page-body" style="color: var(--faint)">点「开始」直接开工，不再被拦。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <ul class="points">
+          <li class="yes"><b>默认 = 建任务的人</b>（也就是负责人）。谁提的事谁把关，绝大多数任务本来就是这样。</li>
+          <li><b>项目设置里已配的「默认审阅」怎么办</b>：建议按配的走，没配才落到创建者——这条要你定。</li>
+          <li><b>要换人就在概览里改</b>：审阅人这一项现在只读地显示出来，点一下能换，不用等报错。</li>
+          <li class="no"><b>橙色告警只在真的缺人时出现</b>：外部成员、或者负责人在项目里找不到对应的人，才提示补选。</li>
+        </ul>
+      </section>
+
+      <!-- ============ 4. 边界 ============ -->
+      <section>
+        <h2><span class="num">4</span>边界：空项目，和手机上</h2>
+        <p class="lede">一个项目刚建出来、一个频道都还没有时，光一个 ＋ 还不够明显，得把话说出来。</p>
+
+        <div class="pair">
+          <div class="stage">
+            <span class="stage__tag stage__tag--new">空项目</span>
+            <div class="app" style="height: 260px">
+              <div class="app__side">
+                <div class="proj"><span class="proj__avatar">综</span><span class="proj__name">综合</span><span class="proj__spacer"></span></div>
+                <div class="side__scroll">
+                  <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1.4" /><rect x="9" y="2" width="5" height="5" rx="1.4" /><rect x="2" y="9" width="5" height="5" rx="1.4" /><rect x="9" y="9" width="5" height="5" rx="1.4" /></svg></span><span class="row__label">总览</span></div>
+                  <div class="subhead">
+                    <span class="subhead__label">频道</span>
+                    <button class="subhead__add" aria-label="新建频道"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9" /></svg></button>
+                  </div>
+                  <div class="row is-active"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">综合</span></div>
+                  <div class="empty-state">
+                    <span class="empty-state__t">还没有别的频道。</span>
+                    <button class="btn btn--primary" style="height: 32px">
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9" /></svg>
+                      新建频道
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="app__main"><div class="page-body" style="color: var(--faint)">综合</div></div>
+            </div>
+          </div>
+
+          <div class="stage">
+            <span class="stage__tag stage__tag--new">手机</span>
+            <div class="phone">
+              <div class="phone__screen">
+                <div class="m-appbar">
+                  <button class="iconbtn" aria-label="返回"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5L5 8l4.5 4.5" /></svg></button>
+                  <span class="m-appbar__t">综合</span>
+                  <button class="iconbtn" aria-label="项目菜单"><svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="13" cy="8" r="1.5" /></svg></button>
+                </div>
+                <div class="side__scroll" style="padding-top: 0">
+                  <div class="m-subhead">
+                    <span class="m-subhead__label">频道</span>
+                    <button class="m-subhead__add" aria-label="新建频道"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 4v10M4 9h10" /></svg></button>
+                  </div>
+                  <div class="m-row is-active"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color: var(--muted)"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg>综合</div>
+                  <div class="m-row"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color: var(--faint)"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg>前端<span class="row__count" style="margin-left: auto">2</span></div>
+                  <div class="m-row"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color: var(--faint)"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg>设备与机器</div>
+                  <div class="m-row" style="color: var(--muted)"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color: var(--faint)"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2L13.5 13.5" /></svg>浏览频道</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <ul class="points">
+          <li class="yes"><b>手机上 32×32 的 ＋</b>：手指点得中（≥44px 的命中区），放在标题行右端，和桌面同一位置。</li>
+          <li class="yes"><b>空项目直说</b>：一个频道都没有时，列表里给出「新建频道」主按钮，不让人对着一个 ＋ 猜。</li>
+        </ul>
+      </section>
+
+      <!-- ============ 5. 备选 ============ -->
+      <section>
+        <h2><span class="num">5</span>备选：把「新建频道」做成列表末尾的一行</h2>
+        <p class="lede">
+          ＋ 之外还有一条路：在「浏览频道」上面加一行常驻的「＋ 新建频道」。更显眼，但要多占一行，且位置随频道数往下跑。
+        </p>
+
+        <div class="stage">
+          <span class="stage__tag">备选</span>
+          <div class="app" style="height: 300px">
+            <div class="app__side app__side--narrow">
+              <div class="proj"><span class="proj__avatar">综</span><span class="proj__name">综合</span><span class="proj__spacer"></span></div>
+              <div class="side__scroll">
+                <div class="subhead"><span class="subhead__label">频道</span></div>
+                <div class="row is-active"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">综合</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">前端</span></div>
+                <div class="row"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6 2.5L5 13.5M11 2.5l-1 11M3 6h9.5M2.5 10H12" /></svg></span><span class="row__label">设备与机器</span></div>
+                <div class="row mark mark--below" data-mark="常驻一行">
+                  <span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9" /></svg></span>
+                  <span class="row__label">新建频道</span>
+                </div>
+                <div class="row row--browse"><span class="row__slot"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2L13.5 13.5" /></svg></span><span class="row__label">浏览频道</span></div>
+              </div>
+            </div>
+            <div class="app__main"><div class="page-body" style="color: var(--faint)">综合</div></div>
+          </div>
+        </div>
+
+        <ul class="points">
+          <li><b>好处</b>：字是写出来的，不用认图标；点击区域更大。</li>
+          <li><b>代价</b>：频道多的时候它被推到列表末尾，还是「藏在底下」；同时和「浏览频道」并排两行入口，容易看混。</li>
+          <li><b>建议</b>：用第 2 节的主方案；这条留作备选，两个都要也行（＋ 管常驻，末尾一行只管空项目）。</li>
+        </ul>
+
+        <div class="note">
+          <b>没动的地方：</b>「浏览频道」这一页和它的搜索/筛选/加入退出照旧；命令面板里的「新建频道」照旧；频道的字段（名称、说明、私密）和权限（外部成员不能建）一个不改。
+        </div>
+      </section>
+    </main>
+
+    <script>
+      // 主题：和产品一样，值写在 <html data-theme>，两份令牌都在这页里
+      const light = document.getElementById('theme-light')
+      const dark = document.getElementById('theme-dark')
+      function setTheme(name) {
+        document.documentElement.dataset.theme = name
+        light.setAttribute('aria-pressed', String(name === 'light'))
+        dark.setAttribute('aria-pressed', String(name === 'dark'))
+      }
+      light.addEventListener('click', () => setTheme('light'))
+      dark.addEventListener('click', () => setTheme('dark'))
+
+      // ＋ → 弹窗。只做这一处交互，够看清「就地建」这件事。
+      const app = document.getElementById('demo-app')
+      app.querySelectorAll('[data-dialog-open]').forEach((el) =>
+        el.addEventListener('click', () => app.setAttribute('data-dialog', 'open'))
+      )
+      app.querySelectorAll('[data-dialog-close]').forEach((el) =>
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('.dialog') && !e.target.closest('[data-dialog-close]')) return
+          app.removeAttribute('data-dialog')
+        })
+      )
+    </script>
+  </body>
+</html>
