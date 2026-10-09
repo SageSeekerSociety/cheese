@@ -12,6 +12,7 @@ import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from 
 import { UserApi } from '@/network/api/users'
 import { queryClient } from '@/query/client'
 import { forgetPersistedQueries } from '@/query/persist'
+import { forgetRoomSnapshots } from '@/query/snapshot'
 import { disablePush } from '@/services/webPush'
 import { resetFeedbackCaches } from '@/stores/feedback'
 
@@ -89,6 +90,7 @@ function forgetServerData(): void {
     else queryClient.getQueryCache().remove(query)
   }
   forgetPersistedQueries()
+  forgetRoomSnapshots()
   resetRoomLink()
 }
 

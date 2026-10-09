@@ -8,6 +8,8 @@ import { ref } from 'vue'
 
 import { confirmProjectSkill, declineProjectSkill, listProjectSkills } from '@/api/projectSkills'
 import { t } from '@/i18n'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 
 export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
   /** 这个房间里芝士提议、还在等人的那些。 */
@@ -20,8 +22,13 @@ export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
   /** 读一次。拉不到就当没有：这张卡是顺路问一句，不该让对话栏报错。 */
   async function load() {
     try {
-      const page = await listProjectSkills(projectId.value)
-      proposals.value = page.data.filter((s) => s.state === 'draft' && s.proposal && s.source_topic_id === roomId.value)
+      // 进房间那一次，房间快照里带着（query/snapshot）。
+      const room = roomId.value
+      proposals.value = await fromSnapshot(keys.roomSkillProposals(room), async () =>
+        (await listProjectSkills(projectId.value)).data.filter(
+          (s) => s.state === 'draft' && s.proposal && s.source_topic_id === room
+        )
+      )
     } catch {
       proposals.value = []
     }

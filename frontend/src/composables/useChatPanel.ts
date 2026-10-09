@@ -55,7 +55,7 @@ import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/top
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
 
-import { ANNOUNCED } from './chatPanelContract'
+import { ANNOUNCED, SNAPSHOT_RESOURCES } from './chatPanelContract'
 import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
@@ -68,6 +68,8 @@ import { useTimelineTasks } from './useTimelineTasks'
 import i18n, { t } from '@/i18n'
 import { cachedWindow, readNewestBlocks, setCachedWindow } from '@/query/blocks'
 import { roomChanged } from '@/query/changes'
+import { refreshTopicRow } from '@/query/project'
+import { settleRoom } from '@/query/snapshot'
 
 // The panel and its host have to agree on the event list, so it lives on its own
 // (see chatPanelContract) and is re-exported here: the view keeps importing
@@ -217,12 +219,23 @@ export function useChatPanel(opts: ChatPanelOptions) {
       handleFrame(frame)
       noteFrame()
     },
-    onOpen: (reconnect, newest) => {
+    onOpen: (reconnect, newest, room) => {
+      // 订阅带来的房间快照放进缓存（query/snapshot）；进房间时等着它的那几处读就此拿到。
+      const here = place()
+      const channel = topic()
+      if (here && channel) settleRoom(here.id, channel.id, room)
       // State frames are transient: what the room announced while we were away is
-      // gone, so a re-connect (not the first open) treats each as changed once.
+      // gone, so a re-connect (not the first open) treats each as changed once —
+      // except what the snapshot just brought, which is as of now.
       if (reconnect) {
-        for (const resource of ANNOUNCED) announce(resource)
-        announce('topics', topic()?.id)
+        const brought: ReadonlySet<string> = room ? SNAPSHOT_RESOURCES : new Set()
+        for (const resource of ANNOUNCED) if (!brought.has(resource)) announce(resource)
+        if (!room) announce('topics', channel?.id)
+        else {
+          // 房间这一行不在快照里；任务在，时间线上各块带着的那几件照旧重读。
+          if (channel) void refreshTopicRow(channel.project_id, channel.id)
+          void roomTasks.refresh()
+        }
       }
       tail.subscribed(newest)
       // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。

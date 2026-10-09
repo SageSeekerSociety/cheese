@@ -319,6 +319,8 @@ frontend/src/
 - **一个 QueryClient**：换了人登录或退出时，每一份退回「没读过」，看着它的地方还连着，新的人的令牌到手后屏幕上那几份重读（`services/account.ts`）。项目清单另存一份在 sessionStorage（`query/persist.ts`），冷打开时左边栏当场就有。
 - **不可变更新**：本地写一律 `patchQuery(key, old => 新值)`：先作废正在路上的那次读，再改缓存。「改之前发出去的读把刚改的盖回去」靠它挡住，不再各处手写版本号。
 - **推送进缓存**：`state` 帧经一个入口（`query/changes.ts`）按键让对应几份再读一次；正在读的那次回来之后再读一次，一串帧只多读一次（`refreshQueries`）。缓存里没有的（采纳卡、提案卡、文档）由页面自己接。终点是按实体就地 `upsert` / `delete`，要等变更带序号（迁移第 3b、4d 步）。
+- **进房间不再逐块读**：房间连接上的 `subscribed` 帧带着订阅生效那一刻房间的样子（`room`：名册、任务、置顶、支线、提议卡；任务还有它自己、相关、审阅意见），每一块和它自己那个接口回的一样（后端 `api/room_snapshot.py`）。打开房间的导航出发时记下「快照要来」，这几格的读先等它（`query/snapshot.ts`）；之后的帧都比快照新。采纳卡和预览不在里面：读它们要等外部服务。
+- **侧栏不读整个项目的任务**：频道清单的每一行带着挂在它下面的任务（`my_tasks`：和我有关的几件，加进行中的总数），任务变了重读那一行。
 - **KeepAlive 里的页面停下观察**：保活页面的查询把 `enabled` 绑到页面在不在屏幕上（`composables/usePageActive.ts`）。
 - **轮询退场**：`ProjectShell.vue` 和 `ProjectSidebar.vue` 的 30 秒轮询是查询自带的 `refetchInterval`，后台标签不问；用户级变更流上线后删掉。
 - **聊天时间线不迁**：双向翻页、跳到中间、实时追加、发送中的消息、按 id 合并，`useInfiniteQuery` 给不了；时间线留在 `useTimeline` / `useChatPaging`，只有每个房间最新那一段窗口在缓存里（`query/blocks.ts`），打开房间、预取、未读增加时的后台预取共用它。

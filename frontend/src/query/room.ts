@@ -12,12 +12,14 @@ import { listPins } from '@/api/pins'
 import { listThreads } from '@/api/threads'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 
 /** 房间名册。名册的写法（`api/topicMembers`）写完就把它标过期。 */
 export function roomMembersQuery(roomId: string) {
   return queryOptions({
     queryKey: keys.roomMembers(roomId),
-    queryFn: (): Promise<ListPayload<TopicMemberRow>> => listTopicMembers(roomId),
+    queryFn: (): Promise<ListPayload<TopicMemberRow>> =>
+      fromSnapshot(keys.roomMembers(roomId), () => listTopicMembers(roomId)),
   })
 }
 
@@ -33,7 +35,7 @@ export function computeProfileQuery(roomId: string) {
 export function pinsQuery(roomId: string) {
   return queryOptions({
     queryKey: keys.roomPins(roomId),
-    queryFn: (): Promise<ChannelPin[]> => listPins(roomId),
+    queryFn: (): Promise<ChannelPin[]> => fromSnapshot(keys.roomPins(roomId), () => listPins(roomId)),
   })
 }
 
@@ -41,10 +43,11 @@ export function pinsQuery(roomId: string) {
 export function threadsQuery(roomId: string) {
   return queryOptions({
     queryKey: keys.roomThreads(roomId),
-    queryFn: async (): Promise<ThreadRow[]> => {
-      const rows = await listThreads(roomId, 100)
-      return Array.isArray(rows) ? rows : []
-    },
+    queryFn: (): Promise<ThreadRow[]> =>
+      fromSnapshot(keys.roomThreads(roomId), async () => {
+        const rows = await listThreads(roomId, 100)
+        return Array.isArray(rows) ? rows : []
+      }),
   })
 }
 
@@ -66,7 +69,7 @@ export function roomTasksQuery(roomId: string, filter: RoomTaskFilter) {
   return queryOptions({
     queryKey,
     queryFn: ({ signal }): Promise<ListPayload<RoomTask>> =>
-      listRoomTasks(roomId, filter, queryClient.getQueryData(queryKey), signal),
+      fromSnapshot(queryKey, () => listRoomTasks(roomId, filter, queryClient.getQueryData(queryKey), signal)),
   })
 }
 
@@ -108,7 +111,7 @@ export function heldPreview(roomId: string): PreviewInfo | null | undefined {
 export function roomTaskQuery(taskId: string) {
   return queryOptions({
     queryKey: keys.roomTask(taskId),
-    queryFn: (): Promise<RoomTask> => getTask(taskId),
+    queryFn: (): Promise<RoomTask> => fromSnapshot(keys.roomTask(taskId), () => getTask(taskId)),
     placeholderData: () => listedTask(taskId),
   })
 }

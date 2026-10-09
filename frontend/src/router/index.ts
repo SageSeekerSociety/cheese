@@ -22,6 +22,7 @@ import { installTopicTransitions } from '@/lib/viewTransition'
 import { myId } from '@/me'
 import { prefetchNewestBlocks } from '@/query/blocks'
 import { prefetchPreview } from '@/query/room'
+import { expectRoom } from '@/query/snapshot'
 import { recoverNavigations } from '@/services/staleBuild'
 import { usePageTitleStore } from '@/stores/title'
 import { handSignInToApp } from '@/views/account/appSignIn'
@@ -175,6 +176,8 @@ router.beforeEach((to) => {
   const conversation = to.name === 'workspace-task' ? ids.taskId : ids.topicId
   if (!conversation || !isUuid(conversation)) return
   void prefetchNewestBlocks(conversation).catch(() => {})
+  // 房间的名册、任务、置顶这些随订阅一起来（query/snapshot）：页面上读它们的先等快照。
+  if (ids.topicId && isUuid(ids.topicId)) expectRoom(conversation, ids.topicId)
   // 房间里会点开文档预览：趁浏览器空闲把 pdf.js 先取下来（只取一次）。
   preloadPdfViewer()
 })

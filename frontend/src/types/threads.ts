@@ -74,3 +74,11 @@ declare module '../cx_types' {
     tasks?: RoomTask[]
   }
 }
+
+// `GET /topics` 的每一行带着侧栏挂在它下面的任务：和我有关的几件（最多五件），和这个
+// 频道进行中的一共几件（views/workspace/ProjectSidebar）。
+declare module '../cx_types' {
+  interface Topic {
+    my_tasks?: { shown: RoomTask[]; open: number }
+  }
+}
