@@ -13,7 +13,7 @@ from app.domain.agent.mentions import (
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.reads import load_project
 from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
@@ -55,7 +55,7 @@ async def text_as_sent(
         text = await project_refs_text(session, topic.project_id, topic.id, content)
         roster = await room_roster(session, topic.project_id, topic)
         return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
-    project = await ProjectRepository(session).get(topic.project_id)
+    project = await load_project(session, topic.project_id)
     if project is None:
         raise NotFoundError("Project not found")
     agent = await AgentInstanceService(session).for_topic(topic, project)
