@@ -75,13 +75,6 @@ async def delivery_landed(
             session, task, task_summary_prompt(title=task.title), closes=True
         )
     await session.flush()
-    # The room's row in the sidebar is what changed (its task count/status), so
-    # name the room for the client's per-row refetch.
-    show_once_committed(
-        session,
-        task.room_id,
-        {"type": "state", "resource": "topics", "id": str(task.room_id)},
-    )
     await tell_origin(
         session,
         task,

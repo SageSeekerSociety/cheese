@@ -25,7 +25,6 @@ from datetime import UTC, datetime
 from sqlalchemy import or_, select
 
 from app.core.errors import UpstreamUnavailableError
-from app.core.live_frames import show_state_once_committed
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.harness.prompt import main_checks_failed_prompt
@@ -66,8 +65,6 @@ async def watch_landings(chat) -> dict:
     sessions = chat.session_factory
     async with sessions() as session:
         closed = await close_overdue(session)
-        for task in closed:
-            show_state_once_committed(session, task.room_id)
         await session.commit()
         ids = list(
             await session.scalars(

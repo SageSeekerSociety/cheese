@@ -31,7 +31,7 @@ CLOSES_TASK = "closesTask"
 
 async def close_after_summary(session: AsyncSession, task_id: uuid.UUID) -> Task | None:
     """Close ``task_id`` if it is waiting for its summary turn. Returns the
-    task it closed; the caller tells the pages showing it."""
+    task it closed; the pages showing it hear from `room_task.live`."""
     task = await session.get(Task, task_id, with_for_update=True)
     if task is None or task.closing_since is None:
         return None
