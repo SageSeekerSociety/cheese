@@ -53,10 +53,6 @@ if __package__:
     from app.domain.agent.harness.claude_code.remote_execution.context_service import (
         serve,
     )
-    from app.domain.agent.harness.claude_code.remote_execution.private import (
-        ensure,
-        release,
-    )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
         allow_native_tools,
         carry_transcripts,
@@ -97,7 +93,6 @@ else:
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     from context_service import serve
-    from private import ensure, release
     from release import (
         allow_native_tools,
         carry_transcripts,
@@ -266,6 +261,15 @@ def prepare(
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     if target.get("kind") == "private":
+        # Not lifted with the siblings above: `private` imports fcntl, which
+        # Windows has not, and this runs on the member's own machine.
+        if __package__:
+            # deferred-import: private imports fcntl, which Windows has not
+            from .private import ensure
+        else:
+            # deferred-import: private imports fcntl, which Windows has not
+            from private import ensure
+
         ensure(target, directory, os.environ)
     if target.get("kind") == "deferred" and target["workspace"] != DEFERRED_WORKSPACE:
         target = _take_leased_machine(target)
@@ -1808,6 +1812,13 @@ def main():
     if args.mode == "transport":
         transport(config, args.config)
     elif args.mode == "release":
+        if __package__:
+            # deferred-import: private imports fcntl, which Windows has not
+            from .private import release
+        else:
+            # deferred-import: private imports fcntl, which Windows has not
+            from private import release
+
         release(config)
     elif args.mode == "bridge":
         # Remote servers and a type's own, whose definition rides each call.
