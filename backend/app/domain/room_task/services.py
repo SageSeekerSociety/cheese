@@ -68,6 +68,13 @@ class TaskService:
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
 
+    async def tasks_of_rooms(
+        self, room_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, uuid.UUID]:
+        """{还在进行的那条活: 它所在的房间} —— 一个频道那一格认的是它全部的对话，
+        所以调用方要的是「这些房间里有哪些活」（`api/routes/topics._awaiting_an_answer`）。"""
+        return await self._repo.tasks_of_rooms(room_ids)
+
     async def record_author(self, task: Task, agent_handle: str) -> None:
         """Keep the first executing agent, including across concurrent opens."""
         await self._session.execute(

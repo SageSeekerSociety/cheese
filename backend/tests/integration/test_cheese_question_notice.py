@@ -21,6 +21,7 @@ from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification.letter import letter_for
+from app.domain.notification.push import push_link
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -29,6 +30,7 @@ from tests.conftest import seed_user
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
+    open_task,
     post_message,
     post_project,
     room_agent_headers,
@@ -224,8 +226,33 @@ def test_the_person_who_started_the_turn_hears_the_question(
     assert row["contextMetadata"]["question"] == "预算按哪个口径统计"
     assert row["contextMetadata"]["topicId"] == room
     assert row["contextMetadata"]["topicTitle"] == "预算复核"
+    # 题问在支线里：通知记的也是那条支线，点开才落得到那条消息上（频道主线上没有它）。
+    assert row["contextMetadata"]["threadId"] == thread
     assert row["read"] is False
     assert _questions(client, alice) == []  # 未发起这一轮的人不接收
+
+
+def test_a_question_asked_in_a_task_points_back_at_that_task(client):
+    """芝士在任务里问的那道题：通知落回那个任务，不是它所在的频道。
+
+    实况：首页「动态」里点那条提问，落到了频道主线上 —— 而那条消息在任务自己的线上，
+    房间页按 `?block=` 找不到它，只显示一句「这条消息已不存在」。题在哪条会话里，
+    通知就落在哪条会话里（`taskId` 和那条消息的 `conversation_id` 是同一个落点）。
+    """
+    alice = seed_user(client, "alice")
+    pid, room = _room(client)
+    task = open_task(client, room)["id"]
+
+    _ask_an_old_question(client, task, asked="alice")
+
+    (row,) = _questions(client, alice)
+    assert row["contextMetadata"]["taskId"] == task
+    assert "threadId" not in row["contextMetadata"]
+    # 「在哪个房间」还是那个频道：里面说的是它，落点是它里面的那条会话。
+    assert row["contextMetadata"]["topicId"] == room
+    assert push_link(row["contextMetadata"]) == (
+        f"/projects/{pid}/topics/{room}/tasks/{task}"
+    )
 
 
 def test_a_question_in_a_turn_the_platform_started_reaches_nobody(

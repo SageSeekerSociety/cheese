@@ -36,6 +36,29 @@ def test_cheese_question_leads_with_the_question_and_lands_on_it():
     assert f"{settings.frontend_url}/projects/p-1/topics/t-1?block=b-9" in body
 
 
+def test_the_letter_about_a_question_follows_it_into_the_task_it_was_asked_in():
+    """问在任务里的题：按钮落到那个任务，不是频道主线。
+
+    那条消息在任务自己的线上，频道主线上没有它 —— 落到频道，人点开就是一句「这条
+    消息已不存在」（推送、站内通知的链接读的是同一条规则 `push.push_link`）。
+    """
+    letter = letter_for(
+        {
+            "type": "CHEESE_QUESTION",
+            "payload": {
+                **ROOM,
+                "question": "这个字段存毫秒还是秒？",
+                "blockId": "b-9",
+                "taskId": "k-2",
+            },
+        }
+    )
+
+    assert f"{settings.frontend_url}/projects/p-1/topics/t-1/tasks/k-2?block=b-9" in (
+        render_html(letter)
+    )
+
+
 def test_room_notice_carries_the_sentence_said_in_the_room():
     letter = letter_for(
         {"type": "ROOM_NOTICE", "payload": {**ROOM, "content": "验收卡等你确认"}}
