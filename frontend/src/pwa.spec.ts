@@ -177,3 +177,72 @@ describe('新版本怎么换上', () => {
     expect(assign).toHaveBeenCalledWith('/b')
   })
 })
+
+describe('房间连接一直连不上', () => {
+  // 后端换掉了旧页面要连的接口时，旧页面一直「未连接」；确认这一页落后了才整页加载，
+  // 问不到就不动。
+  async function load() {
+    vi.resetModules()
+    return (await import('./pwa')).reloadIfBehind
+  }
+
+  let reload: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    reload = vi.fn()
+    vi.stubGlobal('location', { ...window.location, assign, reload })
+  })
+
+  it('服务器上已经是另一版：新 worker 接管后整页加载', async () => {
+    pageRuns('/assets/index-old.js')
+    const { messages } = fakeBrowser({ waiting: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<script type="module" src="/assets/index-new.js"></script>'))
+    )
+    const reloadIfBehind = await load()
+
+    expect(await reloadIfBehind()).toBe(true)
+    expect(messages).toEqual([{ type: 'SKIP_WAITING' }])
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  it('还是同一版：不刷新', async () => {
+    pageRuns('/assets/index-same.js')
+    fakeBrowser({ waiting: false })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<script type="module" src="/assets/index-same.js"></script>'))
+    )
+    const reloadIfBehind = await load()
+
+    expect(await reloadIfBehind()).toBe(false)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('问不到服务器：不刷新', async () => {
+    pageRuns('/assets/index-old.js')
+    fakeBrowser({ waiting: true })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      })
+    )
+    const reloadIfBehind = await load()
+
+    expect(await reloadIfBehind()).toBe(false)
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('几分钟内只问一次', async () => {
+    pageRuns('/assets/index-same.js')
+    fakeBrowser({ waiting: false })
+    const fetched = vi.fn(async () => new Response('<script type="module" src="/assets/index-same.js"></script>'))
+    vi.stubGlobal('fetch', fetched)
+    const reloadIfBehind = await load()
+
+    await reloadIfBehind()
+    await reloadIfBehind()
+    expect(fetched).toHaveBeenCalledTimes(1)
+  })
+})

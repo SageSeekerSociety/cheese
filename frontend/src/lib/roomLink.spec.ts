@@ -16,6 +16,9 @@ vi.mock('@/api/http', async (importOriginal) => ({
   authToken: () => auth.token,
 }))
 
+const pwa = vi.hoisted(() => ({ reloadIfBehind: vi.fn(async () => false) }))
+vi.mock('@/pwa', () => pwa)
+
 import { openRoomChannel, resetRoomLink } from './roomLink'
 
 const links: FakeLink[] = []
@@ -59,6 +62,7 @@ function watch(topic: string) {
 beforeEach(() => {
   links.length = 0
   auth.token = 't1'
+  pwa.reloadIfBehind.mockClear()
   vi.stubGlobal('WebSocket', FakeLink)
   resetRoomLink()
 })
@@ -177,5 +181,33 @@ describe('一个页面一条房间连接', () => {
     expect(b.events).toEqual(['open', 'close'])
     watch('room-b')
     expect(links).toHaveLength(2)
+  })
+})
+
+describe('连接一直连不上', () => {
+  // 服务器上已经没有这一页要连的接口时（后端换了地址，这一页还是旧版），重连多少次都
+  // 一样；连不上几次之后就该问问这一页是不是落后了。
+  function failOnce(topic: string) {
+    watch(topic)
+    links[links.length - 1].onclose?.()
+  }
+
+  it('连还没连上就断了三次，问一次这一页是不是落后了', () => {
+    failOnce('room-a')
+    failOnce('room-a')
+    expect(pwa.reloadIfBehind).not.toHaveBeenCalled()
+    failOnce('room-a')
+    expect(pwa.reloadIfBehind).toHaveBeenCalledTimes(1)
+  })
+
+  it('连上过一次就重新数，连上之后再断不算', () => {
+    failOnce('room-a')
+    failOnce('room-a')
+    watch('room-a')
+    links[links.length - 1].up()
+    links[links.length - 1].onclose?.()
+    failOnce('room-a')
+    failOnce('room-a')
+    expect(pwa.reloadIfBehind).not.toHaveBeenCalled()
   })
 })

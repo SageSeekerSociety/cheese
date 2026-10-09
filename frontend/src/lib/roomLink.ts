@@ -26,9 +26,13 @@
 import type { RoomSnapshot } from '@/query/snapshot'
 
 import { authToken, BASE } from '@/api/http'
+import { reloadIfBehind } from '@/pwa'
 
 const OPEN = 1
 const CLOSED = 3
+// 连接这么多次连还没连上就断了，就问一次这一页是不是落后于服务器上那一版：服务器上
+// 已经没有这一页要连的接口时，重连多少次都一样（pwa.reloadIfBehind）。
+const FAILED_OPENS_BEFORE_VERSION_CHECK = 3
 
 export interface RoomChannel {
   readyState: number
@@ -101,6 +105,7 @@ class Channel implements RoomChannel {
 class Link {
   private socket: WebSocket | null = null
   private ready = false
+  private failedOpens = 0
   private readonly rooms = new Map<string, Channel>()
 
   open(topic: string): Channel {
@@ -142,6 +147,7 @@ class Link {
     socket.onopen = () => {
       if (this.socket !== socket) return
       this.ready = true
+      this.failedOpens = 0
       for (const room of this.rooms.values()) this.subscribe(room)
     }
     socket.onmessage = (event: MessageEvent) => {
@@ -159,8 +165,10 @@ class Link {
     }
     socket.onclose = () => {
       if (this.socket !== socket) return
+      const opened = this.ready
       this.forget(socket)
       this.endAll(false)
+      if (!opened && ++this.failedOpens >= FAILED_OPENS_BEFORE_VERSION_CHECK) void reloadIfBehind()
     }
   }
 
