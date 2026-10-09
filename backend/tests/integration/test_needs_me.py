@@ -8,6 +8,8 @@
 - 芝士请他拍板而他还没拍的，在「待办」里，拍完就消失。
 - 芝士写给他的变更提醒在「待办」里，读过就消失；只记一笔的（silent）不进来。
 - 一个任务在不在等**看的这个人**，由服务端说：侧栏的点只对被等的那个人亮。
+- 平台自己开的那一轮里问在活里的题没点谁的名：等它的是这条活的人（负责人和协作者）
+  —— 和「待办」、投递同一份名单（`Task.people`）。
 - 好几天没人动的任务：三天提醒负责人一次，十四天算「已停滞」；在等别人审阅或回答
   的不算。
 """
@@ -19,12 +21,15 @@ from sqlalchemy import select
 
 from app.domain.delivery.models import Delivery
 from app.domain.room_task.models import Task
+from app.domain.room_task.presentation import NeedsYou
 from app.domain.room_task.services import TaskService
 from app.domain.task_quiet.sweep import remind_quiet_tasks
 from app.domain.topic.models import Topic, TopicStatus
+from tests.ask_fixtures import active_ask
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
+    open_task,
     post_project,
     session_auth_headers,
 )
@@ -259,6 +264,49 @@ def test_a_task_waits_on_its_owner_alone_in_the_project_list(client):
     assert as_alice[str(waiting)]["awaits_me"] is True
     assert as_alice[str(going)]["awaits_me"] is False
     assert as_bob[str(waiting)]["awaits_me"] is False
+
+
+def test_a_question_in_a_tasks_platform_turn_waits_on_the_tasks_people(
+    client, stub_hooks, monkeypatch
+):
+    """平台开的轮次里问在活里的题，任务列表和侧栏的点等的是这条活的人。
+
+    这道题上没记着某个人（不是哪个人开的那一轮），看的人只能从「这条活是谁的」推出
+    等回答的是谁 —— 负责人和协作者。所以任务那页对这两个人写「待你回答」、侧栏点
+    亮；频道里与这条活无关的人看到的是通用那句、点不亮。
+    """
+    project = _project(client, "alice")
+    join_project_team(client, project, "bob")
+    join_project_team(client, project, "carol")
+    channel = _channel(client, project)
+    task = open_task(client, channel, owner="alice", contributors=["bob"])["id"]
+
+    with active_ask(
+        client, stub_hooks, monkeypatch, task, platform_turn=True
+    ) as headers:
+        r = client.post(
+            f"/topics/{task}/asks",
+            json={
+                "questions": [
+                    {
+                        "question": "预算按哪个口径统计",
+                        "options": [{"text": "按部门"}, {"text": "按项目"}],
+                    }
+                ]
+            },
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+
+    for handle in ("alice", "bob"):
+        row = _project_tasks(client, project, handle)[task]
+        assert row["awaits_me"] is True
+        assert row["presentation"]["phrase"] == NeedsYou.awaiting_answer
+
+    # 名册里但与这条活无关的人：同一句通用状态，点不亮。
+    carol = _project_tasks(client, project, "carol")[task]
+    assert carol["awaits_me"] is False
+    assert carol["presentation"]["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_a_task_quiet_for_two_weeks_is_stalled_and_a_newer_one_is_not(client):

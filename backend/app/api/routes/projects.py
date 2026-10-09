@@ -501,6 +501,7 @@ async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> lis
         is_running = task.id in running
         # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
         # 点和任务列表的橙字都读它，不各自从列再推一遍。
+        asking = asked.get(task.id)
         awaits = address(
             Event(
                 reviewers=(
@@ -509,7 +510,11 @@ async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> lis
                     else (card.reviewer_handle,)
                 ),
                 reporter=task.reporter_handle,
-                asked=asked.get(task.id),
+                asked=asking,
+                # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知、
+                # 待办同一个名单（`announce.notify_question`）。题根本不在等，就
+                # 没有这一层。
+                asked_also=(task.people if task.id in asked and asking is None else ()),
                 owner=(
                     task.owner_handle
                     if presentation.owner_acts_on(shown, running=is_running)
