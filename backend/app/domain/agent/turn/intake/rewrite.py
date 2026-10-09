@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.core.sentences import say
 from app.domain.agent.mentions import (
     _expand_mention_names,
     person_mentions,
@@ -45,7 +46,7 @@ async def text_as_sent(
     `post_user_message` does."""
     place = await PlaceResolver(session).conversation(block.conversation_id)
     if place is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     topic = place.room
     by_agent = await TopicMemberService(session).holds_an_agent_seat(topic, author)
     if place.task is not None:
@@ -57,7 +58,7 @@ async def text_as_sent(
         return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
     project = await load_project(session, topic.project_id)
     if project is None:
-        raise NotFoundError("Project not found")
+        raise NotFoundError(say("projectNotFound"))
     agent = await AgentInstanceService(session).for_topic(topic, project)
     mentions = await person_mentions(session, topic, content, agent, dm=_is_dm(topic))
     return SentText(topic, mentions.content, mentions.roster, False)
