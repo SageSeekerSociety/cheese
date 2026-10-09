@@ -15,13 +15,12 @@ already read the message is told it changed, the way a message reaches it.
 
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.chat import SentText, text_as_sent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
@@ -41,11 +40,27 @@ if TYPE_CHECKING:
     from app.domain.agent.runtime import AgentWorkRunner
 
 
-class MentionEffects(Protocol):
+class EditedText(Protocol):
+    """Normalization facts the block edit consumes, not their room/seat resolver."""
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def roster(self) -> list[dict] | None: ...
+
+    @property
+    def by_agent(self) -> bool: ...
+
+
+_EffectSent = TypeVar("_EffectSent", bound=EditedText, contravariant=True)
+
+
+class MentionEffects(Protocol[_EffectSent]):
     async def __call__(
         self,
         session: AsyncSession,
-        sent: SentText,
+        sent: _EffectSent,
         block: Block,
         author: str,
         /,
@@ -54,7 +69,7 @@ class MentionEffects(Protocol):
     ) -> None: ...
 
 
-async def edit_message(
+async def edit_message[Sent: EditedText](
     session: AsyncSession,
     publish: Callable[[str, dict], Awaitable[None]],
     block_id: uuid.UUID,
@@ -63,7 +78,8 @@ async def edit_message(
     content: str,
     chat: "ChatService",
     runner: "AgentWorkRunner",
-    notify_mentions: MentionEffects,
+    normalize_text: Callable[[AsyncSession, Block, str, str], Awaitable[Sent]],
+    notify_mentions: MentionEffects[Sent],
     checklist: dict | None = None,
 ) -> dict:
     """Replace the text of ``editor``'s own message, commit, and tell the room.
@@ -80,7 +96,7 @@ async def edit_message(
     text = content.strip()
     if not text:
         raise ValidationError("content must not be blank")
-    sent = await text_as_sent(session, block, editor, text)
+    sent = await normalize_text(session, block, editor, text)
     before = block.content
     already_read = consumed_turn(block) is not None
     await blocks.replace_content(block, sent.text, checklist=checklist)

@@ -28,6 +28,7 @@ from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -982,6 +983,7 @@ async def write_topic_progress(
             db,
             get_broker().publish,
             current.id,
+            normalize_text=text_as_sent,
             notify_mentions=announce_edited_message,
             editor=actor.handle,
             content=text,

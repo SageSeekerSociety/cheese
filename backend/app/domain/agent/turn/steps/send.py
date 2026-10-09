@@ -27,6 +27,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.service import AgentEvent, AgentResult
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.steps.prepared import PreparedSend
+from app.domain.agent.turn.store.intervals import note_turn_context
 from app.domain.agent.turn.store.session_inputs import (
     DeliveryStamp,
     commit_delivery,
@@ -38,7 +39,7 @@ from app.domain.delivery.input_identity import (
     InputRegistrar,
 )
 
-logger = logging.getLogger("app.domain.agent.room.turn")
+logger = logging.getLogger(__name__)
 _SESSION_ROUTES_KEPT = 512
 
 
@@ -51,17 +52,6 @@ class SystemEvent(Protocol):
         *,
         meta: dict | None = None,
     ) -> dict | None: ...
-
-
-class TurnContextWriter(Protocol):
-    async def __call__(
-        self,
-        turn_id: uuid.UUID,
-        *,
-        route: str,
-        reply_to: uuid.UUID | None,
-        agent_handle: str,
-    ) -> None: ...
 
 
 class HookEventConsumer(Protocol):
@@ -120,7 +110,6 @@ class FailedRetirement(Protocol):
 @dataclass(frozen=True, slots=True)
 class SendEffects:
     post_system_event: SystemEvent
-    note_turn_context: TurnContextWriter
     consume_hook_event: HookEventConsumer
     known_commits: Callable[[uuid.UUID, uuid.UUID], Awaitable[set[str] | None]]
     register_input: InputRegistration
@@ -275,7 +264,8 @@ async def send_prepared(
 
     # And on the turn itself: the backend that ends this turn may not be
     # this one (`_begin_self_started_turn`), and it remembers neither.
-    await effects.note_turn_context(
+    await note_turn_context(
+        sessions,
         turn_id,
         route=route,
         reply_to=user_block_id,

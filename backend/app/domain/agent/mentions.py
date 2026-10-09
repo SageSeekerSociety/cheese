@@ -6,8 +6,8 @@
 - **读**：`<@handle>` 是编码过的 token，不是从散文里猜的；`<@all>` / `<@here>`
   是保留的群播 token（`_resolve_mentions`）；`<#id>` 是话题引用（`_topic_refs`）。
 - **写**：正文落库之前要过的那一层——人打的走 `person_mentions`，发布路径上
-  的走 `project_refs_text`。「发出去会存成什么」由 `text_as_sent` 答（它留在
-  chat.py，理由见下）。
+  的走 `project_refs_text`。「发出去会存成什么」由 `turn/intake/rewrite.py`
+  的 `text_as_sent` 答。
 - **落库之后**：`announce_mentions` 发强提醒、写 ``block.refs``、给点不到的
   handle 在消息旁边留一行。发送与编辑走的是同一个它。
 
@@ -22,17 +22,11 @@
 
 三段各答一个问题，判据都只有一份。
 
-搬出来时按原样搬，行为一格没动。`PersonMentions` 跟着走；`SentText` 与
-`text_as_sent` 留在 chat.py —— 它俩要 `_is_dm` 的那个答案，而它的调用点是
-`block/editing.py`，签名是对外约定，插不进一个「这间房是不是私聊」的参数。
-`person_mentions` 这一侧不需要：`_is_dm` 仍然只在 `room/turn.py` 里问，答案以 ``dm``
-参数递进来，那个布尔因此在全仓仍然只有一个读点
-（`test_is_private_read_points.py`）—— 连名字也不带过来，因为它按文件统计读点，
-连形参与关键字实参都数。
-
-调用它们的是 chat.py 自己（`post_user_message`、`_persist_assistant_message`、
-`post_system_event`）与 `block/editing.py`；
-`ChatService` 上那些不读实例状态的方法留一行同名委托，调用点与测试都不用改。
+人类发送、assistant 发布和编辑的真实 intake 共享这些判据。
+`SentText` 与 `text_as_sent` 由 `turn/intake/rewrite.py` 持有，`block/editing.py`
+直接使用；它只问 `turn/intake/rooms.py` 的 `_is_dm`，仍然只有那里读一次房间的
+私聊布尔。`person_mentions` 接收该答案，不复制判据
+（`test_is_private_read_points.py`）。
 """
 
 import re

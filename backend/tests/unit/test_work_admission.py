@@ -241,9 +241,6 @@ async def test_message_to_another_teammate_starts_its_turn_beside_a_live_one(
             self.finished.append(recipient)
             yield {"type": "done"}
 
-        async def ack_summon(self, *args):
-            return None
-
     chat = TwoSeats(db_factory)
     runner, broker = _runner()
     topic = await a_topic(db_factory)

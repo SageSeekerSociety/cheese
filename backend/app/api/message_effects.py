@@ -2,8 +2,8 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.chat import SentText
 from app.domain.agent.mentions import announce_mentions
+from app.domain.agent.turn.intake.rewrite import SentText
 from app.domain.block.models import Block
 
 

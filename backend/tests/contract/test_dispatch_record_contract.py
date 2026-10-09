@@ -85,10 +85,6 @@ class _Chat:
 
     # Admission resolves the fixture's real room and seat before the fake send.
     _turn_seat_handle = ChatService._turn_seat_handle
-    _resolved_agent = ChatService._resolved_agent
-    _agent_at = ChatService._agent_at
-    _session_agent = staticmethod(ChatService._session_agent)
-    _acting_handle = ChatService._acting_handle
 
     def __init__(self, factory):
         self.session_factory = factory

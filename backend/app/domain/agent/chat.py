@@ -18,8 +18,8 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -36,7 +36,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.event_lines import (
     _CHANGE_FILES_LISTED,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _change_summary_meta,  # noqa: F401 — 测试仍从 chat.py 导它
-    _Changeset,
+    _Changeset,  # noqa: F401 — 测试仍从 chat.py 导它
     _diff_file_stats,  # noqa: F401 — 测试仍从 chat.py 导它
     _format_change_summary,  # noqa: F401 — 测试仍从 chat.py 导它
     _format_tool_event,  # noqa: F401 — 测试仍从 chat.py 导它
@@ -87,11 +87,10 @@ from app.domain.agent.mentions import (
     MENTION_ALL,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     MENTION_HERE,  # noqa: F401
     PersonMentions,  # noqa: F401
-    _expand_mention_names,
+    _expand_mention_names,  # noqa: F401 — 现有测试仍使用此导出
     _resolve_mentions,  # noqa: F401
     _topic_refs,  # noqa: F401
-    person_mentions,
-    project_refs_text,
+    project_refs_text,  # noqa: F401 — 现有发送路由仍使用此导出
 )
 from app.domain.agent.platform_notices import (
     delivery_checking_notice,
@@ -114,28 +113,20 @@ from app.domain.agent.prompt import (
     read_images,
 )
 
-# 兼容门面：不碰实例状态的问答（这一轮谁答、项目 key 带多少额度、这条记忆改动
-# 说进哪间房）搬去了 `queries.py`。这里重新导出，`app.domain.agent.chat` 仍是既有
-# 调用点与测试的导入路径；`ChatService` 上留一行同名委托，调用点一格没动。
+# Canonical read/policy implementations; gateway consumers retain their narrow calls.
 from app.domain.agent.queries import (
-    _acting_handle,
     _agent_at,
     _agent_handle,
     _gateway_budget_target,
     _pass_policy_gate,
     _Proposed,
-    _resolved_agent,
-    _session_agent,
 )
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
 
-# 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
-# `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
-# 仍是既有调用点与测试的导入路径；`ChatService` 上留一行同名委托，调用点一格没动。
-# 带 noqa 的常量本文件不用，只是给外部留的导入路径。
+# Compose the actual changeset/event owners with this root's session capability.
 from app.domain.agent.room_events import (
     _known_commits,
     _turn_changeset,
@@ -156,7 +147,7 @@ from app.domain.agent.turn.intake.human import HumanMessages
 from app.domain.agent.turn.intake.native_turns import NativeTurns
 from app.domain.agent.turn.intake.notes import _note_reachability
 from app.domain.agent.turn.intake.preparation import TurnPreparation
-from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
+from app.domain.agent.turn.intake.rooms import room_roster
 
 # 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
@@ -172,9 +163,6 @@ from app.domain.agent_instance.services import (
     ResolvedAgent,
 )
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.models import (
-    Block,
-)
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import (
     InputEffects,
@@ -195,16 +183,14 @@ from app.domain.identity.handles import (
     recipient_seat,
 )
 from app.domain.policy import gate
-from app.domain.project.models import Project
 from app.domain.project.reads import load_project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
-from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs, threads_of_rooms
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import TopicStatus
 from app.domain.topic.reads import load_topic
-from app.domain.topic_membership.services import TopicMemberService
 
 CHEESE_AUTHOR = "cheese"
 
@@ -215,17 +201,6 @@ REPLAYS_AT_ONCE = 4
 logger = logging.getLogger(__name__)
 
 
-# Persistent, clickable action cards (§3.1.1 控件): each cheese action 芝士 takes
-# is recorded as a system event block (shown in the conversation) tagged
-# refs=["action:<resource>"], which the UI renders as a card linking to it.
-# NOTE: no "doc" entry — a doc edit already lands the SAME 「编辑了文档」
-# event every human edit gets (via the save path). One fact, one line,
-# whoever the author is (用户拍板: 芝士不需要专属提示行).
-#
-# No "accept" entry either, for the same reason: filing a card and correcting
-# one each announce themselves (EVENT_CARD_FILED / EVENT_CARD_REDESCRIBED), and
-# those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
-# to them is the same fact told twice, worse.
 # HTTP statuses worth an automatic re-run: timeouts, throttling, server-side
 # blips. Anything else (or a rejected seat rate-limit) surfaces immediately.
 _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
@@ -363,9 +338,8 @@ class ChatService(SessionRecovery):
                 live=self.live,
                 send_effects=SendEffects(
                     post_system_event=self.post_system_event,
-                    note_turn_context=self._note_turn_context,
                     consume_hook_event=self.hook_events.accept,
-                    known_commits=self._known_commits,
+                    known_commits=partial(_known_commits, self._sessions),
                     register_input=self._input_registrar,
                     open_interval=turn_inputs.open_interval_with_input,
                     retire_failed=turn_inputs.retire_failed,
@@ -400,8 +374,8 @@ class ChatService(SessionRecovery):
             ),
             post_event=self.post_system_event,
             room_of_conversation=self._room_of_conversation,
-            turn_changeset=self._turn_changeset,
-            persist_summary=self._persist_change_summary,
+            turn_changeset=partial(_turn_changeset, self._sessions),
+            persist_summary=partial(_persist_change_summary, self._sessions, self.live),
         )
 
     @property
@@ -462,7 +436,7 @@ class ChatService(SessionRecovery):
             place = await PlaceResolver(session).conversation(topic_id)
             if place is None:
                 raise NotFoundError("Topic not found")
-            agent = await self._agent_at(session, place)
+            agent = await _agent_at(session, place)
             return agent.handle
 
     @asynccontextmanager
@@ -1255,7 +1229,7 @@ class ChatService(SessionRecovery):
                         )
                         if owner is not None
                         else None
-                    ) or await self._agent_at(session, place)
+                    ) or await _agent_at(session, place)
                     # 事件没说骨架，就问这个项目跑的是哪个——同一个答法，和开
                     # 这一轮用的那一个（结论 28）。
                     harness = harness or harness_for(owner.settings if owner else None)
@@ -1370,7 +1344,10 @@ class ChatService(SessionRecovery):
     @property
     def native_turns(self) -> NativeTurns:
         return NativeTurns(
-            self._sessions, self.live, self._open_session_turn, self._known_commits
+            self._sessions,
+            self.live,
+            self._open_session_turn,
+            partial(_known_commits, self._sessions),
         )
 
     async def _open_session_turn(
@@ -1391,30 +1368,6 @@ class ChatService(SessionRecovery):
             session_id=session_id,
         )
 
-    async def _note_turn_context(
-        self,
-        turn_id: uuid.UUID,
-        *,
-        route: str,
-        reply_to: uuid.UUID | None,
-        agent_handle: str,
-    ) -> None:
-        """Best-effort, like the delivery stamp: losing it costs a turn picked
-        up by another backend its reply link and the accuracy of one route
-        label. It lands after the interval exists, so the row carries this
-        turn's exact seat and route — what death evidence is matched against,
-        never a room-level guess."""
-        from app.domain.agent.repositories import AgentTurnRepository
-
-        try:
-            async with self._sessions() as session:
-                await AgentTurnRepository(session).note_context(
-                    turn_id, route=route, reply_to=reply_to, agent_handle=agent_handle
-                )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
-            logger.exception("could not record the context of turn %s", turn_id)
-
     async def sweep_memory_dreams(self) -> dict:
         """巡检一圈：哪些项目该整理记忆了，逐个跑（`periodic_jobs` 里的一个）。
 
@@ -1427,50 +1380,6 @@ class ChatService(SessionRecovery):
     async def run_memory_dream(self, *, project_id: uuid.UUID) -> dict:
         """跑一次记忆整理（dream）；不该跑就什么都不做（`memory_ledger.py`）。"""
         return await self._memory.run_dream(project_id=project_id)
-
-    async def ack_summon(
-        self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None
-    ) -> dict | None:
-        """Add the 👀 receipt of the agent running the turn (``by``, else the
-        room's seat) to the summoning user message (idempotent) and return the
-        WS reaction payload. Best-effort: a failed receipt must never kill the
-        turn."""
-        try:
-            async with self._sessions() as session:
-                blocks = BlockRepository(session)
-                await blocks.add_reaction_if_absent(
-                    user_block_id,
-                    "👀",
-                    by or await self._agent_handle(session, topic_id),
-                )
-                reactions = await blocks.reactions_for_block(user_block_id)
-                await session.commit()
-            return {"block_id": str(user_block_id), "reactions": reactions}
-        except Exception:  # noqa: BLE001 — the turn matters more than the ack
-            logger.exception("failed to 👀-ack block %s", user_block_id)
-            return None
-
-    @staticmethod
-    async def _session_agent(
-        agents: AgentInstanceService,
-        topic: Topic,
-        project: Project,
-        agent_handle: str | None,
-    ) -> ResolvedAgent:
-        return await _session_agent(agents, topic, project, agent_handle)
-
-    async def _resolved_agent(
-        self, session: AsyncSession, topic: Topic
-    ) -> ResolvedAgent:
-        return await _resolved_agent(session, topic)
-
-    async def _agent_at(self, session: AsyncSession, place: Place) -> ResolvedAgent:
-        return await _agent_at(session, place)
-
-    async def _acting_handle(
-        self, session: AsyncSession, topic_id: uuid.UUID, agent: ResolvedAgent
-    ) -> str:
-        return await _acting_handle(session, topic_id, agent)
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         return await _agent_handle(session, topic_id)
@@ -1492,45 +1401,6 @@ class ChatService(SessionRecovery):
             work_id,
             reachable,
             reason,
-        )
-
-    async def _turn_changeset(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        known_commits: set[str] | None,
-    ) -> _Changeset | None:
-        return await _turn_changeset(
-            self._sessions,
-            project_id,
-            topic_id,
-            known_commits,
-        )
-
-    async def _known_commits(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> set[str] | None:
-        return await _known_commits(
-            self._sessions,
-            project_id,
-            topic_id,
-        )
-
-    async def _persist_change_summary(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None,
-        changeset: _Changeset,
-    ) -> dict | None:
-        return await _persist_change_summary(
-            self._sessions,
-            self.live,
-            project_id=project_id,
-            topic_id=topic_id,
-            turn_id=turn_id,
-            changeset=changeset,
         )
 
     async def _pass_policy_gate(
@@ -1620,47 +1490,3 @@ class ChatService(SessionRecovery):
             topic_id,
             turn_id,
         )
-
-
-@dataclass(frozen=True, slots=True)
-class SentText:
-    """A message's text as sending it would have stored it, and how it was sent."""
-
-    room: Topic
-    text: str
-    # The names its mentions were read against; None where that way of sending
-    # announces no mentions at all (a card's conversation).
-    roster: list[dict] | None
-    by_agent: bool
-
-
-async def text_as_sent(
-    session: AsyncSession, block: Block, author: str, content: str
-) -> SentText:
-    """What sending ``content`` as ``author`` where ``block`` is would have
-    stored. An edit stores exactly that, by calling the same code.
-
-    On a card it is `say_on_task`'s rewrite, for anyone. In the room the author
-    is an agent when it holds one of the room's agent seats, the question the
-    publication routes ask; its text goes through both halves of the
-    publication rewrite, with the arguments a publication passes (no roster, no
-    topic list). A person's goes through `person_mentions`, as
-    `post_user_message` does."""
-    place = await PlaceResolver(session).conversation(block.conversation_id)
-    if place is None:
-        raise NotFoundError("Topic not found")
-    topic = place.room
-    by_agent = await TopicMemberService(session).holds_an_agent_seat(topic, author)
-    if place.task is not None:
-        text = await project_refs_text(session, topic.project_id, topic.id, content)
-        return SentText(topic, text, None, by_agent)
-    if by_agent:
-        text = await project_refs_text(session, topic.project_id, topic.id, content)
-        roster = await room_roster(session, topic.project_id, topic)
-        return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
-    project = await ProjectRepository(session).get(topic.project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    agent = await AgentInstanceService(session).for_topic(topic, project)
-    mentions = await person_mentions(session, topic, content, agent, dm=_is_dm(topic))
-    return SentText(topic, mentions.content, mentions.roster, False)

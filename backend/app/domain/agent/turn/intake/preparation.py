@@ -95,7 +95,7 @@ from app.domain.topic.reads import conversation_progress, project_topics
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import team_terms
 
-logger = logging.getLogger("app.domain.agent.room.turn")
+logger = logging.getLogger(__name__)
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:

@@ -4,6 +4,7 @@ The runner owns when an interval opens or closes. This module owns the exact
 repository write and its commit, returning only after durability is established.
 """
 
+import logging
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -12,6 +13,31 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.repositories import AgentTurnRepository
+
+logger = logging.getLogger(__name__)
+
+
+async def note_turn_context(
+    sessions: async_sessionmaker[AsyncSession],
+    turn_id: uuid.UUID,
+    *,
+    route: str,
+    reply_to: uuid.UUID | None,
+    agent_handle: str,
+) -> None:
+    """Best-effort, like the delivery stamp: losing it costs a turn picked
+    up by another backend its reply link and the accuracy of one route
+    label. It lands after the interval exists, so the row carries this
+    turn's exact seat and route — what death evidence is matched against,
+    never a room-level guess."""
+    try:
+        async with sessions() as session:
+            await AgentTurnRepository(session).note_context(
+                turn_id, route=route, reply_to=reply_to, agent_handle=agent_handle
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
+        logger.exception("could not record the context of turn %s", turn_id)
 
 
 async def open_turn(

@@ -16,6 +16,7 @@ from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.block.editing import edit_message
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import ReactionToggleIn
@@ -61,6 +62,7 @@ async def edit_block(
         db,
         broker.publish,
         block_id,
+        normalize_text=text_as_sent,
         notify_mentions=announce_edited_message,
         editor=actor.handle,
         content=body.content,
