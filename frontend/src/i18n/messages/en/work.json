@@ -1416,6 +1416,7 @@
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
     "moreActions": "More actions",
     "chooseProject": "Choose a project",
+    "personalTeam": "Personal",
     "switchProject": "Switch project",
     "chooseProjectFirst": "Choose a project first",
     "topics": "Channels",

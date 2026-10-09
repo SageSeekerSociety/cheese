@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from app.api.auth import get_actor_resolver
 from app.api.routes import projects
 from app.core import db
+from app.domain.team.services import TeamLabel
 
 
 @pytest.mark.parametrize("commit_fails", [False, True])
@@ -52,7 +53,9 @@ async def test_project_response_waits_for_commit(monkeypatch, commit_fails):
     monkeypatch.setattr(
         projects,
         "team_service",
-        lambda _: SimpleNamespace(handles_of=AsyncMock(return_value={1: "crew"})),
+        lambda _: SimpleNamespace(
+            labels_of=AsyncMock(return_value={1: TeamLabel(handle="crew", name="Crew")})
+        ),
     )
     monkeypatch.setattr(
         projects,

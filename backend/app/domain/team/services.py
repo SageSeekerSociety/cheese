@@ -1,5 +1,6 @@
 import secrets
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,6 +66,12 @@ def team_service(session: AsyncSession) -> "TeamService":
     return TeamService(TeamRepository(session=session))
 
 
+@dataclass(frozen=True)
+class TeamLabel:
+    handle: str
+    name: str
+
+
 class TeamService:
     def __init__(self, repo: TeamRepository) -> None:
         self._repo = repo
@@ -72,8 +79,11 @@ class TeamService:
     async def get_team(self, team_id: int) -> Team | None:
         return await self._repo.get_by_id(team_id)
 
-    async def handles_of(self, team_ids: set[int]) -> dict[int, str]:
-        """team id -> handle, a personal team going by its owner's username."""
+    async def labels_of(self, team_ids: set[int]) -> dict[int, TeamLabel]:
+        """team id -> what links to it go by and what it is called.
+
+        A personal team's handle is its owner's username.
+        """
         teams = await self._repo.get_by_ids(list(team_ids))
         names = await usernames_by_ids(
             self._repo._session,
@@ -83,11 +93,11 @@ class TeamService:
                 if t.personal_owner_user_id is not None
             },
         )
-        out: dict[int, str] = {}
+        out: dict[int, TeamLabel] = {}
         for tid, team in teams.items():
             handle = team.handle or names.get(team.personal_owner_user_id or 0)
             if handle:
-                out[tid] = handle
+                out[tid] = TeamLabel(handle=handle, name=team.name)
         return out
 
     async def visible_team(self, team_id: int, user_id: int) -> Team:

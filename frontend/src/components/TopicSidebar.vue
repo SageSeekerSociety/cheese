@@ -216,6 +216,17 @@ const canTransfer = computed(
     (currentProject.value.owner_handle === myHandle() || currentProject.value.can_manage_members === true)
 )
 const canLeave = computed(() => !!currentProject.value && currentProject.value.owner_handle !== myHandle())
+// 项目名上面那一行：这个项目归哪个团队，点了进团队的项目列表。地址和顶栏那颗 ← 退到
+// 的是同一处（ParentBackButton 的 owningTeam）：个人项目只有本人打得开自己那一页，
+// 对他写「个人」，对被邀请进来的人不画这一行。
+const owningTeam = computed<{ label: string; handle: string } | null>(() => {
+  const handle = currentProject.value?.team_handle
+  if (!handle) return null
+  if (handle === currentProject.value?.owner_handle) {
+    return handle === myHandle() ? { label: t('work.sidebar.personalTeam'), handle } : null
+  }
+  return { label: currentProject.value?.team_name || handle, handle }
+})
 const currentProjectName = computed<string>(
   () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? t('work.sidebar.chooseProject')
 )
@@ -372,6 +383,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         :page="page === true"
         :column="column === true"
         :project-name="currentProjectName"
+        :team="owningTeam"
         :private-unread-total="privateUnreadTotal"
         :search-title="searchTitle"
         :menu-open="projectSheetOpen"
