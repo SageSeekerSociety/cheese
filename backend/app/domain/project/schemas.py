@@ -62,6 +62,13 @@ class ProjectOut(BaseModel):
     shell: ShellOut | None = None
 
 
+class GettingStartedOut(BaseModel):
+    """「开始清单」要服务端回答的那一条（`GET /projects/{id}/getting-started`）。"""
+
+    #: 调用者在项目里哪段对话里跟 AI 队友说上过话（他说过，AI 队友也说过）。
+    talked: bool
+
+
 class ForgeAttributionUpdate(BaseModel):
     requester_coauthor: bool | None
 

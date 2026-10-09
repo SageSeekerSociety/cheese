@@ -92,3 +92,11 @@ export function requestSiteSession(projectId: string): Promise<{ url: string; gr
     method: 'POST',
   })
 }
+
+/**
+ * 「开始清单」里要问服务端的那一条：我在这个项目里跟 AI 队友说上过话没有——在哪段
+ * 对话里都算，任务里的对话也算（频道那一栏读不到那里）。
+ */
+export function getGettingStarted(projectId: string): Promise<{ talked: boolean }> {
+  return request<{ talked: boolean }>(`/projects/${encodeURIComponent(projectId)}/getting-started`)
+}

@@ -19,7 +19,7 @@ from app.api.place import (
     live_rooms_seen,
     rooms_seen,
 )
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -40,7 +40,11 @@ from app.domain.agent.github_app import (
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
-from app.domain.block.queries import awaiting_an_answer, weeklies_for_project
+from app.domain.block.queries import (
+    awaiting_an_answer,
+    talked_with_agent,
+    weeklies_for_project,
+)
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
@@ -61,6 +65,7 @@ from app.domain.project.repositories import (
 )
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
+    GettingStartedOut,
     ProjectCreate,
     ProjectOut,
 )
@@ -574,6 +579,24 @@ async def project_progress(
     )
     rows = [h.as_dict() for h in happened]
     return ok(page(rows, len(rows)))
+
+
+@router.get("/{project_id}/getting-started", **typed_response(GettingStartedOut))
+async def project_getting_started(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """「开始清单」里要问服务端的那一条：这个人在项目里跟 AI 队友说上过话没有。
+
+    说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问
+    （`block.queries.talked_with_agent`）。问的是调用者自己。
+    """
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await ProjectService(db).get_or_404(project_id)
+    talked = await talked_with_agent(db, project_id, actor.handle)
+    return ok(GettingStartedOut(talked=talked).model_dump())
 
 
 @router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])

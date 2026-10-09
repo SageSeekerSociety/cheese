@@ -8,11 +8,11 @@
 import { effectScope, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ library: vi.fn(), forge: vi.fn() }))
+const mocks = vi.hoisted(() => ({ library: vi.fn(), forge: vi.fn(), started: vi.fn() }))
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
-  return { ...actual, getForgeConnection: mocks.forge }
+  return { ...actual, getForgeConnection: mocks.forge, getGettingStarted: mocks.started }
 })
 vi.mock('../lib/libraryApi', async () => {
   const actual = await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')
@@ -51,17 +51,18 @@ function setup(opts: Setup = {}) {
   const projectId = ref<string | null>(opts.projectId ?? 'p1')
   const spoken = ref(opts.agentHasSpoken ?? false)
   const attached = ref(opts.roomHasAttachment ?? false)
+  const onLine = ref(opts.on ?? true)
   const { value, stop } = inScope(() =>
     useGettingStarted({
       projectId: () => projectId.value,
-      on: () => opts.on ?? true,
+      on: () => onLine.value,
       agentHasSpoken: () => spoken.value,
       roomHasAttachment: () => attached.value,
       members: () => opts.members ?? [],
       alsoProbe: () => opts.alsoProbe ?? false,
     })
   )
-  return { ...value, projectId, spoken, attached, stop }
+  return { ...value, projectId, spoken, attached, onLine, stop }
 }
 
 function done(key: string, steps: { key: string; done: boolean }[]): boolean {
@@ -71,6 +72,7 @@ function done(key: string, steps: { key: string; done: boolean }[]): boolean {
 beforeEach(() => {
   mocks.library.mockReset().mockResolvedValue(okLibrary(0))
   mocks.forge.mockReset().mockResolvedValue(forge(false))
+  mocks.started.mockReset().mockResolvedValue({ talked: false })
   localStorage.clear()
 })
 afterEach(() => localStorage.clear())
@@ -122,6 +124,37 @@ describe('useGettingStarted', () => {
     localStorage.setItem('user', JSON.stringify({ username: 'me' }))
     await flush()
     expect(done('people', gs.steps.value)).toBe(false)
+    gs.stop()
+  })
+
+  // 跟芝士的来回可能只发生在任务对话里，这一栏读不到那里（dev，2026-10-09）。
+  it('在任务里跟芝士说上过话也算：服务端说说过了，这一步打勾', async () => {
+    mocks.started.mockResolvedValue({ talked: true })
+    const gs = setup()
+    await flush()
+    expect(done('talk', gs.steps.value)).toBe(true)
+    gs.stop()
+  })
+
+  it('去任务里聊完再回到这一栏，重新问一次', async () => {
+    const gs = setup()
+    await flush()
+    expect(done('talk', gs.steps.value)).toBe(false)
+
+    gs.onLine.value = false
+    mocks.started.mockResolvedValue({ talked: true })
+    await flush()
+    gs.onLine.value = true
+    await flush()
+    expect(done('talk', gs.steps.value)).toBe(true)
+    gs.stop()
+  })
+
+  it('这一栏自己看见芝士开过口，就不再去问服务端', async () => {
+    const gs = setup({ agentHasSpoken: true })
+    await flush()
+    expect(done('talk', gs.steps.value)).toBe(true)
+    expect(mocks.started).not.toHaveBeenCalled()
     gs.stop()
   })
 
