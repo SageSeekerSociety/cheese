@@ -89,7 +89,7 @@ async def test_a_turns_tail_read_without_its_bookkeeping_lands_as_it_happened(
     async def deliver() -> None:
         for record in _records(str(work)):
             for event in assembler.accept(record):
-                await service._consume_hook_event(
+                await service.hook_events.accept(
                     project_id,
                     topic_id,
                     work,
@@ -143,7 +143,7 @@ async def test_a_result_that_says_something_new_still_lands(client, tmp_path):
     async def deliver() -> None:
         for record in records:
             for event in assembler.accept(record):
-                await service._consume_hook_event(
+                await service.hook_events.accept(
                     project_id,
                     topic_id,
                     work,

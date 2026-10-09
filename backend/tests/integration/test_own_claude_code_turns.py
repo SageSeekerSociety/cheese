@@ -9,7 +9,7 @@ Claude Code reports its own usage at the end of every turn. That report must
 not be what charges a turn the platform already meters elsewhere — the
 metering proxy for a subscription turn — or the turn is charged twice.
 
-These run the real close of a turn (`ChatService._close_hook_work`) over a
+These run the real close of a turn (`TurnCompletion.close`) over a
 Claude Code result as the assembler reads it, against PostgreSQL.
 """
 
@@ -21,9 +21,9 @@ from sqlalchemy import select
 from app.domain.agent.chat import ChatService
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.harness.claude_code.events import Assembler
-from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.service import AgentResult
 from app.domain.agent.supply import SUBSCRIPTION
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block
 from app.domain.delivery.models import TimedDelivery
@@ -117,7 +117,9 @@ def test_an_own_turn_is_recorded_and_not_charged(client):
         factory = client.test_request_factory
         seat = await _seat(factory, project)
         state = _state(project, topic, seat, OWN_ROUTE)
-        await _chat(factory)._close_hook_work(state, _result(seat, _finished(seat)))
+        await _chat(factory).turn_completion.close(
+            state, _result(seat, _finished(seat))
+        )
         (row,) = await _usage(factory, state.work_id)
         assert row.credits == 0, "the owner's own login paid for it"
         assert row.output_tokens == 400
@@ -137,7 +139,9 @@ def test_a_subscription_turn_is_not_charged_from_what_the_session_reports(client
         factory = client.test_request_factory
         seat = await _seat(factory, project)
         state = _state(project, topic, seat, SUBSCRIPTION)
-        await _chat(factory)._close_hook_work(state, _result(seat, _finished(seat)))
+        await _chat(factory).turn_completion.close(
+            state, _result(seat, _finished(seat))
+        )
         rows = await _usage(factory, state.work_id)
         assert sum(row.credits for row in rows) == 0
         assert sum(row.output_tokens for row in rows) == 0
@@ -163,7 +167,7 @@ def test_an_own_turn_refused_by_its_usage_window_goes_on_when_it_resets(client):
             },
         }
         result = _result(seat, refused, _finished(seat, result="limit reached"))
-        await _chat(factory)._close_hook_work(state, result)
+        await _chat(factory).turn_completion.close(state, result)
         async with factory() as session:
             (note,) = list(await session.scalars(select(TimedDelivery)))
             lines = list(
@@ -193,7 +197,7 @@ def test_a_window_that_still_allows_the_turn_schedules_nothing(client):
             "type": "rate_limit_event",
             "rate_limit_info": {"status": "allowed", "resetsAt": 1},
         }
-        await _chat(factory)._close_hook_work(
+        await _chat(factory).turn_completion.close(
             state, _result(seat, allowed, _finished(seat))
         )
         async with factory() as session:

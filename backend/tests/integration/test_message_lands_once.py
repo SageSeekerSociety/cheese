@@ -63,7 +63,7 @@ async def test_two_writers_of_one_event_land_a_single_message(
     topic_id = await _topic(factory)
 
     async def land(unsolicited: bool):
-        return await service._persist_assistant_message(
+        return await service.messages.persist_assistant_message(
             project_id=(await _project_of(factory, topic_id)),
             topic_id=topic_id,
             text="查到了，根因在只读 token 上。",
@@ -101,7 +101,7 @@ async def test_a_genuinely_new_event_still_lands(business_db_factory, tmp_path):
     project_id = await _project_of(factory, topic_id)
 
     for eid in ("e-1", "e-2"):
-        await service._persist_assistant_message(
+        await service.messages.persist_assistant_message(
             project_id=project_id,
             topic_id=topic_id,
             text="好的",

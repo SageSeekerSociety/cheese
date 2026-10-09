@@ -26,7 +26,7 @@ The rules this module is the whole of:
   already in place, and processing advances normally instead of looping on
   pos <= head.
 - retiring a work is writing its `stopped_at`, nothing else: never a
-  completion, never `_close_hook_work`, never an AgentResult.
+  completion, never `turn.intake.completion.TurnCompletion.close`, never an AgentResult.
 """
 
 import logging

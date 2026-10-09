@@ -13,31 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.agent.gateway_usage import OWN_ROUTE
-from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.service import AgentResult, AgentUsage
+from app.domain.agent.service import AgentUsage
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, payer_for_project
 
 if TYPE_CHECKING:
-    from app.domain.agent.live_work import HookWorkState
-
-
-def reported_usage(route: str, result: AgentResult) -> AgentUsage | None:
-    """What the session says it used, where that is what counts.
-
-    Claude Code's turns are metered where their requests go — the metering
-    proxy for a subscription turn (`usage/subscription_ingest`), the gateway
-    for the rest. What the session reports of itself counts only for a
-    member's own Claude Code, whose requests reach neither; counted anywhere
-    else it would charge the turn a second time."""
-    usage = result.usage
-    if result.harness == CLAUDE_CODE and route != OWN_ROUTE:
-        return None
-    if usage is None or not (
-        usage.input_tokens or usage.output_tokens or usage.cost_usd
-    ):
-        return None
-    return usage
+    from app.domain.agent.turn.state.live import HookWorkState
 
 
 async def record_turn_usage(

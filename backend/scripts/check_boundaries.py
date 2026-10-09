@@ -33,7 +33,7 @@ Everything else is import-linter's own machinery: the contracts live in
 is enough to reproduce a verdict by hand. This script adds the two things above
 and nothing more.
 
-    ... --self-test   plant each violation the three contracts exist to catch,
+    ... --self-test   plant each violation the seven contracts exist to catch,
                       in a throwaway tree, and require them to fire
     ... --json        one JSON record on stdout instead of the report; the exit
                       code is unchanged. The record's shape is fixed in
@@ -65,7 +65,15 @@ ROOT_PACKAGE = "app"
 #: run fewer contracts and still report success — a check that narrowed itself
 #: is indistinguishable from a tree that got cleaner. Adding or renaming a
 #: contract means editing this tuple, which is the tripwire working.
-CONTRACT_IDS = ("api-domain-core", "routes-touch-no-models", "domains-acyclic")
+CONTRACT_IDS = (
+    "api-domain-core",
+    "routes-touch-no-models",
+    "domains-acyclic",
+    "turn-layers",
+    "turn-no-composition-imports",
+    "realtime-no-turn",
+    "turn-storage-purity",
+)
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
 
@@ -338,7 +346,7 @@ def main() -> int:
 # Self test. Every contract above was red on the day it was written, so the
 # tree passing it proves nothing about whether it still fires — the baseline
 # would make a contract that stopped matching anything look identical to a
-# clean repo. These plant the three violations the contracts exist to catch,
+# clean repo. These plant the violations the contracts exist to catch,
 # in the smallest tree that satisfies their declarations, and require each one
 # to come back red for the stated reason.
 # ---------------------------------------------------------------------------
@@ -354,12 +362,33 @@ _SEED = {
     "app/domain/bar/__init__.py": "",
     "app/domain/bar/models.py": "class Bar:\n    ...\n",
     "app/domain/bar/services.py": "def read_bar():\n    ...\n",
+    "app/domain/agent/__init__.py": "",
+    "app/domain/agent/chat.py": "",
+    "app/domain/agent/runtime.py": "",
+    "app/domain/agent/fixture_bridge.py": "",
+    "app/domain/agent/run_records.py": "",
+    "app/domain/agent/realtime/__init__.py": "",
+    "app/domain/agent/realtime/broker.py": "",
+    "app/domain/agent/turn/__init__.py": "",
+    "app/domain/agent/turn/intake/__init__.py": "",
+    "app/domain/agent/turn/steps/__init__.py": "",
+    "app/domain/agent/turn/store/__init__.py": "",
+    "app/domain/agent/turn/state/__init__.py": "",
 }
 
 #: (what it plants, files beyond the seed, expected exit code, a needle the
 #: output must carry — so a red run is red for the reason claimed and not
 #: because the tree failed to build)
-_CASES: list[tuple[str, dict[str, str], int, str | None]] = [
+_IMPORT_INTAKE = "import app.domain.agent.turn.intake\n"
+_IMPORT_STEPS = "import app.domain.agent.turn.steps\n"
+_IMPORT_STORE = "import app.domain.agent.turn.store\n"
+_IMPORT_STATE = "import app.domain.agent.turn.state\n"
+_IMPORT_BRIDGE = "import app.domain.agent.fixture_bridge\n"
+_IMPORT_BROKER = "import app.domain.agent.realtime.broker\n"
+_IMPORT_RECORDS = "import app.domain.agent.run_records\n"
+
+
+_CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
     (
         "a route reaching a model directly (C2)",
         {
@@ -370,12 +399,14 @@ _CASES: list[tuple[str, dict[str, str], int, str | None]] = [
         },
         BROKEN,
         "app.api.routes is not allowed to import app.domain.bar.models",
+        ("routes-touch-no-models",),
     ),
     (
         "core reaching up into api (C1)",
         {"app/core/jobs.py": "from app.api.deps import get_db\n"},
         BROKEN,
         "app.core is not allowed to import app.api",
+        ("api-domain-core",),
     ),
     (
         "two sibling domains in a cycle (C3)",
@@ -390,49 +421,94 @@ _CASES: list[tuple[str, dict[str, str], int, str | None]] = [
         },
         BROKEN,
         "No cycles are allowed in app.domain",
+        ("domains-acyclic",),
     ),
     (
         "a tree inside every declared boundary",
         {},
         OK,
         None,
+        (),
+    ),
+    (
+        "steps importing intake directly (T1)",
+        {"app/domain/agent/turn/steps/execute.py": _IMPORT_INTAKE},
+        BROKEN,
+        None,
+        ("turn-layers",),
+    ),
+    (
+        "steps reaching intake through a bridge (T1 transitive)",
+        {
+            "app/domain/agent/turn/steps/execute.py": _IMPORT_BRIDGE,
+            # Crossing a turn sibling and coming back also creates a C3 cycle.
+            "app/domain/agent/fixture_bridge.py": _IMPORT_INTAKE,
+        },
+        BROKEN,
+        None,
+        ("turn-layers", "domains-acyclic"),
+    ),
+    (
+        "an unclassified turn module (T1 exhaustive)",
+        {"app/domain/agent/turn/extra.py": ""},
+        BROKEN,
+        None,
+        ("turn-layers",),
+    ),
+    (
+        "intake importing chat directly (T2)",
+        {"app/domain/agent/turn/intake/messages.py": "import app.domain.agent.chat\n"},
+        BROKEN,
+        None,
+        ("turn-no-composition-imports",),
+    ),
+    (
+        "intake reaching chat indirectly is deliberately allowed (T2)",
+        {
+            "app/domain/agent/turn/intake/messages.py": _IMPORT_BRIDGE,
+            "app/domain/agent/fixture_bridge.py": "import app.domain.agent.chat\n",
+        },
+        OK,
+        None,
+        (),
+    ),
+    (
+        "realtime reaching intake through a bridge (T3 transitive)",
+        {
+            "app/domain/agent/realtime/broker.py": _IMPORT_BRIDGE,
+            "app/domain/agent/fixture_bridge.py": _IMPORT_INTAKE,
+        },
+        BROKEN,
+        None,
+        ("realtime-no-turn",),
+    ),
+    (
+        "storage reaching realtime through run records (T4 transitive)",
+        {
+            "app/domain/agent/turn/store/events.py": _IMPORT_RECORDS,
+            "app/domain/agent/run_records.py": _IMPORT_BROKER,
+        },
+        BROKEN,
+        None,
+        ("turn-storage-purity",),
+    ),
+    (
+        "real downward layers and a steps publisher remain allowed",
+        {
+            "app/domain/agent/turn/intake/messages.py": _IMPORT_STEPS,
+            "app/domain/agent/turn/steps/__init__.py": _IMPORT_STORE + _IMPORT_BROKER,
+            "app/domain/agent/turn/store/__init__.py": _IMPORT_STATE,
+        },
+        OK,
+        None,
+        (),
     ),
 ]
 
-#: A config that declares nothing, and one that declares all three contracts
+#: A config that declares nothing, and one that declares all seven contracts
 #: but freezes an exception as a wildcard — the one thing this format must not
 #: accept, and which import-linter itself honours happily.
 _THIN_CONFIG = "[importlinter]\nroot_package = app\n"
-_WILDCARD_CONFIG = """\
-[importlinter]
-root_package = app
-include_external_packages = False
-
-[importlinter:contract:api-domain-core]
-name = C1
-type = layers
-layers =
-    app.api
-    app.domain
-    app.core
-ignore_imports =
-    app.api.** -> app.domain.**
-
-[importlinter:contract:routes-touch-no-models]
-name = C2
-type = forbidden
-source_modules =
-    app.api.routes
-forbidden_modules =
-    app.domain.*.models
-allow_indirect_imports = true
-
-[importlinter:contract:domains-acyclic]
-name = C3
-type = acyclic_siblings
-ancestors =
-    app.domain
-"""
 
 
 def _invoke(tmp: Path, *extra: str) -> tuple[int, str, str]:
@@ -509,6 +585,11 @@ def _tail(output: str, lines: int = 25) -> str:
 
 def self_test() -> int:
     failures: list[str] = []
+    # Only self-tests need the project's default declaration. Normal --config,
+    # --json and --help must not read it before judge can report exit 2.
+    wildcard_config = DEFAULT_CONFIG.read_text().replace(
+        "ignore_imports =\n", "ignore_imports =\n    app.api.** -> app.domain.**\n", 1
+    )
 
     def report(what: str, code: int, output: str, expected: int, needle: str | None):
         verdict = "ok"
@@ -523,7 +604,7 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory(prefix="boundary-selftest-") as raw:
         sandbox = Path(raw)
 
-        for index, (what, files, expected, needle) in enumerate(_CASES):
+        for index, (what, files, expected, needle, _broken) in enumerate(_CASES):
             tmp = sandbox / f"case{index}"
             tmp.mkdir()
             report(what, *_run(None, files, tmp), expected, needle)
@@ -533,11 +614,31 @@ def self_test() -> int:
         tmp = sandbox / "thin"
         tmp.mkdir()
         report(
-            "a declaration that lost two of its three contracts",
+            "a declaration that lost all seven contracts",
             *_run(_THIN_CONFIG, {}, tmp),
             CANNOT_JUDGE,
             "missing",
         )
+
+        # Every individual contract is mandatory, not just a nonempty config.
+        import configparser
+
+        for contract_id in CONTRACT_IDS:
+            config = configparser.ConfigParser()
+            config.read(DEFAULT_CONFIG)
+            config.remove_section(f"importlinter:contract:{contract_id}")
+            import io
+
+            contents = io.StringIO()
+            config.write(contents)
+            missing_tmp = sandbox / f"missing-{contract_id}"
+            missing_tmp.mkdir()
+            report(
+                f"missing mandatory contract {contract_id}",
+                *_run(contents.getvalue(), {}, missing_tmp),
+                CANNOT_JUDGE,
+                f"missing ['{contract_id}']",
+            )
 
         # No config at all. Nothing to judge, and 2 is not a pass.
         tmp = sandbox / "absent"
@@ -566,9 +667,63 @@ def self_test() -> int:
         tmp.mkdir()
         report(
             "an exception written as a wildcard",
-            *_run(_WILDCARD_CONFIG, {}, tmp),
+            *_run(wildcard_config, {}, tmp),
             BROKEN,
             "wildcard",
+        )
+
+        # Copy the checker away from its default config. --config must remain
+        # independent of that file, and an absent default must be judged, not
+        # crash while importing self-test fixture constants.
+        detached = sandbox / "detached"
+        detached.mkdir()
+        _plant(None, {}, detached)
+        alternate = detached / "explicit.ini"
+        (detached / DEFAULT_CONFIG.name).rename(alternate)
+        copied = detached / "scripts" / HERE.name
+        copied.parent.mkdir()
+        shutil.copy(HERE, copied)
+        detached_cases = [
+            ("help with no default config", ("--help",), OK, False),
+            ("missing default config", ("--json",), CANNOT_JUDGE, True),
+            (
+                "explicit config with no default config",
+                ("--config", str(alternate), "--json"),
+                OK,
+                True,
+            ),
+        ]
+        for what, arguments, expected, has_record in detached_cases:
+            result = subprocess.run(
+                [sys.executable, str(copied), *arguments],
+                cwd=detached,
+                capture_output=True,
+                text=True,
+            )
+            report(what, result.returncode, result.stderr, expected, None)
+            if has_record:
+                try:
+                    output_lines = result.stdout.strip().splitlines()
+                    assert len(output_lines) == 1
+                    record = json.loads(output_lines[0])
+                    assert record["id"] == CHECK_ID
+                    assert record["status"] == _STATUS_OF_EXIT[expected]
+                except (AssertionError, KeyError, ValueError) as exc:
+                    failures.append(f"{what}: invalid single-line JSON: {exc!r}")
+        # A non-file at the default path also must not be touched by --config.
+        (detached / DEFAULT_CONFIG.name).mkdir()
+        result = subprocess.run(
+            [sys.executable, str(copied), "--config", str(alternate), "--json"],
+            cwd=detached,
+            capture_output=True,
+            text=True,
+        )
+        report(
+            "explicit config with unreadable default path",
+            result.returncode,
+            result.stdout + result.stderr,
+            OK,
+            None,
         )
 
         # Every planted tree again under --json: the record has to agree with
@@ -577,19 +732,33 @@ def self_test() -> int:
         # cleaner tree.
         json_cases = [
             (f"case{index}", what, expected)
-            for index, (what, _f, expected, _n) in enumerate(_CASES)
+            for index, (what, _f, expected, _n, _broken) in enumerate(_CASES)
         ]
         json_cases.append(
-            ("thin", "a declaration that lost two of its three contracts", CANNOT_JUDGE)
+            ("thin", "a declaration that lost all seven contracts", CANNOT_JUDGE)
         )
         json_cases.append(("wildcard", "an exception written as a wildcard", BROKEN))
         json_cases.append(("absent", "no config to read at all", CANNOT_JUDGE))
+        json_cases.extend(
+            (f"missing-{cid}", f"missing mandatory contract {cid}", CANNOT_JUDGE)
+            for cid in CONTRACT_IDS
+        )
         for where, what, expected in json_cases:
             problem, record = _record_problem(sandbox / where, expected)
             if problem is None and where.startswith("case"):
                 ids = [row.get("file") for row in record.get("details", [])]
                 if ids != list(CONTRACT_IDS):
                     problem = f"details name {ids}, want {list(CONTRACT_IDS)}"
+                else:
+                    expected_broken = set(_CASES[int(where[4:])][4])
+                    broken = {
+                        row["file"] for row in record["details"] if not row["kept"]
+                    }
+                    if broken != expected_broken:
+                        problem = (
+                            f"broken contracts {sorted(broken)}, "
+                            f"want {sorted(expected_broken)}"
+                        )
             if (
                 problem is None
                 and where == "wildcard"
@@ -614,10 +783,10 @@ def self_test() -> int:
         )
         return 1
     print(
-        "PASS: check_boundaries self-test (3 contracts fire on the violation they "
+        "PASS: check_boundaries self-test (7 contracts fire on the violation they "
         "exist to catch; an absent, a trimmed and a wildcarded declaration each "
         "come back not-passing; every case agrees with the exit code under --json, "
-        "on one line of stdout, naming all three contracts)"
+        "on one line of stdout, naming all seven contracts)"
     )
     return 0
 

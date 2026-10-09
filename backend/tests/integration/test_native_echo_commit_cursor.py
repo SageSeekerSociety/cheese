@@ -38,7 +38,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.subscription import Subscription
-from app.domain.agent.live_work import LiveWork
+from app.domain.agent.turn.state.live import LiveWork
 async def run():
     engine = create_async_engine(sys.argv[1])
     chat = ChatService.__new__(ChatService)

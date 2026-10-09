@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
-from app.domain.agent.live_work import LiveWork
+from app.domain.agent.turn.state.live import LiveWork
 from tests import conftest
 from tests.conftest import close_topic_subscriptions, drain_hooks, settle_turn
 

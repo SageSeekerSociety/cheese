@@ -635,6 +635,7 @@
   "siteDomainNotIsolated": "Site 托管域名必须与平台域名隔离",
   "roomUnderRoomUseSplit": "频道下面放的是任务，不是另一个频道：改为新建任务",
   "topicNotFound": "频道不存在",
+  "chatMessageEmpty": "消息为空",
   "topicCloneIntoSelf": "不能把频道克隆到它自己",
   "topicCloneSameProject": "只能在同一项目内克隆会话",
   "topicCloneNeverRan": "源频道还没跑过（没有可克隆的会话）",
@@ -926,6 +927,7 @@
   "upstreamUnavailable": "上游服务不可用",
   "gatewayTimeout": "上游没有及时应答",
   "invalidRequestParameters": "请求参数不合法",
+  "chatPublicationIdReused": "同一 request_id 已用于另一条消息",
   "clientDisconnected": "客户端已断开",
   "deviceOffline": "设备 {device} 离线",
   "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知",
@@ -1001,5 +1003,6 @@
   "githubReviewPostFailed": "GitHub 拒绝了这次评审（HTTP {status}）：{reply}",
   "reviewCommentSuggestionOnly": "修改建议",
   "taskFileEditsOverlap": "这个文件在你打开之后又被改过，有和你改的位置重叠的地方，逐处选一个版本",
+  "addressedAgentUnavailable": "所寻址的智能体不可用",
   "fileTooLarge": "文件太大（上限 {mb}MB）"
 }

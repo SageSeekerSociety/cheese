@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.scopes import MemoryScope
 
 #: 现场状态查表的键：一间房 + 这一轮。
 TurnKey = tuple[uuid.UUID, uuid.UUID]
@@ -196,3 +196,17 @@ class LiveWork:
             elif matches(state):
                 hits.append(work_id)
         return hits[0] if len(hits) == 1 else None
+
+    def attributed_work_id(self, topic_id: uuid.UUID, author: str) -> uuid.UUID | None:
+        """Which live hook work a room publication with no turn id belongs to."""
+        live = [s for (t, _), s in self.hook_work.items() if t == topic_id]
+        own = [s for s in live if s.acting_agent == author]
+        if len(own) == 1:
+            return own[0].work_id
+        if len(own) > 1:
+            active = self.active_turn_ids.get(topic_id, ())
+            hits = [s.work_id for s in own if s.work_id in active]
+            return hits[0] if len(hits) == 1 else None
+        if len(live) == 1:
+            return live[0].work_id
+        return None

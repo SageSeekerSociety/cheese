@@ -24,42 +24,27 @@ from sqlalchemy import select
 
 from app.core.background import hold
 from app.core.errors import AppError
-from app.core.obs import bind_context, clear_context
 from app.core.redis import get_redis_client
-from app.core.sentences import error_frame, listing, say
+from app.core.sentences import listing, say
 from app.domain.agent import death_evidence, dispatch_log, turn_inputs
 from app.domain.agent.admission import (
-    HOST_BUSY_META,
-    QUEUED_META,
-    Slot,
-    enter,
     queued,
-    queued_text,
-    wait_for_host,
 )
 from app.domain.agent.host_failure import handle_host_failure, record_host_success
-from app.domain.agent.initial_admission import admitted_initial
 from app.domain.agent.pending_messages import nudge_messages, resume_messages
 from app.domain.agent.platform_failures import (
-    HOST_SCOPED_CODES,
-    SUBSCRIPTION_CREDENTIAL_EXPIRED,
-    classify_platform_failure,
+    PlatformFailure,
 )
 from app.domain.agent.platform_notices import (
     EVENT_DELIVERY_FALLBACK,
     EVENT_DEPLOY_INTERRUPTED,
     EVENT_DISPATCH_UNKNOWN,
     EVENT_TOOLS_RECOVERED,
-    EVENT_TURN_FAILED,
     EVENT_TURN_QUEUED,
     EVENT_TURN_TIMEOUT,
-    SEVERITY_ERROR,
-    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
-    delivery_checking_notice,
-    delivery_fallback_notice,
     notice,
 )
 from app.domain.agent.queries import instance_of_handle
@@ -69,25 +54,25 @@ from app.domain.agent.realtime import subscriber_queue
 # Re-exported for `app.domain.delivery.agent`: its seam may not import the
 # repository module itself (it would close a C3 domain cycle).
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord  # noqa: F401
+from app.domain.agent.turn.intake.messages import RunnerIntake
+from app.domain.agent.turn.intake.status import WorkStatus
+from app.domain.agent.turn.state.execution import ExecutionPolicy, ExecutionState
+from app.domain.agent.turn.steps.execute import ExecutionEffects, execute
+from app.domain.agent.turn.store.intervals import open_turn
 from app.domain.agent.turn_ledger import (
-    close_turns,
     fire_on_done,
-    open_turn,
     project_pool,
     stamp_delivery,
     utcnow,
 )
 from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.delivery.agent import dispatch_pending, run_attempt
-from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.delivery.models import Delivery
 from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
-from app.domain.identity.handles import names_a_person, recipient_seat
-from app.domain.thread.services import answer_place
+from app.domain.identity.handles import names_a_person
 from app.domain.topic_membership.services import addressable_seat
-from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -138,7 +123,6 @@ class AgentWorkRunner:
     ) -> None:
         self._broker = broker
         self._host_has_room = host_has_room
-        self._message_locks: dict[tuple[uuid.UUID, str | None], asyncio.Lock] = {}
         self._timeout = turn_timeout_s
         # 冷启动看门狗: how long a turn may produce NOTHING before it is called
         # dead. Separate from `turn_timeout_s` because it answers a different
@@ -203,6 +187,29 @@ class AgentWorkRunner:
         # moment it holds the owner lock, a little before turns may start (the
         # takeover itself listens), and cleared the moment it starts to leave.
         self._owns_sessions = True
+        execution_state = ExecutionState(
+            self._recent,
+            self._live,
+            self._last_frame_at,
+            self._live_topics,
+            self._delivered,
+            self._host_failed_topics,
+        )
+        self._status = WorkStatus(broker, execution_state)
+        self._intake = RunnerIntake(
+            broker,
+            execution_state,
+            wait_to_start=self._wait_to_start,
+            schedule_message=lambda service, topic, turn, **message: (
+                self._receive_message(service, topic, turn, **message)
+            ),
+            execute=self._execute,
+            nudge=self._nudge_after_work,
+            host_has_room=host_has_room,
+            address_agent=addressed_to_agent,
+            is_addressed=_a_turn_was_addressed,
+            resolve_initial_seat=self._resolve_initial_seat,
+        )
 
     @property
     def accepting_turns(self) -> bool:
@@ -286,46 +293,7 @@ class AgentWorkRunner:
                     await asyncio.wait(pending)
 
     def topic_work(self, topic_id: uuid.UUID) -> dict | None:
-        """Latest lifecycle record for this topic. `ceiling_s` is this turn's
-        effective absolute ceiling (`self._timeout`, or the channel's own hard
-        ceiling once its `turn_ceiling` frame has rescheduled the outer wrap —
-        see `_execute`) and `near_ceiling` is a coarse "within the last 10
-        minutes" flag — turn 活跃度检测 deliberately does NOT expose a live
-        `budget_left_s` countdown any more: that figure was observed making the
-        agent rush against what's only meant to be a wedged-turn safety net
-        (dev, 2026-08-08).
-        Ring-buffer-backed, so None after a restart or ~100 turns elsewhere."""
-        key = str(topic_id)
-        activity = self._broker.activity_snapshot(key)
-        if activity is not None:
-            for rec in reversed(self._recent):
-                if rec.get("turn_id") != activity["turn_id"]:
-                    continue
-                out = dict(rec)
-                out["status"] = "running"
-                out["started_at"] = activity["started_at"]
-                out["ceiling_s"] = round(rec.get("ceiling_s") or self._timeout)
-                out["near_ceiling"] = False
-                return out
-            return {
-                "turn_id": activity["turn_id"],
-                "topic_id": key,
-                "status": "running",
-                "started_at": activity["started_at"],
-                "ceiling_s": round(self._timeout),
-                "near_ceiling": False,
-            }
-        for rec in reversed(self._recent):
-            if rec["topic_id"] != key:
-                continue
-            out = dict(rec)
-            ceiling_s = rec.get("ceiling_s") or self._timeout
-            out["ceiling_s"] = round(ceiling_s)
-            if rec["status"] == "running":
-                elapsed = time.time() - rec["started_at"]
-                out["near_ceiling"] = (ceiling_s - elapsed) < 600
-            return out
-        return None
+        return self._status.topic_work(topic_id, self._timeout)
 
     def continuation_for(self, topic_id: uuid.UUID) -> uuid.UUID | None:
         """The logical unit of work this topic's CURRENT turn belongs to, or
@@ -336,7 +304,7 @@ class AgentWorkRunner:
         dedup against. None means "not inside an automatic turn": a human
         clicking a button twice means it twice, so the caller skips the check
         rather than inventing a namespace."""
-        rec = self._current_turn_record(topic_id)
+        rec = self._status.current_turn_record(topic_id)
         raw = rec.get("continuation_id") if rec is not None else None
         return uuid.UUID(raw) if isinstance(raw, str) else None
 
@@ -357,7 +325,7 @@ class AgentWorkRunner:
         completion notice wakes the session and it runs a whole turn off that,
         which is the likeliest turn to open work of its own). Only a real
         person's handle comes back."""
-        rec = self._current_turn_record(topic_id)
+        rec = self._status.current_turn_record(topic_id)
         author = rec.get("author") if rec is not None else None
         if not isinstance(author, str) or not names_a_person(author):
             return None
@@ -384,79 +352,11 @@ class AgentWorkRunner:
             self._last_frame_at[str(turn_id)] = time.monotonic()
             return
 
-    def _current_turn_record(self, topic_id: uuid.UUID) -> dict | None:
-        """The `_recent` entry for the turn this topic is running NOW, or None.
-
-        Shared by `continuation_for` and `turn_author_for` so the two cannot
-        disagree about which turn "now" means. `_recent` is a ring buffer of what
-        turns *did*, so the newest entry for a topic is not necessarily live —
-        hence the two guards: prefer the broker's own live turn id, and when the
-        broker has none, accept the newest entry only while it still reads
-        `running`."""
-        key = str(topic_id)
-        activity = self._broker.activity_snapshot(key)
-        active_id = activity["turn_id"] if activity is not None else None
-        for rec in reversed(self._recent):
-            if rec["topic_id"] != key:
-                continue
-            if active_id is not None and rec.get("turn_id") != active_id:
-                continue
-            if active_id is None and rec["status"] != "running":
-                return None
-            return rec
-        return None
-
     def running_topic_ids(self) -> set[uuid.UUID]:
-        """Every topic with a turn currently in flight — for the board's bulk
-        read, which can't afford one `topic_work()` lookup per row. Same "newest
-        record per topic wins" rule as `topic_work()`, across all topics."""
-        seen: set[str] = set()
-        running: set[uuid.UUID] = set()
-        for channel in self._broker.active_channels():
-            try:
-                running.add(uuid.UUID(channel))
-            except ValueError:
-                continue
-        for rec in reversed(self._recent):
-            key = rec["topic_id"]
-            if key in seen:
-                continue
-            seen.add(key)
-            if rec["status"] == "running":
-                running.add(uuid.UUID(key))
-        return running
+        return self._status.running_topic_ids()
 
     def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
-        """The turn THIS process is actually executing for `topic_id`, with how
-        long since it last published a frame — or None if nobody is running one.
-
-        This is the heartbeat half of the stall verdict (see
-        `TopicService.stall_signal`), and deliberately not `topic_work()`:
-        `_recent` is a ring buffer of what turns *did*, so a turn killed with the
-        process still reads `running` there forever. `_live` is emptied by the
-        turn's own `finally`, which a dying process never gets to run — so a
-        registry entry with no `_live` entry means the executor is gone, no
-        matter what the buffer remembers.
-        """
-        activity = self._broker.activity_snapshot(str(topic_id))
-        if activity is not None:
-            return {
-                "turn_id": activity["turn_id"],
-                "silent_for_s": activity["idle_for_s"],
-            }
-        now = time.monotonic()
-        for turn_id, live_topic in self._live_topics.items():
-            if live_topic != topic_id or turn_id not in self._live:
-                continue
-            frame_at = self._last_frame_at.get(turn_id)
-            return {
-                "turn_id": turn_id,
-                # None means the bookkeeping is off (an entry without a frame
-                # stamp); the caller treats an unknown gap as "not proof of
-                # life" rather than inventing a fresh one.
-                "silent_for_s": None if frame_at is None else round(now - frame_at, 1),
-            }
-        return None
+        return self._status.live_work_for_topic(topic_id)
 
     async def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
         """Turns currently waiting for one of this project's slots."""
@@ -515,7 +415,7 @@ class AgentWorkRunner:
         id 写进自己那条记录里（环境修复把它写进事故 meta，之后靠 `turn_pending` 判断
         这一轮是不是还在排队）。不传就当场分配一个。"""
         turn_id = turn_id or uuid.uuid4()
-        work = self._run(
+        work = self._intake._run(
             chat_service,
             topic_id,
             turn_id,
@@ -558,111 +458,23 @@ class AgentWorkRunner:
         client_id: str | None = None,
         quoted_context: dict | None = None,
     ) -> uuid.UUID:
-        """Persist one human message now, then deliver it to whoever it named.
-
-        Only model turns use queue/credit gates; quotes carry no summon authority.
-        **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
-        `summon: bool` 入参，从浏览器的帧上一路传到这里，和服务端解析出来的 @ 做或
-        运算 —— 也就是说一条谁也没 @ 的消息，只要客户端把那个布尔置真，照样起一轮。
-        现在只认落库那一刻解析出来的 `agent_recipient`：@ 了谁，就是点了谁的名。
-        """
-        received_at = time.monotonic()
-        channel = str(topic_id)
-        # Capture the user's arrival-time expectation before the database write.
-        # The live session may finish while the message is being persisted; that
-        # race is still a delivery fallback, not an ordinary idle-topic message.
-        live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
-            self._broker.active_turn_ids(channel)
-        )
-        (
-            payloads,
-            user_block_id,
-            user_block_ids,
-            duplicate,
-        ) = await chat_service.post_user_message(
+        return await self._intake.receive_message(
+            chat_service,
             topic_id,
             author=author,
             content=content,
-            turn_id=None,
-            reply_to=reply_to,
-            attachments=attachments,
-            client_id=client_id,
-            quoted_context=quoted_context,
-        )
-        turn_id = user_block_id
-        recipient = next(
-            (
-                (payload.get("meta") or {}).get("agent_recipient")
-                for payload in payloads
-                if (payload.get("meta") or {}).get("agent_recipient")
-            ),
-            None,
-        )
-        recipient_handle = (recipient or {}).get("handle")
-        mentioned = any(
-            (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
-            for payload in payloads
-        )
-        # 点到的是**席位**，不是这个队友自己的名字。`agent_recipient.handle` 是项目
-        # 给它起的名（`reviewer`、`planner`…，`AgentInstance.handle` 允许任意小写
-        # 串），而一条投递怎么到达是按席位的命名规矩判出来的
-        # （`how_it_arrives` → `looks_like_agent_handle`）。拿实例名去问，一个没叫
-        # `cheese` 开头的队友就永远不是「靠一轮收到」—— @ 它、和它私聊，都跑不起一
-        # 轮。席位由实例 id 定，和名册上坐的那个字符串是同一个。
-        #
-        # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
-        # 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = addressed_to_agent(recipient_seat(recipient) if mentioned else None)
-        persisted_at = time.monotonic()
-        for payload in payloads:
-            await self._broker.publish(
-                channel, {"type": "user_block", "block": payload}
-            )
-        logger.info(
-            "chat_receive_timing topic=%s turn=%s persist_ms=%.3f publish_ms=%.3f",
-            topic_id,
-            turn_id,
-            (persisted_at - received_at) * 1000,
-            (time.monotonic() - persisted_at) * 1000,
-        )
-        if duplicate:
-            return turn_id
-        # A message to 芝士 in a channel's main line is answered in its 支线.
-        answer_in = await answer_place(
-            chat_service.session_factory, user_block_id if mentioned else None, topic_id
-        )
-        if answer_in != topic_id:
-            live_delivery_expected = chat_service.has_running_turn(answer_in)
-        self._receive_message(
-            chat_service,
-            answer_in,
-            turn_id,
-            addressed=addressed,
-            continuation_id=turn_id,
-            author=author,
-            content=next(
-                (
-                    payload["content"]
-                    for payload in payloads
-                    if payload.get("id") == str(user_block_id) and content
-                ),
-                content,
-            ),
             reply_to=reply_to,
             attachments=attachments,
             provision_actor=provision_actor,
-            landed_user_block_id=user_block_id,
-            landed_user_block_ids=user_block_ids,
-            live_delivery_expected=live_delivery_expected,
-            recipient_handle=recipient_handle,
+            client_id=client_id,
+            quoted_context=quoted_context,
         )
-        return turn_id
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:
         # Named like `submit`'s, so `turn_pending` sees a message still waiting
         # to be admitted as the pending turn it is.
         task = asyncio.create_task(
-            self._consume_message(chat_service, topic_id, turn_id, **message),
+            self._intake._consume_message(chat_service, topic_id, turn_id, **message),
             name=f"turn:{turn_id}",
         )
         self._tasks.add(task)
@@ -680,75 +492,6 @@ class AgentWorkRunner:
             )
             self._tasks.add(dispatch)
             dispatch.add_done_callback(self._tasks.discard)
-
-    async def _consume_message(
-        self, chat_service, topic_id, turn_id, **message
-    ) -> None:
-        # Order each recipient's messages. Waiting for another agent's turn must
-        # not block a follow-up addressed to the agent that is still running.
-        # Before anything else: whether this joins a running turn or starts one
-        # depends on knowing what is running, which only the owner does.
-        await self._wait_to_start()
-        key = (topic_id, message["recipient_handle"])
-        lock = self._message_locks.setdefault(key, asyncio.Lock())
-        # The window this and the two lines below measure runs from a message
-        # being durably received to its turn starting to assemble. Every other
-        # stretch of a turn is timed; this one never was, and it is not small —
-        # it holds a queue behind the recipient's other messages, a live-delivery
-        # attempt that reaches the database, and the credit and concurrency gates.
-        # Measured through it, a turn only shows a gap with nothing in it.
-        admission_started = time.monotonic()
-        try:
-            async with lock:
-                logger.info(
-                    "chat_admission_timing topic=%s turn=%s phase=message_lock "
-                    "elapsed_ms=%.3f unix_ms=%.3f",
-                    topic_id,
-                    turn_id,
-                    (time.monotonic() - admission_started) * 1000,
-                    time.time() * 1000,
-                )
-                if not _a_turn_was_addressed(message["addressed"]):
-                    if message["content"] or message["attachments"]:
-                        # Heard, not asked: nothing here is the agent's to answer.
-                        await chat_service.merge_into_running_turn(
-                            topic_id,
-                            message["landed_user_block_ids"] or [turn_id],
-                            message["content"],
-                            message["author"],
-                            message["attachments"],
-                            **(
-                                {"recipient_handle": message["recipient_handle"]}
-                                if message["recipient_handle"] is not None
-                                else {}
-                            ),
-                            owes_reply=False,
-                        )
-                    await self._broker.publish(str(topic_id), {"type": "done"})
-                    return
-                if await self._deliver_message(
-                    chat_service, topic_id, turn_id, **message
-                ):
-                    return
-            logger.info(
-                "chat_admission_timing topic=%s turn=%s phase=live_delivery_declined "
-                "elapsed_ms=%.3f unix_ms=%.3f",
-                topic_id,
-                turn_id,
-                (time.monotonic() - admission_started) * 1000,
-                time.time() * 1000,
-            )
-            message.pop("landed_user_block_ids")
-            message.pop("live_delivery_expected")
-            await self._run(chat_service, topic_id, turn_id, **message)
-        except Exception:
-            logger.exception(
-                "agent message subscription failed topic=%s turn=%s", topic_id, turn_id
-            )
-            await self._broker.publish(
-                str(topic_id),
-                error_frame(say("agentDeliveryFailed"), type="error"),
-            )
 
     def turn_pending(self, turn_id: uuid.UUID) -> bool:
         """Include admission queueing before the durable turn interval opens."""
@@ -1542,392 +1285,8 @@ class AgentWorkRunner:
     )
 
     #: How long a turn waits for its room's replay before the room is told.
-    REPLAY_NOTICE_S = 20.0
 
     #: 等的是这间房自己的记录接回来，平台自己会往前推，没人需要动手。
-    _CATCHING_UP_META = notice(
-        EVENT_TURN_QUEUED,
-        severity=SEVERITY_INFO,
-        who=WHO_PLATFORM,
-        detail=say("catchingUpDetail"),
-        detail_label=say("labelWhatHappensNext"),
-    )
-
-    async def _wait_for_replay(
-        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID
-    ) -> None:
-        """Wait for the room's replay of what its sessions said while nobody
-        listened (`ChatService.recover_sessions`).
-
-        The turn it answered is closed, and the messages it took stamped
-        consumed, only as that replay lands; a turn started before then sends
-        them again. Nothing outside the room waits for it.
-        """
-        told = False
-        while (replay := chat_service.replaying(topic_id)) is not None:
-            done, _ = await asyncio.wait(
-                {replay}, timeout=None if told else self.REPLAY_NOTICE_S
-            )
-            if not done:
-                told = True
-                await self._post_event(
-                    chat_service,
-                    topic_id,
-                    turn_id,
-                    say("catchingUp"),
-                    meta=self._CATCHING_UP_META,
-                )
-
-    async def _post_event(
-        self,
-        chat_service,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        text: str,
-        *,
-        meta: dict | None = None,
-    ) -> bool:
-        """Persist + broadcast a platform system event (queue/refusal). Reuses
-        the post_system_event + broker path the nudge mechanism uses."""
-        try:
-            block = await chat_service.post_system_event(
-                topic_id, text, turn_id, meta=meta
-            )
-        except Exception:  # noqa: BLE001 — visibility is best-effort
-            logger.exception("failed to post admission event for %s", topic_id)
-            return False
-        if block is not None:
-            await self._broker.publish(
-                str(topic_id), {"type": "event_block", "block": block}
-            )
-        return block is not None
-
-    async def _admit(
-        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID, agent=None
-    ) -> tuple[str, Slot | None]:
-        """Admission control (spec §9.1 算力额度真实化), before any execution:
-
-        - credits exhausted → ("reject", None): the caller refuses the turn.
-        - its session starts on a session host with no memory for it → wait.
-        - project concurrency full → wait for one of the project's slots, first
-          come first served, after posting a visible "排队中" system event.
-          Returns ("ok", slot) with the slot held (caller must release).
-        - topic unknown / policy lookup failed → ("ok", None): admit ungated;
-          the turn itself surfaces the real error.
-        """
-        try:
-            policy = await chat_service.work_policy(topic_id, agent)
-        except Exception:  # noqa: BLE001 — admission must never kill a turn
-            logger.exception("work_policy failed for %s; admitting", topic_id)
-            policy = None
-        if policy is None:
-            return "ok", None
-        if policy["credits_exhausted"]:
-            logger.info("turn %s rejected: credits exhausted", turn_id)
-            return "reject", None
-        await wait_for_host(
-            self._host_has_room if policy.get("on_session_host") else None,
-            topic_id,
-            lambda text: self._post_event(
-                chat_service, topic_id, turn_id, text, meta=HOST_BUSY_META
-            ),
-        )
-
-        async def tell_queued(ahead: int) -> None:
-            await self._post_event(
-                chat_service, topic_id, turn_id, queued_text(ahead), meta=QUEUED_META
-            )
-            logger.info(
-                "turn %s queued (project=%s ahead=%s)",
-                turn_id,
-                policy["project_id"],
-                ahead,
-            )
-
-        slot = await enter(
-            get_redis_client(),
-            str(turn_id),
-            pool=project_pool(policy["project_id"], policy["max_concurrent_turns"]),
-            on_queued=tell_queued,
-        )
-        return "ok", slot
-
-    async def _refuse_exhausted(
-        self,
-        chat_service,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        *,
-        author: str,
-        content: str,
-        reply_to: str | None,
-        attachments: list[dict] | None,
-        is_message_turn: bool,
-        message_landed: bool = False,
-    ) -> None:
-        """Refuse a turn the credits do not admit. A human's message still lands
-        (only the AI turn is metered); the platform's own event says why."""
-
-        policy = await chat_service.work_policy(topic_id)
-        reason = (policy or {}).get("credits_exhausted")
-        event = credits_event(reason)
-
-        channel = str(topic_id)
-        if is_message_turn and not message_landed and (content or attachments):
-            try:
-                async for frame in chat_service.converse(
-                    topic_id=topic_id,
-                    author=author,
-                    content=content,
-                    summon=False,
-                    turn_id=turn_id,
-                    reply_to=reply_to,
-                    attachments=attachments,
-                ):
-                    if frame.get("type") != "done":
-                        await self._broker.publish(channel, frame)
-            except Exception:  # noqa: BLE001 — still surface the refusal
-                logger.exception("failed to land message for refused turn")
-        posted = await self._post_event(
-            chat_service,
-            topic_id,
-            turn_id,
-            event,
-            meta=CREDITS_EXHAUSTED_META,
-        )
-        await self._broker.publish(
-            channel,
-            error_frame(event, type="error", persisted=posted),
-        )
-        self._recent.append(
-            {
-                "turn_id": str(turn_id),
-                "topic_id": str(topic_id),
-                "status": "rejected",
-                "detail": "额度已用完，未执行",
-                "started_at": time.time(),
-            }
-        )
-
-    async def _deliver_message(
-        self,
-        chat_service,
-        topic_id,
-        turn_id,
-        *,
-        recipient_handle=None,
-        live_delivery_expected=False,
-        landed_user_block_id=None,
-        landed_user_block_ids=None,
-        content="",
-        author="",
-        attachments=None,
-        **_message,
-    ) -> bool:
-        if landed_user_block_id is not None and (content or attachments):
-            delivered = await chat_service.merge_into_running_turn(
-                topic_id,
-                landed_user_block_ids or [landed_user_block_id],
-                content,
-                author,
-                attachments,
-                **(
-                    {"recipient_handle": recipient_handle}
-                    if recipient_handle is not None
-                    else {}
-                ),
-            )
-            if isinstance(delivered, InputReconciliationPending):
-                checking, checking_meta = delivery_checking_notice()
-                await self._post_event(
-                    chat_service, topic_id, turn_id, checking, meta=checking_meta
-                )
-                return True
-            if delivered is True:
-                # 这里曾经打 👀。现在不打了：这一句证明的是「传输层收下了这次写
-                # 入」，而 harness 说「会话把它读进去了」是另一件事，由
-                # `confirm_prompt_receipt` 统一落记号——两处都打会变成同一条消息
-                # 上先后出现两个来源不同、含义不同的同一个符号。
-                return True
-            if delivered is False or live_delivery_expected:
-                logger.warning(
-                    "live delivery fell back to the queue (topic=%s, "
-                    "block=%s, delivered=%s, live_expected=%s)",
-                    topic_id,
-                    landed_user_block_id,
-                    delivered,
-                    live_delivery_expected,
-                )
-                fallback_text, fallback_meta = delivery_fallback_notice()
-                await self._post_event(
-                    chat_service,
-                    topic_id,
-                    turn_id,
-                    fallback_text,
-                    meta=fallback_meta,
-                )
-
-        return False
-
-    async def _run(
-        self,
-        chat_service,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        *,
-        author: str,
-        content: str,
-        addressed: Addressed,
-        reply_to: str | None = None,
-        attachments: list[dict] | None = None,
-        is_resume: bool = False,
-        resume_reason: str | None = None,
-        nudge_event: str | None = None,
-        nudge_meta: dict | None = None,
-        continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
-        # Human message already persisted by ``receive_message``. Its AI work is
-        # still pending admission and may instead merge into a live turn.
-        landed_user_block_id: uuid.UUID | None = None,
-        recipient_handle: str | None = None,
-        delivery_id: uuid.UUID | None = None,
-        recipient_instance_id: uuid.UUID | None = None,
-    ) -> None:
-        channel = str(topic_id)
-        # 一轮只有一种开法：converse。以前还有第二种 —— kickoff 把一条预制的帧流从
-        # 外面递进来，平台用它起「没有人写过提示词」的那种轮次。那条路整条退场
-        # （I12），所以这里没有外来的帧流可接，只剩下面自己准备的那一份。
-        frames: AsyncIterator[subscriber_queue.Frame] | None = None
-        # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
-        # project's concurrent-turn ceiling is reached. Both states are posted
-        # into the topic as platform system events, so people SEE why nothing
-        # is streaming yet.
-        await self._wait_to_start()
-        await self._wait_for_replay(chat_service, topic_id, turn_id)
-        admit_started = time.monotonic()
-        verdict, gate = await self._admit(
-            chat_service, topic_id, turn_id, recipient_instance_id
-        )
-        logger.info(
-            "chat_admission_timing topic=%s turn=%s phase=admitted verdict=%s "
-            "elapsed_ms=%.3f unix_ms=%.3f",
-            topic_id,
-            turn_id,
-            verdict,
-            (time.monotonic() - admit_started) * 1000,
-            time.time() * 1000,
-        )
-        if verdict == "reject":
-            await self._refuse_exhausted(
-                chat_service,
-                topic_id,
-                turn_id,
-                author=author,
-                content=content,
-                reply_to=reply_to,
-                attachments=attachments,
-                # A human message turn lands its message even when refused;
-                # resume/nudge turns have nothing to land.
-                #
-                # 判据是**有没有人说过话**，不是「是不是 resume」：平台自己那几条投
-                # 递（机器接入、环境修好、记忆整理）作者是 `system`、正文是平台写的
-                # 一段提示，既不 resume 也没有 nudge —— 当成「一条人发的消息」补落，
-                # 就是把平台的提示词当人话写进时间线。
-                is_message_turn=(
-                    not is_resume and nudge_event is None and names_a_person(author)
-                ),
-                message_landed=landed_user_block_id is not None,
-            )
-            return
-        lifecycle = {"started": False, "session_owned": False}
-        try:
-            async with admitted_initial(
-                chat_service,
-                topic_id,
-                delivery_id,
-                user_block_id=landed_user_block_id,
-                recipient_instance_id=recipient_instance_id,
-                recipient_handle=recipient_handle,
-            ) as offered:
-                if offered:
-                    return
-                if landed_user_block_id is not None:
-                    frames = chat_service.converse_prepared(
-                        topic_id=topic_id,
-                        author=author,
-                        content=content,
-                        turn_id=turn_id,
-                        user_block_id=landed_user_block_id,
-                        continuation_id=continuation_id,
-                        provision_actor=provision_actor,
-                        recipient_instance_id=recipient_instance_id,
-                        **(
-                            {"recipient_handle": recipient_handle}
-                            if recipient_handle is not None
-                            else {}
-                        ),
-                    )
-                await self._execute(
-                    chat_service,
-                    topic_id,
-                    turn_id,
-                    author=author,
-                    content=content,
-                    addressed=addressed,
-                    reply_to=reply_to,
-                    attachments=attachments,
-                    is_resume=is_resume,
-                    resume_reason=resume_reason,
-                    nudge_event=nudge_event,
-                    nudge_meta=nudge_meta,
-                    continuation_id=continuation_id,
-                    provision_actor=provision_actor,
-                    frames=frames,
-                    lifecycle=lifecycle,
-                    delivery_id=delivery_id,
-                    recipient_instance_id=recipient_instance_id,
-                )
-        finally:
-            # Close what this turn opened, unless the session took over THIS
-            # turn — asking by id rather than trusting the handover.
-            #
-            # The mark gets opened on the first frame, and the frames that
-            # arrive first are not this turn producing anything: they are the
-            # room acknowledging the request (`ack_summon`'s 👀, a system event
-            # block). `session_lifecycle` comes after them, so by the time the
-            # runner learns a session will own the ending it has already opened
-            # a mark — and used to decline to close it on the strength of that
-            # frame alone.
-            #
-            # That holds only while the session opens its activity under the
-            # SAME work id, which collapses the two into one entry. When a turn
-            # begins on a topic that already has one running, the session reuses
-            # the standing activity instead of opening a second, so the newer
-            # turn is never started on the session's books and never ended
-            # either. Nothing else publishes `turn_finished`, so the mark
-            # outlives the turn by the length of the process: the room keeps
-            # 正在思考, and `/health`'s drain count never reaches zero (#604).
-            handed_over = lifecycle["session_owned"]
-            session_ended_it = handed_over and chat_service.session_took_over(
-                topic_id, turn_id
-            )
-            if lifecycle["started"] and not session_ended_it:
-                await self._broker.publish(
-                    channel, {"type": "turn_finished", "turn_id": str(turn_id)}
-                )
-            # Drop the liveness mark here, not in `_execute`: a turn killed by
-            # task cancellation (CancelledError is a BaseException — it misses
-            # every `except` inside `_execute`, including the registry cleanup)
-            # must stop counting as live, so the next sweep can claim it. The
-            # open interval deliberately survives — that is what gets it resumed.
-            self._live.pop(str(turn_id), None)
-            self._delivered.discard(str(turn_id))
-            self._last_frame_at.pop(str(turn_id), None)
-            self._live_topics.pop(str(turn_id), None)
-            if gate is not None:
-                await gate.release()
-
-            nudge_messages(chat_service, topic_id, runner=self)
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?
@@ -1968,542 +1327,137 @@ class AgentWorkRunner:
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> None:
-        channel = str(topic_id)
         summon = _a_turn_was_addressed(addressed)
-        lifecycle = (
-            lifecycle
-            if lifecycle is not None
-            else {
-                "started": False,
-                "session_owned": False,
-            }
+        state = ExecutionState(
+            self._recent,
+            self._live,
+            self._last_frame_at,
+            self._live_topics,
+            self._delivered,
+            self._host_failed_topics,
         )
-        continuation_id = continuation_id or turn_id
-        # #388 缺陷一: set when the backend already knows this turn's credential is
-        # dead. Read in the fuse-arming block (to cut the fuse short) and again in
-        # the TimeoutError handler (to say the true reason and skip the auto-retry).
-        # Bound here so it is always defined, even on an early failure path.
-        credential_expired = False
-        # Did this turn blame the MACHINE? Decides whether finishing counts as
-        # evidence the machine is healthy (#186) — a turn that ends in a
-        # host-scoped failure must not immediately clear the streak it just added.
-        host_failed = False
-        # Correlate: every log line anywhere inside this turn carries these ids.
-        bind_context(turn=str(turn_id)[:8], topic=str(topic_id)[:8])
-        t0 = time.monotonic()
-        rec = {
-            "turn_id": str(turn_id),
-            "topic_id": str(topic_id),
-            "continuation_id": str(continuation_id),
-            "author": author,
-            "summon": summon,
-            "is_resume": is_resume,
-            "status": "running",
-            "started_at": time.time(),
-            "first_output_s": None,
-            "tools": 0,
-            "duration_s": None,
-            "detail": None,
-        }
-        self._recent.append(rec)
-        # `_live` FIRST, and only then the durable row. Opening the interval is
-        # a database round-trip, so a sweep can land in the gap — and a sweep
-        # that sees this turn in `_live` and not in the table finds nothing to
-        # claim, where the other order would show it a row with no task and read
-        # it as a corpse. `SWEEP_MIN_AGE_S` is what actually protects the window;
-        # a just-registered turn is too young to be judged either way.
-        current = asyncio.current_task()
-        if current is not None:
-            self._live[str(turn_id)] = current
-        self._last_frame_at[str(turn_id)] = time.monotonic()
-        self._live_topics[str(turn_id)] = topic_id
-        # The durable interval: if the PROCESS dies (deploy past the drain
-        # ceiling, crash), startup finds it still open — a killed turn must
-        # never just vanish.
-        await open_turn(
+        policy = ExecutionPolicy(
+            self._timeout,
+            self._first_output_timeout_s,
+            self._credential_expired_fuse_s,
+            self.RESEND_REASON,
+            expected_error_types=(AppError,),
+        )
+
+        async def stamped(work_id: uuid.UUID) -> None:
+            await stamp_delivery(chat_service.session_factory, work_id)
+
+        async def silent(
+            conversation_id: uuid.UUID, text: str, continuation: uuid.UUID
+        ) -> None:
+            await self._recover_silent_turn(
+                chat_service, conversation_id, text, continuation
+            )
+
+        async def host_success(conversation_id: uuid.UUID) -> None:
+            await record_host_success(topic_id=conversation_id)
+
+        async def host_failure(
+            conversation_id: uuid.UUID, work_id: uuid.UUID, failure: PlatformFailure
+        ) -> None:
+            verdict = await handle_host_failure(
+                topic_id=conversation_id, failure=failure
+            )
+            if verdict.message:
+                await self._intake._post_event(
+                    chat_service,
+                    conversation_id,
+                    work_id,
+                    verdict.message,
+                    meta=verdict.event_meta,
+                )
+
+        async def system_event(
+            conversation_id: uuid.UUID,
+            text: str,
+            work_id: uuid.UUID,
+            *,
+            meta: dict | None = None,
+        ) -> dict | None:
+            return await chat_service.post_system_event(
+                conversation_id, text, work_id, meta=meta
+            )
+
+        def session_took_over(conversation_id: uuid.UUID, work_id: uuid.UUID) -> bool:
+            return chat_service.session_took_over(conversation_id, work_id)
+
+        effects = ExecutionEffects(
+            system_event,
+            stamped,
+            silent,
+            host_success,
+            host_failure,
+            self._credential_is_known_expired,
+            session_took_over,
+        )
+
+        # The factory is called only at the old frame-source selection point
+        # inside the executor's try, not before interval registration/commit.
+        def frame_factory() -> AsyncIterator[dict]:
+            return chat_service.converse(
+                topic_id=topic_id,
+                author=author,
+                content=content,
+                summon=summon,
+                turn_id=turn_id,
+                reply_to=reply_to,
+                attachments=attachments,
+                is_resume=is_resume,
+                resume_reason=resume_reason,
+                nudge_event=nudge_event,
+                nudge_meta=nudge_meta,
+                continuation_id=continuation_id or turn_id,
+                provision_actor=provision_actor,
+                **({"delivery_id": delivery_id} if delivery_id is not None else {}),
+                **(
+                    {"recipient_instance_id": recipient_instance_id}
+                    if recipient_instance_id is not None
+                    else {}
+                ),
+            )
+
+        await execute(
+            state,
+            policy,
+            effects,
             chat_service.session_factory,
-            turn_id=turn_id,
-            conversation_id=topic_id,
-            continuation_id=continuation_id,
+            self._broker.publish,
+            frame_factory,
+            topic_id,
+            turn_id,
             author=author,
             content=content,
+            summon=summon,
             is_resume=is_resume,
-            resendable=bool(content.strip())
-            and (not is_resume or resume_reason == self.RESEND_REASON),
-            started_at=utcnow(),
+            resume_reason=resume_reason,
+            continuation_id=continuation_id,
+            frames=frames,
+            lifecycle=lifecycle,
         )
-        logger.info(
-            "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
-        )
-        try:
-            # Wall-clock ceiling (R8): a wedged turn must not hold the topic lock
-            # forever. On timeout the async-for exits, closing the converse
-            # generator → its `async with` blocks unwind → the topic lock releases
-            # and the in-container claude process is torn down.
-            #
-            # This wrap is transport-INDEPENDENT — one AgentWorkRunner singleton, same
-            # `self._timeout` for every backend (SDK / tmux / device). Most
-            # backends have no activity signal of their own, so this stays their
-            # only ceiling. A driven session has one (turn 活跃度检测: the
-            # runtime's own liveness rules and hard ceiling can run well past
-            # `self._timeout`) — it signals its actual ceiling back via
-            # a `turn_ceiling` frame, and ONLY that reschedules this wrap
-            # (`Timeout.reschedule`), relative to when the turn started so a late
-            # frame can't silently grant more time than the backend promised.
-            # Every other backend never emits this frame, so their behaviour here
-            # is byte-for-byte unchanged.
-            loop_start = asyncio.get_running_loop().time()
-            # When the turn itself began, filled in by `prompt_delivered` below.
-            # `loop_start` is not that moment: preparing the database, choosing a
-            # backend and attaching the screen all happen after it.
-            turn_start: float | None = None
-            # Past `turn_start + ceiling_s` the turn is RECORDED as long, and
-            # nothing else: the ceiling stopped being a deadline. Elapsed time
-            # cannot tell an agent three hours into a refactor from a session
-            # that is stuck, and the harness monitor now carries three checks
-            # that each catch a specific way of being stuck (a process gone,
-            # output with no tool call, an injected message never read). What a
-            # wall clock alone could still end here is a turn that is working
-            # and has not finished. So the only deadline this wrap keeps is the
-            # cold-start fuse below, which asks a different question.
-            ceiling_crossed = False
 
-            # 冷启动看门狗: until the model has said ANYTHING, the wrap runs on a
-            # much shorter fuse than the turn ceiling.
-            #
-            # A turn whose substrate never comes up is indistinguishable, from
-            # out here, from one thinking hard — both are silence. So the ceiling
-            # (900s for tmux) was what ended them, and for 900 seconds the topic
-            # reported 进行中 while nothing existed to make progress. On
-            # 2026-08-12 that took the whole dev platform down for 30 minutes:
-            # every topic's turn started in the same second, ran with `tools=0`
-            # and `first_output_s=None`, and each one occupied its full ceiling
-            # before failing. The information needed to call it was there from
-            # second one.
-            #
-            # The fuse only covers the gap BEFORE first output; once a `tool` or
-            # `assistant_block` arrives the deadline is pushed out to the real
-            # ceiling and this layer is gone for the rest of the turn. So a slow
-            # turn is never cut short — only a turn that never started.
-            #
-            # `turn_ceiling` deliberately does NOT lift the fuse: chat.py emits it
-            # up front, before the container is touched, so it proves a backend
-            # was selected and nothing more. It is remembered and applied at first
-            # output instead.
-            first_output_fuse_s = self._first_output_timeout_s
-            ceiling_s = self._timeout
-            # #388 缺陷一: when the backend already knows this turn's model
-            # credential is expired, the turn cannot produce a token — every
-            # request is rejected (401/407) before a hook can flow. Don't spend the
-            # full cold-start fuse guessing at container/disk/network: cut it to a
-            # short grace (still long enough that a credential refreshed between
-            # setup and now speaks first, retiring the fuse) so a silent turn fails
-            # FAST and with the true reason. The definitive first-hand 401 lives in
-            # the metering proxy (box infra, out of this repo); this is the part the
-            # backend lands on its own from the expiry #386 already stamps.
-            credential_expired = self._credential_is_known_expired(topic_id)
-            if credential_expired and first_output_fuse_s:
-                first_output_fuse_s = min(
-                    first_output_fuse_s, self._credential_expired_fuse_s
-                )
-            if first_output_fuse_s:
-                fuse_deadline = loop_start + min(first_output_fuse_s, self._timeout)
-            else:
-                fuse_deadline = None
-            # No deadline until the fuse asks for one. `self._timeout` used to
-            # be the starting value, standing in for a ceiling the backend had
-            # not declared yet; the ceiling is recorded now, never scheduled, so
-            # a wrap that started at `self._timeout` would cut every turn whose
-            # fuse is disabled at exactly that mark, with nothing to say why.
-            async with asyncio.timeout(None) as turn_deadline:
-                if fuse_deadline is not None:
-                    turn_deadline.reschedule(fuse_deadline)
-                turn_frames = (
-                    frames
-                    if frames is not None
-                    else chat_service.converse(
-                        topic_id=topic_id,
-                        author=author,
-                        content=content,
-                        summon=summon,
-                        turn_id=turn_id,
-                        reply_to=reply_to,
-                        attachments=attachments,
-                        is_resume=is_resume,
-                        resume_reason=resume_reason,
-                        nudge_event=nudge_event,
-                        nudge_meta=nudge_meta,
-                        continuation_id=continuation_id,
-                        provision_actor=provision_actor,
-                        **(
-                            {"delivery_id": delivery_id}
-                            if delivery_id is not None
-                            else {}
-                        ),
-                        **(
-                            {"recipient_instance_id": recipient_instance_id}
-                            if recipient_instance_id is not None
-                            else {}
-                        ),
-                    )
-                )
-                async for frame in turn_frames:
-                    kind = frame.get("type")
-                    if kind == "session_lifecycle":
-                        # Interactive providers hand lifecycle to the live
-                        # subscription. Their request returns after injection;
-                        # Stop or the session watchdog retires the indicator.
-                        lifecycle["session_owned"] = True
-                        turn_deadline.reschedule(None)
-                        continue
-                    # Proof of life for the silence check in sweep_orphans, taken
-                    # before the `continue`s below so EVERY frame counts. A tool
-                    # call persists no Block, so without this a turn legitimately
-                    # grinding through tools looks identical to a wedged one.
-                    self._last_frame_at[str(turn_id)] = time.monotonic()
-                    # Measured from `turn_start` when the backend told us when
-                    # the turn began, and from `loop_start` when it did not: a
-                    # recorded fact must not depend on an optional frame.
-                    ceiling_base = loop_start if turn_start is None else turn_start
-                    if (
-                        not ceiling_crossed
-                        and asyncio.get_running_loop().time()
-                        >= ceiling_base + ceiling_s
-                    ):
-                        ceiling_crossed = True
-                        rec["ceiling_crossed_s"] = round(
-                            asyncio.get_running_loop().time() - ceiling_base
-                        )
-                        logger.warning(
-                            "turn %s is past its %ss ceiling and still going — "
-                            "recorded, not ended (topic %s)",
-                            turn_id,
-                            round(ceiling_s),
-                            topic_id,
-                        )
-                    if kind == "prompt_delivered":
-                        # The transport accepted the write. Stamp the durable
-                        # registry NOW: if this process dies a moment later, the
-                        # sweep reads a fact instead of guessing from side
-                        # effects that may not exist yet.
-                        await stamp_delivery(chat_service.session_factory, turn_id)
-                        self._delivered.add(str(turn_id))
-                        # The turn starts HERE, so the ceiling does too. Both
-                        # clocks finally have a real base, and whichever comes
-                        # first wins: the fuse still asks "did anything ever
-                        # start" from `loop_start`, which is what makes the setup
-                        # window its business, and the ceiling now asks "has this
-                        # run too long" from the moment there was something to
-                        # run.
-                        turn_start = asyncio.get_running_loop().time()
-                        continue
-                    if kind == "turn_ceiling":
-                        ceiling_s = float(frame.get("seconds", self._timeout))
-                        # `topic_work()` reads this so `cheese_status` reports the
-                        # backend's REAL ceiling, not the generic outer default.
-                        rec["ceiling_s"] = ceiling_s
-                        # The frame's only remaining job here: it is emitted before
-                        # the container is touched, so the generic default that
-                        # truncated the fuse (`min(first_output_fuse_s,
-                        # self._timeout)` above) was standing in for a ceiling
-                        # nobody had declared. Now one is declared, the fuse gets
-                        # its own full length back. The ceiling itself is recorded
-                        # against `turn_start`, never scheduled.
-                        if fuse_deadline is not None:
-                            fuse_deadline = loop_start + max(0.0, first_output_fuse_s)
-                            turn_deadline.reschedule(fuse_deadline)
-                        continue
-                    if not lifecycle["started"] and not lifecycle["session_owned"]:
-                        await self._broker.publish(
-                            channel,
-                            {"type": "turn_started", "turn_id": str(turn_id)},
-                        )
-                        lifecycle["started"] = True
-                    if kind == "waiting":
-                        rec["status"] = "waiting"
-                        rec["detail"] = "Cloud machine provisioning"
-                    if kind == "assistant_block" and rec["first_output_s"] is None:
-                        rec["first_output_s"] = round(time.monotonic() - t0, 2)
-                        # The model spoke: the substrate is up, so hand the turn
-                        # its real ceiling and retire the cold-start fuse.
-                        if fuse_deadline is not None:
-                            fuse_deadline = None
-                            turn_deadline.reschedule(None)
-                    if kind == "error":
-                        rec["status"] = "error"
-                        rec["detail"] = str(frame.get("message", ""))[:200]
-                        if frame.get("code") in HOST_SCOPED_CODES:
-                            # The chat layer already recorded it against the
-                            # machine and may have moved the topic; don't undo
-                            # that below just because the stream ended cleanly.
-                            host_failed = True
-                            self._host_failed_topics.add(str(topic_id))
-                    await self._broker.publish(channel, frame)
-            if rec["status"] == "running":
-                rec["status"] = "done"
-            rec["duration_s"] = round(time.monotonic() - t0, 1)
-            if (
-                rec["status"] == "done"
-                and rec["first_output_s"] is None
-                and summon
-                and not is_resume
-                and content.strip()
-            ):
-                # A summoned turn that published nothing. Usually 芝士 simply had
-                # nothing to say; sometimes its platform tools were gone and it
-                # answered into a terminal nobody reads (observed 2026-09-13/14:
-                # `chat_send` returning `No such tool available` while the
-                # session reported ready). Only this case pays for the question,
-                # and only a confirmed reconnect re-delivers the message.
-                await self._recover_silent_turn(
-                    chat_service, topic_id, content, continuation_id
-                )
-            if not host_failed and str(topic_id) in self._host_failed_topics:
-                self._host_failed_topics.discard(str(topic_id))
-                # Streaming a turn to its end is the machine working. That breaks
-                # the failure streak and lifts any quarantine (#186) — the way a
-                # machine gets back into rotation without anyone clearing it.
-                # Only reached when this process actually saw the machine fail:
-                # there is nothing to clear otherwise, and paying a DB round-trip
-                # on every good turn would delay the turn's release (see
-                # `_host_failed_topics`).
-                await record_host_success(topic_id=topic_id)
-            logger.info(
-                "turn done: status=%s tools=%s first_output=%ss duration=%ss",
-                rec["status"],
-                rec["tools"],
-                rec["first_output_s"],
-                rec["duration_s"],
-            )
-        except asyncio.CancelledError:
-            # Killed from outside: `sweep_orphans` tearing down a wedged turn, or
-            # the process shutting down. CancelledError is a BaseException, so
-            # without this clause it escapes every handler below and the record
-            # keeps saying `running` for as long as the process lives — and that
-            # record is what `GET /topics` (`running`) and `/topics/{id}/status`
-            # (`turn`) serve. Killing a turn while still reporting it alive is
-            # the same lie the sweep exists to end, so the teardown has to close
-            # the books here.
-            rec["status"] = "cancelled"
-            rec["duration_s"] = round(time.monotonic() - t0, 1)
-            rec["detail"] = rec.get("detail") or "轮次被强制结束"
-            logger.warning(
-                "turn %s cancelled for topic %s after %ss",
-                turn_id,
-                topic_id,
-                rec["duration_s"],
-            )
-            # Surface the request failure before `_run` publishes the explicit
-            # turn_finished marker that retires this turn's broker state.
-            # Publishing never suspends (it is queue writes only), so it is safe
-            # on an already-cancelled task.
-            await self._broker.publish(
-                channel,
-                error_frame(say("turnForceStopped"), type="error", persisted=False),
-            )
-            # Ends the stream, for the reason spelled out on the timeout path.
-            # `turn_finished` does not cover this: `_run` publishes it only when
-            # `lifecycle["started"]` is set, and a turn the sweep tears down
-            # before its first frame never announced itself, so a subscriber
-            # would be left reading until its own timeout.
-            await self._broker.publish(channel, {"type": "done"})
-            # The on-disk registry entry is deliberately left alone: whoever
-            # cancelled us owns it (the sweep already claimed it; a shutdown
-            # wants startup to find and resume it).
-            clear_context("turn", "topic")
-            raise
-        except TimeoutError:
-            rec["status"] = "timeout"
-            rec["duration_s"] = round(time.monotonic() - t0, 1)
-            # The actual ceiling this turn ran against — `topic_work()` reads
-            # the same `ceiling_s or self._timeout` fallback for `cheese
-            # status` (see its docstring above); a backend that emitted a
-            # `turn_ceiling` frame may have raised this well above
-            # `self._timeout`, so logging the base default here would be
-            # misleading about what actually elapsed before the cut.
-            # Two different failures share this handler, and telling them apart is
-            # the whole point of the cold-start fuse — it decides which message
-            # the room gets. "Ran a long time and wedged" is a turn problem, and
-            # its work so far is on disk. "Never produced a token" is an
-            # ENVIRONMENT problem (no container, no disk, no model connection):
-            # nothing ran, so saying 已完成的改动都在 there would be a lie.
-            # Neither is retried — a person picks it up (a wedged turn re-runs
-            # into the same dead machine, and an environment that never came up
-            # needs someone to look).
-            # Only the cold-start fuse raises this now: the ceiling is recorded
-            # rather than scheduled, so a turn that produced output has no
-            # deadline left to hit. Kept as a check rather than assumed, so a
-            # future deadline added above cannot silently borrow the fuse's
-            # wording.
-            never_started = bool(
-                rec["first_output_s"] is None and self._first_output_timeout_s
-            )
-            if not never_started:
-                raise
-            # Meta for the posted event: only the credential-expired case carries a
-            # platform_error classification the frontend can render; the two generic
-            # branches stay a plain system event, exactly as before.
-            fuse_meta: dict | None = None
-            # 平台提示统一契约的 meta，给「一个字没输出」和「超时」这两条用。
-            # 凭据已过期那条走 `fuse_meta`（它带 code）。
-            timeout_meta: dict | None = None
-            if never_started and credential_expired:
-                # #388 缺陷一: the backend KNEW the credential was dead. Say so —
-                # the guessing message ("容器/磁盘/网络") is the one that cost four
-                # people ten hours when the true reason was already known.
-                logger.error(
-                    "turn %s never produced output for topic %s and its model "
-                    "credential is known-expired; fast-failing as a subscription "
-                    "credential failure (tools=%s)",
-                    turn_id,
-                    topic_id,
-                    rec["tools"],
-                )
-                rec["detail"] = "subscription credential expired"
-                text = SUBSCRIPTION_CREDENTIAL_EXPIRED.content
-                fuse_meta = SUBSCRIPTION_CREDENTIAL_EXPIRED.meta
-            else:
-                logger.error(
-                    "turn %s produced no output within %ss for topic %s; "
-                    "treating as a substrate failure (tools=%s)",
-                    turn_id,
-                    round(self._first_output_timeout_s),
-                    topic_id,
-                    rec["tools"],
-                )
-                rec["detail"] = "no first output"
-                # 平台提示统一契约: 房间里一行，「常见原因」那一串进 meta.detail。
-                text = say("noFirstOutput", seconds=round(self._first_output_timeout_s))
-                timeout_meta = notice(
-                    EVENT_TURN_TIMEOUT,
-                    severity=SEVERITY_WARN,
-                    # 工作电脑没起来，平台不再自动重试 —— 要有人看一眼。
-                    who=WHO_HUMAN,
-                    detail=say(
-                        "noFirstOutputDetail",
-                        seconds=round(self._first_output_timeout_s),
-                    ),
-                    detail_label=say("labelReason"),
-                    retryable=True,
-                )
-            block = None
-            try:
-                # `fuse_meta` (订阅凭据已过期) 优先：它带 code，下面的 error 帧
-                # 认这个字段。其余两条走 `timeout_meta`。
-                block = await chat_service.post_system_event(
-                    topic_id, text, turn_id, meta=fuse_meta or timeout_meta
-                )
-            except Exception:  # noqa: BLE001 — best effort
-                logger.exception("failed to persist timeout event")
-            if block is not None:
-                await self._broker.publish(
-                    channel, {"type": "event_block", "block": block}
-                )
-            frame = error_frame(text, type="error", persisted=block is not None)
-            if fuse_meta is not None:
-                frame["code"] = SUBSCRIPTION_CREDENTIAL_EXPIRED.code
-            await self._broker.publish(channel, frame)
-            # End the stream. `chat` publishes `done` on the paths it owns, and
-            # this one cut its generator off mid-flight, so without this nothing
-            # does: a subscriber waiting for the turn to end instead waits out
-            # its own read timeout, which is how a squeezed ceiling became a
-            # 300-second hang in CI rather than a fast failure. `turn_finished`
-            # is no substitute, being published only for a turn that got far
-            # enough to announce itself, which a turn cut down during setup
-            # never did.
-            await self._broker.publish(channel, {"type": "done"})
-            # No auto-retry, whatever the timeout was. A credential-dead turn
-            # only burns the fuse again against the same expired credential
-            # (#388's "对自己的失败没有记忆") and self-heals on the next human
-            # summon once the host re-auths; a wedged one re-enters the machine
-            # that just died; an environment that never came up needs a person.
-            # All three now wait for someone to look — the event above said so.
-        except AppError as exc:
-            rec["status"] = "error"
-            rec["detail"] = exc.message
-            rec["duration_s"] = round(time.monotonic() - t0, 1)
-            await self._broker.publish(channel, error_frame(exc.message, type="error"))
-            # Ends the stream, for the reason spelled out on the timeout path.
-            await self._broker.publish(channel, {"type": "done"})
-        except Exception as exc:  # noqa: BLE001 — surface runtime failures (spec H4)
-            rec["status"] = "crashed"
-            rec["duration_s"] = round(time.monotonic() - t0, 1)
-            logger.exception("turn %s failed for topic %s", turn_id, topic_id)
-            # The failure goes into the 现场 timeline as a persisted system event
-            # (scrolls with the flow, survives reload) — not just a transient
-            # banner. No invented cause: the log has the real traceback.
-            platform_failure = classify_platform_failure(exc)
-            if platform_failure is not None:
-                text = platform_failure.content
-                event_meta = platform_failure.meta
-            else:
-                # 平台提示统一契约: 一行给房间，别的收进 detail。真正的 traceback
-                # 只进日志（这里连异常文本都不外发是刻意的 —— 见上面那段注释）。
-                # 平台认不出来的失败当作缺陷信号，不当瞬时故障 —— 重试只会把同一个
-                # bug 再触发一遍（2026-09-04 一个 NotFoundError 被连着自动重跑，
-                # 把一个正在进行的 hackathon 房间刷了屏）。发一次，交给人。
-                text = say("turnCrashed")
-                event_meta = notice(
-                    EVENT_TURN_FAILED,
-                    severity=SEVERITY_ERROR,
-                    who=WHO_HUMAN,
-                    detail=say("turnCrashedDetail"),
-                    detail_label=say("labelDetails"),
-                    retryable=True,
-                )
-            block = None
-            try:
-                block = await chat_service.post_system_event(
-                    topic_id, text, turn_id, meta=event_meta
-                )
-            except Exception:  # noqa: BLE001 — best effort, never mask the error
-                logger.exception("failed to persist turn-failure event")
-            if block is not None:
-                await self._broker.publish(
-                    channel, {"type": "event_block", "block": block}
-                )
-            frame = error_frame(text, type="error", persisted=block is not None)
-            if platform_failure is not None:
-                frame["code"] = platform_failure.code
-            await self._broker.publish(channel, frame)
-            # Ends the stream, for the reason spelled out on the timeout path.
-            await self._broker.publish(channel, {"type": "done"})
-            # An unnamed failure is a bug signal, not a transience signal, so the
-            # platform does not repeat it — the event above already handed the
-            # topic to a person (#574, and the 2026-09-04 room flood). A recovery
-            # that survives a deploy is a different thing entirely and still runs:
-            # recover/replay/adopt carry a live turn across a restart untouched.
-            if platform_failure is not None and platform_failure.host_scoped:
-                # The machine, not the turn, is the suspect. Account for it
-                # against the device and, once it has failed twice in a row,
-                # say so in the room by name. No retry and no other machine:
-                # the topic stays pinned where it failed until a person has
-                # looked (host_failure.py says why the swap it used to do is
-                # gone).
-                host_failed = True
-                self._host_failed_topics.add(str(topic_id))
-                verdict = await handle_host_failure(
-                    topic_id=topic_id,
-                    failure=platform_failure,
-                )
-                if verdict.message:
-                    await self._post_event(
-                        chat_service,
-                        topic_id,
-                        turn_id,
-                        verdict.message,
-                        meta=verdict.event_meta,
-                    )
-        # A session that adopted this exact turn owns its interval's ending.
-        # Returning after input injection is not the native work ending.
-        session_owns_ending = (
-            rec["status"] == "done"
-            and lifecycle["session_owned"]
-            and chat_service.session_took_over(topic_id, turn_id)
+    async def _resolve_initial_seat(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        *,
+        user_block_id: uuid.UUID | None = None,
+        recipient_instance_id: uuid.UUID | None = None,
+        recipient_handle: str | None = None,
+    ) -> str:
+        # Root composition: retain the real session owner's seat resolution,
+        # and resolve it only at the original pre-lock admission point.
+        return await chat_service._turn_seat_handle(
+            topic_id,
+            user_block_id=user_block_id,
+            recipient_instance_id=recipient_instance_id,
+            recipient_handle=recipient_handle,
         )
-        if not session_owns_ending:
-            try:
-                await close_turns(chat_service.session_factory, [turn_id])
-            except Exception:  # noqa: BLE001 — the turn already finished
-                logger.exception("could not close the interval for turn %s", turn_id)
-        clear_context("turn", "topic")
+
+    def _nudge_after_work(self, chat_service, topic_id: uuid.UUID) -> None:
+        # A pending-message scan belongs to this scheduler, including its tasks.
+        nudge_messages(chat_service, topic_id, runner=self)

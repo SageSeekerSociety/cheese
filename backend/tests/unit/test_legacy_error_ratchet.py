@@ -155,7 +155,6 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/agent/input_registration.py", "ValidationError"): 1,
     ("app/domain/agent/market.py", "ValidationError"): 1,
     ("app/domain/agent/queries.py", "ValidationError"): 1,
-    ("app/domain/agent/room/turn.py", "ValidationError"): 2,
     ("app/domain/agent/runtime.py", "AppError"): 1,
     ("app/domain/agent_credential/services.py", "ValidationError"): 2,
     ("app/domain/agent_instance/services.py", "ValidationError"): 11,

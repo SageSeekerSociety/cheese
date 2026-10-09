@@ -327,9 +327,7 @@ def test_a_message_held_by_an_open_turn_starts_when_its_stop_closes_it(client):
     assert _sent_to_the_session(channel, room) == []
 
     async def stop() -> None:
-        from app.domain.agent import hook_stream
-
-        await hook_stream.close_on_stop(service, uuid.UUID(room), ahead)
+        await service._close_turn_interval(uuid.UUID(room), ahead)
 
     client.portal.call(stop)
 

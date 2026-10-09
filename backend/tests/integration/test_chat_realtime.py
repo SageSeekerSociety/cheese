@@ -339,7 +339,7 @@ async def test_retry_adopts_a_pre_idempotency_delivery_without_resubmitting(
         )
         topic_id = topic.id
         await session.commit()
-    _payloads, original, original_ids, _ = await svc.post_user_message(
+    _payloads, original, original_ids, _ = await svc.human_messages.post_user_message(
         topic_id,
         author="u",
         content="saved by the old backend",
@@ -411,7 +411,7 @@ async def test_receiving_a_message_mints_no_second_agent(business_db_factory, tm
         ]
         await session.commit()
     assert before, "建项目就该播下芝士那一行"
-    payloads, _, _, _ = await svc.post_user_message(
+    payloads, _, _, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="A note for later", turn_id=None, reply_to=None
     )
     assert payloads[0]["meta"]["agent_recipient"]["handle"] == "cheese"
@@ -481,13 +481,13 @@ async def test_queued_message_retains_selected_teammate(business_db_factory, tmp
             await members.ensure_agent_seat(topic.id, agent_instance_handle(made.id))
         topic_id = topic.id
         await session.commit()
-    _, original, _, _ = await svc.post_user_message(
+    _, original, _, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="@First For first", turn_id=None, reply_to=None
     )
-    await svc.post_user_message(
+    await svc.human_messages.post_user_message(
         topic_id, author="u", content="@Second For second", turn_id=None, reply_to=None
     )
-    prepared = await svc._assemble_turn(
+    prepared = await svc.turn_preparation.prepare(
         topic_id=topic_id,
         content="@First For first",
         turn_id=original,
@@ -523,7 +523,7 @@ async def test_backend_resolves_room_agent_mention(
         )
         topic_id = topic.id
         await session.commit()
-    payloads, _, _, _ = await svc.post_user_message(
+    payloads, _, _, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content=text, turn_id=None, reply_to=None
     )
     assert payloads[0]["meta"]["agent_recipient"]["mentioned"] is mentioned
@@ -568,7 +568,7 @@ async def test_backend_resolves_a_legacy_shared_seat_mention(
         await IdentityService(session).ensure_agent_user(handle=CHEESE_HANDLE)
         await TopicMemberService(session).ensure_agent_seat(topic_id, CHEESE_HANDLE)
         await session.commit()
-    payloads, _, _, _ = await svc.post_user_message(
+    payloads, _, _, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="@芝士 hello", turn_id=None, reply_to=None
     )
     assert payloads[0]["content"] == f"<@{CHEESE_HANDLE}> hello"
@@ -684,7 +684,7 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
 
 
 class RacingSeat(ChatService):
-    """Counts the turns inside `_converse_impl`, and parks the first one just
+    """Counts the turns inside `TurnPreparation.converse`, and parks the first one just
     before it takes its seat lock.
 
     `converse` asks "is a turn running?" and only then goes for the lock; the
@@ -704,6 +704,8 @@ class RacingSeat(ChatService):
         self.in_flight = 0
         self.max_in_flight = 0
         self.turns = 0
+        self._real_prepared_converse = self.turn_preparation.converse
+        self.turn_preparation.converse = self._count_prepared
 
     async def _turn_seat_handle(self, topic_id, **kwargs) -> str:
         self.seat_handle_calls += 1
@@ -718,12 +720,12 @@ class RacingSeat(ChatService):
             self.first_left_the_gap.set()
         return handle
 
-    async def _converse_impl(self, **kwargs):
+    async def _count_prepared(self, **kwargs):
         self.turns += 1
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
         try:
-            async for frame in super()._converse_impl(**kwargs):
+            async for frame in self._real_prepared_converse(**kwargs):
                 yield frame
         finally:
             self.in_flight -= 1
@@ -788,7 +790,7 @@ async def _two_requests_that_both_saw_the_seat_free(
                 first.result()  # 它先炸了：把真正的错抛出来，别只报超时
             await asyncio.sleep(0.01)
     second = asyncio.create_task(_converse_to_the_end(svc, topic_id, "Second task"))
-    # 等「第二条进了 `_converse_impl`」，不等时间：只有真进去了才说明它过了
+    # 等「第二条进了 `TurnPreparation.converse`」，不等时间：只有真进去了才说明它过了
     # 同一个「有人正在跑吗」、答了「没有」，否则它会 merge 进在跑的那一轮、
     # 根本不竞速。进得去也说明它已经拿到那把（此刻空闲的）锁。
     async with asyncio.timeout(HANG_S):
@@ -814,7 +816,7 @@ async def test_two_requests_that_both_saw_the_seat_free_never_overlap(
 
     - `_begin_self_started_turn` 自起的轮次不占席位锁；此时来一条 summon，
       live 投递一旦失败就会落到那把（空闲的）锁上、再开一轮；
-    - `_turn_seat_handle`（拿锁**前**）与 `_assemble_turn`（拿锁**后**）
+    - `_turn_seat_handle`（拿锁**前**）与 `TurnPreparation.prepare`（拿锁**后**）
       对「收件人已停用」「默认 agent 中途被换」两种输入解析出的 handle
       不同 —— 两条请求于是各键一把锁，锁形同虚设。
 
@@ -1625,7 +1627,7 @@ async def test_midturn_delivery_holds_no_topic_lock(
         )
         topic_id: uuid.UUID = topic.id
         await session.commit()
-    _payloads, _block_id, block_ids, _ = await svc.post_user_message(
+    _payloads, _block_id, block_ids, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
     )
     in_flight = asyncio.Event()
@@ -1690,7 +1692,7 @@ async def test_midturn_message_stays_pending_until_its_receipt(
         topic_id: uuid.UUID = topic.id
         await session.commit()
 
-    _payloads, block_id, block_ids, _ = await svc.post_user_message(
+    _payloads, block_id, block_ids, _ = await svc.human_messages.post_user_message(
         topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
     )
 
@@ -1839,7 +1841,7 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
     for session_runner in after.sessions.values():
         session_runner.channel = after
     replaced = service(after)
-    runner.REPLAY_NOTICE_S = 0.2
+    runner._intake.REPLAY_NOTICE_S = 0.2
 
     # Taking the sessions over does not wait for the slow room's backlog.
     async with asyncio.timeout(HANG_S):

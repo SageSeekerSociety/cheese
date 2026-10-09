@@ -348,7 +348,7 @@ class Assembler:
 def _usage(record: dict) -> AgentUsage | None:
     """What the turn reports it used: every token it sent, cached or not, and
     what the build prices it at. The model is the one that did most of it.
-    Charged only where nothing else meters the turn (`chat._close_hook_work`)."""
+    Charged only where nothing else meters it (`turn.intake.completion`)."""
     usage = record.get("usage")
     if not isinstance(usage, dict):
         return None

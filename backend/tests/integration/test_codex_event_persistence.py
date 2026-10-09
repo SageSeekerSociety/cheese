@@ -56,7 +56,7 @@ async def test_replayed_codex_reply_is_not_persisted_twice(client, tmp_path):
                 },
             }
         )[0]
-        await service._consume_hook_event(
+        await service.hook_events.accept(
             project_id,
             topic_id,
             uuid.uuid4(),
@@ -181,7 +181,7 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
         }
     )[0]
     client.portal.call(
-        lambda: service._consume_hook_event(
+        lambda: service.hook_events.accept(
             project_id,
             topic_id,
             uuid.uuid4(),
@@ -268,7 +268,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
     first = service()
 
     async def commit_then_disconnect(*args):
-        await first._consume_hook_event(*args)
+        await first.hook_events.accept(*args)
         raise ConnectionError("reader died after database commit")
 
     reader = Subscription(session, path, remote, commit_then_disconnect, AsyncMock())
@@ -277,7 +277,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
     assert len(CodexBacklog(path).unread()) == 1
     remote.return_value = {"events": []}
     restarted = Subscription(
-        session, path, remote, service()._consume_hook_event, AsyncMock()
+        session, path, remote, service().hook_events.accept, AsyncMock()
     )
     assert client.portal.call(lambda: restarted.drain()) == 1
     assert not CodexBacklog(path).unread()

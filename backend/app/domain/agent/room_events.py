@@ -21,35 +21,19 @@
 
 import logging
 import uuid
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.announce import announce
 from app.domain.agent.event_lines import (
-    _change_summary_meta,
     _Changeset,
     _diff_file_stats,
-    _format_change_summary,
-    _format_tool_event,
-    _subagent_event_text,
-    _subagent_result_meta,
-    _tool_event_meta,
 )
-from app.domain.agent.live_work import LiveWork
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import RUN_RECORD_EVENTS
-from app.domain.agent.queries import _agent_handle, _block_payload
+from app.domain.agent.queries import _block_payload
 from app.domain.agent.run_records import record_now
-from app.domain.agent.service import (
-    AgentToolResult,
-)
-from app.domain.agent.step_output import output_tail
-from app.domain.agent.tool_preview import tool_detail, tool_preview, work_subpath
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
@@ -154,232 +138,6 @@ async def _keep_run_record(
         turn_id=turn_id,
         seat=seat,
     )
-
-
-async def _persist_room_event(
-    sessions: async_sessionmaker,
-    live: LiveWork,
-    *,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    content: str,
-    meta: dict,
-    turn_id: uuid.UUID | None,
-    eid: str | None = None,
-    platform_unsolicited: bool = False,
-    in_room: bool = False,
-    author_type: AuthorType = AuthorType.participant,
-    inner_id: uuid.UUID | None = None,
-    author: str | None = None,
-    at: datetime | None = None,
-) -> dict | None:
-    """One event block, committed NOW and deduped by event-id.
-
-    Shared by everything the room learns mid-turn — a tool call, a subagent's
-    conclusion, the turn's change summary — so all three get the same
-    durability and idempotency contract instead of three copies of it that
-    drift. Returns None when this event-id already landed.
-
-    ``in_room`` decides whether the conversation shows it at all, and it
-    travels as ``meta.in_room`` — its own field, because visibility is not
-    authorship. It used to ride on ``author_type``, which meant an event
-    genuinely written by 芝士 could not be shown in the room without lying
-    about who wrote it, and anything that later wanted to know the author
-    was reading a field answering a different question. Absent means shown:
-    every other writer in the codebase posts to the room.
-
-    ``author_type`` is then free to answer its own question, and does: 芝士
-    is a participant and wrote the tool calls and the subagent conclusions,
-    while the change summary is the platform's own line."""
-    meta = {**meta, "in_room": in_room}
-    if eid:
-        meta = {**meta, "eid": eid}
-    if platform_unsolicited:
-        meta = {**meta, "platform_unsolicited": True}
-    # 这一步是这一轮的执行者做的，署它的名。房间的默认队友只是没有这一轮账目
-    # 时的回落：几位队友同坐一间房时，拿默认那位署名会把现场整轮记到别人头上。
-    # A turn is kept under its conversation: the task's when there is one.
-    state = (
-        live.hook_work.get((inner_id or topic_id, turn_id))
-        if turn_id is not None
-        else None
-    )
-    async with sessions() as session:
-        blocks = BlockRepository(session)
-        if eid and await blocks.has_eid(inner_id or topic_id, eid):
-            return None
-        # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
-        # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
-        # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
-        landed = landing(
-            EventAbout.task if inner_id is not None else EventAbout.room,
-            project_id=project_id,
-            room_id=topic_id,
-            task_id=inner_id,
-        )
-        block = await blocks.add(
-            project_id=landed.project_id,
-            conversation_id=landed.conversation_id,
-            author=(
-                author
-                or (state.acting_agent if state is not None else None)
-                or await _agent_handle(session, topic_id)
-            ),
-            author_type=author_type,
-            content=content,
-            kind=BlockKind.event,
-            turn_id=turn_id,
-            meta=meta,
-            created_at=at,
-        )
-        payload = _block_payload(BlockOut.model_validate(block))
-        await session.commit()
-    return payload
-
-
-async def _persist_tool_event(
-    sessions: async_sessionmaker,
-    live: LiveWork,
-    *,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    name: str,
-    tool_input: dict,
-    platform: bool,
-    turn_id: uuid.UUID | None,
-    eid: str | None = None,
-    platform_unsolicited: bool = False,
-    inner_id: uuid.UUID | None = None,
-    author: str | None = None,
-    at: datetime | None = None,
-) -> dict | None:
-    """Persist ONE 施工现场 event the moment it streams in, not batched to the
-    turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
-    a mid-turn restart/crash never loses the 现场 timeline already produced.
-    ``eid`` (the harness's own id for the event) is stamped into meta so a
-    record read twice lands once. Returns the persisted block payload so the
-    caller can broadcast it as a WS frame."""
-    preview = tool_preview(
-        name, tool_input, work_dir=work_subpath(project_id, topic_id)
-    )
-    return await _persist_room_event(
-        sessions,
-        live,
-        project_id=project_id,
-        topic_id=topic_id,
-        content=_format_tool_event(name, preview),
-        meta=_tool_event_meta(
-            name,
-            preview,
-            platform=platform,
-            detail=tool_detail(name, tool_input, preview),
-        ),
-        turn_id=turn_id,
-        eid=eid,
-        platform_unsolicited=platform_unsolicited,
-        inner_id=inner_id,
-        author=author,
-        at=at,
-    )
-
-
-async def _persist_subagent_result(
-    sessions: async_sessionmaker,
-    live: LiveWork,
-    *,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    event: AgentToolResult,
-    turn_id: uuid.UUID | None,
-    eid: str | None = None,
-    platform_unsolicited: bool = False,
-    inner_id: uuid.UUID | None = None,
-) -> dict | None:
-    """Land a returning subagent's conclusion in the room timeline."""
-    return await _persist_room_event(
-        sessions,
-        live,
-        project_id=project_id,
-        topic_id=topic_id,
-        content=_subagent_event_text(event.description, event.text),
-        meta=_subagent_result_meta(event.name, event.description, event.text),
-        turn_id=turn_id,
-        eid=eid or event.eid,
-        platform_unsolicited=platform_unsolicited,
-        inner_id=inner_id,
-        author=event.agent_handle,
-    )
-
-
-async def _persist_change_summary(
-    sessions: async_sessionmaker,
-    live: LiveWork,
-    *,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    turn_id: uuid.UUID | None,
-    changeset: _Changeset,
-) -> dict | None:
-    """Land 「这一轮改了 N 个文件」 in the room timeline.
-
-    This one goes in the ROOM, not just 现场 (spec §8.5 变更提醒). What 芝士
-    changed is the one thing about a turn that is nowhere else in the
-    conversation: the doc panel lights up on its own and the accept card
-    speaks for itself, but "this turn touched these files" was only ever a
-    grey line in a drawer nobody has open."""
-    return await _persist_room_event(
-        sessions,
-        live,
-        project_id=project_id,
-        topic_id=topic_id,
-        content=_format_change_summary(changeset.files),
-        meta=_change_summary_meta(changeset),
-        turn_id=turn_id,
-        in_room=True,
-        author_type=AuthorType.platform,  # 平台自己数出来的，不是芝士说的
-    )
-
-
-async def _mark_step_failed(
-    sessions: async_sessionmaker, block_id: uuid.UUID, error: str
-) -> dict | None:
-    """Stamp a 现场 step as failed, and hand back the step as it now reads.
-    Never fails a turn over a red dot."""
-    try:
-        async with sessions() as session:
-            block = await BlockRepository(session).mark_step_failed(block_id, error)
-            payload = (
-                _block_payload(BlockOut.model_validate(block))
-                if block is not None
-                else None
-            )
-            await session.commit()
-        return payload
-    except Exception:  # noqa: BLE001 — a step's verdict is not worth a turn
-        logger.warning("could not mark step %s failed", block_id)
-        return None
-
-
-async def _record_step_output(
-    sessions: async_sessionmaker, block_id: uuid.UUID, text: str
-) -> dict | None:
-    """Keep the tail of what a step printed. Never fails a turn over it."""
-    output, total = output_tail(text)
-    try:
-        async with sessions() as session:
-            block = await BlockRepository(session).record_step_output(
-                block_id, output, total
-            )
-            payload = (
-                _block_payload(BlockOut.model_validate(block))
-                if block is not None
-                else None
-            )
-            await session.commit()
-        return payload
-    except Exception:  # noqa: BLE001 — a step's output is not worth a turn
-        logger.warning("could not record the output of step %s", block_id)
-        return None
 
 
 async def _turn_changeset(
