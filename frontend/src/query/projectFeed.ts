@@ -14,6 +14,7 @@ import type { Ref } from 'vue'
 import { onScopeDispose, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
+import { retryAfter } from '@/lib/retryAfter'
 import { openRoomChannel, type RoomChannel } from '@/lib/roomLink'
 import { refreshQueries } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -120,7 +121,7 @@ export function useProjectFeed(projectId: Ref<string>, me: string | null): void 
     retryTimer = setTimeout(() => {
       retryTimer = null
       if (projectId.value === id) open(id)
-    }, retryMs)
+    }, retryAfter(retryMs))
     retryMs = Math.min(retryMs * 2, MAX_RETRY_MS)
   }
 

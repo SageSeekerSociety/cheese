@@ -20,6 +20,7 @@ import { onScopeDispose, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { t } from '../../../i18n'
+import { retryAfter } from '../../../lib/retryAfter'
 import { openRoomChannel } from '../../../lib/roomLink'
 
 export function useRoomSocket(options: {
@@ -143,7 +144,7 @@ export function useRoomSocket(options: {
 
   function scheduleReconnect(topicId: string) {
     if (retryTimer || connectRefused.value) return
-    const delay = retryDelayMs
+    const delay = retryAfter(retryDelayMs)
     retryDelayMs = Math.min(retryDelayMs * 2, 15000)
     retryTimer = setTimeout(() => {
       retryTimer = null
