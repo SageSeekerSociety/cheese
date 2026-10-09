@@ -4,11 +4,15 @@ in the 支线 pane. Whatever changes what the task reads as reaches both without
 a reload, whichever path made the change.
 """
 
+import asyncio
+import threading
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from app.api.deps import get_chat_service
+from app.api.deps import get_chat_service, get_work_runner
+from app.domain.agent.runtime import addressed_to_agent
+from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.review.landing_watch import watch_landings
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import Building, NeedsYou
@@ -17,6 +21,7 @@ from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     new_project,
     open_task,
+    room_agent_seat,
     room_socket,
     session_auth_headers,
 )
@@ -158,7 +163,9 @@ def test_a_turn_starting_and_ending_in_a_task_is_heard_in_its_channel(
 ):
     """The channel's card for a started task flips to 运行中 when a turn in the
     task reaches its session, and back to 已开始 when the turn ends, without the
-    channel page reloading."""
+    channel page reloading. The page rereads the task the moment it is told,
+    so what it reads then is what it keeps: settling the ended turn (its usage,
+    its inputs) can still be under way, and that must not read as running."""
     project = new_project(client, owner="alice")
     room = project["root_topic_id"]
     task = open_task(client, room, owner="alice")["id"]
@@ -166,15 +173,47 @@ def test_a_turn_starting_and_ending_in_a_task_is_heard_in_its_channel(
     # after it, or it would be taken into that one.
     wait_work_idle()
     wait_turn_idle(client, task)
+    seat = room_agent_seat(client, task)
+    started = threading.Event()
 
+    def held(topic, prompt, reply, *, agent=None):
+        stub_hooks.starts(topic, agent=agent)
+        stub_hooks.acknowledges(topic, prompt, agent=agent)
+        started.set()
+
+    monkeypatch.setattr(stub_hooks, "emit_turn", held)
+    # The turn's settling waits until the channel has read the card.
+    read = threading.Event()
+    settle = TurnCompletion.close
+
+    async def settling_slowly(self, *args, **kwargs):
+        await asyncio.to_thread(read.wait, 10)
+        return await settle(self, *args, **kwargs)
+
+    monkeypatch.setattr(TurnCompletion, "close", settling_slowly)
+    chat = client.app.dependency_overrides[get_chat_service]()
     with room_socket(client, room, "alice") as channel:
         _drain(channel)
-        with active_ask(client, stub_hooks, monkeypatch, task, platform_turn=True):
+        client.portal.call(
+            lambda: get_work_runner().submit(
+                chat,
+                uuid.UUID(task),
+                author="system",
+                content="接着干",
+                addressed=addressed_to_agent(seat),
+            )
+        )
+        assert started.wait(5), "the turn never reached its session"
+        assert _told(channel, room)
+        card = _channel_card(client, room, task)
+        assert card["presentation"]["phrase"] == Building.running
+        _drain(channel)
+
+        stub_hooks.stops(uuid.UUID(task), "做完了", agent=seat)
+        try:
             assert _told(channel, room)
             card = _channel_card(client, room, task)
-            assert card["presentation"]["phrase"] == Building.running
-            _drain(channel)
-
-        assert _told(channel, room)
-    card = _channel_card(client, room, task)
-    assert card["presentation"]["phrase"] == Building.started
+        finally:
+            read.set()
+        assert card["presentation"]["phrase"] == Building.started
+    wait_turn_idle(client, task)
