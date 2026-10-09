@@ -86,7 +86,7 @@
     "dompurify": "^3.4.16",
     "echarts": "^6.1.0",
     "editorjs-latex": "^1.0.5",
-    "editorjs-parser": "^1.5.3",
+    "editorjs-parser": "^3.2.1",
     "exceljs": "4.4.0",
     "i18next": "^23.16.8",
     "jwt-decode": "^4.0.0",
