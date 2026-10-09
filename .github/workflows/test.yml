@@ -181,7 +181,7 @@ jobs:
         run: python3 .claude/scripts/check-migration-safety.py
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     name: ${{ matrix.layer }} (${{ matrix.shard }})
     strategy:
       fail-fast: false
@@ -234,6 +234,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Probe CPU topology (experiment)
+        run: lscpu; nproc
 
       # Hosted matrix runners have isolated service containers. Keep the slot
       # namespace for reproductions on a machine shared by multiple test runs.
