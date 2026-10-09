@@ -70,6 +70,10 @@ const KINDS = {
   // A grey bar where the composer was (「任务已关闭」).
   notice: { need: ['text'], text: [], ui: ['text', 'button'], list: [] },
   checklist: { need: ['title', 'items'], text: ['done'], ui: ['title'], list: ['items'] },
+  // A form field in a dialog: its label over the box, what is in the box, a hint under it.
+  field: { need: ['label'], text: ['value'], ui: ['label', 'hint'], list: [] },
+  // A dialog's buttons, right-aligned; the last one is the primary.
+  buttons: { need: ['actions'], text: ['pressing'], ui: ['actions'], list: ['actions'] },
 }
 const COMMON = ['kind', 'at', 'until', 'press', 'lines']
 
@@ -110,7 +114,7 @@ export function panelSpec(spec, where, fail) {
     const out = { ...p, at: p.at || 0 }
     for (const f of k.list) if (p[f] !== undefined) out[f] = listOf(p[f])
     for (const f of k.ui) for (const label of (k.list.includes(f) ? out[f] : p[f] === undefined ? [] : [p[f]])) uiCheck(String(label), at, fail)
-    if ((p.kind === 'card' || p.kind === 'review') && p.pressing && ![...(out.actions || []), p.button].includes(p.pressing)) fail(at, `«pressing: ${p.pressing}» is not one of the card's «actions»`)
+    if ((p.kind === 'card' || p.kind === 'review' || p.kind === 'buttons') && p.pressing && ![...(out.actions || []), p.button].includes(p.pressing)) fail(at, `«pressing: ${p.pressing}» is not one of the card's «actions»`)
     return out
   })
   if (!parts.length) fail(where, 'a panel needs «parts»')
@@ -189,6 +193,12 @@ function partHtml(p, cfg) {
     }
     case 'delivery':
       return `<div class="dp-delivery"${a}><span class="dp-delivery-label">${esc(p.label)}</span><b>${esc(p.title)}</b>${p.ok ? `<span class="dp-card-ok">${ic('git')}${esc(p.ok)}</span>` : ''}${p.items ? `<div class="dp-focus">${p.focus ? `<span>${esc(p.focus)}</span>` : ''}<ol>${p.items.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></div>` : ''}</div>`
+    case 'field':
+      return `<div class="dp-field"${a}><span class="dp-field-label">${esc(p.label)}</span><span class="dp-field-box">${esc(p.value || '')}</span>${p.hint ? `<span class="dp-field-hint">${esc(p.hint)}</span>` : ''}</div>`
+    case 'buttons': {
+      const last = p.actions.length - 1
+      return `<div class="dp-buttons"${a}>${p.actions.map((x, i) => button(x, p, i === last ? 'dp-btn dp-btn-primary' : 'dp-btn')).join('')}</div>`
+    }
     case 'notice':
       return `<div class="dp-notice"${a}><span>${esc(p.text)}</span>${p.button ? `<span class="dp-notice-go">${esc(p.button)}</span>` : ''}</div>`
     case 'checklist': {
@@ -208,7 +218,7 @@ function fileRows(files) {
 
 // The window: a header row (a head part replaces it), a feed that fills from the
 // bottom like the product's conversation, and a dock for the composer and cards.
-const DOCK = ['composer', 'card', 'notice', 'review']
+const DOCK = ['composer', 'card', 'notice', 'review', 'buttons']
 // Under the header, above the feed.
 const TOP = ['strip', 'tabs']
 
@@ -249,6 +259,8 @@ function partText(p) {
     case 'head': return `页头：${p.room ? `# ${p.room} / ` : ''}${p.title}${p.status ? `，状态「${p.status}」` : ''}${p.note ? `，「${p.note}」` : ''}`
     case 'card': return `输入框上方的验收条${p.title ? `「${p.title}」` : ''}${[p.status, p.ok, p.who].filter(Boolean).map((x) => `「${x}」`).join('')}${p.note ? `，${p.note}` : ''}${p.actions ? `，按钮 ${p.actions.map((x) => `「${x}」`).join('')}` : ''}${p.button ? `，按钮「${p.button}」` : ''}`
     case 'checklist': return `${p.title}：${p.items.join('；')}`
+    case 'field': return `「${p.label}」${p.value ? `：${p.value}` : ''}${p.hint ? `（${p.hint}）` : ''}`
+    case 'buttons': return `按钮 ${p.actions.map((x) => `「${x}」`).join('')}`
   }
   return ''
 }

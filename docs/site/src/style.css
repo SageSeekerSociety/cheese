@@ -964,6 +964,61 @@ h1 {
   }
 }
 
+/* :::map — what contains what: boxes inside boxes, neutral, one accent on the
+   outermost name. Siblings share a row while it is wide enough and stack after. */
+.map {
+  margin: 8px 0 24px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+}
+
+.map-box {
+  min-width: 0;
+  padding: 10px 12px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  flex: 1 1 180px;
+}
+
+.map-d1 {
+  padding: 14px 16px 16px;
+  background: var(--fill);
+  border-color: transparent;
+}
+
+.map-d3,
+.map-d5 {
+  background: var(--fill);
+}
+
+.prose .map-label {
+  margin: 0;
+  color: var(--muted);
+}
+
+.map-label b {
+  margin-right: 8px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.map-d1 > .map-label b {
+  color: var(--accent-ink);
+}
+
+.map-kids {
+  display: flex;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.map-kids > .map-box:first-child {
+  flex-grow: 3;
+}
+
 /* Folded originals on the generated reference pages. */
 .prose details.fold {
   margin: 0 0 12px;
@@ -2671,6 +2726,39 @@ body.dragging .dock-resize::after {
   text-decoration: underline;
   text-decoration-color: var(--faint);
   text-underline-offset: 3px;
+}
+
+/* A dialog's form field and its buttons. */
+.dp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dp-field-label {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.dp-field-box {
+  min-height: 36px;
+  padding: 7px 10px;
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+}
+
+.dp-field-hint {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--faint);
+}
+
+.dp-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .dp-dock {
