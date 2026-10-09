@@ -10,8 +10,8 @@ import { queryOptions } from '@tanstack/vue-query'
 import { getPreview, getProgress, getTask, getTopicComputeProfile, listRoomTasks, listTopicMembers } from '@/api'
 import { listPins } from '@/api/pins'
 import { listThreads } from '@/api/threads'
-import { queryClient } from '@/lib/queryClient'
-import { keys } from '@/queries/keys'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 /** 房间名册。名册的写法（`api/topicMembers`）写完就把它标过期。 */
 export function roomMembersQuery(roomId: string) {
@@ -65,7 +65,8 @@ export function roomTasksQuery(roomId: string, filter: RoomTaskFilter) {
   const queryKey = keys.roomTaskList(roomId, filter)
   return queryOptions({
     queryKey,
-    queryFn: (): Promise<ListPayload<RoomTask>> => listRoomTasks(roomId, filter, queryClient.getQueryData(queryKey)),
+    queryFn: ({ signal }): Promise<ListPayload<RoomTask>> =>
+      listRoomTasks(roomId, filter, queryClient.getQueryData(queryKey), signal),
   })
 }
 
@@ -134,12 +135,4 @@ function tasksIn(data: unknown): RoomTask[] {
   if ('blocks' in data && Array.isArray(data.blocks))
     return (data.blocks as Block[]).flatMap((block) => block.tasks ?? [])
   return []
-}
-
-/** 这个房间的任务变了（新建、改名、关闭、换人）：房间和项目的任务清单都作废。 */
-export function refreshTasks(roomId: string, projectId: string | null): Promise<void> {
-  return Promise.all([
-    queryClient.invalidateQueries({ queryKey: keys.roomTasks(roomId) }),
-    projectId ? queryClient.invalidateQueries({ queryKey: keys.projectTasks(projectId) }) : null,
-  ]).then(() => undefined)
 }

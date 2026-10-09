@@ -40,10 +40,10 @@ import router from './router'
 import i18n from '@/i18n'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
-import { persistProjectList } from '@/lib/queryPersist'
 // Plugins
 import { registerPlugins } from '@/plugins'
 import vuetify from '@/plugins/vuetify'
+import { persistProjectList } from '@/query/persist'
 import AccountService from '@/services/account'
 import { watchForStaleBuild } from '@/services/staleBuild'
 

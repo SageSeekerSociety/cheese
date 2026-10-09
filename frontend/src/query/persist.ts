@@ -7,9 +7,9 @@ import type { PersistedClient, Persister } from '@tanstack/query-persist-client-
 
 import { persistQueryClient } from '@tanstack/query-persist-client-core'
 
-import { queryClient } from '@/lib/queryClient'
 import { myHandle } from '@/me'
-import { keys } from '@/queries/keys'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 const STORAGE_KEY = 'cheesex.queries.v1'
 const MAX_AGE_MS = 24 * 60 * 60 * 1000

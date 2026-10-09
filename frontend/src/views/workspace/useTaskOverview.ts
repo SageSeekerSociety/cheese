@@ -7,8 +7,8 @@ import { computed, ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getTaskRelated, retryTaskOpening } from '@/api/tasks'
-import { queryClient } from '@/lib/queryClient'
-import { roomProgressQuery } from '@/queries/room'
+import { queryClient } from '@/query/client'
+import { roomProgressQuery } from '@/query/room'
 
 /** 芝士在干活时，清单多久重取一次。 */
 const CHECKLIST_EVERY_MS = 5000

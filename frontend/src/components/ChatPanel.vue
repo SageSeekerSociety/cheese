@@ -114,7 +114,6 @@ const threadable = computed(() => mainLine.value && props.topic?.status !== 'arc
 const forward = emit as unknown as (event: string, ...args: unknown[]) => void
 const panelEmit = ((event: string, ...args: unknown[]) => {
   if (event === 'state-changed' && args[0] === 'threads') void threadLines.refresh()
-  if (event === 'state-changed' && args[0] === 'pins') void pins.reload()
   if (event === 'thread-activity') {
     const [threadId, member, active] = args as [string, string, boolean]
     void threadLines.onActivity(threadId, member, active)

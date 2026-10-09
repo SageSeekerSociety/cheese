@@ -33,10 +33,10 @@ import PanelToggle from '@/components/room/PanelToggle.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
-import { queryClient } from '@/lib/queryClient'
 import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
-import { projectQuery } from '@/queries/project'
+import { queryClient } from '@/query/client'
+import { projectQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
@@ -151,7 +151,7 @@ const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
 const managerName = ref<string | null>(null)
-// 我管不管这个项目：详情打开时才问，和工作区别处读同一份项目（`queries/project`）。
+// 我管不管这个项目：详情打开时才问，和工作区别处读同一份项目（`query/project`）。
 const projectRead = useQuery(
   computed(() => ({ ...projectQuery(props.topic.project_id), enabled: detailsOpen.value })),
   queryClient

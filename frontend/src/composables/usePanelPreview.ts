@@ -16,17 +16,10 @@ import type { FramePick } from './usePreviewFrames'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import {
-  attachmentRawUrl,
-  downloadFile,
-  readPreviewFile,
-  requestPreviewSession,
-  uploadAttachment,
-} from '../api'
+import { attachmentRawUrl, downloadFile, readPreviewFile, requestPreviewSession, uploadAttachment } from '../api'
 import { useDocumentBytes, useDocumentPage } from '../lib/documentBytes'
 import { sameDocumentIdentity } from '../lib/documentIdentity'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, pageViewOf, suffixOf, webMimeOf } from '../lib/fileKind'
-import { readPreview } from '../queries/room'
 import { roomFileDestination } from '../lib/previewSession'
 
 import { useDocumentRevisions } from './useDocumentRevisions'
@@ -35,6 +28,7 @@ import { useRoomFileEditor } from './useRoomFileEditor'
 import { useRoomFileHistory } from './useRoomFileHistory'
 
 import { t } from '@/i18n'
+import { readPreview } from '@/query/room'
 
 export interface PanelPreviewProps {
   topicId: string | null
@@ -239,7 +233,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
       let art: PreviewInfo | null
       try {
         // 正在问的那一次（路由守卫替这个房间先起的头、面板的指针轮询）还没回来就等它
-        // （`queries/room`）。首屏和定时轮询还认几秒内刚问到的那一份：别把又一轮网络压在
+        // （`query/room`）。首屏和定时轮询还认几秒内刚问到的那一份：别把又一轮网络压在
         // 「面板挂载之后」的临界路径上，两处轮询同时开着时也只问一次。收工重取、点了
         // 「重新载入」要的是此刻的，现问。
         const recent = (opts.poll || !opts.silent) && !opts.reload

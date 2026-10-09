@@ -24,9 +24,8 @@ it('an unchanged room task list is one request that hands back the same payload'
   vi.stubGlobal('fetch', fetcher)
   const first = await listRoomTasks('r1', { limit: 0 })
   expect(first.data.map((t) => t.id)).toEqual(['k1'])
-  // 304 交回的就是攥着的那一个对象：调用方 `tasks.value = payload.data` 是同引用赋值，
-  // Vue 的 ref setter 跳过触发，这一轮不重画。
-  const second = await listRoomTasks('r1', { limit: 0 })
+  // 304 交回的就是手上那一个对象：缓存里的数据没换引用，读它的地方这一轮不重画。
+  const second = await listRoomTasks('r1', { limit: 0 }, first)
   expect(second).toBe(first)
   expect(fetcher).toHaveBeenCalledTimes(2)
   const [url, init] = fetcher.mock.calls[1]
@@ -41,36 +40,32 @@ it('a changed room task list comes back as a fresh payload', async () => {
     .mockResolvedValueOnce(json({ data: [{ id: 'k1' }, { id: 'k2' }], total: 2 }, { ETag: '"v2"' }))
   vi.stubGlobal('fetch', fetcher)
   const first = await listRoomTasks('r1', { limit: 0 })
-  const second = await listRoomTasks('r1', { limit: 0 })
+  const second = await listRoomTasks('r1', { limit: 0 }, first)
   expect(second).not.toBe(first)
   expect(second.data.map((t) => t.id)).toEqual(['k1', 'k2'])
 })
 
-it('the project task list is cached under its own path, not the room one', async () => {
-  const fetcher = vi.fn((url: string) => Promise.resolve(json({ data: [{ id: url }], total: 1 }, { ETag: '"v1"' })))
+it('an unchanged project task list hands back the same payload', async () => {
+  const etag = '"p1"'
+  const fetcher = vi.fn((_url: string, init: RequestInit) => {
+    if (new Headers(init.headers).get('If-None-Match') === etag) {
+      return Promise.resolve(new Response(null, { status: 304, headers: { ETag: etag } }))
+    }
+    return Promise.resolve(json({ data: [{ id: 'k1' }], total: 1 }, { ETag: etag }))
+  })
   vi.stubGlobal('fetch', fetcher)
-  const project = await listProjectTasks('p1')
-  const room = await listRoomTasks('r1', { limit: 0 })
-  expect(project.data[0].id).toContain('/projects/p1/tasks')
-  expect(room.data[0].id).toContain('/topics/r1/tasks')
-  expect(fetcher).toHaveBeenCalledTimes(2)
+  const first = await listProjectTasks('p1', { open: true })
+  expect(await listProjectTasks('p1', { open: true }, first)).toBe(first)
+  expect(fetcher.mock.calls[1][0]).toContain('/projects/p1/tasks?status=open')
 })
 
-it('a second reader signs in mid-flight — the pending read is not shared across tokens', async () => {
-  localStorage.setItem('accessToken', 'user-a')
-  let resolveA!: (value: Response) => void
-  const fetcher = vi
-    .fn()
-    .mockReturnValueOnce(new Promise((yes) => (resolveA = yes)))
-    .mockImplementation(() => Promise.resolve(json({ data: [], total: 0 })))
+it('a first read with nothing held asks without a version and takes the body', async () => {
+  const fetcher = vi.fn(() => Promise.resolve(json({ data: [{ id: 'k1' }], total: 1 }, { ETag: '"v1"' })))
   vi.stubGlobal('fetch', fetcher)
-  const first = listRoomTasks('r1', { limit: 0 })
-  await Promise.resolve()
-  localStorage.setItem('accessToken', 'user-b')
-  const second = listRoomTasks('r1', { limit: 0 })
-  await Promise.resolve()
-  // 换了人就不能跟上一个还在飞的：键里的 token 不同，第二个人自己发一条。
-  expect(fetcher).toHaveBeenCalledTimes(2)
-  resolveA(json({ data: [], total: 0 }))
-  await Promise.all([first, second])
+  // 换了人之后缓存是空的：头一次读不带上一个人那份的版本号。
+  await listRoomTasks('r1', { limit: 0 })
+  await listRoomTasks('r1', { limit: 0 })
+  for (const [, init] of fetcher.mock.calls as unknown as [string, RequestInit][]) {
+    expect(new Headers(init.headers).get('If-None-Match')).toBeNull()
+  }
 })

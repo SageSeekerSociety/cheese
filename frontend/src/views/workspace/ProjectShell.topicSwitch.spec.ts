@@ -106,8 +106,11 @@ import ProjectShell from './ProjectShell.vue'
 import TopicView from './TopicView.vue'
 
 import i18n from '@/i18n'
+import { seedProject } from '@/test/seedQueries'
 
 function setup() {
+  // 项目框每 30 秒问一次的那几份：刚读过，这一刻不问。
+  seedProject('p1', { topics: [TOPIC_A, TOPIC_B], unread: {}, privateUnread: {}, notifyLevels: {} }, 'alice')
   store.value = reactive({
     topics: [TOPIC_A, TOPIC_B],
     members: [],
@@ -121,9 +124,6 @@ function setup() {
     agentName: 'Cheese',
     activeTopicId: null,
     activeDmPeer: null,
-    placeById: (id: string) => [TOPIC_A, TOPIC_B].find((t) => t.id === id) ?? null,
-    isResolvingPlace: () => false,
-    loadPlace: vi.fn(async () => {}),
     markRead: vi.fn(),
     openProject: vi.fn(),
     refreshTopics: vi.fn(),

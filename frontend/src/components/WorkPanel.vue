@@ -37,10 +37,7 @@ import { getTopicWorkSummary, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
-import { queryClient } from '../lib/queryClient'
 import { withViewTransition } from '../lib/viewTransition'
-import { keys } from '../queries/keys'
-import { heldPreview, openRoomTasksQuery, readPreview } from '../queries/room'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的「定时与触发」）。这个文件里 `panelTabs` 已经
@@ -57,6 +54,9 @@ import ProjectFileTab from './ProjectFileTab.vue'
 
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { heldPreview, openRoomTasksQuery, readPreview } from '@/query/room'
 
 const props = withDefaults(
   defineProps<{
@@ -324,7 +324,7 @@ function markPreviewSeen(id?: string | null) {
 }
 
 // Fetch the POINTER only (no file read, no cookie priming) so the dot can appear
-// while 预览 is not the open tab. Goes through the query cache (`queries/room`), so a
+// while 预览 is not the open tab. Goes through the query cache (`query/room`), so a
 // request the router guard already started for this topic is reused rather than
 // repeated — and the answer here is there the next time the room is opened.
 //
@@ -592,7 +592,7 @@ const panelTabs = computed<PanelTab[]>(() =>
   // 它们。频道「没有改动」是事实，不用等谁来答。
   if (!props.taskId) summaryLoaded.value = true
   if (id && props.taskId) {
-    // 这件任务的当前预览，之前问过的还在缓存里（`queries/room`）：命中就直接用——面板
+    // 这件任务的当前预览，之前问过的还在缓存里（`query/room`）：命中就直接用——面板
     // 挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
     const warm = heldPreview(id)
     if (warm !== undefined) {

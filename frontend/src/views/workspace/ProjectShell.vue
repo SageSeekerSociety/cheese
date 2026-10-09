@@ -9,10 +9,10 @@ import { provideTopicMemory } from '@/composables/useTopicMemory'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { trackNavigations } from '@/lib/navigationProgress'
-import { queryClient } from '@/lib/queryClient'
 import { warmPagesWhenIdle } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
-import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/queries/project'
+import { queryClient } from '@/query/client'
+import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -74,7 +74,7 @@ onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 // 实时性: poll unread badges so messages landing in OTHER topics light up
 // without a manual refresh. The same tick refreshes the topic list, so the
 // sidebar's 芝士还在跑 呼吸点 fades for topics you are not watching too. 标签页在
-// 后台时不问，切回来时过期了的再问一次（lib/queryClient）。
+// 后台时不问，切回来时过期了的再问一次（query/client）。
 const POLL_MS = 30_000
 const me = myHandle()
 useQuery(

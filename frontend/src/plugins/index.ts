@@ -7,7 +7,6 @@
 // Types
 import type { App } from 'vue'
 
-
 import { useAttachmentImages } from '@/composables/useAttachmentImages'
 
 import i18n from '../i18n'

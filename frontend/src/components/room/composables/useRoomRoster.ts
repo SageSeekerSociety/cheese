@@ -21,8 +21,8 @@ import { isExternalMember } from '../../../lib/externalMembers'
 import { isAvatarKnownFailed, rememberAvatarFailure } from '../../../utils/avatarFailures'
 import { getAvatarUrl } from '../../../utils/materials'
 
-import { queryClient } from '@/lib/queryClient'
-import { roomMembersQuery } from '@/queries/room'
+import { queryClient } from '@/query/client'
+import { roomMembersQuery } from '@/query/room'
 
 export function useRoomRoster(options: {
   topic: () => Topic | null
@@ -39,7 +39,7 @@ export function useRoomRoster(options: {
   // `cheese` 掩盖过这件事，真实部署里没有。名单里少了它，就没人 @ 得到它，而 @ 它
   // 正是叫它干活的唯一方式。
   //
-  // 名册按话题读，切到看过的房间时上次那份当场就在（`queries/room`）。名册抽屉里加人、
+  // 名册按话题读，切到看过的房间时上次那份当场就在（`query/room`）。名册抽屉里加人、
   // 移人、改角色之后那份当场作废重读，重读期间旧名单留着，不闪。
   //
   // 而「名单里没有 AI 队友」在两种状态下含义正相反：还没到（要等——此刻替人写的 @

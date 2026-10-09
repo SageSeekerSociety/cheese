@@ -318,7 +318,7 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
     if (envelope.code !== 200) {
       throw new Error(envelope.message || `API error code ${envelope.code}`)
     }
-      return { data: envelope.data, etag: res.headers?.get?.('ETag') ?? null }
+    return { data: envelope.data, etag: res.headers?.get?.('ETag') ?? null }
   }
 }
 
@@ -335,21 +335,25 @@ const etags = new WeakMap<object, string>()
  *  `cache: 'no-store'` keeps the decision in THIS code rather than in the
  *  browser's HTTP cache, which would answer the 304 transparently with a stored
  *  copy and make "nothing changed" indistinguishable from "here is the body
- *  again". */
-export function readSince<T extends object>(path: string, previous: T | undefined): Promise<T> {
+ *  again". `outer` aborts the request (the cache gave up on it). */
+export function readSince<T extends object>(path: string, previous: T | undefined, outer?: AbortSignal): Promise<T> {
   const etag = previous ? etags.get(previous) : undefined
-  return withinBudget(async (signal) => {
-    try {
-      const { data, etag: next } = await performRequestFull<T>(path, {
-        headers: etag ? { 'If-None-Match': etag } : {},
-        cache: 'no-store',
-        signal,
-      })
-      if (next) etags.set(data, next)
-      return data
-    } catch (error) {
-      if (error instanceof NotModified && previous) return previous
-      throw error
-    }
-  }, READ_BUDGET_MS)
+  return withinBudget(
+    async (signal) => {
+      try {
+        const { data, etag: next } = await performRequestFull<T>(path, {
+          headers: etag ? { 'If-None-Match': etag } : {},
+          cache: 'no-store',
+          signal,
+        })
+        if (next) etags.set(data, next)
+        return data
+      } catch (error) {
+        if (error instanceof NotModified && previous) return previous
+        throw error
+      }
+    },
+    READ_BUDGET_MS,
+    outer
+  )
 }

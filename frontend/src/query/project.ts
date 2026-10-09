@@ -22,9 +22,9 @@ import {
 import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
 import { listProjectProgress } from '@/api/projectProgress'
 import { rememberNumbered, rememberProjects } from '@/lib/addresses'
-import { patchQuery, queryClient } from '@/lib/queryClient'
-import { cachedWindow, prefetchNewestBlocks } from '@/queries/blocks'
-import { keys } from '@/queries/keys'
+import { cachedWindow, prefetchNewestBlocks } from '@/query/blocks'
+import { patchQuery, queryClient, settled } from '@/query/client'
+import { keys } from '@/query/keys'
 
 // 最近有动静的在前，不可调：侧栏用位置本身说这个顺序。
 const TOPIC_SORT = { sort: 'last_activity_at', order: 'desc' } as const
@@ -56,8 +56,8 @@ export function topicsQuery(projectId: string) {
   const queryKey = keys.projectTopics(projectId)
   return queryOptions({
     queryKey,
-    queryFn: async (): Promise<ListPayload<Topic>> => {
-      const payload = await listTopics(projectId, TOPIC_SORT, queryClient.getQueryData(queryKey))
+    queryFn: async ({ signal }): Promise<ListPayload<Topic>> => {
+      const payload = await listTopics(projectId, TOPIC_SORT, queryClient.getQueryData(queryKey), signal)
       rememberNumbered('channels', payload.data)
       return payload
     },
@@ -159,6 +159,14 @@ export function patchTopics(projectId: string, change: (rows: Topic[]) => Topic[
  * 它可能是刚变得对这个人可见、此前根本不在清单里的房间，只补一行补不出来。
  */
 export async function refreshTopicRow(projectId: string, roomId: string): Promise<void> {
+  // 这个项目的清单不在手上（没打开过）：这一行先作废，等有人看清单时整份读。
+  if (!queryClient.getQueryData(keys.projectTopics(projectId))) {
+    await queryClient.invalidateQueries({ queryKey: keys.roomRow(roomId) })
+    return
+  }
+  // 正在读这一行的那一次是变之前发出去的：等它回来再读，同时要的跟着同一次。
+  const inFlight = queryClient.getQueryCache().find({ queryKey: keys.roomRow(roomId), exact: true })
+  if (inFlight) await settled(inFlight)
   let row: Topic
   try {
     row = await queryClient.fetchQuery({ ...roomRowQuery(roomId), staleTime: 0 })

@@ -27,9 +27,9 @@ export {
   isRetryableGetFailure,
   NotModified,
   READ_BUDGET_MS,
+  readSince,
   refreshNow,
   request,
-  readSince,
   RequestTimeoutError,
   tokenExpiresWithin,
 } from './api/http'

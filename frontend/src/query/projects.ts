@@ -5,8 +5,8 @@ import { queryOptions } from '@tanstack/vue-query'
 
 import { listProjects } from '@/api'
 import { rememberProjects } from '@/lib/addresses'
-import { queryClient } from '@/lib/queryClient'
-import { keys } from '@/queries/keys'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 export function projectsQuery() {
   return queryOptions({

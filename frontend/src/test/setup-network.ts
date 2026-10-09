@@ -1,8 +1,8 @@
 import { afterEach, expect } from 'vitest'
 
-import { queryClient } from '@/lib/queryClient'
+import { queryClient } from '@/query/client'
 
-// 服务器数据的缓存（lib/queryClient.ts）是模块级的：每个用例结束清空，上一个用例读到
+// 服务器数据的缓存（query/client.ts）是模块级的：每个用例结束清空，上一个用例读到
 // 的东西不会被下一个当成缓存先画出来。
 afterEach(() => {
   queryClient.clear()

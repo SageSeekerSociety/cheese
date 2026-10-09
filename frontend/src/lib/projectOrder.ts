@@ -1,11 +1,11 @@
 import type { Project } from '@/cx_types'
 
-// rail 上项目的先后是**这个人**的排法，所以和 projectCache 一样按 handle 存。
+// rail 上项目的先后是**这个人**的排法，所以按 handle 存。
 // 整个浏览器一份的 `cheesex.layout` 装不了它：那份不分账号，换个账号进来 rail
 // 就按上一个人的顺序排（workspace store 里 lastProjectId 那条注释记着同一个坑）。
 //
-// 用 localStorage 而不是 projectCache 的 sessionStorage：那份是缓存，关掉标签页
-// 就该没了；排法是设置，得留着。
+// 用 localStorage 而不是项目清单那份 sessionStorage（query/persist）：那份是缓存，
+// 关掉标签页就该没了；排法是设置，得留着。
 const ORDER_PREFIX = 'cheesex.projectOrder.v1:'
 
 /** 拖到目标格子的哪一边。由指针落在目标上半还是下半决定，所以首尾两个位置都够得着。 */

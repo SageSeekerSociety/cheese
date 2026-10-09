@@ -36,10 +36,10 @@ import ProjectExportSection from '@/components/settings/ProjectExportSection.vue
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
-import { queryClient } from '@/lib/queryClient'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import { myHandle } from '@/me'
-import { projectQuery } from '@/queries/project'
+import { queryClient } from '@/query/client'
+import { projectQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目设置（`/projects/<id>/settings/<栏>`）。盖在整个窗口上的一层（SettingsOverlay），

@@ -13,8 +13,8 @@ import { queryOptions } from '@tanstack/vue-query'
 
 import { listBlocks } from '@/api'
 import { mergeRefreshedTail, PAGE_SIZE } from '@/lib/blockPaging'
-import { queryClient } from '@/lib/queryClient'
-import { keys } from '@/queries/keys'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 export interface BlockWindow {
   blocks: Block[]
@@ -45,8 +45,12 @@ export function setCachedWindow(roomId: string, window: BlockWindow): void {
   queryClient.setQueryData(keys.roomNewestBlocks(roomId), window)
 }
 
-/** 现在就去问最新一页；已经有一个在路上就等它。 */
-export function readNewestBlocks(roomId: string): Promise<BlockWindow> {
+/**
+ * 现在就去问最新一页；已经有一个在路上就等它。`restart`：在路上的那一个不能等了
+ * （它发出之后连接断过，可能永远回不来），作废它重新问。
+ */
+export async function readNewestBlocks(roomId: string, opts: { restart?: boolean } = {}): Promise<BlockWindow> {
+  if (opts.restart) await queryClient.cancelQueries({ queryKey: keys.roomNewestBlocks(roomId), exact: true })
   return queryClient.fetchQuery({ ...newestBlocksQuery(roomId), staleTime: 0 })
 }
 
@@ -78,7 +82,9 @@ function releaseLane(): void {
 export async function prefetchNewestBlocks(roomId: string, opts: { fresh?: boolean } = {}): Promise<void> {
   await acquireLane()
   try {
-    await queryClient.prefetchQuery(opts.fresh ? { ...newestBlocksQuery(roomId), staleTime: 0 } : newestBlocksQuery(roomId))
+    await queryClient.prefetchQuery(
+      opts.fresh ? { ...newestBlocksQuery(roomId), staleTime: 0 } : newestBlocksQuery(roomId)
+    )
   } finally {
     releaseLane()
   }

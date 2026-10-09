@@ -22,11 +22,11 @@ import {
   renameProjectArtifact,
 } from '@/api'
 import { memberName } from '@/lib/agentNames'
-import { queryClient } from '@/lib/queryClient'
 import { prefetchNow } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
-import { overviewQuery, progressQuery } from '@/queries/project'
-import { openProjectTasksQuery } from '@/queries/tasks'
+import { queryClient } from '@/query/client'
+import { overviewQuery, progressQuery } from '@/query/project'
+import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectOverviewView from '@/views/workspace/ProjectOverviewView.vue'
 

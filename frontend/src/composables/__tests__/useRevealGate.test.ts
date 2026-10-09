@@ -3,13 +3,12 @@
 import type { App, Ref } from 'vue'
 
 import { createApp, defineComponent, h, nextTick, ref } from 'vue'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
 import { useQuery } from '@tanstack/vue-query'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { holdRevealGate, holdRevealUntil, provideRevealGate } from '../useRevealGate'
 
-import { queryClient } from '@/lib/queryClient'
+import { queryClient } from '@/query/client'
 
 const apps: App[] = []
 

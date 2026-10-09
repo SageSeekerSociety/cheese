@@ -9,10 +9,10 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { unpinBlock } from '@/api/pins'
 import { RECENT_DONE } from '@/lib/channelTasks'
-import { patchQuery, queryClient } from '@/lib/queryClient'
-import { keys } from '@/queries/keys'
-import { overviewQuery } from '@/queries/project'
-import { openRoomTasksQuery, pinsQuery, roomTasksQuery } from '@/queries/room'
+import { patchQuery, queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { overviewQuery } from '@/query/project'
+import { openRoomTasksQuery, pinsQuery, roomTasksQuery } from '@/query/room'
 
 export function useChannelOverview(opts: {
   /** 正看着的频道；任务页上是 null，什么都不读。 */
@@ -56,14 +56,6 @@ export function useChannelOverview(opts: {
   })
   const overviewText = computed(() => (opts.general() ? overviewRead.data.value?.text ?? '' : ''))
 
-  function loadTasks() {
-    const id = opts.channelId()
-    if (id) void queryClient.invalidateQueries({ queryKey: keys.roomTasks(id) })
-  }
-  function loadPins() {
-    const id = opts.channelId()
-    if (id) void queryClient.invalidateQueries({ queryKey: keys.roomPins(id) })
-  }
   watch(opts.tick, () => {
     if (opts.general()) void queryClient.invalidateQueries({ queryKey: keys.projectOverview(opts.projectId()) })
   })
@@ -79,5 +71,5 @@ export function useChannelOverview(opts: {
     }
   }
 
-  return { tasks, pins, overview, overviewText, loadTasks, loadPins, unpin }
+  return { tasks, pins, overview, overviewText, unpin }
 }

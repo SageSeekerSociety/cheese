@@ -6,11 +6,12 @@ import { computed, ref } from 'vue'
 import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale } from '@/i18n'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
-import { queryClient } from '@/lib/queryClient'
-import { forgetPersistedQueries } from '@/lib/queryPersist'
+import { identityChanges } from '@/lib/identity'
 import { resetRoomLink } from '@/lib/roomLink'
 import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
 import { UserApi } from '@/network/api/users'
+import { queryClient } from '@/query/client'
+import { forgetPersistedQueries } from '@/query/persist'
 import { disablePush } from '@/services/webPush'
 import { resetFeedbackCaches } from '@/stores/feedback'
 
@@ -59,7 +60,7 @@ function storedUserId(): number | undefined {
  *   建键，请求头不进键，后端也没发 `Vary` —— 所以 `GET /api/projects` 全浏览器只
  *   有一份。它是 NetworkFirst、五秒拿不到响应就回退缓存，于是一次慢请求会把上一
  *   个人的数据画到这个人屏幕上。
- * - **服务器数据的缓存**（lib/queryClient）住在内存里，项目清单还在本标签页存了一份：
+ * - **服务器数据的缓存**（query/client）住在内存里，项目清单还在本标签页存了一份：
  *   下一个人打开总览会先看到上一个人的项目名，然后才被后台刷新盖掉 —— 那一眼已经
  *   泄露了。
  * - **反馈那三份**（stores/feedback.ts 的公开列表 / 我的反馈 / 详情）也都是「同一
@@ -75,11 +76,25 @@ function storedUserId(): number | undefined {
  * 认不出新身份时（OAuth 回调只给令牌，用户信息随后才拉）当作换了人：那条路径只在
  * 一次全新的登录里走到，宁可多清一次。
  */
-/** 这个人看得到的服务器数据，和这个页面的房间连接（连着的是上一个人看着的那些房间）。 */
+/**
+ * 这个人看得到的服务器数据，和这个页面的房间连接（连着的是上一个人看着的那些房间）。
+ *
+ * 缓存里每一份都退回「没读过」：正在读的作废，读到的扔掉。还有地方看着的那几份不从
+ * 缓存里拿走 —— 拿走了，看着它的那一处就连在一份谁也不再更新的数据上，回到同一个项目
+ * 时既不重读、也换不掉上一个人那份。新的人的令牌到手后，它们再读一次（`readAsNewPerson`）。
+ */
 function forgetServerData(): void {
-  queryClient.clear()
+  for (const query of queryClient.getQueryCache().getAll()) {
+    if (query.observers.length) query.reset()
+    else queryClient.getQueryCache().remove(query)
+  }
   forgetPersistedQueries()
   resetRoomLink()
+}
+
+/** 换了人、令牌也到手了：屏幕上正看着的那几份按这个人的身份读一次。 */
+function readAsNewPerson(): void {
+  void queryClient.refetchQueries({ type: 'active' })
 }
 
 export function dropCachesIfSomeoneElseLogsIn(previous: number | undefined, next: number | undefined): boolean {
@@ -217,6 +232,7 @@ export class AccountService {
   }
 
   public set user(value) {
+    if (value?.id !== this._user.value?.id) identityChanges.value += 1
     this._user.value = value
   }
 
@@ -342,12 +358,13 @@ export class AccountService {
 
   /** 接过一个新令牌：这个标签页续签的，或者别的标签页续签、登录的。 */
   private adopt(accessToken: string, user?: User) {
-    if (user) dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user.id)
+    const someoneElse = !!user && dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user.id)
     this.accessToken = accessToken
     if (user) {
       this.user = user
       localStorage.setItem('user', JSON.stringify(user))
     }
+    if (someoneElse) readAsNewPerson()
     this.loggedIn = true
     // 手里有活令牌了，恢复这件事就完成了：界面那一层可以收起来。
     this._restorePhase.value = 'idle'
@@ -358,7 +375,7 @@ export class AccountService {
   }
 
   public async login(accessToken: string, user?: User) {
-    dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user?.id)
+    const someoneElse = dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user?.id)
     this.loggedIn = true
     this.accessToken = accessToken
     announceSignIn(accessToken, user)
@@ -373,6 +390,7 @@ export class AccountService {
       // 如果没有提供用户信息（如 OAuth 登录），获取完整的用户信息
       await this.updateUserInfo(true)
     }
+    if (someoneElse) readAsNewPerson()
   }
 
   public async logout() {

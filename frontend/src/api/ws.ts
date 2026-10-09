@@ -20,7 +20,7 @@ export function screenWsUrl(sid: string): string {
   return `${base}/connector/session/${encodeURIComponent(sid)}/screen${q}`
 }
 
-// Dev-only observability hook, same purpose as `window.__blockCache`: the probe
+// Dev-only observability hook, same purpose as `window.__queryClient`: the probe
 // scripts under scripts/ open real sockets and issue real fetches from inside
 // the page, and the prefix they need is the one BASE exists to spell ONCE. Four
 // of them had it hand-written instead, and every copy was a copy that could be

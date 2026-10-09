@@ -13,11 +13,11 @@ import type { Topic } from '../cx_types'
 import { nextTick, ref, watch } from 'vue'
 
 import { ApiError, listBlocks } from '../api'
-import { setCachedWindow } from '../queries/blocks'
 import { PAGE_SIZE, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
 import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
 
 import { t } from '@/i18n'
+import { setCachedWindow } from '@/query/blocks'
 
 type Timeline = ReturnType<typeof useTimeline>
 

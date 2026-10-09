@@ -5,8 +5,8 @@ import type { ListPayload, RoomTask } from '@/cx_types'
 import { infiniteQueryOptions, queryOptions } from '@tanstack/vue-query'
 
 import { listProjectTasks, pageProjectTasks } from '@/api'
-import { queryClient } from '@/lib/queryClient'
-import { keys } from '@/queries/keys'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 /**
  * 项目里还开着的任务。整个项目的任务后端每读一次都要全部算一遍，而清单没变的时候
@@ -16,8 +16,8 @@ export function openProjectTasksQuery(projectId: string) {
   const queryKey = keys.projectOpenTasks(projectId)
   return queryOptions({
     queryKey,
-    queryFn: (): Promise<ListPayload<RoomTask>> =>
-      listProjectTasks(projectId, { open: true }, queryClient.getQueryData(queryKey)),
+    queryFn: ({ signal }): Promise<ListPayload<RoomTask>> =>
+      listProjectTasks(projectId, { open: true }, queryClient.getQueryData(queryKey), signal),
   })
 }
 

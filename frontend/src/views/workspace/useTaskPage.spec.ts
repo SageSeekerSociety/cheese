@@ -16,6 +16,8 @@ import { useTaskPage } from './useTaskPage'
 import { closeTask, getTask } from '@/api/tasks'
 
 const task = (status: string): RoomTask => ({ id: 'k1', status, owner_handle: 'alice' }) as unknown as RoomTask
+// 改动的回答写进缓存、晚回来的读落地，都在当前这一轮之后：等它们都落定再看。
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 beforeEach(() => {
   vi.mocked(getTask).mockReset()
@@ -23,9 +25,11 @@ beforeEach(() => {
 })
 
 it('关闭之前发出的读、关闭之后才回来：任务仍是已关闭', async () => {
-  const page = useTaskPage({ taskId: () => 'k1', people: () => [] })
+  // 打开任务页就读一次这件任务。
   vi.mocked(getTask).mockResolvedValueOnce(task('open'))
+  const page = useTaskPage({ taskId: () => 'k1', people: () => [] })
   await page.load()
+  expect(page.task.value?.status).toBe('open')
 
   let answer!: (t: RoomTask) => void
   vi.mocked(getTask).mockReturnValueOnce(new Promise((res) => (answer = res)))
@@ -34,19 +38,25 @@ it('关闭之前发出的读、关闭之后才回来：任务仍是已关闭', a
   await page.close('做完了')
   answer(task('open'))
   await reread
+  await settle()
 
   expect(page.task.value?.status).toBe('closed')
 })
 
 it('改动之后才发出的读照常算数', async () => {
-  const page = useTaskPage({ taskId: () => 'k1', people: () => [] })
+  // 打开任务页就读一次这件任务。
   vi.mocked(getTask).mockResolvedValueOnce(task('open'))
+  const page = useTaskPage({ taskId: () => 'k1', people: () => [] })
   await page.load()
+  expect(page.task.value?.status).toBe('open')
   vi.mocked(closeTask).mockResolvedValueOnce(task('closed'))
   await page.close('做完了')
+  await settle()
+  expect(page.task.value?.status).toBe('closed')
 
   vi.mocked(getTask).mockResolvedValueOnce(task('open'))
   await page.load(true)
+  await settle()
 
   expect(page.task.value?.status).toBe('open')
 })

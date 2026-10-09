@@ -9,10 +9,10 @@ import { useQuery } from '@tanstack/vue-query'
 import { ApiError } from '@/api'
 import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
-import { patchQuery, queryClient } from '@/lib/queryClient'
 import { myHandle } from '@/me'
-import { keys } from '@/queries/keys'
-import { computeProfileQuery, roomTaskQuery } from '@/queries/room'
+import { patchQuery, queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { computeProfileQuery, roomTaskQuery } from '@/query/room'
 
 export interface TaskComparison {
   before: string
@@ -22,7 +22,7 @@ export interface TaskComparison {
 export function useTaskPage(opts: { taskId: () => string | undefined; people: () => TopicMemberRow[] }) {
   const ME = myHandle()
   // 别处已经读过这一件（侧栏、任务清单、对话里那一块带着的）就先照着它画，读回来再原地
-  // 换——不先清空成一个转圈（`queries/room`）。
+  // 换——不先清空成一个转圈（`query/room`）。
   const read = useQuery(
     computed(() => {
       const id = opts.taskId() ?? ''

@@ -30,9 +30,9 @@ import SkillDetailDrawer from '@/components/skills/SkillDetailDrawer.vue'
 import SkillEditDialog from '@/components/skills/SkillEditDialog.vue'
 import SkillImportDialog from '@/components/skills/SkillImportDialog.vue'
 import i18n, { t } from '@/i18n'
-import { queryClient } from '@/lib/queryClient'
 import { useDialog } from '@/plugins/dialog'
-import { projectQuery } from '@/queries/project'
+import { queryClient } from '@/query/client'
+import { projectQuery } from '@/query/project'
 
 /** 过了这个数，芝士不再主动提议新的（后端 `PROPOSAL_LIMIT`）；人加不拦，只提一句。 */
 const CROWDED = 20

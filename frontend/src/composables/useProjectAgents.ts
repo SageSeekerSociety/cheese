@@ -23,9 +23,9 @@ import {
   setProjectDefaultAgent,
 } from '@/api'
 import { t } from '@/i18n'
-import { patchQuery, queryClient } from '@/lib/queryClient'
-import { keys } from '@/queries/keys'
-import { agentsQuery } from '@/queries/project'
+import { patchQuery, queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { agentsQuery } from '@/query/project'
 
 interface AgentsPayload {
   agents: ProjectAgent[]
@@ -40,7 +40,7 @@ interface AgentsPayload {
 }
 
 export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
-  // 进过一次的队友名册，再进来第一帧就在（lib/queryClient）。
+  // 进过一次的队友名册，再进来第一帧就在（query/client）。
   const key = computed(() => [...keys.projectAgents(toValue(projectId)), 'settings'] as const)
   const read = useQuery(
     computed(() => ({

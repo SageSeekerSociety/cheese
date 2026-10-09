@@ -24,9 +24,10 @@ import { setChannelMembersOnly } from '@/api/topicMembers'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
 import { externalHandles } from '@/lib/externalMembers'
-import { patchQuery, queryClient } from '@/lib/queryClient'
+import { identityChanges } from '@/lib/identity'
 import { myHandle } from '@/me'
-import { keys } from '@/queries/keys'
+import { patchQuery, queryClient, refreshQueries } from '@/query/client'
+import { keys } from '@/query/keys'
 import {
   membersQuery,
   notifyLevelsQuery,
@@ -37,13 +38,13 @@ import {
   refreshTopicRow as refreshRow,
   topicsQuery,
   unreadQuery,
-} from '@/queries/project'
-import { projectsQuery, refreshProjects } from '@/queries/projects'
+} from '@/query/project'
+import { projectsQuery, refreshProjects } from '@/query/projects'
 
 // 当前打开的是哪个项目，和围着它的界面状态（栏宽、上次待的房间、为什么打不开）。
 //
 // 项目的数据（频道清单、成员、未读、通知档位）不存在这里：它们在 query 缓存里
-// （`queries/project.ts`），这里只是按当前项目把那几份接出来，写操作改的也是那几份。
+// （`query/project.ts`），这里只是按当前项目把那几份接出来，写操作改的也是那几份。
 //
 // 它必须是 store 而不是 provide/inject：项目侧栏走全站的 `sidebar` 具名视图
 // (App.vue)，和内容区是两个平级的组件实例，中间没有父子关系可以注入。这也正是
@@ -90,7 +91,11 @@ export function lastOpenedProjectId(): string | null {
 export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projectId = ref<string | null>(null)
   const pid = computed(() => projectId.value ?? '')
-  const me = computed(() => myHandle())
+  // 跟着登录的人变：换了人，未读读的是新的人那一份。
+  const me = computed(() => {
+    void identityChanges.value
+    return myHandle()
+  })
   const hasProject = computed(() => !!projectId.value)
 
   // 进了项目、或者哪一页要了（`refreshProjects`）才读：没打开任何项目时 store 不替谁去问。
@@ -107,11 +112,17 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 不会来的答案；或者更坏，拿一个还没到货的清单当「这个项目没有壳」。
   const projectsSettled = computed(() => projectsRead.isFetched.value)
 
-  const topicsRead = useQuery(computed(() => ({ ...topicsQuery(pid.value), enabled: hasProject.value })), queryClient)
+  const topicsRead = useQuery(
+    computed(() => ({ ...topicsQuery(pid.value), enabled: hasProject.value })),
+    queryClient
+  )
   const topics = computed<Topic[]>(() => topicsRead.data.value?.data ?? [])
   const loadingTopics = computed(() => hasProject.value && topicsRead.isPending.value && !topicsRead.isError.value)
 
-  const membersRead = useQuery(computed(() => ({ ...membersQuery(pid.value), enabled: hasProject.value })), queryClient)
+  const membersRead = useQuery(
+    computed(() => ({ ...membersQuery(pid.value), enabled: hasProject.value })),
+    queryClient
+  )
   const members = computed(() => membersRead.data.value ?? [])
   // 名册上的外部成员（团队以外、被邀请进这个项目的人）。聊天署名、@ 候选、房间名册
   // 都拿它来挂「外部」那个标，所以放在 store 里算一次，谁问都是同一份。
@@ -132,7 +143,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 几条），和私聊未读——私聊按对方的 handle 编址（'cheese' = 和芝士那一间），因为私聊
   // 的行来自成员名单，没有话题 id。频道的数字已经按我设的通知档位算过了（后端）。
   const withMe = computed(() => hasProject.value && !!me.value)
-  const unreadRead = useQuery(computed(() => ({ ...unreadQuery(pid.value, me.value), enabled: withMe.value })), queryClient)
+  const unreadRead = useQuery(
+    computed(() => ({ ...unreadQuery(pid.value, me.value), enabled: withMe.value })),
+    queryClient
+  )
   const unreadMap = computed<Record<string, TopicUnread>>(() => unreadRead.data.value ?? {})
   const privateUnreadRead = useQuery(
     computed(() => ({ ...privateUnreadQuery(pid.value, me.value), enabled: withMe.value })),
@@ -141,7 +155,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const privateUnreadMap = computed<Record<string, number>>(() => privateUnreadRead.data.value ?? {})
   // 我不在默认档位的频道（{topic_id: {level, muted_until}}）。过了期的静音后端不列；
   // 页面开着的时候静音到点，下一次轮询会把它拿掉。
-  const levelsRead = useQuery(computed(() => ({ ...notifyLevelsQuery(pid.value), enabled: hasProject.value })), queryClient)
+  const levelsRead = useQuery(
+    computed(() => ({ ...notifyLevelsQuery(pid.value), enabled: hasProject.value })),
+    queryClient
+  )
   const notifyLevels = computed<Record<string, TopicNotifySetting>>(() => levelsRead.data.value ?? {})
   function levelOf(topicId: string): TopicNotifyLevel {
     return notifyLevels.value[topicId]?.level ?? 'mentions'
@@ -229,6 +246,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
    * 两档分开，因为下一步动作不一样：没登录的人要去登录，登录了的人得去要权限。
    */
   const accessDenied = ref<'unauthenticated' | 'forbidden' | 'archived' | null>(null)
+  // 换了人（或者从没登录变成登录了）：上一个身份进不来，不代表这一个也进不来。
+  watch(me, () => {
+    accessDenied.value = null
+  })
   function noteAccess(e: unknown) {
     if (!(e instanceof ApiError)) return false
     if (e.status === 401) accessDenied.value = 'unauthenticated'
@@ -292,10 +313,18 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   /** 进一个项目。上一个项目的「打不开」「报错」不带过来；数据各自按项目读。 */
   function openProject(id: string) {
     if (projectId.value === id && !accessDenied.value) return
+    // 回到上次打不开的同一个项目（从登录页回来、刚被请进来）：上次读到的是「进不来」，
+    // 这一次按现在的身份重读。
+    const retry = projectId.value === id
     projectId.value = id
     accessDenied.value = null
     error.value = null
     persistLayout()
+    if (retry) {
+      void topicsRead.refetch()
+      void membersRead.refetch()
+      void refreshUnread()
+    }
   }
 
   /** 侧栏那块「加载话题失败」的「重试」：再读一次当前项目的话题清单。 */
@@ -325,24 +354,24 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   }
 
   function refreshTopics(): Promise<void> {
-    return queryClient.invalidateQueries({ queryKey: keys.projectTopics(pid.value) })
+    return refreshQueries({ queryKey: keys.projectTopics(pid.value) })
   }
 
   function refreshMembers(): Promise<void> {
-    return queryClient.invalidateQueries({ queryKey: keys.projectMembers(pid.value) })
+    return refreshQueries({ queryKey: keys.projectMembers(pid.value) })
   }
 
   /** 未读、私聊未读和通知档位：数字跟着档位变，三份一起问。 */
   function refreshUnread(): Promise<void> {
     const project = pid.value
     return Promise.all([
-      queryClient.invalidateQueries({ queryKey: keys.projectUnread(project, me.value) }),
-      queryClient.invalidateQueries({ queryKey: keys.projectPrivateUnread(project, me.value) }),
-      queryClient.invalidateQueries({ queryKey: keys.projectNotifyLevels(project) }),
+      refreshQueries({ queryKey: keys.projectUnread(project, me.value) }),
+      refreshQueries({ queryKey: keys.projectPrivateUnread(project, me.value) }),
+      refreshQueries({ queryKey: keys.projectNotifyLevels(project) }),
     ]).then(() => undefined)
   }
 
-  /** 这一行变了：只取这一行补进清单（见 `queries/project`）。 */
+  /** 这一行变了：只取这一行补进清单（见 `query/project`）。 */
   function refreshTopicRow(topicId: string): Promise<void> {
     return refreshRow(pid.value, topicId)
   }

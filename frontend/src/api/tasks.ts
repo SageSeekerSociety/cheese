@@ -18,10 +18,11 @@ function taskPath(taskId: string): string {
 export function listProjectTasks(
   projectId: string,
   opts: { open?: boolean } = {},
-  previous?: ListPayload<RoomTask>
+  previous?: ListPayload<RoomTask>,
+  signal?: AbortSignal
 ): Promise<ListPayload<RoomTask>> {
   const path = `/projects/${encodeURIComponent(projectId)}/tasks`
-  return readSince(opts.open ? `${path}?status=open` : path, previous)
+  return readSince(opts.open ? `${path}?status=open` : path, previous, signal)
 }
 
 /** 「全部任务」里谁的：我负责的、我协助的、别人的。 */
@@ -74,7 +75,8 @@ export function listRoomTasks(
     /** 只要有自己分支的。 */
     branch?: boolean
   },
-  previous?: ListPayload<RoomTask>
+  previous?: ListPayload<RoomTask>,
+  signal?: AbortSignal
 ): Promise<ListPayload<RoomTask>> {
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
@@ -84,7 +86,7 @@ export function listRoomTasks(
   for (const id of opts?.blocks ?? []) q.append('blocks', id)
   if (opts?.branch) q.set('branch', 'true')
   const query = q.toString() ? `?${q.toString()}` : ''
-  return readSince(`/topics/${encodeURIComponent(roomId)}/tasks${query}`, previous)
+  return readSince(`/topics/${encodeURIComponent(roomId)}/tasks${query}`, previous, signal)
 }
 
 /** 一个任务。它的对话和房间的一样读（`/topics/{task}/blocks`）。 */

@@ -23,9 +23,10 @@ import type { BlockWindow } from '../lib/blockPaging'
 import type { RoomStateFrame } from '../types/roomSocket'
 
 import { ensureFreshToken, listBlocks } from '../api'
-import { setCachedWindow } from '../queries/blocks'
 import { applyLiveChanges, PAGE_SIZE } from '../lib/blockPaging'
 import { resyncTail } from '../lib/tailResync'
+
+import { setCachedWindow } from '@/query/blocks'
 
 /**
  * 断线重连：屏幕上正是这间房，什么都不清。读回最新一页就地合进时间线，再开 socket；

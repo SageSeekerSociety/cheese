@@ -2,13 +2,14 @@
 // 由凭据说，后端按「频道创建者或项目管理员」放行（加人、移出、说明），加入和退出
 // 只认本人。
 //
-// 名册变了就把缓存里那份名册标过期（`queries/room`）：房间头部、对话栏的 @ 候选、
+// 名册变了就把缓存里那份名册标过期（`query/room`）：房间头部、对话栏的 @ 候选、
 // 成员面板读的都是它，不标的话刚加进来的人 @ 不出来。
 import type { Topic, TopicMemberRow } from '../cx_types'
 
 import { request } from '../api'
-import { queryClient } from '../lib/queryClient'
-import { keys } from '../queries/keys'
+
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 function rosterWrite<T>(topicId: string, write: Promise<T>): Promise<T> {
   return write.then((result) => {

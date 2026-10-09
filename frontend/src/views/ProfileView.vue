@@ -22,7 +22,7 @@ import type {
 } from '@/cx_types'
 import type { ActivityWeek } from '@/lib/activityYear'
 
-import { computed, onActivated, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
@@ -30,6 +30,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
+import { usePageActive } from '@/composables/usePageActive'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
@@ -45,10 +46,10 @@ import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
 import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { teammateName } from '@/lib/agentNames'
-import { patchQuery, queryClient } from '@/lib/queryClient'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
+import { patchQuery, queryClient } from '@/query/client'
 
 defineOptions({ name: 'ProfileView' })
 
@@ -71,10 +72,13 @@ interface Page {
   recent: ProfileTopic[] | null
 }
 
-// 回到看过的主页先照着上一次的画，背后重取（lib/queryClient）。
+// 回到看过的主页先照着上一次的画，背后重取（query/client）。
 const pageKey = computed(() => ['user', props.handle, 'profile', props.projectId ?? null] as const)
+// 保活着离开时停下，回来时过期了的再读（usePageActive）。
+const pageActive = usePageActive()
 const page = useQuery(
   computed(() => ({
+    enabled: pageActive.value,
     queryKey: pageKey.value,
     queryFn: async (): Promise<Page> => {
       const [profile, member, recent] = await Promise.all([
@@ -90,10 +94,6 @@ const page = useQuery(
   queryClient
 )
 holdRevealUntil(() => !page.isPending.value)
-// 保活着的页面回到前台（App.vue 的 keptAlivePages）：离开期间过期了就再问一次。
-onActivated(() => {
-  if (page.isStale.value) void page.refetch()
-})
 const data = page.data
 // 只在没有任何内容可画时转圈、报错；有内容时背后那次没取到就照常显示。
 const loading = page.isPending

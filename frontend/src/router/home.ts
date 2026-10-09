@@ -6,8 +6,8 @@ import type { RouteLocationRaw, RouteRecordRaw } from 'vue-router'
  *  ——弱网下恢复成功时首屏那次导航早就结束了，得把这份决定重走一遍。 */
 export async function landingForMember(): Promise<RouteLocationRaw> {
   const [{ queryClient }, { projectsQuery }, { workspaceProject }, { lastOpenedProjectId }] = await Promise.all([
-    import('@/lib/queryClient'),
-    import('@/queries/projects'),
+    import('@/query/client'),
+    import('@/query/projects'),
     import('@/components/common/Navigation/destinations'),
     import('@/stores/workspace'),
   ])

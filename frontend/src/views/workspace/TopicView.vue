@@ -31,13 +31,13 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
-import { queryClient } from '@/lib/queryClient'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
-import { roomRowQuery, usePlace } from '@/queries/project'
-import { refreshTasks, roomMembersQuery } from '@/queries/room'
+import { queryClient } from '@/query/client'
+import { roomRowQuery, usePlace } from '@/query/project'
+import { roomMembersQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
@@ -439,30 +439,17 @@ function handleTurnDone() {
 }
 
 // A platform resource in this room changed (the API handler that changed it
-// sent the frame) — refresh the affected panel live (§3.1.1).
-function handleStateChanged(resource: string, id?: string) {
-  // 「topics」也说任务清单变了（建、改名、关），任务页自己的页头和侧栏都要跟着变。
-  if (resource === 'topics') {
-    // 后端指名了变的是哪一行（房间 id）就只重取那一行 —— 改一个房间名不再重下整份
-    // 清单（400 多个话题近 300KB）。没指名（老后端、或没带 id 的调用点）退回整块重取。
-    if (id) void store.refreshTopicRow(id)
-    else void store.refreshTopics()
-    void refreshTasks(props.topicId, props.projectId)
-    if (props.taskId) void taskPage.load(true)
-  } else if (resource === 'pins') void channelOverview.loadPins()
-  else if (resource === 'accept') reloadAccept()
+// sent the frame) — refresh the affected panel live (§3.1.1). 频道这一行、任务、置顶、
+// 支线在缓存里，对话栏收到帧时已经把它们标过期了（`query/changes`），看着它们的
+// 侧栏、概览、任务页自己重读；这里只接缓存里没有的那几样。
+const CACHED_RESOURCES: ReadonlySet<string> = new Set(['topics', 'tasks', 'pins', 'threads'])
+function handleStateChanged(resource: string) {
+  if (resource === 'accept') reloadAccept()
   // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   // 技能的提议落下、被保存或被拒：那张卡跟着变。
   else if (resource === 'skills') chatColumn.value?.reloadSkills()
-  // 任务开始、交付、关闭：任务页跟着变，侧栏那几行也是。
-  else if (resource === 'tasks') {
-    void refreshTasks(props.topicId, props.projectId)
-    if (props.taskId) void taskPage.load(true)
-  }
-  // 频道里有支线长了一条：概览里「支线」那一格跟着变（主线上那一行对话栏自己换）。
-  else if (resource === 'threads') void channelThreads.load()
-  else activityTick.value += 1 // doc / notify → reload
+  else if (!CACHED_RESOURCES.has(resource)) activityTick.value += 1 // doc / notify → reload
 }
 
 // An action card's button → open the relevant view (§3.1.1 控件).

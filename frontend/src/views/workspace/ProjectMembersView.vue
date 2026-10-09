@@ -49,9 +49,9 @@ import { t } from '@/i18n'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
-import { queryClient } from '@/lib/queryClient'
 import { myHandle } from '@/me'
-import { agentsQuery, projectQuery } from '@/queries/project'
+import { queryClient } from '@/query/client'
+import { agentsQuery, projectQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 defineOptions({ name: 'ProjectMembersView' })
@@ -75,7 +75,7 @@ watch(
 const me = computed(() => myHandle())
 const project = computed(() => store.projects.find((p) => p.id === props.projectId) ?? null)
 const ownerHandle = computed<string>(() => String(project.value?.owner_handle ?? ''))
-// 我管不管这个项目的成员：和工作区别处读同一份项目（`queries/project`）。
+// 我管不管这个项目的成员：和工作区别处读同一份项目（`query/project`）。
 const projectRead = useQuery(
   computed(() => projectQuery(props.projectId)),
   queryClient

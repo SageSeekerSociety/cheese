@@ -348,11 +348,11 @@ import {
   reorderProjects,
   saveProjectOrder,
 } from '@/lib/projectOrder'
-import { queryClient } from '@/lib/queryClient'
 import { myHandle } from '@/me'
 import { NotificationsApi } from '@/network/api/notifications'
 import { TeamsApi } from '@/network/api/teams'
-import { projectsQuery, refreshProjects } from '@/queries/projects'
+import { queryClient } from '@/query/client'
+import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
@@ -432,9 +432,9 @@ function endPageMotion(event: AnimationEvent) {
   if (event.target === contentRef.value) contentRef.value?.classList.remove(...MOTION_CLASSES)
 }
 
-// 名字来自各自组件里的 defineOptions({ name })。保活的页面回到前台时数据不会因为
-// 重新挂载而重取，所以这两页各自在 onActivated 里把过期的那份再问一次，不然回到
-// 页面看到的是一屏永远不再刷新的旧数据。
+// 名字来自各自组件里的 defineOptions({ name })。保活的页面离开时组件还在，它的查询
+// 把 `enabled` 绑到页面在不在屏幕上（composables/usePageActive）：离开时不跟着别处的
+// 失效重读，回来时过期了的再读一次。
 const keptAlivePages = ['ProjectDocsView', 'ProfileView']
 
 // 确认身份的弹窗第一次被要用时才加载：大多数会话从不需要它
@@ -459,7 +459,7 @@ const hasSidebar = computed(() => currentRoute.matched.some((record) => record.c
 // Fusion merge (C): 项目来自我们的后端 (/api/projects)，在桌面 rail 上一个项目
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
 // (话题/群聊/doc/agent)。两端各拿到哪些格子由 Navigation/destinations.ts 说了算。
-// 冷打开时上一次的清单从本标签页的存储里先拿出来（lib/queryPersist），rail 当场就有。
+// 冷打开时上一次的清单从本标签页的存储里先拿出来（query/persist），rail 当场就有。
 const projectsRead = useQuery(
   computed(() => ({ ...projectsQuery(), enabled: AccountService.loggedIn })),
   queryClient

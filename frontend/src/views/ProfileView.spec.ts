@@ -14,7 +14,6 @@ import ProfileView from './ProfileView.vue'
 
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
 import i18n, { setLocale } from '@/i18n'
-import { clearPageCache } from '@/lib/pageCache'
 
 const me = vi.hoisted(() => ({ handle: 'lin' }))
 
@@ -89,7 +88,6 @@ async function renderPage(handle: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  clearPageCache()
   setLocale('zh-CN')
   me.handle = 'lin'
   vi.stubGlobal('visualViewport', new EventTarget())

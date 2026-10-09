@@ -9,8 +9,9 @@
 // 次」而改变界面上的任何状态——尤其是未读红点。
 import type { RouteLocationRaw, Router } from 'vue-router'
 
-import { prefetchNewestBlocks } from '../queries/blocks'
 import { whenIdle } from './idle'
+
+import { prefetchNewestBlocks } from '@/query/blocks'
 
 /**
  * 指针进来之后要停这么久才算「想点」。
@@ -29,7 +30,7 @@ export interface HoverTarget {
   topicId?: string
 }
 
-// 取过就不再取，按解析出来的完整路径记。消息手上那份还新鲜就不取（`queries/blocks`）。
+// 取过就不再取，按解析出来的完整路径记。消息手上那份还新鲜就不取（`query/blocks`）。
 const warmedRoutes = new Set<string>()
 
 // 指针只有一个，所以待触发的预取也只有一个：进到新的一行就顶掉上一行的，离开就
@@ -130,7 +131,7 @@ function warmPage(router: Router, name: string): void {
 /**
  * 预热话题最新一页消息。手上那份还新鲜就不取。
  *
- * 和未读变多时的后台预取排同一条队（`queries/blocks`），而不是自己再开一条：那条闸
+ * 和未读变多时的后台预取排同一条队（`query/blocks`），而不是自己再开一条：那条闸
  * 一次只放两个请求出去，另起一套等于把闸开大一倍，也就等于把这里的「顺手」变成了
  * 和用户抢。
  *

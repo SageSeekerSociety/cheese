@@ -13,12 +13,13 @@ export type TopicSortOrder = 'asc' | 'desc'
 export function listTopics(
   projectId: string,
   opts?: { sort?: TopicSortField; order?: TopicSortOrder },
-  previous?: ListPayload<Topic>
+  previous?: ListPayload<Topic>,
+  signal?: AbortSignal
 ): Promise<ListPayload<Topic>> {
   const q = new URLSearchParams({ project_id: projectId })
   if (opts?.sort) q.set('sort', opts.sort)
   if (opts?.order) q.set('order', opts.order)
-  return readSince<ListPayload<Topic>>(`/topics?${q.toString()}`, previous)
+  return readSince<ListPayload<Topic>>(`/topics?${q.toString()}`, previous, signal)
 }
 
 /** 一个话题的名字，和它在哪个项目里。跨项目找话题只要这几样。 */

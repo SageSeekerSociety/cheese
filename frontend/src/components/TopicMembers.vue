@@ -19,9 +19,6 @@ import { memberName } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { whenIdle } from '../lib/idle'
-import { queryClient } from '../lib/queryClient'
-import { keys } from '../queries/keys'
-import { computeProfileQuery, roomMembersQuery } from '../queries/room'
 import { getAvatarUrl } from '../utils/materials'
 
 import AdaptiveMenu from './common/AdaptiveMenu.vue'
@@ -33,6 +30,9 @@ import TopicComputePicker from './TopicComputePicker.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { computeProfileQuery, roomMembersQuery } from '@/query/room'
 
 const props = defineProps<{
   topicId: string
@@ -54,7 +54,7 @@ const emit = defineEmits<{
   (e: 'manager', name: string | null): void
 }>()
 
-// 切回来过的房间先画上次那份名册，背后再重取（`queries/room`）。骨架只在手上什么
+// 切回来过的房间先画上次那份名册，背后再重取（`query/room`）。骨架只在手上什么
 // 都没有时出：有上次那份就照着它画，回来了原地换。
 const roster = useQuery(
   computed(() => roomMembersQuery(props.topicId)),

@@ -11,11 +11,11 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { saveRoomOutputToLibrary } from '../api'
 import { pinBlock, unpinBlock } from '../api/pins'
-import { queryClient } from '../lib/queryClient'
-import { keys } from '../queries/keys'
-import { pinsQuery } from '../queries/room'
 
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { pinsQuery } from '@/query/room'
 
 export function useChannelPins(opts: {
   /** 这一栏是频道主线时是频道 id；否则 null，什么都不读。 */
@@ -25,7 +25,7 @@ export function useChannelPins(opts: {
   /** 时间线上有「谁置顶了什么」那一行。 */
   seen: () => boolean
 }) {
-  // 和频道概览里那一块读同一份（`queries/room`）。
+  // 和频道概览里那一块读同一份（`query/room`）。
   const read = useQuery(
     computed(() => {
       const id = opts.channelId() ?? ''

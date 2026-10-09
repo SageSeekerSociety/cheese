@@ -16,8 +16,8 @@ import { reactive } from 'vue'
 import { isQueued, threadWaitLabel, WAITS } from '../lib/threadStatus'
 
 import { getThread } from '@/api/threads'
-import { queryClient } from '@/lib/queryClient'
-import { threadsQuery } from '@/queries/room'
+import { queryClient } from '@/query/client'
+import { threadsQuery } from '@/query/room'
 
 interface Timeline {
   messages: Ref<Block[]>

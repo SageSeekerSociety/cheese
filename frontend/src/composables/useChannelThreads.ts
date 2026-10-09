@@ -1,14 +1,14 @@
 // 一个频道的支线清单：概览里「支线」那一格读它。频道说它的支线变了（`threads`）就重读。
-// 和主线消息下面那一行读同一份（`queries/room`）。
+// 和主线消息下面那一行读同一份（`query/room`）。
 import type { ThreadRow } from '../types/threads'
 
 import { computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { t } from '@/i18n'
-import { patchQuery, queryClient } from '@/lib/queryClient'
-import { keys } from '@/queries/keys'
-import { threadsQuery } from '@/queries/room'
+import { patchQuery, queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { threadsQuery } from '@/query/room'
 
 export function useChannelThreads(roomId: () => string | null) {
   const read = useQuery(

@@ -8,7 +8,7 @@
 // what it looks like.
 //
 // What lives here: the roster and the turns, the timeline window and its paging
-// (the newest page comes from `queries/blocks`; older and newer pages from
+// (the newest page comes from `query/blocks`; older and newer pages from
 // useChatPaging and roomResync),
 // the socket frames and what each one means for the window, the scroll position
 // policy, the unread/received animation sets, and the error banner. What
@@ -45,7 +45,6 @@ import { runRecordOf, threadStatusOf, useRunRecords } from '../components/room/c
 import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
-import { cachedWindow, readNewestBlocks, setCachedWindow } from '../queries/blocks'
 import { applyLiveChanges } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
 import { renderNoticeMessage } from '../lib/noticeText'
@@ -67,6 +66,8 @@ import { applyRoomState, useRoomResync } from './useRoomResync'
 import { useTimelineTasks } from './useTimelineTasks'
 
 import i18n, { t } from '@/i18n'
+import { cachedWindow, readNewestBlocks, setCachedWindow } from '@/query/blocks'
+import { roomChanged } from '@/query/changes'
 
 // The panel and its host have to agree on the event list, so it lives on its own
 // (see chatPanelContract) and is re-exported here: the view keeps importing
@@ -220,9 +221,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
       // State frames are transient: what the room announced while we were away is
       // gone, so a re-connect (not the first open) treats each as changed once.
       if (reconnect) {
-        for (const resource of ANNOUNCED) emit('state-changed', resource)
-        emit('state-changed', 'topics', topic()?.id)
-        void roomTasks.refresh()
+        for (const resource of ANNOUNCED) announce(resource)
+        announce('topics', topic()?.id)
       }
       tail.subscribed(newest)
       // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
@@ -289,6 +289,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 只是这一段的底部，不是最新。
   const unseen = ref<string[]>([])
 
+  // 房间说它的某样东西变了：缓存里那几份标过期，时间线上各块带着的任务重读，页面
+  // 再接它自己画的那些。
+  function announce(resource: string, id?: string) {
+    const room = topic()
+    if (room) void roomChanged({ room: room.id, project: room.project_id, resource, id })
+    if (resource === 'topics' || resource === 'tasks') void roomTasks.refresh()
+    emit('state-changed', resource, id)
+  }
+
   function handleFrame(frame: WsServerFrame) {
     // 平台运行中记下的一件事：不进对话，现场和状态行读它。
     const recorded = runRecordOf(frame)
@@ -310,10 +319,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
         applyReactions(frame.block_id, frame.reactions)
         break
       case 'state':
-        // A platform resource changed → parent refreshes that panel live.
+        // A platform resource changed: what the cache holds of it goes stale
+        // (`query/changes`), and the parent refreshes whatever else it draws.
         // The clickable record of the action is a persisted event_block (below).
-        if (frame.resource === 'topics' || frame.resource === 'tasks') void roomTasks.refresh()
-        emit('state-changed', frame.resource, frame.id)
+        announce(frame.resource, frame.id)
         break
       case 'event_block':
         // A persisted, clickable action card (doc/topics/...) for this turn.
@@ -451,10 +460,12 @@ export function useChatPanel(opts: ChatPanelOptions) {
       const parallelSocket = entering && outbox.value.length === 0
       if (parallelSocket) connectSocket(room.id)
       // 打开话题的那次导航已经替它起了头（router/index.ts）：这里跟着那一条走，不另发
-      // 一次。回来的是缓存窗口接上最新一页之后的样子（`queries/blocks`）。
+      // 一次。回来的是缓存窗口接上最新一页之后的样子（`query/blocks`）。
       // One screenful, not the whole timeline — older blocks arrive when the
       // user scrolls up to them (loadOlder).
-      const fresh = await readNewestBlocks(room.id)
+      // 断线重连回来再开一次的（不是刚进房间）：之前那次读是断线前发出的，可能卡在
+      // 半路，不跟着它等，另问一次。
+      const fresh = await readNewestBlocks(room.id, { restart: !entering })
       // Only apply if still the active topic (avoid race on fast switching).
       if (!stillHere()) return
       for (const block of fresh.blocks) tail.hold(block.id)

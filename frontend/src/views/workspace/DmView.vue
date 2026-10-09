@@ -10,10 +10,10 @@ import ChatPanel from '@/components/ChatPanel.vue'
 import { t } from '@/i18n'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentHandleOf } from '@/lib/dm'
-import { queryClient } from '@/lib/queryClient'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
-import { agentsQuery } from '@/queries/project'
+import { queryClient } from '@/query/client'
+import { agentsQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -104,14 +104,6 @@ function handleTurnDone() {
   void store.refreshUnread()
 }
 
-function handleStateChanged(resource: string, id?: string) {
-  // 指名了那一行（房间 id）就只重取它，否则退回整份重取 —— 和 TopicView 同一条路。
-  if (resource === 'topics') {
-    if (id) void store.refreshTopicRow(id)
-    else void store.refreshTopics()
-  }
-}
-
 // 私聊是从名册点进来的，所以 ← 回名册。手机上顶栏那颗 ← 走的是路由 meta 的
 // backTo，两边指的是同一个地方。
 function backToMembers() {
@@ -152,7 +144,6 @@ function handleMentionClick(handle: string) {
       :show-composer="true"
       @back="backToMembers"
       @turn-done="handleTurnDone"
-      @state-changed="handleStateChanged"
       @mention-click="handleMentionClick"
       @open-topic="openTopic"
     />

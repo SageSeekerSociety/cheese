@@ -101,13 +101,14 @@ FRAME_LOGGER = """
 }
 """
 
-# Read the app's REAL blockCache instance via the dev-only window hook
-# (a dynamic import can resolve to a second module instance under Vite HMR).
+# Read the app's REAL query cache via the dev-only window hook (a dynamic
+# import can resolve to a second module instance under Vite HMR). A room's
+# newest window lives under ['room', id, 'blocks', 'newest'].
 READ_CACHE = """
 (topicId) => {
-  const cache = window.__blockCache;
+  const cache = window.__queryClient;
   if (!cache) return { hook: false };
-  const arr = cache.get(topicId);
+  const arr = cache.getQueryData(['room', topicId, 'blocks', 'newest'])?.blocks;
   if (!arr) return { cached: false };
   const last = arr[arr.length - 1];
   return {
@@ -163,8 +164,8 @@ async ({ topicId, content, token }) => {
 }
 """
 
-# Refresh a topic's blockCache entry exactly the way the unread poll does
-# (fetch fresh blocks, replace the cache array).
+# Refresh a topic's cached newest window the way the unread poll's prefetch
+# lands it (fetch fresh blocks, replace the window).
 REFRESH_CACHE = """
 async (topicId) => {
   // window.__cxApi.base, not '/api': the gateway strips exactly one prefix, so
@@ -172,7 +173,10 @@ async (topicId) => {
   // a hand-written single prefix 404s.
   const r = await fetch(`${window.__cxApi.base}/topics/${topicId}/blocks`);
   const payload = (await r.json()).data;
-  window.__blockCache.set(topicId, payload.data);
+  window.__queryClient.setQueryData(['room', topicId, 'blocks', 'newest'], {
+    blocks: payload.data,
+    hasMore: !!payload.has_more,
+  });
   return payload.data.length;
 }
 """

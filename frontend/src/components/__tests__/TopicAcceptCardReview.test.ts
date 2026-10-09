@@ -42,6 +42,7 @@ import { AcceptPage, chooseMore, stubOverlayGlobals } from './acceptHarness'
 
 import i18n, { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 function mergeState(): MergeStateInfo {
   return {
@@ -162,14 +163,20 @@ describe('要几个人批准才合得进去', () => {
   })
 })
 
+/** 打开 p1，它的成员名册已经读回来。 */
+function withMembers(members: object[]) {
+  seedProjects([])
+  seedProject('p1', { topics: [], members: members as never, unread: {}, privateUnread: {}, notifyLevels: {} })
+  useWorkspaceStore().openProject('p1')
+}
+
 describe('改由谁审阅', () => {
   it('单子上只有在岗的成员，停用的队友不出现在派活的单子上', async () => {
-    const store = useWorkspaceStore()
-    store.members = [
+    withMembers([
       { user_handle: 'alice', role: 'member', name: 'Alice' },
       { user_handle: 'bob', role: 'member', name: 'Bob' },
       { user_handle: 'retired', role: 'member', name: 'Retired', active: false },
-    ] as never
+    ])
 
     const { container } = await mountWith([card({})])
     await chooseMore(container, '改由他人审阅')
@@ -180,11 +187,10 @@ describe('改由谁审阅', () => {
   })
 
   it('选一位就是把卡改派给他', async () => {
-    const store = useWorkspaceStore()
-    store.members = [
+    withMembers([
       { user_handle: 'alice', role: 'member', name: 'Alice' },
       { user_handle: 'bob', role: 'member', name: 'Bob' },
-    ] as never
+    ])
 
     const card1 = card({})
     reassignCard.mockResolvedValue(card1)
