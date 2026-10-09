@@ -110,6 +110,40 @@ export async function takeWaitingWorker({ check = false } = {}): Promise<void> {
   await within(TAKEOVER_WAIT_MS, taken)
 }
 
+/**
+ * 房间连接一直连不上时，看看是不是这一页落后了：落后就换上新版。
+ *
+ * 「下一次跳转再换版本」（见文件头）的前提是旧页面照样能用。后端换掉旧页面要连的接口时
+ * （例如 #3185 把房间连接从 /topics/{id}/chat 换成 /rooms/live），旧页面就不只是旧，而是
+ * 一直「未连接」：人只看到房间不动，也等不来那一次点击。这时这一页已经连不上，整页加载
+ * 不多丢东西（草稿已落盘）。
+ *
+ * 只认问得到的答案：问不到（断网、服务器在重启）就不刷新，那种连不上不是版本的事，和
+ * `pageIsBehind` 在这一点上相反。最多每 `LINK_CHECK_MS` 问一次。
+ */
+const LINK_CHECK_MS = 5 * 60 * 1000
+let lastLinkCheckAt = -Infinity
+
+export async function reloadIfBehind(): Promise<boolean> {
+  const now = Date.now()
+  if (now - lastLinkCheckAt < LINK_CHECK_MS) return false
+  lastLinkCheckAt = now
+  const own = document.querySelector('script[type="module"][src]')?.getAttribute('src')
+  if (!own) return false
+  let served: string
+  try {
+    const response = await fetch(import.meta.env.BASE_URL, { cache: 'no-store' })
+    if (!response.ok) return false
+    served = await response.text()
+  } catch {
+    return false
+  }
+  if (served.includes(own)) return false
+  await takeWaitingWorker({ check: true })
+  window.location.reload()
+  return true
+}
+
 /** 有新 worker 了：这一页落后就等下一次跳转整页加载；没落后就让它现在接管，不刷新。 */
 function onNewWorker() {
   behind = pageIsBehind()
