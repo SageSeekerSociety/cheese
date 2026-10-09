@@ -151,12 +151,23 @@ def away_text(count: int, locale: str | None) -> str:
 
 
 def push_link(payload: dict[str, Any]) -> str:
-    """点开推送落到哪儿：那个房间；房间说不清就是待办，那里一定列着这件事。
+    """点开推送落到哪儿：**那条消息在的那条会话** —— 一个任务、一条支线，或频道自
+    己那条线；地址说不清就是待办，那里一定列着这件事。
+
+    一个任务里问的问题也归它所在的频道，可那条消息不在频道主线上：落回频道是一页
+    没有这条消息的地方，人点开只看到「这条消息已不存在」（`announce._asked_where`
+    记的正是这条会话）。
 
     和 `frontend/public/push-sw.js` 的 `readPayload` 是同一条规则。
     """
     project_id = payload.get("projectId")
     topic_id = payload.get("topicId")
+    task_id = payload.get("taskId")
+    thread_id = payload.get("threadId")
     if project_id and topic_id:
+        if task_id:
+            return f"/projects/{project_id}/topics/{topic_id}/tasks/{task_id}"
+        if thread_id:
+            return f"/projects/{project_id}/topics/{topic_id}/threads/{thread_id}"
         return f"/projects/{project_id}/topics/{topic_id}"
     return "/inbox"

@@ -168,6 +168,22 @@ def _show_once_committed(session: AsyncSession, block: Block) -> None:
     show_once_committed(session, block.conversation_id, frame)
 
 
+def _asked_where(place: Place) -> dict[str, str]:
+    """这道题问在哪条会话里：一个任务的、一条支线的，还是频道自己那条线。
+
+    空字典 = 频道自己那条线。芝士在哪条会话里问，那条消息就落在哪条会话的时间线上
+    （`landing` 用的是同一个落点），投递读的就是这里：链接指向频道，就是把人送到一
+    页没有这条消息的地方 —— 他点开只看到「这条消息已不存在」。
+
+    `push.push_link` 和前端的通知渲染器都按这两个 id 决定落点。
+    """
+    if place.task_id is not None:
+        return {"taskId": str(place.task_id)}
+    if place.thread_id is not None:
+        return {"threadId": str(place.thread_id)}
+    return {}
+
+
 async def notify_question(
     session: AsyncSession,
     *,
@@ -207,6 +223,9 @@ async def notify_question(
                 "agentName": await _agent_name(session, place.project_id, asker),
                 # 那条提问消息：通知据它定位到房间里的那一行。
                 "blockId": str(block.id),
+                # 这条消息在哪条会话里 —— 任务或支线里问的题，通知点开要回到那条
+                # 线，不是回到频道（`_asked_where`）。
+                **_asked_where(place),
             },
             # 问出口的那一刻，不是走到这一行的那一刻 —— 收下整个 block 而不是它的
             # id，就是为了这个时刻拿得到。

@@ -247,6 +247,31 @@ def test_a_decision_asked_on_a_card_awaits_on_its_channel(client):
     assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is False
 
 
+def test_a_question_asked_on_a_card_awaits_on_its_channel(client):
+    """芝士在一条活里问的一道题，照样是这个频道在等你回答。
+
+    和上面那条决策请求同一条规矩：一个频道是它全部对话的和，侧栏那一格要亮。题落在
+    那条活自己的线上（通知的落点也是它，见 `test_cheese_question_notice`）—— 题在哪
+    条线上，和谁在等它，是两件事；少了任务这一头，人就看得见「有一条待办」而侧栏
+    一处都不亮。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid, "T", created_by="alice")
+    # bob 是这条活的协作者：题问的是他，答它的也是他（任务里只有参与的人说得了话）。
+    card = open_task(
+        client, tid, "报名表单字段精简", owner="alice", contributors=["bob"]
+    )
+    question_row(client, card["id"], asked="bob")
+
+    assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is True
+    # 题问的是 bob：这个点不为频道里其他任何人亮。
+    assert _seen_by(client, pid, "alice")["T"]["awaits_me"] is False
+
+    # 答了就灭：频道等的是那道题，题了结，这一格跟着走。
+    _say(client, card["id"], "bob", "按部门")
+    assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is False
+
+
 def _set_card(client, card_id: str, **fields) -> None:
     import asyncio
 
