@@ -301,10 +301,11 @@ class Block(UuidPk, Timestamps, Base):
     # Where this block stands among its conversation's, in the order they were
     # stored: 1, 2, 3 … A page that lost its connection asks for what came
     # "after n", and a read cursor is one of these. The database numbers each
-    # insert from the conversation's counter (`Conversation.last_seq`, trigger
-    # `blocks_numbered`), so writers in one conversation are numbered in the
-    # order they commit. Not the order a room shows: that is `created_at`, which
-    # a caller may date earlier than now (`BlockRepository.create`).
+    # insert one past the largest in its conversation, under a lock held to
+    # commit (trigger `blocks_numbered`), so writers in one conversation are
+    # numbered in the order they commit. Not the order a room shows: that is
+    # `created_at`, which a caller may date earlier than now
+    # (`BlockRepository.create`).
     seq: Mapped[int] = mapped_column(BigInteger, server_default=FetchedValue())
 
     kind: Mapped[BlockKind] = mapped_column(

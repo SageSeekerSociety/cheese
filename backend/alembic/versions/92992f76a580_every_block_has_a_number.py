@@ -1,7 +1,7 @@
 """Every block has a number
 
 Revision ID: 92992f76a580
-Revises: 22d5c7f33018
+Revises: 052f77ef6c92
 Create Date: 2026-10-09
 
 `5f1b7d54bffa` numbered the blocks stored before the counter and the trigger
@@ -18,7 +18,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "92992f76a580"
-down_revision: str | Sequence[str] | None = "22d5c7f33018"
+down_revision: str | Sequence[str] | None = "052f77ef6c92"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

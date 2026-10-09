@@ -1,13 +1,13 @@
 """Number the blocks stored before conversations counted them
 
 Revision ID: 5f1b7d54bffa
-Revises: 1a96fb7b05db
+Revises: 0dd66b328211
 Create Date: 2026-10-09
 
-`1a96fb7b05db` numbers every block stored from then on, starting each
-conversation's counter at the number of blocks it already held. This gives
-those blocks 1 … n, in the order rooms show them (`created_at`, then `id`), so
-they sit below every number the counter hands out.
+`0dd66b328211` numbers every block stored from then on above the number of
+blocks its conversation already held (`seq_floor`). This gives those blocks
+1 … n, in the order rooms show them (`created_at`, then `id`), so they sit below
+every number handed out since.
 
 One conversation at a time, each its own statement and its own commit: a
 conversation is numbered whole or not at all, so a run that stops halfway
@@ -25,7 +25,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "5f1b7d54bffa"
-down_revision: str | Sequence[str] | None = "1a96fb7b05db"
+down_revision: str | Sequence[str] | None = "0dd66b328211"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -3,15 +3,13 @@
 A room, a task and a 支线 are each a conversation, and the things that belong to one —
 what is said in it, an agent's session, its turns and spend, its progress —
 point here (``conversation_id``) rather than at whichever table the
-conversation lives in. A row holds who the conversation is — its id (the
-room's, the task's or the 支线's own), its project and its kind — and the
-counter that numbers what is said in it. Everything each says about itself
-stays in ``topics``, ``tasks`` or ``threads``.
+conversation lives in. A row holds who the conversation is: its id
+(the room's, the task's or the 支线's own), its project and its kind. Everything
+each says about itself stays in ``topics``, ``tasks`` or ``threads``.
 
 The database keeps the register, not the application: inserting a room, a
-task or a 支线 registers it and deleting one removes it (migration ``f7985445d2bf``),
-and storing a block advances the counter (``1a96fb7b05db``), so no code path
-writes these rows.
+task or a 支线 registers it and deleting one removes it (migration ``f7985445d2bf``), so
+no code path creates or deletes these rows.
 """
 
 import enum
@@ -43,8 +41,7 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
-    # The number the conversation's newest block got (`Block.seq`): the database
-    # takes the next one for every block stored here (migration
-    # ``1a96fb7b05db``). Read without a lock it is the newest number committed,
-    # so a read cursor set to it covers exactly what the reader could have seen.
-    last_seq: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    # The numbers (`Block.seq`) kept for the blocks the conversation held before
+    # numbering began: those are 1 … seq_floor, and every block stored since
+    # numbers itself above them (migration ``0dd66b328211``).
+    seq_floor: Mapped[int] = mapped_column(BigInteger, server_default="0")

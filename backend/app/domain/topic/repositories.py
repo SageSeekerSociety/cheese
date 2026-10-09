@@ -851,20 +851,25 @@ class TopicRepository:
         newest block, in one statement (「全部标为已读」). Rows that exist keep
         their notify level.
 
-        "Newest" is the conversation's counter as committed: a block still being
-        stored gets a larger number and stays unread, which is right, since the
-        reader could not have seen it."""
+        "Newest" is the largest number committed: a block still being stored
+        gets a larger one and stays unread, which is right, since the reader
+        could not have seen it."""
         if not topic_ids:
             return
         now = datetime.now(UTC)
-        newest = select(
-            func.gen_random_uuid(),
-            Conversation.id,
-            literal(user_handle),
-            Conversation.last_seq,
-            literal(now),
-            literal(now),
-        ).where(Conversation.id.in_(topic_ids))
+        newest = (
+            select(
+                func.gen_random_uuid(),
+                Conversation.id,
+                literal(user_handle),
+                func.coalesce(func.max(Block.seq), 0),
+                literal(now),
+                literal(now),
+            )
+            .outerjoin(Block, Block.conversation_id == Conversation.id)
+            .where(Conversation.id.in_(topic_ids))
+            .group_by(Conversation.id)
+        )
         stmt = pg_insert(TopicReadState).from_select(
             [
                 "id",

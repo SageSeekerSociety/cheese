@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from tests.integration.migration_replay import database_at, seed_room
 
 BEFORE = "bc82f9d6481a"
-COUNTER = "1a96fb7b05db"
+COUNTER = "0dd66b328211"
 NUMBERED = "5f1b7d54bffa"
 HEAD = "4e8f1c1e2b22"
 
@@ -75,6 +75,25 @@ def test_a_block_written_during_the_deploy_comes_after_all_of_them():
         assert [numbers[b] for b in held] == [1, 2, 3]
         assert numbers[during] == 4
         assert numbers[after] == 5
+
+
+def test_blocks_stored_in_one_statement_are_numbered_in_order():
+    with database_at(BEFORE) as db:
+        project, room = seed_room(db)
+        db.upgrade(HEAD)
+        db.execute(
+            "INSERT INTO blocks (id, project_id, conversation_id, kind, author_type,"
+            " author, content, refs, created_at, updated_at)"
+            " SELECT gen_random_uuid(), $1, $2, 'event', 'platform', 'platform',"
+            " g::text, '[]', now(), now() FROM generate_series(1, 500) g",
+            project,
+            room,
+        )
+
+        rows = db.fetch(
+            "SELECT content, seq FROM blocks WHERE conversation_id = $1", room
+        )
+        assert sorted(r["seq"] for r in rows) == list(range(1, 501))
 
 
 def test_each_conversation_counts_on_its_own():
