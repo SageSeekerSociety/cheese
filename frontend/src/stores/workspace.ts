@@ -660,8 +660,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 清单里没有这一行就退回整份重取：这一行可能是刚变得对这个人可见、此前根本不在
   // 他清单里的房间（加入一个私有频道就是这样），只补一行补不出来。
   async function refreshTopicRow(topicId: string) {
+    // 和整份清单的读一样：读发出之后这边改过（改名、归档、加入），回来的是改之前的
+    // 样子，盖上去那一行会先跳回旧的，等下一次读才又跳回来。不算数。
+    const revision = topicRevision
+    const epoch = projectEpoch
     try {
       const place = await getTopic(topicId)
+      if (revision !== topicRevision || epoch !== projectEpoch) return
       const i = topics.value.findIndex((t) => t.id === topicId)
       if (i >= 0) topics.value[i] = place
       else await refreshTopics()

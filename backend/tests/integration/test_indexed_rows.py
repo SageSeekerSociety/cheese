@@ -47,7 +47,7 @@ INDEXES = {
     "ix_blocks_last_said",
     "ix_blocks_unanswered",
     "ix_blocks_agent_checks",
-    "ix_blocks_upgraded_to_topic_id",
+    "ix_blocks_shown",
 }
 
 
@@ -447,22 +447,43 @@ async def test_a_whole_room_read_finds_its_conversations_blocks_by_index(db_fact
 
 
 @pytest.mark.anyio
-async def test_deleting_a_room_finds_the_blocks_linking_to_it_by_index(db_factory):
-    """A block upgraded into a room links to it, and deleting the room clears
-    those links (ON DELETE SET NULL). PostgreSQL finds them with the statement
-    below, planned without its value; it must not read every block to do so."""
+async def test_a_page_of_what_the_room_shows_skips_the_steps_by_index(db_factory):
+    """A room opens on one page of what it shows. Its agent's steps, kept out of
+    the room, outnumber its messages many times over; the page holds 50 shown
+    rows all the same, and is read without walking the steps between them."""
     async with db_factory() as session:
-        await _seed(session)
-        await session.execute(text("SET LOCAL enable_seqscan = off"))
-        conn = await session.connection()
-        plan = await _generic_plan(
-            conn,
-            "probe_topic_links",
-            "UPDATE ONLY blocks SET upgraded_to_topic_id = NULL"
-            " WHERE $1::uuid OPERATOR(pg_catalog.=) upgraded_to_topic_id",
-            ["00000000-0000-0000-0000-000000000000"],
+        seeded = await _seed(session)
+        room = seeded["rooms"]["answered"]
+        await session.execute(
+            text(
+                "INSERT INTO blocks (project_id,conversation_id,kind,author_type,"
+                "author,content,refs,meta,id,created_at,updated_at) "
+                "SELECT :pid, :room,"
+                " CASE WHEN g % 20 = 0 THEN 'message' ELSE 'event' END,"
+                "'participant','cheese','x','[]',"
+                " CAST(CASE WHEN g % 20 = 0 THEN '{}'"
+                " ELSE '{\"in_room\": false}' END AS json),"
+                " gen_random_uuid(), now() - g * interval '1 second', now() "
+                "FROM generate_series(1,4000) g"
+            ),
+            {"pid": room.project_id, "room": room.id},
         )
-        assert "ix_blocks_upgraded_to_topic_id" in plan, plan
+        await session.execute(text("ANALYZE blocks"))
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+
+        with statements(session) as seen:
+            page = await BlockRepository(session).page_for_topic(
+                room.id, limit=50, shown=True
+            )
+        assert len(page.items) == 50 and page.has_more
+        assert all(
+            (block.meta or {}).get("in_room") is not False for block in page.items
+        )
+
+        [(sql, params)] = seen
+        conn = await session.connection()
+        plan = await _generic_plan(conn, "probe_shown_page", sql, params)
+        assert "ix_blocks_shown" in plan, plan
         await session.rollback()
 
 

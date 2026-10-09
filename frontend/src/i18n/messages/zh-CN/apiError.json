@@ -992,6 +992,7 @@
   "reviewCommentTooLong": "批注太长",
   "reviewCommentEmpty": "批注没有内容",
   "reviewCommentBadLines": "批注的行号不对",
+  "reviewCommentBadPlace": "批注指的位置不对",
   "reviewCommentNotSendable": "要一起送出的批注里有不能送出的一条，刷新后重试",
   "reviewCommentOutcomeUnknown": "上一轮的批注里没有 {id} 这一条",
   "reviewCommentSignIn": "登录后才能写批注",

@@ -60,12 +60,12 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 
 | 级别 | 判据 |
 |---|---|
-| **D** | 绑在挂载位置或别的通道上：读了路由（`useRoute`/`useRouter`/`$router`/`vue-router`）、`$parent`/`$root`、事件总线、`provide`/`inject` |
-| **C** | 自己取数：直接 import `@/api`、`@/services/*`、`@/network/*`，或者沿着一条能解析出来的链**间接**够到这些，或者自己写 `fetch`/`axios`；或者读业务 store |
+| **D** | 绑在挂载位置或别的通道上：读了路由（`useRoute`/`useRouter`/`$router`/`vue-router`）、模板里画了 `<router-view>`/`<router-link>`、`$parent`/`$root`、事件总线、`provide`/`inject` |
+| **C** | 自己取数：直接 import `@/api`、`@/services/*`、`@/network/*`，或者沿着一条能解析出来的链**间接**够到这些（链上的每一步 `import` 和 `export … from` 都算一条边），或者自己写 `fetch`/`axios`；或者读业务 store |
 | **B** | 只读应用外壳的 store（`usePageTitleStore`、`useNavigationStore`） |
 | **A** | 以上都没有：只靠 props 和事件就能渲染 |
 
-**误差说清**：这是正则不是编译器（原始体检报告用的也是同一套办法）。`import type` 一律不算，它在构建时就被抹掉；解析不出来的模块说明符当成外部依赖，不当成一条边——所以一个组件如果真的隔着一条解析不出来的链在取数，它会被判高一档。`defineProps` / `defineEmits` 根本不数，四个等级都用不到它们（原来那份报告里的 props 普查没有移植）。热点只覆盖 `backend/app/**/*.py` 和 `frontend/src/**/*.{vue,ts,js}`，去掉 `*.spec.ts` 和测试目录：测试跟着它的主语改，不单独算热点；合并提交（`--no-merges`）本来就没有自己的 diff。
+**误差说清**：这是正则不是编译器（原始体检报告用的也是同一套办法）。`import type` 和 `export type … from` 一律不算，它们在构建时就被抹掉；`export { x } from '…'`、`export * from '…'` 这种再导出算一条边——index barrel 就是这样把一条链传下去的，只读 `import` 会漏掉它；解析不出来的模块说明符当成外部依赖，不当成一条边——所以一个组件如果真的隔着一条解析不出来的链在取数，它会被判高一档。`defineProps` / `defineEmits` 根本不数，四个等级都用不到它们（原来那份报告里的 props 普查没有移植）。热点只覆盖 `backend/app/**/*.py` 和 `frontend/src/**/*.{vue,ts,js}`，去掉 `*.spec.ts` 和测试目录：测试跟着它的主语改，不单独算热点；合并提交（`--no-merges`）本来就没有自己的 diff。
 
 ## 当前基线 {#baseline}
 

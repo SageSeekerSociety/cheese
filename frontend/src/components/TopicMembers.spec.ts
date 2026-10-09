@@ -26,7 +26,9 @@ vi.mock('../api', async () => {
   }
 })
 
+import { listTopicMembers } from '../api'
 import { setLocale } from '../i18n'
+import { clearTopicPanelCache } from '../lib/topicPanelCache'
 
 import TopicMembers from './TopicMembers.vue'
 
@@ -335,4 +337,18 @@ describe('名册上这个话题的工作电脑', () => {
     const notices = emitted()['machine-access'] as [string | null][]
     expect(notices.at(-1)).toEqual(['让它看到整台电脑（能操作这台电脑上的服务和其他频道）'])
   })
+})
+
+it('回到看过的频道：名册先画上次那份，重取的时候不换成骨架', async () => {
+  clearTopicPanelCache()
+  const first = await openRoster()
+  expect(document.body.textContent).toContain('Bob')
+  first.unmount()
+  document.body.innerHTML = ''
+
+  // 这一次的重取一直没回来：屏幕上该是上次那份，不是一片骨架。
+  vi.mocked(listTopicMembers).mockImplementationOnce(() => new Promise(() => {}))
+  await openRoster()
+
+  expect(document.body.textContent).toContain('Bob')
 })

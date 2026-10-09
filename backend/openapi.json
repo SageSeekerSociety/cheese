@@ -26992,6 +26992,59 @@
         }
       }
     },
+    "/topics/{task_id}/review-comparison": {
+      "get": {
+        "tags": [
+          "review-comments"
+        ],
+        "summary": "Review Comparison",
+        "description": "A Word document, workbook or deck in the task, compared with the version\nit is read against: paragraphs, cells or slides. `comparison` is null for\nany other file, or when a version cannot be read.",
+        "operationId": "review_comparison_topics__task_id__review_comparison_get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewComparisonOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/review-comments/{comment_id}": {
       "delete": {
         "tags": [
@@ -40554,7 +40607,7 @@
           "topics"
         ],
         "summary": "List Topic Blocks",
-        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)",
+        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)\n\nFilters narrow the timeline inside the paging, so a page holds `limit` rows\nof what was asked for and `has_more` counts the same set (filtering a page\nafterwards returns fewer rows and pages through holes):\n\n- `kind` (repeatable): only these kinds of block;\n- `author`: only blocks signed by this handle;\n- `shown=true`: only what the room's conversation shows\n  (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only\n  what it keeps out of the room (an agent's steps, notices for an agent).\n\nCursors still name any block of the conversation, shown or not.",
         "operationId": "list_topic_blocks_topics__topic_id__blocks_get",
         "parameters": [
           {
@@ -40634,6 +40687,59 @@
                 }
               ],
               "title": "Around"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BlockKind"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Author"
+            }
+          },
+          {
+            "name": "shown",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Shown"
             }
           }
         ],
@@ -52191,6 +52297,187 @@
         ],
         "title": "CommentPageOutEnvelope"
       },
+      "CompareCellOut": {
+        "properties": {
+          "address": {
+            "type": "string",
+            "title": "Address"
+          },
+          "before": {
+            "type": "string",
+            "title": "Before"
+          },
+          "after": {
+            "type": "string",
+            "title": "After"
+          },
+          "before_formula": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Formula"
+          },
+          "after_formula": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Formula"
+          },
+          "formula": {
+            "type": "boolean",
+            "title": "Formula"
+          }
+        },
+        "type": "object",
+        "required": [
+          "address",
+          "before",
+          "after",
+          "before_formula",
+          "after_formula",
+          "formula"
+        ],
+        "title": "CompareCellOut"
+      },
+      "ComparePieceOut": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "title": "Op"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "op",
+          "text"
+        ],
+        "title": "ComparePieceOut"
+      },
+      "CompareRowOut": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "title": "Op"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "pieces": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ComparePieceOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pieces"
+          }
+        },
+        "type": "object",
+        "required": [
+          "op",
+          "before",
+          "after"
+        ],
+        "title": "CompareRowOut",
+        "description": "一段（Word）或一页（幻灯片）：两边各是第几个，没有就是 null。"
+      },
+      "CompareSheetOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "cells": {
+            "items": {
+              "$ref": "#/components/schemas/CompareCellOut"
+            },
+            "type": "array",
+            "title": "Cells"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "cells"
+        ],
+        "title": "CompareSheetOut"
+      },
       "ComputeChoice": {
         "properties": {
           "name": {
@@ -55018,6 +55305,24 @@
         ],
         "title": "ForgotPasswordRequest"
       },
+      "FormattingOut": {
+        "properties": {
+          "after": {
+            "type": "integer",
+            "title": "After"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "after",
+          "text"
+        ],
+        "title": "FormattingOut"
+      },
       "FrontendErrorBatchIn": {
         "properties": {
           "project_id": {
@@ -56445,6 +56750,119 @@
           "code"
         ],
         "title": "OAuthEmailVerifyRequest"
+      },
+      "OfficeComparisonOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "new_file": {
+            "type": "boolean",
+            "title": "New File"
+          },
+          "identical": {
+            "type": "boolean",
+            "title": "Identical"
+          },
+          "changed": {
+            "type": "integer",
+            "title": "Changed"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompareRowOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          },
+          "formatting": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FormattingOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Formatting"
+          },
+          "sheets": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompareSheetOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sheets"
+          },
+          "slides": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CompareRowOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slides"
+          },
+          "against": {
+            "type": "string",
+            "title": "Against"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "new_file",
+          "identical",
+          "changed",
+          "against",
+          "base"
+        ],
+        "title": "OfficeComparisonOut",
+        "description": "一份 Office 文件和它该对着读的那一版比（`documents.compare`）。"
       },
       "OwnAgentsUpdate": {
         "properties": {
@@ -58870,6 +59288,12 @@
             "title": "Line Text",
             "default": ""
           },
+          "place": {
+            "type": "string",
+            "maxLength": 255,
+            "title": "Place",
+            "default": ""
+          },
           "commit_sha": {
             "anyOf": [
               {
@@ -58940,6 +59364,10 @@
           "line_text": {
             "type": "string",
             "title": "Line Text"
+          },
+          "place": {
+            "type": "string",
+            "title": "Place"
           },
           "current_line": {
             "anyOf": [
@@ -59039,6 +59467,7 @@
           "line_start",
           "line_end",
           "line_text",
+          "place",
           "current_line",
           "body",
           "suggestion",
@@ -59141,6 +59570,61 @@
           "data"
         ],
         "title": "ReviewCommentsOutEnvelope"
+      },
+      "ReviewComparisonOut": {
+        "properties": {
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OfficeComparisonOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "comparison"
+        ],
+        "title": "ReviewComparisonOut"
+      },
+      "ReviewComparisonOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ReviewComparisonOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ReviewComparisonOutEnvelope"
       },
       "ReviewSpaceRequest": {
         "properties": {

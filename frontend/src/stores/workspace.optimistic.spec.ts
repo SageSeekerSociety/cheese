@@ -8,6 +8,7 @@ vi.mock('@/api', async () => ({
   ...(await vi.importActual<typeof import('@/api')>('@/api')),
   archiveTopic: vi.fn(),
   unarchiveTopic: vi.fn(),
+  getTopic: vi.fn(),
   listTopics: vi.fn().mockResolvedValue({ data: [] }),
   listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
   listProjects: vi.fn().mockResolvedValue({ data: [] }),
@@ -18,7 +19,7 @@ vi.mock('@/api', async () => ({
 
 import type { Topic } from '@/cx_types'
 
-import { archiveTopic, listTopics, unarchiveTopic } from '@/api'
+import { archiveTopic, getTopic, listTopics, unarchiveTopic } from '@/api'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const topic = (status: string): Topic =>
@@ -98,4 +99,18 @@ it('取消归档：本地先翻回在用，失败还原', async () => {
   await done
   expect(store.topics.find((t) => t.id === 't1')?.status).toBe('archived')
   expect(unarchiveTopic).toHaveBeenCalledWith('t1')
+})
+
+it('归档之前发出的一行重读、归档之后才回来：不把这一行盖回归档之前', async () => {
+  const store = await opened('active')
+  let answer!: (t: Topic) => void
+  vi.mocked(getTopic).mockReturnValue(new Promise((res) => (answer = res)))
+  const reread = store.refreshTopicRow('t1')
+
+  vi.mocked(archiveTopic).mockResolvedValue(topic('archived'))
+  await store.archive('t1')
+  answer(topic('active'))
+  await reread
+
+  expect(store.topics.find((t) => t.id === 't1')?.status).toBe('archived')
 })

@@ -12,6 +12,7 @@ teammate's next commit, which names them as a co-author.
 """
 
 import difflib
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -109,4 +110,42 @@ async def announce_edit(
         ),
         meta=meta,
     )
+    return (block, for_agent) if block is not None else None
+
+
+async def announce_editor_save(
+    session: AsyncSession,
+    *,
+    room_id: uuid.UUID,
+    who: str,
+    path: str,
+    aside: str | None,
+) -> tuple[Block, str] | None:
+    """A person's save of a room document in the Office editor, said in the room
+    and to its AI teammate. The editor writes Office files whole, so there is no
+    diff to show; what the teammate needs is that its copy is stale. `aside` is
+    where the save landed when the file had changed after the editor opened it.
+    """
+    agent = f"<@{CHEESE_HANDLE}>"
+    if aside is None:
+        for_agent = (
+            f"{who} 刚在编辑器里保存了 {path}。你此前读到的这份已经过期，动它之前先"
+            "重新读取；不要用旧内容写回，那会把这次修改冲掉。"
+        )
+        content = say("roomFileEditorSaved", who=f"<@{who}>", path=path, agent=agent)
+    else:
+        for_agent = (
+            f"{who} 在编辑器里改了 {path}，但保存时这份文件已经被改过，{who} 的这一"
+            f"份另存为 {aside}。两份都在，先读这两份，需要的话合成一份。"
+        )
+        content = say(
+            "roomFileEditorSavedAside",
+            who=f"<@{who}>",
+            path=path,
+            aside=aside,
+            agent=agent,
+        )
+    meta = notice(EVENT_FILE_EDITED, severity=SEVERITY_INFO, who=WHO_CHEESE)
+    meta[AGENT_NOTICE_META_KEY] = for_agent
+    block = await announce(session, place_id=room_id, content=content, meta=meta)
     return (block, for_agent) if block is not None else None

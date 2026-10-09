@@ -61,7 +61,9 @@ const addHandle = ref<string | null>(null)
 
 async function load() {
   if (!props.topicId) return
-  loading.value = true
+  // 骨架只在手上什么都没有时出：有上次那份（缓存、或刚改过名册之后的重取）就照着它
+  // 画，回来了原地换。
+  loading.value = !members.value.length
   error.value = ''
   try {
     const payload = await fetchTopicMembers(props.topicId)

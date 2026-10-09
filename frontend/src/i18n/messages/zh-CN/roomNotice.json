@@ -374,5 +374,11 @@
   "taskQuiet": "任务「{title}」已经 {days} 天没有进展",
   "roomFilesKept": "这里以前工作目录里的文件已另存一份，会保留到 {date}，之后删除。需要取回其中的文件，请联系平台管理员。",
   "taskFileEdited": "{who} 修改了 {path} {lines}，已告诉 {agent}",
-  "taskFileEditedLines": "第 {lines} 行"
+  "taskFileEditedLines": "第 {lines} 行",
+  "roomFileEditorSaved": "{who} 在编辑器里保存了 {path}，已告诉 {agent}",
+  "roomFileEditorSavedAside": "{who} 保存时 {path} 已被改过，这一份另存为 {aside}，已告诉 {agent}",
+  "mainChecksFailed": "合并后检查未通过：{checks}。{agent} 会在这一步一起修复",
+  "mainChecksFailedReopened": "合并后检查未通过：{checks}。任务已重新打开，由 {agent} 修复",
+  "deployedTo": "已部署到 {environment}",
+  "deployFailedTo": "部署到 {environment} 失败"
 }

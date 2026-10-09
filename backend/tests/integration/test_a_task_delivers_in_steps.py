@@ -18,6 +18,7 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
+from tests.landing import summary_turn_ends, time_passes, watch
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
 
@@ -81,8 +82,35 @@ def test_accepting_a_step_that_is_not_the_last_keeps_the_task_going(client, app_
     assert "接着做下一步" in _told(client, task_id)
 
 
-def test_accepting_the_last_step_completes_the_task(client, app_world):
+def test_accepting_the_last_step_reads_as_accepted_and_has_the_task_written_up(
+    client, app_world
+):
     task_id, _ = _accepted_step(client, app_world, completes_task=True)
+
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["presentation"]["phrase"] == "accepted"
+    # Its AI teammate gets one turn to bring the document up to date and say
+    # what came of the task.
+    told = _told(client, task_id)
+    assert "最后一次交付已经采纳并合并" in told
+    assert "实况文档" in told and "chat_send" in told
+
+
+def test_the_task_closes_when_its_write_up_turn_ends(client, app_world):
+    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+
+    summary_turn_ends(client, task_id)
+
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "closed"
+    assert task["presentation"]["phrase"] == "accepted"
+
+
+def test_the_task_closes_without_a_write_up_that_never_comes(client, app_world):
+    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+
+    time_passes(client, task_id, minutes=50)
+    watch(client)
 
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "closed"
@@ -91,6 +119,7 @@ def test_accepting_the_last_step_completes_the_task(client, app_world):
 
 def test_the_owner_reopens_a_completed_task_onto_the_latest_code(client, app_world):
     task_id, before = _accepted_step(client, app_world, completes_task=True)
+    summary_turn_ends(client, task_id)
     owner = client.get(f"/topics/{task_id}/task").json()["data"]["owner_handle"]
 
     refused = client.post(

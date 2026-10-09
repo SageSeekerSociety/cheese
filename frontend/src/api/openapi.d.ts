@@ -7206,6 +7206,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/topics/{task_id}/review-comparison": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review Comparison
+         * @description A Word document, workbook or deck in the task, compared with the version
+         *     it is read against: paragraphs, cells or slides. `comparison` is null for
+         *     any other file, or when a version cannot be read.
+         */
+        get: operations["review_comparison_topics__task_id__review_comparison_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/review-comments/{comment_id}": {
         parameters: {
             query?: never;
@@ -9491,6 +9513,18 @@ export interface paths {
          *     - `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one
          *     - `?limit=N&around=<block_id>` → that block with about N/2 on each side: a
          *       conversation opened at one message (a search hit, a quoted reply)
+         *
+         *     Filters narrow the timeline inside the paging, so a page holds `limit` rows
+         *     of what was asked for and `has_more` counts the same set (filtering a page
+         *     afterwards returns fewer rows and pages through holes):
+         *
+         *     - `kind` (repeatable): only these kinds of block;
+         *     - `author`: only blocks signed by this handle;
+         *     - `shown=true`: only what the room's conversation shows
+         *       (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only
+         *       what it keeps out of the room (an agent's steps, notices for an agent).
+         *
+         *     Cursors still name any block of the conversation, shown or not.
          */
         get: operations["list_topic_blocks_topics__topic_id__blocks_get"];
         put?: never;
@@ -13080,6 +13114,57 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
+        /** CompareCellOut */
+        CompareCellOut: {
+            /** Address */
+            address: string;
+            /** Before */
+            before: string;
+            /** After */
+            after: string;
+            /** Before Formula */
+            before_formula: string | null;
+            /** After Formula */
+            after_formula: string | null;
+            /** Formula */
+            formula: boolean;
+        };
+        /** ComparePieceOut */
+        ComparePieceOut: {
+            /** Op */
+            op: string;
+            /** Text */
+            text: string;
+        };
+        /**
+         * CompareRowOut
+         * @description 一段（Word）或一页（幻灯片）：两边各是第几个，没有就是 null。
+         */
+        CompareRowOut: {
+            /** Op */
+            op: string;
+            /** Before */
+            before: number | null;
+            /** After */
+            after: number | null;
+            /** Text */
+            text?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Pieces */
+            pieces?: components["schemas"]["ComparePieceOut"][] | null;
+        };
+        /** CompareSheetOut */
+        CompareSheetOut: {
+            /** Name */
+            name: string;
+            /** Status */
+            status: string;
+            /** Cells */
+            cells: components["schemas"]["CompareCellOut"][];
+            /** Truncated */
+            truncated?: boolean | null;
+        };
         /**
          * ComputeChoice
          * @description Which machine a room works on: a cloud sandbox, a whole cloud VM, or a
@@ -14209,6 +14294,13 @@ export interface components {
             /** Email */
             email: string;
         };
+        /** FormattingOut */
+        FormattingOut: {
+            /** After */
+            after: number;
+            /** Text */
+            text: string;
+        };
         /** FrontendErrorBatchIn */
         FrontendErrorBatchIn: {
             /**
@@ -14764,6 +14856,34 @@ export interface components {
             email: string;
             /** Code */
             code: string;
+        };
+        /**
+         * OfficeComparisonOut
+         * @description 一份 Office 文件和它该对着读的那一版比（`documents.compare`）。
+         */
+        OfficeComparisonOut: {
+            /** Kind */
+            kind: string;
+            /** New File */
+            new_file: boolean;
+            /** Identical */
+            identical: boolean;
+            /** Changed */
+            changed: number;
+            /** Rows */
+            rows?: components["schemas"]["CompareRowOut"][] | null;
+            /** Truncated */
+            truncated?: boolean | null;
+            /** Formatting */
+            formatting?: components["schemas"]["FormattingOut"][] | null;
+            /** Sheets */
+            sheets?: components["schemas"]["CompareSheetOut"][] | null;
+            /** Slides */
+            slides?: components["schemas"]["CompareRowOut"][] | null;
+            /** Against */
+            against: string;
+            /** Base */
+            base: string | null;
         };
         /** OwnAgentsUpdate */
         OwnAgentsUpdate: {
@@ -15548,6 +15668,11 @@ export interface components {
              * @default
              */
             line_text: string;
+            /**
+             * Place
+             * @default
+             */
+            place: string;
             /** Commit Sha */
             commit_sha?: string | null;
             /**
@@ -15580,6 +15705,8 @@ export interface components {
             line_end: number;
             /** Line Text */
             line_text: string;
+            /** Place */
+            place: string;
             /** Current Line */
             current_line: number | null;
             /** Body */
@@ -15638,6 +15765,26 @@ export interface components {
              */
             message: string;
             data: components["schemas"]["ReviewCommentsOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** ReviewComparisonOut */
+        ReviewComparisonOut: {
+            comparison: components["schemas"]["OfficeComparisonOut"] | null;
+        };
+        /** ReviewComparisonOutEnvelope */
+        ReviewComparisonOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ReviewComparisonOut"];
             /** Warnings */
             warnings?: string[] | null;
         };
@@ -31615,6 +31762,39 @@ export interface operations {
             };
         };
     };
+    review_comparison_topics__task_id__review_comparison_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewComparisonOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     delete_review_comment_review_comments__comment_id__delete: {
         parameters: {
             query?: never;
@@ -37426,6 +37606,9 @@ export interface operations {
                 before?: string | null;
                 after?: string | null;
                 around?: string | null;
+                kind?: components["schemas"]["BlockKind"][] | null;
+                author?: string | null;
+                shown?: boolean | null;
             };
             header?: never;
             path: {

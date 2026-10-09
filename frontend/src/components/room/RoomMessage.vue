@@ -95,7 +95,6 @@ const personName = computed(() =>
 
 const emit = defineEmits<{
   (e: 'open-file', path: string): void
-  (e: 'open-topic', id: string): void
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
   (e: 'ask-reply', block: Block, text: string): void
@@ -408,17 +407,6 @@ function renderPlain(text: string): string {
         :names="refs.mentionNames"
         @reply="emit('ask-reply', block, $event)"
       />
-      <!-- 私聊里转出去的块指向它变成的那个房间。频道里转出来的任务挂在消息下面
-         （ChatTimeline 的任务卡），不在这里。 -->
-      <button
-        v-if="block.upgraded_to_topic_id"
-        type="button"
-        class="im-upgraded"
-        @click="emit('open-topic', block.upgraded_to_topic_id!)"
-      >
-        <v-icon size="13">mdi-arrow-top-right</v-icon>
-        {{ t('work.room.message.upgradedToTopic') }}
-      </button>
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
       <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
@@ -590,23 +578,6 @@ function renderPlain(text: string): string {
 }
 .im-file-link :deep(.v-btn__content) {
   min-width: 0;
-}
-.im-upgraded {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-top: 4px;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--text);
-  background: var(--fill);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-.im-upgraded:hover {
-  background: var(--surface);
-  border-color: var(--faint);
 }
 /* 引用 chip（@人 / 文件 / 话题）的样式在 style.css 里，一份定义给所有渲染这份
    markup 的地方用——动作卡和系统事件行里的同款 chip 不在 .im-text 里面，写在组件

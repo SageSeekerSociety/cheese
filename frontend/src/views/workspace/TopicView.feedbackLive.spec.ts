@@ -73,6 +73,7 @@ vi.mock('@/components/ChatPanel.vue', () => ({
     template: `<div>
       <button data-testid="feedback-frame" @click="$emit('state-changed', 'feedback')" />
       <button data-testid="topics-frame" @click="$emit('state-changed', 'topics', 'room-a')" />
+      <button data-testid="tasks-frame" @click="$emit('state-changed', 'tasks')" />
       <slot name="timeline-end" />
     </div>`,
   },
@@ -213,6 +214,21 @@ describe('一个话题变了的帧到达开着页面的人', () => {
     // 改一个房间名不该重下整份清单（400 多个话题近 300KB）。
     expect(mocked.refreshTopics).not.toHaveBeenCalled()
     // 但任务清单那条路还得走着：建、改名、关都要跟着变。
+    expect(mocked.noteTasksChanged).toHaveBeenCalled()
+  })
+})
+
+describe('一件任务的进度变了的帧到达开着频道的人', () => {
+  it('侧栏挂着的任务跟着重读，不等下一次定时', async () => {
+    const { router, view } = setup()
+    await router.push('/projects/p1/topics/topic-a')
+    await waitFor(() => expect(view.baseElement.textContent).toContain('Room A'))
+    const mocked = store.value as { noteTasksChanged: ReturnType<typeof vi.fn> }
+    mocked.noteTasksChanged.mockClear()
+
+    // 验收卡递上来、被退回、被采纳：任务走到哪一档跟着变。
+    await fireEvent.click(view.getByTestId('tasks-frame'))
+
     expect(mocked.noteTasksChanged).toHaveBeenCalled()
   })
 })
