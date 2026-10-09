@@ -3,7 +3,7 @@ misses the first frame and pops in a beat later".
 
 Root cause (found with this probe): on switch-back the first frame restored a
 STALE pixel scrollTop while the timeline's height differs from when we left —
-(a) blocks that landed while away are already in blockCache (unread-poll
+(a) blocks that landed while away are already in the cached newest window (unread-poll
 prefetch) but sat below the fold, and (b) the timeline-end slot (merge box)
 fills in async one frame later. The correction only came from later async
 scrolls (fetch completion + the 200ms catch-up timer), so the tail visibly
@@ -314,7 +314,7 @@ async def main() -> None:
             # message; without the message it would silently re-run scenario A.
             raise SystemExit(f"chat WS did not persist the probe message: {echoed}")
         n = await pg.evaluate(REFRESH_CACHE, topic_a["id"])
-        print(f"[C setup] refreshed A's blockCache (unread-poll style), len={n}")
+        print(f"[C setup] refreshed A's cached window (unread-poll style), len={n}")
         delay_on = True
         await probe_switch(topic_a, "C-newtail")
         delay_on = False
