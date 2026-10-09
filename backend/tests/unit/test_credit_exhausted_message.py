@@ -19,8 +19,9 @@ from datetime import UTC, datetime
 import pytest
 
 from app.api import deps as session_turn_deps
-from app.domain.agent.chat import ChatService, _is_out_of_credit
+from app.domain.agent.chat import ChatService
 from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.agent.turn.state.notices import _is_out_of_credit
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
 from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT

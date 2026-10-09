@@ -3,7 +3,7 @@ that outlived it, hand their unread tails to the rooms, and fold the round's
 per-conversation death evidence into the durable set (FB-56 legacy③).
 
 The mixin holds the orchestration, a room's replay included; ChatService keeps
-the room-side pieces it calls (`_begin_self_started_turn`, the hook-work
+the room-side pieces it calls (`native_turns.begin`, the hook-work
 registry).
 """
 
@@ -19,7 +19,8 @@ from app.domain.agent.harness import SessionRef
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
     from app.domain.agent.prewarm import SeatPrewarm
-    from app.domain.agent.turn.state.live import HookWorkState, LiveWork
+    from app.domain.agent.turn.intake.native_turns import NativeTurns
+    from app.domain.agent.turn.state.live import LiveWork
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +34,8 @@ class SessionRecovery:
         _compute: ComputePool
         live: LiveWork
 
-        async def _begin_self_started_turn(
-            self,
-            project_id: uuid.UUID,
-            topic_id: uuid.UUID,
-            turn_id: uuid.UUID,
-            *,
-            opened: bool = False,
-            agent_handle: str | None = None,
-            session_id: str | None = None,
-        ) -> HookWorkState | None: ...
+        @property
+        def native_turns(self) -> NativeTurns: ...
 
         _replay_slots: asyncio.Semaphore
         prewarm: SeatPrewarm
@@ -96,7 +89,7 @@ class SessionRecovery:
                     found = self._compute.found_conversations(
                         session.conversation_id, session.agent_handle
                     )
-                    await self._begin_self_started_turn(
+                    await self.native_turns.begin(
                         session.project_id,
                         session.conversation_id,
                         work,

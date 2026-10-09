@@ -6,12 +6,12 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.domain.agent import hook_stream
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
+from app.domain.agent.turn.steps import hooks as hook_steps
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -45,7 +45,7 @@ def _chat(factory, tmp_path, runner):
 
 
 async def _consume(chat, project, topic, work, event, eid=None):
-    await chat._consume_hook_event(project, topic, work, event, eid, False, True)
+    await chat.hook_events.accept(project, topic, work, event, eid, False, True)
 
 
 @pytest.mark.anyio
@@ -56,7 +56,7 @@ async def test_the_supplied_runner_observes_durable_output_and_completed_work(
     factory = business_db_factory
     project, topic = await _room(factory, "Session events")
     broker = InProcessBroker()
-    monkeypatch.setattr(hook_stream, "get_broker", lambda: broker)
+    monkeypatch.setattr(hook_steps, "get_broker", lambda: broker)
     runner = AgentWorkRunner(broker)
     chat = _chat(factory, tmp_path, runner)
     work = uuid.uuid4()
@@ -137,7 +137,7 @@ async def test_open_and_publish_are_awaited_before_output_and_close_notification
     project, topic = await _room(factory, "Awaited session events")
     other_project, other_topic = await _room(factory, "Another receiver")
     broker = InProcessBroker()
-    monkeypatch.setattr(hook_stream, "get_broker", lambda: broker)
+    monkeypatch.setattr(hook_steps, "get_broker", lambda: broker)
     opening, allow_open = asyncio.Event(), asyncio.Event()
 
     class WaitingRunner(AgentWorkRunner):
@@ -151,7 +151,7 @@ async def test_open_and_publish_are_awaited_before_output_and_close_notification
     chat = _chat(factory, tmp_path, runner)
     other_chat = _chat(factory, tmp_path, other_runner)
     work, other_work = uuid.uuid4(), uuid.uuid4()
-    await other_chat._begin_self_started_turn(other_project, other_topic, other_work)
+    await other_chat.native_turns.begin(other_project, other_topic, other_work)
     publishing, allow_publish = asyncio.Event(), asyncio.Event()
     publish = broker.publish
 

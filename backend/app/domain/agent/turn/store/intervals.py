@@ -7,6 +7,7 @@ repository write and its commit, returning only after durability is established.
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -53,3 +54,31 @@ async def close_turns(
     async with session_factory() as session:
         await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
         await session.commit()
+
+
+class InsideInputs(Protocol):
+    async def __call__(
+        self, session: AsyncSession, topic_id: uuid.UUID, work_id: uuid.UUID
+    ) -> list[uuid.UUID]: ...
+
+
+async def answered_open_turns(
+    sessions: async_sessionmaker[AsyncSession],
+    inside_inputs: InsideInputs,
+    topic_id: uuid.UUID,
+    turn_id: uuid.UUID,
+) -> tuple[list[uuid.UUID], set[uuid.UUID]]:
+    """Read the actual receipt-selected works and open intervals in one session."""
+    async with sessions() as session:
+        read_inside = await inside_inputs(session, topic_id, turn_id)
+        open_turns = set(
+            await AgentTurnRepository(session).still_open(topic_id, read_inside)
+        )
+    return read_inside, open_turns
+
+
+async def turn_credits_refused(
+    sessions: async_sessionmaker[AsyncSession], turn_id: uuid.UUID
+) -> bool:
+    async with sessions() as session:
+        return await AgentTurnRepository(session).credits_refused(turn_id)

@@ -68,20 +68,6 @@ from app.domain.agent.harness.prompt import (
     strip_platform_notice,
 )
 
-# 兼容门面：屏幕订阅送进来的那一条线（读一条事件、落块、重试与整理的提示、关
-# 这一轮的书）搬去了 `hook_stream.py`（那里有它们各自的文档）。这里重新导出，
-# `app.domain.agent.chat` 仍是既有调用点与测试的导入路径；`ChatService` 上留一行
-# 同名委托，调用点一格没动。带 noqa 的名字本文件不用，只是给外部留的导入路径。
-from app.domain.agent.hook_stream import (
-    _OUT_OF_CREDIT_MARKERS,  # noqa: F401
-    _TOOL_ACTION,  # noqa: F401
-    _consume_hook_event,
-    _is_out_of_credit,  # noqa: F401 — 搬走的判决，测试仍从 chat.py 导它
-    _note_reachability,
-    _turn_failure_notice,  # noqa: F401
-    _with_log,  # noqa: F401
-)
-
 # 兼容门面：记忆的对账与整理（连同它们按房间记的四份状态）搬去了
 # `memory_ledger.py`（那里有整簇的文档）。`ChatService` 上留
 # `sweep_memory_dreams` / `run_memory_dream` 两行委托，调用点一格没动；
@@ -156,7 +142,6 @@ from app.domain.agent.room_events import (
     post_system_event,
 )
 from app.domain.agent.service import (
-    AgentEvent,
     AgentUsage,
 )
 from app.domain.agent.session_turn_events import SessionTurnEvents
@@ -166,7 +151,10 @@ from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.agent.turn.intake.events import (
     _persist_change_summary,
 )
+from app.domain.agent.turn.intake.hooks import HookEvents
 from app.domain.agent.turn.intake.human import HumanMessages
+from app.domain.agent.turn.intake.native_turns import NativeTurns
+from app.domain.agent.turn.intake.notes import _note_reachability
 from app.domain.agent.turn.intake.preparation import TurnPreparation
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 
@@ -182,7 +170,6 @@ from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
-    memory_pool,
 )
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import (
@@ -317,6 +304,35 @@ class ChatService(SessionRecovery):
         self._background_tasks: set[asyncio.Task] = set()
         self._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
 
+    @property
+    def hook_events(self) -> HookEvents:
+        return HookEvents(
+            sessions=self._sessions,
+            live=self.live,
+            work_runner=self._work_runner,
+            messages=self.messages,
+            completion=self.turn_completion,
+            begin_turn=self.native_turns.begin,
+            save_session=self._save_session_pointer,
+            resolve_room=self._room_of_conversation,
+            close_interval=self._close_turn_interval,
+            activity=self._set_hook_activity,
+            thread_replied=self.thread_replied,
+            policy=self.work_policy,
+        )
+
+    async def _close_turn_interval(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> None:
+        """A native Stop may clear the seat after earlier queue nudges failed.
+
+        Interval ownership and scheduling stay with this composition root.
+        """
+        from app.domain.agent.pending_messages import nudge_messages
+
+        await self._close_open_turns(topic_id, turn_id)
+        nudge_messages(self, topic_id)
+
     async def dismiss(self, topic_id: uuid.UUID, seat: str) -> None:
         """Stop the work the teammate on rosters as ``seat`` still has running
         in this room: one taken off the room, whose every call there is now
@@ -348,7 +364,7 @@ class ChatService(SessionRecovery):
                 send_effects=SendEffects(
                     post_system_event=self.post_system_event,
                     note_turn_context=self._note_turn_context,
-                    consume_hook_event=self._consume_hook_event,
+                    consume_hook_event=self.hook_events.accept,
                     known_commits=self._known_commits,
                     register_input=self._input_registrar,
                     open_interval=turn_inputs.open_interval_with_input,
@@ -1141,19 +1157,6 @@ class ChatService(SessionRecovery):
         except Exception:  # noqa: BLE001 — the Stop matters more than the row
             logger.exception("could not close open turns for topic %s", topic_id)
 
-    async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool:
-        """Was `turn_id` ever stamped refused-for-credits by admission? What
-        the turn's own end (`StopFailure`) reads to decide whose wording —
-        the platform's or Claude Code's — the room gets."""
-        from app.domain.agent.repositories import AgentTurnRepository
-
-        try:
-            async with self._sessions() as session:
-                return await AgentTurnRepository(session).credits_refused(turn_id)
-        except Exception:  # noqa: BLE001 — a failed read must not break the notice
-            logger.exception("could not read credits-refused stamp for %s", turn_id)
-            return False
-
     def row_is_dead(
         self, topic_id: uuid.UUID, agent_handle: str, session_id: str | None
     ) -> bool:
@@ -1257,8 +1260,8 @@ class ChatService(SessionRecovery):
                     # 这一轮用的那一个（结论 28）。
                     harness = harness or harness_for(owner.settings if owner else None)
                     # Lock the pointer row before moving it: the active-source
-                    # guard in `hook_stream._bind_user_entry` holds the same
-                    # lock while it validates and mutates, so the two sides of
+                    # guard in `turn.intake.native_entries` holds the same lock
+                    # while it validates and mutates, so the two sides of
                     # a session change serialize on the row itself (FB-56 P2-1).
                     from sqlalchemy import select as _select
 
@@ -1364,136 +1367,29 @@ class ChatService(SessionRecovery):
         """A task moved to another room: read its room again next time."""
         self.live.conversation_rooms.pop(conversation_id, None)
 
-    async def _begin_self_started_turn(
+    @property
+    def native_turns(self) -> NativeTurns:
+        return NativeTurns(
+            self._sessions, self.live, self._open_session_turn, self._known_commits
+        )
+
+    async def _open_session_turn(
         self,
-        project_id: uuid.UUID,
         topic_id: uuid.UUID,
         turn_id: uuid.UUID,
         *,
-        opened: bool = False,
-        agent_handle: str | None = None,
-        session_id: str | None = None,
-    ) -> "HookWorkState | None":
-        """Give a turn the session started for itself the context to end like
-        any other: an interval a sweep can find, and everything its Stop needs.
-
-        Without this, a self-started turn's Stop landed the message and then did
-        nothing at all — no usage row, no conclusion cards settled, no change
-        summary, and no interval to close, because none was ever opened. The
-        room could not even tell you the turn had happened.
-
-        署名是这个房间的席位 handle。退场的是那个谁也没写过的作者值（字面量就是
-        「会话」两个字，结论 13），不是这条记录 —— 一个 worker 做完唤醒主线程，
-        那是同一个 handle 两条线程之间的一条便条，发件人就在这儿。
-
-        Read rather than assembled: there is no prompt to build here, so this
-        takes only what turn END needs, and takes it in one transaction. Two
-        fields are deliberately not read — `roster` stays None so the message
-        path loads it (passing [] would mean 私聊 and flag every @ as a
-        non-member), and `pending_ids` stays empty because nothing was fed to
-        this turn. A message that merges into it mid-flight is stamped consumed
-        by its own receipt (`confirm_prompt_receipt`), not from here.
-
-        ``opened`` is a turn whose interval already exists: one a previous
-        process of ours fed and delivered, which outlived it and is found again
-        by recovery. It gets the same context and no second row, and what the
-        process that assembled it wrote on that row: where its model traffic
-        went, the message it answers, and when it really started.
-
-        ``agent_handle`` is the agent whose session this is, when the caller
-        knows it. Recovery does — it is on the session's own key — and must pass
-        it: the room's fallback is the project default, and a teammate's turn
-        recorded under the default authors every block of that turn under the
-        wrong seat.
-
-        Returns None if the place is gone or the bookkeeping write fails; the
-        event that triggered this still lands, exactly as it did before.
-        """
-        from app.domain.agent.repositories import AgentTurnRepository
-
-        try:
-            async with self._sessions() as session:
-                place = await PlaceResolver(session).conversation(topic_id)
-                if place is None:
-                    return None
-                topic = place.room
-                project = await ProjectRepository(session).get(project_id)
-                if project is None:
-                    return None
-                agents = AgentInstanceService(session)
-                agent = (
-                    await self._agent_at(session, place)
-                    if place.task is not None and agent_handle is None
-                    else await self._session_agent(agents, topic, project, agent_handle)
-                )
-                agent_pool = memory_pool(topic.project_id, agent)
-                # 署这个会话所属队友的名，不是房间的默认队友：一间坐着几位队友
-                # 的房间里，别人的会话自己开的一轮署成默认那位，现场和「正在处
-                # 理」就会把干活的人认错。
-                acting_agent = await self._acting_handle(session, place.room_id, agent)
-                # Read whether or not this process opened it: a session keeps
-                # working across a backend restart, and the process that fed or
-                # first saw the turn wrote what it knew on the row.
-                row = await AgentTurnRepository(session).get(turn_id)
-            if not opened:
-                await self._work_runner.open_turn_the_session_started(
-                    self,
-                    topic_id,
-                    turn_id,
-                    author=acting_agent,
-                    agent_handle=agent.handle,
-                    session_id=session_id,
-                )
-        except Exception:  # noqa: BLE001 — the event matters more than the row
-            logger.exception(
-                "could not open the turn a session started for itself "
-                "(topic=%s, work=%s)",
-                topic_id,
-                turn_id,
-            )
-            return None
-        state = HookWorkState(
-            project_id=project_id,
-            topic_id=topic_id,
-            work_id=turn_id,
-            pending_ids=set(),
-            reply_to=row.reply_to if row is not None else None,
-            roster=None,
-            topic_refs=[],
-            continuation_id=turn_id,
-            # "native" when this process has never assembled a turn for this
-            # session (a screen recovered on the way up, say). It is the answer
-            # that cannot invent spend: the gateway's log is drained by whatever
-            # turn closes next, which is exactly what happened before any of
-            # this existed.
-            route=(row.route if row is not None else None)
-            or self.live.session_route.get(topic_id, "native"),
-            model=self.live.session_model.get(topic_id, ""),
-            acting_agent=acting_agent,
-            agent_pool=agent_pool,
-            user_text="",
-            started_at=row.started_at if row is not None else datetime.now(UTC),
-            agent_instance_handle=agent.handle,
-            known_commits=asyncio.ensure_future(
-                self._known_commits(project_id, place.room_id)
-            ),
-            self_started=not opened,
+        author: str,
+        agent_handle: str,
+        session_id: str | None,
+    ) -> None:
+        await self._work_runner.open_turn_the_session_started(
+            self,
+            topic_id,
+            turn_id,
+            author=author,
+            agent_handle=agent_handle,
+            session_id=session_id,
         )
-        self.live.hook_work[(topic_id, turn_id)] = state
-        if opened:
-            # The session announced this turn's start to the process that fed
-            # it, so this one never heard it: without this a message sent now
-            # would start a turn beside it instead of joining it.
-            # The single-slot world OVERWROTE the slot here, silently dropping
-            # a stale leftover; keep that hygiene by pruning ids whose hook
-            # state is gone — a genuinely live turn always has its state and
-            # survives, which is what several agents in one room will need.
-            self.live.active_turn_ids[topic_id] = {
-                work_id
-                for work_id in self.live.active_turn_ids.get(topic_id, ())
-                if (topic_id, work_id) in self.live.hook_work
-            } | {turn_id}
-        return state
 
     async def _note_turn_context(
         self,
@@ -1531,31 +1427,6 @@ class ChatService(SessionRecovery):
     async def run_memory_dream(self, *, project_id: uuid.UUID) -> dict:
         """跑一次记忆整理（dream）；不该跑就什么都不做（`memory_ledger.py`）。"""
         return await self._memory.run_dream(project_id=project_id)
-
-    async def _consume_hook_event(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        event: AgentEvent,
-        eid: str | None,
-        result_text_seen: bool,
-        platform_unsolicited: bool,
-    ) -> None:
-        """Persist and broadcast one event (hook_stream.py)."""
-        return await _consume_hook_event(
-            self,
-            self._sessions,
-            self.live,
-            self._work_runner,
-            project_id,
-            topic_id,
-            turn_id,
-            event,
-            eid,
-            result_text_seen,
-            platform_unsolicited,
-        )
 
     async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None
