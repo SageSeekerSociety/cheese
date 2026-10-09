@@ -8,9 +8,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain.agent.hook_stream import _bind_user_entry
-from app.domain.agent.live_work import HookWorkState, LiveWork
 from app.domain.agent.service import AgentUserEntry
+from app.domain.agent.turn.intake.native_entries import _bind_user_entry
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn_inputs import (
     bind,
     record_input,
@@ -543,7 +543,7 @@ async def test_a_cleanup_cancelled_after_commit_is_finished_by_the_replay(
     commit and cleanup (not a rollback): the memory side stays, and the
     replay — binding nothing new — finishes exactly the recorded
     predecessor's cleanup (FB-56 P2-2, real commit + cancel)."""
-    import app.domain.agent.hook_stream as hs
+    import app.domain.agent.turn.intake.native_entries as hs
 
     topic = await a_topic(db_factory)
     seat = "cheese"

@@ -65,9 +65,8 @@ export interface NavSources {
  * 工作区那一格落到哪个项目：正开着的 → 上次开过的 → 第一个。
  *
  * 上次那个 id 必须在**这个用户**的项目清单里找得到才算数。存布局的那份
- * localStorage 是整个浏览器一份、不分账号，而项目清单是按 handle 存的
- * (projectCache 的 v2 注释记着同一个坑)——不设这道门，换个账号进来工作区那一格
- * 就指着上一个人的项目，点进去只会 403。
+ * localStorage 是整个浏览器一份、不分账号，而项目清单是这个人的——不设这道门，
+ * 换个账号进来工作区那一格就指着上一个人的项目，点进去只会 403。
  */
 export function workspaceProject(
   projects: Project[],

@@ -38,7 +38,14 @@ async def list_topic_members(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    topic_id = topic.id
+    items = await roster_rows(db, topic)
+    return ok(page(items, len(items)))
+
+
+async def roster_rows(db: AsyncSession, topic) -> list[dict]:
+    """A room's roster as `GET /topics/{id}/members` lists it; also the
+    `members` of the room snapshot a subscription opens with (`room_snapshot`).
+    The caller has authorised the reader."""
     seats = await TopicMemberService(db).seats(topic)
     # Attach display names and avatars so the UI can draw the roster without a
     # second round-trip.
@@ -88,7 +95,7 @@ async def list_topic_members(
         # initial rather than the one face everybody else who never picked has.
         d["avatar_id"] = avatar_by_uid.get(user.id) if user is not None else None
         items.append(d)
-    return ok(page(items, len(items)))
+    return items
 
 
 @router.post("/{topic_id}/members")

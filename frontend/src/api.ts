@@ -18,7 +18,6 @@ export * from './api/devices'
 export * from './api/environment'
 export * from './api/feedback'
 export * from './api/forge'
-export type { ConditionalResult } from './api/http'
 export {
   ApiError,
   authToken,
@@ -28,9 +27,9 @@ export {
   isRetryableGetFailure,
   NotModified,
   READ_BUDGET_MS,
+  readSince,
   refreshNow,
   request,
-  requestConditional,
   RequestTimeoutError,
   tokenExpiresWithin,
 } from './api/http'

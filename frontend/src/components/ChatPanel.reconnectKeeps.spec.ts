@@ -31,6 +31,8 @@ vi.mock('@/api', async () => {
       .mockResolvedValue({ data: [{ member_handle: 'cheese-aaaa11112222', name: 'Kimi', agent: true }] }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
+    // 重连之后这个房间这一行也重读一次（断线期间的改名、归档帧丢了）。
+    getTopic: vi.fn(async (id: string) => ({ ...topic, id })),
   }
 })
 

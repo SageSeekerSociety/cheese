@@ -85,7 +85,7 @@ async def _running_then_let_go(service, claude, hub, project, topic):
     # Where a turn puts it before writing to it.
     await service._compute.activate(session, claude)
     acting = (await claude.ensure(session, system_prompt="System")).acting
-    launch = await service._launch_inputs(topic, seat, acting=acting)
+    launch = await service.turn_preparation.launch_inputs(topic, seat, acting=acting)
     assert launch is not None
     live = await claude.ensure(
         launch.session,

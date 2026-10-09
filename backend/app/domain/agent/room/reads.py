@@ -6,7 +6,7 @@ said and did, when it started and stopped working, which inputs it took in,
 how its work ended, whether the machine under it is reachable, and what it is
 in the middle of writing. Each is routed here to the room's books for it, in
 the order it was read: the event log and the room's timeline
-(``hook_stream``), the realtime 「谁在干活」 frames, the input ledger
+(``turn.intake.hooks``), the realtime 「谁在干活」 frames, the input ledger
 (``turn_inputs``), the waiting-for-the-machine notes, and the live frames.
 """
 
@@ -41,6 +41,21 @@ from app.domain.delivery.input_identity import (
 RoomReader = Callable[[SessionRef, Read], Awaitable[None]]
 
 
+class NativeEvents(Protocol):
+    """The event receiver supplied by composition, not a turn implementation import."""
+
+    async def accept(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        event: AgentEvent,
+        eid: str | None,
+        result_text_seen: bool,
+        platform_unsolicited: bool,
+    ) -> None: ...
+
+
 class RoomBooks(Protocol):
     """What a room keeps of its sessions (``chat.ChatService``)."""
 
@@ -69,16 +84,8 @@ class RoomBooks(Protocol):
         reason: str,
     ) -> None: ...
 
-    async def _consume_hook_event(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        event: AgentEvent,
-        eid: str | None,
-        result_text_seen: bool,
-        platform_unsolicited: bool,
-    ) -> None: ...
+    @property
+    def hook_events(self) -> NativeEvents: ...
 
 
 def reader(chat: RoomBooks) -> RoomReader:
@@ -119,7 +126,7 @@ def reader(chat: RoomBooks) -> RoomReader:
                     event.reason,
                 )
             elif isinstance(event, AgentEvent):
-                await chat._consume_hook_event(
+                await chat.hook_events.accept(
                     session.project_id,
                     session.conversation_id,
                     work,

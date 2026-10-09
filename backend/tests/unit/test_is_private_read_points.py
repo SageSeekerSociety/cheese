@@ -16,7 +16,8 @@ import pathlib
 
 #: 每个文件问 ``is_private`` 几次。
 #:
-#: ``agent/room/turn.py`` 的 1 是定死的：``_is_dm``，整个文件唯一读那个布尔的地方。
+#: ``agent/turn/intake/rooms.py`` 的 1 是定死的：``_is_dm``，
+#: 整个文件唯一读那个布尔的地方。
 #: ARCH §9.1 判据②的两类读点都从它推出来——``_private_owner``（名册恰好两席，这
 #: 间房的人是哪一位）和 ``_assemble_turn`` 的 ``needs_place``（这一轮不租地点，只
 #: 有会话自己那块 64 MiB 草稿区）——所以那两类各自在的地方不再碰这个布尔。
@@ -30,7 +31,7 @@ BASELINE = {
     # 0：项目这一侧本来有一处，现在推回 `_is_dm` 那一类了（结论 19）。留着这一行
     # 是把它钉在 0，谁再加一处回来，红的就是这条。
     "app/api/routes/projects.py": 0,
-    "app/domain/agent/room/turn.py": 1,
+    "app/domain/agent/turn/intake/rooms.py": 1,
     "app/domain/agent_instance/services.py": 1,
     "app/domain/dashboard/services.py": 1,
     # 管理员看板「学习」那一格：私聊不进这张列表，`WHERE is_private IS FALSE` 一类
@@ -119,7 +120,7 @@ def test_is_private_is_asked_no_more_often_than_the_baseline():
 
 def test_a_turn_asks_it_once_and_derives_the_rest():
     """整个文件只读一次那个布尔，而且是在 ``_is_dm`` 里读的。"""
-    source = (_APP / "domain" / "agent" / "room" / "turn.py").read_text()
+    source = (_APP / "domain" / "agent" / "turn" / "intake" / "rooms.py").read_text()
     tree = ast.parse(source)
     naming = _naming_it(tree)
     assert len(naming) == 1
@@ -127,8 +128,8 @@ def test_a_turn_asks_it_once_and_derives_the_rest():
     # 散回轮次组装里去了，而两类读点（名册两席、不租地点）本该都从这一个函数推出
     # 来。所以问的是「包着它的那个函数叫什么」。
     assert _enclosing_function(tree, naming[0]) == "_is_dm", (
-        "``is_private`` 在 room/turn.py 只能在 ``_is_dm`` 里读一次"
+        "``is_private`` 在 turn/intake/rooms.py 只能在 ``_is_dm`` 里读一次"
         "（结论 19，ARCH §9.1 判据②）：名册两席和不租地点两类答案都从它推出来。"
     )
-    chat = (_APP / "domain" / "agent" / "chat.py").read_text()
-    assert "private_seats" in chat, "名册两席那一类走 TopicMemberService"
+    intake = (_APP / "domain" / "agent" / "turn" / "intake" / "human.py").read_text()
+    assert "private_seats" in intake, "名册两席那一类走 TopicMemberService"

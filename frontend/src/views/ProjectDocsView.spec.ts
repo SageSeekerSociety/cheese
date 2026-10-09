@@ -1,4 +1,3 @@
-import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -22,21 +21,6 @@ vi.mock('../api/docHistory', () => ({
   restoreDocVersion: async () => ({}),
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
-// 这一页的数据源是缓存的，每个用例先摆好它看到的那一份，再渲染。
-const state = vi.hoisted(() => ({ payload: {} as Record<string, unknown> }))
-vi.mock('@/composables/useCachedResource', () => ({
-  useCachedResource: () => ({
-    data: ref({
-      projectName: '项目',
-      rootTopicId: 'root',
-      weeklies: [],
-      memoryEntries: [],
-      ...state.payload,
-    }),
-    loading: ref(false),
-    error: ref(null),
-  }),
-}))
 vi.mock('../me', () => ({ myHandle: () => 'writer', myId: () => 'writer' }))
 // 章程是项目概览那一篇文档的面板：评论和节点照旧从接口读，这里给空的。
 vi.mock('../api', async () => {
@@ -67,6 +51,25 @@ import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
 
 import ProjectDocsView from './ProjectDocsView.vue'
 
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+
+// 这一页读的是缓存里这个项目、这一面的那一份：每个用例先摆好它看到的，再渲染。
+function show(kind: 'charter' | 'weeklies' | 'memory', payload: Record<string, unknown> = {}) {
+  queryClient.setQueryData(keys.projectDocs('p', kind), {
+    rootTopicId: 'root',
+    rootTopic: null,
+    overviewId: null,
+    weeklies: [],
+    memoryEntries: [],
+    ...payload,
+  })
+  return render(ProjectDocsView, {
+    props: { projectId: 'p', kind },
+    global: { plugins: [createVuetify()] },
+  })
+}
+
 // These assertions read the Chinese copy; the English rendering is checked in its own case.
 beforeEach(() => {
   setLocale('zh-CN')
@@ -78,7 +81,7 @@ beforeEach(() => {
 
 describe('周报集', () => {
   it('按窗口列出一份真周报，并指得回它写在哪间房', async () => {
-    state.payload = {
+    const view = show('weeklies', {
       weeklies: [
         {
           id: 'w1',
@@ -89,10 +92,6 @@ describe('周报集', () => {
           meta: { since: '2026-08-31T00:00:00+00:00', until: '2026-09-06T23:59:59+00:00' },
         },
       ],
-    }
-    const view = render(ProjectDocsView, {
-      props: { projectId: 'p', kind: 'weeklies' },
-      global: { plugins: [createVuetify()] },
     })
     // 窗口是这一行的身份：并排摆着的几份周报，是它把它们分开的。
     expect(view.getByText('8月31日 – 9月6日')).toBeTruthy()
@@ -102,11 +101,7 @@ describe('周报集', () => {
   })
 
   it('空态说清怎么让芝士写，而不是许一个没人实现的周期', async () => {
-    state.payload = {}
-    const view = render(ProjectDocsView, {
-      props: { projectId: 'p', kind: 'weeklies' },
-      global: { plugins: [createVuetify()] },
-    })
+    const view = show('weeklies')
     expect(view.queryByText('周报由芝士定期产出')).toBeNull()
     expect(view.getByText(/在「综合」里 @ 芝士/)).toBeTruthy()
     expect(view.getByText('暂无周报')).toBeTruthy()
@@ -117,7 +112,7 @@ describe('周报集', () => {
 describe('in English', () => {
   it('names the weekly window in English', async () => {
     setLocale('en')
-    state.payload = {
+    const view = show('weeklies', {
       weeklies: [
         {
           id: 'w1',
@@ -128,10 +123,6 @@ describe('in English', () => {
           meta: { since: '2026-08-31T00:00:00+00:00', until: '2026-09-06T23:59:59+00:00' },
         },
       ],
-    }
-    const view = render(ProjectDocsView, {
-      props: { projectId: 'p', kind: 'weeklies' },
-      global: { plugins: [createVuetify()] },
     })
     expect(view.getByText('Aug 31 – Sep 6')).toBeTruthy()
     expect(view.getByText('From channel')).toBeTruthy()
@@ -143,13 +134,9 @@ describe('in English', () => {
 describe('章程', () => {
   it('打开的是项目概览那一篇协同文档，谁在别处改的都在这儿', async () => {
     seedRoom('overview', '我们给高中生做算法课。')
-    state.payload = {
+    const view = show('charter', {
       rootTopic: { id: 'root', kind: 'root', title: '项目', project_id: 'p' },
       overviewId: 'overview',
-    }
-    const view = render(ProjectDocsView, {
-      props: { projectId: 'p', kind: 'charter' },
-      global: { plugins: [createVuetify()] },
     })
     await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('算法课'))
 
@@ -179,11 +166,7 @@ describe('记忆', () => {
   }
 
   function mountMemory() {
-    state.payload = { memoryEntries: [one, shared] }
-    return render(ProjectDocsView, {
-      props: { projectId: 'p', kind: 'memory' },
-      global: { plugins: [createVuetify()] },
-    })
+    return show('memory', { memoryEntries: [one, shared] })
   }
 
   it('一条记忆一份作用域的名字：自己的那份叫个人记忆，其余叫项目记忆', async () => {

@@ -4,10 +4,12 @@ import type { Block, Topic } from '../cx_types'
 
 import { computed, getCurrentInstance } from 'vue'
 import { useRouter } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
 
-import { useCachedResource } from '@/composables/useCachedResource'
+import { usePageActive } from '@/composables/usePageActive'
+import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { deleteMemory, getProject, getProjectWeeklies, getTopic, listMemory } from '../api'
+import { deleteMemory, getProjectWeeklies, listMemory } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
@@ -19,6 +21,9 @@ import MarkdownView from '@/components/common/MarkdownView.vue'
 import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import i18n, { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
+import { patchQuery, queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { projectQuery, roomRowQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目级文档 (spec §7.1): 章程 / 周报集 / 记忆 — one address each
@@ -62,30 +67,43 @@ interface DocsPayload {
 }
 
 // 一个 kind 一份缓存：三个 tab 是三份不同的文档，来回点不该各转一次圈。
-const { data, loading, error } = useCachedResource(
-  () => `docs:${props.projectId}:${kind.value}`,
-  async (): Promise<DocsPayload> => {
-    const project = await getProject(props.projectId)
-    const payload: DocsPayload = {
-      rootTopicId: project.root_topic_id ?? null,
-      rootTopic: null,
-      overviewId: null,
-      weeklies: [],
-      memoryEntries: [],
-    }
-    if (kind.value === 'charter') {
-      payload.overviewId = (await getProjectOverview(props.projectId)).id
-      if (project.root_topic_id) payload.rootTopic = await getTopic(project.root_topic_id)
-    } else if (kind.value === 'memory') {
-      payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
-    } else if (kind.value === 'weeklies') {
-      // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
-      // 认，一个叫「周报怎么发」的房间也会出现在这儿。
-      payload.weeklies = (await getProjectWeeklies(props.projectId)).data
-    }
-    return payload
-  }
+const docsKey = computed(() => keys.projectDocs(props.projectId, kind.value))
+// 回到看过的那一面先照着上一次的画，背后重取（query/client）。项目本身和根房间
+// 是工作区别处也在读的那两份，刚读过就不再问。
+// 保活着离开时停下，回来时过期了的再读（usePageActive）。
+const pageActive = usePageActive()
+const docs = useQuery(
+  computed(() => ({
+    enabled: pageActive.value,
+    queryKey: docsKey.value,
+    queryFn: async (): Promise<DocsPayload> => {
+      const project = await queryClient.fetchQuery(projectQuery(props.projectId))
+      const payload: DocsPayload = {
+        rootTopicId: project.root_topic_id ?? null,
+        rootTopic: null,
+        overviewId: null,
+        weeklies: [],
+        memoryEntries: [],
+      }
+      if (kind.value === 'charter') {
+        payload.overviewId = (await getProjectOverview(props.projectId)).id
+        if (project.root_topic_id) payload.rootTopic = await queryClient.fetchQuery(roomRowQuery(project.root_topic_id))
+      } else if (kind.value === 'memory') {
+        payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
+      } else if (kind.value === 'weeklies') {
+        // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
+        // 认，一个叫「周报怎么发」的房间也会出现在这儿。
+        payload.weeklies = (await getProjectWeeklies(props.projectId)).data
+      }
+      return payload
+    },
+  })),
+  queryClient
 )
+holdRevealUntil(() => !docs.isPending.value)
+const data = docs.data
+const loading = docs.isPending
+const error = computed(() => (docs.data.value ? null : docs.error.value))
 
 const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
@@ -150,7 +168,10 @@ async function removeMemory(id: string) {
     .catch(() => false)
   if (!confirmed) return
   await deleteMemory(id)
-  if (data.value) data.value.memoryEntries = data.value.memoryEntries.filter((e) => e.id !== id)
+  await patchQuery<DocsPayload>(docsKey.value, (held) => ({
+    ...held,
+    memoryEntries: held.memoryEntries.filter((e) => e.id !== id),
+  }))
 }
 
 // A source-topic link: open that topic in the same project frame.

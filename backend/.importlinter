@@ -9,7 +9,7 @@
 # file states the whole shape once, in the tool that reads the import graph.
 #
 # RUN IT
-#     cd backend && uv run lint-imports          the three contracts, exit 0/1
+#     cd backend && uv run lint-imports          the seven contracts, exit 0/1
 #     cd backend && uv run python scripts/check_boundaries.py
 #                                                same check, exit 0/1/2 where
 #                                                2 = could not judge
@@ -411,3 +411,54 @@ ignore_imports =
     app.domain.user.repositories -> app.domain.team.models
     app.domain.user.services -> app.domain.identity.handles
     app.domain.webhook.service -> app.domain.agent.announce
+
+[importlinter:contract:turn-layers]
+# T1 — every turn module belongs to one of these four layers.
+name = T1 turn layers: intake -> steps -> store -> state
+type = layers
+containers = app.domain.agent.turn
+layers =
+    intake
+    steps
+    store
+    state
+exhaustive = true
+
+[importlinter:contract:turn-no-composition-imports]
+# T2 deliberately checks direct imports; intake can assemble cross-domain facts.
+name = T2 turn code does not import its composition roots directly
+type = forbidden
+source_modules = app.domain.agent.turn
+forbidden_modules =
+    app.domain.agent.chat
+    app.domain.agent.runtime
+    app.api
+allow_indirect_imports = true
+
+[importlinter:contract:realtime-no-turn]
+# T3 checks the full reachable graph, not just imports in broker.py.
+name = T3 realtime cannot reach turn execution or composition
+type = forbidden
+source_modules = app.domain.agent.realtime
+forbidden_modules =
+    app.domain.agent.turn
+    app.domain.agent.chat
+    app.domain.agent.runtime
+    app.api
+allow_indirect_imports = false
+
+[importlinter:contract:turn-storage-purity]
+# T4 also checks transitively: a repository cannot smuggle in a publisher.
+name = T4 turn storage and state cannot reach upper layers or realtime
+type = forbidden
+source_modules =
+    app.domain.agent.turn.store
+    app.domain.agent.turn.state
+forbidden_modules =
+    app.domain.agent.turn.intake
+    app.domain.agent.turn.steps
+    app.domain.agent.realtime
+    app.domain.agent.chat
+    app.domain.agent.runtime
+    app.api
+allow_indirect_imports = false

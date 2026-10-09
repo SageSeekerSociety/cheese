@@ -72,8 +72,6 @@ vi.mock('@/components/ChatPanel.vue', () => ({
     emits: ['state-changed'],
     template: `<div>
       <button data-testid="feedback-frame" @click="$emit('state-changed', 'feedback')" />
-      <button data-testid="topics-frame" @click="$emit('state-changed', 'topics', 'room-a')" />
-      <button data-testid="tasks-frame" @click="$emit('state-changed', 'tasks')" />
       <slot name="timeline-end" />
     </div>`,
   },
@@ -94,8 +92,11 @@ import ProjectShell from './ProjectShell.vue'
 import TopicView from './TopicView.vue'
 
 import i18n from '@/i18n'
+import { seedProject } from '@/test/seedQueries'
 
 function setup() {
+  // 项目框每 30 秒问一次的那几份：刚读过，这一刻不问。
+  seedProject('p1', { topics: [TOPIC], unread: {}, privateUnread: {}, notifyLevels: {} }, 'alice')
   store.value = reactive({
     topics: [TOPIC],
     members: [],
@@ -109,14 +110,9 @@ function setup() {
     agentName: 'Cheese',
     activeTopicId: null,
     activeDmPeer: null,
-    placeById: (id: string) => (id === TOPIC.id ? TOPIC : null),
-    isResolvingPlace: () => false,
-    loadPlace: vi.fn(async () => {}),
     markRead: vi.fn(),
     openProject: vi.fn(),
     refreshTopics: vi.fn(),
-    refreshTopicRow: vi.fn(),
-    noteTasksChanged: vi.fn(),
     refreshUnread: vi.fn(),
     setChatPct: vi.fn(),
   })
@@ -190,45 +186,5 @@ describe('feedback proposal cards on an open page', () => {
     server.live = []
     await fireEvent.click(view.getByTestId('feedback-frame'))
     await waitFor(() => expect(view.baseElement.textContent).not.toContain('Sandbox cannot resolve hosts'))
-  })
-})
-
-describe('一个话题变了的帧到达开着页面的人', () => {
-  it('指名了是哪一行就只重取那一行，任务清单那一路照旧', async () => {
-    const { router, view } = setup()
-    await router.push('/projects/p1/topics/topic-a')
-    await waitFor(() => expect(view.baseElement.textContent).toContain('Room A'))
-
-    const mocked = store.value as {
-      refreshTopicRow: ReturnType<typeof vi.fn>
-      refreshTopics: ReturnType<typeof vi.fn>
-      noteTasksChanged: ReturnType<typeof vi.fn>
-    }
-    mocked.refreshTopicRow.mockClear()
-    mocked.refreshTopics.mockClear()
-    mocked.noteTasksChanged.mockClear()
-
-    await fireEvent.click(view.getByTestId('topics-frame'))
-
-    await waitFor(() => expect(mocked.refreshTopicRow).toHaveBeenCalledWith('room-a'))
-    // 改一个房间名不该重下整份清单（400 多个话题近 300KB）。
-    expect(mocked.refreshTopics).not.toHaveBeenCalled()
-    // 但任务清单那条路还得走着：建、改名、关都要跟着变。
-    expect(mocked.noteTasksChanged).toHaveBeenCalled()
-  })
-})
-
-describe('一件任务的进度变了的帧到达开着频道的人', () => {
-  it('侧栏挂着的任务跟着重读，不等下一次定时', async () => {
-    const { router, view } = setup()
-    await router.push('/projects/p1/topics/topic-a')
-    await waitFor(() => expect(view.baseElement.textContent).toContain('Room A'))
-    const mocked = store.value as { noteTasksChanged: ReturnType<typeof vi.fn> }
-    mocked.noteTasksChanged.mockClear()
-
-    // 验收卡递上来、被退回、被采纳：任务走到哪一档跟着变。
-    await fireEvent.click(view.getByTestId('tasks-frame'))
-
-    expect(mocked.noteTasksChanged).toHaveBeenCalled()
   })
 })

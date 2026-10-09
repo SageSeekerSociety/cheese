@@ -72,7 +72,6 @@ vi.mock('../../api', async () => {
   }
 })
 
-import { resetPreviewPointerCache } from '../../lib/previewPointer'
 import WorkPanel from '../WorkPanel.vue'
 
 const POLL_MS = 5_000
@@ -120,7 +119,6 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.useFakeTimers()
   vi.clearAllMocks()
-  resetPreviewPointerCache()
   getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
   requestPreviewSession.mockResolvedValue({

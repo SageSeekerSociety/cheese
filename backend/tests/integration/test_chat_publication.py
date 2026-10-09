@@ -291,7 +291,9 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
     shows nothing while someone waits.
     """
     from app.domain.agent import chat as chat_module
-    from app.domain.agent.room import turn as turn_module
+    from app.domain.agent.turn.intake import assistant as assistant_module
+    from app.domain.agent.turn.steps import send as send_module
+    from app.domain.agent.turn.store import session_inputs as session_inputs_module
 
     topic, headers = make_room(client)
     chat = client.app.dependency_overrides[get_chat_service]()
@@ -303,7 +305,9 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
             return clock
 
     monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(turn_module, "datetime", Clock)
+    monkeypatch.setattr(send_module, "datetime", Clock)
+    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
+    monkeypatch.setattr(assistant_module, "datetime", Clock)
     assert settings.chat_progress_reminder_after_s == 600
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
     system_event = AsyncMock(wraps=chat.post_system_event)
@@ -392,7 +396,9 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
     that just spoke, counting the silence from turn start."""
     from app.api.deps import get_work_runner
     from app.domain.agent import chat as chat_module
-    from app.domain.agent.room import turn as turn_module
+    from app.domain.agent.turn.intake import assistant as assistant_module
+    from app.domain.agent.turn.steps import send as send_module
+    from app.domain.agent.turn.store import session_inputs as session_inputs_module
 
     topic, headers = room(client)
     chat = client.app.dependency_overrides[get_chat_service]()
@@ -404,7 +410,9 @@ def test_publication_from_a_remote_executor_still_counts_as_speaking(
             return clock
 
     monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(turn_module, "datetime", Clock)
+    monkeypatch.setattr(send_module, "datetime", Clock)
+    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
+    monkeypatch.setattr(assistant_module, "datetime", Clock)
     threshold = 90
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", threshold)
 
@@ -473,8 +481,7 @@ def test_publication_attribution_never_guesses_between_agents():
     """
     from types import SimpleNamespace
 
-    from app.domain.agent.chat import ChatService
-    from app.domain.agent.live_work import LiveWork
+    from app.domain.agent.turn.state.live import LiveWork
 
     topic = uuid.uuid4()
     a, b = uuid.uuid4(), uuid.uuid4()
@@ -484,22 +491,21 @@ def test_publication_attribution_never_guesses_between_agents():
         (topic, b): SimpleNamespace(work_id=b, acting_agent="cheese-b"),
     }
     live.active_turn_ids = {topic: {a}}
-    svc = SimpleNamespace(live=live)
-    attribute = ChatService._attributed_work_id
+    attribute = LiveWork.attributed_work_id
     # A third party publishes: two live turns, neither theirs — no guess.
-    assert attribute(svc, topic, "cheese-c") is None
+    assert attribute(live, topic, "cheese-c") is None
     # The publisher's own turn wins even when it is not the active one.
-    assert attribute(svc, topic, "cheese-b") == b
+    assert attribute(live, topic, "cheese-b") == b
     # Both live turns are the publisher's: the active one breaks the tie.
     live.hook_work[(topic, b)] = SimpleNamespace(work_id=b, acting_agent="cheese-a")
-    assert attribute(svc, topic, "cheese-a") == a
+    assert attribute(live, topic, "cheese-a") == a
     # One live turn only: unambiguous whoever publishes (a token naming no
     # agent seat resolves to the room's roster, which may differ).
     live.hook_work = {(topic, a): SimpleNamespace(work_id=a, acting_agent="cheese-a")}
-    assert attribute(svc, topic, "cheese-c") == a
+    assert attribute(live, topic, "cheese-c") == a
     # Nothing live: nothing to attribute.
     live.hook_work = {}
-    assert attribute(svc, topic, "cheese-a") is None
+    assert attribute(live, topic, "cheese-a") is None
 
 
 def test_consuming_work_id_only_delivers_when_unambiguous():
@@ -512,7 +518,7 @@ def test_consuming_work_id_only_delivers_when_unambiguous():
     """
     from types import SimpleNamespace
 
-    from app.domain.agent.live_work import LiveWork
+    from app.domain.agent.turn.state.live import LiveWork
 
     topic = uuid.uuid4()
     a, b = uuid.uuid4(), uuid.uuid4()

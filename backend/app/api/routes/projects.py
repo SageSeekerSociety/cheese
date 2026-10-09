@@ -1076,3 +1076,43 @@ async def set_project_upstream(
     url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
     await service.merge_settings(project, {"github_repository_url": url})
     return ok({"url": url})
+
+
+#: How many of my tasks a channel's row in the sidebar carries under it.
+RAIL_TASKS = 5
+
+
+async def rail_tasks(
+    db: AsyncSession,
+    chat: ChatService,
+    actor: Actor,
+    room_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, dict]:
+    """What the sidebar hangs under each channel, keyed by channel: how many
+    tasks are underway there (`open`, the count after 「全部任务」), and the ones
+    of them the caller owns or helps on (`shown`) — owned first, then helped,
+    each most recently moved first, at most `RAIL_TASKS`, leaving out one that
+    stalled. Every channel in ``room_ids`` gets an entry; the rows are the
+    project rail's (`_project_task_rows`).
+
+    The project's open tasks are not read for this: the count is one grouped
+    query, and only the caller's own tasks are made into rows."""
+    me = actor.handle or ""
+    service = TaskService(db)
+    counts = await service.underway_counts(room_ids)
+    mine = await service.underway_with(room_ids, me) if actor.authenticated else []
+    rows = await _project_task_rows(db, chat, me, mine)
+    shown: dict[str, list[dict]] = {}
+    for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
+        if not row["stalled"]:
+            shown.setdefault(row["room_id"], []).append(row)
+    out: dict[uuid.UUID, dict] = {}
+    for room in room_ids:
+        here = shown.get(str(room), [])
+        owned = [row for row in here if row["owner_handle"] == me]
+        helped = [row for row in here if row["owner_handle"] != me]
+        out[room] = {
+            "shown": (owned + helped)[:RAIL_TASKS],
+            "open": counts.get(room, 0),
+        }
+    return out

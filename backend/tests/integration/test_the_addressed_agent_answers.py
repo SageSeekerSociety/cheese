@@ -112,7 +112,7 @@ def test_addressing_the_second_teammate_addresses_the_second_teammate(client):
 
         chat = client.app.dependency_overrides[get_chat_service]()
         assert isinstance(chat, ChatService)
-        payloads, *_ = await chat.post_user_message(
+        payloads, *_ = await chat.human_messages.post_user_message(
             uuid.UUID(topic),
             author="alice",
             content=content,
@@ -151,7 +151,7 @@ def test_an_at_for_a_teammate_not_in_the_room_is_plain_words(client):
 
         chat = client.app.dependency_overrides[get_chat_service]()
         assert isinstance(chat, ChatService)
-        payloads, *_ = await chat.post_user_message(
+        payloads, *_ = await chat.human_messages.post_user_message(
             uuid.UUID(topic),
             author="alice",
             content=content,

@@ -34,6 +34,10 @@ class _NothingStored:
 
 
 class FakeChat(WorkChat):
+    @property
+    def human_messages(self):
+        return self
+
     """Controllable stand-in for ChatService: converse turns block until
     released, so tests can observe concurrency and queue order."""
 
@@ -236,9 +240,6 @@ async def test_message_to_another_teammate_starts_its_turn_beside_a_live_one(
                 await self.release_a.wait()
             self.finished.append(recipient)
             yield {"type": "done"}
-
-        async def ack_summon(self, *args):
-            return None
 
     chat = TwoSeats(db_factory)
     runner, broker = _runner()

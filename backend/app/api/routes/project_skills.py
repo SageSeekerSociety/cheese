@@ -187,6 +187,23 @@ async def list_skills(
     return ok(page(items, len(items)))
 
 
+async def proposals_in_room(
+    db: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID
+) -> list[dict]:
+    """Skills an AI teammate proposed in this room and nobody has decided on
+    yet, as `GET /projects/{id}/skills` lists them: what the room's proposal
+    cards draw. The `skill_proposals` of the room snapshot a subscription opens
+    with; the caller has authorised the reader."""
+    room = str(room_id)
+    return [
+        item
+        for item in (_skill(r) for r in await ProjectSkillService(db).list(project_id))
+        if item["state"] == "draft"
+        and item["proposal"]
+        and item["source_topic_id"] == room
+    ]
+
+
 @router.post("/topics/{topic_id}/skills")
 async def create_skill(
     topic_id: uuid.UUID, body: SkillIn, db: DbSession, resolver: ActorResolverDep

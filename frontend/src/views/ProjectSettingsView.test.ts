@@ -12,7 +12,7 @@ import { SudoCancelledError, withSudo } from '../utils/sudo'
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
 import { setLocale } from '@/i18n'
-import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProjects } from '@/test/seedQueries'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))
 const router = vi.hoisted(() => ({
@@ -80,7 +80,7 @@ describe('project settings', () => {
     ['alice', true],
     ['bob', false],
   ])('offers archiving only to the owner (owner=%s)', async (owner, offered) => {
-    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: owner }]
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: owner }])
     const wrapper = await openSettings()
     try {
       expect(wrapper.element.textContent?.includes('归档项目')).toBe(offered)
@@ -240,7 +240,7 @@ describe('project settings', () => {
 
   // 每一栏只放一类事：人一次只为一件事来（换队友 / 调机器 / 定合并规则 / 接仓库）。
   it('lists the sections in order, with archiving last and only for the owner', async () => {
-    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }]
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     const wrapper = await openSettings()
     try {
       const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
@@ -263,7 +263,7 @@ describe('project settings', () => {
 
   it('lists 频道 first for whoever manages the project', async () => {
     vi.mocked(api.getProject).mockResolvedValue({ id: 'project', name: 'P', can_manage_members: true } as Project)
-    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }]
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     const wrapper = await openSettings()
     try {
       await vi.waitFor(() => {

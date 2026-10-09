@@ -635,6 +635,7 @@
   "siteDomainNotIsolated": "The Site hosting domain must be separate from the platform's domain",
   "roomUnderRoomUseSplit": "What goes under a channel is a task, not another channel. Create a task instead",
   "topicNotFound": "Channel not found",
+  "chatMessageEmpty": "The message is empty",
   "topicCloneIntoSelf": "A channel can't be cloned into itself",
   "topicCloneSameProject": "Sessions can only be cloned within the same project",
   "topicCloneNeverRan": "The source channel hasn't run yet (there's no session to clone)",
@@ -926,6 +927,7 @@
   "upstreamUnavailable": "Upstream unavailable",
   "gatewayTimeout": "Upstream did not answer in time",
   "invalidRequestParameters": "Invalid request parameters",
+  "chatPublicationIdReused": "This request_id was already used for another message",
   "clientDisconnected": "The client disconnected",
   "deviceOffline": "Device {device} is offline",
   "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown",
@@ -1001,5 +1003,6 @@
   "githubReviewPostFailed": "GitHub refused the review (HTTP {status}): {reply}",
   "reviewCommentSuggestionOnly": "Suggested change",
   "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each",
+  "addressedAgentUnavailable": "The addressed agent is unavailable",
   "fileTooLarge": "The file is too large ({mb}MB max)"
 }

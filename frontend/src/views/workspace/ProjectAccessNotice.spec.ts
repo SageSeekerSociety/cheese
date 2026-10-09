@@ -5,6 +5,8 @@
  * 什么都没有的项目」长得一模一样。这里断言的是屏幕上留得住的那段话，以及它给的
  * 下一步动作对得上人当下的处境。
  */
+import type { Project } from '@/cx_types'
+
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -23,6 +25,7 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 import ProjectAccessNotice from './ProjectAccessNotice.vue'
 
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 afterEach(cleanup)
 beforeEach(() => setActivePinia(createPinia()))
@@ -75,9 +78,19 @@ describe('打不开这个项目的时候', () => {
   })
 })
 
+// 开着的是这个已归档的项目：它不在项目清单里，名字和所有者是单独读来的那一行。
+async function openArchived(project: Project) {
+  seedProjects([])
+  seedProject(project.id, { topics: [], members: [], unread: {}, privateUnread: {}, notifyLevels: {}, project })
+  const store = useWorkspaceStore()
+  store.openProject(project.id)
+  await vi.waitFor(() => expect(store.openedProject?.id).toBe(project.id))
+  return store
+}
+
 describe('项目已归档的时候', () => {
-  it('不是所有者：说它归档了，只给一条离开的路', () => {
-    useWorkspaceStore().openedProject = { id: 'p', name: 'P', created_at: '', owner_handle: 'bob' }
+  it('不是所有者：说它归档了，只给一条离开的路', async () => {
+    await openArchived({ id: 'p', name: 'P', created_at: '', owner_handle: 'bob' })
     const { getByText, queryByRole, getByRole } = show('archived')
     getByText('项目已归档')
     expect(queryByRole('button', { name: '取消归档' })).toBeNull()
@@ -85,8 +98,7 @@ describe('项目已归档的时候', () => {
   })
 
   it('所有者：主操作是取消归档', async () => {
-    const store = useWorkspaceStore()
-    store.openedProject = { id: 'p', name: 'P', created_at: '', owner_handle: 'alice' }
+    const store = await openArchived({ id: 'p', name: 'P', created_at: '', owner_handle: 'alice' })
     const restore = vi.spyOn(store, 'unarchiveOpenProject').mockResolvedValue(true)
     const { getByRole } = show('archived')
     await fireEvent.click(getByRole('button', { name: '取消归档' }))

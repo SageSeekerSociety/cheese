@@ -38,14 +38,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ValidationError
 from app.core.live_frames import show_once_committed
 from app.core.sentences import notice_message
-from app.domain.agent.mentions import _MENTION_RE, PersonMentions
+from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
     SEVERITY_INFO,
     WHO_CHEESE,
     WHO_HUMAN,
     WHO_PLATFORM,
 )
-from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -58,13 +58,9 @@ from app.domain.delivery.addressing import (
     address,
 )
 from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
-from app.domain.identity.handles import (
-    agent_instance_handle,
-    looks_like_agent_handle,
-)
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
 
 #: `who` 码 → 下一步在谁手上。`who` 回答的是「谁在管这件事」，那正是投递要问的那一
@@ -282,76 +278,6 @@ async def answer_questions(
         recipient["mentioned"] = True
         reply.meta = {**(reply.meta or {}), "agent_recipient": dict(recipient)}
     return questions
-
-
-async def recipient_of_message(
-    session: AsyncSession,
-    topic: Topic,
-    *,
-    agent: ResolvedAgent,
-    mentions: PersonMentions,
-    reply_author: str | None,
-    in_task: bool,
-    dm: bool,
-) -> tuple[dict, str | None]:
-    """这条人的消息的收件人是谁（`agent_recipient`），以及它点名了哪一席。
-
-    收件人默认是这间房指的那位（``agent``）。两种情况改指到别人身上：
-
-    - **@ 了人**：被 @ 的那一席接这一轮。只把 ``mentioned`` 置真不够 ——
-      ``handle``/``instance_id`` 还指着房间默认的那位，@ 第二个队友仍旧是第一位接。
-    - **回复了某条消息**：回谁的消息就是对着谁说的。任务房间里每条消息都默认点名
-      任务那位（``in_task``），于是「回另一位队友的提问」「点它卡上的选项」——两条
-      路都只是一句话——仍然落到任务那位身上，提问的那位收不到答案（#3210）。人发
-      的消息不在这一条里：那条默认归房间，回复它不改变什么。
-
-    两条都成立时以 @ 为准。返回的席位是给 `record_mentions` 的 ``skip`` 用的：那位
-    的投递不重复记。`answer_questions` 是同一个判断在「这句话答了一道题」那条路上
-    的第二次机会。
-    """
-    seat = next(
-        (h for h in mentions.agent_handles if f"<@{h}>" in mentions.content), None
-    )
-    by_mention = seat is not None
-    # 只有带正文的消息按回复改指：附件单独成块、共用同一个收件人，
-    # `answer_questions` 那一档也同样只认有正文的消息。
-    if seat is None and reply_author is not None and mentions.content:
-        # 席位在名册上才算：人发的消息不在这里（它的作者是人，不是席位）。
-        if reply_author in await TopicMemberService(session).agent_handles(topic.id):
-            seat = reply_author
-    # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这一句是
-    # 浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，于是「这条消息点
-    # 了谁的名」有两个答案，其中一个在客户端手上。点名归服务端算（I13），所以这里
-    # 自己认下私聊这一档。
-    #
-    # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的私聊也是私
-    # 聊，而它没有 agent 可点名 —— 认成「点了名」就等于把芝士叫进两个人的私密对话
-    # 里说话。对面是谁只有名册一个出处（`private_seats`，它答的 owner 那一席恒是
-    # 人，所以只看 peer）；名册不是恰好两席时它答 None，这条消息就不点名，和这间房
-    # 其余各处的退路同向。
-    seats = await TopicMemberService(session).private_seats(topic.id) if dm else None
-    recipient = {
-        "instance_id": str(agent.instance_id),
-        "handle": agent.handle,
-        # In a task the owner talks to its agent and nobody else, so every
-        # message is addressed to it, as in a private chat with one.
-        "mentioned": in_task
-        or (seats is not None and looks_like_agent_handle(seats[1])),
-    }
-    if seat is None:
-        return recipient, None
-    if by_mention:
-        recipient["mentioned"] = True
-    named = mentions.by_seat.get(seat)
-    if named is None:
-        # A seat still under the room-derived handle names no instance, and that
-        # seat IS the agent the room points at: the recipient already names it.
-        named = await instance_of_seat(session, topic.project_id, seat)
-    if named is not None:
-        recipient["instance_id"] = str(named.id)
-        recipient["handle"] = named.handle
-        recipient["mentioned"] = True
-    return recipient, seat
 
 
 def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:

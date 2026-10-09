@@ -77,8 +77,9 @@ vi.mock('../../api', async () => {
   }
 })
 
-import { resetPreviewPointerCache, setPreviewPointer } from '../../lib/previewPointer'
 import WorkPanel from '../WorkPanel.vue'
+
+import { prefetchPreview } from '@/query/room'
 
 function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
@@ -132,8 +133,6 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // 指针缓存是模块级的：一个用例取过的答案不该流到下一个用例（下一个该自己问）。
-  resetPreviewPointerCache()
   getPreview.mockResolvedValue(null)
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
   requestPreviewSession.mockResolvedValue({
@@ -331,7 +330,9 @@ describe('预览面板：芝士摆出来时立刻跟上', () => {
 
   it('路由守卫已经问过的那一份，挂上来时先读它——不再多发一条请求', async () => {
     // 守卫先起头的效果：面板挂上来时，答案已经在缓存里。
-    setPreviewPointer('task-1', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    await prefetchPreview('task-1')
+    getPreview.mockClear()
     const { container } = mountPanel()
     await flush()
     // 面板读到了缓存里那一份：没有为它再问一次。
@@ -341,8 +342,10 @@ describe('预览面板：芝士摆出来时立刻跟上', () => {
   })
 
   it('守卫先问过的那一份，开预览时直接拿来渲染——不再等一轮网络', async () => {
-    // 路由守卫已经替这个房间把指针取回来了（lib/previewPointer.ts）：答案在手边。
-    setPreviewPointer('task-1', { path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    // 路由守卫已经替这个房间把指针取回来了（router/index.ts）：答案在手边。
+    getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
+    await prefetchPreview('task-1')
+    getPreview.mockClear()
     readFile.mockResolvedValue({ path: 'report.html', content: '<p>cached</p>' })
     const { container } = mountPanel()
     await flush()

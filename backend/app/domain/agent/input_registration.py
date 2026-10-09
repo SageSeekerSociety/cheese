@@ -4,8 +4,8 @@ import time
 import uuid
 
 from app.core.errors import ValidationError
-from app.domain.agent.live_work import LiveWork
 from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent.turn.state.live import LiveWork
 from app.domain.block.queries import reaction_summaries_for_blocks
 from app.domain.delivery.agent import DeliveryTargetChanged, fence_send
 from app.domain.delivery.input_identity import (

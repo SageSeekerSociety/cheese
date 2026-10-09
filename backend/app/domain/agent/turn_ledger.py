@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 
 from app.domain.agent import turn_inputs
 from app.domain.agent.admission import Pool
-from app.domain.agent.repositories import AgentTurnRepository
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -31,22 +30,10 @@ def fire_on_done(callback: Callable[[], None]) -> None:
         logger.exception("submit on_done hook failed")
 
 
-async def open_turn(session_factory, **fields) -> None:
-    async with session_factory() as session:
-        await AgentTurnRepository(session).open(**fields)
-        await session.commit()
-
-
 async def stamp_delivery(session_factory, turn_id: uuid.UUID) -> None:
     """Record that the transport accepted this turn's prompt (the ledger's own
     helper; mid-turn bookkeeping that must never kill a working turn)."""
     await turn_inputs.stamp_delivery_fact(session_factory, turn_id=turn_id, at=utcnow())
-
-
-async def close_turns(session_factory, turn_ids) -> None:
-    async with session_factory() as session:
-        await AgentTurnRepository(session).close(turn_ids, utcnow())
-        await session.commit()
 
 
 def project_pool(project_id: uuid.UUID | str, limit: int) -> Pool:

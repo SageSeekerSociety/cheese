@@ -69,9 +69,9 @@ from app.domain.memory.models import (
     MemoryEntry,
     MemoryMigrationPlan,
     MemoryMigrationStatus,
-    MemoryScope,
     parse_user_scope_id,
 )
+from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import live_entries
 from app.domain.project.services import ProjectService
 from app.domain.service_keys import KeySpec, service_key

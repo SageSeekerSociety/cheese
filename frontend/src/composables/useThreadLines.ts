@@ -15,7 +15,9 @@ import { reactive } from 'vue'
 
 import { isQueued, threadWaitLabel, WAITS } from '../lib/threadStatus'
 
-import { getThread, listThreads } from '@/api/threads'
+import { getThread } from '@/api/threads'
+import { queryClient } from '@/query/client'
+import { threadsQuery } from '@/query/room'
 
 interface Timeline {
   messages: Ref<Block[]>
@@ -113,7 +115,8 @@ export function useThreadLines(opts: {
     if (refreshing) return refreshing
     refreshing = (async () => {
       try {
-        const rows = await listThreads(room, 100)
+        // 和概览里那一格读同一份；那边正在读就等它。
+        const rows = await queryClient.fetchQuery({ ...threadsQuery(room), staleTime: 0 })
         if (opts.roomId() !== room) return
         for (const row of rows) {
           const shown = opts.timeline.find(row.root_block_id)

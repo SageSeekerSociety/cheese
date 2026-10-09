@@ -38,7 +38,7 @@ import ts from 'typescript'
  */
 const PATH_CALLS = new Map([
   ['request', ''],
-  ['requestConditional', ''],
+  ['readSince', ''],
   ['legacyRequest', ''],
   ['connectorRequest', '/connector'],
 ])

@@ -54,7 +54,7 @@ class WorkChat:
     @property
     def live(self):
         """The per-room/turn state the real service holds (`live_work.LiveWork`)."""
-        from app.domain.agent.live_work import LiveWork
+        from app.domain.agent.turn.state.live import LiveWork
 
         return self.__dict__.setdefault("_live", LiveWork())
 

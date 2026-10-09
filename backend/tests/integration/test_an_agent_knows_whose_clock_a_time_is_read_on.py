@@ -12,7 +12,7 @@ import uuid
 
 from sqlalchemy import update
 
-from app.domain.agent.room.turn import room_roster
+from app.domain.agent.turn.intake.rooms import room_roster
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import join_project_team, post_project

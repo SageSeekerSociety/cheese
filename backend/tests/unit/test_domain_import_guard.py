@@ -65,16 +65,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
-        ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
-        # agent.room.turn 是从 agent.chat 里拆出来的那一块（一轮的组装与执行：
-        # `_assemble_turn`、`_converse_impl`）。它摸的三个 repository 正是原先
-        # chat.py 那一组里跟着它走的：读写 block、读项目表、读话题表。拆模块没有
-        # 新增跨包的边，只是发起方从 chat.py 换成了 room/turn.py，所以按同一笔债
-        # 入账。
-        ("app.domain.agent.room.turn", "app.domain.block.repositories"),
-        ("app.domain.agent.room.turn", "app.domain.project.repositories"),
-        ("app.domain.agent.room.turn", "app.domain.topic.repositories"),
         # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
         # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
         # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`
@@ -92,12 +83,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 边，只是发起方从 chat.py 换成了 queries.py，所以按同一笔债入账。
         ("app.domain.agent.queries", "app.domain.block.repositories"),
         ("app.domain.agent.queries", "app.domain.project.repositories"),
-        # agent.room_events 是从 agent.chat 里拆出来的那一块（这一轮往房间里落下
-        # 的那些行：事件块、步骤的判决、变更汇总）。它摸的 repository 只有 block
-        # 一个，正是原先 chat.py 那一组里跟着它走的：block 领域没有 service 层，
-        # `platform_stats.pipeline` 那条注释讲的是同一件事。拆模块没有新增跨包的
-        # 边，只是发起方从 chat.py 换成了 room_events.py，所以按同一笔债入账。
-        ("app.domain.agent.room_events", "app.domain.block.repositories"),
         # agent.hook_stream 是从 agent.chat 里拆出来的那一块（屏幕订阅送进来的
         # 那一条线：读一条事件、落块、重试与整理的提示、关这一轮的书）。它摸的
         # repository 只有 block 一个，正是原先 chat.py 那一组里跟着它走的：block

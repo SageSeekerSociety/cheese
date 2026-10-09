@@ -208,7 +208,7 @@ async def _publish_as_agent(
     runner = get_work_runner()
     work = runner.live_work_for_topic(place.conversation_id)
     turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-    payload = await chat._persist_assistant_message(
+    payload = await chat.messages.persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
         inner_id=place.inner_id,

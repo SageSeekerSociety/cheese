@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
-from app.domain.agent.live_work import HookWorkState, LiveWork
+from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from tests.conftest import stub_compute
 
 

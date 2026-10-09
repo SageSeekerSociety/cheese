@@ -1,6 +1,6 @@
 import type { ListPayload, Project, ProjectInvitation, ProjectMemberRow, Topic, TopicMemberRow } from '../cx_types'
 
-import { request, roomRead } from './http'
+import { request } from './http'
 
 // 项目成员列表 (used by the 改验收人 menu). Returns {data:[{user_handle, role}]}.
 export function listProjectMembers(projectId: string): Promise<ListPayload<ProjectMemberRow>> {
@@ -88,7 +88,7 @@ export function revokeInvitation(invitationId: string): Promise<ProjectInvitatio
 // the actor's topic role (owner/admin may manage the roster).
 
 export function listTopicMembers(topicId: string): Promise<ListPayload<TopicMemberRow>> {
-  return roomRead<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
+  return request<ListPayload<TopicMemberRow>>(`/topics/${encodeURIComponent(topicId)}/members`)
 }
 
 // 一个房间。任务的 id 问这条接口是 404，任务走 `api/tasks.ts`

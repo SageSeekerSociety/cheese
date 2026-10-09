@@ -48,12 +48,21 @@ onBeforeUnmount(() => clearInterval(ticker))
 
 const separator = computed(() => t('work.room.activity.separator'))
 
+/** 上一轮留下的帧：比这一轮还早。live 帧那本账只在换房间时清，一轮结束后它还在，
+ *  新一轮刚起来、还没吐出第一条时，上一轮收尾那一刻会串进来。 */
+function fromAnEarlierTurn(line: MemberActivityLine): boolean {
+  return line.lastFrameAt != null && line.lastFrameAt < line.since * 1000
+}
+
 /** 谁、此刻那一步 —— 会变长的那一截，用省略号收在它自己身上。 */
 function workingHead(line: MemberActivityLine): string {
   const parts = [t('work.room.activity.working', { name: line.name })]
   // 有从 live 帧读来的当前一步，就用它顶掉时间线上那一个相（「思考中」）—— 它更
   // 具体，而且一次长工具调用期间时间线上根本不长新行，那个相早就是旧的了。
-  const step = line.step ?? line.detail
+  // 上一轮留下的帧（比这一轮还早）不是这一轮的当前一步：那本账只在换房间时清，
+  // 一轮结束后它还在，新一轮刚起来时会串进来。那时退回时间线上那一个相。
+  const live = fromAnEarlierTurn(line) ? null : line.step
+  const step = live ?? line.detail
   if (step) parts.push(step)
   return parts.join(separator.value)
 }
@@ -64,9 +73,11 @@ function workingTotal(line: MemberActivityLine): string | null {
   return formatSpan(Math.max(0, Math.floor((now.value - line.since * 1000) / 1000)))
 }
 
-/** 多久没有新输出；还没到、或从没收过帧就不说。 */
+/** 多久没有新输出；还没到、从没收过帧、或者那一帧比这一轮还早（上一轮留下的）就不说。 */
 function stallText(line: MemberActivityLine): string | null {
-  if (!line.lastFrameAt) return null
+  // 比这一轮还早的帧是上一轮的收尾，那一截静默不是这一轮的：这一轮才开始了几秒，
+  // 不可能已经好几分钟没有输出。
+  if (!line.lastFrameAt || fromAnEarlierTurn(line)) return null
   const quiet = Math.floor((now.value - line.lastFrameAt) / 1000)
   if (quiet * 1000 < STALL_MS) return null
   return t('work.room.activity.stalled', { span: formatSpan(quiet) })

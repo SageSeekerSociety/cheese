@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { RoomTask } from '@/cx_types'
 
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -11,10 +11,7 @@ import { useCommands } from '@/commands'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
-import { readProjectTasks } from '@/lib/projectTasks'
-import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
-import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 
@@ -52,56 +49,18 @@ const activeAllTasks = computed(() =>
   route.name === 'project-tasks' && typeof route.query.channel === 'string' ? route.query.channel : null
 )
 
-// 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和全部任务、项目
-// 总览读同一份（`readProjectTasks`），它们刚读过就拿那一份。任务变了（新建、开始、关闭）
-// 房间会收到通知（`store.tasksChanged`），那时立刻重读；换个页面不算变，30 秒内读过的
-// 就用那一份 —— 这份清单是整个项目的任务，后端每读一次都要把它们全部算一遍。
-const TASKS_REFRESH_MS = 30_000
-const tasks = ref<RoomTask[]>([])
-// 后发的那次读说了算：任务刚变过时另发的那一次，可能比之前还没回来的那一次先回来。
-let tasksRead = 0
-async function loadTasks(maxAgeMs?: number, fresh = false) {
-  const pid = props.projectId
-  const mine = ++tasksRead
-  try {
-    const payload = await readProjectTasks(pid, { maxAgeMs, open: true, fresh })
-    if (props.projectId === pid && mine === tasksRead) tasks.value = payload.data
-  } catch {
-    // 留着上一次的那份。
-  }
-}
-const railTasks = computed(() => railTasksByChannel(tasks.value, myHandle()))
-const roomTasks = computed(() =>
-  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.shown]))
+// 每个频道里和我有关的几条任务，挂在频道那一行下面：频道清单的每一行自己带着
+// （`my_tasks`：最多几件和我有关的，加这个频道进行中的总数），侧栏不读整个项目的任务。
+// 任务变了，房间推来的帧会把那一行重读一次（query/changes）。
+const roomTasks = computed<Record<string, RoomTask[]>>(() =>
+  Object.fromEntries(
+    store.topics.filter((topic) => topic.my_tasks?.shown.length).map((topic) => [topic.id, topic.my_tasks!.shown])
+  )
 )
-const roomTaskTotals = computed(() =>
-  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.total]))
-)
-let tasksTimer: number | undefined
-// 看不见的标签页不读；回到前台时补一次。
-function refreshTasksIfVisible() {
-  if (document.visibilityState !== 'hidden') void loadTasks(TASKS_REFRESH_MS)
-}
-onMounted(() => {
-  void loadTasks()
-  tasksTimer = window.setInterval(refreshTasksIfVisible, TASKS_REFRESH_MS)
-  document.addEventListener('visibilitychange', refreshTasksIfVisible)
-})
-onUnmounted(() => {
-  window.clearInterval(tasksTimer)
-  document.removeEventListener('visibilitychange', refreshTasksIfVisible)
-})
-watch(
-  () => props.projectId,
-  () => void loadTasks(2_000)
-)
-watch(
-  () => route.fullPath,
-  () => void loadTasks(TASKS_REFRESH_MS)
-)
-watch(
-  () => store.tasksChanged,
-  () => void loadTasks(undefined, true)
+const roomTaskTotals = computed<Record<string, number>>(() =>
+  Object.fromEntries(
+    store.topics.filter((topic) => topic.my_tasks?.open).map((topic) => [topic.id, topic.my_tasks!.open])
+  )
 )
 function openAllTasks(channelId: string) {
   void router.push({ name: 'project-tasks', params: { projectId: props.projectId }, query: { channel: channelId } })
@@ -156,12 +115,12 @@ function onPressPage(name: string) {
 }
 
 // 任务行（侧栏那两个 `TopicRailTaskRow` 的位置）：和话题行一样两段都要——任务页的
-// 代码，和它所在那个房间最新一页消息。
+// 代码，和任务自己那段对话最新一页消息（任务页读的是它，不是它所在的频道）。
 function onPressTask(task: { roomId: string; taskId: string }) {
   prefetchNow({
     router,
     to: { name: 'workspace-task', params: { projectId: props.projectId, topicId: task.roomId, taskId: task.taskId } },
-    topicId: task.roomId,
+    topicId: task.taskId,
   })
 }
 

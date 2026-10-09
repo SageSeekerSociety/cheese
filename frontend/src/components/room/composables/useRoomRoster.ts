@@ -11,17 +11,18 @@
 import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
 import type { Block, ProjectMemberRow, Topic, TopicMemberRow } from '../../../cx_types'
 
-import { computed, ref, watch } from 'vue'
-import { tryOnScopeDispose } from '@vueuse/core'
+import { computed, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
 import { t } from '../../../i18n'
 import { agentNames, memberName } from '../../../lib/agentNames'
 import { isAgentBlock } from '../../../lib/authorship'
 import { isExternalMember } from '../../../lib/externalMembers'
-import { cachedTopicPanel, fetchTopicMembers } from '../../../lib/topicPanelCache'
-import { onTopicRosterChange } from '../../../lib/topicRosterChanges'
 import { isAvatarKnownFailed, rememberAvatarFailure } from '../../../utils/avatarFailures'
 import { getAvatarUrl } from '../../../utils/materials'
+
+import { queryClient } from '@/query/client'
+import { roomMembersQuery } from '@/query/room'
 
 export function useRoomRoster(options: {
   topic: () => Topic | null
@@ -37,54 +38,29 @@ export function useRoomRoster(options: {
   // （handle 是 cheese-<话题 hex>），项目名册上没有它——种子数据里有一行共用的
   // `cheese` 掩盖过这件事，真实部署里没有。名单里少了它，就没人 @ 得到它，而 @ 它
   // 正是叫它干活的唯一方式。
-  const roomMembers = ref<TopicMemberRow[]>([])
-
-  // 手上这份名单是**哪个房间**的。
   //
-  // 名册按话题拉，切话题的那一瞬间上一份还在内存里。而「名单里没有 AI 队友」在两
-  // 种状态下含义正相反：还没到（要等——此刻替人写的 @ 指不到这个房间那位）、到了
-  // 确实没有（老话题没有自己的座位，得退回项目名册上那行共用的芝士）。一句「load
-  // 完没完」的布尔分不开这两件事，所以记的是名单的主人。
-  const rosterFor = ref<string | null>(null)
-  const rosterLoaded = computed(() => {
-    const here = options.topic()
-    return !!here && rosterFor.value === here.id
-  })
-
-  async function loadRoster() {
-    const place = options.topic()
-    if (!place) {
-      roomMembers.value = []
-      rosterFor.value = null
-      return
+  // 名册按话题读，切到看过的房间时上次那份当场就在（`query/room`）。名册抽屉里加人、
+  // 移人、改角色之后那份当场作废重读，重读期间旧名单留着，不闪。
+  //
+  // 而「名单里没有 AI 队友」在两种状态下含义正相反：还没到（要等——此刻替人写的 @
+  // 指不到这个房间那位）、到了确实没有（老话题没有自己的座位，得退回项目名册上那行
+  // 共用的芝士）。所以要分清「这个房间的名单到了没有」，不能拿上一个房间那份顶着。
+  const roster = useQuery(
+    computed(() => {
+      const id = options.topic()?.id ?? ''
+      return { ...roomMembersQuery(id), enabled: !!id }
+    }),
+    queryClient
+  )
+  const rosterLoaded = computed(() => !!options.topic() && roster.data.value !== undefined)
+  const roomMembers = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
+  // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出芝士」，
+  // 而屏幕上没有任何东西说明为什么。
+  watch(
+    () => roster.error.value,
+    (e) => {
+      if (e) options.onError(t('work.room.roster.mentionLoadFailed'))
     }
-    const id = place.id
-    // 切回来过的房间：上次那份名单先顶上，@ 补全和署名不必等这一轮网络。
-    const cached = cachedTopicPanel('members', id)
-    if (cached && rosterFor.value !== id) {
-      roomMembers.value = cached.data
-      rosterFor.value = id
-    }
-    try {
-      const payload = await fetchTopicMembers(id)
-      if (options.topic()?.id === id) {
-        roomMembers.value = payload.data
-        rosterFor.value = id
-      }
-    } catch {
-      // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
-      // 芝士」，而屏幕上没有任何东西说明为什么。
-      options.onError(t('work.room.roster.mentionLoadFailed'))
-    }
-  }
-
-  watch(() => options.topic()?.id, loadRoster, { immediate: true })
-  // 名册抽屉里加人、移人、改角色，这份副本跟着重拉：只在切话题时拉的话，刚加进来
-  // 的队友要等切走再切回来才 @ 得到。重拉期间旧名单留着（`rosterFor` 不动），不闪。
-  tryOnScopeDispose(
-    onTopicRosterChange((topicId) => {
-      if (options.topic()?.id === topicId) void loadRoster()
-    })
   )
 
   // 名册那一行有三种形状：话题名册是 member_handle，项目名册是 user_handle，而 @

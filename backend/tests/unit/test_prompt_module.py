@@ -26,6 +26,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
 )
 from app.domain.agent.service import AgentCompacting
+from app.domain.agent.turn.state import inputs
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CONSUMED_TURN_META_KEY,
@@ -39,10 +40,7 @@ MOVED = (
     "_PROGRESS_MARK",
     "_REPLAY_NOTICE_AT",
     "_REPLAY_NOTICE_EVERY",
-    "_addressed_to",
     "_compaction_notice",
-    "_is_pending_input",
-    "_pending_input_blocks",
     "_pending_platform_notices",
     "_platform_preamble",
     "_progress_lines",
@@ -114,7 +112,7 @@ def test_the_definitions_are_not_left_behind_in_chat():
     assert not (defined & set(MOVED)), sorted(defined & set(MOVED))
 
 
-# ---- 待读窗口：哪些块是这一轮还没读进去的输入 ----
+# ---- 待读窗口：由真实准备与收尾共用 state owner，保留全部行为断言 ----
 
 
 def test_a_message_after_the_last_agent_line_is_pending():
@@ -123,7 +121,7 @@ def test_a_message_after_the_last_agent_line_is_pending():
         _block(author=CHEESE_HANDLE, content="答"),
         _block(content="芝士说完之后"),
     ]
-    assert prompt._pending_input_blocks(history) == [history[2]]
+    assert inputs._pending_input_blocks(history) == [history[2]]
 
 
 def test_a_block_a_turn_already_stamped_is_not_pending():
@@ -132,7 +130,7 @@ def test_a_block_a_turn_already_stamped_is_not_pending():
         _block(content="读过了", meta={CONSUMED_TURN_META_KEY: "turn-1"}),
         _block(content="还没读"),
     ]
-    assert prompt._pending_input_blocks(history) == [history[2]]
+    assert inputs._pending_input_blocks(history) == [history[2]]
 
 
 def test_a_tracked_input_is_pending_even_before_the_watermark():
@@ -146,7 +144,7 @@ def test_a_tracked_input_is_pending_even_before_the_watermark():
         _block(content="轮次跑着的时候到的", meta={CONSUMED_TURN_META_KEY: None}),
         _block(author=CHEESE_HANDLE, content="那一轮答的"),
     ]
-    assert prompt._pending_input_blocks(history) == [history[0]]
+    assert inputs._pending_input_blocks(history) == [history[0]]
 
 
 def test_a_platform_event_is_not_an_input_to_read():
@@ -159,14 +157,14 @@ def test_a_platform_event_is_not_an_input_to_read():
             content="闸门没过",
         ),
     ]
-    assert prompt._pending_input_blocks(history) == []
+    assert inputs._pending_input_blocks(history) == []
 
 
 def test_only_what_a_participant_said_counts_as_pending_input():
-    assert prompt._is_pending_input(_block(kind=BlockKind.message))
-    assert prompt._is_pending_input(_block(kind=BlockKind.attachment))
-    assert not prompt._is_pending_input(_block(kind=BlockKind.weekly))
-    assert not prompt._is_pending_input(
+    assert inputs._is_pending_input(_block(kind=BlockKind.message))
+    assert inputs._is_pending_input(_block(kind=BlockKind.attachment))
+    assert not inputs._is_pending_input(_block(kind=BlockKind.weekly))
+    assert not inputs._is_pending_input(
         _block(author_type=AuthorType.platform, kind=BlockKind.message)
     )
 
@@ -188,12 +186,12 @@ def test_a_notice_the_platform_left_is_pending_until_a_turn_stamps_it():
 
 def test_input_for_another_agent_is_not_this_turns():
     for_other = _block(meta={"agent_recipient": {"handle": "cheese-abc"}})
-    assert prompt._addressed_to(for_other, "cheese-abc")
-    assert not prompt._addressed_to(for_other, CHEESE_HANDLE)
+    assert inputs._addressed_to(for_other, "cheese-abc")
+    assert not inputs._addressed_to(for_other, CHEESE_HANDLE)
 
 
 def test_input_with_no_recipient_belongs_to_the_rooms_agent():
-    assert prompt._addressed_to(_block(), CHEESE_HANDLE)
+    assert inputs._addressed_to(_block(), CHEESE_HANDLE)
 
 
 # ---- 重放：几次才值得在房间里说一句 ----

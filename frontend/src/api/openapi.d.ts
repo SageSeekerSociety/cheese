@@ -9411,7 +9411,9 @@ export interface paths {
          *     only moves when the topic's own fields change.
          *
          *     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
-         *     this is the endpoint the sidebar lists from.
+         *     this is the endpoint the sidebar lists from — and the tasks the sidebar
+         *     hangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never
+         *     reads the whole project's tasks for the few that are the caller's.
          *
          *     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
          *     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的

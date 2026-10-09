@@ -1,4 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router'
+import type { Project } from '@/cx_types'
 
 import { createMemoryHistory, createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -19,6 +20,7 @@ import TeamsRoutes from '@/router/teams'
 import UserRoutes from '@/router/user'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 // Keep the production route hierarchy and redirects, without mounting page data loaders.
 function withoutViews(record: RouteRecordRaw): RouteRecordRaw {
@@ -133,10 +135,17 @@ describe('返回上一级', () => {
 // 贴链接直接打开、或者刷新之后，历史里没有"上一层"。这正是当初不敢用
 // history.back() 的那件事——它会把人踢出整个应用。于是退到数据里的归属关系。
 describe('没有来路时，退到项目所属的小队', () => {
+  // 项目外框打开了 project-a，项目清单已经读回来。
+  function projectsAre(projects: Project[]) {
+    seedProjects(projects)
+    seedProject('project-a', { topics: [], members: [], unread: {}, privateUnread: {}, notifyLevels: {} })
+    useWorkspaceStore().openProject('project-a')
+  }
+
   function ownedBy(team: number | null) {
-    useWorkspaceStore().projects = [
+    projectsAre([
       { id: 'project-a', name: 'A', created_at: '', team_id: team, team_handle: team === null ? null : `crew-${team}` },
-    ]
+    ])
   }
 
   it('← 指向项目所属的小队', async () => {
@@ -150,9 +159,7 @@ describe('没有来路时，退到项目所属的小队', () => {
   // 项目在某人名下时，所属的是只有他自己的那个团队，地址是他的用户名，也只有他本人
   // 打得开。被邀请进来的人按下去只会看到「找不到」，所以对他们没有这一层。
   function ownedByPerson(handle: string) {
-    useWorkspaceStore().projects = [
-      { id: 'project-a', name: 'A', created_at: '', team_id: 3, team_handle: handle, owner_handle: handle },
-    ]
+    projectsAre([{ id: 'project-a', name: 'A', created_at: '', team_id: 3, team_handle: handle, owner_handle: handle }])
   }
 
   it('自己名下的项目，← 回你名下的项目', async () => {

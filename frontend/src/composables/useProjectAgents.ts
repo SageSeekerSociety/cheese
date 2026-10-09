@@ -11,18 +11,21 @@ import type { AgentType, ProjectAgent } from '@/cx_types'
 import type { AgentFieldChoice } from '@/lib/modelChoices'
 
 import { computed, ref, toValue } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
-import { useCachedResource } from '@/composables/useCachedResource'
+import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import {
   deactivateProjectAgent,
   getProjectDefaultModel,
   isEndpointMissing,
   listAgentTypes,
-  listProjectAgents,
   setProjectDefaultAgent,
 } from '@/api'
 import { t } from '@/i18n'
+import { patchQuery, queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { agentsQuery } from '@/query/project'
 
 interface AgentsPayload {
   agents: ProjectAgent[]
@@ -37,41 +40,52 @@ interface AgentsPayload {
 }
 
 export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
-  // 进过一次的队友名册，再进来第一帧就在（useCachedResource）。
-  const { data, loading, refreshing, refresh } = useCachedResource(
-    () => `project-agents:${toValue(projectId)}`,
-    async (): Promise<AgentsPayload> => {
-      const id = toValue(projectId)
-      const payload: AgentsPayload = {
-        agents: [],
-        types: [],
-        models: [],
-        backendMissing: false,
-        loadError: null,
-      }
-      try {
-        payload.agents = (await listProjectAgents(id)).data
-      } catch (e) {
-        if (isEndpointMissing(e)) payload.backendMissing = true
-        else payload.loadError = e instanceof Error ? e.message : t('work.projectSettings.agents.loadFailed')
+  // 进过一次的队友名册，再进来第一帧就在（query/client）。
+  const key = computed(() => [...keys.projectAgents(toValue(projectId)), 'settings'] as const)
+  const read = useQuery(
+    computed(() => ({
+      queryKey: key.value,
+      queryFn: async (): Promise<AgentsPayload> => {
+        const id = toValue(projectId)
+        const payload: AgentsPayload = {
+          agents: [],
+          types: [],
+          models: [],
+          backendMissing: false,
+          loadError: null,
+        }
+        try {
+          payload.agents = await queryClient.fetchQuery({ ...agentsQuery(id), staleTime: 0 })
+        } catch (e) {
+          if (isEndpointMissing(e)) payload.backendMissing = true
+          else payload.loadError = e instanceof Error ? e.message : t('work.projectSettings.agents.loadFailed')
+          return payload
+        }
+        // 两个补充数据，谁失败谁空着。
+        const [typeList, modelList] = await Promise.all([
+          listAgentTypes().then(
+            (r) => r.data,
+            () => [] as AgentType[]
+          ),
+          getProjectDefaultModel(id).then(
+            (r) => r.choices,
+            () => [] as AgentFieldChoice[]
+          ),
+        ])
+        payload.types = typeList
+        payload.models = modelList
         return payload
-      }
-      // 两个补充数据，谁失败谁空着。
-      const [typeList, modelList] = await Promise.all([
-        listAgentTypes().then(
-          (r) => r.data,
-          () => [] as AgentType[]
-        ),
-        getProjectDefaultModel(id).then(
-          (r) => r.choices,
-          () => [] as AgentFieldChoice[]
-        ),
-      ])
-      payload.types = typeList
-      payload.models = modelList
-      return payload
-    }
+      },
+    })),
+    queryClient
   )
+  holdRevealUntil(() => !read.isPending.value)
+  const data = read.data
+  const loading = read.isPending
+  const refreshing = computed(() => read.isFetching.value && !read.isPending.value)
+  async function refresh(): Promise<void> {
+    await queryClient.invalidateQueries({ queryKey: keys.projectAgents(toValue(projectId)) })
+  }
 
   const agents = computed<ProjectAgent[]>(() => data.value?.agents ?? [])
   const types = computed<AgentType[]>(() => data.value?.types ?? [])
@@ -85,7 +99,7 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
   // 关掉这条 alert 要连缓存里的那份一起关，不然离开这一节再回来它又弹出来。
   function dismissError() {
     actionError.value = null
-    if (data.value) data.value.loadError = null
+    void patchQuery<AgentsPayload>(key.value, (held) => ({ ...held, loadError: null }))
   }
 
   /** 设为项目默认的那一个队友；正在设的是谁，用它把那一行的按钮画成 loading。 */

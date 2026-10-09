@@ -36,7 +36,6 @@ from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import build_session_opening, build_system_prompt
-from app.domain.agent.live_work import LiveWork
 from app.domain.agent.platform_notices import (
     EVENT_MEMORY_CHANGED,
     SEVERITY_INFO,
@@ -52,6 +51,7 @@ from app.domain.agent.queries import (
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.session_host.host import keeps_memory
+from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_room, room_column

@@ -139,10 +139,17 @@ async def list_review_comments(
     task_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     _place, actor, task = await task_conversation(db, resolver, task_id)
+    return ok(await review_comment_rows(db, task, actor.handle or ""))
+
+
+async def review_comment_rows(db: AsyncSession, task, viewer: str) -> dict:
+    """A task's review comments as `viewer` reads them; also the
+    `review_comments` of a task's room snapshot. The caller has authorised the
+    reader."""
     svc = ReviewCommentService(db)
-    rows = await svc.comments(task.id, actor.handle or "")
+    rows = await svc.comments(task.id, viewer)
     anchor = await svc.anchors(task, rows)
-    return ok({"comments": [describe(row, anchor) for row in rows]})
+    return {"comments": [describe(row, anchor) for row in rows]}
 
 
 @router.get(

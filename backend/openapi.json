@@ -40458,7 +40458,7 @@
           "topics"
         ],
         "summary": "List Topics",
-        "description": "The project's topics.\n\n`sort=last_activity_at` orders by when something last HAPPENED in each topic\n(its newest block), and `active_since=<ISO instant>` keeps only the topics\nactive at or after it — \"最近活跃的话题\". Neither reads `updated_at`, which\nonly moves when the topic's own fields change.\n\nEvery row also carries what it is to the caller (`joined`/`awaits_me`) —\nthis is the endpoint the sidebar lists from.\n\n条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`\n命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的\n徽章会因为成员刚被拉进来、一张验收卡刚落地、某个队友刚开始干活而变，而这些都不动\n`updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。\n没命中那条路仍然走 `ok()` 的信封，前端 `request()` 靠 `{code,message,data}` 解包。",
+        "description": "The project's topics.\n\n`sort=last_activity_at` orders by when something last HAPPENED in each topic\n(its newest block), and `active_since=<ISO instant>` keeps only the topics\nactive at or after it — \"最近活跃的话题\". Neither reads `updated_at`, which\nonly moves when the topic's own fields change.\n\nEvery row also carries what it is to the caller (`joined`/`awaits_me`) —\nthis is the endpoint the sidebar lists from — and the tasks the sidebar\nhangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never\nreads the whole project's tasks for the few that are the caller's.\n\n条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`\n命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的\n徽章会因为成员刚被拉进来、一张验收卡刚落地、某个队友刚开始干活而变，而这些都不动\n`updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。\n没命中那条路仍然走 `ok()` 的信封，前端 `request()` 靠 `{code,message,data}` 解包。",
         "operationId": "list_topics_topics_get",
         "parameters": [
           {

@@ -35,6 +35,7 @@ vi.mock('@/api', () => ({
 
 import { archiveTopic, listTopics } from '@/api'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject } from '@/test/seedQueries'
 
 const topic = (id: string, projectId: string, status = 'active') =>
   ({ id, project_id: projectId, kind: 'topic', title: id, status }) as unknown as Topic
@@ -72,20 +73,24 @@ describe('记着每个项目上次打开的房间', () => {
     store.rememberTopic('p1', 'gone')
     vi.mocked(listTopics).mockResolvedValue({ data: [topic('t1', 'p1')], total: 1 })
 
-    await store.openProject('p1')
+    store.openProject('p1')
     await flush()
 
     expect(store.lastTopicIdFor('p1')).toBeNull()
   })
 
   it('归档掉的房间也不再落回去', async () => {
+    seedProject('p1', { topics: [topic('t9', 'p1')] })
     const store = useWorkspaceStore()
-    store.projectId = 'p1'
-    store.topics = [topic('t9', 'p1')]
+    store.openProject('p1')
+    await flush()
     store.rememberTopic('p1', 't9')
+    // 归档的话题还在清单里（只是状态变了）。
+    vi.mocked(listTopics).mockResolvedValue({ data: [topic('t9', 'p1', 'archived')], total: 1 })
     vi.mocked(archiveTopic).mockResolvedValue(topic('t9', 'p1', 'archived'))
 
     await store.archive('t9')
+    await flush()
 
     expect(store.lastTopicIdFor('p1')).toBeNull()
   })

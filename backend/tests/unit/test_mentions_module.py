@@ -1,27 +1,20 @@
-"""点名解析那一块搬出来之后，自己站得住。
+"""点名解析由真实 intake 调用，不依赖 ChatService 兼容门面。
 
-与 ``test_event_lines.py`` / ``test_prompt_module.py`` 同一套口径，三条：
+直接测点名模块的 token、解析与参数契约，并确认 human / assistant intake
+使用同一份规范函数；点名模块不反向导入 ChatService，根上不留重复定义。
 
-- 直接 import 新模块就能测，不经过 ``ChatService``（这个文件不 import chat 的实例
-  状态，也不起任何 app fixture）；
-- 搬走的名字在 ``app.domain.agent.chat`` 上仍然导得出来——那是兼容门面，既有调用点
-  与测试不用改一行；
-- 新模块不反向 import chat，否则门面就成了循环。
-
-行为本身（friendly ``@名字`` 怎么展开、私聊里名册为空、群播 token 怎么放行、通知发
-给谁、编辑只补发新增的那几个）由 ``test_mentions.py``、``test_broadcast_mentions.py``、
+完整发送、通知与编辑行为由 ``test_mentions.py``、``test_broadcast_mentions.py``、
 ``test_message_edit.py``、``test_chat_publication.py`` 与
-``test_a_private_chats_two_seats_live_in_the_roster.py`` 从门面那条路径覆盖。这里补的
-是搬出来之后新出现的两样东西：模块边界，和原先没有直接单测的那几件——``<#id>``
-引用 token 的解析、``person_mentions`` 那个 ``dm`` 参数（`_is_dm` 仍钉在
-`room/turn.py`，那个布尔不该在第二个模块里出现）。
+``test_a_private_chats_two_seats_live_in_the_roster.py`` 覆盖。这里补模块边界、
+``<#id>`` 引用解析与 ``person_mentions`` 的 ``dm`` 参数；唯一 `_is_dm` 读点
+属于 `turn/intake/rooms.py`，不能在点名模块里再问一遍。
 """
 
 import ast
 import inspect
 import pathlib
 
-from app.domain.agent import chat, mentions
+from app.domain.agent import mentions
 from app.domain.agent.mentions import (
     _SPECIAL_MENTIONS,
     MENTION_ALL,
@@ -29,8 +22,9 @@ from app.domain.agent.mentions import (
     _resolve_mentions,
     _topic_refs,
 )
+from app.domain.agent.turn.intake import assistant, human
 
-#: 搬走的全部名字。门面要逐个还得出同一个对象。
+#: 点名模块负责的名字，不能在 ChatService 根上留下第二份实现。
 MOVED = (
     "MENTION_ALL",
     "MENTION_HERE",
@@ -49,16 +43,18 @@ MOVED = (
 ROSTER = [{"handle": "alice", "name": "Alice", "role": "owner"}]
 
 
-# ---- 门面：搬走的名字还是同一个对象，导入路径没变 ----
+# ---- 真实调用者使用同一规范 owner，不要求旧兼容门面 ----
 
 
-def test_the_moved_names_are_the_same_objects_behind_the_facade():
-    for name in MOVED:
-        assert getattr(chat, name) is getattr(mentions, name), name
+def test_the_intake_callers_use_the_canonical_mention_functions():
+    assert human.person_mentions is mentions.person_mentions
+    assert human.announce_mentions is mentions.announce_mentions
+    assert assistant.announce_mentions is mentions.announce_mentions
+    assert assistant._expand_mention_names is mentions._expand_mention_names
 
 
-def test_the_module_does_not_import_the_facade_back():
-    """反向 import 就是循环，门面也就不是门面了。"""
+def test_the_module_does_not_import_the_composition_root_back():
+    """点名 owner 不依赖组装它的根。"""
     tree = ast.parse(pathlib.Path(mentions.__file__).read_text())
     modules = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
     modules |= {
@@ -71,8 +67,9 @@ def test_the_module_does_not_import_the_facade_back():
 
 
 def test_the_definitions_are_not_left_behind_in_chat():
-    """门面是「重新导出」，不是「两份定义」——两份定义会各自漂移。"""
-    tree = ast.parse(pathlib.Path(chat.__file__).read_text())
+    """根可以使用规范函数，但不能留下第二份定义。"""
+    chat_file = pathlib.Path(mentions.__file__).with_name("chat.py")
+    tree = ast.parse(chat_file.read_text())
     defined = {
         n.name
         for n in tree.body
@@ -146,7 +143,7 @@ def test_the_same_handle_twice_resolves_once():
 def test_person_mentions_takes_the_private_room_answer_as_a_keyword():
     """``dm`` 必填且 keyword-only：这一块不去读 `is_private`。
 
-    `is_private` 全仓只有 `room/turn.py` 的 `_is_dm` 一个读点，而且那道棘轮连形参与关键
+    `is_private` 全仓只有 `turn/intake/rooms.py` 的 `_is_dm` 读点，棘轮连形参与关键
     字实参都数（`test_is_private_read_points.py`）——参数按名字递进来，那个布尔就
     不会在这里多出一个出处。"""
     signature = inspect.signature(mentions.person_mentions)

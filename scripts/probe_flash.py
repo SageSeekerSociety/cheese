@@ -3,7 +3,7 @@ misses the first frame and pops in a beat later".
 
 Root cause (found with this probe): on switch-back the first frame restored a
 STALE pixel scrollTop while the timeline's height differs from when we left —
-(a) blocks that landed while away are already in blockCache (unread-poll
+(a) blocks that landed while away are already in the cached newest window (unread-poll
 prefetch) but sat below the fold, and (b) the timeline-end slot (merge box)
 fills in async one frame later. The correction only came from later async
 scrolls (fetch completion + the 200ms catch-up timer), so the tail visibly
@@ -101,13 +101,14 @@ FRAME_LOGGER = """
 }
 """
 
-# Read the app's REAL blockCache instance via the dev-only window hook
-# (a dynamic import can resolve to a second module instance under Vite HMR).
+# Read the app's REAL query cache via the dev-only window hook (a dynamic
+# import can resolve to a second module instance under Vite HMR). A room's
+# newest window lives under ['room', id, 'blocks', 'newest'].
 READ_CACHE = """
 (topicId) => {
-  const cache = window.__blockCache;
+  const cache = window.__queryClient;
   if (!cache) return { hook: false };
-  const arr = cache.get(topicId);
+  const arr = cache.getQueryData(['room', topicId, 'blocks', 'newest'])?.blocks;
   if (!arr) return { cached: false };
   const last = arr[arr.length - 1];
   return {
@@ -163,8 +164,8 @@ async ({ topicId, content, token }) => {
 }
 """
 
-# Refresh a topic's blockCache entry exactly the way the unread poll does
-# (fetch fresh blocks, replace the cache array).
+# Refresh a topic's cached newest window the way the unread poll's prefetch
+# lands it (fetch fresh blocks, replace the window).
 REFRESH_CACHE = """
 async (topicId) => {
   // window.__cxApi.base, not '/api': the gateway strips exactly one prefix, so
@@ -172,7 +173,10 @@ async (topicId) => {
   // a hand-written single prefix 404s.
   const r = await fetch(`${window.__cxApi.base}/topics/${topicId}/blocks`);
   const payload = (await r.json()).data;
-  window.__blockCache.set(topicId, payload.data);
+  window.__queryClient.setQueryData(['room', topicId, 'blocks', 'newest'], {
+    blocks: payload.data,
+    hasMore: !!payload.has_more,
+  });
   return payload.data.length;
 }
 """
@@ -310,7 +314,7 @@ async def main() -> None:
             # message; without the message it would silently re-run scenario A.
             raise SystemExit(f"chat WS did not persist the probe message: {echoed}")
         n = await pg.evaluate(REFRESH_CACHE, topic_a["id"])
-        print(f"[C setup] refreshed A's blockCache (unread-poll style), len={n}")
+        print(f"[C setup] refreshed A's cached window (unread-poll style), len={n}")
         delay_on = True
         await probe_switch(topic_a, "C-newtail")
         delay_on = False

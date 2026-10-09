@@ -31,6 +31,7 @@ import { myHandle } from '../me'
 import { useDocCollab } from './useDocCollab'
 
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
 
 /** 不在哪个对话里的一份文档（项目资料库里的）：直接给编号，不经对话去问。 */
 export interface PanelDocument {
@@ -226,9 +227,19 @@ export function usePanelDoc(props: PanelDocProps) {
     if (id) void loadLastEdit(id).catch(() => {})
   })
 
+  // 同一页历史同时被要两次（几处一起重读），后来的跟着在飞的那一条走；之后的每一次
+  // 照常现问（staleTime 0）。
+  function readVersions(did: string, page: { before?: number; limit?: number }) {
+    return queryClient.fetchQuery({
+      queryKey: ['document', did, 'history', page],
+      queryFn: () => getDocVersions(did, page),
+      staleTime: 0,
+    })
+  }
+
   async function loadLastEdit(did: string) {
     const sequence = ++lastEditSequence
-    const page = await getDocVersions(did, { limit: 1 })
+    const page = await readVersions(did, { limit: 1 })
     if (disposed || documentId.value !== did || sequence !== lastEditSequence) return
     const top = page.versions[0]
     lastEdit.value = top ? { actor: top.actor, at: top.created_at } : null
@@ -245,7 +256,7 @@ export function usePanelDoc(props: PanelDocProps) {
   function loadVersions(before?: number) {
     const did = documentId.value
     if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
-    return getDocVersions(did, { before })
+    return readVersions(did, { before })
   }
 
   /** 恢复到某一版：在最新一版上再记一版。 */

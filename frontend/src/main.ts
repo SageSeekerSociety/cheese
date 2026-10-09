@@ -43,10 +43,14 @@ import { watchInstallPrompt } from '@/lib/pwaInstall'
 // Plugins
 import { registerPlugins } from '@/plugins'
 import vuetify from '@/plugins/vuetify'
+import { persistProjectList } from '@/query/persist'
 import AccountService from '@/services/account'
 import { watchForStaleBuild } from '@/services/staleBuild'
 
 AccountService.init()
+
+// 上次的项目清单先放回缓存，左边栏冷打开时当场就有。
+persistProjectList()
 
 // In the desktop app the frame is not selectable text and has no browser menu.
 behaveAsDesktopApp()

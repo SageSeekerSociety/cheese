@@ -31,13 +31,12 @@ import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
 import { getTopicWorkSummary, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
-import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
-import { cachedTopicPanel, fetchOpenTasks } from '../lib/topicPanelCache'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
@@ -55,6 +54,9 @@ import ProjectFileTab from './ProjectFileTab.vue'
 
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { heldPreview, openRoomTasksQuery, readPreview } from '@/query/room'
 
 const props = withDefaults(
   defineProps<{
@@ -299,7 +301,7 @@ watch(
       void pollWorkSummary()
     }
     // 一轮里派出去的活，收工那一刻就该出现在 任务 那一格上。
-    void pollThreads({ fresh: true })
+    pollThreads()
   }
 )
 
@@ -322,9 +324,9 @@ function markPreviewSeen(id?: string | null) {
 }
 
 // Fetch the POINTER only (no file read, no cookie priming) so the dot can appear
-// while 预览 is not the open tab. Goes through lib/previewPointer, so a request the
-// router guard already started for this topic is reused rather than repeated — and
-// the answer here feeds that cache for the next time the room is opened.
+// while 预览 is not the open tab. Goes through the query cache (`query/room`), so a
+// request the router guard already started for this topic is reused rather than
+// repeated — and the answer here is there the next time the room is opened.
 //
 // 返回的是「这次问到的产物 id」：`null` 是「这个房间没有预览」（一个真看到过的
 // 状态），`undefined` 是「这一问没成」（没话题 id，或者网络断了）——两者不能混，兜
@@ -334,7 +336,7 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string
   if (!tid) return undefined
   let art: PreviewInfo | null = null
   try {
-    art = await refreshPreviewPointer(tid)
+    art = await readPreview(tid)
   } catch {
     // A failed poll is not a state — leave the dot as it was. The real load
     // reports errors; this one only ever adds a hint.
@@ -470,25 +472,23 @@ function markChangesSeen() {
 // ---- 这个房间派出去了几件活 ----
 // A signal, so 总览 can carry its count while closed and can stay out of the way
 // of a room that never dispatched anything.
-const threads = ref<{ open: number }>({ open: 0 })
+// 只取开着的活本身，不带对话：这里只是为了数一数有几条开着。和频道概览读同一份，
+// 切回房间时上次那个数先在。
+const openTasksRead = useQuery(
+  computed(() => {
+    const roomId = props.topic?.id ?? ''
+    return { ...openRoomTasksQuery(roomId), enabled: !!roomId && !props.taskId }
+  }),
+  queryClient
+)
+const threads = computed<{ open: number }>(() => ({
+  open: (openTasksRead.data.value?.data ?? []).filter((r) => r.status === 'open').length,
+}))
 
-function countThreads(rows: { status: string }[]) {
-  threads.value = { open: rows.filter((r) => r.status === 'open').length }
-}
-
-async function pollThreads(opts: { fresh?: boolean } = {}) {
+function pollThreads() {
   const roomId = props.topic?.id
   if (!roomId || props.taskId) return
-  // Show the count from last time (e.g. switching back to a room) while the fresh one loads.
-  const cached = cachedTopicPanel('openTasks', roomId)
-  if (cached) countThreads(cached.data)
-  try {
-    // 只取开着的活本身，不带对话：这里只是为了数一数有几条开着。和频道概览共用同一条读法。
-    const rows = (await fetchOpenTasks(roomId, opts)).data
-    if (props.topic?.id === roomId) countThreads(rows)
-  } catch {
-    // A failed poll is not a state — same rule as the two polls above.
-  }
+  void queryClient.invalidateQueries({ queryKey: keys.roomTasks(roomId) })
 }
 
 function hasContent(key: TabKey): boolean {
@@ -592,9 +592,9 @@ const panelTabs = computed<PanelTab[]>(() =>
   // 它们。频道「没有改动」是事实，不用等谁来答。
   if (!props.taskId) summaryLoaded.value = true
   if (id && props.taskId) {
-    // 这件任务的当前预览，之前问过的还在缓存里（lib/previewPointer.ts）：命中就直接
-    // 用——面板挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
-    const warm = cachedPreviewPointer(id)
+    // 这件任务的当前预览，之前问过的还在缓存里（`query/room`）：命中就直接用——面板
+    // 挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
+    const warm = heldPreview(id)
     if (warm !== undefined) {
       previewPath.value = warm?.path ?? null
       markPreviewSeen(warm?.artifact_id ?? null)
@@ -609,7 +609,6 @@ const panelTabs = computed<PanelTab[]>(() =>
       if (conversationId.value === openedId) void pollWorkSummary({ seen: true })
     })
   }
-  if (id) void pollThreads()
 }
 
 // Declared after the opening block on purpose: it fires immediately on mount and

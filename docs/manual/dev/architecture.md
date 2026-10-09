@@ -301,7 +301,7 @@ CREATE INDEX ON session_work_leases (claim_until) WHERE claim IS NOT NULL;
 frontend/src/
   api/          传输层 http.ts（鉴权、重试、条件 GET、刷新令牌）＋按资源的薄封装
   api/schema.gen.ts   由 /api/openapi.json 生成的类型，不手改
-  query/        QueryClient、查询键表、变更帧的应用（applyChange）、各资源的 queryOptions
+  query/        QueryClient、查询键表、变更帧的应用（changes.ts）、各资源的 queryOptions
   features/<域>/ 该域的组合函数（包 useQuery / useMutation）、乐观更新、域内客户端状态
   views/        路由容器：读路由、调 features、渲染同目录的 <页面>View.vue
   components/   只吃 props 和事件的组件（含各 *View.vue）
@@ -314,18 +314,21 @@ frontend/src/
 
 ### 数据层 {#frontend-data}
 
-「先给旧数据、背后重取」今天手写了四份：`lib/pageCache.ts`、`composables/useCachedResource.ts`、`lib/topicPanelCache.ts`、`lib/blockCache.ts`。它们各做了 vue-query 的一部分（同键去重、保留旧数据、作废），都没有按前缀失效、只重取在看的、结构共享。终点：
+工作区（项目外框、侧栏、总览、频道和任务页、右侧面板、任务清单、文档、成员）和应用外壳的服务端数据只经一个 QueryClient：`src/query/client.ts` 里的单例，`src/query/keys.ts` 一张键表（按 `['project', id, …]`、`['room', id, …]` 分层），各资源的 `queryOptions` 在 `src/query/` 下按领域放。读的地方把这一个实例显式传给 `useQuery`，不靠组件树注入：store 和不在组件里调用的组合函数也这样读。
 
-- **一个 QueryClient**：退出登录 `clear()`；`useCachedResource` 先改成 vue-query 上的薄壳，调用方不动。
-- **不可变更新**：今天有页面就地改取回来的对象（`useCachedResource.ts:44` 为此用了深层 ref），改成 `setQueryData(key, old => 新值)`。「推送回来的数据把本地改动盖掉」这类问题的根在这里。
-- **变更帧进缓存**：一张「实体 → 查询键」表；`upsert` / `delete` 就地改对应列表，`invalidate` 和不认识的实体按键前缀失效，不去猜。WebSocket 重连时带游标，收到 `resync` 全部失效。
-- **KeepAlive 里的页面要停下观察**：`App.vue:84` 用 `<keep-alive :max="5">` 缓存页面，失活页面的查询仍算「在看」，按前缀失效时会跟着重取。查询的 `enabled` 要绑到页面是否激活。
-- **轮询退场**：`ProjectShell.vue` 和 `ProjectSidebar.vue` 的 30 秒轮询在用户级变更流上线后删掉。
-- **聊天时间线不迁**：`blockCache` 本来就是带分页窗口的增量合并，`useInfiniteQuery` 给不了更多。
+- **一个 QueryClient**：换了人登录或退出时，每一份退回「没读过」，看着它的地方还连着，新的人的令牌到手后屏幕上那几份重读（`services/account.ts`）。项目清单另存一份在 sessionStorage（`query/persist.ts`），冷打开时左边栏当场就有。
+- **不可变更新**：本地写一律 `patchQuery(key, old => 新值)`：先作废正在路上的那次读，再改缓存。「改之前发出去的读把刚改的盖回去」靠它挡住，不再各处手写版本号。
+- **推送进缓存**：`state` 帧经一个入口（`query/changes.ts`）按键让对应几份再读一次；正在读的那次回来之后再读一次，一串帧只多读一次（`refreshQueries`）。缓存里没有的（采纳卡、提案卡、文档）由页面自己接。终点是按实体就地 `upsert` / `delete`，要等变更带序号（迁移第 3b、4d 步）。
+- **进房间不再逐块读**：房间连接上的 `subscribed` 帧带着订阅生效那一刻房间的样子（`room`：名册、任务、置顶、支线、提议卡；任务还有它自己、相关、审阅意见），每一块和它自己那个接口回的一样（后端 `api/room_snapshot.py`）。打开房间的导航出发时记下「快照要来」，这几格的读先等它（`query/snapshot.ts`）；之后的帧都比快照新。采纳卡和预览不在里面：读它们要等外部服务。
+- **侧栏不读整个项目的任务**：频道清单的每一行带着挂在它下面的任务（`my_tasks`：和我有关的几件，加进行中的总数），任务变了重读那一行。
+- **KeepAlive 里的页面停下观察**：保活页面的查询把 `enabled` 绑到页面在不在屏幕上（`composables/usePageActive.ts`）。
+- **轮询退场**：`ProjectShell.vue` 和 `ProjectSidebar.vue` 的 30 秒轮询是查询自带的 `refetchInterval`，后台标签不问；用户级变更流上线后删掉。
+- **聊天时间线不迁**：双向翻页、跳到中间、实时追加、发送中的消息、按 id 合并，`useInfiniteQuery` 给不了；时间线留在 `useTimeline` / `useChatPaging`，只有每个房间最新那一段窗口在缓存里（`query/blocks.ts`），打开房间、预取、未读增加时的后台预取共用它。
+- **还没迁的**：反馈中心（`stores/feedback.ts`）、管理后台、空间、资料库。
 
 | 方案 | 结论 |
 |---|---|
-| A. 继续手写，把四份合成一份 | 不选。合出来是第五份，按前缀失效、结构共享、只重取在看的都要再写一遍 |
+| A. 继续手写，把各页的缓存合成一份 | 不选。合出来是又一份，按前缀失效、结构共享、只重取在看的都要再写一遍 |
 | **B. 采用 @tanstack/vue-query** | **选它**。它只管服务端状态，和 pinia 不冲突；结构共享让「整块重取回来只变一行」时其余子树保持同一个引用 |
 | C. Linear 式本地对象池加 IndexedDB | 不选。全量模型注册和离线存储太重；只借三样：整行 delta、快照带序号、写响应带序号 |
 
@@ -349,12 +352,12 @@ frontend/src/
 | 1 | 本页；清掉导入契约里失效的冻结条目；`api/routes/users/` 和 `users_password.py` 的函数内导入上提；函数内导入的棘轮；前端分级不再把注释里的 `vue-router` 算成读路由；几处组件不再自己取数或读路由 | 无 |
 | 2a | 搬家：`windows`、`pricing`、`notices`、`forge`、`delivery_ledger` 五组模块 | 1 |
 | 2b | 「不许新增 `announce_stale`」「不许新增读进程内存运行态」「新路由必须声明响应模型」三道守卫 | 1 |
-| 2c | 前端装 vue-query，`useCachedResource` 换成薄壳；就地改数据的调用方改成 `setQueryData`；KeepAlive 页面的 `enabled` | 1 |
+| 2c | 已合并：工作区和应用外壳的服务端数据只经一个 QueryClient，手写缓存删掉；就地改数据改成 `patchQuery`；KeepAlive 页面的 `enabled`。反馈中心、管理后台、空间、资料库另作一步 | 1 |
 | 2d | 租约写入收口：10 处写入收进一个 `lease_store`，带状态转移表；`claim_until` 改用数据库 `now()`；守卫：写 `work_lease` 只许经过它 | 1 |
 | 2e | 交接（`hand_over()`）停周期任务前强制刷一次 backend error flush；`periodic_job_runs` 加 `run_by`、`run_until`，`PeriodicRunner` 加「只在持锁进程跑」的开关 | 1 |
 | 3a | 分层契约：每个包都分好层，越界的边冻结 | 2a |
 | 3b | `change_log`、两个写钩子和 Core 写守卫、分配器、`after` / `hello` / `resync` 协议，GET 和写响应带 `X-Change-Seq`；先给房间连接 | 2b |
-| 3c | `topicPanelCache` 换成 queryOptions；旧 `state` 帧改成按键失效 | 2c |
+| 3c | 已合并：`state` 帧经 `query/changes.ts` 按键失效 | 2c |
 | 3d | 建 `session_work_leases`，从 JSON 回填，双写，对账任务跑一周 | 2d |
 | 3e | A 类周期任务逐个迁出全局锁，每个一个 PR；再是 B 类 | 2e |
 | 4a | `agent` 拆出 `preview`、`device`；断开 `gateway` 对 `agent` 内部的引用后拆出 `gateway` | 3a |
