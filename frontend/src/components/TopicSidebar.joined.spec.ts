@@ -131,10 +131,10 @@ describe('侧栏只列我加入了的频道', () => {
     expect(visibleTitles(container)).toContain('plain')
   })
 
-  it('「浏览频道」通到全部频道', async () => {
+  it('「浏览话题」通到全部频道', async () => {
     const onBrowseChannels = vi.fn()
     const view = mount({ onBrowseChannels })
-    await fireEvent.click(view.getByRole('button', { name: '浏览频道' }))
+    await fireEvent.click(view.getByRole('button', { name: '浏览话题' }))
     expect(onBrowseChannels).toHaveBeenCalled()
   })
 

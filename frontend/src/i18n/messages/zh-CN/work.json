@@ -1418,7 +1418,7 @@
     "chooseProject": "选择项目",
     "switchProject": "切换项目",
     "chooseProjectFirst": "先选择一个项目",
-    "topics": "频道",
+    "topics": "话题",
     "workingTip": "{name}正在这里工作",
     "expandWorking": "展开：里面有队友在工作",
     "moreMembers": "+{count}",
@@ -2261,7 +2261,7 @@
     "notJoined": "你还没有加入这个频道。加入后可以在主线发言，也可以直接在消息的支线里回复。",
     "archivedNotice": "这个频道已归档，只能查看",
     "describeFailed": "频道说明没保存",
-    "browse": "浏览频道",
+    "browse": "浏览话题",
     "visibilityFailed": "频道可见范围没改成",
     "privateTip": "私密频道"
   },
