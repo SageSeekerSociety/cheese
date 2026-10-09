@@ -698,7 +698,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     hasNewer,
     unseen,
     editing,
-    scrollRef,
+    scrollToBottom,
     backToNewest: () => paging.backToNewest(),
   })
   const { arrived, sentNow, delivered, flashId, flash, settleArrival, settleSent, outboxLeave, jumpToUnseen } = motion
