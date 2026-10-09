@@ -187,6 +187,43 @@ describe('气泡', () => {
   })
 })
 
+describe('气泡不压住能点、能输入的东西', () => {
+  /** 一只输入框：上面是打字的那一块，左下角一颗回形针，就是这一步要指的。 */
+  async function mountComposer(extra: { wall?: boolean } = {}) {
+    rects.set('box', { left: 0, top: 640, width: 600, height: 100 })
+    rects.set('field', { left: 12, top: 650, width: 576, height: 40 })
+    rects.set('composer-attach', { left: 12, top: 700, width: 28, height: 28 })
+    if (extra.wall) rects.set('wall', { left: 0, top: 0, width: 1024, height: 640 })
+    const Host = defineComponent(() => () => [
+      extra.wall ? h('button', { 'data-anchor': 'wall', type: 'button' }) : null,
+      h('div', { 'data-anchor': 'box' }, [
+        h('textarea', { 'data-anchor': 'field' }),
+        withDirectives(h('button', { 'data-anchor': 'composer-attach', type: 'button' }), [
+          [vGuideAnchor, 'composer-attach'],
+        ]),
+      ]),
+      h(StartGuide, { step: 'materials', anchors: ['composer-attach'] }),
+    ])
+    render(Host)
+    await nextTick()
+    await nextTick()
+  }
+
+  it('指着输入框里的按钮时，气泡让到整只输入框外面，不落在打字的那一块上', async () => {
+    await mountComposer()
+    expect(text()).toBe('资料库里放也行')
+    // 底边停在输入框上沿再往上一点：打字那一块（650 起）整块露在外面。
+    expect(bubble()!.style.transform).toBe('translateY(-100%)')
+    expect(parseFloat(bubble()!.style.top)).toBeLessThanOrEqual(640)
+  })
+
+  it('哪儿都会压住东西时不放气泡，圈照样指着那颗按钮', async () => {
+    await mountComposer({ wall: true })
+    expect(ring()).not.toBeNull()
+    expect(bubble()).toBeNull()
+  })
+})
+
 describe('找不到目标就整块不出现', () => {
   it('目标不在这页上', async () => {
     await mountGuide({ present: [], anchors: ['rail-add'] })
