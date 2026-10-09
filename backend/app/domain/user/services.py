@@ -101,6 +101,18 @@ async def languages_by_ids(
     return {uid: user.language for uid, user in users.items()}
 
 
+async def language_of(session: AsyncSession, handle: str | None) -> str | None:
+    """一个人界面上选的语言，按 handle 取；没这个人、或没选过，都是 None。
+
+    平台自己想对模型说的话按它选：读中文的人说中文，读英文的人说英文。和
+    :func:`languages_by_ids` 同一个字段——推送也是照它写给收件人的。
+    """
+    if not handle:
+        return None
+    user = await UserRepository(session).get_by_handle(handle)
+    return user.language if user is not None else None
+
+
 async def set_language(session: AsyncSession, user_id: int, language: str) -> bool:
     """记下这个人选的界面语言；账号不在了返回 False。取值由调用方先校验。"""
     user = await UserRepository(session).get_by_id(user_id)

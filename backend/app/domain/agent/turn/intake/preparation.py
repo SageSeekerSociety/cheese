@@ -94,6 +94,7 @@ from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.reads import conversation_progress, project_topics
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import team_terms
+from app.domain.user.services import language_of
 
 logger = logging.getLogger(__name__)
 
@@ -990,12 +991,16 @@ class TurnPreparation:
             told = await AgentSessionService(session).told(
                 topic_id, prepared.agent.handle, harness=prepared.harness
             )
+            # 平台自己说给模型的那几句按提问的人的语言走（`user.language`）：一次
+            # 掉线重启的会话先在中文房间里读到英文的两句，接着就把每一步的说明都写成了
+            # 英文。查不到这个人时是 None，那就说存下来的中文。
+            language = await language_of(session, author)
         if untitled:
             # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
             prompt_text = f"{platform_prompt(UNTITLED_TASK)}\n\n{prompt_text}"
         if is_resume:
             prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
-        prompt_text = publication_prompt(prompt_text)
+        prompt_text = publication_prompt(prompt_text, language)
         logger.info(
             "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
             "elapsed_ms=%.3f unix_ms=%.3f",
