@@ -33,6 +33,7 @@ from app.domain.agent.event_lines import (
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import RUN_RECORD_EVENTS
 from app.domain.agent.queries import _block_payload
+from app.domain.agent.run_records import record_now
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
@@ -121,7 +122,6 @@ async def _keep_run_record(
     *,
     meta: dict,
 ) -> None:
-    from app.domain.agent.run_records import record_now
 
     seat = None
     if turn_id is not None:
@@ -161,6 +161,7 @@ async def _turn_changeset(
         return None
 
     async def _collect() -> _Changeset | None:
+        # deferred-import: tests replace this name on app.domain.repository.forge_files
         from app.domain.repository.forge_files import ProjectFiles
 
         fresh = [h for h in commits if h not in known_commits]
@@ -198,7 +199,10 @@ async def _known_commits(
     summary is measured against. None when it cannot be read (see
     HookWorkState.known_commits)."""
     try:
+        # deferred-import: tests replace this name on app.domain.repository.forge_files
         from app.domain.repository.forge_files import ProjectFiles
+
+        # deferred-import: tests replace this name on app.domain.room_task.services
         from app.domain.room_task.services import TaskService
 
         async with sessions() as session:

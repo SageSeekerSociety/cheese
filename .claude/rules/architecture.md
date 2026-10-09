@@ -6,11 +6,11 @@ paths:
 
 # Module boundaries, and which of them a machine actually checks
 
-Five checks run on every commit and in CI. Everything below says *why* each
+Seven checks run on matching commits and in CI. Everything below says *why* each
 rule exists and what enforces it, so that a rule nobody checks is not mistaken
 for one that is. Rules marked **建议** are conventions: no tool will stop you.
 
-One command runs all five: `task boundaries`. Individually:
+One command runs all seven: `task boundaries`. Individually:
 
 | Check | Command |
 |---|---|
@@ -19,13 +19,16 @@ One command runs all five: `task boundaries`. Individually:
 | Component imports | `pnpm --dir frontend run lint:boundary` |
 | File sizes | `python3 .claude/scripts/check-file-sizes.py` |
 | Scenes run standalone | `pnpm --dir frontend run lint:scenes` |
+| Scene child/route debt and old network importers only shrink | `pnpm --dir frontend run lint:scene-debt` |
 | Grade-A components are in the catalog | `pnpm --dir frontend run lint:catalog` |
 
-All five print their baseline and their refresh command when they fail, and each
-has tests of its own that CI runs — a check nobody has watched fail is not a
-check: four carry `--self-test` (boundaries in test.yml, file sizes, scenes and
-catalog in repo-guards.yml), and the component-import ratchet is covered by
-`frontend/scripts/import-boundary-ratchet.test.mjs` under `pnpm run test:ratchet`.
+Each has tests of its own that CI runs: five carry `--self-test`
+(boundaries in test.yml; file sizes, scenes and catalog in repo-guards.yml;
+scene debt in frontend.yml). The component-import ratchet is covered by
+`frontend/scripts/import-boundary-ratchet.test.mjs` under `pnpm run test:ratchet`,
+and deferred imports have tests in the backend suite.
+Scene-debt updates refuse additions, including manual baseline expansion against
+`origin/main`; its parser requires the installed frontend dependencies.
 
 What they cannot say is whether the tree is getting *better*: each one is a
 ratchet against a frozen baseline, and a ratchet that holds still reports success
@@ -184,6 +187,25 @@ through `useNavigation`, seven panel components that came out of making the
 work panels standalone. The
 vue-router half keeps counting type-only imports on purpose, because there the
 alternative (`NavTarget` from `lib/navTarget.ts`) is what the rule points you at.)
+
+## Frontend: one API module per domain behind `src/api.ts`
+
+`frontend/src/api.ts` is a facade: it holds nothing but `export … from`
+statements, and the code lives in `frontend/src/api/<domain>.ts` (feedback,
+members, topics, `admin/gateway`, …). Importers keep writing `@/api` and tests
+keep writing `vi.mock('@/api')`; the facade is what both resolve to.
+
+- **A new endpoint goes in its domain module**, never in `api.ts`. **Enforced**
+  by `no-restricted-syntax` on `src/api.ts` in `eslint.config.mjs`.
+- **A module under `src/api/` stays under 400 lines.** Past that it is two
+  domains. **Enforced** by `.claude/scripts/check-file-sizes.py`.
+- **A module imports `./http` and its siblings, not `../api`.** Going through
+  the facade puts a call inside whatever a test mocked `@/api` with. Sixteen
+  older modules still do (`request` from `'../api'`); changing one changes what
+  its tests intercept, so it is its own change. **建议**.
+- Helpers shared by modules but not part of the public surface
+  (`legacyRequest`, `feedbackQuery`) live in `api/legacy.ts` / `api/query.ts`,
+  which the facade does not re-export.
 
 ## A scene runs standalone, and the set only grows
 

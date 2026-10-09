@@ -6,6 +6,7 @@ import LandingTopic from './LandingTopic.vue'
 
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 
 // The page for the people who bring Cheese into an organisation — schools,
@@ -160,10 +161,10 @@ const trust = computed(() => [
           <BaseButton :href="contactHref" kind="primary" size="lg" append-icon="mdi-email-outline">
             {{ t('publicSite.solutionsPage.contact') }}
           </BaseButton>
-          <router-link class="text-link" :to="entryHref">
+          <NavLink class="text-link" :to="entryHref">
             {{ t('publicSite.solutionsPage.tryProduct') }}
             <v-icon icon="mdi-arrow-right" size="16" />
-          </router-link>
+          </NavLink>
         </div>
       </div>
     </section>

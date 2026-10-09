@@ -14,6 +14,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.block.models import Block, BlockKind
+from app.domain.remote_mcp import service as remote_mcp
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,6 @@ async def unconnected_mcp(
     """The remote MCP servers this session cannot use yet, its type's too,
     each said once in the conversation the session talks in — the room's main
     line, or its task or 支线 (``inner_id``): 「<name> 需要在项目设置里连接」."""
-    from app.domain.remote_mcp import service as remote_mcp
 
     try:
         async with sessions() as session:

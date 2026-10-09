@@ -26,7 +26,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
-from app.domain.block.indexed_rows import COALESCED_ROWS, EID, QUESTION_ROWS
+from app.domain.block.indexed_rows import (
+    COALESCED_ROWS,
+    EID,
+    QUESTION_ROWS,
+    SHOWN_ROWS,
+)
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
@@ -50,6 +55,26 @@ class BlockPage:
 
     items: list[Block]
     has_more: bool
+
+
+def _narrow(
+    stmt,
+    *,
+    kinds: Collection[BlockKind] | None = None,
+    author: str | None = None,
+    shown: bool | None = None,
+):
+    """A conversation read narrowed the way `GET /topics/{id}/blocks` filters:
+    to some kinds, to one author, and to what the room shows (`shown=True`) or
+    keeps out of it (`False`). `SHOWN_ROWS` goes in as its literal text, so a
+    shown read can use `ix_blocks_shown`."""
+    if kinds is not None:
+        stmt = stmt.where(Block.kind.in_(list(kinds)))
+    if author is not None:
+        stmt = stmt.where(Block.author == author)
+    if shown is not None:
+        stmt = stmt.where(SHOWN_ROWS if shown else text(f"NOT ({SHOWN_ROWS.text})"))
+    return stmt
 
 
 class BlockRepository:
@@ -644,8 +669,16 @@ class BlockRepository:
             if not (block.meta or {}).get("answer_log")
         ]
 
-    async def list_for_topic(self, conversation_id: uuid.UUID) -> list[Block]:
-        """Timeline view: blocks of a topic, oldest first (spec §5).
+    async def list_for_topic(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        kinds: Collection[BlockKind] | None = None,
+        author: str | None = None,
+        shown: bool | None = None,
+    ) -> list[Block]:
+        """Timeline view: blocks of a topic, oldest first (spec §5), narrowed
+        as `_narrow` says.
 
         Excludes doc_node tree blocks and inline comments — those belong to the
         document view, not the conversation timeline.
@@ -654,13 +687,9 @@ class BlockRepository:
         walks — otherwise the full view and the paged view could disagree about
         the order of blocks stamped in the same instant.
         """
-        stmt = (
-            select(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-            )
-            .order_by(Block.created_at, Block.id)
-        )
+        stmt = select(Block).where(Block.conversation_id == conversation_id)
+        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
+        stmt = stmt.order_by(Block.created_at, Block.id)
         return list((await self._session.scalars(stmt)).all())
 
     async def turn_history(self, conversation_id: uuid.UUID) -> list[Block]:
@@ -811,6 +840,7 @@ class BlockRepository:
         author: str | None = None,
         whole_room: uuid.UUID | None = None,
         also: Collection[uuid.UUID] = (),
+        shown: bool | None = None,
     ) -> BlockPage:
         """The newest `limit` blocks, or a page before/after a cursor.
 
@@ -850,8 +880,7 @@ class BlockRepository:
         # caller is the difference between paging and pretending to — filtering
         # a page after the fact returns fewer rows than asked for and reports
         # has_more against the wrong set.
-        if kinds is not None:
-            stmt = stmt.where(Block.kind.in_(list(kinds)))
+        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
         if query:
             # Literal matching: a pasted log containing % or _ is not SQL syntax.
             pattern = (
@@ -868,8 +897,6 @@ class BlockRepository:
             )
         if reply_to is not None:
             stmt = stmt.where(Block.reply_to == reply_to)
-        if author is not None:
-            stmt = stmt.where(Block.author == author)
         if before is not None:
             # Row-value comparison: `(created_at, id) < (:ts, :id)` in one go,
             # so the cursor test matches the ORDER BY key exactly. There is no
@@ -899,15 +926,38 @@ class BlockRepository:
             rows.reverse()  # callers render oldest-first, same as list_for_topic
         return BlockPage(items=rows, has_more=has_more)
 
-    async def count_for_topic(self, conversation_id: uuid.UUID) -> int:
+    async def count_for_topic(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        kinds: Collection[BlockKind] | None = None,
+        author: str | None = None,
+        shown: bool | None = None,
+    ) -> int:
         stmt = (
             select(func.count())
             .select_from(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-            )
+            .where(Block.conversation_id == conversation_id)
         )
+        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
         return int((await self._session.scalar(stmt)) or 0)
+
+    async def holds(
+        self,
+        block: Block,
+        *,
+        kinds: Collection[BlockKind] | None = None,
+        author: str | None = None,
+        shown: bool | None = None,
+    ) -> bool:
+        """Whether ``block`` is one a read narrowed this way would return."""
+        stmt = _narrow(
+            select(Block.id).where(Block.id == block.id),
+            kinds=kinds,
+            author=author,
+            shown=shown,
+        )
+        return (await self._session.scalar(stmt)) is not None
 
     async def count_messages(
         self,

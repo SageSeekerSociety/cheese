@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import partial
 
+from sqlalchemy import select as _select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -67,6 +68,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
+from app.domain.agent.input_registration import confirm_receipt, input_registrar
 
 # 兼容门面：记忆的对账与整理（连同它们按房间记的四份状态）搬去了
 # `memory_ledger.py`（那里有整簇的文档）。`ChatService` 上留
@@ -91,6 +93,11 @@ from app.domain.agent.mentions import (
     _resolve_mentions,  # noqa: F401
     _topic_refs,  # noqa: F401
     project_refs_text,  # noqa: F401 — 现有发送路由仍使用此导出
+)
+from app.domain.agent.pending_messages import (
+    finish_work,
+    finish_work_termination,
+    nudge_messages,
 )
 from app.domain.agent.platform_notices import (
     delivery_checking_notice,
@@ -123,6 +130,7 @@ from app.domain.agent.queries import (
 )
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.recovery import SessionRecovery
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
 
@@ -132,6 +140,7 @@ from app.domain.agent.room_events import (
     _turn_changeset,
     post_system_event,
 )
+from app.domain.agent.seat_admission import seat_admission
 from app.domain.agent.service import (
     AgentUsage,
 )
@@ -158,10 +167,12 @@ from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage
 from app.domain.agent.work_policy import work_policy
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
 )
+from app.domain.agent_session.models import AgentSession as _AS
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import (
@@ -303,8 +314,6 @@ class ChatService(SessionRecovery):
 
         Interval ownership and scheduling stay with this composition root.
         """
-        from app.domain.agent.pending_messages import nudge_messages
-
         await self._close_open_turns(topic_id, turn_id)
         nudge_messages(self, topic_id)
 
@@ -406,7 +415,6 @@ class ChatService(SessionRecovery):
         """
         if recipient_handle is not None:
             return recipient_handle
-        from app.domain.agent_instance.models import AgentInstance
 
         async with self._sessions() as session:
             instance_id = recipient_instance_id
@@ -446,7 +454,6 @@ class ChatService(SessionRecovery):
         work_id: uuid.UUID,
         seat_handle: str,
     ) -> AsyncIterator[None]:
-        from app.domain.agent.seat_admission import seat_admission
 
         async with seat_admission(self.live.seat_lock_for(topic_id, seat_handle)):
             self.live.mark_turn_active(topic_id, work_id)
@@ -614,8 +621,6 @@ class ChatService(SessionRecovery):
 
         recipient_handle = None
         if recipient_instance_id is not None:
-            from app.domain.agent_instance.models import AgentInstance
-
             async with self._sessions() as session:
                 instance = await session.get(AgentInstance, recipient_instance_id)
                 if instance is None or not instance.is_active:
@@ -954,7 +959,6 @@ class ChatService(SessionRecovery):
         probe_unread: bool = False,
         fence_delivery: bool = False,
     ) -> InputRegistrar:
-        from app.domain.agent.input_registration import input_registrar
 
         return input_registrar(
             self._sessions,
@@ -970,13 +974,11 @@ class ChatService(SessionRecovery):
         No in-memory candidate is needed. Commit failure propagates so the same
         journal input is retried, even by a newly reconstructed ChatService.
         """
-        from app.domain.agent.input_registration import confirm_receipt
 
         await confirm_receipt(self._sessions, self.live, receipt)
 
     async def confirm_work_completion(self, completion: WorkCompletion) -> None:
         """Settle a journaled completion without process-local work context."""
-        from app.domain.agent.pending_messages import finish_work
 
         await finish_work(self, completion, complete_work_inputs)
 
@@ -988,7 +990,6 @@ class ChatService(SessionRecovery):
         ``completed_at`` and consumes blocks. This one only frees the seat so a
         new input can be taken.
         """
-        from app.domain.agent.pending_messages import finish_work_termination
 
         await finish_work_termination(self, termination, terminate_work_inputs)
 
@@ -1117,9 +1118,8 @@ class ChatService(SessionRecovery):
         """End the one open interval the Stop names (FB-56). Never raises — a
         Stop that cannot update the bookkeeping must still land the message it
         carries. An id that names no live row closes nothing."""
+        # deferred-import: UTC is bound at the top of this module already
         from datetime import UTC, datetime
-
-        from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
@@ -1237,9 +1237,6 @@ class ChatService(SessionRecovery):
                     # guard in `turn.intake.native_entries` holds the same lock
                     # while it validates and mutates, so the two sides of
                     # a session change serialize on the row itself (FB-56 P2-1).
-                    from sqlalchemy import select as _select
-
-                    from app.domain.agent_session.models import AgentSession as _AS
 
                     await session.execute(
                         _select(_AS.id)
@@ -1291,7 +1288,6 @@ class ChatService(SessionRecovery):
             # The agent has said what it understood: the moment to check the
             # name a task got from its opening line (room_task/naming.py).
             naming.nudge(topic_id, "turn")
-            from app.domain.agent.pending_messages import nudge_messages
 
             nudge_messages(self, topic_id)
 
@@ -1331,6 +1327,7 @@ class ChatService(SessionRecovery):
     async def thread_replied(self, conversation_id: uuid.UUID) -> None:
         """A message landed in ``conversation_id``: when that is a 支线, its
         channel's main line shows the 支线 grown."""
+        # deferred-import: tests replace this name on app.domain.agent.staleness
         from app.domain.agent.staleness import announce_stale
 
         room, _inner, thread = await self._conversation_place(conversation_id)

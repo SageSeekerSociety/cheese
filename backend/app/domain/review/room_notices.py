@@ -40,6 +40,9 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.delivery.addressing import Event
+from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.notification.models import NotificationType
 from app.domain.project import artifacts
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
@@ -315,9 +318,6 @@ async def _record_task_nudge(
     session: AsyncSession, *, topic, task, content, headline, meta
 ):
     """Commit the task event and parent delivery with the source state."""
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
-    from app.domain.notification.models import NotificationType
 
     block = await announce(
         session,

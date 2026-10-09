@@ -45,6 +45,9 @@ from app.domain.user.services import (
 if TYPE_CHECKING:
     pass
 
+from redis.asyncio import Redis as AsyncRedis
+from sqlalchemy.exc import IntegrityError
+
 from app.api.routes.users._common import (
     AddEmailCodeRequest,
     AddEmailRequest,
@@ -53,6 +56,14 @@ from app.api.routes.users._common import (
     _email_code_unavailable,
     _own_email,
     _send_email_code,
+)
+from app.core.client_address import resolved_client_address
+from app.domain.passkey.models import PasskeyCredential
+from app.domain.user.login_security import TOTPService
+from app.domain.user.models import User
+from app.domain.user.verification_service import (
+    EmailCodePurpose,
+    EmailVerificationService,
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -170,7 +181,6 @@ async def add_email(
     session: AsyncSession = Depends(get_db),
     session_id: uuid.UUID | None = Depends(get_current_session_id),
 ) -> dict:
-    from sqlalchemy.exc import IntegrityError
 
     user, profile = await _account_without_email(
         auth_user, auth_service, session, session_id
@@ -205,9 +215,6 @@ async def get_my_auth_methods(
 ) -> dict:
     """The ways ``/auth/sudo`` accepts from this account, for the caller only:
     what an account has is nobody else's business."""
-    from app.domain.passkey.models import PasskeyCredential
-    from app.domain.user.login_security import TOTPService
-    from app.domain.user.models import User
 
     user = await session.get(User, auth_user.user_id)
     if user is None:
@@ -242,15 +249,6 @@ async def request_sudo_email_code(
 ) -> dict:
     """Sent to the account's own address, under the same quotas as every
     other mailed code. Refused where ``/auth/sudo`` would refuse the code."""
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.client_address import resolved_client_address
-    from app.domain.user.login_security import TOTPService
-    from app.domain.user.models import User
-    from app.domain.user.verification_service import (
-        EmailCodePurpose,
-        EmailVerificationService,
-    )
 
     user = await session.get(User, auth_user.user_id)
     if user is None:

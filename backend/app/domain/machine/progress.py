@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent_session.models import AgentSession
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.machine.models import CloudHostHome
@@ -33,8 +34,6 @@ async def _conversation(session: AsyncSession, home: CloudHostHome) -> uuid.UUID
     works in the task's own conversation, while ``home.topic_id`` names the
     room its machine belongs to."""
     if home.session_id is not None:
-        from app.domain.agent_session.models import AgentSession
-
         owner = await session.get(AgentSession, home.session_id)
         if owner is not None:
             return owner.conversation_id

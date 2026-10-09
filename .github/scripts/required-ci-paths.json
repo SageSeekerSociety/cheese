@@ -12,10 +12,13 @@
   ],
   "frontend": [
     "frontend/**",
+    "backend/openapi.json",
     ".github/workflows/frontend.yml",
     ".claude/scripts/frontend_grade.py",
     ".claude/scripts/catalog-ratchet.py",
     ".claude/scripts/scene-ratchet.py",
+    ".claude/scripts/scene-debt-ratchet.py",
+    ".claude/scripts/test_scene_debt_ratchet.py",
     ".claude/scripts/ratchet_report.py",
     "docs/site/src/style.css",
     "backend/app/domain/agent/skill_library/doc_writing.md",

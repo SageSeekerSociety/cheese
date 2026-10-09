@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
+from app.core.live_frames import show_state_once_committed
 from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_TIMED_DELIVERY,
@@ -38,6 +39,7 @@ from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
+from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
 from app.domain.run_record.service import keep as keep_record
 from app.domain.topic.models import Topic
 from app.domain.user.services import user_by_handle
@@ -242,6 +244,12 @@ async def give_up_stale(sessions: SessionFactory, *, chat) -> int:
         for row in rows:
             row.state = "failed"
             row.last_error = GAVE_UP
+            # A finished task waiting on this turn to be written up closes
+            # without it.
+            if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
+                closed = await close_after_summary(session, row.conversation_id)
+                if closed is not None:
+                    show_state_once_committed(session, closed.room_id)
             # Only a person's message is told: 「重试」 starts a turn from the
             # messages still waiting, and a platform instruction is not one. A
             # task's opening says it failed on the task page; a routine's run

@@ -7,14 +7,18 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
+from app.core.email import is_placeholder_email
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.sentences import say
 from app.domain.oauth.repositories import OAuthConnectionRepository
+from app.domain.passkey.services import PasskeyService
+from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -772,11 +776,6 @@ class OAuthService:
         never produce a session, so they neither count nor are ever protected.
         Raises ``ConflictError`` when refused.
         """
-        from sqlalchemy import select
-
-        from app.core.email import is_placeholder_email
-        from app.domain.passkey.services import PasskeyService
-        from app.domain.user.models import User
 
         conn = await self._repo.get(connection_id)
         if conn is None or conn.user_id != user_id:
@@ -861,6 +860,7 @@ async def get_github_profile_for_handle(
     connection, present for people who signed in with GitHub but never
     authorized the App.
     """
+    # deferred-import: tests replace this name on app.domain.user.repositories
     from app.domain.user.repositories import UserRepository
 
     user = await UserRepository(session).get_by_handle(handle)
@@ -885,6 +885,7 @@ async def get_github_user_token_for_handle_with_reason(
     too: from an accept-flow caller's point of view both mean "this approver
     has no usable GitHub identity".
     """
+    # deferred-import: tests replace this name on app.domain.user.repositories
     from app.domain.user.repositories import UserRepository
 
     user = await UserRepository(session).get_by_handle(handle)

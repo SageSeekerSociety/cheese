@@ -994,11 +994,13 @@
   "reviewCommentTooLong": "The comment is too long",
   "reviewCommentEmpty": "The comment is empty",
   "reviewCommentBadLines": "The comment's line numbers are invalid",
+  "reviewCommentBadPlace": "The comment's location in the file is invalid",
   "reviewCommentNotSendable": "One of the comments to send can't be sent. Refresh and try again",
   "reviewCommentOutcomeUnknown": "The last round of comments has no comment {id}",
   "reviewCommentSignIn": "Sign in to comment",
   "githubReviewPostFailed": "GitHub refused the review (HTTP {status}): {reply}",
   "reviewCommentSuggestionOnly": "Suggested change",
   "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each",
-  "addressedAgentUnavailable": "The addressed agent is unavailable"
+  "addressedAgentUnavailable": "The addressed agent is unavailable",
+  "fileTooLarge": "The file is too large ({mb}MB max)"
 }

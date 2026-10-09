@@ -60,7 +60,7 @@ from app.domain.room_task.services import (
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, thread_opening, threads_of_rooms
-from app.domain.topic.models import Topic
+from app.domain.topic.models import RoomCleanup, Topic
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -478,6 +478,9 @@ async def list_topic_blocks(
     before: uuid.UUID | None = None,
     after: uuid.UUID | None = None,
     around: uuid.UUID | None = None,
+    kind: Annotated[list[BlockKind] | None, Query()] = None,
+    author: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
+    shown: bool | None = None,
 ) -> dict:
     """The topic's conversation timeline, oldest-first.
 
@@ -498,6 +501,18 @@ async def list_topic_blocks(
     - `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one
     - `?limit=N&around=<block_id>` → that block with about N/2 on each side: a
       conversation opened at one message (a search hit, a quoted reply)
+
+    Filters narrow the timeline inside the paging, so a page holds `limit` rows
+    of what was asked for and `has_more` counts the same set (filtering a page
+    afterwards returns fewer rows and pages through holes):
+
+    - `kind` (repeatable): only these kinds of block;
+    - `author`: only blocks signed by this handle;
+    - `shown=true`: only what the room's conversation shows
+      (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only
+      what it keeps out of the room (an agent's steps, notices for an agent).
+
+    Cursors still name any block of the conversation, shown or not.
     """
     if sum(c is not None for c in (before, after, around)) > 1:
         raise ValidationError(say("cursorOneAnchor"))
@@ -522,8 +537,9 @@ async def list_topic_blocks(
     older_than = await cursor_of(before)
     newer_than = await cursor_of(after)
     centre = await cursor_of(around)
+    narrow = {"kinds": kind, "author": author, "shown": shown}
     if limit is None:
-        blocks = await repo.list_for_topic(place.conversation_id)
+        blocks = await repo.list_for_topic(place.conversation_id, **narrow)
         if older_than is not None:
             blocks = [
                 b
@@ -533,28 +549,30 @@ async def list_topic_blocks(
         has_more = has_newer = False
     elif centre is not None:
         above = await repo.page_for_topic(
-            place.conversation_id, limit=limit // 2, before=centre
+            place.conversation_id, limit=limit // 2, before=centre, **narrow
         )
         below = await repo.page_for_topic(
-            place.conversation_id, limit=limit - limit // 2, after=centre
+            place.conversation_id, limit=limit - limit // 2, after=centre, **narrow
         )
-        blocks = [*above.items, centre, *below.items]
+        # The block it opens at is in the window only if the filters keep it.
+        kept = [centre] if await repo.holds(centre, **narrow) else []
+        blocks = [*above.items, *kept, *below.items]
         has_more, has_newer = above.has_more, below.has_more
     elif newer_than is not None:
         page_result = await repo.page_for_topic(
-            place.conversation_id, limit=limit, after=newer_than
+            place.conversation_id, limit=limit, after=newer_than, **narrow
         )
         blocks = page_result.items
         # Paging down from a block means that block is above this page.
         has_more, has_newer = True, page_result.has_more
     else:
         page_result = await repo.page_for_topic(
-            place.conversation_id, limit=limit, before=older_than
+            place.conversation_id, limit=limit, before=older_than, **narrow
         )
         blocks = page_result.items
         # Paging up from a block means that block is below this page.
         has_more, has_newer = page_result.has_more, older_than is not None
-    total = await repo.count_for_topic(place.conversation_id)
+    total = await repo.count_for_topic(place.conversation_id, **narrow)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
     # Scoped to THIS page's ids, so paging saves the database work too, not just
     # the bytes on the wire.
@@ -1271,7 +1289,6 @@ async def archive_topic(
 async def cleanup_status(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.domain.topic.models import RoomCleanup
 
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)

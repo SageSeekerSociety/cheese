@@ -12,12 +12,12 @@ transport-free / storage-agnostic，内存实现和 SQL 实现都能喂给它）
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.service import DeviceService
+from app.domain.device.sql_repository import SqlDeviceRepository
 
 __all__ = ["sql_device_service"]
 
 
 def sql_device_service(session: AsyncSession) -> DeviceService:
     """接在这个 session 上的、SQL 后端的 ``DeviceService``。"""
-    from app.domain.device.sql_repository import SqlDeviceRepository
 
     return DeviceService(SqlDeviceRepository(session))

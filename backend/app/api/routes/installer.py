@@ -400,7 +400,14 @@ def _accepts_gzip(request: Request) -> bool:
     return False
 
 
-@router.api_route("/latest/{target}/{name}", methods=["GET", "HEAD"])
+@router.api_route(
+    "/latest/{target}/{name}",
+    methods=["GET", "HEAD"],
+    # Named here, not derived: FastAPI builds the default id from the first of the
+    # route's methods and those are a set, so the committed document would otherwise
+    # change with the process (backend/openapi.json is checked as text).
+    operation_id="download_connector_binary",
+)
 async def download_binary(target: str, name: str, request: Request) -> Response:
     """The connector for ``target``. ``X-Checksum-SHA256`` names its bytes, so
     the connection owner can ask which build is published with a HEAD.

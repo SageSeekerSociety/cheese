@@ -14,8 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import (
+    CONSUMED_TURN_META_KEY,
+    Block,
+    BlockKind,
+    consumed_turn,
+)
 from app.domain.conversation.models import Conversation, ConversationKind
+from app.domain.conversation.services import of_room
 from app.domain.thread.models import Thread
 
 # The channel a message is in. A bare table: ``topic`` and ``room_task`` resolve
@@ -105,8 +111,6 @@ async def waiting_in_room(session: AsyncSession, room_id: uuid.UUID) -> list[uui
     """The conversations of a room — its 支线 and tasks — where a message to
     芝士 is still waiting for an answer, oldest message first. A message still
     waiting in the main line is waiting in its 支线."""
-    from app.domain.block.models import CONSUMED_TURN_META_KEY, consumed_turn
-    from app.domain.conversation.services import of_room
 
     blocks = await session.scalars(
         select(Block)

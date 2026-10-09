@@ -9,11 +9,11 @@
 
 import type { UsageStats } from '../cx_types'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 /** Group a token/turn count: 2532615017 → "2,532,615,017". */
 export function fmtNum(n: number): string {
-  return Number(n || 0).toLocaleString('en-US')
+  return Number(n || 0).toLocaleString(i18n.global.locale.value)
 }
 
 /**
@@ -28,7 +28,7 @@ export function fmtCost(n: number): string {
   if (abs < 0.0001) return `${v < 0 ? '-' : ''}<$0.0001`
   if (abs < 1) return `$${v.toFixed(4)}`
   if (abs < 1000) return `$${v.toFixed(2)}`
-  return `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+  return `$${v.toLocaleString(i18n.global.locale.value, { maximumFractionDigits: 0 })}`
 }
 
 /**
@@ -83,7 +83,7 @@ export function fmtSI(n: number | null | undefined, unit = ''): string {
       return `${sign}${scaled.toFixed(digits)}${NBSP}${suffix}${unit}`
     }
   }
-  return `${sign}${Math.round(abs).toLocaleString('en-US')}${unit ? NBSP + unit : ''}`
+  return `${sign}${Math.round(abs).toLocaleString(i18n.global.locale.value)}${unit ? NBSP + unit : ''}`
 }
 
 /**

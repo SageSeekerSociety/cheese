@@ -46,6 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # The debt gate compares candidate baseline sets to the merge base.
+          fetch-depth: 0
           # Nothing below pushes, and the lockfile has zero git: specifiers, so
           # there is no reason to leave the token in .git/config while
           # dependencies' install scripts run.
@@ -140,6 +142,14 @@ jobs:
       - name: Scenes (standalone-ratchet)
         run: pnpm run lint:scenes
 
+      # Freeze exact child edges, debt-page route reads and legacy imports.
+      # Updating or hand-expanding the baseline cannot accept new debt.
+      - name: Scene debt (three downward-only sets)
+        run: pnpm run lint:scene-debt
+
+      - name: Scene debt rule self-tests
+        run: python3 ../.claude/scripts/scene-debt-ratchet.py --self-test
+
       # The catalog ratchet: every component under src/ (src/views/demo/
       # excluded) that renders from props alone — grade A, the same grade the
       # Scenes step uses — is in the /demo/catalog preview site, where
@@ -191,6 +201,23 @@ jobs:
       # Pure node, no dependency, about a second. Read-only.
       - name: Hardcoded Chinese (i18n)
         run: pnpm run lint:i18n
+
+      # src/api/openapi.d.ts is generated from backend/openapi.json, which the
+      # backend lint job keeps equal to what the app serves
+      # (`export_openapi --check`). This is the other half: the committed types
+      # are exactly what that document says. Pure node, ~4s.
+      - name: API types match backend/openapi.json
+        run: pnpm run check:api-types
+
+      # The other half of the same drift: the *paths* this frontend calls. They
+      # are string literals in src/api/*.ts and nothing connected them to the
+      # backend, so a renamed route type-checked and failed in the browser.
+      # Judged against backend/scripts/route_index.json, the artifact the
+      # addressing contract test holds the app to. Reports how many call sites
+      # it judged and how many it could not read, so "clean" never means "the
+      # gate understood nothing".
+      - name: Request paths match the backend's routes
+        run: pnpm run check:request-paths
 
       # Via the package script, not a bare `node --test scripts/`: passing a
       # DIRECTORY resolves as a module entry point on node 22 while node 20

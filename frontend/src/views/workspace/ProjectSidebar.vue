@@ -58,11 +58,14 @@ const activeAllTasks = computed(() =>
 // 就用那一份 —— 这份清单是整个项目的任务，后端每读一次都要把它们全部算一遍。
 const TASKS_REFRESH_MS = 30_000
 const tasks = ref<RoomTask[]>([])
-async function loadTasks(maxAgeMs?: number) {
+// 后发的那次读说了算：任务刚变过时另发的那一次，可能比之前还没回来的那一次先回来。
+let tasksRead = 0
+async function loadTasks(maxAgeMs?: number, fresh = false) {
   const pid = props.projectId
+  const mine = ++tasksRead
   try {
-    const payload = await readProjectTasks(pid, { maxAgeMs, open: true })
-    if (props.projectId === pid) tasks.value = payload.data
+    const payload = await readProjectTasks(pid, { maxAgeMs, open: true, fresh })
+    if (props.projectId === pid && mine === tasksRead) tasks.value = payload.data
   } catch {
     // 留着上一次的那份。
   }
@@ -98,7 +101,7 @@ watch(
 )
 watch(
   () => store.tasksChanged,
-  () => void loadTasks()
+  () => void loadTasks(undefined, true)
 )
 function openAllTasks(channelId: string) {
   void router.push({ name: 'project-tasks', params: { projectId: props.projectId }, query: { channel: channelId } })

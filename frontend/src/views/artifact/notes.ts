@@ -7,8 +7,6 @@ export function noteText(note: string | null | undefined): string {
       return t('tasks.artifactComparison.oversized')
     case 'binary':
       return t('tasks.artifactComparison.binary')
-    case 'document':
-      return t('tasks.artifactComparison.document')
     case 'unsupported':
       return t('tasks.artifactComparison.unsupported')
     case 'many':

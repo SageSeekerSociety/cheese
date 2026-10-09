@@ -628,6 +628,7 @@ async def _write(
 async def _publish(renamed: Renamed) -> None:
     """The channel's pages and the task's own page each listen on their own
     conversation, so both are told."""
+    # deferred-import: tests replace this name on app.domain.agent.staleness
     from app.domain.agent.staleness import announce_stale
 
     await announce_stale(renamed.room_id, "topics", id=renamed.room_id)
@@ -642,6 +643,7 @@ SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
 def _default_factory() -> SessionFactory:
+    # deferred-import: tests replace this name on app.core.db
     from app.core.db import async_session_factory
 
     return async_session_factory

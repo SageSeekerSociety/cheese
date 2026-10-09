@@ -151,10 +151,10 @@
       </div>
     </section>
 
-    <router-link class="realname__policy" :to="{ name: 'LegalPrivacy' }" target="_blank" rel="noopener">
+    <NavLink class="realname__policy" :to="{ name: 'LegalPrivacy' }" target="_blank" rel="noopener">
       {{ t('account.realName.privacyPolicy') }}
       <v-icon icon="mdi-open-in-new" size="14" />
-    </router-link>
+    </NavLink>
   </div>
 </template>
 
@@ -165,6 +165,7 @@ import type { RealNameInfo, UserIdentityAccessLog } from '@/network/api/users/ty
 import { computed, reactive, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import i18n, { t } from '@/i18n'

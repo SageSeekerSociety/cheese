@@ -26,10 +26,25 @@ import uuid
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from app.core.config import settings
 from app.core.db import release_read_session
 from app.core.sentences import say
+from app.domain.agent.platform_notices import (
+    EVENT_DEPENDENCY_CLOSED,
+    EVENT_DEPENDENCY_REJECTED,
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    notice,
+)
+from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
+from app.domain.conversation.services import of_room
+from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.idempotency import store as idem
+from app.domain.idempotency.keys import action_key
+from app.domain.notification.models import NotificationType
 from app.domain.project.forge import (
     ForgeRateLimitedError,
     background_quota,
@@ -39,9 +54,15 @@ from app.domain.project.forge import (
     quota_serves_background,
     status_client,
 )
-from app.domain.review import notes
+from app.domain.repository import identity
+from app.domain.review import notes, pr_text
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
+from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.place import PlaceResolver
+from app.domain.topic.models import Topic
 
 logger = logging.getLogger("cheesex.pr_publish")
 
@@ -141,7 +162,7 @@ async def open_pr_for_card(
     client = await proposal_client(project_id, session)
     if client is None:
         return None
-    from app.domain.review.repositories import AcceptCardRepository
+    # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     card = await AcceptCardRepository(session).get(card_id)
@@ -215,6 +236,7 @@ async def sweep_draft_prs(
     time spent on earlier tasks in this pass. Each task uses its own session
     so a failed write cannot poison the remaining deliveries.
     """
+    # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     counts = {"opened": 0, "skipped": 0, "failed": 0}
@@ -266,23 +288,11 @@ async def retarget_completed_dependencies(
     session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
 ) -> None:
     """Retarget delivered dependencies and persist instructions for the executor."""
-    from sqlalchemy.orm import aliased
 
+    # deferred-import: tests replace this name on app.domain.agent.announce
     from app.domain.agent.announce import announce
-    from app.domain.agent.platform_notices import (
-        EVENT_DEPENDENCY_CLOSED,
-        EVENT_DEPENDENCY_REJECTED,
-        SEVERITY_INFO,
-        WHO_CHEESE,
-        notice,
-    )
-    from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
-    from app.domain.conversation.services import of_room
-    from app.domain.idempotency import store as idem
-    from app.domain.idempotency.keys import action_key
-    from app.domain.review.models import AcceptCard, AcceptStatus
-    from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.room_task.models import Task, TaskStatus
+
+    # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     parent = aliased(Task)
@@ -375,8 +385,8 @@ async def retarget_completed_dependencies(
                 retarget = delivered and task.base_branch != base
                 client = None
                 if retarget and task.pr_number is not None:
+                    # deferred-import: tests patch app.domain.review.services
                     from app.domain.review.services import AcceptService
-                    from app.domain.topic.models import Topic
 
                     room = await session.get(Topic, task.room_id)
                     if room is None:
@@ -539,9 +549,6 @@ async def retarget_completed_dependencies(
                 )
                 if block is None:
                     raise ValueError("Task room is missing")
-                from app.domain.delivery.agent import record_task_instruction
-                from app.domain.delivery.ledger import DeliveryEvent
-                from app.domain.notification.models import NotificationType
 
                 await record_task_instruction(
                     session,
@@ -591,7 +598,7 @@ async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> b
     already open on that head rather than creating a second — that is the belt,
     this is the braces.
     """
-    from app.domain.review.repositories import AcceptCardRepository
+    # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     tasks = TaskService(session)
@@ -623,9 +630,10 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
     each forge request, so a sweep over many quiet branches does not keep a
     database connection waiting on the forge.
     """
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
-    from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.room_task.models import TaskStatus
+
+    # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     task = await TaskService(session).get(task_id)
@@ -674,9 +682,6 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     upstream, and — the ordinary case, on every tick — a branch with nothing on
     it. A newly created task has no changes to review until its first commit.
     """
-    from app.domain.repository import identity
-    from app.domain.review import pr_text
-    from app.domain.room_task.place import PlaceResolver
 
     project_id = task.project_id
     client = await proposal_client(project_id, session)
@@ -688,6 +693,7 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
         return None
     token, _ = await client.tokens.installation_token()
     reader = await status_client(project_id, session)
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
     binding = await binding_for_project(project_id, session)
@@ -706,6 +712,7 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
 
     base = task.base_branch
     who = await identity.attribution(session, room, task_id=task.id)
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
 
     if who.author:
@@ -749,10 +756,6 @@ async def _pr_text(
     验收卡即合并本 PR" — is gone. It described the platform's workflow to people
     who were already inside it, while the reviewer opening the PR on GitHub
     wanted to know what changed and why."""
-    from app.domain.repository import identity
-    from app.domain.review import pr_text
-    from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.room_task.place import PlaceResolver
 
     place = await PlaceResolver(session).resolve(topic_id)
     card = await AcceptCardRepository(session).get(card_id)
@@ -760,6 +763,7 @@ async def _pr_text(
         return branch, f"Cheese-Topic: {topic_id}"
     topic = place.room
     who = await identity.attribution(session, topic, card=card)
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
 
     if who.author:
@@ -784,7 +788,7 @@ async def record_pr(
     card rides a PR now, and a stale「开 PR 失败」would contradict the pr_number
     sitting next to it.
     """
-    from app.domain.review.repositories import AcceptCardRepository
+    # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     async with session_factory() as session:
@@ -817,7 +821,6 @@ async def _record_failure(
     closes the loop: fail visibly here, retry at accept, and the retry's own
     outcome replaces this note. Best-effort: a DB hiccup here must not raise
     out of the background task."""
-    from app.domain.review.repositories import AcceptCardRepository
 
     note = (
         f"{PR_OPEN_FAILED_PREFIX}（{str(exc)[:300]}）。目前没有 PR，"

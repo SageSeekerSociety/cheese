@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.domain.docs_site import site
+from app.domain.docs_site import access, site
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,6 @@ def _cookie_header(cookies: dict[str, str]) -> dict[str, str]:
 
 
 def _internal_pass() -> dict[str, str]:
-    from app.domain.docs_site import access
 
     return {access.cookie_name(): access.internal_pass()}
 

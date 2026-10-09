@@ -61,6 +61,8 @@ from app.domain.agent.platform_failures import (
     HOST_UNREACHABLE_CODE,
 )
 from app.domain.agent.screen_model_env import screen_model_env
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation import services as conversations
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility, default_visibility
@@ -373,6 +375,7 @@ class DeviceChannel(Channel):
             return [(project, topic, None, None) for project, topic, _ in scopes]
         factory = self._session_factory
         if factory is None:
+            # deferred-import: tests replace this name on app.core.db
             from app.core.db import async_session_factory
 
             factory = async_session_factory
@@ -493,6 +496,7 @@ class DeviceChannel(Channel):
             return await self._device_resolver(project_id, topic_id)
         factory = self._session_factory
         if factory is None:
+            # deferred-import: tests replace this name on app.core.db
             from app.core.db import async_session_factory
 
             factory = async_session_factory
@@ -572,6 +576,7 @@ class DeviceChannel(Channel):
     async def _device_api_base(self, device_id: str) -> str:
         factory = self._session_factory
         if factory is None:
+            # deferred-import: tests replace this name on app.core.db
             from app.core.db import async_session_factory
 
             factory = async_session_factory
@@ -1297,6 +1302,7 @@ class DeviceChannel(Channel):
         """一条数据库连接。Cloud 通道从这里继承它——同一个问题，同一份答案。"""
         factory = self._session_factory
         if factory is None:
+            # deferred-import: tests replace this name on app.core.db
             from app.core.db import async_session_factory
 
             factory = async_session_factory
@@ -1308,7 +1314,6 @@ class DeviceChannel(Channel):
         机器从会话行上读，不是项目钉住的那台工作机。问的是这条会话而不是这个房间：
         一间房里的两个队友各有一条会话，可能坐在两台机器上。
         """
-        from app.domain.agent_session.services import AgentSessionService
 
         await TopicService(db).get_or_404(session.topic_id)
         place = await AgentSessionService(db).place(
@@ -1343,7 +1348,7 @@ class DeviceChannel(Channel):
 
     async def _session_agent(self, db, session: SessionRef):
         """Resolve the selected conversation's project handle to its author."""
-        from app.domain.agent_instance.services import AgentInstanceService
+        # deferred-import: tests replace this name on app.domain.project.services
         from app.domain.project.services import ProjectService
 
         if not session.agent_handle:

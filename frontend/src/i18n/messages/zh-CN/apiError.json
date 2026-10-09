@@ -994,11 +994,13 @@
   "reviewCommentTooLong": "批注太长",
   "reviewCommentEmpty": "批注没有内容",
   "reviewCommentBadLines": "批注的行号不对",
+  "reviewCommentBadPlace": "批注指的位置不对",
   "reviewCommentNotSendable": "要一起送出的批注里有不能送出的一条，刷新后重试",
   "reviewCommentOutcomeUnknown": "上一轮的批注里没有 {id} 这一条",
   "reviewCommentSignIn": "登录后才能写批注",
   "githubReviewPostFailed": "GitHub 拒绝了这次评审（HTTP {status}）：{reply}",
   "reviewCommentSuggestionOnly": "修改建议",
   "taskFileEditsOverlap": "这个文件在你打开之后又被改过，有和你改的位置重叠的地方，逐处选一个版本",
-  "addressedAgentUnavailable": "所寻址的智能体不可用"
+  "addressedAgentUnavailable": "所寻址的智能体不可用",
+  "fileTooLarge": "文件太大（上限 {mb}MB）"
 }

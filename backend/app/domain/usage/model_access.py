@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.team.services import team_service
+from app.domain.usage.ledger import team_terms
 from app.domain.usage.models import Plan
 
 
@@ -63,8 +65,6 @@ class ModelAccess:
 
 
 async def model_access(session: AsyncSession, team_id: int) -> ModelAccess:
-    from app.domain.team.services import team_service
-    from app.domain.usage.ledger import team_terms
 
     team = await team_service(session).get_team(team_id)
     personal = team is not None and team.personal_owner_user_id is not None

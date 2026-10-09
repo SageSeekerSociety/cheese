@@ -39,7 +39,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent.compute_configs import ComputeChoice
-from app.domain.agent_session.models import LOST_KEY
+from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
@@ -64,12 +64,21 @@ from app.domain.machine.models import (
     MachineStatus,
     capacity,
 )
-from app.domain.machine.progress import publish_line, tell_lost, tell_replaced
+from app.domain.machine.progress import (
+    publish_line,
+    tell_lost,
+    tell_preparing,
+    tell_ready,
+    tell_replaced,
+)
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.supply import pick_offering
+from app.domain.machine.warm import WarmPoolService
+from app.domain.membership.roster import roster
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicStatus
 from app.domain.usage.compute import VM, admit_start, vm_spec
+from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheese.machine")
 
@@ -138,8 +147,8 @@ class HostPool:
     def __init__(
         self, session: AsyncSession, client: MicroCloudClient | None = None, hub=None
     ) -> None:
+        # deferred-import: tests replace this name on app.domain.agent.device_hub
         from app.domain.agent.device_hub import device_hub
-        from app.domain.machine.warm import WarmPoolService
 
         self._session = session
         self._repo = CloudHostRepository(session)
@@ -171,8 +180,6 @@ class HostPool:
         """
         user_id = actor.user_id
         if actor.via == "cheese":
-            from app.domain.user.services import user_by_handle
-
             user = await user_by_handle(self._session, actor.handle)
             user_id = user.id if user else None
         elif actor.via != "token":
@@ -182,7 +189,6 @@ class HostPool:
         project = await self._projects.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
-        from app.domain.membership.roster import roster
 
         if not any(
             m.handle == actor.handle for m in await roster(self._session, project_id)
@@ -192,6 +198,7 @@ class HostPool:
     # --- placement -----------------------------------------------------------
 
     async def _lock_room(self, topic_id: uuid.UUID):
+        # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
         topic = await TopicService(self._session).lock_for_execution(topic_id)
@@ -227,7 +234,6 @@ class HostPool:
         the project's credits are spent. A sandbox already running is not
         refused, so the turn using it finishes.
         """
-        from app.domain.agent_session.models import AgentSession
 
         agent_session = await self._session.get(AgentSession, session_id)
         if agent_session is None:
@@ -560,7 +566,6 @@ class HostPool:
     async def tell_waiting(self, session_id: uuid.UUID) -> dict | None:
         """Tell the session's room, once, that its sandbox is being prepared.
         Returns what to publish once committed."""
-        from app.domain.machine.progress import tell_preparing
 
         home = await self._locked_home(session_id)
         if home is None or home.waiting_since is not None:
@@ -572,7 +577,6 @@ class HostPool:
 
     async def tell_ready(self, session_id: uuid.UUID) -> dict | None:
         """Close the room's preparing line, if it was told one."""
-        from app.domain.machine.progress import tell_ready
 
         home = await self._locked_home(session_id)
         if home is None or home.waiting_since is None:
@@ -731,7 +735,6 @@ class HostPool:
         right after this backend restarts no connector has dialled back yet, and
         an idle host found offline then is a healthy one (a dev pool host was
         deleted that way a minute after a deploy, 2026-10-06 22:10)."""
-        from app.domain.agent_session.models import AgentSession
 
         if (
             host.device_id is None
@@ -789,7 +792,6 @@ class HostPool:
         device) is told so on its next tool call, which places it in a new
         sandbox. Their rows are locked before the pool, the order a tool call
         takes them in (``session_work._attempt``)."""
-        from app.domain.agent_session.models import AgentSession
 
         device_id = host.device_id
         assert device_id is not None  # an enrolled host (``_lost``)
@@ -913,7 +915,6 @@ class HostPool:
             if locked is None or locked.waiting_since is None:
                 await self._session.commit()
                 continue
-            from app.domain.machine.progress import tell_ready
 
             locked.waiting_since = None
             line = await tell_ready(self._session, locked, host.whole_machine)

@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.delivery.ledger import MAX_ATTEMPTS
+from app.domain.delivery.models import Delivery
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.machine.models import (
     CloudHost,
@@ -175,8 +178,6 @@ class GapRepository:
 
     async def reliability(self) -> dict[str, Any]:
         """投递账本的积压与死信。"""
-        from app.domain.delivery.ledger import MAX_ATTEMPTS
-        from app.domain.delivery.models import Delivery
 
         unsent = int(
             (
@@ -220,7 +221,6 @@ class GapRepository:
 
         **只覆盖这一台**（模块 docstring 第 4 条）。远端设备、云主机各有各的盘。
         """
-        import shutil
 
         root = getattr(settings, "workspace_root", None)
         if not root or not Path(root).exists():
@@ -256,6 +256,7 @@ class GapRepository:
         内存里，库里没有那一列。页面上写的是「这个进程里的预览连接」，不是「全平台」。
         """
         try:
+            # deferred-import: tests replace this name on app.domain.agent.preview_hub
             from app.domain.agent.preview_hub import preview_hub
 
             machines = getattr(preview_hub, "_machines", {})

@@ -25,6 +25,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
+import { responseText } from '@/lib/noticeText'
 import { formatRoutineTime, routineRunLabel, routineStateLabel } from '@/lib/routine'
 import { userRefRoute } from '@/lib/userRef'
 
@@ -156,7 +157,7 @@ const rowMenu = useRowMenu<'row'>()
       <div class="routine-row__id">
         <div class="t-body routine-row__title">{{ routine.title }}</div>
         <div class="t-meta c-faint">
-          {{ routine.trigger_text }}<template v-if="roomName"> · {{ roomName }}</template>
+          {{ responseText(routine, 'trigger_text') }}<template v-if="roomName"> · {{ roomName }}</template>
           <template v-if="whenText"> · {{ whenText }}</template>
         </div>
       </div>

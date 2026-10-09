@@ -20,7 +20,6 @@
     "title": "Compare versions",
     "oversized": "This file exceeds 1 MB. Preview or download both versions to compare them",
     "binary": "This format has no line-by-line diff. Preview or download both versions to compare them",
-    "document": "This compares the document text, not its layout or tracked changes",
     "unsupported": "This file format or size does not support line-by-line comparison",
     "many": "Too many files changed to show a line-by-line diff for this one",
     "unavailable": "These versions use different delivery formats, or have no retained content to compare",
@@ -70,9 +69,6 @@
     "paragraphsChanged": "{n} paragraphs changed",
     "paragraphsAdded": "{n} added",
     "paragraphsRemoved": "{n} removed",
-    "paragraph": "Paragraph {n}",
-    "paragraphNew": "Paragraph {n} (new)",
-    "paragraphGone": "Former paragraph {n} (removed)",
     "noLineChanges": "Same content; only the file permissions differ",
     "status": {
       "added": "Added",

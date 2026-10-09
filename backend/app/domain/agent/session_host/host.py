@@ -46,6 +46,7 @@ from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.driven.subscription import Subscription
 from app.domain.agent.harness.pi.events import thread_of
+from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.reads import (
     CaughtUp,
     Completed,
@@ -206,6 +207,7 @@ class SessionHost:
     @property
     def hub(self):
         if self._hub is None:
+            # deferred-import: tests replace this name on app.domain.agent.device_hub
             from app.domain.agent.device_hub import device_hub
 
             self._hub = device_hub
@@ -215,6 +217,7 @@ class SessionHost:
         if self._drivers is None:
             screens = self._screens
             if screens is None:
+                # deferred-import: cycle agent.device_provider -> session_host.host
                 from app.domain.agent.device_provider import DeviceChannel
 
                 screens = DeviceChannel(
@@ -236,8 +239,8 @@ class SessionHost:
 
     async def _api(self, host: str) -> str:
         """The platform as ``host`` reaches it."""
+        # deferred-import: tests replace this name on app.core.db
         from app.core.db import async_session_factory
-        from app.domain.agent.machine_address import device_api_base
 
         factory = self._session_factory or async_session_factory
         async with factory() as db:

@@ -62,6 +62,7 @@ from app.domain.task.services import (
 )
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.team.repositories import TeamRepository
+from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.services import TeamService
 from app.domain.user.repositories import (
     UserRealNameRepository,
@@ -74,7 +75,6 @@ async def get_task_service(db=Depends(get_db)) -> TaskService:
 
 
 async def get_task_membership_service(db=Depends(get_db)) -> TaskMembershipService:
-    from app.domain.team.repositories import TeamRepository as _TeamRepo
 
     repo = TaskMembershipRepository(session=db)
     realname_repo = UserRealNameRepository(session=db)

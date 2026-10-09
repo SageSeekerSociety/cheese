@@ -37,9 +37,11 @@ from sqlalchemy import DateTime, String, column, select, table, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domain.agent.models import Base
+from app.domain.agent.models import AgentTurn, Base
 from app.domain.agent.nonce import new_nonce, nonce_in
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.common import Uuid
+from app.domain.delivery.receipts import terminate_inputs_of_dead_works
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +203,6 @@ async def mark_session_for_turn(
     """The native session this turn's outstanding input(s) went to — stamped
     on the turn's own row too (FB-56 legacy③): it is the identity a
     termination is matched by."""
-    from app.domain.agent.models import AgentTurn
 
     await db.execute(
         update(AgentTurn)
@@ -339,7 +340,6 @@ async def transition(
 async def _retire(db: AsyncSession, *, turn_id: uuid.UUID, at: datetime) -> None:
     """End the interval. `stopped_at` is the whole of it — never a
     completion, never hook-work accounting."""
-    from app.domain.agent.models import AgentTurn
 
     await db.execute(
         update(AgentTurn)
@@ -372,7 +372,6 @@ async def ensure_interval_and_input(
     runner-driven one has: the sweep can find its corpse, and a Stop can
     close it once delivered.
     """
-    from app.domain.agent.repositories import AgentTurnRepository
 
     await AgentTurnRepository(db).open(
         turn_id=turn_id,
@@ -396,7 +395,6 @@ async def stamp_delivered(
     is never demoted). Stamped at the source, so a converse driven without
     the work runner leaves the same fact a runner-driven one does.
     """
-    from app.domain.agent.repositories import AgentTurnRepository
 
     await AgentTurnRepository(db).mark_delivered(turn_id, at)
     await mark_delivered_for_turn(db, turn_id=turn_id, at=at)
@@ -429,7 +427,6 @@ async def retire_failed_interval(
     an undelivered row, and the turn's own coroutine is the only other
     closer. Exactly this id: a failure retires nobody else's interval.
     """
-    from app.domain.agent.repositories import AgentTurnRepository
 
     await AgentTurnRepository(db).close([turn_id], at)
 
@@ -494,8 +491,6 @@ async def close_dead_turns(session_factory, turn_ids) -> None:
     forever. In the same transaction as the close, so a turn is never ended
     with its inputs still owed.
     """
-    from app.domain.agent.repositories import AgentTurnRepository
-    from app.domain.delivery.receipts import terminate_inputs_of_dead_works
 
     async with session_factory() as session:
         await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
@@ -522,9 +517,6 @@ async def open_turns(session_factory) -> dict:
     it raises, and the callers that must survive a database blip say so where
     they say what else they do on failure.
     """
-    from app.domain.agent.models import AgentTurn
-    from app.domain.agent.repositories import AgentTurnRepository
-    from app.domain.delivery.receipts import terminate_inputs_of_dead_works
 
     async with session_factory() as session:
         turns = AgentTurnRepository(session)

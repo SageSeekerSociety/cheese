@@ -1,4 +1,5 @@
 import asyncio
+import io as _io
 import json
 import logging
 import os
@@ -11,6 +12,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, cast
 
+import fitz
 import pymupdf4llm
 
 from app.core.config import settings
@@ -218,7 +220,6 @@ class TaskPdfDraftService:
             raise BadRequestError(f"PDF can contain at most {self._max_pages} pages")
 
     def _split_pdf_to_pages(self, pdf_bytes: bytes) -> tuple[list[PageSource], str]:
-        import fitz
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         page_count = doc.page_count
@@ -591,8 +592,6 @@ class TaskPdfDraftService:
 
             storage_key = generate_storage_key(filename, prefix="task-images")
             content = await asyncio.to_thread(pathlib.Path(local_path).read_bytes)
-
-            import io as _io
 
             buffer = _io.BytesIO(content)
             # 摘要先算：``compute_file_hash`` 读完会 seek 回开头，接着上传的就是同一

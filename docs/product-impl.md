@@ -38,7 +38,6 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 |---|---|---|
 | `reply_to` | 对话树 | 群聊回复线程 |
 | `refs[]` | 引用 | 决策/结论指回来源（如 `return_conclusion` 写 `refs=[sub_id]`） |
-| `upgraded_to_topic_id` | 活引用 | 升级过的块指向其新话题 |
 | `kind` | 块类型 | `message`/`decision`/`event`/`attachment`/`artifact`/`weekly` 等（文档上的评论在 `document_comments`，不是块） |
 | `author_type` | 作者 | `participant`（人和 agent 都是参与者）/ `platform`（平台自己）。「是人还是芝士」看 `author` 这条 handle |
 
@@ -69,7 +68,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 实况文档 | `components/DocPanel.vue` | 飞书文档式；TipTap 编辑器，块手柄(＋插入/⠿ 拖动排序，真功能)；右侧工具可**钉住停靠** |
 | 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸任务) + 项目文档(章程/周报/记忆) + 成员(私聊从名册进)；右缘可拖拽调宽 |
 | 项目首页 | `views/workspace/RunningWorkView.vue` | 等你决定（一叠卡，一次摆一条）+ 四列看板：施工中 / 交付中 / 待处理（按「该谁动」分列）+ 做出了什么（产物清单，网站钉在它最上面） |
-| 单项产物 | `views/ProjectArtifactView.vue` | 预览 / 下载当前版本 / 版本历史 / 发布成网站 / 任选两版比较 —— Office 文档比的是正文（`domain/documents/text.py`），其余按字节 |
+| 单项产物 | `views/ProjectArtifactView.vue` | 预览 / 下载当前版本 / 版本历史 / 发布成网站 / 任选两版比较 —— Word 按段落、表格按单元格、幻灯片按页（`domain/documents/compare.py`），其余按字节 |
 | 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/状态 |
 | 个人主页 | `views/ProfileView.vue` | `/users/:handle` 与 `/projects/:id/members/:handle` 两个入口同一页：头像/简介/团队 + 一年活动图（点一周筛话题）+ 项目 + 最近参与的话题；自己的页多「编辑资料」和芝士眼中的你（可删）；从项目进来多「在这个项目里」 |
 | 项目文档 | `views/ProjectDocsView.vue` | 章程/周报集/记忆；**在工作台内打开、保留左栏**（docs 模式，Batch f3c631b） |

@@ -12,7 +12,8 @@ from app.api.conditional import if_none_match_hits
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError, UnprocessableEntityError
+from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.avatars.repositories import AvatarRepository
 from app.domain.avatars.services import AvatarService
@@ -120,7 +121,12 @@ async def create_avatar(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AvatarService = Depends(get_avatar_service),
 ) -> dict:
-    file_content = await avatar.read()
+    # 上限与附件同口径（`settings.attachment_max_bytes`，默认 100MB）：限读再拒。
+    file_content = await avatar.read(settings.attachment_max_bytes + 1)
+    if len(file_content) > settings.attachment_max_bytes:
+        raise UnprocessableEntityError(
+            say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
+        )
     file_name = avatar.filename or "avatar"
 
     await aiofiles.os.makedirs(AVATAR_STORAGE_DIR, exist_ok=True)

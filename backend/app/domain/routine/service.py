@@ -38,6 +38,8 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
@@ -45,6 +47,7 @@ from app.domain.feedback import claims as feedback_claims
 from app.domain.feedback import triage as feedback_triage
 from app.domain.library import listing as library_listing
 from app.domain.notification.models import NotificationLevel, NotificationType
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
 from app.domain.routine import schedule
@@ -56,6 +59,9 @@ from app.domain.routine.models import (
     RoutineTrigger,
     RunStatus,
 )
+from app.domain.routine.reads import runs_under
+from app.domain.routine.trigger import describe_trigger
+from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import answered_in
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -103,14 +109,6 @@ def _clean_dir(raw: str) -> str:
     if any(part in ("", ".", "..") for part in path.split("/")) and path:
         raise ValidationError(say("routineOutputDirInvalid"))
     return path
-
-
-def describe_trigger(routine: Routine) -> str:
-    trigger = RoutineTrigger(routine.trigger)
-    if trigger is RoutineTrigger.schedule:
-        return schedule.describe(routine.spec, routine.timezone)
-    scope = "本房间" if routine.spec.get("scope") == "room" else "整个项目"
-    return f"{TRIGGER_LABELS[trigger]}（{scope}）"
 
 
 def _validate(trigger: str, spec: dict, tz: str) -> dict:
@@ -396,7 +394,6 @@ class RoutineService:
                 .with_for_update(skip_locked=True)
             )
         )
-        from app.domain.notification.services import ProjectNotificationService
 
         stopped = 0
         for room in rooms:
@@ -914,7 +911,6 @@ async def _announce_finished(session: AsyncSession) -> list[Block]:
     """Tell how each settled run went: its message in the main line, and its
     owner. The messages returned changed; the caller publishes them once
     this commits."""
-    from app.domain.notification.services import ProjectNotificationService
 
     rows = list(
         await session.execute(
@@ -978,10 +974,6 @@ async def publish_run_messages(
     line under it of its 支线."""
     if not message_ids:
         return
-    from app.domain.block.repositories import BlockRepository
-    from app.domain.block.schemas import BlockOut
-    from app.domain.routine.reads import runs_under
-    from app.domain.thread import reads as thread_reads
 
     broker = get_broker()
     async with sessions() as session:

@@ -22,12 +22,15 @@ from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.routes import health as health_routes
+from app.core.metrics import registry
 from app.domain.admin.services import AdminService
 from app.domain.feedback.models import FeedbackStatus
 from app.domain.feedback.services import FeedbackService
 from app.domain.platform_stats.claude_pool import read_claude_pool, snapshot_path
 from app.domain.platform_stats.gaps import GapRepository
 from app.domain.platform_stats.integrations import IntegrationsRepository
+from app.domain.platform_stats.performance import performance_snapshot
 from app.domain.platform_stats.pipeline import PipelineRepository
 from app.domain.platform_stats.product import ProductHealthRepository
 from app.domain.platform_stats.repositories import MachineInventoryRepository
@@ -217,8 +220,6 @@ class PlatformStatsService:
         前半在 `performance_snapshot()`（进程内存，重启即清零，只有这一个进程）。
         后半是新加的：接口很快而投递发不出去时，用户什么都没收到，p95 还是绿的。
         """
-        from app.core.metrics import registry
-        from app.domain.platform_stats.performance import performance_snapshot
 
         snap = performance_snapshot(routes_registered=routes_registered)
         snap["reliability"] = await self._gaps.reliability()
@@ -278,7 +279,6 @@ async def _health_snapshot() -> dict:
     `overall` 原样取 `health_report()` 的结论：任何一项不是 up/skipped 就是
     「degraded」，不是「多数票」—— 一个 down 的 Redis 不该被其余几项投成「healthy」。
     """
-    from app.api.routes import health as health_routes
 
     checks = await health_routes.health_report()
     return {

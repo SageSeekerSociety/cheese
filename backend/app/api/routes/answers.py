@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.answers.services import AnswersService
@@ -230,8 +230,6 @@ async def delete_answer_comment(
     discussion_service: DiscussionService = Depends(get_discussion_service),
 ) -> dict:
     if auth_user.user_id == 0:
-        from app.core.errors import ForbiddenError
-
         raise ForbiddenError("Authentication required")
     # URL 里两道父级 id 都要绑：先认这个回答挂在哪道题上（`_ = question_id` 和
     # `_ = answer_id` 以前两句一起丢，于是拿一道不存在的题、一个不存在的回答做
@@ -246,8 +244,6 @@ async def delete_answer_comment(
     ):
         raise NotFoundError("Comment not found for this answer")
     if discussion["sender"]["id"] != auth_user.user_id:
-        from app.core.errors import ForbiddenError
-
         raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)
     return {"code": 200, "message": "OK", "data": {"deleted": True}}
@@ -267,8 +263,6 @@ async def get_answer(
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
     answer, question = await service.get_answer(answer_id=answer_id, user_id=user_id)
     if answer["question_id"] != question_id:
-        from app.core.errors import NotFoundError
-
         raise NotFoundError("Answer not found for this question")
 
     # Log view for view_count (mirrors NestJS AnswerService.getViewCountOfAnswer)
@@ -297,7 +291,6 @@ async def update_answer(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    from app.core.errors import NotFoundError
 
     answer_data, _ = await service.get_answer(
         answer_id=answer_id, user_id=auth_user.user_id
@@ -325,7 +318,6 @@ async def delete_answer(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AnswersService = Depends(get_answers_service),
 ) -> dict:
-    from app.core.errors import NotFoundError
 
     answer_data, _ = await service.get_answer(
         answer_id=answer_id, user_id=auth_user.user_id

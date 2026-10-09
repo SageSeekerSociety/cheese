@@ -5,10 +5,12 @@ import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import { useCachedResource } from '@/composables/useCachedResource'
 
 import {
   deleteProjectArtifact,
@@ -32,70 +34,55 @@ const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const store = useWorkspaceStore()
 
-const overviewText = ref<string | null>(null)
-// 还没读到的是 null：画面据此不写「0」和「暂无」。
-const progress = ref<ProgressItem[] | null>(null)
-const progressFailed = ref(false)
-const tasks = ref<RoomTask[] | null>(null)
-
-async function loadOverview() {
-  const pid = props.projectId
-  try {
-    const { id } = await getProjectOverview(pid)
-    const text = await getDocumentText(id)
-    if (props.projectId === pid) overviewText.value = text
-  } catch {
-    // 读不到就按「还没写」显示：那一块的入口（写一份）仍然在。
-    if (props.projectId === pid) overviewText.value = ''
+// 三块各记着上一次读到的那份（`useCachedResource`）：回到这个项目的总览先照着它画，
+// 背后重取，回来了原地换——不先清空成一片骨架。没读到过的才是 null，画面据此不写
+// 「0」和「暂无」。
+const overview = useCachedResource(
+  () => `project-overview:${props.projectId}`,
+  async (key) => {
+    try {
+      const { id } = await getProjectOverview(key.slice('project-overview:'.length))
+      return await getDocumentText(id)
+    } catch {
+      // 读不到就按「还没写」显示：那一块的入口（写一份）仍然在。
+      return ''
+    }
   }
-}
-async function loadProgress() {
-  const pid = props.projectId
-  progressFailed.value = false
-  try {
-    const listed = await listProjectProgress(pid)
-    if (props.projectId === pid) progress.value = listed.data
-  } catch (e) {
-    // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
-    if (props.projectId === pid && !store.noteAccess(e)) progressFailed.value = true
+)
+const recent = useCachedResource(
+  () => `project-progress:${props.projectId}`,
+  async (key) => {
+    try {
+      return (await listProjectProgress(key.slice('project-progress:'.length))).data
+    } catch (e) {
+      // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
+      store.noteAccess(e)
+      throw e
+    }
   }
-}
-async function loadTasks(maxAgeMs?: number) {
-  const pid = props.projectId
-  try {
-    const listed = await readProjectTasks(pid, { maxAgeMs })
-    if (props.projectId === pid) tasks.value = listed.data
-  } catch {
-    // 留着上一次的：一次网络抖动不该让「谁在做什么」变空。
-  }
-}
-function loadAll() {
-  void loadOverview()
-  void loadProgress()
-  void loadTasks()
+)
+// 一次网络抖动不该让「谁在做什么」变空：读失败时留着上一次的。
+const work = useCachedResource(
+  () => `project-tasks:${props.projectId}`,
+  async (key) => (await readProjectTasks(key.slice('project-tasks:'.length), { maxAgeMs: 2_000 })).data
+)
+const overviewText = computed(() => overview.data.value ?? null)
+const progress = computed<ProgressItem[] | null>(() => recent.data.value ?? null)
+const progressFailed = computed(() => !!recent.error.value && !store.accessDenied)
+const tasks = computed<RoomTask[] | null>(() => work.data.value ?? null)
+function loadProgress() {
+  void recent.refresh()
 }
 
 // 切回这个标签页时补一次：看到的是此刻的项目，不是离开时的。
 function onVisibility() {
   if (!document.hidden) {
-    void loadProgress()
-    void loadTasks(5_000)
+    void recent.refresh()
+    void work.refresh()
   }
 }
-onMounted(() => {
-  loadAll()
-  document.addEventListener('visibilitychange', onVisibility)
-})
+onMounted(() => document.addEventListener('visibilitychange', onVisibility))
 onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility))
-watch(
-  () => props.projectId,
-  () => {
-    overviewText.value = null
-    progress.value = null
-    tasks.value = null
-    loadAll()
-  }
-)
 
 const projectName = computed(() => store.projects.find((p) => p.id === props.projectId)?.name ?? '')
 const members = computed(() => store.members as ProjectMemberRow[])

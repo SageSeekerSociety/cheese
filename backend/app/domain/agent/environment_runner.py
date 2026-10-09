@@ -4,11 +4,14 @@ The launcher invokes this inside the selected execution boundary. A lock prevent
 concurrent installers. At exec the lock is released; tmux owns agent reuse.
 """
 
+import ctypes
 import functools
 import json
 import os
+import platform
 import runpy
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -190,8 +193,6 @@ def end_sandbox(home):
 def sandbox_check(pid, path=None):
     """macOS's `sandbox_check`: with no `path`, 1 when `pid` runs in a sandbox;
     with one, 0 when the process may write `path`. -1 when it cannot say."""
-    import ctypes
-    import platform
 
     check = ctypes.CDLL("/usr/lib/libSystem.dylib").sandbox_check
     check.restype = ctypes.c_int
@@ -273,8 +274,6 @@ def darwin_identity(pid):
     process of this user's. From libproc and not `ps`: on macOS `ps` is setuid
     root, and a process under a Seatbelt profile, as a room's executor is, may
     not exec a setuid program."""
-    import ctypes
-    import struct
 
     # struct proc_bsdinfo (PROC_PIDTBSDINFO), with its start time at 120.
     info = ctypes.create_string_buffer(136)

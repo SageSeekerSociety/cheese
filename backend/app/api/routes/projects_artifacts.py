@@ -38,7 +38,7 @@ import of that shape is in it) and no *repository* module (the ratchet in
 `tests/unit/test_domain_import_guard.py` freezes four repository pairs against
 `app.api.routes.projects`; all four stay, because the handlers that read those
 repositories stay too). `app.domain.project.artifacts`, `...preview.office`,
-`...library.service`, `...documents.text` and `...repository.forge_files` are
+`...library.service`, `...documents.compare` and `...repository.forge_files` are
 modules and services, not repositories, so importing them here adds nothing to
 either ratchet and `.importlinter` is untouched.
 
@@ -71,12 +71,13 @@ from app.api.response import ok, page
 from app.api.routes.projects import DbSession
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.documents.text import delivered_comparison
+from app.domain.documents.compare import compare as office_compare
 from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project import artifacts
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
+from app.domain.textfile import compare_bytes
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -176,13 +177,19 @@ async def compare_artifact_versions(
     if left.kind == right.kind == "file" and left.filename and right.filename:
         old = library.read_artifact_snapshot(project_id, before, left.filename)
         new = library.read_artifact_snapshot(project_id, after, right.filename)
-        comparison = await asyncio.to_thread(
-            delivered_comparison, old, new, left.filename, right.filename
-        )
+        office = await asyncio.to_thread(office_compare, old, new, right.filename)
+        if office is not None:
+            # A Word document, workbook or deck: compared by paragraph, cell or
+            # slide, the same comparison the 改动 tab shows.
+            comparison = {"identical": office["identical"], "diff": None, "note": None}
+        else:
+            comparison = await asyncio.to_thread(
+                compare_bytes, old, new, left.filename, right.filename
+            )
         result = {
             "kind": "file",
             "identical": comparison["identical"],
-            "files": [{"path": right.filename, **comparison}],
+            "files": [{"path": right.filename, **comparison, "office": office}],
             "note": None,
         }
     elif left.kind == right.kind == "merge" and left.revision and right.revision:

@@ -2,6 +2,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from app.core.csv_export import csv_row
+from app.core.errors import BadRequestError
 from app.domain.space.analytics_view_service import SUCCESS_STATUS
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.user.repositories import UserProfileRepository, UserRepository
@@ -195,8 +196,6 @@ class SpaceAnalyticsService:
             return None
         result = self._APPROVED_MAP.get(value.upper())
         if result is None:
-            from app.core.errors import BadRequestError
-
             raise BadRequestError(
                 f"Invalid taskStatus: {value}. Must be APPROVED, DISAPPROVED, or NONE"
             )

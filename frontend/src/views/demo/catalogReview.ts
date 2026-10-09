@@ -5,12 +5,15 @@
  * 单独一份，理由同 `catalogAccept.ts`：`catalog.ts` 已经顶着行数上限。三件都只吃
  * props、只往上发事件，批注从哪来、送到哪去在 `composables/useReviewComments.ts`。
  */
-import type { MergeRegion, ReviewComment } from '@/types/reviewComment'
+import type { DiffReview, MergeRegion, OfficeComparison, ReviewComment } from '@/types/reviewComment'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import OfficeCompare from '@/components/review/OfficeCompare.vue'
 import ReviewCommentBox from '@/components/review/ReviewCommentBox.vue'
 import ReviewCommentCard from '@/components/review/ReviewCommentCard.vue'
+import ReviewDocument from '@/components/review/ReviewDocument.vue'
 import ReviewMergePicker from '@/components/review/ReviewMergePicker.vue'
+import { revisionsBundle } from '@/test/panelBundles'
 
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
@@ -21,6 +24,7 @@ const BASE: ReviewComment = {
   line_start: 208,
   line_end: 208,
   line_text: '        q = q.where(Notice.answered_at.is_(None))',
+  place: 'L208',
   current_line: 208,
   body: '归档的任务也要排除，不然侧栏还会数到它',
   suggestion: null,
@@ -65,7 +69,142 @@ const REGIONS: MergeRegion[] = [
   { kind: 'same', text: '</template>\n' },
 ]
 
+const WORD: OfficeComparison = {
+  kind: 'word',
+  new_file: false,
+  identical: false,
+  changed: 2,
+  against: 'returned',
+  rows: [
+    { op: 'same', before: 1, after: 1, text: '3.2 实验结果' },
+    {
+      op: 'changed',
+      before: 2,
+      after: 2,
+      pieces: [
+        { op: 'equal', text: '在 120 名参与者中，完成全部任务的有 ' },
+        { op: 'delete', text: '96' },
+        { op: 'insert', text: '98' },
+        { op: 'equal', text: ' 人。' },
+      ],
+    },
+    { op: 'added', before: null, after: 3, text: '平均用时比 A 组少 4.2 分钟（p = 0.03）。' },
+  ],
+  formatting: [{ after: 1, text: '3.2 实验结果' }],
+}
+
+const SHEET: OfficeComparison = {
+  kind: 'sheet',
+  new_file: false,
+  identical: false,
+  changed: 2,
+  sheets: [
+    {
+      name: '汇总',
+      status: 'changed',
+      cells: [
+        { address: 'C3', before: '34', after: '33', before_formula: null, after_formula: null, formula: false },
+        {
+          address: 'C5',
+          before: '96',
+          after: '95',
+          before_formula: 'SUM(C2:C4)',
+          after_formula: 'SUM(C2:C3)',
+          formula: true,
+        },
+      ],
+    },
+  ],
+}
+
+const SLIDES: OfficeComparison = {
+  kind: 'slide',
+  new_file: false,
+  identical: false,
+  changed: 2,
+  slides: [
+    {
+      op: 'changed',
+      before: 1,
+      after: 1,
+      title: '研究问题',
+      pieces: [
+        { op: 'insert', text: '报名表单的' },
+        { op: 'equal', text: '字段越少，完成率越高吗' },
+      ],
+    },
+    { op: 'added', before: null, after: 2, title: '实验结果' },
+    { op: 'same', before: 2, after: 3, title: '局限' },
+  ],
+}
+
+const DOC_COMMENT: ReviewComment = {
+  ...BASE,
+  id: 'c-doc',
+  path: 'docs/结题报告.docx',
+  line_start: 3,
+  line_end: 3,
+  line_text: '98 人',
+  place: 'p3',
+  current_line: 3,
+  body: '和问卷汇总表对不上，那边是 96',
+}
+
+const DOC_REVIEW: DiffReview = {
+  comments: [DOC_COMMENT],
+  writable: true,
+  me: 'pengwenbo',
+  busy: false,
+  agentName: '芝士',
+}
+
 export const REVIEW_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'office-compare',
+    title: 'OfficeCompare',
+    about: '一份 Office 文件和上一版比：Word 按段落两栏对齐，表格列出变了的格子，幻灯片按页标出改过和新加的。',
+    file: 'src/components/review/OfficeCompare.vue',
+    component: OfficeCompare,
+    needs: UI_T,
+    states: [
+      {
+        name: 'Word',
+        note: '同一段落在同一行；只改了格式的段落列在最下面。',
+        props: { comparison: WORD },
+        expect: '只改了格式',
+      },
+      {
+        name: '表格',
+        note: '原来的值和现在的值并排，变的是公式的标出来。',
+        props: { comparison: SHEET },
+        expect: '汇总',
+      },
+      {
+        name: '幻灯片',
+        note: '按阅读顺序，改过的页带着字词级的差异。',
+        props: { comparison: SLIDES },
+        expect: '实验结果',
+      },
+    ],
+  },
+  {
+    id: 'review-document',
+    title: 'ReviewDocument',
+    about: '「改动」里打开的一份 Office 文件：左边是这一版或和上一版的对比，右边是修订和批注。',
+    file: 'src/components/review/ReviewDocument.vue',
+    component: ReviewDocument,
+    needs: UI_T,
+    args: { path: 'docs/结题报告.docx', documentType: null, docBytes: null, review: DOC_REVIEW, canCompare: true },
+    states: [
+      {
+        name: '对比退回时那一版',
+        note: '被退回过的交付和退回时那一版比；右边挂着这份文件上的批注。',
+        props: { revs: revisionsBundle(), comparing: true, comparison: WORD },
+        expect: '对比退回时那一版',
+      },
+    ],
+  },
+
   {
     id: 'review-comment-box',
     title: 'ReviewCommentBox',

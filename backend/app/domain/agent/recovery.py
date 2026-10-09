@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from app.domain.agent import death_evidence
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.pending_messages import nudge_messages
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
@@ -146,8 +147,6 @@ class SessionRecovery:
                         "session recovery failed for topic %s", session.conversation_id
                     )
                 else:
-                    from app.domain.agent.pending_messages import nudge_messages
-
                     nudge_messages(self, session.conversation_id)
                     # Taken over, read up: now compare it with what this
                     # release would start, while nobody is waiting on it.

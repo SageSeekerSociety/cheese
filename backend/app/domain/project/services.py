@@ -11,13 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.documents import seed
+from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.task.models import Task, TaskMembership
+from app.domain.task.teaching import protocol_for_task
+from app.domain.team.services import team_service
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import Ledger
+from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +136,7 @@ class ProjectService:
         # an agent that exists.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":
@@ -145,8 +151,7 @@ class ProjectService:
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
         """owner_handle == User.username (fusion A1) → that user's personal team,
         provisioning it if needed. None when the handle isn't a real user."""
-        # Local imports: project ↔ team would otherwise be an import cycle.
-        from app.domain.team.services import team_service
+        # deferred-import: tests replace this name on app.domain.user.repositories
         from app.domain.user.repositories import UserRepository
 
         user = await UserRepository(session=self._session).get_by_handle(owner_handle)
@@ -196,7 +201,6 @@ class ProjectService:
     async def overview_document(self, project: Project):
         """The project's overview, made empty (version 0) the first time anyone
         needs it: whoever opens, writes or comments on it needs its id first."""
-        from app.domain.living_doc.services import Documents
 
         documents = Documents(self._session)
         if project.overview_document_id is not None:
@@ -228,8 +232,6 @@ class ProjectService:
         """Write a new project's overview from text it already had: what its
         creator said they wanted, or its 赛题. Author is `system`: the platform
         moved existing words, nobody wrote them here."""
-        from app.domain.block.documents import seed
-        from app.domain.living_doc.services import DocumentJournal
 
         doc = await self.overview_document(project)
         await DocumentJournal(self._session).lock(doc.id)
@@ -325,7 +327,10 @@ class ProjectService:
         project = await self.get_or_404(project_id)
         if project.archived_at is not None:
             return project
+        # deferred-import: breaks the cycle membership.services -> project.services
         from app.domain.membership.services import InvitationService
+
+        # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
         project.archived_at = datetime.now(UTC)
@@ -340,6 +345,7 @@ class ProjectService:
         project = await self.get_or_404(project_id)
         if project.archived_at is None:
             return project
+        # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
         await TopicService(self._session).unarchive_with_project(project_id, by=by)
@@ -381,14 +387,14 @@ class ProjectService:
         nothing, leaves the project exactly as it was. Creating a project must
         not fail because an institution left its resource pack empty.
         """
+        # deferred-import: Task is bound at the top of this module already
         from app.domain.task.models import Task
-        from app.domain.task.teaching import protocol_for_task
 
         task = await self._session.get(Task, task_id)
         if task is None:
             return
+        # deferred-import: TaskMembership is bound at the top of this module already
         from app.domain.task.models import TaskMembership
-        from app.domain.user.models import User
 
         member_id = project.team_id
         if task.submitter_type == 0:
@@ -442,7 +448,6 @@ class ProjectService:
         """Release the task's resources to its workspace after approval."""
         if membership.approved != 0:
             return
-        from app.domain.user.models import User
 
         owner = None
         if not membership.is_team:
