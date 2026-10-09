@@ -57,15 +57,19 @@ def adopt(
     broker: InProcessBroker,
     channel: str,
     turns: Iterable[tuple[str, float, str | None]],
+    *,
+    read_at: int,
 ) -> list[tuple[str, str | None]]:
     """Take in ``(turn id, started at, agent seat)`` the broker does not know.
-    One it already knows is left as it is. The ``turn_finished`` that ends an
-    adopted turn ends it like any other.
+    One it already knows is left as it is, and so is one it saw end after
+    ``read_at`` (`InProcessBroker.books_read`, taken before ``turns`` were
+    read). The ``turn_finished`` that ends an adopted turn ends it like any
+    other.
 
     Returns the ``(turn id, agent seat)`` of the turns it took in, so a caller
     can tell the room about them (``reconcile`` does).
     """
-    return broker.adopt(channel, turns)
+    return broker.adopt(channel, turns, read_at=read_at)
 
 
 async def reconcile(
@@ -90,6 +94,7 @@ async def reconcile(
     the only thing that ends one the database still holds open.
     """
     known = _turn_ids(broker.active_turn_ids(channel))
+    read_at = broker.books_read()
     async with session_factory() as session:
         turns = AgentTurnRepository(session)
         ended = await turns.ended_on(conversation_id, known)
@@ -112,7 +117,7 @@ async def reconcile(
         ended_here += 1
 
     started_here = 0
-    for turn_id, agent in adopt(broker, channel, open_now):
+    for turn_id, agent in adopt(broker, channel, open_now, read_at=read_at):
         # The owner's `turn_started` never reached this process, so a page here
         # was never told the turn exists: it shows a room that looks idle while
         # a teammate is at work. `adopt` has already put it in the books with
