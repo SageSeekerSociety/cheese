@@ -736,18 +736,60 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
-def publication_prompt(content: str) -> str:
+def _in_the_readers_language(language: str | None, zh: str, en: str) -> str:
+    """平台自己想对模型说的话，按读它的那个人的语言选。
+
+    `language` 是提问的人界面上选的（`app.core.sentences.LOCALES`），没选过是
+    None——那就说存下来的中文，和平台存下来的每一句话一样。只有 en 说英文。
+    """
+    return en if language == "en" else zh
+
+
+def publication_prompt(content: str, language: str | None = None) -> str:
     """Carry the chat contract on new and resumed terminal input alike."""
     return (
         content
         + "\n\n"
         + platform_prompt(
-            "Ordinary output and final responses are not published to chat. "
-            "Publish with the chat_send tool. "
-            "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
-            "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
-            "重要进展、改方向、阻碍和完成结果也要主动发消息。"
+            _in_the_readers_language(
+                language,
+                "日常输出和最终答复不会发到聊天里，要用 chat_send 工具发。"
+                "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
+                "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
+                "重要进展、改方向、阻碍和完成结果也要主动发消息。",
+                "Ordinary output and final responses are not published to chat. "
+                "Publish with the chat_send tool. When a person's message needs an "
+                "answer — including one queued or added while you work — answer it "
+                "if you can; if you have to keep working, say what you understood "
+                "and what you are about to do, then carry on. Publish major "
+                "progress, changes of direction, blockers and results too.",
+            )
         )
+    )
+
+
+def silence_reminder(minutes: int, language: str | None = None) -> str:
+    """The room heard nothing from a running turn for `minutes` minutes.
+
+    The platform's own words to the model, said in the reader's language for the
+    same reason the contract above is: a reminder is what a turn that stalled
+    arrives with (a machine off the network, a long command), which is when a
+    session has least else to hold on to. On 2026-10-09 a session restarted
+    after an outage read these two in English and wrote every step's line in
+    English afterwards, in a room whose people write Chinese.
+    """
+    return _in_the_readers_language(
+        language,
+        f"这个房间已经 {minutes} 分钟没听到你说话了，提问的人还在等。"
+        "如果这一轮还在跑，现在就用 chat_send 发一条消息：说清你知道什么、"
+        "在等什么——房间不出声，和卡住了分不出来。计划变了就顺手用 todo_write "
+        "改步骤清单。这一轮已经结束的话才不用理会。",
+        f"You have published nothing to this room for {minutes} minutes and the "
+        "person who asked is still waiting. If this turn is still running, call "
+        "chat_send now with what you know so far and what you are waiting on — a "
+        "room that shows nothing cannot be told apart from one that is stuck. If "
+        "your plan has changed, also update it with todo_write. Ignore this only "
+        "if the turn is already finished.",
     )
 
 

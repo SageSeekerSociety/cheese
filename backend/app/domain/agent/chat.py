@@ -66,6 +66,7 @@ from app.domain.agent.harness.prompt import (
     live_input_lines,
     platform_prompt,
     publication_prompt,
+    silence_reminder,
     strip_platform_notice,
 )
 from app.domain.agent.input_registration import confirm_receipt, input_registrar
@@ -202,6 +203,7 @@ from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs, threads_of_rooms
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.reads import load_topic
+from app.domain.user.services import language_of
 
 CHEESE_AUTHOR = "cheese"
 
@@ -722,6 +724,9 @@ class ChatService(SessionRecovery):
         state = self.live.hook_work.get((topic_id, consuming_turn_id))
         async with self._sessions() as session:
             stored, replied = await live_inputs(session, user_block_ids)
+            # 中途插进来的话也带着平台自己那几句，同样按正在说话的那个人的
+            # 语言走（`user.language`）。
+            language = await language_of(session, author)
         lines, images = live_input_lines(
             author,
             content,
@@ -731,7 +736,7 @@ class ChatService(SessionRecovery):
             recipient=state.acting_agent if state else None,
         )
         state = self.live.hook_work.get((topic_id, consuming_turn_id))
-        line = publication_prompt("\n".join(lines))
+        line = publication_prompt("\n".join(lines), language)
         registrar = self._input_registrar(
             InputEffects(
                 held_block_ids=tuple(user_block_ids),
@@ -822,6 +827,17 @@ class ChatService(SessionRecovery):
                 return False
             silent_for = now - (state.last_chat_at or state.started_at)
             minutes = int(silent_for.total_seconds() // 60)
+            # 平台自己那句话按提问的人的语言说（`user.language`）——他就是还在等
+            # 的那个人。查不到时是 None，说存下来的中文。
+            async with self._sessions() as session:
+                asked = (
+                    await BlockRepository(session).get(state.reply_to)
+                    if state.reply_to
+                    else None
+                )
+                language = await language_of(
+                    session, asked.author if asked is not None else None
+                )
             try:
                 # Repeats every `chat_progress_reminder_after_s` of continued
                 # silence. A publication clears this and `last_chat_at` together,
@@ -831,15 +847,7 @@ class ChatService(SessionRecovery):
                 # A blocked terminal must not hold up reminders in other rooms.
                 async with asyncio.timeout(5):
                     delivered = await self.notify_running_turn(
-                        state.topic_id,
-                        f"You have published nothing to this room for {minutes} "
-                        "minutes and the person who asked is still waiting. If "
-                        "this turn is still running, call chat_send now with "
-                        "what you know so far and what you are waiting on — a "
-                        "room that shows nothing cannot be told apart from one "
-                        "that is stuck. If your plan has changed, also update "
-                        "it with todo_write. Ignore this only if the turn is "
-                        "already finished.",
+                        state.topic_id, silence_reminder(minutes, language)
                     )
                 # THAT a reminder fired was already visible — the periodic
                 # loop logs `chat progress reminder: <count>` on any cycle whose
