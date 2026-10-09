@@ -64,6 +64,18 @@ def clean_path(path: str) -> str:
     return path
 
 
+def _landed_head(task: Task) -> str | None:
+    """The head the task's landed delivery left, while that is still the task's
+    code: the task closed on it, or is being written up after its last step.
+
+    A task that goes on after a step lands works on a new branch from the latest
+    code (`TaskService.next_step`), so the landed head is the step before it,
+    already on the default branch, and its files are not the open step's."""
+    if task.status != TaskStatus.open or task.closing_since is not None:
+        return task.delivered_head
+    return None
+
+
 class ProjectFiles:
     def __init__(
         self,
@@ -154,8 +166,9 @@ class ProjectFiles:
 
     async def revision(self):
         task = await self.task()
-        if task and task.delivered_head:
-            return task.delivered_head
+        landed = _landed_head(task) if task else None
+        if landed:
+            return landed
         branch = (
             task.branch_name
             if task
@@ -294,7 +307,7 @@ class ProjectFiles:
         task = await self.task()
         if task is None or not task.branch_name:
             return None
-        head = task.delivered_head or await self._head(
+        head = _landed_head(task) or await self._head(
             self.project_id, self.session, task.branch_name
         )
         if not head:
