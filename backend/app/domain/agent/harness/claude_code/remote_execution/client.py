@@ -53,10 +53,6 @@ if __package__:
     from app.domain.agent.harness.claude_code.remote_execution.context_service import (
         serve,
     )
-    from app.domain.agent.harness.claude_code.remote_execution.private import (
-        ensure,
-        release,
-    )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
         allow_native_tools,
         carry_transcripts,
@@ -66,7 +62,6 @@ if __package__:
         platform_tool_names,
         touch_skills,
     )
-    from app.domain.agent.harness.claude_code.remote_execution.runtime import bridge
     from app.domain.agent.harness.claude_code.remote_execution.shell_stop import (
         CAUGHT,
         KILL,
@@ -97,7 +92,6 @@ else:
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     from context_service import serve
-    from private import ensure, release
     from release import (
         allow_native_tools,
         carry_transcripts,
@@ -107,7 +101,6 @@ else:
         platform_tool_names,
         touch_skills,
     )
-    from runtime import bridge
     from shell_stop import CAUGHT, KILL, current_target, deliver_stop, start_watcher
 
 PINNED_VERSION = "2.1.282"
@@ -266,6 +259,12 @@ def prepare(
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     if target.get("kind") == "private":
+        if __package__:
+            # deferred-import: private scratch requires fcntl, absent on Windows
+            from .private import ensure
+        else:
+            # deferred-import: private scratch requires fcntl, absent on Windows
+            from private import ensure
         ensure(target, directory, os.environ)
     if target.get("kind") == "deferred" and target["workspace"] != DEFERRED_WORKSPACE:
         target = _take_leased_machine(target)
@@ -1808,11 +1807,23 @@ def main():
     if args.mode == "transport":
         transport(config, args.config)
     elif args.mode == "release":
+        if __package__:
+            # deferred-import: private scratch requires fcntl, absent on Windows
+            from .private import release
+        else:
+            # deferred-import: private scratch requires fcntl, absent on Windows
+            from private import release
         release(config)
     elif args.mode == "bridge":
         # Remote servers and a type's own, whose definition rides each call.
         remote = set(session_servers(config)) - set(config.get("mcp_servers", []))
         if config.get("kind") == "device" or args.args[0] in remote:
+            if __package__:
+                # deferred-import: runtime loads POSIX primitives and hashes its source
+                from .runtime import bridge
+            else:
+                # deferred-import: runtime loads POSIX primitives and hashes its source
+                from runtime import bridge
             bridge(None, args.args[0], call=RemoteClient(config).call)
         else:
             command = RemoteClient(config).command("bridge", args.args[0])
