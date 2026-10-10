@@ -7,6 +7,8 @@
  * - Passing asks for one, and says so before 提交 is pressed.
  * - Pressing 提交 with the score missing says what is missing instead of doing
  *   nothing.
+ * - Changing a saved review to the other verdict does not carry the old
+ *   verdict's comment or score over; changing back brings them back.
  */
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -62,6 +64,7 @@ beforeEach(() => {
     },
   })
   api.postSubmissionReview.mockResolvedValue({ data: {} })
+  api.patchSubmissionReview.mockResolvedValue({ data: {} })
 })
 
 afterEach(cleanup)
@@ -74,12 +77,33 @@ async function choose(key: 'accept' | 'reject') {
   await fireEvent.change(radio)
 }
 
+/** The latest version already carries a saved review. */
+function savedReview(detail: { accepted: boolean; score: number; comment: string }) {
+  api.listSubmissions.mockResolvedValue({
+    data: {
+      submissions: [
+        {
+          id: 77,
+          version: 1,
+          createdAt: Date.now(),
+          content: [],
+          submitter: { nickname: 'someone' },
+          review: { reviewed: true, detail },
+        },
+      ],
+      page: { page_start: 0, page_size: 10, has_more: false, total: 1 },
+    },
+  })
+}
+
+const commentInput = () => screen.getByLabelText('tasks.submissionHistory.comment') as HTMLTextAreaElement
+
 async function mountReview() {
   render(TaskSubmissionHistory, {
     props: { taskId: 5, participantId: 9, reviewable: true },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
-  await screen.findByText('tasks.submissionHistory.review')
+  await screen.findByText(/^tasks\.submissionHistory\.(review|editReview)$/)
 }
 
 const scoreInput = () => screen.queryByLabelText(/tasks\.submissionHistory\.score/) as HTMLInputElement | null
@@ -126,5 +150,46 @@ describe('reviewing a submission', () => {
     await waitFor(() => expect(api.postSubmissionReview).toHaveBeenCalledTimes(1))
     const body = api.postSubmissionReview.mock.calls[0][3]
     expect(body).toMatchObject({ accepted: true, score: 88 })
+  })
+
+  it('changing a rejection to a pass does not send the rejection comment with it', async () => {
+    savedReview({ accepted: false, score: 0, comment: '没有处理空输入' })
+    await mountReview()
+    await waitFor(() => expect(commentInput().value).toBe('没有处理空输入'))
+
+    await choose('accept')
+    await waitFor(() => expect(commentInput().value).toBe(''))
+    expect(scoreInput()!.value).toBe('')
+    await fireEvent.update(scoreInput()!, '90')
+    await fireEvent.click(screen.getByRole('button', { name: 'tasks.submissionHistory.submit' }))
+
+    await waitFor(() => expect(api.patchSubmissionReview).toHaveBeenCalledTimes(1))
+    expect(api.patchSubmissionReview.mock.calls[0][3]).toEqual({ accepted: true, score: 90, comment: '' })
+  })
+
+  it('changing back to the saved verdict brings its comment back', async () => {
+    savedReview({ accepted: false, score: 0, comment: '没有处理空输入' })
+    await mountReview()
+    await waitFor(() => expect(commentInput().value).toBe('没有处理空输入'))
+
+    await choose('accept')
+    await waitFor(() => expect(commentInput().value).toBe(''))
+    await choose('reject')
+
+    await waitFor(() => expect(commentInput().value).toBe('没有处理空输入'))
+  })
+
+  it('a comment written for the new verdict stays when the verdict is changed again', async () => {
+    savedReview({ accepted: true, score: 80, comment: '思路清楚' })
+    await mountReview()
+    await waitFor(() => expect(commentInput().value).toBe('思路清楚'))
+
+    await choose('reject')
+    await waitFor(() => expect(commentInput().value).toBe(''))
+    await fireEvent.update(commentInput(), '第二题算错了')
+    await choose('accept')
+
+    await waitFor(() => expect(scoreInput()!.value).toBe('80'))
+    expect(commentInput().value).toBe('第二题算错了')
   })
 })

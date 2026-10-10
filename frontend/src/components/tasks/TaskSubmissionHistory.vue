@@ -336,6 +336,23 @@ watch(latestSubmission, (newVal) => {
   }
 })
 
+// A comment and a score are written for one verdict. Changing a saved review to
+// the other verdict starts both over — otherwise a rejection's comment (and its
+// stored 0) goes out with the pass. Changing back brings the saved ones back.
+// What the reviewer has already typed for the new verdict is left alone.
+watch(accepted, (now) => {
+  const review = latestSubmission.value?.review
+  if (!props.reviewable || !review?.reviewed) return
+  const saved = review.detail
+  if (now === saved.accepted) {
+    if (!comment.value) comment.value = saved.comment
+    if (score.value === undefined) score.value = saved.score
+  } else {
+    if (comment.value === saved.comment) comment.value = ''
+    if (score.value === saved.score) score.value = undefined
+  }
+})
+
 defineExpose({
   refresh,
 })
