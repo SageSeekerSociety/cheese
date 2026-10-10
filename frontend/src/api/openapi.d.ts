@@ -2376,6 +2376,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connector/my/devices/{device_id}/sandbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check My Sandbox
+         * @description Ask one of the caller's machines again whether it can give a session a
+         *     sandbox: after its owner changed what it lacked, the page asks rather than
+         *     leaving the answer from its last connection standing.
+         */
+        post: operations["check_my_sandbox_connector_my_devices__device_id__sandbox_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connector/my/devices/{device_id}": {
         parameters: {
             query?: never;
@@ -21214,6 +21236,39 @@ export interface operations {
         };
     };
     check_my_claude_code_connector_my_devices__device_id__claude_code_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    } | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_my_sandbox_connector_my_devices__device_id__sandbox_post: {
         parameters: {
             query?: never;
             header?: never;

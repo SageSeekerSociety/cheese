@@ -512,6 +512,7 @@
     "more": "更多操作",
     "claudeCodeLoggedIn": "Claude Code · 已登录（{plan}）",
     "claudeCodeLoggedOut": "Claude Code · 未登录，在这台设备的终端运行 {command} 登录",
+    "sandboxUnavailable": "这台电脑给不了频道隔离环境，在这里的频道会被拒绝。它给出的原因和处理办法：",
     "claudeCodeApiKey": "API key",
     "teams": "提供给",
     "noTeams": "未提供给团队",

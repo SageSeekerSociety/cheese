@@ -20,7 +20,7 @@ Two invariants (fusion-design §4):
 import logging
 import secrets
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -37,6 +37,7 @@ from app.domain.device.repository import (
     Device,
     DeviceRepository,
     HostHealth,
+    SandboxCheck,
     Supply,
     TopicDevice,
     Visibility,
@@ -417,9 +418,31 @@ class DeviceService:
         用之前**要问「这一轮会占谁的机器」，好把提议发给那台机器的主人（结论 40）。
         闸门调不了 `resolve_pinned_device`——它会把绑定写下去，而撞上策略的调用必须
         一台机器也没占。挑的规则在这里一处，写绑定的只在那一处。
+
+        说过自己给不了会话沙箱的机器不挑（`refusing_sandboxes`）。
         """
         healthy = await self.healthy_devices_for_project(project_id, is_online)
-        return healthy[0] if healthy else None
+        refusing = await self.refusing_sandboxes([d.device_id for d in healthy])
+        return next((d for d in healthy if d.device_id not in refusing), None)
+
+    async def refusing_sandboxes(self, device_ids: Sequence[str]) -> dict[str, str]:
+        """The machines among ``device_ids`` that said they cannot give a
+        session a sandbox, each with its reason. A room 「系统挑一台」 places is
+        isolated (`supply.default_visibility`), so none of these is picked for
+        it; a machine not asked yet is not among them, and its install decides."""
+        checks = await self._repo.list_sandbox_checks(device_ids)
+        return {d: c.reason or "" for d, c in checks.items() if not c.isolates}
+
+    async def sandbox_check(self, device_id: str) -> SandboxCheck | None:
+        """What ``device_id`` last said about giving a session a sandbox."""
+        return (await self._repo.list_sandbox_checks([device_id])).get(device_id)
+
+    async def record_sandbox_check(
+        self, device_id: str, *, isolates: bool, reason: str | None
+    ) -> None:
+        await self._repo.save_sandbox_check(
+            SandboxCheck(device_id, isolates, reason, self._now())
+        )
 
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)

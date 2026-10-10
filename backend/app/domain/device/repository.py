@@ -52,6 +52,18 @@ class AuthCode:
     device_id: str | None = None
 
 
+@dataclass(frozen=True)
+class SandboxCheck:
+    """What a machine a person enrolled said, the last time it was asked,
+    about giving a session a sandbox (`device.sandbox`). ``reason`` is its own
+    account of why not, for its owner."""
+
+    device_id: str
+    isolates: bool
+    reason: str | None
+    checked_at: datetime
+
+
 @dataclass
 class HostHealth:
     """A machine's rolling failure streak + quarantine window (#186).
@@ -126,3 +138,10 @@ class DeviceRepository(Protocol):
     async def list_host_health(
         self, device_ids: Sequence[str]
     ) -> dict[str, HostHealth]: ...
+
+    # whether a machine a person enrolled can give a session a sandbox, as it
+    # last answered (`device.sandbox`); one row per machine, absent until asked.
+    async def save_sandbox_check(self, check: SandboxCheck) -> None: ...
+    async def list_sandbox_checks(
+        self, device_ids: Sequence[str]
+    ) -> dict[str, SandboxCheck]: ...

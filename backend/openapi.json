@@ -8074,6 +8074,58 @@
         }
       }
     },
+    "/connector/my/devices/{device_id}/sandbox": {
+      "post": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Check My Sandbox",
+        "description": "Ask one of the caller's machines again whether it can give a session a\nsandbox: after its owner changed what it lacked, the page asks rather than\nleaving the answer from its last connection standing.",
+        "operationId": "check_my_sandbox_connector_my_devices__device_id__sandbox_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Check My Sandbox Connector My Devices  Device Id  Sandbox Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/connector/my/devices/{device_id}": {
       "delete": {
         "tags": [

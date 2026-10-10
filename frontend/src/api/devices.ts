@@ -73,3 +73,13 @@ export function listMyTeams(): Promise<import('../cx_types').MyTeam[]> {
     '/teams/my-teams'
   ).then((r) => r.teams.map((t) => ({ id: t.id, handle: t.handle, name: t.name, personal: t.personal === true })))
 }
+
+/** 让这台电脑再答一次能不能给会话沙箱：机主补上它缺的之后，服务器要再问才知道。 */
+export function checkSandbox(deviceId: string): Promise<import('../types/deviceSandbox').DeviceSandbox | null> {
+  return connectorRequest<import('../types/deviceSandbox').DeviceSandbox | null>(
+    `/my/devices/${encodeURIComponent(deviceId)}/sandbox`,
+    {
+      method: 'POST',
+    }
+  )
+}

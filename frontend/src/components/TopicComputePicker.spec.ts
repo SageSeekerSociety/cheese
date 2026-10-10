@@ -232,13 +232,13 @@ describe('what the room sees of its machine', () => {
     expect(host.disabled).toBe(true)
     expect(host.textContent).toContain('只有这台电脑的主人能开启')
   })
-  it('says why a machine has no isolated environment, in the reader language', async () => {
+  it('says a machine has no isolated environment, and where its owner finds why, in the reader language', async () => {
     setLocale('en')
-    mountPicker(onLab({ owned: true, sandbox_unavailable: { key: 'sandboxUnavailableWindows' } }, 'isolated'))
+    mountPicker(onLab({ owned: true, sandbox_unavailable: { key: 'sandboxUnavailable' } }, 'isolated'))
     await fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
     const isolated = screen.getByTestId('room-machine-isolated') as HTMLButtonElement
     expect(isolated.disabled).toBe(true)
-    expect(isolated.textContent).toContain('which Windows computers do not have')
+    expect(isolated.textContent).toContain('on their devices page')
     expect((screen.getByTestId('room-machine-host') as HTMLButtonElement).disabled).toBe(false)
   })
   it('names the machine an automatic room is on when access is chosen for it', async () => {

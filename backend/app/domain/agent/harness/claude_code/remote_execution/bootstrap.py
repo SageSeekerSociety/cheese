@@ -616,11 +616,10 @@ def sudo(command, failure):
 
 
 # What an install is told when this machine's system has no isolated
-# environment for a room. The backend refuses such a room before it gets here
-# (`device.supply.sandbox_unavailable`, the same sentences) for a machine it
-# has heard from; these are for one it has not. A system gains an environment
-# by leaving this table in the same change that teaches `sandbox_tools` and
-# `sandbox_argv` to build it.
+# environment for a room. The machine says the same when asked as it connects
+# (`device.sandbox`), and the backend refuses such a room before it gets here.
+# A system gains an environment by leaving this table in the same change that
+# teaches `sandbox_tools` and `sandbox_argv` to build it.
 NO_SANDBOX = {
     "win32": (
         "This room runs in an isolated environment, which Windows machines do "

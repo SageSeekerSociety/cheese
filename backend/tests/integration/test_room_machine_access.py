@@ -17,7 +17,6 @@ import pytest
 from sqlalchemy import select
 
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
-from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
@@ -224,6 +223,30 @@ def test_access_is_chosen_for_a_named_machine_and_only_as_one_of_two(
     assert say(message) in response.json()["message"]
 
 
+def _answered(client, device_id: str, isolates: bool, reason: str | None = None):
+    """The machine answers the check it is asked as it connects."""
+    from app.domain.agent.harness.claude_code import executor_launch
+    from app.domain.device import sandbox
+
+    answer = {"isolates": isolates, **({"reason": reason} if reason else {})}
+    hub = SimpleNamespace(
+        exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(answer)})
+    )
+
+    async def ask() -> None:
+        async with client.test_factory() as db:
+            service = sql_device_service(db)
+            await sandbox.refresh(
+                service,
+                hub,
+                await service.get_device(device_id),
+                executor_launch.sandbox_check_script(),
+            )
+            await db.commit()
+
+    asyncio.run(ask())
+
+
 def test_the_picker_says_whose_machine_it_is_and_which_cannot_isolate(
     client, monkeypatch
 ):
@@ -231,8 +254,9 @@ def test_the_picker_says_whose_machine_it_is_and_which_cannot_isolate(
     linux = _machine(client, pid, "linux box")
     mac = _machine(client, pid, "laptop")
     windows = _machine(client, pid, "desktop")
-    targets = {linux: "linux-amd64", mac: "darwin-arm64", windows: "windows-amd64"}
-    monkeypatch.setattr(device_hub, "target", lambda device_id: targets[device_id])
+    _answered(client, linux, True)
+    _answered(client, mac, True)
+    _answered(client, windows, False, "Windows machines do not have one.")
 
     def listed(headers) -> dict:
         devices = _profile(client, tid, headers)["devices"]
@@ -247,9 +271,8 @@ def test_the_picker_says_whose_machine_it_is_and_which_cannot_isolate(
     assert {device["owned"] for device in as_member.values()} == {False}
     assert as_owner[linux]["sandbox_unavailable"] is None
     assert as_owner[mac]["sandbox_unavailable"] is None
-    assert as_owner[windows]["sandbox_unavailable"]["key"] == (
-        "sandboxUnavailableWindows"
-    )
+    assert as_owner[windows]["sandbox_unavailable"]["key"] == "sandboxUnavailable"
+    assert as_member[windows]["sandbox_unavailable"]["key"] == "sandboxUnavailable"
 
 
 async def _session_on(client, tid: str, device_id: str) -> tuple[str, str]:
@@ -296,14 +319,15 @@ def _hub(target: str, install=None):
     )
 
 
-def test_an_isolated_room_on_windows_is_told_what_to_do_instead(client, monkeypatch):
-    """Windows has no isolated environment of its own: the room's agent is
-    told to use WSL or ask for full access, nothing is installed on the
-    machine, and the conversation goes on."""
-    from app.core.sentences import say
-
+def test_a_machine_that_said_it_cannot_isolate_is_refused_before_any_install(
+    client, monkeypatch
+):
+    """The machine said as it connected that it cannot give a session a
+    sandbox: the room's agent is told whose machine it is and what the room
+    can do, nothing is installed there, and the conversation goes on."""
     pid, tid = _room(client)
     pc = _machine(client, pid, "desktop")
+    _answered(client, pc, False, "Windows machines do not have one.")
     assert _choose(client, tid, pc, session_auth_headers(OWNER)).status_code == 200
     hub = _hub("windows-amd64")
     monkeypatch.setattr(work_lease, "device_hub", hub)
@@ -316,9 +340,10 @@ def test_an_isolated_room_on_windows_is_told_what_to_do_instead(client, monkeypa
     )
 
     assert answer.status_code == 200, answer.text
-    assert answer.json()["data"] == {
-        "unavailable": str(say("sandboxUnavailableWindows"))
-    }
+    told = answer.json()["data"]["unavailable"]
+    assert "desktop" in told
+    assert OWNER in told
+    assert "Windows machines" not in told
     hub.exec.assert_not_awaited()
 
 
@@ -405,9 +430,10 @@ def test_an_install_that_fails_on_the_machine_is_told_not_a_server_error(
 
 
 def test_a_machine_that_cannot_isolate_the_room_is_heard_out(client, monkeypatch):
-    """A Linux machine without bubblewrap refuses the install with what to
-    install; the room's agent gets those words, not a failed request, told
-    whose machine it is and that the room can go on elsewhere."""
+    """A machine not asked yet refuses the install: the room's agent is told
+    whose machine it is and that the room can go on elsewhere, not the words
+    meant for its owner, and the machine is known from then on as one that
+    cannot isolate."""
     pid, tid = _room(client)
     machine = _machine(client, pid)
     assert _choose(client, tid, machine, session_auth_headers(OWNER)).status_code == 200
@@ -429,7 +455,9 @@ def test_a_machine_that_cannot_isolate_the_room_is_heard_out(client, monkeypatch
 
     assert answer.status_code == 200, answer.text
     told = answer.json()["data"]["unavailable"]
-    assert said in told
     assert "workstation" in told
     assert OWNER in told
-    assert told != said
+    assert said not in told
+    listed = _profile(client, tid, session_auth_headers(MEMBER))["devices"]
+    (it,) = [device for device in listed if device["device_id"] == machine]
+    assert it["sandbox_unavailable"]["key"] == "sandboxUnavailable"

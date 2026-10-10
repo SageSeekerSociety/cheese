@@ -512,6 +512,7 @@
     "more": "More actions",
     "claudeCodeLoggedIn": "Claude Code · logged in ({plan})",
     "claudeCodeLoggedOut": "Claude Code · not logged in. Run {command} in a terminal on this device to log in",
+    "sandboxUnavailable": "This computer can't give a channel an isolated environment, so channels here are refused. What it reported, and what to do:",
     "claudeCodeApiKey": "API key",
     "teams": "Available to",
     "noTeams": "Not offered to any team",

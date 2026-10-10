@@ -8,12 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listMyDevices = vi.fn()
 const connectDevice = vi.fn()
+const checkSandbox = vi.fn()
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listMyDevices: () => listMyDevices(),
   listMyTeams: async () => [],
   deviceProposedName: async () => ({ device_name: 'andy-mbp' }),
   connectDevice: (...args: unknown[]) => connectDevice(...args),
+  checkSandbox: (...args: unknown[]) => checkSandbox(...args),
 }))
 
 import MyDevicesView from './MyDevicesView.vue'
@@ -145,5 +147,42 @@ describe('the screens open on a device', () => {
 
     await fireEvent.click(kimi)
     expect(await screen.findByText('现场 · @Kimi')).toBeTruthy()
+  })
+
+  it('tells the owner a machine cannot isolate a channel, in its own words, as it answers again', async () => {
+    const reason = 'AppArmor here restricts unprivileged user namespaces.'
+    const said = { isolates: false, reason, checked_at: '2026-10-10T00:00:00Z' }
+    listMyDevices.mockResolvedValue({
+      devices: [
+        { device_id: 'd1', name: 'lab-box', online: true, project_ids: [], team_ids: [], screens: [], sandbox: said },
+      ],
+    })
+    checkSandbox.mockResolvedValue({ ...said, reason: 'asked again' })
+    mount()
+
+    expect(await screen.findByText('asked again')).toBeTruthy()
+    expect(checkSandbox).toHaveBeenCalledWith('d1')
+    expect(screen.getByTestId('device-sandbox').textContent).toContain('给不了频道隔离环境')
+  })
+
+  it('says nothing of a machine that can', async () => {
+    listMyDevices.mockResolvedValue({
+      devices: [
+        {
+          device_id: 'd1',
+          name: 'lab-box',
+          online: true,
+          project_ids: [],
+          team_ids: [],
+          screens: [],
+          sandbox: { isolates: true, reason: null, checked_at: '2026-10-10T00:00:00Z' },
+        },
+      ],
+    })
+    checkSandbox.mockResolvedValue({ isolates: true, reason: null, checked_at: '2026-10-10T00:00:00Z' })
+    mount()
+
+    await screen.findByText('lab-box')
+    expect(screen.queryByTestId('device-sandbox')).toBeNull()
   })
 })

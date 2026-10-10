@@ -48,7 +48,6 @@ from app.domain.device.supply import (
     Supply,
     Visibility,
     default_visibility,
-    sandbox_unavailable,
 )
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
@@ -525,6 +524,22 @@ async def _start_executor(
     return json.loads(installed["stdout"])
 
 
+async def _cannot_isolate(db, device) -> dict:
+    """What a room is told when its machine cannot give a session a sandbox:
+    whose machine it is and what the room can do. Why, and how to change it, is
+    its owner's, on their devices page."""
+    owner = await db.get(User, device.owner_user_id) if device else None
+    return {
+        "unavailable": str(
+            say(
+                "sandboxRefused",
+                machine=device.name if device else "",
+                owner=owner.username if owner else "",
+            )
+        )
+    }
+
+
 class ExecutorSetupFailed(RuntimeError):
     """The install exited non-zero on the machine. Its stderr is the machine's
     own account of why; the agent is told its last line instead of a bare
@@ -950,9 +965,17 @@ async def _attempt(
             # 「系统挑一台」 for a task picks among the computers that may work
             # it: someone else's own computer works only its owner's tasks.
             selected = None
-            for device in await devices.list_devices_for_project(topic.project_id):
-                if _reachable(hub, device.device_id) and await works_tasks_of(
-                    db, device.device_id, project, task.owner_handle
+            candidates = await devices.list_devices_for_project(topic.project_id)
+            refusing = await devices.refusing_sandboxes(
+                [d.device_id for d in candidates]
+            )
+            for device in candidates:
+                if (
+                    device.device_id not in refusing
+                    and _reachable(hub, device.device_id)
+                    and await works_tasks_of(
+                        db, device.device_id, project, task.owner_handle
+                    )
                 ):
                     selected = device
                     break
@@ -974,16 +997,15 @@ async def _attempt(
         if await devices.get_hosted_device(selected.device_id) is None:
             raise ForbiddenError("Device is not hosted")
         # A room meant to be isolated never runs over the whole machine
-        # instead: a machine whose system has no isolated environment yet
-        # refuses it here, saying what to do, and the install on the machine
-        # refuses the same way (`bootstrap.sandbox_argv`) for one this process
-        # has not heard from. The conversation and platform tools go on.
-        unavailable = sandbox_unavailable(hub.target(selected.device_id))
-        if unavailable is not None and await _sandboxed(
-            db, topic_id, selected.device_id
-        ):
+        # instead: a machine that said it cannot give a session a sandbox
+        # (`device.sandbox`) refuses it here, and the install on the machine
+        # refuses the same way for one not asked yet. The conversation and
+        # platform tools go on.
+        if selected.device_id in await devices.refusing_sandboxes(
+            [selected.device_id]
+        ) and await _sandboxed(db, topic_id, selected.device_id):
             await db.commit()
-            return {"unavailable": str(unavailable)}
+            return await _cannot_isolate(db, selected)
     approver = project.owner_handle or ""
     if selected is not None:
         owner = await db.get(User, selected.owner_user_id)
@@ -1251,21 +1273,17 @@ async def _install(
                 row.work_lease = {**holding, "claim_until": now.isoformat()}
             await db.commit()
             if isinstance(exc, launch.SandboxRefused):
-                # The machine cannot make the room's sandbox, and said why, in
-                # words for its owner: the room is told whose machine it is
-                # and what it can do meanwhile, with that reason passed on.
-                device = await sql_device_service(db).get_device(device_id)
-                owner = await db.get(User, device.owner_user_id) if device else None
-                return {
-                    "unavailable": str(
-                        say(
-                            "sandboxRefused",
-                            machine=device.name if device else device_id,
-                            owner=owner.username if owner else "",
-                            reason=str(exc),
-                        )
-                    )
-                }
+                # The machine cannot make the room's sandbox and said why, in
+                # words for its owner. That is a fact about the machine, kept
+                # where its owner reads it; the room is told whose it is and
+                # what it can do meanwhile.
+                devices = sql_device_service(db)
+                await devices.record_sandbox_check(
+                    device_id, isolates=False, reason=str(exc)
+                )
+                await db.commit()
+                device = await devices.get_device(device_id)
+                return await _cannot_isolate(db, device)
             if isinstance(exc, ExecutorSetupFailed):
                 logger.warning("executor installation failed: %s", exc)
                 return {
