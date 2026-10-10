@@ -58,10 +58,12 @@ convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
-`deepseek-flash` has two deployments: RUC's self-hosted copy first, DeepSeek's
-API when RUC fails or is past its parallel limit. Set `RUC_DEEPSEEK_API_BASE`
-(the endpoint's address, no path) and `RUC_DEEPSEEK_API_KEY` in
-`$HOME/gateway/compose/.env` before releasing. The endpoint admits campus
+`deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
+RUC key, and by DeepSeek's API when every RUC key fails or is past its 3
+parallel requests. Set `RUC_DEEPSEEK_API_BASE` (the endpoint's address, no
+path) and `RUC_DEEPSEEK_API_KEY_1` to `RUC_DEEPSEEK_API_KEY_9` in
+`$HOME/gateway/compose/.env` before releasing: nine of the ten keys RUC
+issued, all but the one kept for tests. The endpoint admits campus
 addresses only, so a box serving it needs the route in docs/infrastructure.md
 ("Campus model API").
 
