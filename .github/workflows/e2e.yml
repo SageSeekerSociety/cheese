@@ -51,7 +51,7 @@ jobs:
       E2E_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
       # Names this shard's evidence and artifacts, e.g. e2e-1-of-2.
       E2E_SUITE: e2e-${{ matrix.shard }}-of-${{ strategy.job-total }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     services:
       postgres:
         image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
