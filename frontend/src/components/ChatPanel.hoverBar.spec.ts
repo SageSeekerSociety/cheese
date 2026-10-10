@@ -93,6 +93,17 @@ describe('消息的悬停条', () => {
     expect(container.querySelector('.reply-chip')?.textContent).toContain('第一条')
   })
 
+  it('每个图标按钮都带着读屏念得出的名字', async () => {
+    const { container } = await mountRoom([msg('m1', '第一条')])
+    await pointAt(container, '[data-mid="m1"] .im-text')
+
+    const labels = Array.from(container.querySelectorAll('.hover-bar button.hover-bar__act')).map((b) =>
+      b.getAttribute('aria-label')
+    )
+    expect(labels).toEqual(expect.arrayContaining(['添加表情', '引用回复', '复制', '转为任务']))
+    expect(labels.every((label) => !!label)).toBe(true)
+  })
+
   it('整列只有一个，不是每条消息各带一个', async () => {
     const { container } = await mountRoom([msg('m1', 'a'), msg('m2', 'b'), msg('m3', 'c')])
     await pointAt(container, '[data-mid="m2"] .im-text')
