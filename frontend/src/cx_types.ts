@@ -243,8 +243,7 @@ export interface RoomTask {
   project_id: string
   room_id: string // 它挂在哪个房间里；任务不嵌套
   title: string
-  // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了
-  // 会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
+  // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
@@ -273,6 +272,7 @@ export interface RoomTask {
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
   awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
+  waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null

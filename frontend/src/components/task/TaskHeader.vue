@@ -18,7 +18,7 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import { t } from '@/i18n'
-import { phraseLabel } from '@/lib/board'
+import { taskPhraseLabel } from '@/lib/board'
 import { choiceName } from '@/lib/computeConfig'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -182,9 +182,7 @@ async function confirmHandOver() {
         <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
           task ? taskTitle(task) : ''
         }}</span>
-        <span v-if="task" class="task-header__state" data-testid="task-phrase">{{
-          phraseLabel(task.presentation.phrase)
-        }}</span>
+        <span v-if="task" class="task-header__state" data-testid="task-phrase">{{ taskPhraseLabel(task, ME) }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')
         }}</span>

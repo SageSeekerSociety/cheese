@@ -147,6 +147,17 @@ beforeEach(() => {
 })
 
 describe('任务页头', () => {
+  // 页头那一句和频道里的卡、全部任务、总览说同一件事：在等的是看的人，就写「待你开始」。
+  it('等的是看的人：写「待你开始」，等的是别人：写「讨论中」', () => {
+    me = 'alice'
+    const mine = mount({ waiting_on: 'alice' })
+    expect(mine.getByTestId('task-phrase').textContent).toBe('待你开始')
+    mine.unmount()
+
+    const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
+    expect(theirs.getByTestId('task-phrase').textContent).toBe('讨论中')
+  })
+
   it('负责人点「开始」就开始', async () => {
     const { container, start } = mount()
     const button = container.querySelector('[data-testid="task-start"]')

@@ -13,10 +13,13 @@ import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
 import { replySnippet } from '@/lib/blockDisplay'
-import { columnDotStyle, phraseLabel } from '@/lib/board'
+import { columnDotStyle, taskPhraseLabel } from '@/lib/board'
 import { RECENT_DONE } from '@/lib/channelTasks'
 import { relTime } from '@/lib/relTime'
 import { taskTitle } from '@/lib/topicState'
+import { myHandle } from '@/me'
+
+const ME = myHandle()
 
 const props = defineProps<{
   topic: Topic
@@ -235,7 +238,7 @@ async function save() {
           <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
           <span class="co-task__state t-meta">
             <span class="co-dot" :style="columnDotStyle(task.presentation.column)" aria-hidden="true" />
-            {{ phraseLabel(task.presentation.phrase) }}
+            {{ taskPhraseLabel(task, ME) }}
           </span>
         </span>
         <span v-if="latest(task)" class="co-task__latest t-meta">{{ latest(task) }}</span>
