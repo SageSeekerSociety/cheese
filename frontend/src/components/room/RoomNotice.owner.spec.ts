@@ -64,10 +64,10 @@ describe('提示行的尾标', () => {
 
     expect(lines[0]).toContain('alice 退回了验收卡')
     expect(lines[0]).not.toContain('正在处理')
-    expect(lines[1]).toContain('需要手动处理')
+    expect(lines[1]).toContain('等人处理')
   })
 
-  it('采纳合并之后，「可以合并了」那一行不再说需要手动处理', () => {
+  it('采纳合并之后，「可以合并了」那一行不再说等人处理', () => {
     const lines = seen([
       notice('r', 'alice 退回了验收卡', 'card_rejected', 'cheese'),
       notice('m', 'PR #1 可以合并了，等 alice 采纳', 'accept_ready', 'human'),
@@ -76,7 +76,7 @@ describe('提示行的尾标', () => {
 
     expect(lines[0]).not.toContain('正在处理')
     expect(lines[1]).toContain('PR #1 可以合并了')
-    expect(lines[1]).not.toContain('需要手动处理')
+    expect(lines[1]).not.toContain('等人处理')
     expect(lines[2]).toContain('平台已处理')
   })
 
@@ -86,7 +86,7 @@ describe('提示行的尾标', () => {
       notice('f', '递了验收卡，等 alice 采纳', 'card_filed', 'human'),
     ])
 
-    expect(lines[0]).toContain('需要手动处理')
+    expect(lines[0]).toContain('等人处理')
   })
 
   it('还没人接手的最新一行照常说归谁', () => {
