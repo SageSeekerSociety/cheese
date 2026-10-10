@@ -118,14 +118,17 @@ model_list:
       cheese_selectable: true
       cheese_label: GLM-5.2
 
-  # Two deployments of one model, tried in `order`: RUC's self-hosted copy
-  # first, DeepSeek's API when RUC fails or is cooling down (429 past its 3
-  # parallel requests per key, or unreachable). A conversation stays on RUC
-  # while RUC answers, so the prompt cache it builds there keeps hitting; it
-  # misses once on each move to the other backend. Both carry the same cheese
-  # keys because the catalogue reads whichever row /model/info lists first.
+  # One model, tried in `order`: RUC's self-hosted copy first, DeepSeek's API
+  # when every RUC key fails or is cooling down. RUC admits 3 parallel
+  # requests per key and the limits are independent, so each of its keys is a
+  # deployment of its own; a 429 on one is retried on another before the
+  # request leaves RUC. RUC's own gateway spreads requests across its vLLM
+  # nodes, so spreading ours across keys costs no prompt cache there. A
+  # conversation misses the cache once on each move to DeepSeek's API. Every
+  # row carries the same cheese keys because the catalogue reads whichever
+  # row /model/info lists first.
   - model_name: deepseek-flash
-    litellm_params:
+    litellm_params: &ruc_deepseek_flash_params
       # anthropic/, not deepseek/: the pinned DeepSeek adapter sends Messages
       # requests to {api_base}/anthropic/v1/messages, DeepSeek's own path. This
       # upstream serves Messages at /v1/messages and answers that path with a
@@ -136,14 +139,17 @@ model_list:
       # address and key are box settings: it is a service of another team,
       # not ours to publish.
       api_base: os.environ/RUC_DEEPSEEK_API_BASE
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_1
       order: 1
       # Used internally without a price of its own. The official rates are the
       # estimate, so the budget brake behaves the same on either backend.
       input_cost_per_token: 0.0000003
       output_cost_per_token: 0.0000012
       cache_read_input_token_cost: 0.000000006
-    model_info:
+    # Each row merges its own copy: LiteLLM writes the deployment id into
+    # model_info, and one mapping shared by alias gives every key the same id,
+    # so a 429 on one key cools them all down.
+    model_info: &ruc_deepseek_flash_info
       cheese_selectable: true
       cheese_label: DeepSeek V4.1 Flash
       # Accepted here without error; low and high gave the same reasoning
@@ -154,6 +160,54 @@ model_list:
       # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
       # official route, for the same reason.
       max_input_tokens: 920000
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_2
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_3
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_4
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_5
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_6
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_7
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_8
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_9
+    model_info:
+      <<: *ruc_deepseek_flash_info
 
   - model_name: deepseek-flash
     litellm_params:
