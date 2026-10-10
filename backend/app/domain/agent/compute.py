@@ -117,6 +117,17 @@ class ComputePool:
                 with contextlib.suppress(DeviceCallError, DeviceOffline):
                     await runtime.interrupt(live.session)
 
+    async def stop_work(self, conversation_id: uuid.UUID) -> None:
+        """Take away the work every teammate is doing in this conversation;
+        what they wrote so far stays. A seat with nothing in flight is left
+        alone."""
+        for runtime in self._runtimes():
+            for seat in [seat for seat in runtime.work if seat[0] == conversation_id]:
+                live = runtime.live.get(seat)
+                if live is not None:
+                    with contextlib.suppress(DeviceCallError, DeviceOffline):
+                        await runtime.interrupt(live.session)
+
     def default(self) -> "RoomSessions":
         return self._backends[self._default]
 

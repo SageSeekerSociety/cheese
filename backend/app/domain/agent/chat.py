@@ -335,6 +335,11 @@ class ChatService(SessionRecovery):
             for conversation in (topic_id, *threads):
                 await self._compute.dismiss(conversation, agent.handle)
 
+    async def stop_work(self, conversation_id: uuid.UUID) -> None:
+        """Stop whatever a teammate is still doing in this conversation, a
+        task that has just closed. What it wrote so far stays."""
+        await self._compute.stop_work(conversation_id)
+
     @property
     def turn_preparation(self) -> TurnPreparation:
         if self._turn_preparation is None:

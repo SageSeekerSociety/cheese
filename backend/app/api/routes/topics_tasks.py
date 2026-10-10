@@ -366,6 +366,11 @@ async def conclude_task(
     await tell_origin(db, task, ended)
     out = await _task_out(db, chat, task)
     await db.commit()
+    # A closed task is work that is over: a turn still running in it would
+    # go on spending the model while every write it makes is refused. Its
+    # own session closing it is that turn, and it ends by itself.
+    if actor.via != "cheese":
+        await chat.stop_work(task.id)
     return ok(out)
 
 

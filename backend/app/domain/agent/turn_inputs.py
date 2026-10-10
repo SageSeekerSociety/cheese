@@ -503,8 +503,9 @@ async def open_turns(session_factory) -> dict:
 
     A closed task is work that is over, whatever its session last said, and
     nothing will close a turn left open in it: the sweep keeps a delivered turn
-    open until its session is known dead, and closing a task says nothing to
-    the session. Such a turn kept its room reading as busy, and its inputs
+    open until its session is known dead, and the stop sent when a task
+    closes reaches only a session that is up and held by this process. Such a
+    turn kept its room reading as busy, and its inputs
     refused the seat, for good. They are ended here and never handed to the
     sweep, which would otherwise offer the work again.
 
