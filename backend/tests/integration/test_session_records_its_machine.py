@@ -95,6 +95,7 @@ def channel(client, monkeypatch, executors=("executor",)):
     online = {"center", "center-two", *client.session_test_devices.values()}
     hub: Any = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda device: device in online,
         reconnecting=lambda device: False,
         # No session is running on the session host: `_ensure_screen` is

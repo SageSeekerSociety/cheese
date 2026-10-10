@@ -289,6 +289,7 @@ def _hub(target: str, install=None):
         is_online=lambda _device: True,
         reconnecting=lambda _device: False,
         target=lambda _device: target,
+        isolates=lambda _device: None,
         exec=AsyncMock(
             side_effect=install
             or AssertionError("nothing is installed on this machine")

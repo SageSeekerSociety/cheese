@@ -45,6 +45,7 @@ async def test_invited_teammate_is_the_startup_identity(
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda host: host in {"center", "executor"},
     )
     device = DeviceChannel(hub=hub, session_factory=client.test_request_factory)

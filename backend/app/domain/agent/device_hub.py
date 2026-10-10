@@ -38,6 +38,7 @@ from app.domain.agent.device_contract import (
     LinkInterrupted,
     ViewerTransport,
 )
+from app.domain.agent.harness.claude_code import BUBBLEWRAP_PROBE
 
 # The failures, the screen shape and the call timings are re-exported from
 # ``device_contract`` — they were written down here, so importing them from here
@@ -84,6 +85,9 @@ PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 HEARTBEAT_S = 15.0
 LINK_SILENCE_S = 3 * HEARTBEAT_S
 
+# How long a machine that just connected gets to make its probe sandbox.
+SANDBOX_PROBE_S = 30
+
 
 class DeviceTransport(Protocol):
     """A live device control channel. Satisfied by a ``fastapi.WebSocket`` adapter
@@ -110,6 +114,10 @@ class HubDevice:
     build: str = ""
     target: str = ""
     executor: bool = False
+    # Whether this Linux machine made a bubblewrap sandbox as its person when
+    # asked on this connection (`_probe_sandbox`); None until it answered, and
+    # on every other system.
+    isolates: bool | None = None
     # Whether this CONNECTION has already been told to update itself. Reset on
     # every attach, so a machine whose self-update failed is told again the next
     # time it dials in rather than once and never again.
@@ -214,6 +222,7 @@ class DeviceHub:
         self._devices: dict[str, HubDevice] = {}
         self._screens: dict[str, HubScreen] = {}  # sid -> screen (across devices)
         self._by_screen_token: dict[str, HubScreen] = {}
+        self._probes: set[asyncio.Task[None]] = set()
 
     def _device(self, device_id: str) -> HubDevice:
         return self._devices.setdefault(device_id, HubDevice(device_id=device_id))
@@ -255,6 +264,7 @@ class DeviceHub:
         device.heartbeats = False
         device.connection_generation += 1
         device.executor = False
+        device.isolates = None
         if name:
             device.name = name
         device.update_pushed = False
@@ -315,6 +325,14 @@ class DeviceHub:
         "" before this process has heard its `hello`."""
         device = self._devices.get(device_id)
         return device.target if device is not None else ""
+
+    def isolates(self, device_id: str) -> bool | None:
+        """Whether the Linux machine made a bubblewrap sandbox when it last
+        connected, or None when that is not known. A hint for 「系统挑一台」
+        only: the install on the machine still decides, so a machine whose
+        owner has just installed bubblewrap is not refused on an old answer."""
+        device = self._devices.get(device_id)
+        return device.isolates if device is not None else None
 
     def last_seen_age(self, device_id: str) -> float | None:
         """Seconds since the device last sent any frame; None when it never has."""
@@ -754,6 +772,14 @@ class DeviceHub:
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
             await self._update_if_stale(device, msg)
+            if msg.target.startswith("linux-") and not device.update_pushed:
+                # Not awaited here: its answer comes back through this very
+                # method.
+                task = asyncio.create_task(
+                    self._probe_sandbox(device, device.connection_generation)
+                )
+                self._probes.add(task)
+                task.add_done_callback(self._probes.discard)
             return
         if msg.t == "session.error":
             # The device could not start (or attach) this screen. There is no
@@ -901,6 +927,21 @@ class DeviceHub:
             msg.target or "<unreported>",
         )
         await device.send(device_link.update())
+
+    async def _probe_sandbox(self, device: HubDevice, generation: int) -> None:
+        """Ask a Linux machine that just said hello to make the sandbox the
+        install will need (`BUBBLEWRAP_PROBE`), and keep the answer
+        for this connection. One that cannot be asked keeps None."""
+        try:
+            result = await self.exec(
+                device.device_id,
+                ["bwrap", *BUBBLEWRAP_PROBE],
+                timeout=SANDBOX_PROBE_S,
+            )
+        except (DeviceOffline, TimeoutError):
+            return
+        if device.connection_generation == generation:
+            device.isolates = result.get("exit") == 0
 
     # Overridable seam for logging/metrics; a no-op by default.
     def _on_version_skew(self, device_id: str, proto: int | None) -> None:

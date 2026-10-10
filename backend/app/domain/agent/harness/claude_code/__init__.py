@@ -29,6 +29,9 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
+from app.domain.agent.harness.claude_code.remote_execution.bootstrap import (
+    BUBBLEWRAP_PROBE,
+)
 from app.domain.agent.harness.claude_code.remote_execution.private import (
     target as private_execution_target,
 )
@@ -36,6 +39,7 @@ from app.domain.agent.harness.claude_code.runner import ended
 from app.domain.agent.harness.claude_code.subscription import Subscription
 
 __all__ = [
+    "BUBBLEWRAP_PROBE",
     "CLAUDE_MIN_VERSION",
     "CLAUDE_PINNED_VERSION",
     "DEVICE_TUNNEL_PROBE",

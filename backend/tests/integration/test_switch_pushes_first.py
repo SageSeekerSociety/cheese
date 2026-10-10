@@ -154,6 +154,7 @@ async def _room(client, *, on_cloud=False, in_task=False):
 def _machines(monkeypatch, *, online=True, reconnecting=False, push=PUSHED):
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda device: online,
         reconnecting=lambda device: reconnecting,
     )

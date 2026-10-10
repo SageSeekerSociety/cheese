@@ -17,6 +17,7 @@ __all__ = [
     "Supply",
     "Visibility",
     "default_visibility",
+    "may_isolate",
     "sandbox_unavailable",
 ]
 
@@ -98,3 +99,15 @@ def sandbox_unavailable(target: str) -> NoticeText | None:
     machine this side has not heard from (`bootstrap.sandbox_argv`)."""
     key = _NO_SANDBOX.get(target.split("-", 1)[0])
     return say(key) if key is not None else None
+
+
+def may_isolate(hub, device_id: str) -> bool:
+    """Whether an enrolled machine is not known to refuse a session its
+    sandbox: its system has one (`sandbox_unavailable`), and, on Linux, it
+    did not fail the probe it was asked as it connected (`DeviceHub.isolates`).
+    「系统挑一台」 prefers such a machine (`DeviceService.first_healthy_device`);
+    a machine never asked counts as one, since its install decides."""
+    return (
+        sandbox_unavailable(hub.target(device_id)) is None
+        and hub.isolates(device_id) is not False
+    )

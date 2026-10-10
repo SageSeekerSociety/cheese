@@ -124,6 +124,7 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
 
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda device: True,
         reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),
@@ -546,6 +547,7 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     }
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -923,6 +925,7 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
     info = {"state": "/w/state", "workspace": "/w/work", "mcp_servers": []}
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -1011,6 +1014,7 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
     info = {"state": "/executor/state", "workspace": "/work", "mcp_servers": []}
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda _: True,
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(info)}),
     )
@@ -1151,6 +1155,7 @@ async def test_a_recheck_that_outlasts_its_request_leaves_the_session_startable(
 
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda _: True,
         exec=AsyncMock(side_effect=install),
     )
@@ -1261,6 +1266,7 @@ async def test_an_own_machine_that_just_dropped_is_called_not_refused(
 
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda _device: False,
         reconnecting=lambda _device: True,
         exec=AsyncMock(side_effect=DeviceOffline(device_id)),
@@ -1349,6 +1355,7 @@ def _a_machine_that_installs(monkeypatch, install):
 
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda _: True,
         exec=AsyncMock(side_effect=install),
     )

@@ -52,6 +52,19 @@ class DeviceStatus:
     APPROVED = "approved"
 
 
+def prefer_isolating(
+    devices: list[Device], may_isolate: Callable[[str], bool] | None
+) -> Device | None:
+    """The first of ``devices`` that can give a session its sandbox — a Cloud
+    machine always can, the platform adds what it needs — or, when none is
+    known to, the first of them, whose install then says what it lacks."""
+    if may_isolate is not None:
+        for device in devices:
+            if device.supply is Supply.cloud or may_isolate(device.device_id):
+                return device
+    return devices[0] if devices else None
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -408,7 +421,10 @@ class DeviceService:
         return [d for d in online if not is_quarantined(health.get(d.device_id), now)]
 
     async def first_healthy_device(
-        self, project_id: uuid.UUID, is_online: Callable[[str], bool]
+        self,
+        project_id: uuid.UUID,
+        is_online: Callable[[str], bool],
+        may_isolate: Callable[[str], bool] | None = None,
     ) -> Device | None:
         """「系统挑一台」会挑中的那一台 —— 只读，不写绑定。
 
@@ -417,9 +433,13 @@ class DeviceService:
         用之前**要问「这一轮会占谁的机器」，好把提议发给那台机器的主人（结论 40）。
         闸门调不了 `resolve_pinned_device`——它会把绑定写下去，而撞上策略的调用必须
         一台机器也没占。挑的规则在这里一处，写绑定的只在那一处。
+
+        ``may_isolate``（`supply.may_isolate`）给了的话，先挑能给会话沙箱的那台
+        （`prefer_isolating`）：这里挑中的房间默认是隔离的，挑中一台注定拒绝的机
+        器，房间就停在那里。
         """
         healthy = await self.healthy_devices_for_project(project_id, is_online)
-        return healthy[0] if healthy else None
+        return prefer_isolating(healthy, may_isolate)
 
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)

@@ -127,6 +127,7 @@ def cloud_rooms(client, monkeypatch):
 
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda device: device in online,
         reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),
