@@ -693,9 +693,6 @@ def sandbox_tools(release, platform_machine):
 
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
-# The sandbox `enrolled_bubblewrap` makes, which `DeviceHub.isolates` asks for too.
-BUBBLEWRAP_PROBE = ["--unshare-user", "--unshare-pid", "--ro-bind", "/", "/"]
-BUBBLEWRAP_PROBE += ["--proc", "/proc", "--dev", "/dev", "true"]
 
 
 def seatbelt():
@@ -723,7 +720,11 @@ def enrolled_bubblewrap():
             "bubblewrap) and try again. " + FULL_ACCESS_INSTEAD
         )
     probe = subprocess.run(
-        [found, *BUBBLEWRAP_PROBE], capture_output=True, text=True, timeout=60
+        [found, "--unshare-user", "--unshare-pid", "--ro-bind", "/", "/"]
+        + ["--proc", "/proc", "--dev", "/dev", "true"],
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if probe.returncode:
         raise SandboxUnavailable(
