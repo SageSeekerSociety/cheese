@@ -24,6 +24,7 @@ import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
 import { myHandle } from '../me'
 
+import BaseButton from './base/BaseButton.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
@@ -79,6 +80,8 @@ const props = defineProps<{
   selectedTaskId?: string | null
   /** 「浏览频道」那一页正开着。 */
   browsingChannels?: boolean
+  /** 我能新建频道（外部成员不能）。外面说，因为「我是谁」不是这一层的事。 */
+  canCreate?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -87,6 +90,9 @@ const emit = defineEmits<{
   (e: 'all-tasks', channelId: string): void
   // 「浏览频道」：去看这个项目的全部频道（侧栏只列加入了的）。
   (e: 'browse-channels'): void
+  // 「新建频道」：就在这一层弹对话框（频道标题右边那颗 ＋，空项目里的主按钮）。
+  // 对话框和它要发的请求都在外面：这一层不认识 store。
+  (e: 'new-channel'): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
@@ -341,6 +347,14 @@ const rowSheetActions = computed<MenuAction[]>(() =>
   rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
 )
 
+// 这一列里我还没有别的频道。侧栏只列我加入的，所以「没有别的行」既可能是刚建出来的
+// 项目，也可能是别的频道我一个都没加入——两种情况下「新建一个」都接得上；反过来，
+// 有别的行时不该多这一块。加载中和读失败都返回 false：那两种情况下「没有行」说的是
+// 数据还没到，不是没有频道。
+const noOtherChannels = computed(
+  () => !props.error && !props.loadingTopics && !railSections.value.some((section) => section.rows.length > 0)
+)
+
 // 项目文档 (C4): 章程 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
 // 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
 // 这一行在任何一种文档打开时都是选中态。
@@ -454,9 +468,23 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             @cancel-prefetch="cancelPrefetch()"
           />
 
-          <!-- 新建频道在「浏览频道」那一页，这里不放「＋」：频道少而稳定，新建是一年几次
-               的事。 -->
-          <div class="t-eyebrow side-subhead">{{ t('work.sidebar.topics') }}</div>
+          <!-- 新建频道就在这一组标题右边：常驻可见、不藏进 hover，点一下就地弹对话框，
+               不再跳到「浏览频道」那一页（那里只管找和加入别人的频道）。位置钉在这一
+               行上，频道再多也不动。 -->
+          <div class="t-eyebrow side-subhead">
+            <span class="side-subhead__label">{{ t('work.sidebar.topics') }}</span>
+            <button
+              v-if="canCreate"
+              type="button"
+              class="side-subhead__add tap-target"
+              data-testid="new-channel-entry"
+              :title="t('work.projectSettings.channels.create')"
+              :aria-label="t('work.projectSettings.channels.create')"
+              @click="emit('new-channel')"
+            >
+              <v-icon size="16" icon="mdi-plus" />
+            </button>
+          </div>
 
           <!-- 频道的第一行：项目自带的「综合」，固定在最上面，和其他频道同一组。 -->
           <TopicRailRootRow
@@ -509,6 +537,15 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <LoadingSkeleton v-else-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
+            <!-- 一个别的频道都还没有：光一个 ＋ 太安静，把话说出来，并给一颗主按钮
+                顶上（空项目里这是唯一要做的事）。 -->
+            <div v-if="canCreate && noOtherChannels" class="rail-empty" data-testid="no-other-channels">
+              <span class="t-meta c-faint">{{ t('work.sidebar.noOtherChannels') }}</span>
+              <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" @click="emit('new-channel')">
+                {{ t('work.projectSettings.channels.create') }}
+              </BaseButton>
+            </div>
+
             <template v-for="section in railSections" :key="section.key">
               <v-list v-if="section.rows.length" density="compact" nav class="py-0" tabindex="-1">
                 <!-- Rows are ordered by most recent activity, so a new message pushes a room
@@ -611,7 +648,51 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
   height: 100%;
 }
 .side-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 14px 16px 4px;
+}
+.side-subhead__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「频道」右边那颗 ＋：常驻可见但不抢眼（--faint 的 16px 图标），hover 才亮成琥珀。
+   负的外边距是把它收进标题行的内距里——多一颗按钮，这一行的高度不变。
+   .tap-target 要一个定位的锚点，所以 position: relative。 */
+.side-subhead__add {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px -6px -4px 0;
+  color: var(--faint);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
+}
+.side-subhead__add:hover {
+  color: var(--accent-ink);
+  background: var(--fill);
+}
+
+/* 还没有别的频道时那一块：一句话 + 主按钮。 */
+.rail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 16px 4px;
 }
 
 /* 话题还在路上时，先把行的形状画出来（LoadingSkeleton）。这条 rail 的底是
@@ -693,5 +774,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
    要能单独渲染），这里这条管的是这一层画不出来的部分。 */
 .topic-rail--page .group-toggle {
   min-height: 44px;
+}
+/* 整页形态：＋ 画大一点（32px），手指点得中——命中区由 .tap-target 撑到 44px。 */
+.topic-rail--page .side-subhead__add {
+  width: 32px;
+  height: 32px;
+  margin-right: -8px;
 }
 </style>

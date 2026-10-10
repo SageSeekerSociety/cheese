@@ -2,6 +2,7 @@
 paths:
   - "frontend/src/components/TopicSidebar.vue"
   - "frontend/src/components/topic-sidebar/**"
+  - "frontend/src/views/workspace/ProjectSidebar.vue"
   - "frontend/src/lib/shell.ts"
   - "backend/app/domain/shell/**"
 ---
@@ -18,8 +19,10 @@ paths:
 - 新页面进项目名菜单，顺序由壳的 `nav.project` 定。不要给它在侧栏上开一行。
 - 不要做「打开过一次就摆回侧栏」这类自动露出：以前有过（`shellPrefs`），它就是
   侧栏越用越长的原因，已经删了。
-- 侧栏上也不放「新建频道」的 ＋：新建频道在「浏览频道」那一页。
-- 真要改这条，先问用户，不要顺手改。
+- 「新建频道」的 ＋ 例外地允许挂一颗，但只挂一处：「频道」这一组标题的右边
+  （2026-10-09 用户定：点它就地弹新建频道的对话框，不再跳「浏览频道」那一页）。项目名
+  下那一行照旧不放；「浏览频道」和命令面板的入口都还在。
+- 除了这一处，真要再改这条，先问用户，不要顺手改。
 
 守着它的是 `frontend/src/lib/shell.spec.ts` 里「项目名下那一行只有总览和资料库」，
 那一行的白名单是 `lib/shell.ts` 的 `PROJECT_BAR_PAGES`。改白名单会让那条测试红。

@@ -129,7 +129,18 @@ watch(detailsOpen, (open) => {
   if (open) void props.loadMachine()
 })
 
+// 审阅谁：开始前负责人在这里挑（挑谁看这次改动），开始之后它是定下来的事实，只读。
+// 空的那一档是「没指定」——后端按 项目设置的默认审阅人 → 这件事的负责人 这个次序
+// 落定（`room_task/services.py` 的 `start`），所以绝大多数情况下它就是负责人自己，
+// 点「开始」不再被拦下来补选。
+//
+// 只有负责人能改，而且只在开始之前：开始之后换人得重新开始，那不是一行的分量。
 const reviewer = ref('')
+const canPickReviewer = computed(
+  () => isOwner.value && isOpen.value && !props.task?.started_at && otherPeople.value.length > 0
+)
+// 没人可挑、又还没定下来时，这一行整行不画——空着的一格什么也没说。
+const showReviewer = computed(() => canPickReviewer.value || !!props.task?.reviewer_handle)
 
 const closeOpen = ref(false)
 const closing = ref(false)
@@ -218,6 +229,18 @@ async function confirmHandOver() {
             <div class="task-details__row">
               <dt>{{ t('work.task.owner') }}</dt>
               <dd><UserRef :handle="task.owner_handle" /></dd>
+            </div>
+            <div v-if="showReviewer" class="task-details__row" data-testid="task-reviewer">
+              <dt :title="t('work.task.reviewerHint')">{{ t('work.task.reviewer') }}</dt>
+              <dd v-if="canPickReviewer">
+                <select v-model="reviewer" class="task-notice__select t-meta" :aria-label="t('work.task.reviewer')">
+                  <option value="">{{ t('work.task.reviewerDefault') }}</option>
+                  <option v-for="m in otherPeople" :key="m.member_handle" :value="m.member_handle">
+                    {{ nameOf(m.member_handle) }}
+                  </option>
+                </select>
+              </dd>
+              <dd v-else><UserRef :handle="task.reviewer_handle" /></dd>
             </div>
             <div
               v-if="collaborators.length || (isOwner && isOpen)"

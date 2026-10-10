@@ -347,9 +347,11 @@ def test_a_task_starts_once(client):
     assert r.status_code == 422
 
 
-def test_starting_with_nobody_to_review_is_refused(client):
-    """Changes nobody will review cannot be started on; the owner is asked to
-    name someone rather than the task starting with a gap where review goes."""
+def test_a_task_a_project_names_nobody_to_review_goes_back_to_its_owner(client):
+    """The owner who starts it is who reviews it, when neither they nor the
+    project named anyone. Being made to pick before the task could begin asked
+    every owner the same question in a project where the answer is nearly
+    always themselves."""
     _project_id, room_id = _room(client)
     task = open_task(client, room_id, start=False)
 
@@ -359,8 +361,45 @@ def test_starting_with_nobody_to_review_is_refused(client):
         headers=session_auth_headers("alice"),
     )
 
-    assert r.status_code == 422
-    assert _task(client, room_id, task["id"])["started_at"] is None
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["reviewer_handle"] == "alice"
+    assert _task(client, room_id, task["id"])["started_at"] is not None
+
+
+def test_the_projects_default_reviewer_still_beats_the_owner(client):
+    """A project that took the trouble to name a default reviewer means it: the
+    owner fallback is the floor under that setting, not an override of it."""
+    project_id, room_id = _room(client)
+    _with_bob(client, project_id, room_id)
+    _default_reviewer(client, project_id, "bob")
+    task = open_task(client, room_id, start=False)
+
+    r = client.post(
+        f"/topics/{task['id']}/start",
+        json={},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["reviewer_handle"] == "bob"
+
+
+def test_who_the_owner_names_beats_the_default_reviewer(client):
+    """Naming someone still comes first: the person starting knows which change
+    this is and who understands that part of it."""
+    project_id, room_id = _room(client)
+    _with_bob(client, project_id, room_id)
+    _default_reviewer(client, project_id, "bob")
+    task = open_task(client, room_id, start=False)
+
+    r = client.post(
+        f"/topics/{task['id']}/start",
+        json={"reviewer_handle": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["reviewer_handle"] == "alice"
 
 
 def test_starting_records_what_the_document_said_then(client):

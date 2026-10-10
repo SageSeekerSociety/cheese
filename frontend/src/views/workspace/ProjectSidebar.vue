@@ -1,28 +1,35 @@
 <script setup lang="ts">
 import type { RoomTask } from '@/cx_types'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import { useCommands } from '@/commands'
+import NewChannelDialog from '@/components/channel/NewChannelDialog.vue'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
 // every navigation inside the project (ProjectShell's doc comment says why).
 //
-// Its one rule: EVERY click here is a route change in the content area. Nothing
-// in this file opens something "in place" — that split (some rows swapped the
-// panel, others pushed a full page and took the sidebar with them) was the
-// reason a click's outcome was unpredictable.
-defineOptions({ name: 'ProjectSidebar' })
+// Its one rule: every click here means a route change in the content area. The one
+// thing that opens in place is 新建频道 (`NewChannelDialog`) — that makes a new
+// channel rather than showing a different view of the one you are on, and it is the
+// sidebar's single exception (`.claude/rules/project-sidebar.md`).
+//
+// `inheritAttrs: false`: the router hands this view the whole route params as props,
+// and whatever it does not name by a prop lands here as attrs. This template has two
+// root nodes now, so there is no single element left to inherit them; say so rather
+// than let Vue warn about each one. `SplitListColumn` does the same.
+defineOptions({ name: 'ProjectSidebar', inheritAttrs: false })
 
 // `page`: 手机上话题列表是页面栈的一层，占满内容区（由 WorkspaceEntry 挂起来）。
 // 不带这个 prop 的那份是常驻侧栏——桌面才有，所以手机上它整个不渲染。
@@ -68,9 +75,29 @@ function openAllTasks(channelId: string) {
 function openOverview() {
   void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
 }
-// 「浏览频道」：全部频道都在那一页，加入、退出、新建也在那里。
+// 「浏览频道」：全部频道都在那一页，加入、退出也在那里。
 function browseChannels() {
   void router.push({ name: 'project-channels', params: { projectId: props.projectId } })
+}
+
+// 新建频道：就地在侧栏弹对话框，不跳页——「我要开一个」和「我要找/加入别人的」是两件
+// 事，只有后者该去「浏览频道」那一页（分家见 `.claude/rules/project-sidebar.md`）。
+// 对话框本身、以及它上面那些字段（名称、说明、私密）和「浏览频道」页里那颗是同一个
+// 组件，行为不变；请求照样走 store，失败的那句话也照样由 store 说。
+const creatingOpen = ref(false)
+const creating = ref(false)
+const canCreate = computed(() => !store.isExternal(myHandle()))
+async function createChannel(channel: { title: string; description: string; membersOnly: boolean }) {
+  creating.value = true
+  try {
+    const topic = await store.create(channel.title, channel.description, channel.membersOnly)
+    // 建失败时 store 已经说了原因，对话框留着让人改名字再试。
+    if (!topic) return
+    creatingOpen.value = false
+    void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: topic.id } })
+  } finally {
+    creating.value = false
+  }
 }
 const browsingChannels = computed(() => route.name === 'project-channels')
 function openTask(task: { roomId: string; taskId: string }) {
@@ -124,13 +151,13 @@ function onPressTask(task: { roomId: string; taskId: string }) {
   })
 }
 
-// 新建频道在「浏览频道」那一页（先起名再建），命令面板里这一条去那里。
+// 新建频道：和侧栏那颗 ＋ 落在同一处（就地弹对话框），不再绕「浏览频道」那一页。
 useCommands(() => [
   {
     id: 'topic.new',
     title: t('navigation.palette.newTopic'),
     icon: 'mdi-plus',
-    run: () => void router.push({ name: 'project-channels', params: { projectId: props.projectId } }),
+    run: () => (creatingOpen.value = true),
   },
   // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
   // 别人（比如关掉一个浮层）。
@@ -169,6 +196,7 @@ useCommands(() => [
       :all-tasks-channel-id="activeAllTasks"
       :selected-task-id="activeTaskId"
       :browsing-channels="browsingChannels"
+      :can-create="canCreate"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
       :active-docs="activeDocs"
@@ -179,6 +207,7 @@ useCommands(() => [
       @select-task="openTask"
       @all-tasks="openAllTasks"
       @browse-channels="browseChannels"
+      @new-channel="creatingOpen = true"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @press-page="onPressPage"
@@ -199,6 +228,10 @@ useCommands(() => [
       </template>
     </TopicSidebar>
   </SplitListColumn>
+
+  <!-- 新建频道那个对话框：挂在侧栏外面，因为它不属于某一栏的排版，来源也不止一处
+       （侧栏那颗 ＋、空项目里的主按钮、命令面板那一格）。 -->
+  <NewChannelDialog v-model="creatingOpen" :busy="creating" @create="createChannel" />
 </template>
 
 <style scoped>
