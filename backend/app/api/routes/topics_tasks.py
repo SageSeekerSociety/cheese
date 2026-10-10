@@ -280,18 +280,26 @@ async def _task_out(db, chat: ChatService, task, card=None) -> dict:
     if card is None:
         card = (await AcceptCardRepository(db).latest_by_task([task.id])).get(task.id)
     running = await running_tasks(chat, db, [task])
+    asked = await BlockRepository(db).awaiting_an_answer([task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")
-    out["presentation"] = presentation.task_presentation(
+    shown = presentation.task_presentation(
         presentation.facts_for_task(
             task,
             card,
             running=task.id in running,
-            awaiting_answer=bool(
-                await BlockRepository(db).awaiting_an_answer([task.id])
-            ),
+            awaiting_answer=task.id in asked,
         ),
         now=datetime.now(UTC),
-    ).as_dict()
+    )
+    out["presentation"] = shown.as_dict()
+    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你开始」。
+    out["waiting_on"] = presentation.waiting_on(
+        shown,
+        running=task.id in running,
+        owner=task.owner_handle,
+        reviewer=card.reviewer_handle if card is not None else None,
+        asked=asked.get(task.id),
+    )
     return out
 
 
