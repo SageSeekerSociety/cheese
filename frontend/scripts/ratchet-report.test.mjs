@@ -11,13 +11,15 @@
 //   * a checker that could not run at all (missing binary, unreadable report)
 //     must still exit 2, and must not print a record that reads like a verdict.
 //
-// The FAILING side is proven where a plant is cheap: import-boundary-ratchet
-// with --files over one planted component. stylelint and vue-tsc judge the whole
-// tree (~40 s and ~85 s here), so each is run once and its record is held
-// against the exit code the process really returned.
+// Each real checker runs on a planted fixture, not on the whole tree: the
+// frontend job already lints and type-checks the whole tree in its own steps,
+// so judging it again here doubled the job's two longest steps. The fixtures
+// carry a passing and a failing case for stylelint and a failing one for
+// vue-tsc, and every record is held against the exit code the process really
+// returned.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, describe, it } from 'node:test'
@@ -126,8 +128,8 @@ const runChecker = (script, ...args) =>
 const STATUS_OF_EXIT = { 0: 'pass', 1: 'fail', 2: 'cannot_judge' }
 
 /** The one record `script --json` printed, held against the code it exited with. */
-function agreedRecord(script, id) {
-  const run = runChecker(script, '--json')
+function agreedRecord(script, id, ...args) {
+  const run = runChecker(script, '--json', ...args)
   const lines = run.stdout.trim().split('\n')
   assert.equal(lines.length, 1, `expected exactly one JSON line: ${run.stdout}${run.stderr}`)
 
@@ -172,11 +174,31 @@ describe('--json on the real checkers', () => {
     }
   })
 
-  it('stylelint-tokens: the record is the run', () => {
-    agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens')
+  // A baseline with nothing frozen in it, so any finding in a fixture is new.
+  const emptyBaseline = join(sandbox, 'empty-baseline.json')
+  writeFileSync(emptyBaseline, '{"files":{}}\n')
+
+  it('stylelint-tokens: the record is the run, passing and failing', () => {
+    const clean = join(sandbox, 'clean.css')
+    const planted = join(sandbox, 'planted.css')
+    writeFileSync(clean, 'a { margin: 0; }\n')
+    writeFileSync(planted, 'a { color: #123456; }\n')
+    const args = (file) => ['--files', file, '--baseline', emptyBaseline]
+
+    assert.equal(agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', ...args(clean)).status, 'pass')
+    assert.equal(agreedRecord('stylelint-ratchet.mjs', 'stylelint-tokens', ...args(planted)).status, 'fail')
   })
 
-  it('vue-tsc: the record is the run', () => {
-    agreedRecord('tsc-ratchet.mjs', 'vue-tsc')
+  it('vue-tsc: the record is the run, on a planted type error', () => {
+    const project = join(sandbox, 'tsc-fixture')
+    mkdirSync(project)
+    writeFileSync(
+      join(project, 'tsconfig.json'),
+      '{"compilerOptions":{"strict":true,"noEmit":true,"skipLibCheck":true,"types":[]},"files":["planted.ts"]}\n'
+    )
+    writeFileSync(join(project, 'planted.ts'), "export const n: number = 'not a number'\n")
+    const args = ['--project', join(project, 'tsconfig.json'), '--baseline', emptyBaseline]
+
+    assert.equal(agreedRecord('tsc-ratchet.mjs', 'vue-tsc', ...args).status, 'fail')
   })
 })

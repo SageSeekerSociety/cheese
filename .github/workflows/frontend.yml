@@ -39,7 +39,7 @@ defaults:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     # The margin covers a cold pnpm store without letting a wedged run bill
     # for an hour.
     timeout-minutes: 15
@@ -270,7 +270,7 @@ jobs:
   # setup steps repeat `check`'s and follow the same reasoning.
   unit:
     name: unit (${{ matrix.shard }}/${{ strategy.job-total }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     strategy:
       # A failing shard must not cancel the others; each keeps its own result.

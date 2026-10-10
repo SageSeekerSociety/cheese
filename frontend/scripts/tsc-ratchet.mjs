@@ -5,6 +5,10 @@
 //   node scripts/tsc-ratchet.mjs --update   rewrite the baseline downward
 //   node scripts/tsc-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
+// `--project <tsconfig>` and `--baseline <file>` judge another project against
+// another baseline. They exist so ratchet-report.test.mjs can run this script
+// on a one-file fixture instead of type-checking the whole tree a second time.
+//
 // The comparison logic lives in tsc-ratchet-core.mjs and is unit-tested; this
 // file is only the I/O around it.
 import { spawnSync } from 'node:child_process'
@@ -17,7 +21,17 @@ import { compare, formatReport, parseTscOutput, tightenedBaseline } from './tsc-
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
-const BASELINE = resolve(ROOT, 'tsc-baseline.json')
+
+function options(name) {
+  return process.argv.flatMap((arg, i) => (arg === name ? [process.argv[i + 1]] : []))
+}
+
+function option(name, fallback) {
+  return options(name)[0] ?? fallback
+}
+
+const BASELINE = resolve(ROOT, option('--baseline', 'tsc-baseline.json'))
+const project = option('--project')
 const update = process.argv.includes('--update')
 const ID = 'vue-tsc'
 
@@ -27,7 +41,7 @@ const ID = 'vue-tsc'
 const LOCAL_BIN = resolve(ROOT, 'node_modules/.bin/vue-tsc')
 const BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : 'vue-tsc'
 
-const run = spawnSync(BIN, ['--noEmit'], {
+const run = spawnSync(BIN, ['--noEmit', ...(project ? ['-p', project] : [])], {
   cwd: ROOT,
   encoding: 'utf8',
   shell: process.platform === 'win32',
