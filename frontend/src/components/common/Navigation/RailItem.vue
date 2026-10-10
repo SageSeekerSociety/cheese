@@ -336,7 +336,7 @@ function warmDestination() {
   top: 50%;
   width: 4px;
   height: 0;
-  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  border-radius: var(--radius-pill);
   background-color: rgb(var(--v-theme-on-surface));
   transform: translateY(-50%);
   transition: height var(--dur-quick) var(--ease-standard);
