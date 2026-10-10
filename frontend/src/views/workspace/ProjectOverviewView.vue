@@ -13,6 +13,7 @@ import type { RoomTask } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
 import { computed, ref } from 'vue'
+import dayjs from 'dayjs'
 
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -24,11 +25,22 @@ import { myPhraseLabel, phraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
 import { taskTitle } from '@/lib/topicState'
 
+/** 从一道题领出来的项目截到哪一刻。 */
+export interface ChallengeDeadline {
+  /** 截止那一刻（毫秒）。 */
+  at: number
+  /** 是这份报名自己的截止（批准时定），而不是题目的截止。 */
+  mine: boolean
+}
+
 const props = defineProps<{
   projectId: string
   projectName: string
   /** 项目总览那份文档现在写着什么；还没读到是 null。 */
   overviewText: string | null
+  /** 从一道题领出来的项目截到哪一刻：批准过的报名是它自己的截止（`mine`），否则是题目
+   *  的截止；不是领题开的项目、或读不到，是 null（不写这一行）。 */
+  challengeDeadline?: ChallengeDeadline | null
   /** 最近进展；还没读到是 null。 */
   progress: ProgressItem[] | null
   progressFailed: boolean
@@ -52,6 +64,14 @@ const emit = defineEmits<{
 }>()
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
+
+// 按看的人自己的钟点写：同一时刻，题目页、问芝士和这里说的是同一天同一分钟。
+const deadlineText = computed(() => {
+  const d = props.challengeDeadline
+  if (!d) return ''
+  const when = dayjs(d.at).format(t('tasks.roster.dateTimeFormat'))
+  return d.mine ? t('work.overview.myDeadline', { when }) : t('work.overview.taskDeadline', { when })
+})
 
 // ---- 项目总览：只显示开头，长了可以展开 ----
 const overviewOpen = ref(false)
@@ -137,6 +157,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
               {{ t('work.overview.edit') }}
             </button>
           </div>
+          <p v-if="deadlineText" class="ov-deadline t-body" data-testid="overview-deadline">{{ deadlineText }}</p>
           <template v-if="overviewText?.trim()">
             <div class="ov-doc" :class="{ 'ov-doc--clipped': overviewLong && !overviewOpen }" data-user-content>
               <MarkdownView class="md-content" :source="overviewText" />
@@ -332,6 +353,10 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   content: '';
   position: absolute;
   inset: -12px -8px;
+}
+.ov-deadline {
+  margin: 0 0 8px;
+  color: var(--muted);
 }
 .ov-empty {
   display: flex;

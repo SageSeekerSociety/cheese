@@ -2324,7 +2324,9 @@
     "people": "谁在做什么",
     "allTasks": "全部任务 {count}",
     "nobody": "暂无进行中的任务",
-    "moreOf": "其余 {count} 个"
+    "moreOf": "其余 {count} 个",
+    "myDeadline": "提交截止：{when}",
+    "taskDeadline": "题目截止：{when}"
   },
   "projectTasks": {
     "allChannels": "所有频道",

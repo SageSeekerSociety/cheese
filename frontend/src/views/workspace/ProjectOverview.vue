@@ -4,6 +4,7 @@
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
+import type { ChallengeDeadline } from '@/views/workspace/ProjectOverviewView.vue'
 
 import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -25,7 +26,7 @@ import { memberName } from '@/lib/agentNames'
 import { prefetchNow } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { overviewQuery, progressQuery } from '@/query/project'
+import { overviewQuery, progressQuery, projectQuery } from '@/query/project'
 import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectOverviewView from '@/views/workspace/ProjectOverviewView.vue'
@@ -52,6 +53,20 @@ const work = useQuery(
   queryClient
 )
 holdRevealUntil(() => !overview.isPending.value && !recent.isPending.value && !work.isPending.value)
+
+// 从一道题领出来的项目：总览上方写这一份报名截到哪一刻。项目那一行里带着
+// （`challenge_deadline`，后端按报名算），不是总览文档里写死的字 —— 那份是领取时写的，
+// 那时还没批准，也不知道读的人在哪个时区。
+const project = useQuery(
+  computed(() => projectQuery(props.projectId)),
+  queryClient
+)
+const challengeDeadline = computed<ChallengeDeadline | null>(() => {
+  // 只在单个项目那一行（`GET /projects/{id}`）里有：报名批准时定下的截止（`mine`），
+  // 还没有就是题目的截止。
+  const d = project.data.value?.challenge_deadline as { at: string; mine: boolean } | null | undefined
+  return d ? { at: Date.parse(d.at), mine: d.mine } : null
+})
 // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
 watch(
   () => recent.error.value,
@@ -114,6 +129,7 @@ function allTasks() {
     :project-id="projectId"
     :project-name="projectName"
     :overview-text="overviewText"
+    :challenge-deadline="challengeDeadline"
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"

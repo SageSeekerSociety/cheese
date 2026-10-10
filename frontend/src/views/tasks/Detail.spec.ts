@@ -308,6 +308,28 @@ describe('题目详情', () => {
     expect(other.container.textContent).toContain(t('tasks.eligibility.unknown'))
   })
 
+  it('我的进度写的是我这份报名自己的截止，按我的钟点到分钟；题目的截止不顶替它', async () => {
+    // 本地时间造出来的时刻：不管测试机在哪个时区，这一刻在本地都是 10 月 24 日 16:05。
+    const mine = new Date(2030, 9, 24, 16, 5).getTime()
+    const closes = new Date(2030, 9, 26, 9, 0).getTime()
+    const { container } = await mount(
+      { deadline: closes, userDeadline: closes },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: mine }] }
+    )
+
+    const line = container.querySelector('[data-testid="my-deadline"]')
+    expect(line?.textContent).toContain('10月24日 16:05')
+    expect(line?.textContent).not.toContain('10月26日')
+  })
+
+  it('还在等批准的报名没有自己的截止，不写那一行', async () => {
+    const { container } = await mount(
+      { deadline: new Date(2030, 9, 26, 9, 0).getTime() },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE', deadline: null }] }
+    )
+    expect(container.querySelector('[data-testid="my-deadline"]')).toBeNull()
+  })
+
   it('提交期限按天说：老数据里存的毫秒也换成天', async () => {
     const { container } = await mount({ defaultDeadline: 14 * DAY })
     expect(container.textContent).toContain(i18n.global.t('tasks.side.periodValue', { n: 14 }))

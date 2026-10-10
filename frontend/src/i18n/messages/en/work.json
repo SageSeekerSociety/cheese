@@ -2324,7 +2324,9 @@
     "people": "Who is doing what",
     "allTasks": "All tasks {count}",
     "nobody": "No tasks in progress",
-    "moreOf": "{count} more"
+    "moreOf": "{count} more",
+    "myDeadline": "Your deadline: {when}",
+    "taskDeadline": "Challenge closes: {when}"
   },
   "projectTasks": {
     "allChannels": "All channels",

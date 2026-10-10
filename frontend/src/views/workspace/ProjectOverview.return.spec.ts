@@ -40,6 +40,8 @@ vi.mock('@/api/tasks', async (importOriginal) => ({
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   listProjectArtifacts: vi.fn(async () => ({ data: [], total: 0 })),
+  // 不是领题开的项目：项目那一行里没有截止。
+  getProject: vi.fn(async () => ({ id: 'p1', name: '项目一', external_task_id: null })),
   getProjectSite: vi.fn(async () => {
     throw new Error('no site')
   }),

@@ -1,10 +1,11 @@
 """What a person's 芝士 is told: its rules, the place it was asked in, and — once —
 what was said in the conversation before its session existed."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.domain.assistant.models import AssistantMessage
-from app.domain.task.models import Task
+from app.domain.notification.preferences import local_time
+from app.domain.task.models import Task, TaskMembership
 
 _RULES = (
     "你是芝士，知是平台上的 AI 助手，在帮这位用户做事。"
@@ -26,15 +27,37 @@ _RULES = (
 EARLIER_CHARS = 24_000
 
 
-def _when(moment: datetime | None) -> str:
-    return moment.strftime("%Y-%m-%d") if moment else "不限"
+def _when(moment: datetime | None, timezone: str | None) -> str:
+    """A moment on the asker's own clock, to the minute — the clock the task
+    page shows them, so 芝士 and the page name the same day."""
+    if moment is None:
+        return "不限"
+    return local_time(moment, timezone).strftime("%Y-%m-%d %H:%M")
 
 
-def task_brief(task: Task) -> str:
+def _mine(claim: TaskMembership | None, timezone: str | None) -> str | None:
+    """The asker's own deadline: their claim's, which is not the task's."""
+    if claim is None:
+        return None
+    if claim.approved != 0:
+        return "你的领取：等待出题人批准；批准时才定下你的提交截止时间"
+    return f"你的提交截止：{_when(claim.deadline, timezone)}"
+
+
+def task_brief(
+    task: Task,
+    *,
+    claim: TaskMembership | None = None,
+    timezone: str | None = None,
+) -> str:
     """The task as 芝士 is shown it: what anyone who can open the task page
-    reads there, and nothing from its attachments. Wrapped so the rules can
-    call it material rather than instructions."""
+    reads there, and nothing from its attachments — plus the asker's own claim
+    (``app.domain.task.claims.own_claim``) when they have one. Times are on the
+    asker's clock (``timezone``, the one their browser reported). Wrapped so
+    the rules can call it material rather than instructions."""
     form = "团队" if task.submitter_type == 1 else "个人"
+    clock = local_time(datetime.now(UTC), timezone)
+    mine = _mine(claim, timezone)
     lines = [
         f"标题：{task.name}",
         f"简介：{task.intro}",
@@ -44,8 +67,10 @@ def task_brief(task: Task) -> str:
             if task.submitter_type == 1 and task.max_team_size
             else ""
         ),
-        f"截止：{_when(task.deadline)}",
+        f"题目截止：{_when(task.deadline, timezone)}",
+        *([mine] if mine else []),
         f"领取后提交期限：{task.default_deadline} 天",
+        f"（以上时间都是用户所在时区 {clock.tzinfo}，{clock.tzname()}）",
         f"可多次提交：{'是' if task.resubmittable else '否'}",
         "说明：",
         task.description,

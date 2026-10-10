@@ -236,6 +236,7 @@
     "overdue": "已过期 {n} 天",
     "dueToday": "今天截止",
     "daysLeft": "还剩 {n} 天",
+    "myDeadline": "我的提交截止：{when}",
     "projectsFailed": "项目列表加载失败",
     "retry": "重试",
     "newProject": "用这道题新建项目",

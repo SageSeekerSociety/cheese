@@ -110,10 +110,6 @@ class TestTaskIntegration:
                 f"[查看完整赛题要求](/spaces/{task_setup['space_id']}/tasks/{task_id})"
                 in response.json()["data"]["content"]
             )
-            expected_deadline = datetime.fromtimestamp(
-                task_setup["deadline_ms"] / 1000, UTC
-            ).strftime("%Y-%m-%d %H:%M UTC")
-            assert expected_deadline in response.json()["data"]["content"]
         if as_team:
             doc = response.json()["data"]
             response = api_client.put(

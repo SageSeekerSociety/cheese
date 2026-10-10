@@ -30,6 +30,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.notification.preferences import local_time
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceRepository,
@@ -38,6 +39,7 @@ from app.domain.space.repositories import (
 from app.domain.task.access import (
     ensure_task_joinable,
 )
+from app.domain.task.claims import claim_of
 from app.domain.task.inputs import (
     map_approve_type_to_int,
 )
@@ -53,6 +55,7 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.user.repositories import (
     UserRepository,
 )
+from app.domain.user.services import timezones_by_ids
 
 router = APIRouter(prefix="/tasks")
 
@@ -65,18 +68,31 @@ async def list_joined_tasks(resolver: ActorResolverDep, db=Depends(get_db)) -> d
     if not actor.authenticated or actor.user_id is None:
         raise AuthenticationRequiredError("Login required")
     tasks = await TaskService.of(db).list_joined(actor.user_id)
-    return ok(
-        [
+    # On the asker's own clock, with its offset: an agent reading a UTC
+    # instant names the UTC day, which is not the day their task page shows.
+    zone = (await timezones_by_ids(db, [actor.user_id])).get(actor.user_id)
+
+    def when(moment: datetime | None) -> str | None:
+        return local_time(moment, zone).isoformat() if moment else None
+
+    rows = []
+    for task in tasks:
+        claim = await claim_of(db, task=task, user_id=actor.user_id)
+        approved = claim is not None and claim.approved == 0
+        rows.append(
             {
                 "id": task.id,
                 "title": task.name,
                 "intro": task.intro,
-                "deadline": task.deadline.isoformat() if task.deadline else None,
+                "deadline": when(task.deadline),
+                # Their own deadline, set when the claim was approved; null
+                # while it still waits for approval.
+                "myDeadline": when(claim.deadline) if approved and claim else None,
+                "approved": approved,
                 "ended": task.ended_at is not None,
             }
-            for task in tasks
-        ]
-    )
+        )
+    return ok(rows)
 
 
 async def _participation_response(db, task, membership, auth_user) -> dict:
