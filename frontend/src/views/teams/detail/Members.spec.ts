@@ -253,6 +253,21 @@ describe('inviting someone by name', () => {
     expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
   })
 
+  it('someone already in the team is said so, and cannot be invited again', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({
+      data: { members: [{ user: { id: 31, nickname: '张衡', username: 'zhangheng' }, role: 'MEMBER' }] },
+    } as never)
+    lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'zhangheng')
+    await screen.findByText('已经在团队里', {}, { timeout: 2000 })
+    expect((screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement).disabled).toBe(true)
+    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+
+    expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
+  })
+
   it('a name nobody has is said in Chinese, and nothing is sent', async () => {
     lookupUser.mockRejectedValue(new ApiError(404, 'No account with that username or email'))
     const field = await openInvite()

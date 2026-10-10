@@ -44,6 +44,8 @@
                     <div class="t-body">{{ found.name || found.handle }}</div>
                     <div class="t-meta c-muted">{{ found.handle }}</div>
                   </div>
+                  <v-spacer />
+                  <span v-if="alreadyIn" class="t-meta c-muted">{{ t('teams.members.alreadyIn') }}</span>
                 </div>
                 <v-select
                   v-model="inviteRoleInput"
@@ -69,7 +71,7 @@
               <v-card-actions>
                 <v-spacer></v-spacer>
                 <BaseButton type="button" @click="isActive.value = false">{{ t('teams.members.cancel') }}</BaseButton>
-                <BaseButton type="submit" kind="primary" :disabled="!found">{{
+                <BaseButton type="submit" kind="primary" :disabled="!found || alreadyIn">{{
                   t('teams.members.inviteSubmit')
                 }}</BaseButton>
               </v-card-actions>
@@ -531,6 +533,9 @@ const {
       ? e.message
       : t('teams.members.inviteLookupFailed')
 )
+// 已经在团队里的人不用再邀请——后端也会拒，但那是按下按钮之后才知道。项目的
+// 「邀请外部成员」是同一条。
+const alreadyIn = computed(() => !!found.value && teamMembers.value.some((m) => m.user.id === found.value?.id))
 const inviteRoleInput = ref('MEMBER')
 const inviteMessageInput = ref('')
 
@@ -633,7 +638,7 @@ const pendingRequests = computed(() => {
 // 拿真假判断会把成功当失败——不提示、不刷新，那一行还挂着，再点一次就是「找不到」。
 const confirmInvite = async () => {
   const invitee = found.value
-  if (!teamData.value || !invitee) {
+  if (!teamData.value || !invitee || alreadyIn.value) {
     return
   }
 
