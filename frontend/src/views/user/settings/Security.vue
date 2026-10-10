@@ -10,6 +10,9 @@
     v-model:show-totp="showTotp"
     v-model:setup-step="setupStep"
     v-model:verification-code="verificationCode"
+    v-model:show-close-account="showCloseAccount"
+    :username="currentUserName ?? ''"
+    :closing-account="closingAccount"
     :web-authn-supported="webAuthnSupported"
     :passkeys="passkeys"
     :adding-passkey="addingPasskey"
@@ -42,6 +45,7 @@
     @sign-out-device="signOutDevice"
     @sign-out-others="handleSignOutOthers"
     @copy="copy"
+    @close-account="handleCloseAccount"
   />
 </template>
 
@@ -51,6 +55,7 @@ import type { PasskeyInfo, SessionInfo } from '@/types/apiUsers'
 import type { SetupStep } from './SecurityView.vue'
 
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser'
 
@@ -63,11 +68,12 @@ import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
-import { currentUserId } from '@/services/account'
+import AccountService, { currentUserId, currentUserName } from '@/services/account'
 import { oauthProviderName } from '@/views/account/oauthProvider'
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 
 const dialogs = useDialog()
+const router = useRouter()
 const webAuthnSupported = browserSupportsWebAuthn()
 
 const fail = (error: unknown, fallback: string) => toast.error(axiosErrorMessage(error, fallback))
@@ -400,6 +406,28 @@ const handleSignOutOthers = async () => {
   } finally {
     signingOutOthers.value = false
   }
+}
+
+// ---- Closing the account ----
+
+const showCloseAccount = ref(false)
+const closingAccount = ref(false)
+
+const handleCloseAccount = async (username: string) => {
+  closingAccount.value = true
+  try {
+    await withSudo('account:delete', (sudoTicket) => UserApi.closeAccount(username, sudoTicket))
+  } catch (error) {
+    closingAccount.value = false
+    if (error instanceof SudoCancelledError) return
+    fail(error, t('account.security.closeFailed'))
+    return
+  }
+  // The account is gone: nothing this tab holds signs in as it any more.
+  showCloseAccount.value = false
+  toast.success(t('account.security.closed'))
+  await AccountService.logout()
+  await router.push('/')
 }
 
 onMounted(async () => {

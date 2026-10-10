@@ -39,6 +39,11 @@ async def user_by_handle(session: AsyncSession, handle: str) -> User | None:
     return await UserRepository(session).get_by_username(handle)
 
 
+async def user_by_id(session: AsyncSession, user_id: int) -> User | None:
+    """The live account with this id; None when there is none or it is closed."""
+    return await UserRepository(session).get_by_id(user_id)
+
+
 async def users_by_handle(
     session: AsyncSession, handles: Iterable[str]
 ) -> dict[str, User]:

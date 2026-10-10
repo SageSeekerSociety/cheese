@@ -60,12 +60,14 @@ import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
+import { useClosedAuthors } from './useClosedAuthors'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
 import { applyRoomState, useRoomResync } from './useRoomResync'
 import { useTimelineTasks } from './useTimelineTasks'
 
-import i18n, { t } from '@/i18n'
+import { t } from '@/i18n'
+import { fmtTime } from '@/lib/messageClock'
 import { cachedWindow, readNewestBlocks, setCachedWindow } from '@/query/blocks'
 import { roomChanged } from '@/query/changes'
 import { refreshTopicRow } from '@/query/project'
@@ -100,6 +102,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 这一条出错就写给用户看，所以它得在下面那段（房间名册）之前。
   const errorMsg = ref<string | null>(null)
 
+  const closedAuthors = useClosedAuthors()
+
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
   // 房间名册和项目名册是两份，因为 AI 队友的座位只在前者上。
   const {
@@ -116,6 +120,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   } = useRoomRoster({
     topic: () => topic(),
     members: () => members(),
+    closed: () => closedAuthors.closed.value,
     author: AUTHOR,
     onError: (message) => {
       errorMsg.value = message
@@ -141,6 +146,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
     catchUp: (roomId, after) => void resync.catchUp(roomId, after),
   })
   const { messages, hasMore, hasNewer } = timeline
+  closedAuthors.follow(() =>
+    messages.value.filter((b) => isPersonBlock(b) && !memberByHandle.value.has(b.author)).map((b) => b.author)
+  )
   const loadingHistory = ref(false)
 
   // 哪几轮在跑、谁在干、要不要显示「在处理」—— 见 room/composables/useRoomTurns。
@@ -825,17 +833,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     return connected.value ? t('work.room.chat.sending') : t('work.room.chat.waitingConnection')
   }
 
-  function fmtTime(iso: string): string {
-    // Local HH:mm next to the name on the first of a run (not raw UTC). In the
-    // app's language, not the browser's: a Chinese screen on an en-US system
-    // otherwise reads 「07:20 PM」, which also no longer fits the gutter that a
-    // continued message shows its time in.
-    return new Date(iso).toLocaleTimeString(i18n.global.locale.value, {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
-  }
   // 分栏 (2026-09-09, <@符露夀> 定): 我说的话靠右，别人和芝士靠左。
   //
   // 侧只回答一件事——**这条是不是我说的**。「谁在说」仍然由头像和名字承担，两侧

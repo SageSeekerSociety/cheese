@@ -404,7 +404,7 @@ unmatched_ignore_imports_alerting = warn
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
-    platform_stats : feature_stats : dashboard : project_progress : onboarding
+    platform_stats : feature_stats : dashboard : project_progress : onboarding : account
     routine : task_quiet : admin : room_cleanup : wake_watch
     agent : agent_session : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet

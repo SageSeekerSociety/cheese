@@ -238,7 +238,8 @@ async def delete_answer_comment(
         or discussion["modelId"] != answer_id
     ):
         raise NotFoundError("Comment not found for this answer")
-    if discussion["sender"]["id"] != auth_user.user_id:
+    # A closed account's comment has no sender left to compare with.
+    if (discussion["sender"] or {}).get("id") != auth_user.user_id:
         raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)
     return ok({"deleted": True})

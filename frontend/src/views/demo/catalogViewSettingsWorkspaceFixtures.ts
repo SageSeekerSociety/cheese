@@ -180,6 +180,8 @@ const SECURITY_SESSIONS: SessionInfo[] = [
 
 /** 两步验证那一屏的两个登录方式摘要 + 三块清单。 */
 export const SECURITY_PROPS = {
+  username: 'wangxiaoming',
+  closingAccount: false,
   webAuthnSupported: true,
   passkeys: SECURITY_PASSKEYS,
   addingPasskey: false,
@@ -206,6 +208,7 @@ export const SECURITY_PROPS = {
 export const SECURITY_DIALOGS = {
   showChangePassword: false,
   showTotp: false,
+  showCloseAccount: false,
   setupStep: 'qr' as const,
   verificationCode: '',
 }

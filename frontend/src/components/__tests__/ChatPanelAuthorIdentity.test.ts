@@ -35,6 +35,11 @@ vi.mock('../../api', async () => {
   }
 })
 
+vi.mock('../../api/people', () => ({
+  listClosedAccounts: vi.fn().mockResolvedValue({ handles: [] }),
+}))
+
+import { listClosedAccounts } from '../../api/people'
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
@@ -125,6 +130,16 @@ describe('消息头上的作者名', () => {
     await flush()
 
     expect(container.querySelector('.im-name')!.textContent?.trim()).toBe('ghost')
+  })
+
+  it('名册里没有、账号已注销的作者 → 显示「已注销用户」，不显示他留下的 handle', async () => {
+    vi.mocked(listClosedAccounts).mockResolvedValueOnce({ handles: ['ghost'] })
+    const id = freshRoom()
+    const { container } = mountPanel(id, 'ghost', [{ user_handle: 'wangchangxin', role: 'member', name: 'fulu' }])
+    await flush()
+
+    expect(listClosedAccounts).toHaveBeenCalledWith(['ghost'])
+    expect(container.querySelector('.im-name')!.textContent?.trim()).toBe('已注销用户')
   })
 
   // mentionNames 那张表额外塞了 all/here 两个保留键（渲染成「所有人」「在线成员」），
