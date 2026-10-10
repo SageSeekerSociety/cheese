@@ -57,13 +57,17 @@ def _project(client) -> str:
 def _room(client, project_id: str, title: str = "做一个东西") -> str:
     r = client.post("/topics", json={"project_id": project_id, "title": title})
     assert r.status_code == 200
-    room_id = r.json()["data"]["id"]
+    return r.json()["data"]["id"]
+
+
+def _place(client, task) -> None:
+    """The task's own session takes the machine its working copy is on."""
 
     async def place():
         async with client.test_factory() as session:
-            room = await session.get(Topic, uuid.UUID(room_id))
+            room = await session.get(Topic, task.room_id)
             await AgentSessionService(session).remember_place(
-                conversation_id=room.id,
+                conversation_id=task.id,
                 agent_handle="cheese",
                 work_lease={"kind": "device"},
                 runtime_location={
@@ -76,7 +80,6 @@ def _room(client, project_id: str, title: str = "做一个东西") -> str:
             await session.commit()
 
     asyncio.run(place())
-    return room_id
 
 
 def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
@@ -86,6 +89,7 @@ def _hand_over(client, room_id: str, *, files=None, again=False, **declared):
     的一条 —— 和真实情况一样（一条活交付一次）。
     """
     task = delivery_task(client, room_id, new=again)
+    _place(client, task)
     if files:
         for name, content in files.items():
             path = client.test_machine_home / ".cheese/tasks" / str(task.id) / name

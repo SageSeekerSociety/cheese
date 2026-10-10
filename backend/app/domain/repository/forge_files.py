@@ -128,21 +128,25 @@ class ProjectFiles:
         if task is None:
             raise ValidationError(say("taskRequired"))
         room = await self.session.get(Topic, task.room_id)
-        # Executors are pinned per room; sessions record their leases separately.
-        target = next(
-            (
-                place.lease
-                for place in await AgentSessionService(self.session).places_in_room(
-                    task.room_id
-                )
-                if room is not None
-                and place.resource_id == str(room.resource_id or room.id)
-                and (place.lease or {}).get("kind") == "device"
-            ),
-            None,
+        found = (
+            await AgentSessionService(self.session).working_copy(
+                task.id, str(room.resource_id or room.id)
+            )
+            if room is not None
+            else None
         )
-        if not target or target.get("kind") != "device":
-            raise GatewayUnavailableError(say("taskMachineNotConnected"))
+        if found is None:
+            # No session of this task has taken a machine yet, so no machine
+            # holds a working copy of it: the same as a machine without one.
+            if operation in _NO_WORKTREE_YET:
+                return _NO_WORKTREE_YET[operation]
+            raise NotFoundError(say("taskFileNotOnMachine"))
+        target, lost = found
+        if lost:
+            # Its cloud sandbox was destroyed with its home (idle, or given up
+            # with its host), and the lease still names it until the task's
+            # next tool call places it in a new one.
+            raise UpstreamUnavailableError(say("taskSandboxReleased"))
         await self._release()
         try:
             # Interactive file requests must not inherit the agent's 11-minute
@@ -156,15 +160,9 @@ class ProjectFiles:
         except (TimeoutError, DeviceOffline, DeviceNotReady) as exc:
             raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
         except DeviceCallError as exc:
-            # A cloud sandbox left idle is destroyed with its home, and the
-            # room's lease still names it until the next tool call places the
-            # session again. The machine's own words for that are a missing
-            # path; say what happened instead.
-            if await AgentSessionService(self.session).sandbox_lost_in_room(
-                task.room_id
-            ):
-                raise UpstreamUnavailableError(say("taskSandboxReleased")) from exc
-            raise
+            raise UpstreamUnavailableError(
+                say("taskMachineFailed", error=str(exc))
+            ) from exc
         if result.get("error") == "not_found":
             if operation in _NO_WORKTREE_YET:
                 return _NO_WORKTREE_YET[operation]

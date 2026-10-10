@@ -51,6 +51,7 @@ def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
     response = client.post("/topics", json={"project_id": str(pid), "title": "Files"})
     assert response.status_code == 200
     room_id = uuid.UUID(response.json()["data"]["id"])
+    task_id = delivery_task_id(client, room_id)
 
     async def place():
         async with client.test_factory() as session:
@@ -58,8 +59,9 @@ def _mktopic(client, pid: uuid.UUID) -> uuid.UUID:
             from app.domain.agent.harness import harness_for
             from app.domain.agent_session.services import AgentSessionService
 
+            # The task's own session took the machine its working copy is on.
             await AgentSessionService(session).remember_place(
-                conversation_id=room_id,
+                conversation_id=task_id,
                 agent_handle="cheese",
                 work_lease={"kind": "device"},
                 runtime_location={

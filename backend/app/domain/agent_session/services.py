@@ -109,11 +109,24 @@ class AgentSessionService:
         rows = await self._repo.placed_in_room(room_id)
         return [place for row in rows if (place := row.place()) is not None]
 
-    async def sandbox_lost_in_room(self, room_id: uuid.UUID) -> bool:
-        """A session in this room had its cloud sandbox destroyed and has not
-        been placed in a new one yet (``LOST_KEY``)."""
-        rows = await self._repo.placed_in_room(room_id)
-        return any((row.execution_request or {}).get(LOST_KEY) for row in rows)
+    async def working_copy(
+        self, conversation_id: uuid.UUID, generation: str
+    ) -> tuple[dict, bool] | None:
+        """The machine lease holding this task's (or 支线's) working copy on the
+        room's current ``generation``, and whether its cloud sandbox has been
+        destroyed since (``LOST_KEY``).
+
+        Each session works in a home of its own (``CloudHostHome``), so a
+        task's files are in its own session's home and in no other session's
+        of the same room. None while no session of it has taken a machine:
+        nothing holds a working copy of it yet."""
+        for row in await self._repo.placed_in_conversation(conversation_id):
+            place = row.place()
+            if place is None or place.resource_id != generation:
+                continue
+            if place.lease is not None and place.lease.get("kind") == "device":
+                return place.lease, bool((row.execution_request or {}).get(LOST_KEY))
+        return None
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
         """Which harness the room's one pane belongs to, if anything is on it.

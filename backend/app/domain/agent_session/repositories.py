@@ -247,6 +247,21 @@ class AgentSessionRepository:
         )
         return list(result.scalars())
 
+    async def placed_in_conversation(
+        self, conversation_id: uuid.UUID
+    ) -> list[AgentSession]:
+        """Every session of this one conversation that is sitting on a machine,
+        newest first."""
+        result = await self._session.execute(
+            select(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.runtime_location.is_not(None),
+            )
+            .order_by(AgentSession.placed_at.desc(), AgentSession.id)
+        )
+        return list(result.scalars())
+
     async def placed_in_room(self, room_id: uuid.UUID) -> list[AgentSession]:
         """Every session in this room that is sitting on a machine, newest first.
 
