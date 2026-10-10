@@ -28,13 +28,23 @@ jobs:
           docker run --rm -v "$PWD:/work" -w /work \
             alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 \
             sh scripts/build-bubblewrap.sh dist
+      # Ubuntu from 24.04 refuses a user namespace to a program no AppArmor
+      # profile allows one, and the profile Ubuntu ships names /usr/bin/bwrap.
+      # So on this runner the placed copy is refused until its owner allows
+      # it, once, as root; this proves both halves.
       - name: Make a sandbox with it, as a user
         run: |
-          cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns || true
           tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP"
-          "$RUNNER_TEMP"/bubblewrap-*/bwrap --unshare-user --unshare-pid \
-            --ro-bind / / --proc /proc --dev /dev true \
-            || echo "::warning::this runner does not allow unprivileged user namespaces"
+          bwrap=$(echo "$RUNNER_TEMP"/bubblewrap-*/bwrap)
+          sandbox() { "$bwrap" --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev true; }
+          restricted=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)
+          if [ "$restricted" = 1 ]; then
+            if sandbox; then echo "::error::restricted, yet allowed before any profile: this run proves nothing"; exit 1; fi
+            printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile cheese-bwrap %s flags=(unconfined) {\n  userns,\n}\n' "$bwrap" \
+              | sudo tee /etc/apparmor.d/cheese-bwrap
+            sudo apparmor_parser -r /etc/apparmor.d/cheese-bwrap
+          fi
+          sandbox
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bubblewrap-${{ matrix.runner }}
