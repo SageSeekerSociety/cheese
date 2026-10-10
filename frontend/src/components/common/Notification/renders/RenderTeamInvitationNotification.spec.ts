@@ -118,3 +118,19 @@ it('offers no answer once the invitation has been answered', async () => {
   expect(view.queryByRole('button', { name: '接受' })).toBeNull()
   expect(view.queryByRole('button', { name: '拒绝' })).toBeNull()
 })
+
+it('names the role the way the team members page does, never as its code', async () => {
+  const asMember = invitation('PENDING', '46')
+  const { view } = await mount(asMember)
+
+  await view.findByText(/以 普通成员 身份邀请你加入团队/)
+  expect(view.queryByText(/MEMBER/)).toBeNull()
+  cleanup()
+
+  const asAdmin = invitation('PENDING', '47')
+  asAdmin.contextMetadata = { role: 'ADMIN', message: '' }
+  const admin = await mount(asAdmin)
+
+  await admin.view.findByText(/以 管理员 身份邀请你加入团队/)
+  expect(admin.view.queryByText(/ADMIN/)).toBeNull()
+})

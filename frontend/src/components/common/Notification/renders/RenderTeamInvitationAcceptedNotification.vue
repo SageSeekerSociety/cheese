@@ -27,7 +27,6 @@ const { t } = useI18n()
 const accepter = computed(() => getEntity(props.notification, 'accepter'))
 const team = computed(() => getEntity(props.notification, 'team'))
 const applicationId = computed(() => getStringMetadata(props.notification, 'applicationId', ''))
-const role = computed(() => getStringMetadata(props.notification, 'role', t('notifications.common.member')))
 
 // 通知标题
 const title = computed(() => {
