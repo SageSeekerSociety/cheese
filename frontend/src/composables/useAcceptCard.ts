@@ -397,11 +397,10 @@ export function useAcceptCard(props: AcceptCardHost) {
     }
   }
 
-  // 能改派给谁：名册上还在岗的那些。队友当验收人没问题——AI 队友和人的权限一样大
-  // ——要挡的只有停用的队友：停用就是为了挡住新的活，而改派就是派活。后端的
-  // `reviewer_handle` 只是个 handle，不校验这个人还在不在，点下去就是把卡停在一个没
-  // 人驱动的实例名下，界面上还照样写着「等 @xxx 验收」。
-  const reviewerChoices = computed(() => store.members.filter((m) => m.active !== false))
+  // 能改派给谁：名册上的人。AI 队友不在单子上——审阅是人对 AI 交来的东西把关，协作
+  // 模式下 AI 也采纳不了，改派给它卡就停在那儿没人收（后端同样拒绝，`reviewers.py`）。
+  // 和开始前挑审阅人那张单子是同一个口径。
+  const reviewerChoices = computed(() => store.members.filter((m) => !m.agent && m.active !== false))
 
   async function onReassignCard(handle: string) {
     const card = pendingCard.value

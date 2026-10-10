@@ -23,7 +23,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.delivery.addressing import Event
-from app.domain.identity.handles import agent_instance_handle
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -140,33 +139,6 @@ def test_one_person_wearing_both_hats_hears_about_it_once(client):
     assert _file_card(client, room, reviewer="alice").status_code == 200
 
     assert len(_notices(client, alice)) == 1
-
-
-def test_an_agent_reviewer_reads_it_in_the_room_instead_of_the_mailbox(client):
-    """卡递给 agent：房间里那一行照落，提需求的人照收，agent 的收件箱是空的。
-
-    agent 有用户行，handle 解析得出用户 id，所以它以前照样收到一条站内信 —— 一条
-    谁都不会打开的记录，没有报错也没有人看得见。同一条事件对人和 agent 说的是同一
-    句话（谁该收到），分岔只在怎么送到（`identity/arrival.py`）。
-    """
-    project_id, room = _room_and_project(client)
-    agent = agent_instance_handle(uuid.uuid4())
-    agent_token = seed_user(client, agent)
-    reporter = seed_user(client, "bob")
-    _set_reporter(client, room, "bob")
-    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
-    # (`_require_reviewer_in_room`)。这张卡递给的是一位 agent —— 一张卡只有房间会
-    # 放进来的人才接得住，所以让他像真实参与者一样进项目，量到的才是「agent 的收件
-    # 箱是空的」那件事，不是名册。
-    join_project_team(client, project_id, agent)
-
-    assert _file_card(client, room, reviewer=agent).status_code == 200
-
-    (event,) = _filed_events(client, room)
-    assert agent in event["content"]
-    (row,) = _notices(client, reporter)
-    assert row["contextMetadata"]["content"] == event["content"]
-    assert _notices(client, agent_token) == []
 
 
 def test_a_notice_that_names_nobody_reaches_nobody(client):

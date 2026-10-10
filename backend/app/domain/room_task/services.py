@@ -364,6 +364,9 @@ class TaskService:
         )
         if not reviewer:
             raise UnprocessableEntityError(say("reviewerRequired"))
+        # 交上来的改动由人采纳：审阅人定成 AI 队友，这件事的每一次交付都没人能收。
+        if not names_a_person(reviewer):
+            raise UnprocessableEntityError(say("reviewerNotAPerson", handle=reviewer))
         doc = (
             await Documents(self._session).get(task.document_id)
             if task.document_id is not None
