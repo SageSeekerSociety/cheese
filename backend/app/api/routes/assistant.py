@@ -50,8 +50,10 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.feature_stats import pricing
+from app.domain.task.claims import claim_of
 from app.domain.task.services import TaskService, ensure_task_readable
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
+from app.domain.user.services import timezones_by_ids
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -183,7 +185,13 @@ async def _place(db, row, auth: AuthUserInfo) -> str:
     """Where the conversation is, written out for 芝士; it takes the same
     judgment as reading that place."""
     if row.place_kind == "task":
-        return task_brief(await _readable_task(db, int(row.place_id), auth))
+        task = await _readable_task(db, int(row.place_id), auth)
+        zones = await timezones_by_ids(db, [auth.user_id])
+        return task_brief(
+            task,
+            claim=await claim_of(db, task=task, user_id=auth.user_id),
+            timezone=zones.get(auth.user_id),
+        )
     return ""
 
 

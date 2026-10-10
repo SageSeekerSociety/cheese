@@ -188,13 +188,14 @@ class ProjectService:
 
         # The original requirements may be rich-text JSON. Keep their canonical
         # page reachable instead of copying serialized editor data into Markdown.
+        # No deadline here: this text is written once, at claim time, before the
+        # claim is approved — the participant's own deadline does not exist yet,
+        # and one fixed string cannot be in every reader's time zone. The
+        # overview page shows the live one beside this text.
         brief = (
             f"## 赛题要求\n\n{task.intro}\n\n"
             f"[查看完整赛题要求](/spaces/{task.space_id}/tasks/{task.id})"
         )
-        if task.deadline:
-            deadline = task.deadline.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
-            brief += f"\n\n提交截止时间：{deadline}"
         await self.seed_overview(project, brief)
         return project
 

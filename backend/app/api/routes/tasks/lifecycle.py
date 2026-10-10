@@ -46,6 +46,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.task.claims import own_claim
 from app.domain.task.inputs import (
     map_approve_type,
     map_approve_type_to_int,
@@ -218,16 +219,15 @@ async def get_task(
 
         if task.submitter_type == 0:  # USER
             submittable = is_user_approved
-            if user_membership and user_membership.deadline:
-                user_deadline_ms = int(user_membership.deadline.timestamp() * 1000)
         elif task.submitter_type == 1:  # TEAM
             approved_team_memberships = [m for m in team_memberships if m.approved == 0]
             submittable = bool(approved_team_memberships)
             submittable_as_team = [
                 _team_summary(m.member_id) for m in approved_team_memberships
             ]
-            if team_memberships and team_memberships[0].deadline:
-                user_deadline_ms = int(team_memberships[0].deadline.timestamp() * 1000)
+        claim = own_claim(task, user_membership, team_memberships)
+        if claim is not None and claim.deadline is not None:
+            user_deadline_ms = int(claim.deadline.timestamp() * 1000)
 
         if queryJoinability:
             participation_eligibility = (

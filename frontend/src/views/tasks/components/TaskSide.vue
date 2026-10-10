@@ -16,6 +16,7 @@
           </AdaptiveMenu>
         </div>
         <p class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
+        <p v-if="myDeadlineText" class="ts__deadline t-meta-read" data-testid="my-deadline">{{ myDeadlineText }}</p>
 
         <template v-if="identity.approved === 'APPROVED'">
           <p v-if="projectsFailed" class="ts__note">
@@ -83,6 +84,7 @@ import type { Task, TaskSubmissionReview } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import dayjs from 'dayjs'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
@@ -129,10 +131,22 @@ const status = computed(() => {
     : { label: t('tasks.side.versionFailed', { n }), tone: 'danger' }
 })
 
-/** 我自己的截止：出题人批准时给每人单设的那一个，不是题目的截止。 */
+/** 我自己的截止：出题人批准时给每人单设的那一个，不是题目的截止。读的是这一栏画着的
+ *  那一份报名（`identity`）；没有才退回接口按同一条规则挑出来的 `userDeadline`。 */
+const myDeadline = computed(() => {
+  if (props.identity?.approved !== 'APPROVED') return null
+  return props.identity.deadline ?? props.task.userDeadline ?? null
+})
+
+/** 截到哪一刻，按看的人自己的钟点写出来 —— 和问芝士、项目总览说的是同一个时刻。 */
+const myDeadlineText = computed(() =>
+  myDeadline.value == null
+    ? ''
+    : t('tasks.side.myDeadline', { when: dayjs(myDeadline.value).format(t('tasks.roster.dateTimeFormat')) })
+)
+
 const remaining = computed(() => {
-  if (props.identity?.approved !== 'APPROVED') return ''
-  const at = props.task.userDeadline ?? props.identity.deadline
+  const at = myDeadline.value
   if (at == null) return ''
   const days = Math.ceil((at - Date.now()) / DAY_MS)
   if (days < 0) return t('tasks.side.overdue', { n: -days })
@@ -245,6 +259,10 @@ watch(
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.ts__deadline {
+  margin: 2px 0 0;
 }
 
 .ts__status {

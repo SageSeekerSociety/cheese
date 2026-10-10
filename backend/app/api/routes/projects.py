@@ -80,6 +80,7 @@ from app.domain.room_task.services import TaskService
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
+from app.domain.task.claims import deadline_for_project
 from app.domain.task.services import claim_backs_project
 from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
@@ -333,6 +334,18 @@ async def get_project(
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     payload = await _project_payload(db, project)
+    # A project opened by claiming a challenge hands in by its claim's
+    # deadline; the overview shows it on the reader's own clock.
+    deadline = (
+        await deadline_for_project(
+            db, task_id=project.external_task_id, team_id=project.team_id
+        )
+        if project.external_task_id is not None
+        else None
+    )
+    payload["challenge_deadline"] = (
+        {"at": deadline.at.isoformat(), "mine": deadline.mine} if deadline else None
+    )
     # Whether this caller runs the project's membership: its owner, or an
     # owner/admin of its team. The members page shows invite/remove by it.
     payload["can_manage_members"] = actor.authenticated and await MemberService(

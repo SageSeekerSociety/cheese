@@ -134,3 +134,19 @@ it('任务和进展还没读到：不写「0」，也不写「暂无」', () => 
   expect(view.queryByText(t('work.overview.nobody'))).toBeNull()
   expect(view.queryByText(t('work.overview.noProgress'))).toBeNull()
 })
+
+it('领题开的项目：写着这份报名自己截到哪一刻，按看的人的钟点到分钟', () => {
+  // 本地时间造出来的时刻：不管测试机在哪个时区，这一刻在本地都是 10 月 24 日 16:05。
+  const at = new Date(2030, 9, 24, 16, 5).getTime()
+  const view = mount({ overviewText: '## 赛题要求', challengeDeadline: { at, mine: true } })
+  expect(view.getByTestId('overview-deadline').textContent).toBe('提交截止：10月24日 16:05')
+
+  cleanup()
+  const closing = mount({ overviewText: '## 赛题要求', challengeDeadline: { at, mine: false } })
+  expect(closing.getByTestId('overview-deadline').textContent).toBe('题目截止：10月24日 16:05')
+})
+
+it('不是领题开的项目：不写截止', () => {
+  const view = mount({ overviewText: '## 现在到哪了' })
+  expect(view.queryByTestId('overview-deadline')).toBeNull()
+})

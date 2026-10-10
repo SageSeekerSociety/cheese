@@ -233,6 +233,7 @@
     "overdue": "{n} days overdue",
     "dueToday": "Due today",
     "daysLeft": "{n} days left",
+    "myDeadline": "Your deadline: {when}",
     "projectsFailed": "Couldn't load projects",
     "retry": "Retry",
     "newProject": "New project from this challenge",
