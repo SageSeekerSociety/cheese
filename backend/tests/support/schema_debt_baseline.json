@@ -313,6 +313,7 @@
     "remove_table agent_seat_owner",
     "remove_table agent_turn_inputs",
     "remove_table agent_types_archive",
+    "remove_table device_dedup_archive_20261010",
     "remove_table invite_code",
     "remove_table llm_call_log",
     "remove_table milestones",
