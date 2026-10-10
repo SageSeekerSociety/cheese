@@ -1102,8 +1102,9 @@ units are untouched by it.
 
 ## Campus model API: dev reaches it through 119pve, hand-managed
 
-`deepseek-flash-ruc` (deploy/gateway/config.yaml) calls RUC's self-hosted model
-at `RUC_DEEPSEEK_API_BASE` (gateway `.env`), which admits campus addresses only. Everything
+`deepseek-flash` (deploy/gateway/config.yaml) tries RUC's self-hosted model at
+`RUC_DEEPSEEK_API_BASE` (gateway `.env`) before DeepSeek's API, and that endpoint
+admits campus addresses only. Everything
 the dev box sends by default goes through router-2 and leaves off campus, and
 the endpoint drops those connections after about 5 s with an empty reply. So
 TCP to that address and port, and nothing else, takes the same path as tunnel B:

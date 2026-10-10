@@ -118,10 +118,48 @@ model_list:
       cheese_selectable: true
       cheese_label: GLM-5.2
 
+  # Two deployments of one model, tried in `order`: RUC's self-hosted copy
+  # first, DeepSeek's API when RUC fails or is cooling down (429 past its 3
+  # parallel requests per key, or unreachable). A conversation stays on RUC
+  # while RUC answers, so the prompt cache it builds there keeps hitting; it
+  # misses once on each move to the other backend. Both carry the same cheese
+  # keys because the catalogue reads whichever row /model/info lists first.
+  - model_name: deepseek-flash
+    litellm_params:
+      # anthropic/, not deepseek/: the pinned DeepSeek adapter sends Messages
+      # requests to {api_base}/anthropic/v1/messages, DeepSeek's own path. This
+      # upstream serves Messages at /v1/messages and answers that path with a
+      # 500 after about 130 s. Plain http because that is all it serves.
+      model: anthropic/deepseek-flash
+      # The endpoint admits campus addresses only; the dev box reaches it
+      # through 119pve (docs/infrastructure.md, "Campus model API"). Its
+      # address and key are box settings: it is a service of another team,
+      # not ours to publish.
+      api_base: os.environ/RUC_DEEPSEEK_API_BASE
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY
+      order: 1
+      # Used internally without a price of its own. The official rates are the
+      # estimate, so the budget brake behaves the same on either backend.
+      input_cost_per_token: 0.0000003
+      output_cost_per_token: 0.0000012
+      cache_read_input_token_cost: 0.000000006
+    model_info:
+      cheese_selectable: true
+      cheese_label: DeepSeek V4.1 Flash
+      # Accepted here without error; low and high gave the same reasoning
+      # length when measured on 2026-10-08, so on this backend they are moot.
+      cheese_efforts: [low, high]
+      supports_reasoning: true
+      supports_vision: true
+      # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
+      # official route, for the same reason.
+      max_input_tokens: 920000
+
   - model_name: deepseek-flash
     litellm_params:
       model: deepseek/deepseek-flash
       api_key: os.environ/DEEPSEEK_API_KEY
+      order: 2
     model_info:
       cheese_selectable: true
       cheese_label: DeepSeek V4.1 Flash
@@ -144,37 +182,6 @@ model_list:
       # was refused before Claude Code thought it was time to compact.
       # 1,048,576 - 128,000, rounded down.
       max_input_tokens: 920000
-
-  # The same model self-hosted at RUC (vLLM). Its own name rather than a
-  # second deployment of deepseek-flash: the router would scatter one
-  # conversation across two backends and both prompt caches would miss.
-  # The endpoint admits campus addresses only; the dev box reaches it through
-  # 119pve (docs/infrastructure.md, "Campus model API"). Its address and key
-  # are box settings: it is a service of another team, not ours to publish.
-  - model_name: deepseek-flash-ruc
-    litellm_params:
-      # anthropic/, not deepseek/: the pinned DeepSeek adapter sends Messages
-      # requests to {api_base}/anthropic/v1/messages, DeepSeek's own path. This
-      # upstream serves Messages at /v1/messages and answers that path with a
-      # 500 after about 130 s. Plain http because that is all it serves.
-      model: anthropic/deepseek-flash
-      api_base: os.environ/RUC_DEEPSEEK_API_BASE
-      api_key: os.environ/RUC_DEEPSEEK_API_KEY
-      # Used internally without a price of its own. The official rates are the
-      # estimate, so the budget brake behaves as it does on deepseek-flash.
-      input_cost_per_token: 0.0000003
-      output_cost_per_token: 0.0000012
-      cache_read_input_token_cost: 0.000000006
-    model_info:
-      cheese_selectable: true
-      cheese_label: DeepSeek V4.1 Flash（人大校内）
-      supports_reasoning: true
-      supports_vision: true
-      # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
-      # official route, for the same reason.
-      max_input_tokens: 920000
-      # No cheese_efforts: low and high gave the same reasoning length when
-      # measured on 2026-10-08, so offering them would promise nothing.
 
   # Price-only entries: the Claude models served through the platform's
   # subscription (the metering proxy), never through this gateway. Their tokens
