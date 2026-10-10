@@ -92,7 +92,7 @@ class SpaceCategory(Base):
     A 题目版 (`Space`) is a course / an activity; this row is one bucket of
     that course's problems — 作业, 实验, 小测 — so one course holds several of
     them and every 题目 (`Task`) hangs off exactly one. The auto-created
-    "General" row a new board receives (`SpaceService.create_space`) is the
+    first category a new board receives (`SpaceService.create_space`) is the
     course's first bucket, not a course in its own right.
 
     This is the current product definition. `docs/spec.md` still carries the
