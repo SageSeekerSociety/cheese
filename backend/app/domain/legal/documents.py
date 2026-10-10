@@ -56,7 +56,12 @@ DOCUMENTS: dict[str, LegalDocument] = {
     "terms": LegalDocument(
         key="terms",
         title="用户协议",
-        versions=(LegalVersion("1.0", date(2026, 9, 23)),),
+        versions=(
+            LegalVersion("1.0", date(2026, 9, 23)),
+            # Members' own model services, the model providers' own handling,
+            # and anonymised content used for training and given to partners.
+            LegalVersion("1.1", date(2026, 10, 11)),
+        ),
     ),
     "privacy": LegalDocument(
         key="privacy",
@@ -67,6 +72,9 @@ DOCUMENTS: dict[str, LegalDocument] = {
             # person can delete their own real-name record: nothing agreed to
             # changes, so nobody is asked again.
             LegalVersion("1.1", date(2026, 9, 25), material=False),
+            # Anonymised content used for training and given to partners, and
+            # what happens to content once it reaches a model provider.
+            LegalVersion("1.2", date(2026, 10, 11)),
         ),
     ),
 }
