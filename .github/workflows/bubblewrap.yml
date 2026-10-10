@@ -9,6 +9,7 @@ on:
     paths:
       - scripts/build-bubblewrap.sh
       - .github/workflows/bubblewrap.yml
+      - cli/internal/daemoncmd/sandbox.go
   workflow_dispatch: {}
 
 permissions:
@@ -49,6 +50,32 @@ jobs:
         with:
           name: bubblewrap-${{ matrix.runner }}
           path: dist/
+
+  # What an owner on Ubuntu 24.04 does once: the released bwrap, where
+  # cheesehost places it, is refused until `sudo cheesehost sandbox allow`.
+  allow:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: cli/go.mod
+      - name: Place the released bwrap as cheesehost does
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd cli && go build -o "$RUNNER_TEMP/cheesehost" .)
+          revision=$(sed -n 's/^revision=//p' scripts/build-bubblewrap.sh)
+          gh release download "bubblewrap-v$revision" -p "*-linux-x64.tar.gz" -D "$RUNNER_TEMP"
+          mkdir -p ~/.cheese/runtime/bubblewrap
+          tar -xzf "$RUNNER_TEMP"/bubblewrap-*-linux-x64.tar.gz -C ~/.cheese/runtime/bubblewrap --strip-components=1
+      - name: Refused, then allowed
+        run: |
+          sandbox() { ~/.cheese/runtime/bubblewrap/bwrap --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev true; }
+          if sandbox; then echo "::error::allowed before any profile: this run proves nothing"; exit 1; fi
+          sudo "$RUNNER_TEMP/cheesehost" sandbox allow
+          sandbox
 
   release:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
