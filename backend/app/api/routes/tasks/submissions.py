@@ -224,6 +224,16 @@ async def patch_task_submission(
     if membership is None or membership.task_id != task_id:
         raise NotFoundError.for_resource("participant", participant_id)
 
+    # Editing a version hands work in just as a new version does, so it takes the
+    # same door as ``post_task_submission``: an approved claim, a challenge still
+    # running, and not past the claim's own deadline.
+    if membership.approved != 0:
+        raise ForbiddenError("Participant must be approved before submitting")
+    if task.ended_at is not None:
+        raise BadRequestError("Cannot submit to an ended task")
+    if past_deadline(membership.deadline, datetime.now(UTC)):
+        raise BadRequestError(say("submissionPastDeadline"))
+
     if membership.is_team:
         is_member = await team_service.is_team_member(
             membership.member_id, auth_user.user_id
