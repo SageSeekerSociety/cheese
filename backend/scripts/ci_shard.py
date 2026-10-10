@@ -2,10 +2,18 @@
 
 Load with ``-p scripts.ci_shard --ci-shard=0/4``. xdist still schedules the
 assigned cases within each runner; every worker derives the same partition.
+
+The assigned cases are then ordered module by module, the longest module first
+by ``tests/module_durations.json`` (refreshed with ``scripts.test_durations``),
+each module's cases kept together in their collected order. Under
+``--dist loadfile --no-loadscope-reorder`` a worker takes the next module from
+the head of that order whenever it runs low, so the run ends on short modules
+instead of one worker finishing a long one alone.
 """
 
 import hashlib
 import json
+import statistics
 from pathlib import Path
 
 import pytest
@@ -41,7 +49,9 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         bucket = int.from_bytes(hashlib.sha256(item.nodeid.encode()).digest()) % count
         (assigned if bucket == index else deselected).append(item)
-    items[:] = assigned
+    # The manifest below records which cases this shard holds, in partition
+    # order, which is what assert_suite_ran recomputes; only the run is reordered.
+    items[:] = _longest_module_first(assigned)
     for item in assigned:
         item.user_properties.append(("cheese_nodeid", item.nodeid))
     config.hook.pytest_deselected(items=deselected)
@@ -64,3 +74,38 @@ def pytest_collection_modifyitems(config, items):
             + "\n"
         )
     return result
+
+
+DURATIONS = Path(__file__).resolve().parents[1] / "tests" / "module_durations.json"
+LAYERS = ("pure", "contract", "integration")
+
+
+def _layer(item):
+    return next((m.name for m in item.iter_markers() if m.name in LAYERS), None)
+
+
+def _longest_module_first(items):
+    """``items`` grouped by module, longest estimated module first.
+
+    A module's estimate is its recorded seconds per test times the cases this
+    shard holds of it. A module with no record is estimated at its layer's
+    median seconds per test. Ties keep collection order, and so do the cases
+    within a module.
+    """
+    if not DURATIONS.exists() or not items:
+        return items
+    recorded = json.loads(DURATIONS.read_text())
+    modules: dict[str, list] = {}
+    for item in items:
+        modules.setdefault(item.nodeid.split("::")[0], []).append(item)
+
+    def estimate(module, cases):
+        layer = recorded.get(_layer(cases[0]) or "", {})
+        seconds, tests = layer.get(module, (None, None))
+        if seconds is None or not tests:
+            per_test = [s / n for s, n in layer.values() if n] or [0.0]
+            return statistics.median(per_test) * len(cases)
+        return seconds / tests * len(cases)
+
+    order = sorted(modules.items(), key=lambda kv: -estimate(*kv))
+    return [item for _, cases in order for item in cases]
