@@ -124,7 +124,17 @@ describe('under your own name', () => {
 })
 
 describe('moving someone out', () => {
-  const qinmo = { user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER' }
+  const qinmo = { user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER', canRemove: true }
+
+  it('a member the server will not let the reader remove has no 移除成员', async () => {
+    // 管理员读到的另一位管理员：服务端说移不了，这一行就不给按钮。
+    const peer = { user: { id: 10, nickname: 'zhaoyu', username: 'zhaoyu' }, role: 'ADMIN', canRemove: false }
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ data: { members: [peer, qinmo] } } as never)
+    mount({ role: 'ADMIN' })
+
+    await screen.findByRole('button', { name: '移除成员' })
+    expect(screen.getAllByRole('button', { name: '移除成员' })).toHaveLength(1)
+  })
 
   it('an admin is asked first, and a yes takes them off the team', async () => {
     vi.mocked(TeamsApi.getMembers).mockResolvedValue({ data: { members: [qinmo] } } as never)

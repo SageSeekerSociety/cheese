@@ -9164,6 +9164,10 @@ export interface paths {
         /**
          * Enumerate Team Members
          * @description Return team members for a given team.
+         *
+         *     Each row says whether the reader may remove that member (``canRemove``),
+         *     by the rule the remove endpoint enforces. The reader's own row says no:
+         *     leaving is its own action, not a removal from the roster.
          */
         get: operations["get_team_members_teams__teamId__members_get"];
         put?: never;

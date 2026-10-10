@@ -180,7 +180,7 @@
                     </template>
                     <span>{{ t('teams.members.demote') }}</span>
                   </v-tooltip>
-                  <v-tooltip v-if="isSelfAdmin && member.role !== 'OWNER'" location="bottom">
+                  <v-tooltip v-if="member.canRemove" location="bottom">
                     <template #activator="{ props: activatorProps }">
                       <BaseButton
                         v-bind="activatorProps"
@@ -426,7 +426,9 @@ const isSelfOwner = computed(() => {
 const isSelfAdmin = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
 
 // 右键一位成员：行尾那几颗（升管理员、降成员、移出）收成一份，弹在鼠标那一点上。
-// 谁看得见哪一项和那几颗按钮同一套判据。
+// 谁看得见哪一项和那几颗按钮同一套判据。移出看服务端给的 canRemove：能不能移出取决于
+// 读者和那一位各是什么角色（管理员移不了别的管理员），由移出接口用的同一条规则算出来，
+// 这里不再另写一份。
 const rowMenu = useRowMenu<number>()
 function memberActions(member: TeamMember): MenuAction[] {
   const actions: MenuAction[] = []
@@ -444,7 +446,7 @@ function memberActions(member: TeamMember): MenuAction[] {
       icon: 'mdi-account-arrow-down',
       onSelect: () => void demoteToMember(member.user.id),
     })
-  if (isSelfAdmin.value && member.role !== 'OWNER')
+  if (member.canRemove)
     actions.push({
       key: 'remove',
       label: t('teams.members.remove'),
