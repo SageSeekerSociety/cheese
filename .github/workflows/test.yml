@@ -400,9 +400,16 @@ jobs:
           # can read the run's own output, so tee it here. pipefail keeps the
           # step's status pytest's, not tee's — a bare pipe would report success.
           set -o pipefail
+          tests=tests/
           if [ "$TEST_LAYER" = pure ]; then
             export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
             export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
+            # A pure case can only live under tests/unit (`_layer_of`), so the
+            # workers need not import and collect the other directories to
+            # deselect them; on a fresh checkout that is about half of each
+            # worker's collection. The coverage-complete job still compares the
+            # cases that ran against a collection of all of tests/.
+            tests=tests/unit
           fi
           observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources")
           if [ "$TEST_LAYER" = pure ]; then
@@ -413,7 +420,7 @@ jobs:
           # Silent worker losses tracked in #3005 have an unknown cause.
           # ci_evidence records retries and hang stacks; verification names
           # the cases that passed only on a retry without claiming a fix.
-          "${observe[@]}" -- uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+          "${observe[@]}" -- uv run python -m pytest "$tests" -m "$TEST_LAYER" -k 'not kotlin' \
             --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
