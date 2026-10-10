@@ -114,5 +114,5 @@ parts:
 :::cards
 - [完成一道题目](/solve-a-challenge#solve-a-challenge)：领取题目，在题目的项目中和芝士一起完成，再提交。
 - [个人额度](/quota#personal)：个人额度的用量和重置时间。
-- [空间与题目](/challenges#spaces)：题目页上各栏的说明。
+- [题目 · 题目页](/challenges#detail)：题目页上各栏的说明。
 :::

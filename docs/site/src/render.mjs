@@ -24,7 +24,7 @@ const THEME_BOOT = "try{var s=localStorage.getItem('cheesex.theme'),p=s==='light
 // sidebar drawer on a narrow one.
 const sectionLinks = (site, section, cls) => site.tabs.map((t) => `<a class="${cls}${t.key === section ? ' on' : ''}" href="${t.href}"${t.key === section ? ' aria-current="true"' : ''}>${esc(t.label)}${t.lock ? `<span class="lock" title="仅管理员">${ic('lock', 'width:12px;height:12px')}</span>` : ''}</a>`).join('')
 
-export function shell(ctx, { title, description, section, bodyClass = '', main, pageData }) {
+export function shell(ctx, { title, description, section, bodyClass = '', main, pageData, moved }) {
   const { site, assets } = ctx
   return `<!doctype html>
 <html lang="zh-CN">
@@ -37,6 +37,7 @@ export function shell(ctx, { title, description, section, bodyClass = '', main, 
 <link rel="alternate" type="application/rss+xml" title="知是更新日志" href="${BASE}/changelog.xml">
 <link rel="stylesheet" href="${assets.css}">
 <script>document.documentElement.classList.add('js');${THEME_BOOT}</script>
+${moved ? `<script>(function(m){function go(){var to=m[decodeURIComponent(location.hash.slice(1))];if(to)location.replace(to)}go();addEventListener('hashchange',go)})(${JSON.stringify(moved).replace(/</g, '\\u003c')})</script>` : ''}
 </head>
 <body class="${bodyClass}" data-sec="${esc(section)}">
 <a class="skip" href="#main">跳到正文</a>
@@ -139,6 +140,7 @@ export function docPage(ctx, page, nav, prev, next) {
     section: page.section,
     main,
     pageData: { kind: 'doc', section: page.section, slug: page.slug, title: page.title, md: page.mdUrl, dev },
+    moved: page.moved,
   })
 }
 

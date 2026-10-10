@@ -16,7 +16,7 @@ export const SECTIONS = [
   ['features', '功能说明', 'layers', [
     ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
-    ['教学', ['challenges']],
+    ['教学', ['challenges', 'spaces']],
     ['资源', ['devices', 'quota', 'feedback']],
   ]],
   ['faq', '常见问题', 'info', [['排障', ['troubleshooting']]]],
@@ -39,8 +39,17 @@ export const DEV = [
 
 // Pages that moved; their old URLs keep working. A target may name a section
 // (`page#anchor`); the old URL's own #fragment is then dropped, since it named a
-// section of the old page.
-export const REDIRECTS = { compute: 'devices', members: 'teams', 'split-work': 'team-project', 'review-changes': 'working-with-cheese#review-result' }
+// section of the old page. A key that names a section (`page#anchor`) is a
+// section that moved off a page that still exists: that page sends the old
+// #fragment on to the target.
+const SPACE_SECTIONS = ['spaces', 'create', 'invite-codes', 'members', 'publish', 'audit', 'participants', 'space-library', 'teaching']
+export const REDIRECTS = {
+  compute: 'devices',
+  members: 'teams',
+  'split-work': 'team-project',
+  'review-changes': 'working-with-cheese#review-result',
+  ...Object.fromEntries(SPACE_SECTIONS.map((a) => [`challenges#${a}`, a === 'spaces' ? 'spaces' : `spaces#${a}`])),
+}
 
 // Hand-picked highlights per release, [text, PR]. The full list comes from git.
 export const HIGHLIGHTS = {
