@@ -230,7 +230,10 @@ class DeviceSandboxRow(Base):
     __tablename__ = "device_sandbox"
 
     device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), primary_key=True
+        ForeignKey(
+            "device.device_id", ondelete="CASCADE", name="fk_device_sandbox_device_id"
+        ),
+        primary_key=True,
     )
     isolates: Mapped[bool] = mapped_column(Boolean, nullable=False)
     reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)

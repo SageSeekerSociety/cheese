@@ -28,7 +28,10 @@ def upgrade() -> None:
         sa.Column("reason", sa.String(1000), nullable=True),
         sa.Column("checked_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
-            ["device_id"], ["device.device_id"], ondelete="CASCADE"
+            ["device_id"],
+            ["device.device_id"],
+            ondelete="CASCADE",
+            name="fk_device_sandbox_device_id",
         ),
         sa.PrimaryKeyConstraint("device_id"),
     )
