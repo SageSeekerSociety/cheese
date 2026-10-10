@@ -151,7 +151,6 @@ def _installing_hub(monkeypatch):
 
     hub = SimpleNamespace(
         target=lambda _device: "linux-amd64",
-        isolates=lambda _device: None,
         is_online=lambda device: True,
         exec=AsyncMock(side_effect=install),
     )

@@ -171,7 +171,6 @@ def _machines(monkeypatch):
         "device_hub",
         SimpleNamespace(
             target=lambda _device: "linux-amd64",
-            isolates=lambda _device: None,
             is_online=lambda d: True,
             exec=AsyncMock(side_effect=install),
         ),
