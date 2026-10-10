@@ -50,7 +50,7 @@ function submit() {
       v-model="target"
       autocomplete="off"
       :items="options"
-      :label="t('work.computeChoice.computer')"
+      :label="t('work.computeChoice.environment')"
       density="compact"
       variant="outlined"
       hide-details

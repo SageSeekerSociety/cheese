@@ -1982,7 +1982,7 @@
     "cloudVm": "整台云虚拟机",
     "deviceOnline": "{name} · 在线",
     "deviceOffline": "{name} · 离线",
-    "computer": "自有设备",
+    "environment": "环境",
     "none": "暂无可用的环境",
     "cloudHint": "每个会话在自己的云端环境里工作，首次运行时自动准备",
     "cloudVmHint": "每个会话一台独立的云虚拟机，有 sudo，能跑 Docker、要 KVM 的任务和内核模块。准备要几分钟；会话闲置后先把改动推送到分支，再释放虚拟机",
