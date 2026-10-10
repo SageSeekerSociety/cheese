@@ -48,12 +48,17 @@ async def opening_state(
     )
     if row is None:
         return None
-    if row.state in ("failed", "uncertain"):
+    if row.state == "failed":
         return "failed"
-    if row.state != "received":
+    # ``uncertain`` alone is not a failure: the send returns before the session's
+    # receipt is recorded, so for the first seconds of a normal turn the row
+    # reads ``uncertain``. The turn it started says whether it is still going.
+    if row.state not in ("received", "uncertain"):
         return "waiting" if row.attempts > 0 and row.retry_at else "drafting"
     turn = await session.get(AgentTurn, row.attempt_id) if row.attempt_id else None
-    if turn is None or turn.stopped_at is None:
+    if turn is None:
+        return "failed" if row.state == "uncertain" else "drafting"
+    if turn.stopped_at is None:
         return "drafting"
     spoke = await session.scalar(
         select(Block.id)
