@@ -88,6 +88,10 @@ async def roster_rows(db: AsyncSession, topic) -> list[dict]:
             agent = AgentInstanceService.resolved(instance) if instance else fallback
             d["name"] = agent.display_name
             d["name_source"] = agent.name_source.value
+            # The teammate's own handle (`cheese`), which the project roster
+            # shows under its name; `member_handle` is its seat (`cheese-<hex>`),
+            # an internal id nobody types.
+            d["instance_handle"] = agent.handle
         else:
             d["name"] = (
                 profile.nickname if profile and profile.nickname else m.member_handle

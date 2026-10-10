@@ -175,6 +175,39 @@ def test_each_agent_row_is_named_after_the_agent_seated_there(client):
     assert rows[reviewer["seat_handle"]]["name"] == "评审"
 
 
+def test_each_agent_row_carries_the_handle_the_project_roster_shows(client):
+    """名册上队友那一行带着它自己的 handle——项目成员页写在它名字下面的那一串，
+    不是座位账号（`cheese-<hex>`）。两处写的必须是同一串。"""
+    p = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
+    tid = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "T"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    reviewer = client.post(
+        f"/projects/{p['id']}/agents",
+        json={"handle": "reviewer", "display_name": "评审"},
+    ).json()["data"]
+    client.post(
+        f"/topics/{tid}/members",
+        json={"handle": reviewer["seat_handle"], "actor": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+
+    agents = client.get(
+        f"/projects/{p['id']}/agents", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    shown = {a["handle"] for a in agents}
+    rows = {m["member_handle"]: m for m in _roster(client, tid) if m["agent"]}
+    assert len(rows) == 2
+    assert rows[reviewer["seat_handle"]]["instance_handle"] == "reviewer"
+    for seat, row in rows.items():
+        assert row["instance_handle"] in shown
+        assert row["instance_handle"] != seat
+    people = [m for m in _roster(client, tid) if not m["agent"]]
+    assert all("instance_handle" not in m for m in people)
+
+
 def test_roster_reports_the_global_default_avatar_as_no_avatar(client):
     """名册要区分「挑过头像」和「从来没挑过」，后者报 avatar_id=null。
 

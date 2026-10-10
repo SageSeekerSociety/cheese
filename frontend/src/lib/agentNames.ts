@@ -21,6 +21,15 @@ export function memberName(row: { name?: string | null; name_source?: string | n
   return row ? teammateName(row.name, row.name_source) : ''
 }
 
+/**
+ * 名册上一行名字下面那串 handle。队友写它自己的 handle（`cheese`）：座位 handle
+ * （`cheese-<hex>`）是内部的编号，没人会打它。项目成员页、频道名册、往频道里加人的
+ * 下拉都按这一条写，同一位队友在哪里都是同一串。
+ */
+export function shownHandle(handle: string, row: { instance_handle?: string | null }): string {
+  return row.instance_handle || handle
+}
+
 /** 名册上一行队友的两个答案：它叫什么，和它是哪一位。 */
 interface AgentSeat {
   name: string

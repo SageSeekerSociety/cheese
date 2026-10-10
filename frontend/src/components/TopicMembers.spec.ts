@@ -397,3 +397,31 @@ it('加一位进来，名册当场多他一行，不用重开房间', async () =
     )
   )
 })
+
+describe('队友名字下面那串 handle', () => {
+  // 项目成员页在队友名字下面写它自己的 handle（`cheese`），频道名册和「添加」下拉写的
+  // 得是同一串，而不是座位账号（`cheese-<hex>`）。
+  it('名册和「添加」下拉都写队友自己的 handle，不写座位账号', async () => {
+    server.rows = ROOM.map((row) =>
+      row.agent ? { ...row, member_handle: 'cheese-68ec1f2dbcad', instance_handle: 'cheese' } : { ...row }
+    )
+    const members = PROJECT_MEMBERS.map((m) =>
+      m.user_handle === 'cheese-a2' ? { ...m, instance_handle: 'reviewer' } : m
+    )
+    await openRoster({ projectMembers: members })
+
+    const handles = Array.from(document.querySelectorAll('.roster__item .roster__handle')).map((el) =>
+      el.textContent?.trim()
+    )
+    expect(handles).toContain('cheese')
+    expect(handles).not.toContain('cheese-68ec1f2dbcad')
+
+    await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
+    await settle()
+    const options = Array.from(document.querySelectorAll('.v-overlay .roster__handle')).map((el) =>
+      el.textContent?.trim()
+    )
+    expect(options).toContain('reviewer')
+    expect(options).not.toContain('cheese-a2')
+  })
+})
