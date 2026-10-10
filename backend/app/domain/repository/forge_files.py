@@ -76,6 +76,13 @@ def _landed_head(task: Task) -> str | None:
     return None
 
 
+#: What a task's live listing and comparison are while its machine holds no
+#: working copy of it yet, as for a task just made: no files, no changes. The
+#: machine answers ``not_found`` for the missing directory; only a file
+#: operation's ``not_found`` means a file is missing.
+_NO_WORKTREE_YET = {"tree": {"files": []}, "diff": {"diff": ""}}
+
+
 class ProjectFiles:
     def __init__(
         self,
@@ -159,6 +166,8 @@ class ProjectFiles:
                 raise UpstreamUnavailableError(say("taskSandboxReleased")) from exc
             raise
         if result.get("error") == "not_found":
+            if operation in _NO_WORKTREE_YET:
+                return _NO_WORKTREE_YET[operation]
             raise NotFoundError(say("taskFileNotOnMachine"))
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
