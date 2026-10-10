@@ -310,7 +310,7 @@ async def redispatch_undelivered(
     return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work):
+async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat):
     """Renew admission ownership while queued; settle only this claimed attempt."""
 
     async def renew():
@@ -362,7 +362,7 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                 # The turn that writes a finished task up is over, however it
                 # went: the task closes now (`room_task.closing`).
                 if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
-                    await close_after_summary(session, row.conversation_id)
+                    await close_after_summary(session, row.conversation_id, chat)
             await session.commit()
 
 

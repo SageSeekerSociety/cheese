@@ -8,6 +8,10 @@ is the one asking, and it gets to finish.
 
 The close can reach a backend that does not hold the session — the one taking
 over in a deploy — and the backend that does still stops the work.
+
+The owner is not the only one who closes a task: a task whose last step was
+accepted closes on its own when the turn writing it up never ends, and that
+close stops the work the same way.
 """
 
 import time
@@ -19,6 +23,7 @@ from sqlalchemy import update
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
+from app.domain.review import landing_watch
 from app.domain.room_task.models import Task
 from app.main import app
 from tests.conftest import StubChannel, retire_topic, stub_compute
@@ -195,6 +200,42 @@ def test_a_turn_that_closed_its_own_task_gets_to_finish_then_stops(client):
         _a_while_ago(client, task_id)
         client.portal.call(holder.stop_work_in_closed_tasks)
         assert _interrupts(channel, task_id)
+    finally:
+        retire_topic(client, task_id)
+        app.dependency_overrides.pop(get_chat_service, None)
+
+
+def test_a_task_closed_for_a_write_up_that_never_came_stops_the_turn(client):
+    channel, task, _ = _working_task(client)
+    task_id = uuid.UUID(task["id"])
+    service = app.dependency_overrides[get_chat_service]()
+    try:
+        # Its last step was accepted fifty minutes ago, and the turn writing
+        # the task up is still going.
+        async def accepted_long_ago() -> None:
+            async with client.test_request_factory() as session:
+                await session.execute(
+                    update(Task)
+                    .where(Task.id == task_id)
+                    .values(closing_since=datetime.now(UTC) - timedelta(minutes=50))
+                )
+                await session.commit()
+
+        client.portal.call(accepted_long_ago)
+        assert _interrupts(channel, task_id) == []
+
+        client.portal.call(lambda: landing_watch.watch_landings(service))
+
+        assert (
+            client.get(
+                f"/topics/{task['id']}/task", headers=session_auth_headers("alice")
+            ).json()["data"]["status"]
+            == "closed"
+        )
+        _until(
+            lambda: _interrupts(channel, task_id),
+            "the task closed at its deadline with its teammate still working",
+        )
     finally:
         retire_topic(client, task_id)
         app.dependency_overrides.pop(get_chat_service, None)

@@ -246,7 +246,7 @@ async def give_up_stale(sessions: SessionFactory, *, chat) -> int:
             # A finished task waiting on this turn to be written up closes
             # without it.
             if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
-                await close_after_summary(session, row.conversation_id)
+                await close_after_summary(session, row.conversation_id, chat)
             # Only a person's message is told: 「重试」 starts a turn from the
             # messages still waiting, and a platform instruction is not one. A
             # task's opening says it failed on the task page; a routine's run

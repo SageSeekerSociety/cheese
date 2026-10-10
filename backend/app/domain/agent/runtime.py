@@ -434,7 +434,13 @@ class AgentWorkRunner:
             recipient_instance_id=recipient_instance_id,
         )
         if delivery_id is not None:
-            work = run_attempt(chat_service.session_factory, delivery_id, turn_id, work)
+            work = run_attempt(
+                chat_service.session_factory,
+                delivery_id,
+                turn_id,
+                work,
+                chat=chat_service,
+            )
         task = asyncio.create_task(
             work,
             name=f"turn:{turn_id}",

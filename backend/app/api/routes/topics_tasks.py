@@ -59,6 +59,7 @@ from app.domain.machine.session_reports import devices_held_by
 from app.domain.mentions import canonicalize_refs
 from app.domain.review.task_landing import tell_origin
 from app.domain.room_task import binding, presentation
+from app.domain.room_task.closing import close_task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.schemas import ConclusionIn
@@ -348,7 +349,11 @@ async def conclude_task(
                 else task.contributor_handles
             ),
         )
-    task = await tasks.close_thread(task, conclusion=conclusion)
+    # Its own session closing it is the turn that would be stopped, and it
+    # ends by itself.
+    task = await close_task(
+        db, task, None if actor.via == "cheese" else chat, conclusion=conclusion
+    )
     # The task's own conversation hears how it ended, and so does the
     # discussion it came from; the channel's card for it updates in place.
     ended = (
@@ -366,11 +371,6 @@ async def conclude_task(
     await tell_origin(db, task, ended)
     out = await _task_out(db, chat, task)
     await db.commit()
-    # A closed task is work that is over: a turn still running in it would
-    # go on spending the model while every write it makes is refused. Its
-    # own session closing it is that turn, and it ends by itself.
-    if actor.via != "cheese":
-        await chat.stop_work(task.id)
     return ok(out)
 
 
