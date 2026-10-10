@@ -12,6 +12,8 @@ export type Space = {
   visibleTaskLimit?: number | null
   /** 过审状态：没过审的板子，子资源（分类/题目/成员）一律读不到。 */
   reviewStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
+  /** 被驳回时审核人写的原因。 */
+  reviewReason?: string | null
   /**
    * 这块板的默认「给 AI 队友的指导」（#944）。四级继承的最外层，与
    * `SpaceCategory.teaching` 同形状；六格全空 = 没说。

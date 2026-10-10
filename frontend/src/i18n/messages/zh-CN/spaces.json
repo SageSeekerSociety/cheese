@@ -275,7 +275,7 @@
   "inviteCodes": {
     "copy": "复制",
     "createdTitle": "这是你的邀请码",
-    "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个空间。",
+    "createdBody": "等空间通过审核，把它发给要邀请的人：他在首页点「用邀请码加入」，填进去就能加入这个空间。审核通过前这个码还不能用。",
     "openSpace": "进入空间",
     "create": "新建",
     "current": "当前使用中的码",
@@ -375,6 +375,14 @@
       "memberHint": "做题目、看公告"
     },
     "count": "共 {n} 人"
+  },
+  "reviewNotice": {
+    "pendingTitle": "空间还在审核中",
+    "pendingBody": "平台管理员审核通过后，这里才能发布题目，邀请码也才能用。审核结果会显示在「空间」页的「我的空间申请」里。",
+    "rejectedTitle": "空间申请被驳回",
+    "rejectedBody": "可以到「空间」页的「我的空间申请」里修改后重新提交。",
+    "rejectedBodyReason": "驳回原因：{reason}。可以到「空间」页的「我的空间申请」里修改后重新提交。",
+    "backToSpaces": "回到空间列表"
   },
   "manageDenied": {
     "title": "你没有管理权限",
