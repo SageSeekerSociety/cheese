@@ -133,3 +133,33 @@ def test_a_reply_after_the_failure_clears_it(client):
 
     assert line["reply_count"] == 1
     assert line["failed"] is False
+
+
+def test_a_checklist_posted_in_a_thread_tells_the_channel(client, monkeypatch):
+    """A checklist posted into a 支线 is one of its replies (the line under the
+    message counts it), so the channel is told the 支线 grew, as it is for a
+    plain reply. Without that the line under the message keeps the count it
+    was read with: it said 2 条回复 while the 支线 itself held 3."""
+    import app.domain.agent.staleness as staleness
+
+    heard: list[tuple[str, str]] = []
+
+    async def announce(conversation_id, resource, *, id=None):
+        heard.append((str(conversation_id), resource))
+
+    monkeypatch.setattr(staleness, "announce_stale", announce)
+    tid = _channel(client)
+    root = post_message(client, tid, "alice", {"content": "照着赛题要求列出要做的几步"})
+    thread = _thread(client, root["id"], "alice")
+    post_message(client, thread, "alice", {"content": "先别写代码"})
+    heard.clear()
+
+    r = client.put(
+        f"/topics/{thread}/progress",
+        json={"todos": [{"content": "读赛题", "status": "pending"}]},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    assert (tid, "threads") in heard
+    assert _line_under(client, tid, root["id"])["reply_count"] == 2

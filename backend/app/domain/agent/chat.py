@@ -367,7 +367,9 @@ class ChatService(SessionRecovery):
     def messages(self) -> AssistantMessages:
         # Composition only: this stateless writer uses the service's real state
         # and transactions; it owns no copied live work or compatibility entry.
-        return AssistantMessages(self._sessions, self.live, room_roster)
+        return AssistantMessages(
+            self._sessions, self.live, room_roster, self.thread_replied
+        )
 
     @property
     def turn_completion(self) -> TurnCompletion:
