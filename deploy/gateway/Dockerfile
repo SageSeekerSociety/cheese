@@ -11,12 +11,13 @@ COPY chatgpt_session.py /app/.venv/lib/python3.13/site-packages/cheese_chatgpt_s
 COPY test_chatgpt_session.py /opt/cheese-gateway/
 COPY retry_stream.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/retry_stream.py
 COPY test_retry_stream.py /opt/cheese-gateway/
-COPY patch_deepseek_images.py test_deepseek_images.py patch_empty_anthropic_text.py test_empty_anthropic_text.py check_config.py config.yaml /opt/cheese-gateway/
+COPY patch_deepseek_images.py test_deepseek_images.py test_deepseek_route_order.py patch_empty_anthropic_text.py test_empty_anthropic_text.py check_config.py config.yaml /opt/cheese-gateway/
 RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_deepseek_images.py \
     && /app/.venv/bin/python /opt/cheese-gateway/patch_empty_anthropic_text.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/check_config.py /opt/cheese-gateway/config.yaml \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_deepseek_images.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_deepseek_route_order.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_empty_anthropic_text.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_stream_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_provider_http_timing.py \
