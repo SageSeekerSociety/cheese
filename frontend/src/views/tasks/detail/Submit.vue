@@ -464,7 +464,7 @@ const submitTask = async () => {
     await TasksApi.createSubmission(props.taskData.id, currentIdentity.value.id, finalSubmissionContent)
     toast.success(t('tasks.submit.submitted'))
     // 题目页外框只在打开时读一次我的最新一版；不说一声，「我的进度」和「我的提交」上的数要等刷新才变。
-    events.emit('submitted')
+    events.emit('participation-changed')
 
     // 跳转到提交记录页面
     router.push({

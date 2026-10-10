@@ -31,8 +31,9 @@ export interface TaskEvents {
   'confirm-leave-team': undefined // 确认离开队伍
   'reload-joined-teams': undefined // 重新加载已加入的队伍
   'review-participant': { id: number; name: string } // 领取者页签：打开某人的逐版评审
-  'roster-changed': undefined // 逐版评审关掉了，领取者页签重新取一遍
-  submitted: undefined // 交上了一版：题目页重读我的最新一版（我的进度、「我的提交」上的数）
+  // 谁的领取或提交变了（批准/拒绝领取、改截止、评审、交上一版）：题目页重读我那一份
+  // （页头的主操作、我的进度、「我的提交」上的数），领取者页签重读名单。一处改，各处跟着变。
+  'participation-changed': undefined
 }
 
 // 创建任务模块的事件总线

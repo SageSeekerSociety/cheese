@@ -182,6 +182,10 @@ import { TasksApi } from '@/network/api/tasks'
 
 const { t } = useI18n()
 
+/** `changed`：这一版的评审写下、改了或撤了。外面别处也显示这一版判没判（领取者的表、我的进度），
+ *  它们听这一声重读。 */
+const emit = defineEmits<{ changed: [] }>()
+
 interface Props {
   taskId: number
   participantId: number
@@ -287,6 +291,7 @@ const submitReview = handleSubmit(async (form) => {
     try {
       await TasksApi.patchSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
       toast.success(t('tasks.submissionHistory.reviewUpdated'))
+      emit('changed')
     } catch (error) {
       toast.error(t('tasks.submissionHistory.reviewUpdateFailed'))
       console.error(error)
@@ -297,6 +302,7 @@ const submitReview = handleSubmit(async (form) => {
     try {
       await TasksApi.postSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
       toast.success(t('tasks.submissionHistory.reviewed'))
+      emit('changed')
     } catch (error) {
       toast.error(t('tasks.submissionHistory.reviewFailed'))
       console.error(error)
@@ -311,6 +317,7 @@ const cancelReview = async () => {
     try {
       await TasksApi.deleteSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id)
       toast.success(t('tasks.submissionHistory.reviewCanceled'))
+      emit('changed')
     } catch (error) {
       toast.error(t('tasks.submissionHistory.reviewCancelFailed'))
       console.error(error)
