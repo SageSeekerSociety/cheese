@@ -17,7 +17,7 @@ export const SECTIONS = [
     ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
     ['教学', ['challenges', 'spaces']],
-    ['资源', ['devices', 'quota', 'feedback']],
+    ['资源', ['environment', 'devices', 'quota', 'feedback']],
   ]],
   ['faq', '常见问题', 'info', [['排障', ['troubleshooting']]]],
 ]
@@ -49,6 +49,8 @@ export const REDIRECTS = {
   'split-work': 'team-project',
   'review-changes': 'working-with-cheese#review-result',
   ...Object.fromEntries(SPACE_SECTIONS.map((a) => [`challenges#${a}`, a === 'spaces' ? 'spaces' : `spaces#${a}`])),
+  // 设备与环境 was split: choosing an environment moved to its own page.
+  ...Object.fromEntries(['topic-environment', 'cloud-busy'].map((a) => [`devices#${a}`, `environment#${a}`])),
 }
 
 // Hand-picked highlights per release, [text, PR]. The full list comes from git.

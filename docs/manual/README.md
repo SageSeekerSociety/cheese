@@ -32,7 +32,8 @@
 │   ├── 文件与成果 files.md
 │   ├── 提交 submissions.md
 │   ├── 验收与采纳 accept.md
-│   ├── 设备与环境 devices.md
+│   ├── 环境 environment.md
+│   ├── 自有设备 devices.md
 │   ├── 额度 quota.md
 │   ├── 反馈中心 feedback.md
 │   └── 发布成果 sites.md
@@ -84,7 +85,7 @@
 | `publish-a-challenge.md` | 建空间、发邀请码、发布题目、批准领取、评审提交 | 详细规则链接空间、提交 |
 | `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `spaces.md` |
 | `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
-| `use-your-computer.md` | 接入自己的 Mac 或 Windows 电脑，让频道改用它，把本地数据交给芝士 | 服务器接入、任务环境、隔离和自己的 Claude Code 见 `devices.md` |
+| `use-your-computer.md` | 接入自己的 Mac 或 Windows 电脑，让频道改用它，把本地数据交给芝士 | 服务器接入、隔离和自己的 Claude Code 见 `devices.md`；任务环境见 `environment.md` |
 
 ### 使用 Cheese {#feature-pages}
 
@@ -96,13 +97,14 @@
 | `spaces.md` | 给管理空间的人：新建空间、邀请码、成员与角色、发布题目的表单、审核题目、领取者与评审、资料库、给 AI 队友的指导 | 做题的一侧见 `challenges.md`；评审细节见 `submissions.md` |
 | `teams.md` | 创建团队、邀请成员、加入申请、已发送邀请、团队成员管理、招募广场当前边界 | 项目成员归 `projects.md`；AI 队友归 `agents.md` |
 | `projects.md` | 创建项目、与赛题的关系、所属团队、项目成员与邀请、主要入口与「总览」、上游仓库、项目与成果的关系 | 文件操作归 `files.md`；队友配置归 `agents.md`；赛题提交归 `submissions.md` |
-| `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道总览、支线、置顶、频道成员、重命名与归档、消息与执行的关系、环境入口、项目总览和频道说明 | 队友配置与触发规则归 `agents.md`；设备和环境规则归 `devices.md`；任务列表归 `tasks.md` |
+| `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道总览、支线、置顶、频道成员、重命名与归档、消息与执行的关系、环境入口、项目总览和频道说明 | 队友配置与触发规则归 `agents.md`；环境规则归 `environment.md`，自有设备归 `devices.md`；任务列表归 `tasks.md` |
 | `agents.md` | 创建与配置 AI 队友、真实表单字段、设置默认队友、在频道成员中调整队友、触发处理消息、运行方式、模型、已验证限制 | 不承担完整入门流程、设备连接或进度管理；不承诺未验证的记忆机制 |
 | `tasks.md` | 看任务的几处入口、「全部任务」的分组与状态、「待办」里的理由、任务名称、任务详情、与频道执行过程的关系 | 不重复项目介绍、队友配置或最终提交 |
 | `files.md` | 上传及限制、文件进入时间线、查找生成文件、查看与编辑成果、单文件下载、成果相关的「改动 / 现场 / 预览」入口 | Site 发布归 `sites.md`；赛题提交归 `submissions.md`；不编造整个项目打包下载 |
 | `submissions.md` | 学生提交条件、入口、表单与文件要求、已验证的提交限制；发布者查看提交与提交记录 | 与 Agent 交付的验收与采纳分开；不把单一赛题的限制推断成所有赛题通用规则 |
 | `accept.md` | Agent 交付后的验收、采纳、实际入口与操作结果 | 不负责赛题提交或普通文件下载；未验证的验收与合并关系不能写成正式规则 |
-| `devices.md` | 设置 → 设备、添加与安装、登录、网页批准、在线 / 离线状态、AI 队友的环境及更换（频道和任务）、用自己的 Claude Code | 不解释 tokens；不能把选择设备写成选择本地目录 |
+| `environment.md` | 三种环境、项目 → 频道 → 任务三层的选择与更换、项目的环境分布、环境准备失败、云端资源紧张 | 接入设备和隔离归 `devices.md`；计费归 `quota.md` |
+| `devices.md` | 接入 Mac / Windows 电脑和服务器、网页批准、提供给团队、隔离环境与整台电脑、用自己的 Claude Code、设备离线 | 环境的选择归 `environment.md`；不能把选择设备写成选择本地目录 |
 | `quota.md` | 团队「额度」页、个人「芝士额度」、耗尽提示和当前可操作范围 | 设备连接归 `devices.md`；不编造自行调整或发放额度入口 |
 | `sites.md` | 导出与发布中的 Site 发布、发布结果与管理入口、当前能力和限制 | 普通文件下载归 `files.md`；不承诺整个项目导出 |
 

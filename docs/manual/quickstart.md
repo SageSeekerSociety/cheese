@@ -259,5 +259,5 @@ parts:
 :::cards
 - [把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)：写好要求、中途补充、退回修改。
 - [和同学一起做一个项目](/team-project#team-project)：把同学加入项目，分工完成一份大作业。
-- [设备与环境](/devices#devices)：让芝士用你自己电脑上的文件和软件。
+- [自有设备](/devices#devices)：让芝士用你自己电脑上的文件和软件。
 :::
