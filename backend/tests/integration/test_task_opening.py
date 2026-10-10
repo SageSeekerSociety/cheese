@@ -8,6 +8,9 @@ The rules, stated before the code:
 - once the first instruction gave up, the task says it failed, and someone
   working the task can try again, which gives the same instruction again;
 - only someone working the task tries again, and only after a failure;
+- while the first turn runs, the task is being drafted, even before the
+  session's receipt for the instruction is recorded; it failed only when that
+  turn ended having said nothing;
 - a task created empty has no such first turn;
 - an instruction that has not started half an hour after it was given gives up
   instead of trying for ever.
@@ -160,4 +163,43 @@ def test_an_instruction_not_started_in_half_an_hour_gives_up(client):
         lambda: deliver_due(chat.session_factory, chat=chat, runner=get_work_runner())
     )
 
+    assert _opening(client, task) == "failed"
+
+
+def test_a_running_first_turn_is_drafting_until_it_ends_having_said_nothing(client):
+    from app.domain.agent.models import AgentTurn
+    from app.domain.delivery.models import Delivery
+
+    _, task = _task_from_message(client)
+    turn_id = uuid.uuid4()
+
+    async def _sent_without_receipt():
+        # The send returned and the receipt is not in yet: the ledger row reads
+        # `uncertain` while the turn it started is running.
+        async with client.test_factory() as session:
+            session.add(
+                AgentTurn(
+                    id=turn_id,
+                    continuation_id=turn_id,
+                    conversation_id=uuid.UUID(task),
+                    author="system",
+                    started_at=datetime.now(UTC),
+                )
+            )
+            await session.execute(
+                update(Delivery)
+                .where(Delivery.conversation_id == uuid.UUID(task))
+                .values(state="uncertain", attempt_id=turn_id, attempts=1)
+            )
+            await session.commit()
+
+    asyncio.run(_sent_without_receipt())
+    assert _opening(client, task) == "drafting"
+
+    async def _turn_ends():
+        async with client.test_factory() as session:
+            (await session.get(AgentTurn, turn_id)).stopped_at = datetime.now(UTC)
+            await session.commit()
+
+    asyncio.run(_turn_ends())
     assert _opening(client, task) == "failed"
