@@ -22,6 +22,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import github_pr
 from app.domain.review.github_pr import OpenedPR
+from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.pr_publish import dispatch as _REAL_DISPATCH
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -341,7 +342,7 @@ class FakeGitHubPrClient:
 
     async def pull_request_status(
         self, *, owner, repo, number, token
-    ) -> github_pr.PullRequestStatus:
+    ) -> PullRequestStatus:
         if self.status_delay_s:
             await asyncio.sleep(self.status_delay_s)
         if self.status_error is not None:
@@ -349,7 +350,7 @@ class FakeGitHubPrClient:
         pr = self.prs[number]
         self.status_calls.append(number)
         self.status_tokens.append(token)
-        return github_pr.PullRequestStatus(
+        return PullRequestStatus(
             head_sha=pr["head_sha"],
             head_ref=pr["head"],
             base_ref=pr["base"],

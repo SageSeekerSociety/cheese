@@ -28,7 +28,7 @@ from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
-    from app.domain.review.github_pr import PullRequestStatus
+    from app.domain.review.github_pr_status import PullRequestStatus
 
 from urllib.parse import urlsplit
 
