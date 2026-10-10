@@ -180,5 +180,5 @@ parts:
 - [改完再交一版](/resubmit#resubmit)：看老师的评语，改完提交新版本。
 - [和同学一起做一个项目](/team-project#team-project)：几个人在同一个项目里分工、交接。
 - [团队](/teams#teams)：邀请、申请加入和成员管理。
-- [空间与题目 · 领取题目](/challenges#claim)：领取条件和提示的完整说明。
+- [题目 · 领取与批准](/challenges#claim)：领取条件和提示的完整说明。
 :::

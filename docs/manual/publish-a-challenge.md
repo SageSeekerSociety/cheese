@@ -313,6 +313,6 @@ parts:
 
 :::cards
 - [给空间写 AI 队友的指导](/guide-the-teammate#guide-the-teammate)：规定学生项目里的芝士怎么辅导学生。
-- [空间与题目](/challenges#spaces)：公告、分类、模板和成员管理的完整说明。
+- [空间](/spaces#spaces)：邀请码、成员、审核和领取者管理的完整说明。
 - [提交 · 发布者查看提交](/submissions#review)：评审的完整说明。
 :::

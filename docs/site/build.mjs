@@ -833,6 +833,22 @@ const site = {
 }
 const ctx = { site, assets, lockup: LOCKUP }
 
+// A section that moved to another page (`page#anchor` → `page#anchor`): the old
+// page stays, and a script in its head sends the old #fragment on to the new place.
+const target = (from, to) => {
+  const [slug, anchor] = to.split('#')
+  if (!pages[slug]) fail(`redirect ${from} → ${to}: no such page`)
+  if (anchor && !pages[slug].chunks.some((c) => c.id === anchor)) fail(`redirect ${from} → ${to}: no such section`)
+  return `${BASE}/${to}`
+}
+for (const [from, to] of Object.entries(REDIRECTS)) {
+  const [slug, anchor] = from.split('#')
+  if (!anchor) continue
+  if (!pages[slug]) fail(`redirect ${from} → ${to}: the page it moved from does not exist`)
+  if (pages[slug].chunks.some((c) => c.id === anchor)) fail(`redirect ${from} → ${to}: ${slug} still has that section`)
+  pages[slug].moved = { ...pages[slug].moved, [anchor]: target(from, to) }
+}
+
 const flatNav = (nav) => nav.flatMap(([, items]) => items)
 for (const [key] of SECTIONS) {
   const list = flatNav(userNav[key])
@@ -850,10 +866,7 @@ write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerS
 write('dev-gate.html', devGatePage(ctx))
 write('404.html', notFoundPage(ctx))
 for (const [from, to] of Object.entries(REDIRECTS)) {
-  const [slug, anchor] = to.split('#')
-  if (!pages[slug]) fail(`redirect ${from} → ${to}: no such page`)
-  if (anchor && !pages[slug].chunks.some((c) => c.id === anchor)) fail(`redirect ${from} → ${to}: no such section`)
-  write(`${from}.html`, redirectPage(`${BASE}/${to}`))
+  if (!from.includes('#')) write(`${from}.html`, redirectPage(target(from, to)))
 }
 
 // ---------- search indexes: public and developer, kept apart ----------

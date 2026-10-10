@@ -98,5 +98,5 @@ parts:
 - [完成一道题目](/solve-a-challenge#solve-a-challenge)：从加入空间到第一次提交。
 - [改完再交一版](/resubmit#resubmit)：看评语、和芝士改完、提交新版本。
 - [发布一道题目并收作业](/publish-a-challenge#review)：发布者批准领取、评审作业。
-- [空间与题目](/challenges#claim)：领取、批准和截止时间的规则。
+- [题目 · 领取与批准](/challenges#claim)：领取、批准和截止时间的规则。
 :::

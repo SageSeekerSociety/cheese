@@ -119,6 +119,6 @@ parts:
 
 :::cards
 - [发布一道题目并收作业](/publish-a-challenge#publish-a-challenge)：新建空间、发布题目、批准领取、评审作业。
-- [空间与题目 · 给 AI 队友的指导](/challenges#teaching)：几层指导之间哪一份生效。
-- [空间与题目 · 资料库](/challenges#space-library)：上传、可见范围和移除。
+- [空间 · 给 AI 队友的指导](/spaces#teaching)：几层指导之间哪一份生效。
+- [空间 · 资料库](/spaces#space-library)：上传、可见范围和移除。
 :::

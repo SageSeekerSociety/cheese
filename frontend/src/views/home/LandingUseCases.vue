@@ -22,7 +22,7 @@ const roles = computed(() => [
       { title: t('publicSite.useCases.teachers.item3Title'), body: t('publicSite.useCases.teachers.item3Body') },
       { title: t('publicSite.useCases.teachers.item4Title'), body: t('publicSite.useCases.teachers.item4Body') },
     ],
-    docs: { label: t('publicSite.useCases.teachers.docs'), href: docsUrl('/challenges') },
+    docs: { label: t('publicSite.useCases.teachers.docs'), href: docsUrl('/spaces') },
   },
   {
     id: 'students' as UseCaseRole,
