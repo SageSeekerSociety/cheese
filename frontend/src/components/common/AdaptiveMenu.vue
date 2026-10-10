@@ -86,11 +86,12 @@ const sheetActivator = () => ({
     <template #activator="{ props: activator }">
       <slot name="activator" :props="activator" />
     </template>
-    <v-list min-width="160">
+    <v-list min-width="160" role="menu">
       <slot name="desktopHeader" />
       <v-list-item
         v-for="action in props.actions"
         :key="action.key"
+        role="menuitem"
         :to="action.to"
         :prepend-icon="action.icon"
         :disabled="action.disabled || action.loading"

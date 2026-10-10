@@ -144,6 +144,9 @@ export const AGENT_STATUS_EVENTS = new Set([
   'doc_missing',
 ])
 
+/** detail 是一个人写的一句话（不是日志）的事件：这句话直接跟在那一行后面。 */
+const QUOTED_DETAIL = new Set(['card_rejected'])
+
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
 export interface NoticeOccurrence {
   /** 这一次的那行人话。 */
@@ -273,6 +276,8 @@ export type PlatformNotice =
       whoLabel: string
       /** >1 时显示 ×N；1 表示没有折叠。 */
       count: number
+      /** 一个人自己写的那句话（退回的理由），跟着这一行直接写出来，不收进展开区。 */
+      quote?: string
       occurrences: NoticeOccurrence[]
       /** 后端说现在点一下重试有用（`meta.retryable`）。 */
       retryable: boolean
@@ -444,13 +449,17 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   if (mail) return { mode: 'mail-draft', mail, outcome: null }
 
   if (str(m?.detail)) {
+    // 退回的理由是审阅的人写给芝士的话，不是日志：读时间线的人要一眼看到为什么退回，
+    // 不该再点开一次。
+    const quote = run.length === 1 && QUOTED_DETAIL.has(str(m?.event_type)) ? noticeText(block, 'detail') : ''
     return {
       mode: 'fold',
       line: noticeText(block),
       who: whoTag(block),
       whoLabel: whoLabel(block),
       count: run.length,
-      occurrences: run.map(occurrenceOf).filter((o) => o.detail),
+      ...(quote ? { quote } : {}),
+      occurrences: quote ? [] : run.map(occurrenceOf).filter((o) => o.detail),
       retryable: m?.retryable === true,
     }
   }

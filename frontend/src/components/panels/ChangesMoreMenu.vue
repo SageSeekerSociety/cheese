@@ -98,16 +98,18 @@ const sheetActions = computed<MenuAction[]>(() => {
         :loading="refreshing"
       />
     </template>
-    <v-list density="compact" :aria-label="t('work.room.changes.options')">
+    <v-list density="compact" role="menu" :aria-label="t('work.room.changes.options')">
       <template v-if="currentTask?.status === 'open'">
         <v-list-subheader class="pt-0">{{ t('work.room.changes.version') }}</v-list-subheader>
         <v-list-item
+          role="menuitem"
           :title="t('work.room.changes.liveFile')"
           :subtitle="t('work.room.changes.liveNote')"
           :active="fileSource === 'live'"
           @click="emit('select-version', 'live')"
         />
         <v-list-item
+          role="menuitem"
           :title="t('work.room.changes.committedVersion')"
           :subtitle="t('work.room.changes.committedNote')"
           :active="fileSource === 'committed'"
@@ -117,11 +119,17 @@ const sheetActions = computed<MenuAction[]>(() => {
       </template>
       <v-list-item
         v-if="canDownload"
+        role="menuitem"
         :title="t('work.room.changes.download')"
         prepend-icon="mdi-download-outline"
         @click="emit('download')"
       />
-      <v-list-item :title="t('work.room.changes.refresh')" prepend-icon="mdi-refresh" @click="emit('refresh')" />
+      <v-list-item
+        role="menuitem"
+        :title="t('work.room.changes.refresh')"
+        prepend-icon="mdi-refresh"
+        @click="emit('refresh')"
+      />
     </v-list>
   </v-menu>
 </template>

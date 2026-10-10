@@ -215,19 +215,25 @@ function pickHeading(pos: number) {
             <v-icon size="17">mdi-dots-horizontal</v-icon>
           </button>
         </template>
-        <v-list density="compact" :aria-label="t('work.room.doc.options')">
-          <v-list-item :title="t('work.room.doc.history')" @click="emit('history')" />
-          <v-list-item :title="t('work.room.doc.exportMarkdown')" @click="emit('export')" />
+        <v-list density="compact" role="menu" :aria-label="t('work.room.doc.options')">
+          <v-list-item role="menuitem" :title="t('work.room.doc.history')" @click="emit('history')" />
+          <v-list-item role="menuitem" :title="t('work.room.doc.exportMarkdown')" @click="emit('export')" />
           <template v-if="!readOnly">
             <v-divider class="my-1" />
             <v-list-item
+              role="menuitem"
               :title="editable ? t('work.room.doc.setReadOnly') : t('work.room.doc.backToEdit')"
               @click="emit('toggle-editable')"
             />
           </template>
           <template v-if="deletable">
             <v-divider class="my-1" />
-            <v-list-item :title="t('work.room.doc.delete')" base-color="error" @click="emit('delete')" />
+            <v-list-item
+              role="menuitem"
+              :title="t('work.room.doc.delete')"
+              base-color="error"
+              @click="emit('delete')"
+            />
           </template>
         </v-list>
       </v-menu>

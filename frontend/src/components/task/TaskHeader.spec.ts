@@ -314,6 +314,19 @@ describe('任务页头', () => {
     expect(document.querySelector('[data-testid="task-reopen"]')).toBeNull()
   })
 
+  it('「⋯」打开的是一个菜单，每一项是菜单项', async () => {
+    const { container } = mount()
+    stubViewport()
+    await fireEvent.click(container.querySelector('[data-testid="task-more"]')!)
+    const menu = await waitFor(() => {
+      const el = document.querySelector('[role="menu"]')
+      expect(el).not.toBeNull()
+      return el!
+    })
+    const items = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((el) => el.textContent?.trim())
+    expect(items).toEqual(expect.arrayContaining(['重命名', '关闭任务']))
+  })
+
   it('协作者能改名，不能转交和关闭', async () => {
     me = 'bob'
     const { container, rename } = mount({ contributor_handles: ['bob'] })

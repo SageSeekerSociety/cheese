@@ -340,13 +340,29 @@ async function confirmHandOver() {
             data-testid="task-more"
           />
         </template>
-        <v-list density="compact">
-          <v-list-item :title="t('work.task.rename')" data-testid="task-rename" @click="renameOpen = true" />
+        <v-list density="compact" role="menu" :aria-label="t('work.task.more')">
+          <v-list-item
+            role="menuitem"
+            :title="t('work.task.rename')"
+            data-testid="task-rename"
+            @click="renameOpen = true"
+          />
           <template v-if="isOwner && isOpen">
-            <v-list-item v-if="otherPeople.length" :title="t('work.task.handOver')" @click="handOverOpen = true" />
-            <v-list-item :title="t('work.task.close')" @click="closeOpen = true" />
+            <v-list-item
+              v-if="otherPeople.length"
+              role="menuitem"
+              :title="t('work.task.handOver')"
+              @click="handOverOpen = true"
+            />
+            <v-list-item role="menuitem" :title="t('work.task.close')" @click="closeOpen = true" />
           </template>
-          <v-list-item v-else-if="isOwner" :title="t('work.task.reopen')" data-testid="task-reopen" @click="reopen()" />
+          <v-list-item
+            v-else-if="isOwner"
+            role="menuitem"
+            :title="t('work.task.reopen')"
+            data-testid="task-reopen"
+            @click="reopen()"
+          />
         </v-list>
       </v-menu>
     </div>

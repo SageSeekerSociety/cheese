@@ -27,7 +27,7 @@ import { taskTitle } from '@/lib/topicState'
 const props = defineProps<{
   tasks: RoomTask[]
   /** 我看得见的频道：筛选菜单列没归档的那些，任务行上写频道名也查它。 */
-  channels: { id: string; title: string; archived?: boolean }[]
+  channels: { id: string; title: string; glyph: string; archived?: boolean }[]
   /** 只看这个频道；null 是整个项目。 */
   channelId: string | null
   names: Record<string, string>
@@ -129,12 +129,14 @@ const channelActions = computed<MenuAction[]>(() => [
     .filter((c) => !c.archived)
     .map((c) => ({
       key: c.id,
-      label: `# ${c.title}`,
-      icon: 'mdi-pound',
+      // 符号由图标画（私密频道是锁），名字里不再带 #：两处都写就成了「# # 综合」。
+      label: c.title,
+      icon: c.glyph,
       onSelect: () => emit('pick-channel', c.id),
     })),
 ])
 const pickedChannel = computed(() => (props.channelId ? channelTitle.value.get(props.channelId) ?? null : null))
+const pickedGlyph = computed(() => props.channels.find((c) => c.id === props.channelId)?.glyph ?? 'mdi-pound')
 const nameOf = (handle: string) => props.names[handle] || handle
 
 function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'plain' } {
@@ -177,7 +179,8 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
             :data-user-content="pickedChannel || undefined"
             data-testid="tasks-channel"
           >
-            {{ pickedChannel ? `# ${pickedChannel}` : t('work.projectTasks.allChannels') }}
+            <v-icon v-if="pickedChannel" size="16">{{ pickedGlyph }}</v-icon>
+            {{ pickedChannel ?? t('work.projectTasks.allChannels') }}
             <v-icon size="16">mdi-chevron-down</v-icon>
           </button>
         </template>
