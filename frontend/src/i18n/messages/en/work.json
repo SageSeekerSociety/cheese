@@ -1707,6 +1707,12 @@
       "online": "online",
       "offline": "offline",
       "empty": "No member has connected their Claude Code",
+      "callersLabel": "Who can call it",
+      "callersOwner": "Only me",
+      "callersProject": "Project members",
+      "callersDetail": "When project members call it, it uses the model account you set up on your own computer. You pay for it and answer for that account's terms.",
+      "callersOwnerTag": "only its owner can call it",
+      "callersProjectTag": "any project member can call it",
       "readOnly": "Only project admins can change this",
       "loadFailed": "Couldn't load members' own Claude Code",
       "saveFailed": "Couldn't save the setting"

@@ -1707,6 +1707,12 @@
       "online": "在线",
       "offline": "离线",
       "empty": "暂无已接入的 Claude Code",
+      "callersLabel": "谁可以叫它",
+      "callersOwner": "只有我",
+      "callersProject": "项目成员",
+      "callersDetail": "项目成员叫它时，用的是你在自己电脑上配置的模型账号，费用和账号条款由你自己负责。",
+      "callersOwnerTag": "只有主人能叫",
+      "callersProjectTag": "项目成员都能叫",
       "readOnly": "仅项目管理员可修改",
       "loadFailed": "加载成员自己的 Claude Code 失败",
       "saveFailed": "保存设置失败"

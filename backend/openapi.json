@@ -23905,6 +23905,69 @@
         }
       }
     },
+    "/projects/{project_id}/own-agents/{handle}/callers": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Set Own Agent Callers",
+        "description": "Who may call a member's own agent: its owner alone, or any person in the\nproject. Only its owner decides, since it is their account that pays.",
+        "operationId": "set_own_agent_callers_projects__project_id__own_agents__handle__callers_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Handle"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnAgentCallersUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/default-model": {
       "get": {
         "tags": [
@@ -59696,6 +59759,159 @@
         ],
         "title": "OnboardingOutEnvelope"
       },
+      "OwnAgentCallersUpdate": {
+        "properties": {
+          "callers": {
+            "$ref": "#/components/schemas/OwnCallers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "callers"
+        ],
+        "title": "OwnAgentCallersUpdate"
+      },
+      "OwnAgentMachineOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "online"
+        ],
+        "title": "OwnAgentMachineOut"
+      },
+      "OwnAgentOut": {
+        "properties": {
+          "handle": {
+            "type": "string",
+            "title": "Handle"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "callers": {
+            "$ref": "#/components/schemas/OwnCallers"
+          },
+          "owner_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Handle"
+          },
+          "owner_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Name"
+          },
+          "machines": {
+            "items": {
+              "$ref": "#/components/schemas/OwnAgentMachineOut"
+            },
+            "type": "array",
+            "title": "Machines"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handle",
+          "name",
+          "callers",
+          "owner_handle",
+          "owner_name",
+          "machines"
+        ],
+        "title": "OwnAgentOut"
+      },
+      "OwnAgentsOut": {
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed"
+          },
+          "can_manage": {
+            "type": "boolean",
+            "title": "Can Manage"
+          },
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/OwnAgentOut"
+            },
+            "type": "array",
+            "title": "Agents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "allowed",
+          "can_manage",
+          "agents"
+        ],
+        "title": "OwnAgentsOut"
+      },
+      "OwnAgentsOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OwnAgentsOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "OwnAgentsOutEnvelope"
+      },
       "OwnAgentsUpdate": {
         "properties": {
           "allowed": {
@@ -59708,6 +59924,15 @@
           "allowed"
         ],
         "title": "OwnAgentsUpdate"
+      },
+      "OwnCallers": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "project"
+        ],
+        "title": "OwnCallers",
+        "description": "Who may set a member's own agent to work. Its owner decides; the\nplatform does not look at what the agent signs in with."
       },
       "PageCheckIn": {
         "properties": {
