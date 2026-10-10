@@ -1007,5 +1007,6 @@
   "reviewCommentSuggestionOnly": "Suggested change",
   "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each",
   "addressedAgentUnavailable": "The addressed agent is unavailable",
-  "fileTooLarge": "The file is too large ({mb}MB max)"
+  "fileTooLarge": "The file is too large ({mb}MB max)",
+  "submissionPastDeadline": "Your submission deadline has passed, so no new version can be handed in. Ask the challenge's author to extend it"
 }
