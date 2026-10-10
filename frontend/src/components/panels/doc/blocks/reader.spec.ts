@@ -47,6 +47,14 @@ describe('reading Markdown outside the editor', () => {
     expect(host.querySelector('[data-block="callout"]')?.textContent).toContain('周三前要回复')
   })
 
+  it('shows a code block whose text no highlighter recognises, every line of it', () => {
+    const host = show('signup.md 现在是四行：\n\n```\n组会报名\n时间：周四下午三点\n地点：B201\n报名找林老师\n```', {
+      as: 'chat',
+      copyCode: true,
+    })
+    expect(host.querySelector('pre code')?.textContent).toBe('组会报名\n时间：周四下午三点\n地点：B201\n报名找林老师')
+  })
+
   it('never runs what the text carries', () => {
     const host = show(
       [
