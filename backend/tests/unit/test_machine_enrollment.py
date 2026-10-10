@@ -6,6 +6,7 @@ must not outlive its one use, a failure must be recorded rather than retried
 forever, and the human's own access must survive.
 """
 
+import re
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -13,6 +14,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.errors import ValidationError
+from app.domain.device.memory_repository import InMemoryDeviceRepository
+from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
 from app.domain.machine import enrollment
 from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, AiStatus, MachineStatus
@@ -44,6 +47,9 @@ class FakeDevices:
             owner_user_id=owner_user_id,
             supply=supply,
         )
+
+    async def delete_platform_provisioned(self, device_id, *, actor_user_id):
+        pass
 
     async def assign_to_project(self, device_id, project_id, *, actor_user_id):
         self.assigned.append((device_id, project_id))
@@ -238,6 +244,42 @@ async def test_a_failed_attempt_keeps_the_key_so_it_can_be_retried(monkeypatch):
     assert machine.device_id is None
     assert machine.bootstrap_key == "PRIVATE-KEY"
     assert machine.enroll_attempts == 1
+
+
+def _credential_in(script: str) -> str:
+    """The token a bootstrap script writes onto the machine."""
+    match = re.search(r'"token": "([^"]+)"', script)
+    assert match is not None
+    return match.group(1)
+
+
+async def test_a_retried_host_is_one_machine_not_one_per_attempt(monkeypatch):
+    """A host that needed a second try is still one machine. Each attempt hands
+    the machine a fresh credential, and the one from a failed attempt used to
+    outlive it: the host was left as one device per attempt, all but one never
+    online."""
+    outcomes = iter([enrollment.EnrollmentError("bootstrap timed out"), None])
+
+    def _bootstrap():
+        failure = next(outcomes)
+        if failure is not None:
+            raise failure
+        return "Connected."
+
+    service, calls = build_service(monkeypatch, bootstrap=_bootstrap)
+    devices = DeviceService(InMemoryDeviceRepository())
+    service._devices = devices
+    machine = make_machine()
+
+    await service.enroll(machine)
+    await service.enroll(machine)
+
+    failed, enrolled = (_credential_in(call["script"]) for call in calls)
+    assert failed != enrolled
+    assert await devices.verify_token(failed) is None
+    device = await devices.verify_token(enrolled)
+    assert device is not None
+    assert device.device_id == machine.device_id
 
 
 async def test_enrolling_twice_is_a_no_op(monkeypatch):

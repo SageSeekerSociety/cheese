@@ -1123,6 +1123,13 @@ class HostPool:
             # Never let the token reach a log line or an API error body.
             reason = enrollment.redact(str(exc), device.token)
             logger.warning("enrolling host %s failed: %s", host.hostname, reason)
+            # The next attempt mints a device of its own, and nothing points at
+            # this one: the host records a device only once it enrolls. Kept, a
+            # host that took three tries is left as three devices of one name,
+            # two of them never online (2026-10-07).
+            await self._devices.delete_platform_provisioned(
+                device.device_id, actor_user_id=owner.id
+            )
             return await self._repo.mark_enroll_failed(host, error=reason)
         logger.info(
             "enrolled host %s as device %s: %s",
