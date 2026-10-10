@@ -19,7 +19,7 @@
 │   ├── 组队协作：team-project / join-a-team / invite-to-project
 │   ├── 做题目：solve-a-challenge / ask-about-a-challenge / team-challenge / resubmit
 │   ├── 出题目：publish-a-challenge / guide-the-teammate
-│   ├── 成果：review-changes / publish-a-site
+│   ├── 成果：publish-a-site
 │   └── 环境：use-your-computer
 ├── 使用 Cheese
 │   ├── 赛题 challenges.md
@@ -82,9 +82,8 @@
 | `resubmit.md` | 看评审结果，和芝士改完，提交新版本 | 提交规则见 `submissions.md` |
 | `publish-a-challenge.md` | 建空间、发邀请码、发布题目、批准领取、评审提交 | 详细规则链接空间与题目、提交 |
 | `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `challenges.md` |
-| `review-changes.md` | 找到待审阅的改动，审阅、追问、采纳或退回 | 按钮的完整说明见 `accept.md` |
 | `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
-| `use-your-computer.md` | 可选：接入自己的电脑或服务器，给频道或任务换环境；用自己的 Claude Code | 接入与隔离的完整说明见 `devices.md` |
+| `use-your-computer.md` | 接入自己的 Mac 或 Windows 电脑，让频道改用它，把本地数据交给芝士 | 服务器接入、任务环境、隔离和自己的 Claude Code 见 `devices.md` |
 
 ### 使用 Cheese {#feature-pages}
 
@@ -101,7 +100,7 @@
 | `files.md` | 上传及限制、文件进入时间线、查找生成文件、查看与编辑成果、单文件下载、成果相关的「改动 / 现场 / 预览」入口 | Site 发布归 `sites.md`；赛题提交归 `submissions.md`；不编造整个项目打包下载 |
 | `submissions.md` | 学生提交条件、入口、表单与文件要求、已验证的提交限制；发布者查看提交与提交记录 | 与 Agent 交付的验收与采纳分开；不把单一赛题的限制推断成所有赛题通用规则 |
 | `accept.md` | Agent 交付后的验收、采纳、实际入口与操作结果 | 不负责赛题提交或普通文件下载；未验证的验收与合并关系不能写成正式规则 |
-| `devices.md` | 设置 → 设备、添加与安装、登录、网页批准、在线 / 离线状态、AI 队友的环境及更换 | 不解释 tokens；不能把选择设备写成选择本地目录 |
+| `devices.md` | 设置 → 设备、添加与安装、登录、网页批准、在线 / 离线状态、AI 队友的环境及更换（频道和任务）、用自己的 Claude Code | 不解释 tokens；不能把选择设备写成选择本地目录 |
 | `quota.md` | 团队「额度」页、个人「芝士额度」、耗尽提示和当前可操作范围 | 设备连接归 `devices.md`；不编造自行调整或发放额度入口 |
 | `sites.md` | 导出与发布中的 Site 发布、发布结果与管理入口、当前能力和限制 | 普通文件下载归 `files.md`；不承诺整个项目导出 |
 
@@ -170,7 +169,7 @@ order: 1
 
 标题 slug 使用小写字母、数字和连字符，全页唯一。修改标题文字时保留原 slug，避免中文标题自动生成的锚点随措辞变化失效。
 
-页面改名、拆分或删除时，先检查产品入口、其他文档、Agent 引用和外部链接是否仍指向旧地址。只有已被实际引用的旧地址需要保留兼容入口或配置重定向；未正式发布且没有任何引用的页面，可以在更新内部链接后直接迁移。
+页面改名、拆分或删除时，先检查产品入口、其他文档、Agent 引用和外部链接是否仍指向旧地址。只有已被实际引用的旧地址需要保留兼容入口或配置重定向；未正式发布且没有任何引用的页面，可以在更新内部链接后直接迁移。重定向写在 `docs/site/src/structure.mjs` 的 `REDIRECTS` 里，目标可以是 `页面#锚点`，指到接手这件事的那一节。
 
 `llms.txt` 按标题、Markdown 地址和节首摘要帮助模型定位答案。每节先写有信息量的摘要句，不以列表或“首先我们来看一下”开头。核心步骤应能独立看懂，链接提供进一步说明，不能代替答案本身。
 

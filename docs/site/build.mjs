@@ -850,7 +850,9 @@ write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerS
 write('dev-gate.html', devGatePage(ctx))
 write('404.html', notFoundPage(ctx))
 for (const [from, to] of Object.entries(REDIRECTS)) {
-  if (!pages[to]) fail(`redirect ${from} → ${to}: no such page`)
+  const [slug, anchor] = to.split('#')
+  if (!pages[slug]) fail(`redirect ${from} → ${to}: no such page`)
+  if (anchor && !pages[slug].chunks.some((c) => c.id === anchor)) fail(`redirect ${from} → ${to}: no such section`)
   write(`${from}.html`, redirectPage(`${BASE}/${to}`))
 }
 

@@ -214,7 +214,7 @@ export function devGatePage(ctx) {
 }
 
 export function redirectPage(to) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>已移动</title><meta http-equiv="refresh" content="0; url=${to}"><link rel="canonical" href="${to}"><script>location.replace(${JSON.stringify(to)}+location.hash)</script></head><body><a href="${to}">这一页已经移到新地址</a></body></html>`
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>已移动</title><meta http-equiv="refresh" content="0; url=${to}"><link rel="canonical" href="${to}"><script>location.replace(${JSON.stringify(to)}${to.includes('#') ? '' : '+location.hash'})</script></head><body><a href="${to}">这一页已经移到新地址</a></body></html>`
 }
 
 export function notFoundPage(ctx) {

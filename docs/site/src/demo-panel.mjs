@@ -47,7 +47,8 @@ const KINDS = {
   msg: { need: ['who', 'say'], text: ['who', 'say', 'to'], ui: [], list: ['steps'] },
   thread: { need: ['text'], text: ['last'], ui: ['text', 'status'], list: [] },
   typing: { need: ['text'], text: [], ui: ['text'], list: [] },
-  line: { need: ['text'], text: [], ui: ['text', 'button', 'sub'], list: [] },
+  // `value` is the line's own data after the label: 「网站入口：」 site/index.html.
+  line: { need: ['text'], text: ['value'], ui: ['text', 'button', 'sub'], list: [] },
   // An amber strip under the header: the platform asking for something (「需要指定由谁审阅…」).
   strip: { need: ['text'], text: ['value'], ui: ['text', 'label'], list: [] },
   // A document the step is not about: its headings, each over a grey bar.
@@ -74,6 +75,9 @@ const KINDS = {
   field: { need: ['label'], text: ['value'], ui: ['label', 'hint'], list: [] },
   // A dialog's buttons, right-aligned; the last one is the primary.
   buttons: { need: ['actions'], text: ['pressing'], ui: ['actions'], list: ['actions'] },
+  // A row in a list (a device, the published site): its name, a grey line under
+  // it, a status and a button on the right. Name and line are the row's own data.
+  row: { need: ['title'], text: ['title', 'sub'], ui: ['status', 'button'], list: [] },
 }
 const COMMON = ['kind', 'at', 'until', 'press', 'lines']
 
@@ -162,7 +166,7 @@ function partHtml(p, cfg) {
     case 'line':
       return p.sub
         ? `<div class="dp-empty"${a}><b>${esc(p.text)}</b><span>${esc(p.sub)}</span></div>`
-        : `<div class="dp-line"${a}><span>${esc(p.text)}</span>${p.button ? button(p.button, p, 'dp-link') : ''}</div>`
+        : `<div class="dp-line"${a}><span>${esc(p.text)}${p.value ? `<code>${esc(p.value)}</code>` : ''}</span>${p.button ? button(p.button, p, 'dp-link') : ''}</div>`
     case 'strip':
       return `<div class="dp-strip"${a}><span>${esc(p.text)}</span>${p.label ? `<span class="dp-strip-pick">${esc(p.label)}<span class="dp-select">${esc(p.value || '')}</span></span>` : ''}</div>`
     case 'doc':
@@ -199,6 +203,8 @@ function partHtml(p, cfg) {
       const last = p.actions.length - 1
       return `<div class="dp-buttons"${a}>${p.actions.map((x, i) => button(x, p, i === last ? 'dp-btn dp-btn-primary' : 'dp-btn')).join('')}</div>`
     }
+    case 'row':
+      return `<div class="dp-row"${a}><div class="dp-row-main"><b>${esc(p.title)}</b>${p.sub ? `<span>${esc(p.sub)}</span>` : ''}</div>${p.status ? `<span class="dp-row-status">${esc(p.status)}</span>` : ''}${p.button ? button(p.button, p, 'dp-btn dp-btn-primary') : ''}</div>`
     case 'notice':
       return `<div class="dp-notice"${a}><span>${esc(p.text)}</span>${p.button ? `<span class="dp-notice-go">${esc(p.button)}</span>` : ''}</div>`
     case 'checklist': {
@@ -247,7 +253,7 @@ function partText(p) {
   switch (p.kind) {
     case 'msg': return `${p.who}：${p.to ? `@${p.to} ` : ''}${p.say}${p.steps ? `（${p.steps.map((s, i) => `${i + 1}. ${s}`).join('；')}）` : ''}`
     case 'thread': return `消息下面出现「${p.text}」${p.last ? `：${p.last}` : ''}`
-    case 'typing': case 'line': case 'notice': return `「${p.text}」${p.sub ? `：${p.sub}` : ''}`
+    case 'typing': case 'line': case 'notice': return `「${p.text}」${p.value ? ` ${p.value}` : ''}${p.sub ? `：${p.sub}` : ''}`
     case 'strip': return `「${p.text}」${p.label ? `，「${p.label}」` : ''}`
     case 'doc': return `文档：${p.headings.join('、')}`
     case 'tabs': return `右侧切到「${p.active}」`
@@ -261,6 +267,7 @@ function partText(p) {
     case 'checklist': return `${p.title}：${p.items.join('；')}`
     case 'field': return `「${p.label}」${p.value ? `：${p.value}` : ''}${p.hint ? `（${p.hint}）` : ''}`
     case 'buttons': return `按钮 ${p.actions.map((x) => `「${x}」`).join('')}`
+    case 'row': return `一行「${p.title}」${p.sub ? `：${p.sub}` : ''}${p.status ? `，「${p.status}」` : ''}${p.button ? `，按钮「${p.button}」` : ''}`
   }
   return ''
 }

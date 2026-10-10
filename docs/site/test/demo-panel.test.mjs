@@ -182,6 +182,9 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
   eq(run('title: 对话框\ncaption: 一行\nparts:\n  - kind: field\n    label: 项目名称\n    value: 组会资料\n  - kind: buttons\n    actions: 取消 | 下一步\n    pressing: 下一步\n    press: 1'), '', 'a dialog quoting real field and button labels builds')
   const field = run('title: 假字段\ncaption: 一行\nparts:\n  - kind: field\n    label: 项目代号\n  - kind: buttons\n    actions: 取消 | 下一步\n    pressing: 下一步\n    press: 1')
   ok(/项目代号/.test(field) && /not a string the product shows/.test(field), `a field label the product does not show fails the build: «${field}»`)
+  eq(run('title: 一行\ncaption: 一行\nparts:\n  - kind: row\n    title: 我的 MacBook\n    sub: 刚刚\n    status: 在线\n    button: 发布\n    press: 1'), '', 'a row with its own name and a real status and button builds')
+  const row = run('title: 假状态\ncaption: 一行\nparts:\n  - kind: row\n    title: 我的 MacBook\n    status: 飞速运转\n    button: 发布\n    press: 1')
+  ok(/飞速运转/.test(row) && /not a string the product shows/.test(row), `a row status the product does not show fails the build: «${row}»`)
   const still = run('title: 不动\ncaption: 一行\nparts:\n  - kind: msg\n    who: 你\n    say: 一')
   ok(/picture/.test(still), `a panel where nothing changes fails the build: «${still}»`)
 }
