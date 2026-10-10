@@ -148,9 +148,9 @@ async def post_task_submission(
         raise NotFoundError.for_resource("participant", participant_id)
 
     if membership.approved != 0:
-        raise ForbiddenError("Participant must be approved before submitting")
+        raise ForbiddenError(say("submissionClaimNotApproved"))
     if task.ended_at is not None:
-        raise BadRequestError("Cannot submit to an ended task")
+        raise BadRequestError(say("submissionChallengeEnded"))
     # A claim's own deadline (set when it is approved, moved by whoever teaches
     # the task) is the last moment to hand work in: past it with nothing in hand
     # the claim reads FAILED (`submission_state`, and the deadline sweep writes
@@ -228,9 +228,9 @@ async def patch_task_submission(
     # same door as ``post_task_submission``: an approved claim, a challenge still
     # running, and not past the claim's own deadline.
     if membership.approved != 0:
-        raise ForbiddenError("Participant must be approved before submitting")
+        raise ForbiddenError(say("submissionClaimNotApproved"))
     if task.ended_at is not None:
-        raise BadRequestError("Cannot submit to an ended task")
+        raise BadRequestError(say("submissionChallengeEnded"))
     if past_deadline(membership.deadline, datetime.now(UTC)):
         raise BadRequestError(say("submissionPastDeadline"))
 

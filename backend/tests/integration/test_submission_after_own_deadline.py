@@ -275,3 +275,5 @@ def test_a_claim_no_longer_approved_cannot_edit_its_version(
     resp = _edit(api_client, claim, version, "撤销批准后改的一版")
 
     assert resp.status_code == 403, resp.text
+    assert resp.json()["error"]["i18n"]["key"] == "submissionClaimNotApproved"
+    assert "撤销批准后改的一版" not in _texts(api_client, claim)
