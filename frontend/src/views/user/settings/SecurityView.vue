@@ -155,6 +155,25 @@
       </div>
     </section>
 
+    <section v-if="trainingAllowed !== null" class="settings-card">
+      <h2 class="settings-card__title">{{ t('account.security.dataUse') }}</h2>
+      <div class="srow">
+        <label class="srow__k" for="training-use">{{ t('account.security.trainingUse') }}</label>
+        <span class="srow__v">{{ t('account.security.trainingUseHint') }}</span>
+        <v-switch
+          id="training-use"
+          :model-value="trainingAllowed"
+          :loading="savingTrainingUse"
+          :disabled="savingTrainingUse"
+          color="primary"
+          density="compact"
+          inset
+          hide-details
+          @update:model-value="(v) => emit('set-training-use', v === true)"
+        />
+      </div>
+    </section>
+
     <!-- Changing the password -->
     <v-dialog v-model="showChangePassword" :max-width="DIALOG_WIDTH.sm" @after-leave="resetPasswordForm">
       <v-card :title="t('account.security.changePasswordTitle')">
@@ -322,6 +341,9 @@ defineProps<{
   qrCodeData: string
   verifyError: string
   backupCodes: string[]
+  /** Whether their content may be used for training; null until the account is read. */
+  trainingAllowed: boolean | null
+  savingTrainingUse: boolean
 }>()
 
 const emit = defineEmits<{
@@ -337,6 +359,7 @@ const emit = defineEmits<{
   'sign-out-device': [sessionId: string]
   'sign-out-others': []
   copy: [text: string]
+  'set-training-use': [allowed: boolean]
 }>()
 
 // Which dialog is open, and how far the two-step setup has got, are the

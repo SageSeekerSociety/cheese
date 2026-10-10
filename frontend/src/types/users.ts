@@ -16,6 +16,9 @@ export type User = {
   // Only on the signed-in person's own record: the IANA time zone of the
   // browser they last used, null until one reports it; their quiet hours run on it.
   timezone?: string | null
+  // Only on the signed-in person's own record: their content may be used,
+  // anonymised, to train models and be given to partners (privacy policy 1.2).
+  trainingAllowed?: boolean
 }
 
 // 实名认证状态

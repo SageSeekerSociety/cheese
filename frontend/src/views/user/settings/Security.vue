@@ -30,6 +30,8 @@
     :qr-code-data="qrCodeData"
     :verify-error="verifyError"
     :backup-codes="backupCodes"
+    :training-allowed="trainingAllowed"
+    :saving-training-use="savingTrainingUse"
     @add-passkey="handleAddPasskey"
     @delete-passkey="handleDeletePasskey"
     @init-totp="handleInitTOTP"
@@ -42,6 +44,7 @@
     @sign-out-device="signOutDevice"
     @sign-out-others="handleSignOutOthers"
     @copy="copy"
+    @set-training-use="setTrainingUse"
   />
 </template>
 
@@ -71,6 +74,33 @@ const dialogs = useDialog()
 const webAuthnSupported = browserSupportsWebAuthn()
 
 const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessage(error, fallback))
+
+// Whether their content may be used for training (privacy policy 1.2), read
+// from the account as the page opens and saved the moment the switch moves.
+const trainingAllowed = ref<boolean | null>(null)
+const savingTrainingUse = ref(false)
+
+async function loadTrainingUse() {
+  try {
+    const { data } = await UserApi.getCurrentUser()
+    trainingAllowed.value = data.user.trainingAllowed ?? true
+  } catch (error) {
+    fail(error, t('account.security.trainingUseLoadFailed'))
+  }
+}
+
+async function setTrainingUse(allowed: boolean) {
+  savingTrainingUse.value = true
+  try {
+    const { data } = await UserApi.setTrainingUse(allowed)
+    trainingAllowed.value = data.allowed
+    toast.success(t('account.security.trainingUseSaved'))
+  } catch (error) {
+    fail(error, t('account.security.trainingUseSaveFailed'))
+  } finally {
+    savingTrainingUse.value = false
+  }
+}
 
 async function copy(text: string) {
   try {
@@ -407,5 +437,6 @@ onMounted(async () => {
   fetch2FAStatus()
   fetchConnections()
   fetchSessions()
+  loadTrainingUse()
 })
 </script>

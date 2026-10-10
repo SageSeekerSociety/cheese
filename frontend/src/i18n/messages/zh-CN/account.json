@@ -348,7 +348,13 @@
     "unlinkFailed": "解除关联失败，稍后重试",
     "lastWayIn": "这是你唯一的登录方式。先设置密码或添加通行密钥",
     "loadFailed": "部分信息加载失败，刷新页面",
-    "methodEmailCode": "邮箱验证码登录"
+    "methodEmailCode": "邮箱验证码登录",
+    "dataUse": "数据使用",
+    "trainingUse": "允许将我的内容用于模型训练",
+    "trainingUseHint": "内容会先经过匿名化处理，用于改进和训练 AI 模型，或提供给 AI 模型及技术提供方等合作方。关闭后，你的内容不再被这样使用。",
+    "trainingUseSaved": "已保存",
+    "trainingUseSaveFailed": "未能保存，稍后重试",
+    "trainingUseLoadFailed": "未能读取数据使用设置"
   },
   "profile": {
     "title": "个人资料",

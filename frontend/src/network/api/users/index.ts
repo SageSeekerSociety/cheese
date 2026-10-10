@@ -141,6 +141,14 @@ export namespace UserApi {
       data: { timezone },
     })
 
+  /** Whether the signed-in person's content may be used for training (privacy policy 1.2). */
+  export const setTrainingUse = (allowed: boolean) =>
+    ApiInstance.request<{ allowed: boolean }>({
+      url: '/users/me/training-use',
+      method: 'PUT',
+      data: { allowed },
+    })
+
   export const getUserInfo = (userid: number) =>
     ApiInstance.request<GetUserInfoResponse>({
       // url: `https://stoplight.io/mocks/huanchengstudio/cheese/2398548/users/${userid}`,

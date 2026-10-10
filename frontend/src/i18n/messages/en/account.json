@@ -348,7 +348,13 @@
     "unlinkFailed": "Could not unlink. Try again.",
     "lastWayIn": "This is your only way to sign in. Set a password or add a passkey first.",
     "loadFailed": "Some details could not load. Refresh the page.",
-    "methodEmailCode": "Email code sign-in"
+    "methodEmailCode": "Email code sign-in",
+    "dataUse": "Data use",
+    "trainingUse": "Allow my content to be used for model training",
+    "trainingUseHint": "Content is anonymised first, then used to improve and train AI models or given to partners such as AI model and technology providers. Turn this off and your content is no longer used this way.",
+    "trainingUseSaved": "Saved",
+    "trainingUseSaveFailed": "Couldn't save. Try again later.",
+    "trainingUseLoadFailed": "Couldn't load your data use setting"
   },
   "profile": {
     "title": "Profile",
