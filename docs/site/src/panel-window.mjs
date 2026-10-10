@@ -34,8 +34,37 @@ export function panelStage(el) {
   const on = (n, b) => Number(n.dataset.at || 0) <= b && (n.dataset.until === undefined || b < Number(n.dataset.until))
   let run = 0
 
+  // The window is as tall as the frame on screen. Changing frames slides the
+  // height from the old frame's to the new one's, so nothing jumps and no
+  // frame carries the blank space of a taller one.
+  let fitting = 0
+  function fit(change, animate) {
+    if (!win) return change()
+    const me = ++fitting
+    const from = win.getBoundingClientRect().height
+    win.style.height = ''
+    const out = change()
+    const to = win.getBoundingClientRect().height
+    if (!animate || !from || Math.abs(from - to) < 1) return out
+    win.style.height = `${from}px`
+    void win.offsetHeight
+    win.style.height = `${to}px`
+    const done = (e) => {
+      if (e && e.target !== win) return
+      win.removeEventListener('transitionend', done)
+      if (me === fitting) win.style.height = ''
+    }
+    win.addEventListener('transitionend', done)
+    setTimeout(done, 600)
+    return out
+  }
+
   // Shows beat b; returns the parts that arrived with it.
   function show(b, animate) {
+    return fit(() => showParts(b, animate), animate)
+  }
+
+  function showParts(b, animate) {
     const arrived = []
     for (const n of timed) {
       const vis = on(n, b)
@@ -54,14 +83,6 @@ export function panelStage(el) {
       n.textContent = text.slice(0, i)
       await wait(step)
     }
-  }
-
-  // Hold the window at its tallest frame, so frames never move the page.
-  function lock() {
-    win.style.minHeight = ''
-    let h = 0
-    for (let b = 0; b <= beats; b++) { show(b, false); h = Math.max(h, win.offsetHeight) }
-    win.style.minHeight = `${h}px`
   }
 
   // From whatever is up to beat b: the press that leads there, then the arrivals.
@@ -87,13 +108,14 @@ export function panelStage(el) {
     return run === me
   }
 
-  function jump(b) {
+  // Straight to beat b; `animate` slides the height when a reader picks a step.
+  function jump(b, { animate = false } = {}) {
     run++
     for (const [n, text] of typed) n.textContent = text
-    show(b, false)
+    show(b, animate)
   }
 
-  return { beats, win, lock, go, jump, cancel: () => { run++ } }
+  return { beats, win, go, jump, cancel: () => { run++ } }
 }
 
 export function mountPanel(el, { reduced = false } = {}) {
@@ -107,8 +129,7 @@ export function mountPanel(el, { reduced = false } = {}) {
     const me = ++run
     el.classList.remove('dp-done')
     if (replay) replay.hidden = true
-    stage.lock()
-    stage.jump(0)
+    stage.jump(0, { animate: true })
     for (let b = 1; b <= stage.beats; b++) {
       await wait(HOLD)
       if (run !== me) return

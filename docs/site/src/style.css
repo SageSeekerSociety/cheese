@@ -2472,6 +2472,7 @@ body.dragging .dock-resize::after {
 .dp-win {
   display: flex;
   max-width: 520px;
+  transition: height var(--dur-base) var(--ease-standard);
   margin: 0 auto;
   overflow: hidden;
   font-size: 14px;
