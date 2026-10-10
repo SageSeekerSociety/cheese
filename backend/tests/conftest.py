@@ -158,6 +158,9 @@ settings.task_deadline_sweep_interval_s = 0
 # The queued-message sweep starts turns for messages a test may be holding
 # back on purpose; tests that want it run it themselves.
 settings.queued_message_sweep_interval_s = 0
+# Stopping work in closed tasks would interrupt a test's stub session behind
+# its back; the tests about it run the look themselves.
+settings.closed_task_stop_interval_s = 0
 # Request limits stay on, set far above anything a test does. Their rate state
 # lives in Redis, which no test resets, and across a suite the same handles
 # ("alice") and the same test client address are reused far faster than any

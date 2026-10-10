@@ -31,9 +31,10 @@ The rules this module is the whole of:
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, String, column, select, table, update
+from sqlalchemy import DateTime, String, column, or_, select, table, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,6 +43,9 @@ from app.domain.agent.nonce import new_nonce, nonce_in
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.common import Uuid
 from app.domain.delivery.receipts import terminate_inputs_of_dead_works
+
+if TYPE_CHECKING:
+    from app.domain.agent.compute import ComputePool
 
 logger = logging.getLogger(__name__)
 
@@ -494,7 +498,47 @@ async def close_dead_turns(session_factory, turn_ids) -> None:
 
 
 #: Read for one fact only, so the agent domain does not import the task model.
-_tasks = table("tasks", column("id", Uuid), column("status", String))
+_tasks = table(
+    "tasks",
+    column("id", Uuid),
+    column("status", String),
+    column("closed_at", DateTime(timezone=True)),
+)
+
+
+#: How long a turn that closed its own task has to finish saying so before the
+#: task's closed state stops it like any other (`stop_work_in_closed_tasks`).
+#: A close by anyone else stops the work on the spot where it can.
+CLOSING_TAIL = timedelta(seconds=30)
+
+
+async def stop_work_in_closed_tasks(session_factory, compute: "ComputePool") -> int:
+    """Stop the work this process's sessions are still doing in tasks that
+    have closed; how many tasks that was.
+
+    Closing a task stops its work from the process the close reached
+    (`ChatService.stop_work`), and that is not always the one holding the
+    session: a close that lands on the backend taking over in a deploy, or on
+    the one leaving, finds nothing to stop. The session's holder is the one
+    that can, and the task's closed state is what it goes by, whoever closed
+    it and whenever."""
+    working = compute.working_conversations()
+    if not working:
+        return 0
+    before = datetime.now(UTC) - CLOSING_TAIL
+    async with session_factory() as session:
+        closed = set(
+            await session.scalars(
+                select(_tasks.c.id).where(
+                    _tasks.c.id.in_(working),
+                    _tasks.c.status == "closed",
+                    or_(_tasks.c.closed_at.is_(None), _tasks.c.closed_at <= before),
+                )
+            )
+        )
+    for task_id in closed:
+        await compute.stop_work(task_id)
+    return len(closed)
 
 
 async def open_turns(session_factory) -> dict:
@@ -503,10 +547,10 @@ async def open_turns(session_factory) -> dict:
 
     A closed task is work that is over, whatever its session last said, and
     nothing will close a turn left open in it: the sweep keeps a delivered turn
-    open until its session is known dead, and the stop sent when a task
-    closes reaches only a session that is up and held by this process. Such a
-    turn kept its room reading as busy, and its inputs
-    refused the seat, for good. They are ended here and never handed to the
+    open until its session is known dead, and stopping the session
+    (`ChatService.stop_work_in_closed_tasks`) leaves its row as it is. Such a
+    turn kept its room reading as busy, and its inputs refused the seat, for
+    good. They are ended here and never handed to the
     sweep, which would otherwise offer the work again.
 
     Whether reading this can fail is the sweep's business, not this function's:
