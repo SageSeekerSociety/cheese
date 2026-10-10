@@ -9,6 +9,19 @@ name: Backend Test
 # remote-execution).
 on:
   workflow_call:
+    inputs:
+      # The layers run on arm64: its standard runners have four real cores,
+      # while the x64 ones are two cores with hyperthreading on CPUs of
+      # different generations, and these layers keep every core busy. The
+      # prod release runs the same suite once on x64 (deploy-prod.yml),
+      # because production does.
+      runner:
+        type: string
+        default: ubuntu-24.04-arm
+      # The commit to test; empty means the commit the caller ran for.
+      ref:
+        type: string
+        default: ""
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
 permissions:
@@ -42,6 +55,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
@@ -181,7 +196,7 @@ jobs:
         run: python3 .claude/scripts/check-migration-safety.py
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     name: ${{ matrix.layer }} (${{ matrix.shard }})
     strategy:
       fail-fast: false
@@ -234,6 +249,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
 
       # Hosted matrix runners have isolated service containers. Keep the slot
       # namespace for reproductions on a machine shared by multiple test runs.
@@ -472,6 +489,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: backend-*
