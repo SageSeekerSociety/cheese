@@ -235,15 +235,15 @@ jobs:
         # Bound tmpfs to 4 GiB on 16 GiB runners; sample filesystem and RAM below.
         options: >-
           ${{ matrix.layer == 'integration' && '--tmpfs /var/lib/postgresql/data:rw,size=4g' || '' }}
-          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 10s
-          --health-timeout 5s --health-retries 5
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 1s
+          --health-timeout 5s --health-retries 60
       valkey:
         image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
         ports:
           - 6389:6379
         options: >-
-          --health-cmd "valkey-cli ping" --health-interval 10s
-          --health-timeout 5s --health-retries 5
+          --health-cmd "valkey-cli ping" --health-interval 1s
+          --health-timeout 5s --health-retries 60
     # Each runner has its own services and xdist workers. This ceiling detects
     # hangs; the artifact timings measure whether the feedback budget is met.
     timeout-minutes: 20
