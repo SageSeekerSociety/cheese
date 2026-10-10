@@ -206,8 +206,11 @@ def claim_state(verdicts: Iterable[bool | None]) -> str:
     ]
 
 
-def _past_deadline(deadline: datetime | None, moment: datetime) -> bool:
-    """与清扫任务同一条判据：``deadline IS NOT NULL AND deadline < now``。"""
+def past_deadline(deadline: datetime | None, moment: datetime) -> bool:
+    """与清扫任务同一条判据：``deadline IS NOT NULL AND deadline < now``。
+
+    交作业那条路（``POST .../submissions``）也按它拒：
+    过了自己的截止就不再收新的一版。"""
     if deadline is None:
         return False
     if deadline.tzinfo is None:
@@ -243,7 +246,7 @@ async def derive_completion_status(
         has_a_passed_submission=passed,
         has_a_submission_in_the_queue=queued,
         has_a_live_submission=handed_in,
-        past_deadline=_past_deadline(membership.deadline, now or datetime.now(UTC)),
+        past_deadline=past_deadline(membership.deadline, now or datetime.now(UTC)),
     )
 
 

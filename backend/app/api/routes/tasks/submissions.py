@@ -1,5 +1,6 @@
 """提交与批阅。"""
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -25,6 +26,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.task.access import (
     bind_review_path,
@@ -36,6 +38,7 @@ from app.domain.task.services import (
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
+from app.domain.task.submission_state import past_deadline
 from app.domain.team.services import TeamService
 
 router = APIRouter(prefix="/tasks")
@@ -148,6 +151,14 @@ async def post_task_submission(
         raise ForbiddenError("Participant must be approved before submitting")
     if task.ended_at is not None:
         raise BadRequestError("Cannot submit to an ended task")
+    # A claim's own deadline (set when it is approved, moved by whoever teaches
+    # the task) is the last moment to hand work in: past it with nothing in hand
+    # the claim reads FAILED (`submission_state`, and the deadline sweep writes
+    # the same). A version taken after it would turn that FAILED back into
+    # PENDING_REVIEW behind the teacher's back; moving the deadline is how a
+    # late hand-in is let through.
+    if past_deadline(membership.deadline, datetime.now(UTC)):
+        raise BadRequestError(say("submissionPastDeadline"))
 
     if membership.is_team:
         is_member = await team_service.is_team_member(
