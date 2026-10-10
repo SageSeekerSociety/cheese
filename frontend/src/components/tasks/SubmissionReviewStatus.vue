@@ -32,10 +32,12 @@ const alertTitle = computed(() => {
     : t('tasks.reviewStatus.rejected')
 })
 
+/** 没写评语就不画「评语:」这一行 —— 光秃秃一个标签后面什么都没有。 */
 const alertText = computed(() => {
   if (!review.value || !review.value.reviewed) {
     return undefined
   }
-  return t('tasks.reviewStatus.comment', { comment: review.value.detail.comment })
+  const comment = review.value.detail.comment?.trim()
+  return comment ? t('tasks.reviewStatus.comment', { comment }) : undefined
 })
 </script>
