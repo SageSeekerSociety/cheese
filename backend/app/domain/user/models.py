@@ -63,6 +63,12 @@ class User(Base):
     # whose clock their quiet hours are read on. NULL until a page reports one;
     # NULL is read as Beijing time (`notification.preferences.DEFAULT_TIMEZONE`).
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # When the account was given its first project (`POST /users/me/first-project`).
+    # Set once: someone who later leaves or deletes every project lands on the
+    # inbox instead of being handed another one.
+    first_project_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

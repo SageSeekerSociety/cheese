@@ -21,7 +21,6 @@ import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
-import { vGuideAnchor } from '@/composables/useStartGuide'
 
 import { pastedTextName } from '../../lib/attachments'
 import {
@@ -60,13 +59,6 @@ const props = defineProps<{
   replyLabel?: string | null
   /** 发一张自己的清单；不给就没有这个入口。 */
   postChecklist?: (steps: string[]) => Promise<boolean>
-  /**
-   * 新用户引导能指这只输入框（登记 `composer-input` / `composer-attach`）。只有项目
-   * 本体那一栏的输入框给：引导只画在那一栏上，而登记表一个名字只认一颗按钮——支
-   * 线、任务里的输入框也来登记的话，后挂上的那只会把名字抢走，引导就圈着旁边那
-   * 栏的输入框。
-   */
-  guided?: boolean
 }>()
 
 const checklistOpen = ref(false)
@@ -428,7 +420,7 @@ defineExpose({
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
-    <div v-guide-anchor="guided ? 'composer-input' : ''" class="composer-box">
+    <div class="composer-box">
       <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。 -->
       <ComposerChipRow
         :reply-label="replyLabel"
@@ -459,7 +451,6 @@ defineExpose({
         @compositionend="onCompositionEnd"
       />
       <ComposerActions
-        :guided="!!guided"
         :uploading="attsUploading"
         :can-send="canSend"
         :show-image-picker="!mdAndUp"

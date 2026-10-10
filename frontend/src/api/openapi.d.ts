@@ -6057,31 +6057,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/projects/{project_id}/getting-started": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Project Getting Started
-         * @description 「开始清单」里要问服务端的两条：这个人在项目里跟 AI 队友说上过话没有，和
-         *     项目的代码仓库里有没有合进过一次被采纳的改动。
-         *
-         *     说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问
-         *     （`block.queries.talked_with_agent`），问的是调用者自己。合进仓库那一条看
-         *     验收卡（`review.queries.change_landed`），不看仓库接没接上。
-         */
-        get: operations["project_getting_started_projects__project_id__getting_started_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/projects/{project_id}/memory": {
         parameters: {
             query?: never;
@@ -11924,6 +11899,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/me/first-project": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Give the signed-in user their first project, once per account */
+        post: operations["make_my_first_project_users_me_first_project_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{userId}/identity": {
         parameters: {
             query?: never;
@@ -14329,6 +14321,32 @@ export interface components {
             /** Project */
             project?: string | null;
         };
+        /** FirstProjectIn */
+        FirstProjectIn: {
+            /** Name */
+            name: string;
+        };
+        /** FirstProjectOut */
+        FirstProjectOut: {
+            /** Project Id */
+            project_id: string | null;
+        };
+        /** FirstProjectOutEnvelope */
+        FirstProjectOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["FirstProjectOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /**
          * ForceMergeDecision
          * @description 人工放行。No `decided_by`, same reason as 作废: this is an authorization
@@ -14384,32 +14402,6 @@ export interface components {
             source?: string | null;
             /** Page */
             page?: string | null;
-        };
-        /**
-         * GettingStartedOut
-         * @description 「开始清单」要服务端回答的那一条（`GET /projects/{id}/getting-started`）。
-         */
-        GettingStartedOut: {
-            /** Talked */
-            talked: boolean;
-            /** Landed */
-            landed: boolean;
-        };
-        /** GettingStartedOutEnvelope */
-        GettingStartedOutEnvelope: {
-            /**
-             * Code
-             * @default 200
-             */
-            code: number;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data: components["schemas"]["GettingStartedOut"];
-            /** Warnings */
-            warnings?: string[] | null;
         };
         /** GrantCreate */
         GrantCreate: {
@@ -28949,37 +28941,6 @@ export interface operations {
             };
         };
     };
-    project_getting_started_projects__project_id__getting_started_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["GettingStartedOutEnvelope"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     add_memory_projects__project_id__memory_post: {
         parameters: {
             query?: never;
@@ -41746,6 +41707,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    make_my_first_project_users_me_first_project_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-User-Id"?: number | null;
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FirstProjectIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirstProjectOutEnvelope"];
                 };
             };
             /** @description Validation Error */

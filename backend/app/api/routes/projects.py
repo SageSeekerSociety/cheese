@@ -19,7 +19,7 @@ from app.api.place import (
     live_rooms_seen,
     rooms_seen,
 )
-from app.api.response import ok, page, typed_response
+from app.api.response import ok, page
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -42,7 +42,6 @@ from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import (
     awaiting_an_answer,
-    talked_with_agent,
     weeklies_for_project,
 )
 from app.domain.conversation.services import rooms_of_inner
@@ -65,7 +64,6 @@ from app.domain.project.repositories import (
 )
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
-    GettingStartedOut,
     ProjectCreate,
     ProjectOut,
 )
@@ -73,7 +71,7 @@ from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
 from app.domain.review.github_pr import parse_github_repo
-from app.domain.review.queries import change_landed, latest_cards_by_task
+from app.domain.review.queries import latest_cards_by_task
 from app.domain.room_task import naming, presentation
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
@@ -592,27 +590,6 @@ async def project_progress(
     )
     rows = [h.as_dict() for h in happened]
     return ok(page(rows, len(rows)))
-
-
-@router.get("/{project_id}/getting-started", **typed_response(GettingStartedOut))
-async def project_getting_started(
-    project_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """「开始清单」里要问服务端的两条：这个人在项目里跟 AI 队友说上过话没有，和
-    项目的代码仓库里有没有合进过一次被采纳的改动。
-
-    说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问
-    （`block.queries.talked_with_agent`），问的是调用者自己。合进仓库那一条看
-    验收卡（`review.queries.change_landed`），不看仓库接没接上。
-    """
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await ProjectService(db).get_or_404(project_id)
-    talked = await talked_with_agent(db, project_id, actor.handle)
-    landed = await change_landed(db, project_id)
-    return ok(GettingStartedOut(talked=talked, landed=landed).model_dump())
 
 
 @router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])

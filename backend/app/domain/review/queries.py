@@ -21,13 +21,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.review.models import AcceptCard
 from app.domain.review.notes import NoteCode
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.topic.models import Topic
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,20 +119,3 @@ async def accepted_by_task(
                 Returned(task_id=card.task_id, by=card.decided_by, at=at)
             )
     return found
-
-
-async def change_landed(db: AsyncSession, project_id: uuid.UUID) -> bool:
-    """这个项目的代码仓库里有没有一次被采纳、合进去了的改动：「开始清单」「让成果
-    进代码仓库」那一步的判据。
-
-    看的是验收卡合并的那一刻（`pr_merged_at`），每条合并的路——采纳那一下、合并
-    队列、轮询器、有人在 forge 上自己合——都打它。不看仓库接没接上：平台托管的项目
-    一建好就有仓库，往资料库里放个文件也会把它备好，那时候里面什么成果都还没有。
-    """
-    landed = (
-        select(AcceptCard.id)
-        .join(Topic, Topic.id == AcceptCard.topic_id)
-        .where(Topic.project_id == project_id, AcceptCard.pr_merged_at.is_not(None))
-        .exists()
-    )
-    return bool(await db.scalar(select(landed)))

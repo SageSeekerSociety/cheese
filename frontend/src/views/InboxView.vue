@@ -4,7 +4,6 @@ import type { WaitingItem } from '@/cx_types'
 import { computed, onMounted, ref } from 'vue'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
-import { vGuideAnchor } from '@/composables/useStartGuide'
 
 import { listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -158,10 +157,9 @@ async function dismissAll(projectId: string) {
 
 <template>
   <AppPage :title="t('navigation.inbox')">
-    <!-- 零项目时这一页就是新用户的落点（`landingForMember` 把他放在这儿）。原来只有
-         一句「暂无{project}」加两颗按钮，说的是「这里什么都没有」，没告诉他平台上有
-         哪些路可走——团队和项目的入口分别在别的地方，他看不到。现在拆成三条并列的
-         起步路，每条一句话说清进去能得到什么。 -->
+    <!-- 一个项目都没有的人：新账号登录时已经有了自己的第一个项目（`landingForMember`），
+         走到这里的是后来退出或删光了项目的人。三条起步路并列，每条一句话说清进去能
+         得到什么。 -->
     <section v-if="noProjects" class="inbox__start">
       <p class="t-title">{{ t('work.emptyTitle', projectTerm) }}</p>
       <p class="inbox__start-lede">{{ t('work.startPaths.lede') }}</p>
@@ -173,7 +171,7 @@ async function dismissAll(projectId: string) {
             <span class="inbox__path-title">{{ t('work.startPaths.project.title', projectTerm) }}</span>
             <span class="inbox__path-body">{{ t('work.startPaths.project.body') }}</span>
           </div>
-          <BaseButton v-guide-anchor="'new-project'" kind="primary" size="sm" @click="showNewProjectDialog()">
+          <BaseButton kind="primary" size="sm" @click="showNewProjectDialog()">
             {{ t('navigation.newProject', projectTerm) }}
           </BaseButton>
         </li>

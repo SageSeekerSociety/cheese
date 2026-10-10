@@ -21748,50 +21748,6 @@
         }
       }
     },
-    "/projects/{project_id}/getting-started": {
-      "get": {
-        "tags": [
-          "projects"
-        ],
-        "summary": "Project Getting Started",
-        "description": "「开始清单」里要问服务端的两条：这个人在项目里跟 AI 队友说上过话没有，和\n项目的代码仓库里有没有合进过一次被采纳的改动。\n\n说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问\n（`block.queries.talked_with_agent`），问的是调用者自己。合进仓库那一条看\n验收卡（`review.queries.change_landed`），不看仓库接没接上。",
-        "operationId": "project_getting_started_projects__project_id__getting_started_get",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GettingStartedOutEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/projects/{project_id}/memory": {
       "post": {
         "tags": [
@@ -47862,6 +47818,81 @@
         }
       }
     },
+    "/users/me/first-project": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Give the signed-in user their first project, once per account",
+        "operationId": "make_my_first_project_users_me_first_project_post",
+        "parameters": [
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FirstProjectIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirstProjectOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users/{userId}/identity": {
       "get": {
         "tags": [
@@ -55468,6 +55499,78 @@
         ],
         "title": "FetchIn"
       },
+      "FirstProjectIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "FirstProjectIn"
+      },
+      "FirstProjectOut": {
+        "properties": {
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id"
+        ],
+        "title": "FirstProjectOut"
+      },
+      "FirstProjectOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FirstProjectOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "FirstProjectOutEnvelope"
+      },
       "ForceMergeDecision": {
         "properties": {
           "reason": {
@@ -55631,61 +55734,6 @@
           "message"
         ],
         "title": "FrontendErrorIn"
-      },
-      "GettingStartedOut": {
-        "properties": {
-          "talked": {
-            "type": "boolean",
-            "title": "Talked"
-          },
-          "landed": {
-            "type": "boolean",
-            "title": "Landed"
-          }
-        },
-        "type": "object",
-        "required": [
-          "talked",
-          "landed"
-        ],
-        "title": "GettingStartedOut",
-        "description": "「开始清单」要服务端回答的那一条（`GET /projects/{id}/getting-started`）。"
-      },
-      "GettingStartedOutEnvelope": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "default": 200
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "$ref": "#/components/schemas/GettingStartedOut"
-          },
-          "warnings": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Warnings"
-          }
-        },
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "title": "GettingStartedOutEnvelope"
       },
       "GrantCreate": {
         "properties": {

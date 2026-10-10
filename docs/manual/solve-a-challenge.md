@@ -170,7 +170,7 @@ parts:
     title: "# 综合"
     at: 1
   - kind: line
-    text: 从一件具体的事开始
+    text: 你想先做点什么？
     at: 1
     until: 2
   - kind: msg

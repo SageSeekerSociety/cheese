@@ -804,7 +804,6 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/weeklies", auth: "actor.project", owner: "block"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/tasks", auth: "actor.project", owner: "project.rail"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/progress", auth: "actor.project", owner: "project"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/getting-started", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/memory", auth: "memory.closed.write", owner: "memory"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-chat", auth: "project.private.chat", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge", auth: "actor.project", owner: "project"}
@@ -1181,6 +1180,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/users/me", auth: "legacy.answers.list_answers", owner: "user"}
   - {protocol: "http", method: "PUT", path: "/users/me/language", auth: "user.session", owner: "user"}
   - {protocol: "http", method: "PUT", path: "/users/me/timezone", auth: "user.session", owner: "user"}
+  - {protocol: "http", method: "POST", path: "/users/me/first-project", auth: "user.session", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email/code", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "POST", path: "/users/me/email", auth: "legacy.users.send_add_email_code", owner: "user"}
   - {protocol: "http", method: "GET", path: "/users/me/auth-methods", auth: "legacy.answers.list_answers", owner: "user"}

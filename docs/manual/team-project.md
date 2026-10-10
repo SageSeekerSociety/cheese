@@ -190,13 +190,7 @@ parts:
     title: "# 综合"
     at: 3
   - kind: line
-    text: 从一件具体的事开始
-    sub: 芝士可以查找资料、起草文档，或和你一起拆分任务
-    at: 3
-  - kind: checklist
-    title: 开始清单
-    items: 让成果进代码仓库 | 跟芝士说第一句话 | 把要用的材料放进来 | 把同事请进来
-    done: 1
+    text: 你想先做点什么？
     at: 3
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理

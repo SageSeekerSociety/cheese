@@ -32,6 +32,7 @@
   },
   "allSpaces": "All spaces",
   "emptyTitle": "No {project} yet",
+  "firstProjectName": "{name}'s project",
   "joinAction": "Join with a code",
   "joinBody": "The space's creator provides the invite code",
   "joinCancel": "Cancel",
@@ -56,12 +57,6 @@
       "action": "Go to teams"
     },
     "settingsNote": "AI teammates and code repositories are set up inside a project: open Project settings — the first section is AI teammates, and the repository is under “Repository and credit”."
-  },
-  "startGuide": {
-    "aria": "Getting-started tip",
-    "project": "Start a project here",
-    "materials": "Or drop it in the library",
-    "skip": "Skip the tour"
   },
   "sessionMachine": {
     "machine": "Change to",
@@ -985,32 +980,24 @@
       "readingAttachment": "{agent} is reading an attachment…",
       "quoteChanged": "The quoted text has changed"
     },
-    "gettingStarted": {
-      "title": "Getting started",
-      "dismiss": "Don't show again",
-      "talk": "Say the first word to {agent}",
-      "talkHint": "In the box below",
-      "materials": "Bring your material in",
-      "materialsAction": "Open library",
-      "repo": "Get results into the repository",
-      "repoAction": "Connect repository",
-      "people": "Bring a colleague in",
-      "peopleAction": "Go to members",
-      "note": "AI teammates and the code repository are both changed in Project settings: the first section is AI teammates, and the repository is under “Repository and credit”."
-    },
     "chat": {
       "pickTopic": "Select a channel to start chatting",
       "starter": {
-        "research": "Find sources",
-        "researchText": "Look up the material for me, cite your sources, and write it up as a document. What I want to understand is: ",
-        "draft": "Draft a document",
-        "draftText": "Draft a document for me. Confirm the goal and the audience with me first. What I want to write is: ",
-        "breakdown": "Break down a goal",
-        "breakdownText": "Break my goal into tasks I can act on, and show me the suggested split first. My goal is: "
+        "tidy": "Tidy up or rewrite a document",
+        "tidyHint": "Slides, papers, reports, spreadsheets",
+        "tidyText": "Tidy up or rewrite the attached material for me. Show me how you plan to change it first, and start once I confirm. What I want is: ",
+        "research": "Research a topic into a report",
+        "researchHint": "With sources, ready to download",
+        "researchText": "Look up the material for me, cite your sources, and write it up as a report. Show me the outline first, and write it in full once I confirm. What I want to understand is: ",
+        "build": "Build a web page or small tool",
+        "buildHint": "Open the preview when it is done",
+        "buildText": "Build a web page for me and send me the preview link when it is done. Show me the page structure first, and start once I confirm. What I want to build is: ",
+        "plan": "Break down a goal and split the work",
+        "planHint": "Good for team projects",
+        "planText": "Break my goal into tasks I can act on, with a suggested split of the work and a schedule. Show me how you would break it down first. My goal is: "
       },
       "startAria": "Start working in this project",
-      "startTitle": "Start with something concrete",
-      "startBody": "{agent} can find sources, draft documents, or break down tasks with you",
+      "startTitle": "What would you like to do first?",
       "loadingOlder": "Loading older messages…",
       "older": "Older messages",
       "newMessagesBelow": "New messages below",

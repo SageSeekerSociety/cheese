@@ -34,7 +34,6 @@ import ThreadLine from '../room/ThreadLine.vue'
 import TimelineMark from '../TimelineMark.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
-import UserRef from '@/components/common/UserRefLink.vue'
 import RoutineRunLine from '@/components/routine/RoutineRunLine.vue'
 import { t } from '@/i18n'
 
@@ -78,8 +77,7 @@ const props = defineProps<{
   /** 房间里有队友正在跑这一轮。 */
   working: boolean
   showStarters: boolean
-  starterPrompts: { label: string; text: string }[]
-  agentSeat: { handle?: string } | undefined
+  starterPrompts: { label: string; hint: string; text: string }[]
   agentName: string
   refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
   outbox: Outgoing[]
@@ -367,20 +365,21 @@ function emitOutboxLeave(el: Element, done: () => void) {
         <LoadingSkeleton v-if="loadingHistory" variant="chat" />
       </Transition>
 
-      <section v-if="showStarters" class="chat-start px-5 py-8" :aria-label="t('work.room.chat.startAria')">
-        <h2 class="t-title mb-2">{{ t('work.room.chat.startTitle') }}</h2>
-        <i18n-t scope="global" keypath="work.room.chat.startBody" tag="p" class="t-body c-muted mb-4">
-          <template #agent><UserRef :handle="agentSeat?.handle" :name="agentName" /></template>
-        </i18n-t>
-        <div class="d-flex flex-wrap ga-2">
-          <BaseButton
+      <!-- 起手卡：项目本体还没跟 AI 队友说上话时，四件具体的事，点一张就把一句写好的请求
+           放进输入框，人改完再发。新账号登录后第一屏就是这里（router/home.ts）。 -->
+      <section v-if="showStarters" class="chat-start" :aria-label="t('work.room.chat.startAria')">
+        <h2 class="t-page-title chat-start__title">{{ t('work.room.chat.startTitle') }}</h2>
+        <div class="chat-start__cards">
+          <button
             v-for="prompt in starterPrompts"
             :key="prompt.label"
-            kind="secondary"
-            size="sm"
+            type="button"
+            class="chat-start__card"
             @click="emit('starter', prompt.text)"
-            >{{ prompt.label }}</BaseButton
           >
+            <span class="t-title">{{ prompt.label }}</span>
+            <span class="t-body c-faint">{{ prompt.hint }}</span>
+          </button>
         </div>
       </section>
 
@@ -602,6 +601,40 @@ function emitOutboxLeave(el: Element, done: () => void) {
 <style scoped src="../room/room-row.css"></style>
 
 <style scoped>
+.chat-start {
+  max-width: 560px;
+  padding: 32px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-start__title {
+  margin: 0;
+}
+.chat-start__cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.chat-start__card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  cursor: pointer;
+}
+.chat-start__card:hover {
+  background: var(--fill);
+}
+@media (max-width: 600px) {
+  .chat-start__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .messages {
   background: var(--surface);
   /* A flex child's implicit min-height is its content — without this, a long
