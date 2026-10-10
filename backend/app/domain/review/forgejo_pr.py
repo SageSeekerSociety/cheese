@@ -14,8 +14,8 @@ from app.domain.review.github_pr import (
     GitHubPrError,
     MergeResult,
     OpenedPR,
-    PullRequestStatus,
 )
+from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.pr_signals import ReviewSignal
 
 

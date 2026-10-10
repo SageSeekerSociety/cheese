@@ -44,7 +44,7 @@ from . import cards, decisions, merge_queue, notices, polling, reviewers
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
-    from app.domain.review.github_pr import PullRequestStatus
+    from app.domain.review.github_pr_status import PullRequestStatus
 
 
 class AcceptService:

@@ -728,3 +728,52 @@ async def test_status_carries_githubs_own_draft_flag():
     )
 
     assert status.draft is True
+
+
+# ---- pull_request_status: mergeability GitHub has not worked out yet ---------
+
+
+def _open_pr(mergeable_state: str, mergeable: bool | None) -> dict:
+    return {
+        "state": "open",
+        "merged": False,
+        "mergeable": mergeable,
+        "mergeable_state": mergeable_state,
+        "head": {"sha": "abc"},
+    }
+
+
+async def _no_wait(_seconds: float) -> None:
+    return None
+
+
+@pytest.mark.anyio
+async def test_status_waits_out_the_mergeability_github_is_still_computing():
+    """Right after a merge to the base branch, GitHub answers the first read of
+    every open PR with `unknown` and works the answer out behind it. The status
+    is the answer, not that first read."""
+    answers = iter([_open_pr("unknown", None), _open_pr("clean", True)])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=next(answers))
+
+    client = HttpxGitHubPrClient(transport=httpx.MockTransport(handler), sleep=_no_wait)
+    status = await client.pull_request_status(
+        owner="acme", repo="widgets", number=7, token="t"
+    )
+
+    assert status.mergeable_state == "clean"
+    assert status.mergeable is True
+
+
+@pytest.mark.anyio
+async def test_status_still_answers_when_github_never_works_it_out():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_open_pr("unknown", None))
+
+    client = HttpxGitHubPrClient(transport=httpx.MockTransport(handler), sleep=_no_wait)
+    status = await client.pull_request_status(
+        owner="acme", repo="widgets", number=7, token="t"
+    )
+
+    assert status.mergeable_state == "unknown"
