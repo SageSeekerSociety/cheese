@@ -106,10 +106,16 @@ const myIdentity = computed(
     identities.value.find((i) => i.approved === 'NONE') ??
     null
 )
+/** 领到了：报名批过。接口的 `joined` 不是这个意思 —— 它对还在等批的报名也是 true（只排除被拒的），
+ *  拿它当「领到了」，等批的人就会看到一颗服务端不收的「提交作业」。批没批看 `submittable`
+ *  （服务端按批过的报名算）和我那份报名自己的审核状态。 */
 const joined = computed(
-  () => taskData.value?.joined === true || identities.value.some((i) => i.approved === 'APPROVED')
+  () => taskData.value?.submittable === true || identities.value.some((i) => i.approved === 'APPROVED')
 )
-const myClaimPending = computed(() => !joined.value && identities.value.some((i) => i.approved === 'NONE'))
+/** 报了还没批：接口说我在这道题里（`joined`），或者我有一份等批的报名，但还没批过。 */
+const myClaimPending = computed(
+  () => !joined.value && (taskData.value?.joined === true || identities.value.some((i) => i.approved === 'NONE'))
+)
 const myClaimRejected = computed(
   () => identities.value.length > 0 && identities.value.every((i) => i.approved === 'DISAPPROVED')
 )
