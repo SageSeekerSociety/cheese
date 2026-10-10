@@ -2,6 +2,7 @@
 import { computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
 
 import { useBranchProtection } from '@/composables/useBranchProtection'
@@ -142,13 +143,17 @@ watch(
 const { mdAndUp } = useDisplay()
 const router = useRouter()
 
-// 归档成了：项目已经不在清单里，清单刷一遍（刷不成功不该把归档变成失败），人回到
-// 首页。replace：再按回退键不该又落回这个项目的设置页。
+// 归档成了：项目已经不在清单里，清单刷一遍（刷不成功不该把归档变成失败），人落到
+// 「已归档的项目」——刚归档的这个就列在那里，取消归档也在那里。不回首页：首页会把人
+// 带到上次待的另一个项目，看上去像什么都没发生、又像换了个项目。名字先记下来：清单
+// 刷过之后这个项目就查不到了。replace：再按回退键不该又落回这个项目的设置页。
 const { archiving, archiveError, archiveProject } = useProjectArchive(
   () => props.projectId,
   async () => {
+    const name = projectName.value
     await Promise.allSettled([workspace.refreshProjects()])
-    void router.replace('/')
+    toast.success(t('work.projectSettings.archive.done', { name }))
+    void router.replace({ name: 'my-archived-projects' })
   }
 )
 

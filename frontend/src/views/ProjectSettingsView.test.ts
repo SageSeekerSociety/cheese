@@ -15,6 +15,7 @@ import { setLocale } from '@/i18n'
 import { seedProjects } from '@/test/seedQueries'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 const router = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
@@ -22,7 +23,15 @@ const router = vi.hoisted(() => ({
 }))
 
 vi.mock('../api')
+vi.mock('vuetify-sonner', () => ({ toast }))
 vi.mock('../api/ownAgents')
+vi.mock('../components/settings/ArchiveProjectSection.vue', () => ({
+  // i18n-data: a stand-in that confirms the archive at once
+  default: {
+    emits: ['archive'],
+    template: '<section><button class="archive-confirmed" @click="$emit(\'archive\')">归档</button></section>',
+  },
+}))
 vi.mock('../utils/sudo', () => ({
   SudoCancelledError: class SudoCancelledError extends Error {},
   withSudo: vi.fn(),
@@ -256,6 +265,28 @@ describe('project settings', () => {
         '导出项目',
         '归档项目',
       ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  // 归档完不回首页：首页会把人带进上次待的另一个项目，像是归档没发生、又像跳错了地方。
+  it('after archiving, says so and opens the archived projects, where this one now is', async () => {
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
+    vi.mocked(api.archiveProject).mockResolvedValue(undefined as never)
+    const wrapper = await openSettings('archive')
+    try {
+      // 确认框（打项目名）是 ArchiveProjectDialog 自己的事，这里替身直接说「确认归档」。
+      const confirm = await vi.waitFor(() => {
+        const el = document.body.querySelector<HTMLButtonElement>('.archive-confirmed')
+        if (!el) throw new Error('archive section not drawn yet')
+        return el
+      })
+      confirm.click()
+
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith({ name: 'my-archived-projects' }))
+      expect(api.archiveProject).toHaveBeenCalledWith('project')
+      expect(toast.success).toHaveBeenCalledWith('已归档「毕业设计」')
     } finally {
       wrapper.unmount()
     }

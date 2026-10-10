@@ -1628,7 +1628,8 @@
         "submit": "Archive",
         "body": "The project leaves every member's project list, can no longer be changed, and its running tasks stop. Everything in it is kept, and you can unarchive it from Archived projects",
         "confirmLabel": "Type the project name \"{name}\" to confirm"
-      }
+      },
+      "done": "Archived “{name}”"
     },
     "export": {
       "title": "Export project",
