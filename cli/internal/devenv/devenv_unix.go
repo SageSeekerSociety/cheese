@@ -8,6 +8,11 @@
 // `python3` on PATH is older, or missing, the server's pinned build is placed
 // under the footprint root and put first on this process's PATH, which every
 // command and session it starts inherits.
+//
+// On Linux it is also `bwrap`, which a room's sandbox is made with. That one is
+// placed whatever the system has: the sandbox is the platform's, so the build
+// it runs on is the one the platform pinned, not one a machine may or may not
+// have installed.
 package devenv
 
 import (
@@ -30,8 +35,9 @@ import (
 // minimum is the oldest Python the session's runner runs on (it uses StrEnum).
 const minimum = "(3, 11)"
 
-// Ensure places the server's Python when the system's is too old, and puts it
-// first on PATH. base is the connector's `<origin>/connector`.
+// Ensure places the server's Python when the system's is too old, and on Linux
+// the server's bwrap, and puts each first on PATH. base is the connector's
+// `<origin>/connector`.
 func Ensure(ctx context.Context, base string, log io.Writer) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -39,18 +45,30 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	}
 	root := filepath.Join(home, place.Root, "runtime")
 	bin := filepath.Join(root, "python", "bin")
-	if _, err := os.Stat(filepath.Join(bin, "python3")); err != nil && recentEnough("python3") {
+	_, placed := os.Stat(filepath.Join(bin, "python3"))
+	python := placed == nil || !recentEnough("python3")
+	if !python && runtime.GOOS != "linux" {
 		return nil
 	}
 	platform, err := toolchainPlatform(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return err
 	}
+	base = strings.TrimRight(base, "/")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return err
 	}
-	python := tool{"python", ".tar.gz", extractTarGz}
-	if err := ensureTool(ctx, strings.TrimRight(base, "/"), root, platform, python, log); err != nil {
+	if runtime.GOOS == "linux" {
+		bubblewrap := tool{"bubblewrap", ".tar.gz", extractTarGz}
+		if err := ensureTool(ctx, base, root, platform, bubblewrap, log); err != nil {
+			return fmt.Errorf("bubblewrap: %w", err)
+		}
+		runtimepath.Put(filepath.Join(root, "bubblewrap"))
+	}
+	if !python {
+		return nil
+	}
+	if err := ensureTool(ctx, base, root, platform, tool{"python", ".tar.gz", extractTarGz}, log); err != nil {
 		return fmt.Errorf("python: %w", err)
 	}
 	runtimepath.Put(bin)
@@ -67,7 +85,7 @@ func recentEnough(python string) bool {
 func toolchainPlatform(goos, goarch string) (string, error) {
 	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[goarch]
 	if (goos != "linux" && goos != "darwin") || arch == "" {
-		return "", fmt.Errorf("no Python build for %s/%s", goos, goarch)
+		return "", fmt.Errorf("no toolchain build for %s/%s", goos, goarch)
 	}
 	return goos + "-" + arch, nil
 }
