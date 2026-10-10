@@ -23,7 +23,7 @@ from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
 )
-from app.domain.team.services import TeamService
+from app.domain.team.services import TeamService, may_remove_member
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -677,17 +677,28 @@ async def get_team_members(
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
-    """Return team members for a given team."""
-    _ = auth_user
+    """Return team members for a given team.
+
+    Each row says whether the reader may remove that member (``canRemove``),
+    by the rule the remove endpoint enforces. The reader's own row says no:
+    leaving is its own action, not a removal from the roster.
+    """
     relations = list(await service.get_team_members(team_id=team_id))
+    viewer_role = next(
+        (rel.role for rel in relations if rel.user_id == auth_user.user_id), None
+    )
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, relations)
     members = [
-        _member_to_api_model(
-            rel,
-            users_map=users_map,
-            profiles_map=profiles_map,
-            avatars_map=avatars_map,
-        )
+        {
+            **_member_to_api_model(
+                rel,
+                users_map=users_map,
+                profiles_map=profiles_map,
+                avatars_map=avatars_map,
+            ),
+            "canRemove": rel.user_id != auth_user.user_id
+            and may_remove_member(viewer_role, rel.role, own=False),
+        }
         for rel in relations
     ]
     # Compute allMembersVerified: check real-name status for each member

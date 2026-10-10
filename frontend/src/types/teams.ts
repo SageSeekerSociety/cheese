@@ -11,6 +11,8 @@ export type TeamJoinStatus = 'member' | 'pending' | 'none'
 export interface TeamMember {
   role: TeamMemberRoleType
   user: User
+  /** The reader may remove this member: the server's own removal rule. False on the reader's own row. */
+  canRemove?: boolean
 }
 
 export interface Team {
