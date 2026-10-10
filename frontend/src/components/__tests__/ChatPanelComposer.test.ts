@@ -214,6 +214,25 @@ describe('对话栏自己的输入栏', () => {
     expect(queryByRole('button', { name: '起草文档' })).toBeNull()
   })
 
+  // 任务页的对话栏拿的也是频道这只房间（kind 是 root）。起手区块是频道主线的，
+  // 新建的空任务里不该冒出「从一件具体的事开始」。
+  it('does not offer starter drafts in a task of the channel', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const { queryByRole, queryByText } = render(ChatPanel, {
+      props: {
+        topic: { ...topic('starter-task-room'), kind: 'root' },
+        conversationId: 'task-in-starter-task-room',
+        showComposer: true,
+        hideHeader: true,
+        members,
+      },
+      global: { plugins: [vuetify, i18n, attachments] },
+    })
+    await flush()
+    expect(queryByText('从一件具体的事开始')).toBeNull()
+    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+  })
+
   // 退休判据是「芝士在这个房间里说过话」，不是「房间里有没有东西」。新用户常常先
   // 自己说一句（而且往往忘了 @），那句话落在房间里，却没有任何一行字替他说明下一
   // 步该说什么——入口正是在这个时刻最该还在。

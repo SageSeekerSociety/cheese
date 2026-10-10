@@ -38,6 +38,9 @@ export interface RowRefs {
 
 export interface ChatComposerDeps {
   topic: () => Topic | null
+  /** The panel reads the room's own conversation, not a task or 支线 in it. A
+   *  task's panel is handed the room as `topic` too. */
+  ownLine: () => boolean
   alwaysSummon: () => boolean
   showComposer: () => boolean
   /** The rows the timeline is showing — the retry button only ever sits on the last one. */
@@ -62,6 +65,7 @@ export interface ChatComposerDeps {
 export function useChatComposer(deps: ChatComposerDeps) {
   const {
     topic,
+    ownLine,
     alwaysSummon,
     showComposer,
     rows,
@@ -189,6 +193,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
   const roomHasAttachment = computed(() => blocks.value.some((b) => b.kind === 'attachment' && !isAgentBlock(b)))
   const showStarters = computed(
     () =>
+      ownLine() &&
       topic()?.kind === 'root' &&
       topic()?.status !== 'archived' &&
       showComposer() &&
