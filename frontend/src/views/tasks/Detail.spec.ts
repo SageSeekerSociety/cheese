@@ -210,6 +210,31 @@ describe('题目详情', () => {
     expect(claimButton(container)?.disabled).toBe(true)
   })
 
+  it.each([
+    ['个人', { submitterType: 'USER' }, { id: 11, type: 'USER', approved: 'NONE' }],
+    ['团队', { submitterType: 'TEAM' }, { id: 12, type: 'TEAM', approved: 'NONE', teamName: '红队' }],
+  ])('%s领取还在等批：没有「提交作业」，按钮灰着写明在等批，也没有「我的提交」', async (_, task, identity) => {
+    // 接口对等批的报名也回 `joined: true`，只有 `submittable` 是 false。
+    const { container } = await mount(
+      { ...task, joined: true, submittable: false },
+      { hasParticipation: true, identities: [identity] }
+    )
+
+    expect(buttonWith(container, t('tasks.page.submit.first'))).toBeNull()
+    expect(hrefs(container)).not.toContain(`${BASE}/submit`)
+    const btn = claimButton(container)!
+    expect(btn.disabled).toBe(true)
+    expect(btn.textContent).toContain(t('tasks.page.claim.pending'))
+    expect(hrefs(container)).not.toContain(`${BASE}/submissions`)
+  })
+
+  it('批过之后：主操作是「提交作业」', async () => {
+    const { container } = await mount({ joined: true, submittable: true }, APPROVED_ME)
+
+    await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submit`))
+    expect(claimButton(container)).toBeNull()
+  })
+
   it('上限 0 是「不限」：人再多也领得动', async () => {
     const { container } = await mount({ participants: { total: 30, examples: [] }, participantLimit: 0 })
 
