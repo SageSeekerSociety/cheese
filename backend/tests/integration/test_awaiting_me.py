@@ -231,6 +231,31 @@ def test_a_question_in_a_task_is_on_the_list_of_the_tasks_people(
     assert _mine(client, "carol") == []
 
 
+def test_a_question_leaves_the_list_when_its_task_closes(
+    client, stub_hooks, monkeypatch
+):
+    """一道题挂在任务上，只在任务还开着时等人回答：任务关了，题跟着结束，清单上
+    不再有它（任务里的选项也不再能点，见前端 `AskQuickReplies`）。"""
+    project = _project(client, "alice")
+    room = _room(client, project, "alice")
+    task = open_task(client, room, owner="alice")["id"]
+    with active_ask(
+        client, stub_hooks, monkeypatch, task, platform_turn=True
+    ) as headers:
+        _ask(client, task, headers)
+    (item,) = _mine(client, "alice")
+    assert item["reason"] == "asked"
+
+    r = client.post(
+        f"/topics/{task}/close",
+        json={"conclusion": "做完了"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    assert _mine(client, "alice") == []
+
+
 def test_an_idle_room_is_not_something_to_process(client):
     """清单只收待处理 —— 一个闲着的房间没有在等任何人。"""
     project = _project(client, "alice")

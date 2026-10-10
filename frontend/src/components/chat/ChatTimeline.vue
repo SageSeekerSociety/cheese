@@ -40,6 +40,8 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
+  /** 这里已经不能回答提问了（任务关了、频道归档了）。 */
+  askClosed?: boolean
   /** 私聊里的消息不能转为任务：不给「转为任务」。 */
   noUpgrade?: boolean
   /** 这是频道的主线：消息可以有支线，下面挂着支线那一行。 */
@@ -468,6 +470,7 @@ function emitOutboxLeave(el: Element, done: () => void) {
             :time="fmtTime(m.created_at)"
             :refs="refs"
             :viewer="viewer"
+            :ask-closed="askClosed"
             :active="bar.shown && bar.id === m.id"
             :live="liveChecklists.has(m.id)"
             :face="faceRows.get(m.id)?.state ?? null"

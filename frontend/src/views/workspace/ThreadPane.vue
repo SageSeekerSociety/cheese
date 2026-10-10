@@ -216,6 +216,7 @@ function toTask() {
         hide-header
         show-composer
         :composer-closed="room.status === 'archived' ? t('work.channel.archivedNotice') : null"
+        :ask-closed="room.status === 'archived'"
         in-thread
         :members="members"
         :topic-list="topicList"

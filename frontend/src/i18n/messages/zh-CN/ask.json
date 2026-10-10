@@ -3,6 +3,7 @@
     "label": "快捷回复",
     "recommended": "推荐",
     "answered": "{name}：{text}",
-    "noneOfThese": "以上都不是"
+    "noneOfThese": "以上都不是",
+    "closed": "已结束，不再等回答"
   }
 }

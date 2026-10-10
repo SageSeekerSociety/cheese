@@ -79,6 +79,9 @@ const props = withDefaults(
     // 这里此刻不能说话，以及为什么（任务只有负责人能说话、任务已关闭）。输入框的
     // 位置换成这一句，`composer-closed` 插槽接在它后面。
     composerClosed?: string | null
+    // 这里的提问已经不再等回答（任务关了、频道归档了）：选项不再给点。和
+    // `composerClosed` 分开，因为「我不能说话」（任务只有负责人能说）不等于「题结束了」。
+    askClosed?: boolean
     // 这一栏是一条支线：输入框写「在支线中回复」；我上一句叫过 AI 队友的话，打开时
     // 先带上「@芝士 」。
     inThread?: boolean
@@ -96,6 +99,7 @@ const props = withDefaults(
     conversationId: null,
     taskAgentHandle: null,
     composerClosed: null,
+    askClosed: false,
     inThread: false,
   }
 )
@@ -393,6 +397,7 @@ defineExpose({ send, linkDown, submitQuestion })
       <ErrorBoundary :reset-key="topic.id">
         <ChatTimeline
           :topic="topic"
+          :ask-closed="askClosed"
           :no-upgrade="noUpgrade"
           :threadable="threadable"
           :processable="inThread"
