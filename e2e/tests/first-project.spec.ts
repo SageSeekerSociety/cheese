@@ -4,7 +4,9 @@ import { DEMO_PASSWORD, acceptPendingConsents } from "./helpers";
 
 // A new account's first screen is its own project's 综合, with the starter
 // cards: no "new project" to find first, and nothing is sent until the person
-// sends it. grace, because no other spec signs in as her and she owns nothing.
+// sends it. grace, because no other spec signs in as her; the CI seed puts
+// every demo account in a team that has projects, so she first leaves hers
+// (全栈开发小队, team 2) and has none, like an account just registered.
 test("a new account lands in its own project and starts from a card", async ({ page }) => {
   const signedIn = await page.request.post("/api/users/auth/login", {
     data: { username: "grace", password: DEMO_PASSWORD },
@@ -12,6 +14,11 @@ test("a new account lands in its own project and starts from a card", async ({ p
   expect(signedIn.ok()).toBe(true);
   const { accessToken, user } = (await signedIn.json()).data;
   await acceptPendingConsents(page, accessToken);
+  // A retry finds her already out of it.
+  const left = await page.request.delete("/api/users/me/teams/2", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect([200, 204, 404]).toContain(left.status());
   await page.goto("/favicon.ico");
   await page.evaluate(
     ({ accessToken, user }) => {
