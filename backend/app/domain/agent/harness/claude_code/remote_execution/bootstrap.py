@@ -713,11 +713,9 @@ def enrolled_bubblewrap():
     found = shutil.which("bwrap")
     if not found:
         raise SandboxUnavailable(
-            "This room runs in an isolated environment, which needs "
-            "bubblewrap, and bubblewrap is not installed on this machine. "
-            "Install it (Debian and Ubuntu: sudo apt install bubblewrap; "
-            "Fedora: sudo dnf install bubblewrap; Arch: sudo pacman -S "
-            "bubblewrap) and try again. " + FULL_ACCESS_INSTEAD
+            "This room runs in an isolated environment, made with the bubblewrap "
+            "cheesehost places on this machine when it starts, and it is not "
+            "there. Restart cheesehost and try again. " + FULL_ACCESS_INSTEAD
         )
     probe = subprocess.run(
         [found, "--unshare-user", "--unshare-pid", "--ro-bind", "/", "/"]
@@ -732,16 +730,16 @@ def enrolled_bubblewrap():
             "make one on this machine ("
             + probe.stderr.strip()[-300:]
             + "). "
-            + user_namespaces_advice()
+            + user_namespaces_advice(found)
             + " "
             + FULL_ACCESS_INSTEAD
         )
     return found
 
 
-def user_namespaces_advice():
-    """What to change on this machine for bubblewrap to make a sandbox, which
-    it does in a user namespace of its own, as the user and not as root."""
+def user_namespaces_advice(bwrap):
+    """What to change on this machine for `bwrap` to make a sandbox, which it
+    does in a user namespace of its own, as the user and not as root."""
 
     def setting(path):
         try:
@@ -754,10 +752,12 @@ def user_namespaces_advice():
     )
     if setting("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") == "1":
         return (
-            "AppArmor here restricts unprivileged user namespaces, as Ubuntu "
-            "does from 23.10 on. Allow them for bubblewrap with an AppArmor "
-            "profile for it, or for every program with: sudo sysctl -w "
-            "kernel.apparmor_restrict_unprivileged_userns=0" + keep + "."
+            "AppArmor here allows a user namespace only to a program a profile "
+            "names, as Ubuntu does from 23.10 on. Name cheesehost's bubblewrap "
+            "once, as root: printf 'abi <abi/4.0>,\\ninclude <tunables/global>"
+            "\\nprofile cheese-bwrap " + bwrap + " flags=(unconfined) {\\n  "
+            "userns,\\n}\\n' | sudo tee /etc/apparmor.d/cheese-bwrap && sudo "
+            "apparmor_parser -r /etc/apparmor.d/cheese-bwrap"
         )
     if setting("/proc/sys/kernel/unprivileged_userns_clone") == "0":
         return (
