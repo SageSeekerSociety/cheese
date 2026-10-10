@@ -234,6 +234,7 @@
     "versionPassed": "第 {n} 版已通过",
     "versionFailed": "第 {n} 版未通过",
     "overdue": "已过期 {n} 天",
+    "closed": "已截止",
     "dueToday": "今天截止",
     "daysLeft": "还剩 {n} 天",
     "myDeadline": "我的提交截止：{when}",

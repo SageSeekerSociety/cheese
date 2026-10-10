@@ -64,13 +64,20 @@
         <div v-if="task.rank">
           <dt>{{ t('tasks.side.rank') }}</dt>
           <dd>
+            <!-- 每颗星由 v-rating 自己那个隐藏的单选框带名字（「难度 N / 5」）；它默认画的星是一颗
+                 也带同一句 aria-label 的按钮，又坐在那个单选框的 <label> 里，读屏就念两遍。
+                 这里只画星的图标，不给它名字。 -->
             <v-rating
               :model-value="task.rank"
               :item-aria-label="rankStarLabel"
               readonly
               density="compact"
               size="x-small"
-            />
+            >
+              <template #item="{ icon, color }">
+                <v-icon :icon="icon" :color="color" size="16" class="ts__star" aria-hidden="true" />
+              </template>
+            </v-rating>
           </dd>
         </div>
         <div>
@@ -93,6 +100,8 @@ import type { Task, TaskSubmissionReview } from '@/types'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
+
+import { deadlineState } from '@/utils/tasks'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
@@ -153,13 +162,12 @@ const myDeadlineText = computed(() =>
     : t('tasks.side.myDeadline', { when: dayjs(myDeadline.value).format(t('tasks.roster.dateTimeFormat')) })
 )
 
+/** 过没过、隔几天都由 `deadlineState` 说，交作业表单的「已截止」读的也是它。 */
 const remaining = computed(() => {
-  const at = myDeadline.value
-  if (at == null) return ''
-  const days = Math.ceil((at - Date.now()) / DAY_MS)
-  if (days < 0) return t('tasks.side.overdue', { n: -days })
-  if (days === 0) return t('tasks.side.dueToday')
-  return t('tasks.side.daysLeft', { n: days })
+  const state = deadlineState(myDeadline.value)
+  if (state == null) return ''
+  if (state.passed) return state.days === 0 ? t('tasks.side.closed') : t('tasks.side.overdue', { n: state.days })
+  return state.days === 0 ? t('tasks.side.dueToday') : t('tasks.side.daysLeft', { n: state.days })
 })
 
 const formText = computed(() => {
@@ -176,12 +184,10 @@ const formText = computed(() => {
 const rankStarLabel = computed(() => t('tasks.side.rankStar', { n: '{0}', of: '{1}' }))
 
 const deadlineText = computed(() => {
-  const at = props.task.deadline
-  if (at == null) return t('tasks.side.deadlineNone')
-  const days = Math.ceil((at - Date.now()) / DAY_MS)
-  if (days < 0) return t('tasks.side.closedAgo', { n: -days })
-  if (days === 0) return t('tasks.side.dueToday')
-  return t('tasks.side.dueIn', { n: days })
+  const state = deadlineState(props.task.deadline)
+  if (state == null) return t('tasks.side.deadlineNone')
+  if (state.passed) return state.days === 0 ? t('tasks.side.closed') : t('tasks.side.closedAgo', { n: state.days })
+  return state.days === 0 ? t('tasks.side.dueToday') : t('tasks.side.dueIn', { n: state.days })
 })
 
 /** 领取之后给每人的提交期限（天）。发题表单存的是天数，老数据里存的是毫秒（14 天存成
@@ -334,6 +340,10 @@ watch(
 
 .ts__facts {
   margin: 0;
+}
+
+.ts__star {
+  margin: 0 2px;
 }
 
 .ts__facts > div {

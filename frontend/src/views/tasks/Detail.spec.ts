@@ -526,11 +526,31 @@ describe('题目详情', () => {
     expect(days.container.textContent).toContain(i18n.global.t('tasks.side.periodValue', { n: 30 }))
   })
 
-  it('题目信息里的难度星，每颗读出来是「难度 N / 5」，不是「评分」', async () => {
-    const { container } = await mount({ rank: 2 })
+  it('题目信息里的难度星，每颗只有一个名字「难度 N / 5」，不念两遍', async () => {
+    const { getByRole, queryAllByRole } = await mount({ rank: 2 })
 
-    const stars = Array.from(container.querySelectorAll('.v-rating button')).map((b) => b.getAttribute('aria-label'))
-    expect(stars).toContain('难度 2 / 5')
-    expect(stars.every((name) => name?.startsWith('难度 '))).toBe(true)
+    for (const n of [1, 2, 3, 4, 5]) expect(getByRole('radio', { name: `难度 ${n} / 5` })).toBeTruthy()
+    expect(queryAllByRole('radio', { name: /难度.*难度/ })).toHaveLength(0)
+    expect(queryAllByRole('button', { name: /难度/ })).toHaveLength(0)
+  })
+
+  it('我自己的截止过了 21 小时：我的进度不说「今天截止」，和交作业表单一样说已经截止', async () => {
+    const { container } = await mount(
+      { submittable: true, submissionSchema: [{ type: 'TEXT', prompt: '成果说明' }] },
+      {
+        hasParticipation: true,
+        identities: [
+          { id: 11, type: 'USER', approved: 'APPROVED', canSubmit: true, deadline: Date.now() - 21 * 3_600_000 },
+        ],
+      },
+      `${BASE}/submit`
+    )
+
+    await waitFor(() => expect(container.querySelector('.expired-text')?.textContent).toBe(t('shell.countdown.closed')))
+    const head = container.querySelector('.ts__mine-head')?.textContent ?? ''
+    expect(head).not.toContain(t('tasks.side.dueToday'))
+    expect([t('tasks.side.closed'), i18n.global.t('tasks.side.overdue', { n: 1 })].some((s) => head.includes(s))).toBe(
+      true
+    )
   })
 })

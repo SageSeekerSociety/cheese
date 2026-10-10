@@ -231,6 +231,7 @@
     "versionPassed": "Version {n} passed",
     "versionFailed": "Version {n} not passed",
     "overdue": "{n} days overdue",
+    "closed": "Closed",
     "dueToday": "Due today",
     "daysLeft": "{n} days left",
     "myDeadline": "Your deadline: {when}",
