@@ -14,7 +14,7 @@ export const SECTIONS = [
     ['工作电脑', ['use-your-computer']],
   ]],
   ['features', '功能说明', 'layers', [
-    ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
+    ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks', 'routines']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
     ['教学', ['challenges', 'spaces']],
     ['资源', ['environment', 'devices', 'quota', 'feedback']],
@@ -51,6 +51,11 @@ export const REDIRECTS = {
   ...Object.fromEntries(SPACE_SECTIONS.map((a) => [`challenges#${a}`, a === 'spaces' ? 'spaces' : `spaces#${a}`])),
   // 设备与环境 was split: choosing an environment moved to its own page.
   ...Object.fromEntries(['topic-environment', 'cloud-busy'].map((a) => [`devices#${a}`, `environment#${a}`])),
+  // 频道 was tightened: the routine-run section became its own page, and two sections folded into others.
+  'rooms#routine-runs': 'routines#runs',
+  'rooms#channel-overview': 'rooms#topic-layout',
+  'rooms#join-channel': 'rooms#create-topic',
+  'rooms#topic-runtime': 'rooms#topic-members',
 }
 
 // Hand-picked highlights per release, [text, PR]. The full list comes from git.

@@ -237,7 +237,7 @@ parts:
 
 :::cards
 - [验收与采纳](/accept#accept)：卡上每个按钮的意思，需要几个人批准时怎么办。
-- [任务与看板](/tasks#tasks)：负责人、协作者，以及看板上每一列的意思。
+- [任务](/tasks#tasks)：负责人、协作者，以及「全部任务」每一组的意思。
 - [让 AI 队友处理消息](/agents#summon)：除了 `Ctrl/Cmd+Enter`，还有哪些方式把消息交给芝士。
 - [和同学一起做一个项目](/team-project#team-project)：三个人和芝士做完一份大作业。
 :::

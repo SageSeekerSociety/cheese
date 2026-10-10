@@ -50,7 +50,6 @@ async function settle(page, ms = 1200) {
 // name → [device, take(page, ctx) returning screenshot options]
 const SHOTS = {
   'work-home': [desktop, async (page) => { await page.goto(`${APP}/`); await settle(page); return { clip: { x: 64, y: 30, width: 1376, height: 320 } } }],
-  room: [desktop, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/channels/${rooms['报名表单改版']}`); await settle(page, 2000) }],
   'room-menu': [desktop, async (page, { pid, rooms }) => {
     await page.goto(`${APP}/projects/${pid}/channels/${rooms['报名表单改版']}`)
     await settle(page)
@@ -70,9 +69,7 @@ const SHOTS = {
     const box = await page.locator('.accept-dock').first().boundingBox()
     return { clip: { x: box.x - 16, y: box.y - 4, width: box.width + 32, height: box.height + 20 } }
   }],
-  settings: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/settings`); await settle(page, 2000); return { clip: { x: 345, y: 34, width: 1095, height: 616 } } }],
   'm-work-home': [phone, async (page) => { await page.goto(`${APP}/`); await settle(page) }],
-  'm-room': [phone, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/channels/${rooms['报名表单改版']}`); await settle(page, 2000) }],
 }
 
 const wanted = process.argv.slice(2)
