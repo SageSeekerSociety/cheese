@@ -312,31 +312,43 @@ function warmDestination() {
 // or the tile reads as a small square framed inside a bigger one.
 .app-rail-item.app-rail-item--tile {
   background-color: transparent;
-  // the amber ring is a box-shadow on the avatar; a v-card clips its content
-  // (overflow:hidden) so the ring only showed at the corners. Let it render
-  // fully so the frame is a clean, symmetric square on all 4 sides.
+  // v-card 默认 overflow: hidden，会把探出格子的件数角标和左边的竖条裁掉。
   overflow: visible;
 
   &:hover,
   &[aria-current] {
     background-color: transparent;
   }
+}
 
-  // Selected project reads as selected via an amber ring FRAMING the square:
-  // a 3px gap in the rail's own colour, then the 2px ring. The gap is --canvas
-  // (the rail sits on `background`), not --surface — on dark those differ and
-  // a surface-coloured gap would draw a second, lighter ring.
-  .v-avatar {
-    transition: box-shadow var(--dur-quick) var(--ease-standard);
-  }
-  &[aria-current] .v-avatar {
-    // `primary`, not the #f57f17 literal: identical in light (primary IS
-    // #F57F17) and correctly lightened to #FFA733 on dark, where the original
-    // amber only reaches 3.1:1.
-    box-shadow:
-      0 0 0 3px var(--canvas),
-      0 0 0 5px rgb(var(--v-theme-primary));
-  }
+// 「你在这儿」画在 rail 左边缘的一条圆头竖条上（Discord 式），不碰头像，也不和
+// 右上角的件数角标打架：选中是长的一条，悬停没选中的格子是短的一截。原来的琥珀
+// 描边框在头像外面再套一圈，和头像自己的颜色混在一起，不好看也不好认。
+//
+// 格子 48px 居中在 64px 的 rail 里，左边离 rail 边缘 8px，所以竖条往外挪 8px 贴边。
+// 颜色用 on-surface：深色 rail 上是白的，浅色 rail 上是深墨，同一个 token 两套
+// 主题都够亮眼；不用琥珀，琥珀留给主操作和品牌标记。「＋新建项目」不是目的地，
+// 不画竖条。
+.app-rail-item:not(.app-rail-item--add)::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 4px;
+  height: 0;
+  border-radius: var(--radius-pill);
+  background-color: rgb(var(--v-theme-on-surface));
+  transform: translateY(-50%);
+  transition: height var(--dur-quick) var(--ease-standard);
+  pointer-events: none;
+}
+
+.app-rail-item:not(.app-rail-item--add):hover::before {
+  height: 20px;
+}
+
+.app-rail-item:not(.app-rail-item--add)[aria-current]::before {
+  height: 36px;
 }
 
 // 普通图标格（「待办」）：和首页那一格同一块底，选中时用琥珀色的图标说「你在这儿」。
