@@ -155,6 +155,7 @@ def channel(client, monkeypatch):
 
     hub: Any = SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda device: device in {"center", "executor"},
         call_executor=AsyncMock(side_effect=runner),
         exec=AsyncMock(

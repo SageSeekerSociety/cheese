@@ -1,5 +1,6 @@
 """The project default and room-local resource choices."""
 
+from functools import partial
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -16,7 +17,7 @@ from app.domain.agent.market import (
     cloud_vm_provisionable,
     compute_default_name,
 )
-from app.domain.device.supply import default_visibility
+from app.domain.device.supply import default_visibility, may_isolate
 from app.domain.device.wiring import sql_device_service
 from app.domain.policy import gate
 from app.domain.user.models import User as UserRow
@@ -271,4 +272,6 @@ async def _machine_this_room_gets(session: AsyncSession, topic, choice: ComputeC
     binding = await devices.topic_binding(topic.id)
     if binding is not None:
         return await devices.get_device(binding.device_id)
-    return await devices.first_healthy_device(topic.project_id, device_hub.is_online)
+    return await devices.first_healthy_device(
+        topic.project_id, device_hub.is_online, partial(may_isolate, device_hub)
+    )

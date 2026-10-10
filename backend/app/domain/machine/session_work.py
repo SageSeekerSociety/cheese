@@ -44,10 +44,12 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
 from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.device.service import prefer_isolating
 from app.domain.device.supply import (
     Supply,
     Visibility,
     default_visibility,
+    may_isolate,
     sandbox_unavailable,
 )
 from app.domain.device.wiring import sql_device_service
@@ -936,7 +938,7 @@ async def _attempt(
             return {"unavailable": UNBOUND}
         if selected is None:
             selected = await devices.first_healthy_device(
-                topic.project_id, hub.is_online
+                topic.project_id, hub.is_online, partial(may_isolate, hub)
             )
         if (
             own_host is None
@@ -949,13 +951,19 @@ async def _attempt(
         ):
             # 「系统挑一台」 for a task picks among the computers that may work
             # it: someone else's own computer works only its owner's tasks.
-            selected = None
-            for device in await devices.list_devices_for_project(topic.project_id):
-                if _reachable(hub, device.device_id) and await works_tasks_of(
-                    db, device.device_id, project, task.owner_handle
-                ):
-                    selected = device
-                    break
+            selected = prefer_isolating(
+                [
+                    device
+                    for device in await devices.list_devices_for_project(
+                        topic.project_id
+                    )
+                    if _reachable(hub, device.device_id)
+                    and await works_tasks_of(
+                        db, device.device_id, project, task.owner_handle
+                    )
+                ],
+                partial(may_isolate, hub),
+            )
         if selected is None or not _reachable(hub, selected.device_id):
             await db.commit()
             return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}

@@ -75,6 +75,7 @@ def _hub():
 
     return SimpleNamespace(
         target=lambda _device: "linux-amd64",
+        isolates=lambda _device: None,
         is_online=lambda device: True,
         reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),

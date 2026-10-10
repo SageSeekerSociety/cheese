@@ -397,6 +397,9 @@ class RemoteDeviceHub:
         # is what `DeviceHub.target` answers before a machine says hello.
         return self._devices.get(device_id, {}).get("target") or ""
 
+    def isolates(self, device_id: str) -> bool | None:
+        return self._devices.get(device_id, {}).get("isolates")
+
     def last_seen_age(self, device_id: str) -> float | None:
         return self._devices.get(device_id, {}).get("last_seen_age")
 

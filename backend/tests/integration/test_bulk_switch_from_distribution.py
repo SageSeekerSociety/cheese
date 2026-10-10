@@ -129,7 +129,9 @@ def _pushes(monkeypatch):
         work_lease,
         "device_hub",
         SimpleNamespace(
-            target=lambda _device: "linux-amd64", is_online=lambda device: True
+            target=lambda _device: "linux-amd64",
+            isolates=lambda _device: None,
+            is_online=lambda device: True,
         ),
     )
     remote = AsyncMock(
