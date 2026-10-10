@@ -189,6 +189,14 @@ describe('链接里的项目换不出来', () => {
     expect(store.topicsError).not.toBeNull()
   })
 
+  it('登录以后这一次没问到：不再说要登录', async () => {
+    await arrive('/projects/signed-in-now/tasks/1412', noteSignedOut)
+    resolveProject.mockRejectedValue(new TypeError('Failed to fetch'))
+    listTopics.mockRejectedValue(new TypeError('Failed to fetch'))
+    const store = await arrive('/projects/signed-in-now/tasks/1412', canonicalAddress)
+    expect(store.accessDenied).not.toBe('unauthenticated')
+  })
+
   it('登录以后换得出来了：说明撤掉，内容取回来', async () => {
     const store = await arrive('/projects/later/tasks/1412', noteSignedOut)
     resolveProject.mockResolvedValue({ id: '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10', slug: 'later' })

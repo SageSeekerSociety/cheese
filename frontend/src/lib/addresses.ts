@@ -227,6 +227,8 @@ export async function canonicalAddress(to: RouteLocationNormalized): Promise<tru
   if (!to.matched.some((r) => r.meta?.projectFrame === true)) return true
   const ref = to.params.projectId
   if (typeof ref !== 'string' || !ref) return true
+  // 走到这里的人已经登录了：没登录时记下的「要登录」不再作数，这一次没问到也不能留着它。
+  if (refusedByRef.get(ref) === 'unauthenticated') refusedByRef.delete(ref)
   const project = await projectOf(ref)
   if (!project) return true
 

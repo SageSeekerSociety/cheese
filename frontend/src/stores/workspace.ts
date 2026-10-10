@@ -100,7 +100,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     void identityChanges.value
     return myHandle()
   })
-  const hasProject = computed(() => !!projectId.value && !refused.value)
+  const hasProject = computed(() => !!projectId.value)
+  // 这个项目的东西能不能去读：地址换不出来的不去读。自己的项目清单不在此列，照常读。
+  const reachable = computed(() => hasProject.value && !refused.value)
 
   // 进了项目、或者哪一页要了（`refreshProjects`）才读：没打开任何项目时 store 不替谁去问。
   const projectsWanted = ref(false)
@@ -117,14 +119,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projectsSettled = computed(() => projectsRead.isFetched.value)
 
   const topicsRead = useQuery(
-    computed(() => ({ ...topicsQuery(pid.value), enabled: hasProject.value })),
+    computed(() => ({ ...topicsQuery(pid.value), enabled: reachable.value })),
     queryClient
   )
   const topics = computed<Topic[]>(() => topicsRead.data.value?.data ?? [])
-  const loadingTopics = computed(() => hasProject.value && topicsRead.isPending.value && !topicsRead.isError.value)
+  const loadingTopics = computed(() => reachable.value && topicsRead.isPending.value && !topicsRead.isError.value)
 
   const membersRead = useQuery(
-    computed(() => ({ ...membersQuery(pid.value), enabled: hasProject.value })),
+    computed(() => ({ ...membersQuery(pid.value), enabled: reachable.value })),
     queryClient
   )
   const members = computed(() => membersRead.data.value ?? [])
@@ -146,7 +148,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 每个频道和任务在等我的东西（`TopicUnread`：行上的数字、名字加不加粗、上次读后来了
   // 几条），和私聊未读——私聊按对方的 handle 编址（'cheese' = 和芝士那一间），因为私聊
   // 的行来自成员名单，没有话题 id。频道的数字已经按我设的通知档位算过了（后端）。
-  const withMe = computed(() => hasProject.value && !!me.value)
+  const withMe = computed(() => reachable.value && !!me.value)
   const unreadRead = useQuery(
     computed(() => ({ ...unreadQuery(pid.value, me.value), enabled: withMe.value })),
     queryClient
@@ -160,7 +162,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 我不在默认档位的频道（{topic_id: {level, muted_until}}）。过了期的静音后端不列；
   // 页面开着的时候静音到点，下一次轮询会把它拿掉。
   const levelsRead = useQuery(
-    computed(() => ({ ...notifyLevelsQuery(pid.value), enabled: hasProject.value })),
+    computed(() => ({ ...notifyLevelsQuery(pid.value), enabled: reachable.value })),
     queryClient
   )
   const notifyLevels = computed<Record<string, TopicNotifySetting>>(() => levelsRead.data.value ?? {})
