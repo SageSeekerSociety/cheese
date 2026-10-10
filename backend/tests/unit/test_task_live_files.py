@@ -278,3 +278,45 @@ async def test_live_files_on_a_released_sandbox_say_so(monkeypatch, released):
     else:
         with pytest.raises(DeviceCallError):
             await files.live("diff", base_branch="main")
+
+
+@pytest.mark.anyio
+async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
+    monkeypatch, tmp_path
+):
+    from app.core.errors import NotFoundError
+    from app.domain.repository import forge_files
+
+    task = SimpleNamespace(
+        id=uuid.uuid4(),
+        room_id=uuid.uuid4(),
+        status=forge_files.TaskStatus.open,
+        base_branch="main",
+    )
+    room = SimpleNamespace(id=task.room_id, resource_id=None)
+    session = SimpleNamespace(get=AsyncMock(return_value=room))
+    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id)
+    monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
+    monkeypatch.setattr(
+        forge_files.AgentSessionService,
+        "places_in_room",
+        AsyncMock(
+            return_value=[
+                SimpleNamespace(resource_id=str(room.id), lease={"kind": "device"})
+            ]
+        ),
+    )
+    # The machine itself, whose home holds no directory for this task.
+    executor = object.__new__(Executor)
+    executor.env = {"HOME": str(tmp_path)}
+
+    async def call(_target, method, params):
+        assert method == "task_fs"
+        return executor.task_fs(params)
+
+    monkeypatch.setattr(forge_files.execution, "call", call)
+
+    assert await files.files("live") == ([], "live")
+    assert await files.diff("live") == ""
+    with pytest.raises(NotFoundError):
+        await files.live("read", path="README.md")
