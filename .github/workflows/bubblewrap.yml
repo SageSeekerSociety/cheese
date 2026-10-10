@@ -1,0 +1,75 @@
+name: bubblewrap
+
+# The bwrap cheesehost places on Linux machines (`scripts/build-bubblewrap.sh`).
+# A pull request that changes the recipe builds it, so the recipe is known to
+# work before it merges; publishing the release that `agent/toolchain.py` pins
+# is a manual dispatch from main, because a release is what machines download.
+on:
+  pull_request:
+    paths:
+      - scripts/build-bubblewrap.sh
+      - .github/workflows/bubblewrap.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build in Alpine
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work \
+            alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 \
+            sh scripts/build-bubblewrap.sh dist
+      # Ubuntu from 24.04 refuses a user namespace to a program no AppArmor
+      # profile allows one, and the profile Ubuntu ships names /usr/bin/bwrap.
+      # So on this runner the placed copy is refused until its owner allows
+      # it, once, as root; this proves both halves.
+      - name: Make a sandbox with it, as a user
+        run: |
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP"
+          bwrap=$(echo "$RUNNER_TEMP"/bubblewrap-*/bwrap)
+          sandbox() { "$bwrap" --unshare-user --unshare-pid --ro-bind / / --proc /proc --dev /dev true; }
+          restricted=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)
+          if [ "$restricted" = 1 ]; then
+            if sandbox; then echo "::error::restricted, yet allowed before any profile: this run proves nothing"; exit 1; fi
+            printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile cheese-bwrap %s flags=(unconfined) {\n  userns,\n}\n' "$bwrap" \
+              | sudo tee /etc/apparmor.d/cheese-bwrap
+            sudo apparmor_parser -r /etc/apparmor.d/cheese-bwrap
+          fi
+          sandbox
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bubblewrap-${{ matrix.runner }}
+          path: dist/
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          revision=$(sed -n 's/^revision=//p' scripts/build-bubblewrap.sh)
+          version=$(sed -n 's/^version=//p' scripts/build-bubblewrap.sh)
+          source=$(sed -n 's/^source_sha256=//p' scripts/build-bubblewrap.sh)
+          gh release create "bubblewrap-v$revision" dist/* \
+            --title "bubblewrap $revision" \
+            --notes "bubblewrap $version, built statically against musl in Alpine 3.22 by \`scripts/build-bubblewrap.sh\` for cheesehost to place on Linux machines. Source: the upstream release tarball, SHA-256 \`$source\`. Licensed LGPL-2.0-or-later; COPYING is in each archive."
