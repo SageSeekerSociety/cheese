@@ -227,7 +227,6 @@ async def _publish_as_agent(
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}
     )
-    await chat.thread_replied(place.conversation_id)
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     # A task's session names nobody into its task: only its owner speaks there.
