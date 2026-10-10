@@ -18,6 +18,27 @@ from starlette.websockets import WebSocketDisconnect
 from app.core.obs import RedactSecrets, configure_logging, scrub_secrets
 
 
+@pytest.fixture(autouse=True)
+def _uvicorn_loggers_at_their_default_level():
+    """Start each test with uvicorn's loggers where a process uvicorn starts
+    has them: at its default level, info.
+
+    Logger levels outlive a test. A uvicorn server another test started in this
+    worker with ``log_level="error"`` leaves ``uvicorn.error`` and
+    ``uvicorn.access`` at ERROR, and the info lines these tests write through
+    them would be dropped before any handler or filter saw them.
+    """
+    loggers = [
+        logging.getLogger(n) for n in ("uvicorn", "uvicorn.error", "uvicorn.access")
+    ]
+    levels = [logger.level for logger in loggers]
+    for logger in loggers:
+        logger.setLevel(logging.INFO)
+    yield
+    for logger, level in zip(loggers, levels, strict=True):
+        logger.setLevel(level)
+
+
 def test_the_filter_is_actually_installed_by_the_real_setup():
     """The wiring, not the mechanism.
 
