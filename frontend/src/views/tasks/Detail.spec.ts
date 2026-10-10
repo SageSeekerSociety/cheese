@@ -47,6 +47,11 @@ vi.mock('@/composables/usePageTitle', () => ({
   usePageTitle: () => ({ setDynamicTitle: vi.fn(), clearDynamicTitle: vi.fn() }),
 }))
 
+// 交作业表单开场问一次单个文件的上限，写进「提交须知」。
+vi.mock('@/network/api/attachments', () => ({
+  AttachmentsApi: { upload: vi.fn(), limits: vi.fn(async () => ({ data: { maxFileBytes: 100 * 1024 * 1024 } })) },
+}))
+
 // 领取/退队/实名/对话那几张对话框挂在老机器上（事件总线 + `TaskDialogs`），这里只留空壳。
 vi.mock('@/views/tasks/components', async () => {
   const { defineComponent: dc, h: hh } = await import('vue')

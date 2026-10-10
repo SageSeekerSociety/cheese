@@ -488,7 +488,7 @@
     "chooseIdentity": "Choose who to submit as:",
     "guideTitle": "Before you submit",
     "guideRequirements": "Make sure your submission meets the challenge requirements and every required field is filled in",
-    "guideFileSize": "Files can be up to 50 MB; common document and archive formats are supported",
+    "guideFileSize": "Up to {size} per file; common document and archive formats are supported",
     "guideMultiple": "This challenge allows multiple submissions; you can update your work any time before the deadline",
     "guideOnce": "This challenge allows one submission only and it can't be changed afterwards, so check before you submit",
     "uploadingTitle": "Uploading your submission",

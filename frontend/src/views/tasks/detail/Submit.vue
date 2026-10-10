@@ -151,8 +151,11 @@
           <v-list-item prepend-icon="mdi-check-circle-outline" class="ps-2">
             <v-list-item-title>{{ t('tasks.submit.guideRequirements') }}</v-list-item-title>
           </v-list-item>
-          <v-list-item prepend-icon="mdi-file-upload-outline" class="ps-2">
-            <v-list-item-title>{{ t('tasks.submit.guideFileSize') }}</v-list-item-title>
+          <!-- 上限是上传那一步真拦的那个数（`GET /attachments/limits`）；问不到就不写这一行，不猜一个数。 -->
+          <v-list-item v-if="maxFileBytes" prepend-icon="mdi-file-upload-outline" class="ps-2">
+            <v-list-item-title>{{
+              t('tasks.submit.guideFileSize', { size: formatFileSize(maxFileBytes) })
+            }}</v-list-item-title>
           </v-list-item>
           <v-list-item v-if="taskData?.resubmittable" prepend-icon="mdi-refresh" class="ps-2">
             <v-list-item-title>{{ t('tasks.submit.guideMultiple') }}</v-list-item-title>
@@ -223,6 +226,8 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
 
+import { formatFileSize } from '@/utils/materials'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
@@ -251,6 +256,8 @@ const currentFileName = ref('')
 const uploadSpeed = ref('0 KB/s')
 const timeRemaining = ref('')
 const selectedIdentityId = ref<number | null>(null)
+/** 单个文件的上限：服务端上传时拦的那个数。`null` = 还没问到。 */
+const maxFileBytes = ref<number | null>(null)
 
 // 计算有效的提交身份（已通过审核且可提交的）
 const submissionIdentities = computed(() => {
@@ -339,6 +346,16 @@ const updateProgress = throttle((progressEvent: any) => {
     })
   }
 }, 200)
+
+// 「提交须知」里那句上限：问不到就少说一句，上传照旧，不弹错。
+onMounted(async () => {
+  try {
+    const { data } = await AttachmentsApi.limits()
+    maxFileBytes.value = data.maxFileBytes
+  } catch {
+    maxFileBytes.value = null
+  }
+})
 
 // 初始化提交内容
 onMounted(() => {

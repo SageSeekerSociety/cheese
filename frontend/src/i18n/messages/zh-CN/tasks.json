@@ -491,7 +491,7 @@
     "chooseIdentity": "请选择你要使用的提交身份：",
     "guideTitle": "提交须知",
     "guideRequirements": "确保你的提交内容符合题目要求，并且所有必填项均已填写完整",
-    "guideFileSize": "上传的文件大小不得超过50MB，支持常见文档和压缩包格式",
+    "guideFileSize": "单个文件不超过 {size}，支持常见文档和压缩包格式",
     "guideMultiple": "该题目允许多次提交，你可以在截止日期前多次更新你的作品",
     "guideOnce": "该题目仅允许提交一次，提交后将无法修改，请谨慎操作",
     "uploadingTitle": "正在上传提交内容",
