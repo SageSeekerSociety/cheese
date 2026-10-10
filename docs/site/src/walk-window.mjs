@@ -39,7 +39,7 @@ export function mountWalk(el, { reduced = false } = {}) {
       mark(i + 1)
       if (reduced) return stage.jump(i + 1)
       // From the screen before this step, so the press that the step describes is seen.
-      stage.jump(i)
+      stage.jump(i, { animate: true })
       await stage.go(i + 1)
       if (run !== me) return
     }
@@ -51,14 +51,13 @@ export function mountWalk(el, { reduced = false } = {}) {
     })
   })
 
-  stage.lock()
   stage.jump(stage.beats)
   if (reduced) return
 
   async function walk() {
     const me = ++run
     mark(0)
-    stage.jump(0)
+    stage.jump(0, { animate: true })
     await wait(BEFORE)
     for (let n = 1; n <= steps.length; n++) {
       if (run !== me) return
