@@ -26,7 +26,21 @@ vi.mock('@/api', async () => {
   }
 })
 
+const resolveProject = vi.fn()
+
+vi.mock('@/api/addresses', () => ({
+  resolveProject: (...a: unknown[]) => resolveProject(...a),
+  resolveNumber: vi.fn().mockRejectedValue(new Error('not here')),
+  addressOf: vi.fn().mockRejectedValue(new Error('not here')),
+}))
+
+import type { RouteLocationNormalized } from 'vue-router'
+
+import { createMemoryHistory, createRouter } from 'vue-router'
+
 import { ApiError } from '@/api'
+import { addressProps, canonicalAddress, noteSignedOut } from '@/lib/addresses'
+import { workspaceRoutes } from '@/router/workspaceRoutes'
 import { dropCachesIfSomeoneElseLogsIn } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -130,6 +144,65 @@ describe('开着的项目页，登录在中途没了', () => {
     const store = await openFine()
     listTopics.mockRejectedValue(new TypeError('Failed to fetch'))
     await store.refreshTopics()
+    await flush()
+    expect(store.accessDenied).toBeNull()
+    expect(store.topics.map((t) => t.id)).toEqual(['t1'])
+  })
+})
+
+// 链接里是项目的短名（`/projects/cheese-dev/tasks/1412`）。登录了的人，守卫拿短名换
+// UUID；看不到这个项目的人换不出来，服务端答「没有」（不是成员也这样答）。以前页面接着
+// 拿短名去要频道清单，被当成参数不合法挡回来，侧栏上就只剩一句「加载频道失败 请求参数
+// 不合法」：人看不出是自己进不来、项目不存在，还是平台坏了。
+describe('链接里的项目换不出来', () => {
+  const router = createRouter({ history: createMemoryHistory(), routes: [workspaceRoutes] })
+  const at = (path: string) => router.resolve(path) as unknown as RouteLocationNormalized
+
+  async function arrive(path: string, guard: (to: RouteLocationNormalized) => unknown) {
+    await guard(at(path))
+    const store = useWorkspaceStore()
+    store.openProject(addressProps(at(path)).projectId)
+    await flush()
+    return store
+  }
+
+  it('看不到这个项目：整页说打不开，也不拿短名去要频道清单', async () => {
+    resolveProject.mockRejectedValue(new ApiError(404, 'Project not found'))
+    const store = await arrive('/projects/someone-elses/tasks/1412', canonicalAddress)
+    expect(store.accessDenied).toBe('missing')
+    expect(store.topicsError).toBeNull()
+    expect(listTopics).not.toHaveBeenCalled()
+  })
+
+  it('没登录：整页说要登录', async () => {
+    const store = await arrive('/projects/not-signed-in/tasks/1412', noteSignedOut)
+    expect(store.accessDenied).toBe('unauthenticated')
+    expect(listTopics).not.toHaveBeenCalled()
+  })
+
+  // 断网时没问到，不等于进不来：照常去读，读不到由侧栏就地报错 + 重试。
+  it('只是没问到：不说进不来', async () => {
+    resolveProject.mockRejectedValue(new TypeError('Failed to fetch'))
+    listTopics.mockRejectedValue(new TypeError('Failed to fetch'))
+    const store = await arrive('/projects/flaky/tasks/1412', canonicalAddress)
+    expect(store.accessDenied).toBeNull()
+    expect(store.topicsError).not.toBeNull()
+  })
+
+  it('登录以后这一次没问到：不再说要登录', async () => {
+    await arrive('/projects/signed-in-now/tasks/1412', noteSignedOut)
+    resolveProject.mockRejectedValue(new TypeError('Failed to fetch'))
+    listTopics.mockRejectedValue(new TypeError('Failed to fetch'))
+    const store = await arrive('/projects/signed-in-now/tasks/1412', canonicalAddress)
+    expect(store.accessDenied).not.toBe('unauthenticated')
+  })
+
+  it('登录以后换得出来了：说明撤掉，内容取回来', async () => {
+    const store = await arrive('/projects/later/tasks/1412', noteSignedOut)
+    resolveProject.mockResolvedValue({ id: '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10', slug: 'later' })
+    listTopics.mockResolvedValue({ data: [{ id: 't1', kind: 'root' }] })
+    await canonicalAddress(at('/projects/later/tasks/1412'))
+    store.openProject(addressProps(at('/projects/later/tasks/1412')).projectId)
     await flush()
     expect(store.accessDenied).toBeNull()
     expect(store.topics.map((t) => t.id)).toEqual(['t1'])

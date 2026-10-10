@@ -1374,7 +1374,9 @@
     "archivedBody": "Everything is still here. It can be used again once the project owner unarchives it",
     "backToProjects": "Back to my projects",
     "forbiddenTitle": "You're not a member of this project",
-    "forbiddenBody": "Only project members can see what is here. If you need access, ask someone on the project to add you"
+    "forbiddenBody": "Only project members can see what is here. If you need access, ask someone on the project to add you",
+    "missingTitle": "Can't open this project",
+    "missingBody": "This project doesn't exist, or you're not a member of it. If you need access, ask someone on the project to add you"
   },
   "topicState": {
     "draft": "Draft",

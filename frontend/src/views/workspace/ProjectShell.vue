@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, toRef, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
@@ -74,24 +74,29 @@ onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 
 // 频道清单、未读、提醒档位：框架这一层一直看着它们。别的房间里有人说话、改了名、
 // 芝士开始或停下，项目推一帧过来，变了的那一份重读（query/projectFeed）。
+// 地址上的项目换不出来（没登录、没有这个项目或看不到）时，这一层也不拿短名去请求。
 const me = myHandle()
+const reachable = computed(() => !store.projectRefused)
 useQuery(
-  computed(() => topicsQuery(props.projectId)),
+  computed(() => ({ ...topicsQuery(props.projectId), enabled: reachable.value })),
   queryClient
 )
 useQuery(
-  computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me })),
+  computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me && reachable.value })),
   queryClient
 )
 useQuery(
-  computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me })),
+  computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me && reachable.value })),
   queryClient
 )
 useQuery(
-  computed(() => notifyLevelsQuery(props.projectId)),
+  computed(() => ({ ...notifyLevelsQuery(props.projectId), enabled: reachable.value })),
   queryClient
 )
-useProjectFeed(toRef(props, 'projectId'), me || null)
+useProjectFeed(
+  computed(() => (reachable.value ? props.projectId : '')),
+  me || null
+)
 
 // 这个框架底下这几页的代码，趁空闲先下下来：侧栏那一行「总览/资料库」、侧栏和总览
 // 里的任务行，点下去就是它们。按页名热，因为框架这一层拿不到每一页的地址参数
