@@ -4,15 +4,22 @@ A closed task is work that is over. Left running, the teammate went on for
 minutes after its owner closed the task: the room kept showing it at work, the
 model kept being paid for, and every write it tried was refused because the
 task was closed. When the task's own session is the one closing it, that turn
-is the one asking, and it ends by itself.
+is the one asking, and it gets to finish.
+
+The close can reach a backend that does not hold the session — the one taking
+over in a deploy — and the backend that does still stops the work.
 """
 
 import time
 import uuid
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import update
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
+from app.domain.room_task.models import Task
 from app.main import app
 from tests.conftest import StubChannel, retire_topic, stub_compute
 from tests.integration.conftest import (
@@ -50,18 +57,38 @@ def _interrupts(channel: StubChannel, task: uuid.UUID) -> list[dict]:
     ]
 
 
-def _working_task(client) -> tuple[KeepsWorking, dict, str]:
-    """A started task whose teammate is in the middle of its first turn."""
-    data = post_project(client, {"name": "Close"}, owner="alice").json()["data"]
-    room = data["root_topic_id"]
-    channel = KeepsWorking()
-    service = ChatService(
+def _backend(client, channel: StubChannel) -> ChatService:
+    """One backend process's sessions, reached through ``channel``."""
+    return ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/close-task-ws",
         compute=stub_compute(channel),
     )
+
+
+def _a_while_ago(client, task_id: uuid.UUID) -> None:
+    """Let a minute pass since the task closed."""
+
+    async def age() -> None:
+        async with client.test_request_factory() as session:
+            await session.execute(
+                update(Task)
+                .where(Task.id == task_id)
+                .values(closed_at=datetime.now(UTC) - timedelta(minutes=1))
+            )
+            await session.commit()
+
+    client.portal.call(age)
+
+
+def _working_task(client) -> tuple[KeepsWorking, dict, str]:
+    """A started task whose teammate is in the middle of its first turn."""
+    data = post_project(client, {"name": "Close"}, owner="alice").json()["data"]
+    room = data["root_topic_id"]
+    channel = KeepsWorking()
+    service = _backend(client, channel)
     app.dependency_overrides[get_chat_service] = lambda: service
     task = open_task(client, room, "验证一下", owner="alice")
     task_id = uuid.UUID(task["id"])
@@ -113,6 +140,61 @@ def test_a_task_closed_by_its_own_session_is_not_interrupted(client):
         )
         assert closed.status_code == 200, closed.text
         assert _interrupts(channel, task_id) == []
+    finally:
+        retire_topic(client, task_id)
+        app.dependency_overrides.pop(get_chat_service, None)
+
+
+def test_a_close_reaching_another_backend_still_stops_the_turn(client):
+    channel, task, _ = _working_task(client)
+    task_id = uuid.UUID(task["id"])
+    holder = app.dependency_overrides[get_chat_service]()
+    try:
+        # The close lands on a backend that holds no session: the one taking
+        # over in a deploy, before the work has moved to it.
+        elsewhere = _backend(client, KeepsWorking())
+        app.dependency_overrides[get_chat_service] = lambda: elsewhere
+        closed = client.post(
+            f"/topics/{task['id']}/close",
+            json={"conclusion": "不用做了"},
+            headers=session_auth_headers("alice"),
+        )
+        assert closed.status_code == 200, closed.text
+        assert _interrupts(channel, task_id) == []
+
+        # The backend holding the session looks again, a while later.
+        _a_while_ago(client, task_id)
+        client.portal.call(holder.stop_work_in_closed_tasks)
+
+        assert _interrupts(channel, task_id), "the backend holding it kept working"
+    finally:
+        app.dependency_overrides[get_chat_service] = lambda: holder
+        retire_topic(client, task_id)
+        app.dependency_overrides.pop(get_chat_service, None)
+
+
+def test_a_turn_that_closed_its_own_task_gets_to_finish_then_stops(client):
+    channel, task, room = _working_task(client)
+    task_id = uuid.UUID(task["id"])
+    holder = app.dependency_overrides[get_chat_service]()
+    try:
+        closed = client.post(
+            f"/topics/{task['id']}/close",
+            json={"conclusion": "做完了"},
+            headers=task_agent_headers(
+                task["project_id"], task_id, room_agent_seat(client, room)
+            ),
+        )
+        assert closed.status_code == 200, closed.text
+
+        client.portal.call(holder.stop_work_in_closed_tasks)
+        assert _interrupts(channel, task_id) == []
+
+        # Still at it long after it closed the task: that is work going on in
+        # a task that is over.
+        _a_while_ago(client, task_id)
+        client.portal.call(holder.stop_work_in_closed_tasks)
+        assert _interrupts(channel, task_id)
     finally:
         retire_topic(client, task_id)
         app.dependency_overrides.pop(get_chat_service, None)

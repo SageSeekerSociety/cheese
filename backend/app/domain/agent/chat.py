@@ -340,6 +340,13 @@ class ChatService(SessionRecovery):
         task that has just closed. What it wrote so far stays."""
         await self._compute.stop_work(conversation_id)
 
+    async def stop_work_in_closed_tasks(self) -> int:
+        """Stop the work this process's sessions still do in closed tasks
+        (`turn_inputs.stop_work_in_closed_tasks`)."""
+        return await turn_inputs.stop_work_in_closed_tasks(
+            self._sessions, self._compute
+        )
+
     @property
     def turn_preparation(self) -> TurnPreparation:
         if self._turn_preparation is None:

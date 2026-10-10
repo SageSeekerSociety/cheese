@@ -506,6 +506,13 @@ def periodic_jobs(
             settings.orphan_sweep_interval_s,
             lambda: sweep_orphan_turns(chat),
         ),
+        # A close stops a task's work only where it lands; the process holding
+        # the session goes by the task's closed state instead.
+        PeriodicRunner(
+            "closed task stop",
+            settings.closed_task_stop_interval_s,
+            lambda: chat.stop_work_in_closed_tasks(),
+        ),
         # A message queued behind a turn starts when that turn's end nudges the
         # scan. A nudge that finds the seat still busy is not repeated, so one
         # missed wake-up left a message waiting until something unrelated woke

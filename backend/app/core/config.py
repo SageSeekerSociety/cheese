@@ -859,6 +859,12 @@ class Settings(BaseSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # Seconds between looks, on the process holding the sessions, for work
+    # still running in a task that has closed (`stop_work_in_closed_tasks`).
+    # One indexed read of the tasks its working seats are in, and none when no
+    # seat is working: this is how long a close that reached another backend
+    # can leave a turn running.
+    closed_task_stop_interval_s: int = 10
     # How long a message can wait for its turn past a missed wake-up
     # (`background.periodic_jobs`). One indexed read of the few waiting
     # messages per run (`ix_blocks_queued_messages`), owner process only.

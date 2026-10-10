@@ -128,6 +128,15 @@ class ComputePool:
                     with contextlib.suppress(DeviceCallError, DeviceOffline):
                         await runtime.interrupt(live.session)
 
+    def working_conversations(self) -> set[uuid.UUID]:
+        """Every conversation a seat this process holds is working in."""
+        return {
+            seat[0]
+            for runtime in self._runtimes()
+            for seat in runtime.work
+            if seat in runtime.live
+        }
+
     def default(self) -> "RoomSessions":
         return self._backends[self._default]
 
