@@ -76,12 +76,8 @@ async def _announce_filed(
     topic: Topic,
     card: AcceptCard,
     task: Task,
-    *,
-    artifact: str,
 ) -> None:
-    return await _announce_filed_from_room(
-        self._session, topic, card, task, artifact=artifact
-    )
+    return await _announce_filed_from_room(self._session, topic, card, task)
 
 
 async def _announce_new_artifact(

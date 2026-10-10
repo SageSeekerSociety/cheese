@@ -271,7 +271,7 @@ async def create_card(
             snapshot[1],
         )
     card.pr_number, card.pr_url = task.pr_number, task.pr_url
-    await self._announce_filed(topic, card, task, artifact=declared.name)
+    await self._announce_filed(topic, card, task)
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
     await self._warn_about_a_second_pending_migration(topic, task.id)
