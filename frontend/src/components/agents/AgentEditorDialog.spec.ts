@@ -217,6 +217,13 @@ describe('新建时的校验', () => {
     )
   })
 
+  it('says why a level is greyed out on a model that skips it', async () => {
+    mountDialog(null)
+    await chooseModel('DeepSeek')
+    await waitFor(() => expect(effortButton('中').disabled).toBe(true))
+    expect(screen.getByText(/当前模型不支持「中」/)).toBeTruthy()
+  })
+
   it('offers no effort on a model that takes none', async () => {
     mountDialog(null)
     await waitFor(() => expect(screen.getByText(/这个模型不支持调思考强度/)).toBeTruthy())

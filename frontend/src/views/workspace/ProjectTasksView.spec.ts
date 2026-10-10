@@ -33,8 +33,9 @@ function task(over: Partial<RoomTask>): RoomTask {
 }
 
 const channels = [
-  { id: 'front', title: '前端' },
-  { id: 'share', title: '预览与分享' },
+  { id: 'front', title: '前端', glyph: 'mdi-pound' },
+  { id: 'share', title: '预览与分享', glyph: 'mdi-pound' },
+  { id: 'inner', title: '内部', glyph: 'mdi-lock-outline' },
 ]
 
 beforeEach(() => {
@@ -142,4 +143,16 @@ it('看已关闭的：列的是读回来的那一页，筛选上写的是一共�
   expect(titles(view)).toEqual(['做完的'])
   expect(view.container.textContent).toContain('120')
   expect(view.getByTestId('tasks-more')).toBeTruthy()
+})
+
+it('频道菜单里每个频道只写名字，符号由图标画，私密频道是一把锁', async () => {
+  const { getByTestId } = mount([])
+  await fireEvent.click(getByTestId('tasks-channel'))
+
+  const items = Array.from(document.querySelectorAll('[role="menuitem"]'))
+  const front = items.find((item) => item.textContent?.includes('前端'))!
+  expect(front.textContent?.trim()).toBe('前端')
+  expect(front.querySelector('.mdi-pound')).not.toBeNull()
+  const inner = items.find((item) => item.textContent?.includes('内部'))!
+  expect(inner.querySelector('.mdi-lock-outline')).not.toBeNull()
 })

@@ -29,6 +29,8 @@ const open = defineModel<boolean>({ default: false })
 const props = withDefaults(
   defineProps<{
     title: string
+    /** 标题前的符号（mdi 名），例如频道的 # 或私密频道的锁。 */
+    titleIcon?: string
     /** 主操作的字，例如「保存」。不给就没有主操作，只能关上。 */
     primaryLabel?: string
     /** 手机页头上主操作画成图标时用的 mdi 名；不给就画字。 */
@@ -99,7 +101,10 @@ function primary() {
     scrollable
   >
     <v-card rounded="lg">
-      <v-card-title class="t-dialog-title">{{ props.title }}</v-card-title>
+      <v-card-title class="t-dialog-title">
+        <v-icon v-if="props.titleIcon" size="20" class="adaptive-dialog__title-icon">{{ props.titleIcon }}</v-icon
+        >{{ props.title }}
+      </v-card-title>
       <v-card-text class="adaptive-dialog__desktop-body"><slot /></v-card-text>
       <v-card-actions class="px-4 pb-3">
         <v-spacer />
@@ -144,7 +149,10 @@ function primary() {
         >
           <v-icon size="22">mdi-close</v-icon>
         </v-btn>
-        <h2 class="adaptive-dialog__title t-title">{{ props.title }}</h2>
+        <h2 class="adaptive-dialog__title t-title">
+          <v-icon v-if="props.titleIcon" size="18" class="adaptive-dialog__title-icon">{{ props.titleIcon }}</v-icon
+          >{{ props.title }}
+        </h2>
         <template v-if="props.primaryLabel">
           <!-- eslint-disable-next-line vue/no-restricted-syntax -- phone full-page dialog header action (design-system §3.6 exception) -->
           <v-btn
@@ -207,6 +215,10 @@ function primary() {
   padding-top: env(safe-area-inset-top);
   box-sizing: content-box;
   border-bottom: 1px solid var(--line);
+}
+.adaptive-dialog__title-icon {
+  margin-right: 4px;
+  vertical-align: -2px;
 }
 .adaptive-dialog__title {
   flex: 1 1 auto;

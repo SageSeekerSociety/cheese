@@ -96,12 +96,20 @@ const effortOptions = computed(() => [
     title: honoured.value.has(level) ? undefined : t('work.projectSettings.agents.editor.effortLevelUnsupported'),
   })),
 ])
+// 点不了的那几档为什么点不了，写在下面：灰掉的按钮上的 title 提示很多浏览器不显示，
+// 只看见一档灰着，不知道为什么。
+const unsupportedLevels = computed(() => effortButtons.value.filter((level) => !honoured.value.has(level)))
 const effortHint = computed(() => {
   if (honoured.value.size === 0) return t('work.projectSettings.agents.editor.effortNone')
   const effort = draft.value.effort
   if (effort && !honoured.value.has(effort))
     return t('work.projectSettings.agents.editor.effortUnsupported', { effort: effortLabel(effort) })
-  return effort ? '' : t('work.projectSettings.agents.editor.effortHintAuto')
+  const missing = unsupportedLevels.value.length
+    ? t('work.projectSettings.agents.editor.effortLevelsUnsupported', {
+        levels: unsupportedLevels.value.map(effortLabel).join(t('work.room.roster.listSeparator')),
+      })
+    : ''
+  return [effort ? '' : t('work.projectSettings.agents.editor.effortHintAuto'), missing].filter(Boolean).join(' ')
 })
 
 function applyPreset(name: string | null) {

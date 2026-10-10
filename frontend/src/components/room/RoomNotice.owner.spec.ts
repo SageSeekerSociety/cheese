@@ -95,3 +95,15 @@ describe('提示行的尾标', () => {
     expect(lines[0]).toContain('Nova正在处理')
   })
 })
+
+describe('退回的理由', () => {
+  it('写在退回那一行上，不用点开就看得到', () => {
+    const rejected = notice('r', 'alice 退回了改动，正在修改', 'card_rejected', 'cheese')
+    ;(rejected.meta as Record<string, unknown>).detail = '标题加一行“组会报名”'
+
+    const [line] = seen([rejected])
+
+    expect(line).toContain('alice 退回了改动')
+    expect(line).toContain('标题加一行“组会报名”')
+  })
+})

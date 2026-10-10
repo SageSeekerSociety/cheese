@@ -424,6 +424,7 @@
         "cheese": "Cheese is on it",
         "human": "Needs a person"
       },
+      "quote": "“{text}”",
       "working": "{name} is on it",
       "incident": {
         "title": "Environment temporarily unavailable",
@@ -1766,6 +1767,7 @@
         "effortHintAuto": "Auto leaves it to the model's own default.",
         "effortNone": "This model doesn't take a thinking effort; it runs at its own default.",
         "effortUnsupported": "This model doesn't support \"{effort}\"; it runs at its own default.",
+        "effortLevelsUnsupported": "The current model does not support {levels}, so those levels cannot be chosen.",
         "effortLevelUnsupported": "This model doesn't support this level",
         "advanced": "Advanced settings",
         "advancedReadOnly": "Only the project owner or a team admin can change advanced settings",

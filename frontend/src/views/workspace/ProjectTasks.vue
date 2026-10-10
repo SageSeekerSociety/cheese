@@ -17,7 +17,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { newTask } from '@/commands/topicActions'
 import { memberName } from '@/lib/agentNames'
 import { liveTasks } from '@/lib/board'
-import { topicTitle } from '@/lib/topicState'
+import { channelGlyph, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { closedProjectTasksQuery, openProjectTasksQuery } from '@/query/tasks'
@@ -81,6 +81,7 @@ const channels = computed(() =>
   (store.topics as Topic[]).map((topic) => ({
     id: topic.id,
     title: topicTitle(topic),
+    glyph: channelGlyph(topic),
     archived: topic.status === 'archived',
   }))
 )

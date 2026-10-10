@@ -424,6 +424,7 @@
         "cheese": "芝士处理中",
         "human": "等人处理"
       },
+      "quote": "「{text}」",
       "working": "{name}正在处理",
       "incident": {
         "title": "环境暂时不可用",
@@ -1766,6 +1767,7 @@
         "effortHintAuto": "自动＝不指定，用模型自己的默认。",
         "effortNone": "这个模型不支持调思考强度，按模型默认运行。",
         "effortUnsupported": "当前模型不支持「{effort}」，运行时按模型默认。",
+        "effortLevelsUnsupported": "当前模型不支持「{levels}」，这几档选不了。",
         "effortLevelUnsupported": "这个模型不支持这一档",
         "advanced": "高级设置",
         "advancedReadOnly": "只有项目所有者或团队管理员能改高级设置",
