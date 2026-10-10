@@ -2722,6 +2722,43 @@ body.dragging .dock-resize::after {
   text-underline-offset: 3px;
 }
 
+/* A row in a list: name over a grey line, status and button on the right. */
+.dp-row {
+  display: flex;
+  padding: 10px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  align-items: center;
+  gap: 10px;
+}
+
+.dp-row-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.dp-row-main b {
+  overflow: hidden;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dp-row-main span,
+.dp-row-status {
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
+.dp-row-status {
+  white-space: nowrap;
+}
+
 /* A dialog's form field and its buttons. */
 .dp-field {
   display: flex;
@@ -2751,6 +2788,7 @@ body.dragging .dock-resize::after {
 
 .dp-buttons {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
 }

@@ -10,7 +10,7 @@ export const SECTIONS = [
     ['组队协作', ['team-project', 'join-a-team', 'invite-to-project']],
     ['做题目', ['solve-a-challenge', 'ask-about-a-challenge', 'team-challenge', 'resubmit']],
     ['出题目', ['publish-a-challenge', 'guide-the-teammate']],
-    ['成果', ['review-changes', 'publish-a-site']],
+    ['成果', ['publish-a-site']],
     ['工作电脑', ['use-your-computer']],
   ]],
   ['features', '功能说明', 'layers', [
@@ -37,8 +37,10 @@ export const DEV = [
   ['索引（自动生成）', ['by-path']],
 ]
 
-// Pages that moved; their old URLs keep working.
-export const REDIRECTS = { compute: 'devices', members: 'teams', 'split-work': 'team-project' }
+// Pages that moved; their old URLs keep working. A target may name a section
+// (`page#anchor`); the old URL's own #fragment is then dropped, since it named a
+// section of the old page.
+export const REDIRECTS = { compute: 'devices', members: 'teams', 'split-work': 'team-project', 'review-changes': 'working-with-cheese#review-result' }
 
 // Hand-picked highlights per release, [text, PR]. The full list comes from git.
 export const HIGHLIGHTS = {

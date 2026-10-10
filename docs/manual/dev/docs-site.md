@@ -49,7 +49,7 @@ okcheese.com 这个部署配的是 `DOCS_ORIGIN=https://docs.okcheese.com`：文
 
 流程和机制光靠文字读不快，所以页面里可以放一组组件。它们都写成页面里的一段 fence，由 `build.mjs` 在构建时展开成静态 HTML：
 
-- **`demo-panel`**：用户文档的演示。一块简化过的产品界面（只画相关的那一块，其余画成灰条），演一个动作，最多四拍。`parts:` 列出界面上的各块（`msg` 消息、`thread` 支线摘要、`composer` 输入框、`head` 页头、`card` 验收条或验收卡、`checklist` 这一轮的清单、`strip` 页头下的提示条、`tabs` 右侧页签、`doc` 文档、`files` 改动的文件、`notice` 输入框位置的提示、`line` 一行说明、`bars` 灰条、`field` 对话框里的一个输入项、`buttons` 对话框底部的按钮），每块用 `at:` / `until:` 说第几拍出现、第几拍消失，`press:` 说按哪个按钮进入第几拍。构建写进 HTML 的是最后一拍，也就是结果；`src/panel-window.mjs` 在它第一次进入视野时倒回第一拍、播一遍、停在结果上，播完给一个「重播」。没有进度条，只有一行图注（`caption:`）。按钮、状态、占位字这些界面字样由构建对照 `frontend/src/i18n/messages/zh-CN/` 检查（`{name}` 之类的占位能匹配任意文字），对不上就构建失败。
+- **`demo-panel`**：用户文档的演示。一块简化过的产品界面（只画相关的那一块，其余画成灰条），演一个动作，最多四拍。`parts:` 列出界面上的各块（`msg` 消息、`thread` 支线摘要、`composer` 输入框、`head` 页头、`card` 验收条或验收卡、`checklist` 这一轮的清单、`strip` 页头下的提示条、`tabs` 右侧页签、`doc` 文档、`files` 改动的文件、`notice` 输入框位置的提示、`line` 一行说明（`value:` 接在界面字样后面的数据）、`bars` 灰条、`field` 对话框里的一个输入项、`buttons` 对话框底部的按钮、`row` 列表里的一行：名字、下面一行灰字、右侧的状态和按钮），每块用 `at:` / `until:` 说第几拍出现、第几拍消失，`press:` 说按哪个按钮进入第几拍。构建写进 HTML 的是最后一拍，也就是结果；`src/panel-window.mjs` 在它第一次进入视野时倒回第一拍、播一遍、停在结果上，播完给一个「重播」。没有进度条，只有一行图注（`caption:`）。按钮、状态、占位字这些界面字样由构建对照 `frontend/src/i18n/messages/zh-CN/` 检查（`{name}` 之类的占位能匹配任意文字），对不上就构建失败。
 - **`:::walk`**：一列编号步骤加一个带 `walk: true` 的 `demo-panel`。画面第 0 帧是第 1 步之前的屏幕，第 n 帧是第 n 步之后的屏幕，帧数必须等于步数，最多七步，不能有图注。宽屏时步骤在左、画面在右并停在视野里，窄于 1100px 时画面排在步骤下面。`src/walk-window.mjs` 让步骤当控制器：进入视野时从第 0 帧走一遍、停在最后一步，点某一步就切到那一步之后的屏幕。没有脚本或要求减少动态效果时停在最后一帧（减少动态时点步骤仍能切换，只是不动）。
 - **`demo-steps` / `demo-timeline`**：把过程一步步放出来，带上一页 / 下一步 / 播放 / 拖动进度条。每一步可以带一个数字（字符数、token 数），下面有一根按数字画的进度柱；某一步可以设成闸门，播到那里停下等人点继续。`demo-timeline` 只是多一层「这是一条时间线」的样式，数据形状完全一样。
 - **`demo-context`**：一个上下文窗口怎么被填满，仿 Claude Code 文档的「Explore the context window」。顶上一根横条就是整个窗口，下面按时间列出装进来的每一样，标明它属于哪一类、房间里谁看得见（对话 / 现场 / 看不见）。`before:` 排在数据集前面，`then:` 排在后面；`cat: sub` 的行在分身自己的窗口里、不占横条，`cat: compact` 那一行只留下 `keeps:` 列出的几类，再加上摘要。
@@ -148,6 +148,8 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [和同学一起做一个项目](/team-project) | 建团队并批准同学加入；在团队下建项目；把自己负责的部分转为任务；加协作者；查看各人的进度 | 五个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
 | [加入别人的团队](/join-a-team) | 用团队链接申请加入，等批准 | 一个 `:::walk` | 同上 |
 | [邀请一个人加入你的项目](/invite-to-project) | 邀请一位外部成员 | 一个 `:::walk` | 同上 |
+| [把网页发布成网站](/publish-a-site) | 在「总览」中发布网站 | 一个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
+| [让芝士在你自己的电脑上工作](/use-your-computer) | 接入这台电脑；让频道改用这台电脑 | 两个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
 | [提示词注入与上下文管理](/dev/context) | 一轮里上下文窗口怎么被填满，各占多少、谁看得见 | `demo-context` | `gen/prompt.py` 真跑 `build_system_prompt`，按行首的 `## ` 切块，字符数 ÷ 1.6 折成 token |
 | [一条消息怎么变成芝士的一轮](/dev/turn) | 一轮的七步 | `demo-steps` + `embed: turn` | 这一页自己那七节（每步链回本节）；画面是剧本 `scenes/turn.json` |
 | [一条消息怎么变成芝士的一轮](/dev/turn#seats) | 两个队友在同一个话题里并行 | `demo-steps` + `embed: seats` | 「同一话题里的几个 AI 队友」那六节；画面是剧本 `scenes/seats.json` |
