@@ -120,6 +120,11 @@ function codeShape(node: PMNode): HTMLElement {
   } catch {
     code.textContent = text
   }
+  // Highlighting only colours the text; it never decides what the text is.
+  // `highlightAuto` returns an EMPTY tree when no language scores at all — plain
+  // prose such as four lines of Chinese — and the block then showed as an empty
+  // box. Whatever the highlighter returned, the block shows every character.
+  if (code.textContent !== text) code.textContent = text
   pre.append(code)
   return pre
 }
