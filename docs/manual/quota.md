@@ -60,7 +60,7 @@ parts:
     say: 把这周的周报改一版，结尾加上下周待办。
   - kind: line
     text: 本月额度已用完，11月1日重置。这一轮没有执行。
-    sub: 需要手动处理
+    sub: 等人处理
     at: 1
   - kind: line
     text: 下一步

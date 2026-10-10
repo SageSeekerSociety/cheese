@@ -422,7 +422,7 @@
       "who": {
         "platform": "平台已处理",
         "cheese": "芝士处理中",
-        "human": "需要手动处理"
+        "human": "等人处理"
       },
       "working": "{name}正在处理",
       "incident": {
