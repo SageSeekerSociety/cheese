@@ -283,6 +283,13 @@ const emit = defineEmits<{
   min-width: 0;
   margin-inline-end: auto;
 }
+/* The column does not stretch the button, so it is as wide as its content —
+   and a no-wrap name's content is the whole name, however short the column.
+   Capped at the column, the name ellipsises instead of running under ⌄ and
+   the search button. */
+.rail-header__ident .rail-header__home {
+  max-width: 100%;
+}
 .rail-header--team .rail-header__home {
   margin-inline-end: 0;
   padding-block: 1px;
