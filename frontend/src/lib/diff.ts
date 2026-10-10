@@ -184,24 +184,57 @@ export function splitDiffByFile(diff: string): FileDiff[] {
   return out
 }
 
-/** Classify each line of a hunk so the renderer can colour it. */
+function classify(text: string): DiffLine {
+  if (text.startsWith('@@')) return { kind: 'hunk', text }
+  if (text.startsWith('+++') || text.startsWith('---') || text.startsWith('diff --git ')) {
+    return { kind: 'meta', text }
+  }
+  if (text.startsWith('index ') || text.startsWith('new file mode') || text.startsWith('deleted file mode')) {
+    return { kind: 'meta', text }
+  }
+  if (text.startsWith('similarity index') || text.startsWith('rename ')) return { kind: 'meta', text }
+  // A line that is content on neither side: git's "\ No newline at end of
+  // file" marker — it annotates the line above, so it is not a line itself —
+  // and the mode/binary headers. As "context" they advanced both counters,
+  // shifting every number after them, and the gutter showed them as "0 0".
+  if (text.startsWith('\\') || META_HEADER.test(text)) return { kind: 'meta', text }
+  if (text.startsWith('+')) return { kind: 'add', text }
+  if (text.startsWith('-')) return { kind: 'del', text }
+  return { kind: 'context', text }
+}
+
+/** `@@ -oldStart[,oldCount] +newStart[,newCount] @@` — the counts, which default to 1. */
+const HUNK_COUNTS = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/
+
+/**
+ * Classify each line of a hunk so the renderer can colour it.
+ *
+ * A hunk header says how many lines each side has, and a line past both counts
+ * is not part of the hunk. The one that turns up is empty: the newline that ends
+ * the diff text (or separates it from the next one) splits into a trailing "".
+ * Read as context, it took the next number on both sides — a new 3-line file
+ * showed a row "0 4" with a 在第 4 行写批注 button on a line that does not exist.
+ * A real empty context line is " ", so dropping "" there loses nothing.
+ */
 export function parseDiffLines(body: string): DiffLine[] {
-  return body.split('\n').map((text) => {
-    if (text.startsWith('@@')) return { kind: 'hunk' as const, text }
-    if (text.startsWith('+++') || text.startsWith('---') || text.startsWith('diff --git ')) {
-      return { kind: 'meta' as const, text }
+  const out: DiffLine[] = []
+  let oldLeft = 0
+  let newLeft = 0
+  for (const text of body.split('\n')) {
+    const line = classify(text)
+    if (line.kind === 'hunk') {
+      const m = HUNK_COUNTS.exec(text)
+      // A header we cannot read keeps every line after it.
+      oldLeft = m ? Number.parseInt(m[1] ?? '1', 10) : Number.POSITIVE_INFINITY
+      newLeft = m ? Number.parseInt(m[2] ?? '1', 10) : Number.POSITIVE_INFINITY
+    } else if (line.kind === 'add') newLeft -= 1
+    else if (line.kind === 'del') oldLeft -= 1
+    else if (line.kind === 'context') {
+      if (text === '' && oldLeft <= 0 && newLeft <= 0) continue
+      oldLeft -= 1
+      newLeft -= 1
     }
-    if (text.startsWith('index ') || text.startsWith('new file mode') || text.startsWith('deleted file mode')) {
-      return { kind: 'meta' as const, text }
-    }
-    if (text.startsWith('similarity index') || text.startsWith('rename ')) return { kind: 'meta' as const, text }
-    // A line that is content on neither side: git's "\ No newline at end of
-    // file" marker — it annotates the line above, so it is not a line itself —
-    // and the mode/binary headers. As "context" they advanced both counters,
-    // shifting every number after them, and the gutter showed them as "0 0".
-    if (text.startsWith('\\') || META_HEADER.test(text)) return { kind: 'meta' as const, text }
-    if (text.startsWith('+')) return { kind: 'add' as const, text }
-    if (text.startsWith('-')) return { kind: 'del' as const, text }
-    return { kind: 'context' as const, text }
-  })
+    out.push(line)
+  }
+  return out
 }
