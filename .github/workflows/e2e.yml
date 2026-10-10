@@ -26,18 +26,11 @@ jobs:
   #
   # Playwright runs one test at a time inside a job (see playwright.config.ts),
   # so the suite is split across jobs instead: each shard starts its own
-  # backend, frontend and database on its own runner. A shard runs whole spec
-  # files, except files marked `mode: 'parallel'`, whose tests are dealt out
-  # one by one. `CI required` sees this workflow's result, which is success
-  # only when every shard succeeded. `fail-fast` is off so a failing shard does
-  # not cancel the others and each keeps its own report.
-  #
-  # Five shards, because Playwright cuts the ordered test list into runs of
-  # equal COUNT, not equal time, and the two slow files (layout-invariants,
-  # english-no-cjk; about 5 minutes together) sit next to each other in it.
-  # Replaying recorded durations through that cut, the slowest shard took
-  # 6.3-8.4 minutes at two shards, 4.9-6.9 at four, 3.3-4.8 at five and
-  # 3.8-5.3 at six, so five is where adding shards stops paying.
+  # backend, frontend and database on its own runner, and runs the tests
+  # e2e/shard.mjs gives it, balanced by recorded duration (see that file).
+  # `CI required` sees this workflow's result, which is success only when
+  # every shard succeeded. `fail-fast` is off so a failing shard does not
+  # cancel the others and each keeps its own report.
   e2e:
     name: e2e (${{ matrix.shard }}/${{ strategy.job-total }})
     strategy:
@@ -72,7 +65,7 @@ jobs:
           --health-timeout 5s --health-retries 5
     # Same reasoning as test.yml's: a slow run must not be cancelled as stuck.
     # 25 minutes was set when one job ran the whole suite (up to 10m26s); a
-    # shard runs about a fifth to a third of it.
+    # shard runs about a fifth of it.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -193,6 +186,14 @@ jobs:
           status=$(cat "$RUNNER_TEMP/frontend-build.status")
           [ "$status" = 0 ] || { cat "$RUNNER_TEMP/frontend-build.log"; exit "$status"; }
 
+      # Every shard computes the same split from the same test list and
+      # e2e/shard-durations.json, so each test runs in exactly one shard.
+      - name: Choose this shard's tests
+        working-directory: e2e
+        env:
+          CI: true
+        run: node shard.mjs "$E2E_SHARD" "$RUNNER_TEMP/e2e-tests.txt"
+
       # Keep explicit ports aligned with the browser fixture and local runs.
       - name: Run E2E tests
         id: e2e_tests
@@ -202,7 +203,7 @@ jobs:
           JWT_SECRET: test-secret
           ENVIRONMENT: test
           CI: true
-        run: bash ./run-isolated.sh --shard="$E2E_SHARD"
+        run: bash ./run-isolated.sh --test-list="$RUNNER_TEMP/e2e-tests.txt"
 
       - name: Produce E2E CLEAN evidence
         id: clean_evidence
