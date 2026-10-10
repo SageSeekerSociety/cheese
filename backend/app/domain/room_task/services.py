@@ -14,7 +14,6 @@ from app.domain.identity.handles import names_a_person
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
-from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
     LockKind,
@@ -302,22 +301,6 @@ class TaskService:
         task.reporter_handle = reporter_handle
         task.contributor_handles = contributors
         await self._session.flush()
-
-    async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
-        """关闭任务 —— its owner or its own session says it is over; with a
-        `conclusion` it is done, without one it was put down.
-
-        Idempotent: closing a closed thread keeps the first `closed_at` — the
-        moment it stopped being live is a fact, not a re-statement of intent.
-        """
-        if conclusion is not None:
-            task.conclusion = conclusion
-        if task.status is not TaskStatus.closed:
-            task.status = TaskStatus.closed
-            task.closed_at = datetime.now(UTC)
-            after_close(self._session, task.room_id)
-        await self._session.flush()
-        return task
 
     async def ensure_document(self, task: Task) -> uuid.UUID:
         """The task's living document, created empty the first time it is

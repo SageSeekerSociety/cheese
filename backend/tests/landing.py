@@ -42,7 +42,7 @@ def summary_turn_ends(client, task_id: str) -> None:
                 await receive_attempt(session, turn_id, datetime.now(UTC))
                 await session.commit()
 
-        turns.append(run_attempt(sessions, delivery_id, turn_id, turn()))
+        turns.append(run_attempt(sessions, delivery_id, turn_id, turn(), chat=chat))
 
     async def run():
         await dispatch_pending(

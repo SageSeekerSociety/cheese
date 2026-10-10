@@ -20,8 +20,8 @@ from app.domain.agent import device_hub as hub_module
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.room_task.checkouts import remove_closed_checkouts
+from app.domain.room_task.closing import close_task
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.services import TaskService
 from tests.integration.conftest import post_project, session_auth_headers
 
 pytestmark = pytest.mark.anyio
@@ -166,11 +166,10 @@ async def _tasks(client, room, count: int) -> list[uuid.UUID]:
 async def _close(client, room, tasks: list[uuid.UUID]) -> None:
     """Close them the way the room does, and commit."""
     async with client.test_factory() as db:
-        service = TaskService(db)
         for task in tasks:
             row = await db.get(Task, task)
             assert row is not None
-            await service.close_thread(row)
+            await close_task(db, row, None)
         await db.commit()
 
 

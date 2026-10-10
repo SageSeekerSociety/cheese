@@ -116,7 +116,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_close_task`）；带结论是已完成，不带是已关闭；房间里落一条平台消息 |
 | 在任务里说话 | `POST /api/topics/{task}/messages` | ✅ 只收负责人和任务自己的会话；其他人能读，在房间里说 |
 
-实现：`TopicService.create_task / upgrade_block_to_place`、`TaskService.start / hand_over / close_thread`（`backend/app/domain/room_task/services.py`），路由在 `api/routes/topics_tasks.py`。任务是一段对话，地址就是任务的 id：和房间同一套 `/api/topics/{id}/…` 接口。任务有自己的会话（`agent_sessions.conversation_id` = 任务 id），平台对任务说的话经投递账本直接交给它。
+实现：`TopicService.create_task / upgrade_block_to_place`、`TaskService.start / hand_over`（`backend/app/domain/room_task/services.py`）、关闭任务的唯一入口 `room_task/closing.close_task`，路由在 `api/routes/topics_tasks.py`。任务是一段对话，地址就是任务的 id：和房间同一套 `/api/topics/{id}/…` 接口。任务有自己的会话（`agent_sessions.conversation_id` = 任务 id），平台对任务说的话经投递账本直接交给它。
 
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
 
