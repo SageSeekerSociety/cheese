@@ -71,7 +71,7 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
-function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
+function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, startError: string | null = null) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
@@ -89,7 +89,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
       machine: MACHINE,
       machineError: false,
       starting: false,
-      startError: null,
+      startError,
       actionError: null,
       start,
       close: async () => true,
@@ -176,6 +176,15 @@ describe('任务页头', () => {
     const { container } = mount()
     expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
+  })
+
+  it('「开始」要先指定审阅人时，在提示里挑一位就直接开始', async () => {
+    const { container, start } = mount({}, PEOPLE, AGENTS, '需要指定由谁审阅，或在项目设置中设置默认审阅的人')
+    const select = container.querySelector<HTMLSelectElement>('[role="alert"] select')!
+    expect(select).not.toBeNull()
+    await fireEvent.update(select, 'bob')
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalledWith('bob')
   })
 
   it('负责人在任务信息里看得到工作电脑，也能更换', async () => {
