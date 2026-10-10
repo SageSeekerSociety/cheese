@@ -509,3 +509,63 @@ def test_platform_no_longer_serves_preview_content(client, static_preview, route
         f"/topics/{topic_id}/{route}", headers=session_auth_headers("alice")
     )
     assert response.status_code == 404, response.text
+
+
+def _b64(text: str) -> str:
+    import base64
+
+    return base64.b64encode(text.encode()).decode()
+
+
+def test_a_shown_page_brings_its_stylesheet_into_the_preview(client, preview_config):
+    """The page and its stylesheet live on the machine that made them; showing
+    the page sends both, and the preview loads the stylesheet beside it."""
+    _project, topic = _project_topic(client)
+    topic_id = uuid.UUID(topic["id"])
+    html = '<link rel="stylesheet" href="style.css"><img src="img/logo.svg">'
+    response = client.post(
+        f"/topics/{topic_id}/shown",
+        json={
+            "path": "site/index.html",
+            "as": "html",
+            "content": html,
+            "assets": [
+                {"path": "site/style.css", "content_b64": _b64("body{color:red}")},
+                {"path": "site/img/logo.svg", "content_b64": _b64("<svg/>")},
+            ],
+        },
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 200, response.text
+
+    _open_preview(client, topic_id)
+    origin = preview_origin(topic_id)
+    assert client.get(origin + "/").text == served(html)
+    style = client.get(origin + "/style.css")
+    assert style.status_code == 200 and style.text == "body{color:red}"
+    assert style.headers["content-type"].startswith("text/css")
+    assert client.get(origin + "/img/logo.svg").text == "<svg/>"
+
+
+@pytest.mark.parametrize(
+    "asset_path", ["other/style.css", "site/../secret.css", "site/index.html"]
+)
+def test_a_page_cannot_bring_a_file_the_preview_would_not_serve(
+    client, preview_config, asset_path
+):
+    project, topic = _project_topic(client)
+    project_id, topic_id = uuid.UUID(project["id"]), uuid.UUID(topic["id"])
+    response = client.post(
+        f"/topics/{topic_id}/shown",
+        json={
+            "path": "site/index.html",
+            "as": "html",
+            "content": "<p>page</p>",
+            "assets": [{"path": asset_path, "content_b64": _b64("x")}],
+        },
+        headers=session_auth_headers("alice"),
+    )
+    assert response.status_code == 422, response.text
+    # Refused whole: neither the page nor the file was written.
+    assert not library.room_file_exists(project_id, topic_id, "site/index.html")
+    assert not library.room_file_exists(project_id, topic_id, "other/style.css")
