@@ -70,13 +70,7 @@ const SHOTS = {
     const box = await page.locator('.accept-dock').first().boundingBox()
     return { clip: { x: box.x - 16, y: box.y - 4, width: box.width + 32, height: box.height + 20 } }
   }],
-  library: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/library`); await settle(page); return { clip: { x: 340, y: 30, width: 1100, height: 300 } } }],
-  members: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/members`); await settle(page); return { clip: { x: 340, y: 30, width: 1100, height: 750 } } }],
   settings: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/settings`); await settle(page, 2000); return { clip: { x: 345, y: 34, width: 1095, height: 616 } } }],
-  devices: [desktop, async (page) => { await page.goto(`${APP}/my/devices`); await settle(page); return { clip: { x: 300, y: 40, width: 900, height: 490 } } }],
-  teams: [desktop, async (page) => { await page.goto(`${APP}/teams`); await settle(page); return { clip: { x: 64, y: 30, width: 1376, height: 320 } } }],
-  feedback: [desktop, async (page) => { await page.goto(`${APP}/feedback`); await settle(page); return { clip: { x: 260, y: 40, width: 980, height: 560 } } }],
-  'feedback-new': [desktop, async (page) => { await page.goto(`${APP}/feedback/new`); await settle(page); return { clip: { x: 280, y: 40, width: 880, height: 820 } } }],
   'm-work-home': [phone, async (page) => { await page.goto(`${APP}/`); await settle(page) }],
   'm-room': [phone, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/channels/${rooms['报名表单改版']}`); await settle(page, 2000) }],
 }

@@ -133,7 +133,7 @@ parts:
 :::walk
 1. 打开项目的频道「综合」，点频道顶部右侧的成员头像，打开成员名册。
 2. 在名册底部「本频道运行在：云端环境」这一行，点「改」。
-3. 点「其他配置与设备」，在「自有设备」中选这台电脑。
+3. 点「其他配置与设备」，在「环境」下拉框中选这台电脑。
 4. 点「使用此配置」。名册底部变成「本频道运行在：」加这台电脑的名字。
 
 ```demo-panel
@@ -193,7 +193,7 @@ parts:
     at: 2
     until: 3
   - kind: field
-    label: 自有设备
+    label: 环境
     value: 我的 MacBook · 在线
     at: 3
     until: 4
@@ -225,7 +225,7 @@ parts:
 ```
 :::
 
-只想让一个任务用这台电脑时，在任务里单独选环境，见[选择环境](/devices#topic-environment)。
+只想让一个任务用这台电脑时，在任务里单独选环境，见[任务的环境](/environment#task-environment)。
 
 ## 把数据交给芝士 {#tell}
 
@@ -257,12 +257,13 @@ parts:
 - 要用这台电脑上装好的软件或显卡；
 - 要访问只有校园网里才连得上的服务。
 
-只是需要 Docker 或系统软件时，不必接入自己的电脑：频道的环境可以选「整台云虚拟机」，见[设备与环境](/devices#devices)。
+只是需要 Docker 或系统软件时，不必接入自己的电脑：频道的环境可以选「整台云虚拟机」，见[三种环境](/environment#kinds)。
 
 ## 接下来 {#next}
 
 :::cards
-- [设备与环境](/devices#devices)：接入服务器、把设备提供给团队、给任务单独选环境。
+- [自有设备](/devices#devices)：接入服务器、把设备提供给团队、隔离环境的要求。
+- [环境](/environment#topic-environment)：频道和任务怎样选环境。
 - [用自己的 Claude Code](/devices#own-claude-code)：在接入的电脑上用你自己的 Claude 账号。
 - [额度](/quota#compute)：云端环境和模型调用分别怎么计算额度。
 :::

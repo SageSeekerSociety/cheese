@@ -190,7 +190,7 @@ export function downloadPage(ctx, desktop) {
     <p>第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」；Windows 点「更多信息 → 仍要运行」。登录后在「我的设备 → 添加设备」点「接入这台电脑」，芝士就能在这台电脑上干活。</p>
     <p>桌面端每次启动都会检查新版本，下载完成后自动安装并重启。当前版本见 <a class="link" href="${REPO}/releases/tag/desktop-latest" rel="noopener">GitHub 发布页</a>。</p>
     <h2 id="connector">连接器<a class="anchor" href="#connector">#</a></h2>
-    <p>连接器 <code>cheesehost</code> 是一个命令行程序：装在服务器或不装桌面端的电脑上，批准后芝士就能在这台机器上干活。详细步骤见<a class="link" href="${BASE}/devices#devices">设备与运行环境</a>。</p>
+    <p>连接器 <code>cheesehost</code> 是一个命令行程序：装在服务器或不装桌面端的电脑上，批准后芝士就能在这台机器上干活。详细步骤见<a class="link" href="${BASE}/devices#add-device">接入服务器或其他机器</a>。</p>
     <div class="code"><div class="code-bar"><span class="code-lang">Mac / Linux</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><span class="c"># 安装连接器 cheesehost</span>
 curl -fsSL https://okcheese.com/connector/install.sh | sh
 <span class="c"># 登录并保持连接：打开它给出的链接，点「批准并绑定到我」</span>

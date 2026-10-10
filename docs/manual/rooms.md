@@ -144,7 +144,7 @@ order: 4
 
 频道里所有 AI 队友共用这一个环境。更换时每个队友先把改动推送到自己的分支，推没推上去都会换；每一轮结束时的改动都有快照保存。
 
-选项的含义和项目的默认设置见[设备与环境](/devices#topic-environment)。
+选项的含义和项目的默认设置见[环境](/environment#topic-environment)。
 
 ## 频道详情与管理 {#manage-topic}
 
