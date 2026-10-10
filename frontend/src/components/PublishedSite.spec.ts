@@ -139,8 +139,30 @@ describe('网站', () => {
     })
     expect(link.getAttribute('href')).toBe('/sites/project-a')
     expect(container.textContent).toContain(REVISION.slice(0, 8))
-    // 线上已经是这一版了，按钮因此按不下去。
-    expect((screen.getByRole('button', { name: '发布更新' }) as HTMLButtonElement).disabled).toBe(true)
+    // 线上已经是这一版了，按钮因此按不下去，悬停时说出为什么。
+    const update = screen.getByRole('button', { name: '发布更新' }) as HTMLButtonElement
+    expect(update.disabled).toBe(true)
+    expect(update.closest('[title]')?.getAttribute('title')).toBe('线上的就是已采纳的这一版')
+  })
+
+  it('能发的时候按钮上不挂理由', async () => {
+    vi.mocked(getProjectSite).mockResolvedValue(info({ site: site() }))
+    mount()
+
+    const update = (await screen.findByRole('button', { name: '发布更新' })) as HTMLButtonElement
+    expect(update.disabled).toBe(false)
+    expect(update.closest('[title]')).toBeNull()
+  })
+
+  it('托管没配好时，灰着的按钮说的就是那个原因', async () => {
+    vi.mocked(getProjectSite).mockResolvedValue(
+      info({ site: site(), candidates: [], unavailable_reason: '网站托管尚未配置' })
+    )
+    mount()
+
+    const update = (await screen.findByRole('button', { name: '发布更新' })) as HTMLButtonElement
+    expect(update.disabled).toBe(true)
+    expect(update.closest('[title]')?.getAttribute('title')).toBe('网站托管尚未配置')
   })
 
   it('有好几个站点时，发的是人挑的那个入口', async () => {
