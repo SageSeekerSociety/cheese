@@ -179,7 +179,7 @@ describe('project work computer settings', () => {
     await mount()
 
     await fireEvent.click(screen.getByRole('button', { name: '更换' }))
-    await fireEvent.mouseDown(screen.getByLabelText('自有设备'))
+    await fireEvent.mouseDown(screen.getByLabelText('环境'))
     await fireEvent.click(await screen.findByRole('option', { name: /^云端/ }))
     await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
 
@@ -204,7 +204,7 @@ describe('project work computer settings', () => {
     await mount()
 
     await fireEvent.click(screen.getByRole('button', { name: '更换' }))
-    await fireEvent.mouseDown(screen.getByLabelText('自有设备'))
+    await fireEvent.mouseDown(screen.getByLabelText('环境'))
     await fireEvent.click(await screen.findByRole('option', { name: /实验室工作站/ }))
     await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
 
