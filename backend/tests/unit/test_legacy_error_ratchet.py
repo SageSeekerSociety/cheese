@@ -139,7 +139,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/topics_documents.py", "ValidationError"): 12,
     ("app/api/routes/topics_file_sources.py", "ValidationError"): 1,
     ("app/api/routes/topics_messages.py", "ValidationError"): 5,
-    ("app/api/routes/topics_shown.py", "ValidationError"): 7,
+    ("app/api/routes/topics_shown.py", "ValidationError"): 5,
     ("app/api/routes/topics_title.py", "ValidationError"): 1,
     ("app/api/routes/webhooks.py", "ValidationError"): 2,
     ("app/api/routes/workspace.py", "GatewayUnavailableError"): 1,

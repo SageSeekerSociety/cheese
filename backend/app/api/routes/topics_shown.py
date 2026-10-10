@@ -50,6 +50,7 @@ same prefix and tags, is all it takes.
 import base64
 import binascii
 import uuid
+from pathlib import PurePosixPath
 
 from fastapi import APIRouter
 
@@ -58,7 +59,7 @@ from app.api.deps import get_broker
 from app.api.response import ok, page
 from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
 from app.core.config import settings
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
@@ -74,6 +75,51 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
+
+#: How many of its own files a shown page may bring along (`assets`).
+MAX_PAGE_ASSETS = 200
+
+
+def _page_assets(body: dict, entry: str) -> list[tuple[str, bytes]]:
+    """The files a shown page loads from beside it — its stylesheets, scripts,
+    images — decoded and checked before anything is written.
+
+    The page and its files live on the machine that made them; the preview is
+    served from the room's files on the platform. Without these, a page that
+    links ``style.css`` arrives alone and renders unstyled. The preview serves a
+    page's files only from the page's own directory (`read_preview_file`), so a
+    file anywhere else would be written and never reachable: it is refused.
+    """
+    raw = body.get("assets")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise UnprocessableEntityError(say("pageAssetsMalformed"))
+    if len(raw) > MAX_PAGE_ASSETS:
+        raise UnprocessableEntityError(say("pageAssetsTooMany", n=MAX_PAGE_ASSETS))
+    directory = PurePosixPath(entry).parent
+    assets: list[tuple[str, bytes]] = []
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("content_b64"), str):
+            raise UnprocessableEntityError(say("pageAssetsMalformed"))
+        path = clean_artifact_path(str(item.get("path") or ""))
+        if path == entry or (
+            directory != PurePosixPath(".")
+            and directory not in PurePosixPath(path).parents
+        ):
+            raise UnprocessableEntityError(
+                say("pageAssetOutsidePage", path=path, dir=str(directory))
+            )
+        try:
+            data = base64.b64decode(item["content_b64"], validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise UnprocessableEntityError(say("contentB64Invalid")) from exc
+        if len(data) > MAX_ARTIFACT_BYTES:
+            raise UnprocessableEntityError(
+                say("artifactTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+            )
+        assets.append((path, data))
+    return assets
 
 
 # How long ``cheese serve`` may wait for the helper it just started to finish its
@@ -105,14 +151,14 @@ async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
         else await preview_hub.wait_online(topic_id, seat, _PREVIEW_ATTACH_WAIT_S)
     )
     if not tunnel_up:
-        raise ValidationError(say("previewTunnelDown"))
+        raise UnprocessableEntityError(say("previewTunnelDown"))
     alive = (
         inspection.alive
         if inspection is not None
         else await preview_hub.probe(topic_id, seat)
     )
     if not alive:
-        raise ValidationError(say("previewPortSilent"))
+        raise UnprocessableEntityError(say("previewPortSilent"))
 
 
 @router.post("/{topic_id}/shown")
@@ -156,6 +202,7 @@ async def show_in_room(
                 allowed=listing(ARTIFACT_MIME),
             )
         )
+    assets: list[tuple[str, bytes]] = []
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # A remote machine's file is not in the backend worktree until published.
         # Office files and PDFs are not text, so they travel base64-encoded; a
@@ -179,6 +226,7 @@ async def show_in_room(
             raise ValidationError(
                 say("artifactTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
+        assets = _page_assets(body, path)
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # Through the draft history: the state this replaces stays restorable,
         # and `base_version` (the version `cheese pull` read) turns an overwrite
@@ -197,6 +245,20 @@ async def show_in_room(
             note=note if isinstance(note, str) else None,
             base_version=base if isinstance(base, str) and base else None,
         )
+        for asset_path, data in assets:
+            # After the page itself, so a refused page (409) writes nothing. Written
+            # as the machine has them, with no `base_version`: these are the
+            # page's own files as it was made, and nobody pulled them to edit.
+            await room_files.save_room_file(
+                db,
+                project_id=place.project_id,
+                room_id=place.room_id,
+                path=asset_path,
+                data=data,
+                author=author if actor.via == "cheese" else actor.handle,
+                author_kind="agent" if actor.via == "cheese" else "human",
+                source="ai" if actor.via == "cheese" else "upload",
+            )
     block = await add_shown_block(
         db,
         project_id=place.project_id,
