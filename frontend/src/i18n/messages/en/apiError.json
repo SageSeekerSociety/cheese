@@ -899,7 +899,7 @@
   "fileOverLimit": "The file is larger than {mb} MB and can't be processed",
   "artifactKindUnsupported": "Unsupported type {kind} (available: {allowed})",
   "artifactTooLarge": "The artifact is too large (limit {mb} MB)",
-  "pageAssetsMalformed": "A page's files go as [{\"path\": …, \"content_b64\": …}]",
+  "pageAssetsMalformed": "A page's files go as a list whose items each have path and content_b64",
   "pageAssetsTooMany": "A page can bring at most {n} files",
   "pageAssetOutsidePage": "{path} is outside the page's directory {dir}, so the preview cannot open it",
   "askCheeseDocsUnreadable": "Ask Cheese can't read the docs right now. Try again later.",
