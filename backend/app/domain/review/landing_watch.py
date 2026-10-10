@@ -64,7 +64,7 @@ async def watch_landings(chat) -> dict:
 
     sessions = chat.session_factory
     async with sessions() as session:
-        closed = await close_overdue(session)
+        closed = await close_overdue(session, chat)
         await session.commit()
         ids = list(
             await session.scalars(

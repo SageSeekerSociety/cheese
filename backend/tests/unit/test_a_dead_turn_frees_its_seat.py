@@ -26,8 +26,8 @@ from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks, record_receipt, register_input
+from app.domain.room_task.closing import close_task
 from app.domain.room_task.models import Task
-from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
 from tests.turn_log import a_topic, open_turn, turn_row
 from tests.unit.test_runtime import _SweepChat
@@ -211,7 +211,7 @@ async def _task(factory, room, *, closed: bool) -> uuid.UUID:
         session.add(task)
         await session.flush()
         if closed:
-            await TaskService(session).close_thread(task)
+            await close_task(session, task, None)
         await session.commit()
         return task.id
 
