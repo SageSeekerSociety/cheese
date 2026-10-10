@@ -965,7 +965,7 @@ h1 {
 }
 
 /* :::map — what contains what: boxes inside boxes, neutral, one accent on the
-   outermost name. Siblings share a row while it is wide enough and stack after. */
+   outermost name. Siblings stack, so every box spans its parent's width. */
 .map {
   margin: 8px 0 24px;
   font-size: 14px;
@@ -978,7 +978,6 @@ h1 {
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
-  flex: 1 1 180px;
 }
 
 .map-d1 {
@@ -1010,13 +1009,8 @@ h1 {
 .map-kids {
   display: flex;
   margin-top: 10px;
-  flex-wrap: wrap;
-  align-items: flex-start;
+  flex-direction: column;
   gap: 10px;
-}
-
-.map-kids > .map-box:first-child {
-  flex-grow: 3;
 }
 
 /* Folded originals on the generated reference pages. */

@@ -147,8 +147,8 @@ marked.use({
       }
       if (token.kind === 'map') {
         // Each item is a box: its first line is the label (`名字：说明` sets the name in
-        // bold), its sub-list the boxes inside it. Siblings sit side by side when there
-        // is room and stack when there is not; the text version is the list itself.
+        // bold), its sub-list the boxes inside it, siblings stacked. The text version is
+        // the list itself.
         const list = token.tokens.find((t) => t.type === 'list')
         if (!list || token.tokens.some((t) => t.type !== 'list' && t.type !== 'space')) throw new Error(':::map holds one nested list: - 名字：说明')
         const boxes = (items, depth) => items.map((item) => {
