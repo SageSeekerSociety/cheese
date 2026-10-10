@@ -353,7 +353,13 @@ export const CATALOG: CatalogEntry[] = [
         name: '贴在输入框上方',
         note: '一行：待谁审阅，以及退回和采纳两颗按钮。交的是什么不在这一行上。',
         // 卡上带着哪一条活的 id：不传就只看「不属于任何一条活」的那些卡（见组件里那个 filter）。
-        props: { topicId: 'demo', topicStatus: 'active', taskId: ACCEPT_CARD?.task_id },
+        // 看卡的是卡上点名的审阅人：采纳和退回只给他。
+        props: {
+          topicId: 'demo',
+          topicStatus: 'active',
+          taskId: ACCEPT_CARD?.task_id,
+          viewer: ACCEPT_CARD?.reviewer_handle,
+        },
         expect: '采纳并完成任务',
       },
     ],

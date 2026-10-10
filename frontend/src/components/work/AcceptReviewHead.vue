@@ -47,7 +47,7 @@ const round = computed(() => {
     :auto-merge-visible="accept.autoMergeVisible.value"
     :auto-merge-armed-by="accept.autoMergeArmedBy.value"
     :force-merge-visible="accept.forceMergeVisible.value"
-    :my-handle="accept.author"
+    :my-handle="accept.author.value"
     :agent-name="accept.agentName.value"
     :agent-handle="accept.agentHandle.value"
     :deliverable-busy="accept.deliverableBusy.value"

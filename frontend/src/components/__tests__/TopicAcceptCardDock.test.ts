@@ -193,12 +193,20 @@ describe('横条只说现在在等什么', () => {
     expect(buttonNamed(strip, '采纳并完成任务')).toBeUndefined()
   })
 
-  it('可以合并时说在等谁审阅，退回和采纳就在横条上', async () => {
+  it('可以合并、审阅人是我时，退回和采纳就在横条上', async () => {
+    const { container } = await mountWith([card({ reviewer_handle: 'alice', pr_number: 12, merge_state: CLEAN })])
+    const strip = container.querySelector('.accept-bar')!
+    expect(bar(container)).toContain('待你审阅')
+    expect(buttonNamed(strip, '退回')).toBeDefined()
+    expect(buttonNamed(strip, '采纳并完成任务')).toBeDefined()
+  })
+
+  it('审阅人是别人时只说在等谁，不放我点了也会被拒的退回和采纳', async () => {
     const { container } = await mountWith([card({ reviewer_handle: 'bob', pr_number: 12, merge_state: CLEAN })])
     const strip = container.querySelector('.accept-bar')!
     expect(bar(container)).toContain('待 @bob 审阅')
-    expect(buttonNamed(strip, '退回')).toBeDefined()
-    expect(buttonNamed(strip, '采纳并完成任务')).toBeDefined()
+    expect(buttonNamed(strip, '退回')).toBeUndefined()
+    expect(buttonNamed(strip, '采纳并完成任务')).toBeUndefined()
   })
 
   it('等的那个人按显示名写，不按 handle', async () => {
