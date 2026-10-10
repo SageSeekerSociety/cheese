@@ -406,7 +406,8 @@ def test_an_install_that_fails_on_the_machine_is_told_not_a_server_error(
 
 def test_a_machine_that_cannot_isolate_the_room_is_heard_out(client, monkeypatch):
     """A Linux machine without bubblewrap refuses the install with what to
-    install; the room's agent gets those words, not a failed request."""
+    install; the room's agent gets those words, not a failed request, told
+    whose machine it is and that the room can go on elsewhere."""
     pid, tid = _room(client)
     machine = _machine(client, pid)
     assert _choose(client, tid, machine, session_auth_headers(OWNER)).status_code == 200
@@ -427,4 +428,8 @@ def test_a_machine_that_cannot_isolate_the_room_is_heard_out(client, monkeypatch
     )
 
     assert answer.status_code == 200, answer.text
-    assert answer.json()["data"] == {"unavailable": said}
+    told = answer.json()["data"]["unavailable"]
+    assert said in told
+    assert "workstation" in told
+    assert OWNER in told
+    assert told != said

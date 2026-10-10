@@ -47,6 +47,9 @@ INTERRUPTED = "interrupted by user"
 #: The line the build puts above a failed command's own output. The step is
 #: already marked failed; what the room needs is what the command said.
 EXIT_HEADER = re.compile(r"\AExit code \d+\n(?=\S)")
+#: The tag the build wraps a refused or failed call's text in, for the model.
+#: The room is shown the text.
+TOOL_USE_ERROR = re.compile(r"\A\s*<tool_use_error>(.*)</tool_use_error>\s*\Z", re.S)
 
 
 def _text(content: object) -> str:
@@ -272,6 +275,7 @@ class Assembler:
             said = _text(block.get("content"))
             made = self._call(call)
             if block.get("is_error"):
+                said = TOOL_USE_ERROR.sub(r"\1", said)
                 if INTERRUPTED in said:
                     continue
                 events.append(

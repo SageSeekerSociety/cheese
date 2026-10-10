@@ -625,7 +625,7 @@ class Executor:
             "tools/call", {"name": tool, "arguments": args}
         )
         if result.get("isError"):
-            raise RuntimeError(json.dumps(result.get("content")))
+            raise RuntimeError(result["content"][0]["text"])
         return json.loads(result["content"][0]["text"])
 
     # --- commands ------------------------------------------------------------
