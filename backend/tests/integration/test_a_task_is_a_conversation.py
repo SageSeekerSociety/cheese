@@ -74,6 +74,26 @@ def test_a_task_reads_with_its_board_line(client):
     assert got["presentation"]["phrase"]
 
 
+def test_renaming_a_task_hands_back_the_task_as_its_page_reads_it(client):
+    """改名的回答就是页面手上那一份：看板那一格也在。页面拿它整行覆盖，少了那一格，
+    页头就画不出来，直到刷新。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    card = _card(client, room_id, title="接口分页")
+    alice = session_auth_headers("alice")
+
+    renamed = client.post(
+        f"/topics/{card['id']}/title", json={"title": "分页改游标"}, headers=alice
+    )
+    assert renamed.status_code == 200, renamed.text
+    got = renamed.json()["data"]
+    read = client.get(f"/topics/{card['id']}/task", headers=alice).json()["data"]
+    assert got["title"] == read["title"] == "分页改游标"
+    assert got["presentation"] is not None
+    assert got["presentation"] == read["presentation"]
+    assert got["waiting_on"] == read["waiting_on"]
+
+
 def test_saying_something_on_a_card_lands_on_the_card(client):
     """负责人在任务里说的话落在这条活的时间线上，不在房间主线上 —— 看这条活的
     人下周打开还看得见。"""
