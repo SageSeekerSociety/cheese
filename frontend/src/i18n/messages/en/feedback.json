@@ -704,7 +704,11 @@
     "field": {
       "title": {
         "label": "Title",
-        "placeholder": "What happened, in one sentence"
+        "placeholder": {
+          "bug": "What happened, in one sentence",
+          "suggestion": "What you would like improved, in one sentence",
+          "other": "What this is about, in one sentence"
+        }
       },
       "body": {
         "bug": {
