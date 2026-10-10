@@ -3,6 +3,7 @@ import type { SpaceApplication } from '@/network/api/spaces/types'
 
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import dayjs from 'dayjs'
 
 import { getAvatarUrl } from '@/utils/materials'
 
@@ -131,6 +132,11 @@ function blurb(item: SpaceApplication): { main: string; extra: string } {
 }
 
 /** 头像 URL：`avatarId` 缺失时给空串，`UserAvatar` 自己画彩色首字母。 */
+/** 悬停时给的完整时间：读者本地时区，不是接口原样的 ISO 串。 */
+function localStamp(iso: string | null | undefined): string {
+  return iso ? dayjs(iso).format('YYYY-MM-DD HH:mm') : ''
+}
+
 function avatarUrl(avatarId: number | null | undefined): string {
   return avatarId == null ? '' : getAvatarUrl(avatarId)
 }
@@ -213,7 +219,7 @@ onMounted(load)
                       >—</template
                     ></span
                   >
-                  <span class="asp__meta" :title="item.createdAt">{{ relTime(item.createdAt) }}</span>
+                  <span class="asp__meta" :title="localStamp(item.createdAt)">{{ relTime(item.createdAt) }}</span>
                 </div>
                 <p v-if="blurb(item).main" class="asp__desc">{{ blurb(item).main }}</p>
                 <p v-if="blurb(item).extra" class="asp__desc asp__desc--sub">{{ blurb(item).extra }}</p>
@@ -221,7 +227,8 @@ onMounted(load)
                   {{ t('spaces.review.reason') }}：{{ item.reviewReason }}
                 </p>
                 <p v-if="item.reviewedBy" class="asp__meta asp__meta--wrap">
-                  <UserRef :handle="item.reviewedBy" /> · {{ item.reviewedAt }}
+                  <UserRef :handle="item.reviewedBy" /> ·
+                  <span :title="localStamp(item.reviewedAt)">{{ relTime(item.reviewedAt) }}</span>
                 </p>
               </div>
               <div v-if="item.reviewStatus === 'PENDING'" class="asp__actions">

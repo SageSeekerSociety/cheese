@@ -172,6 +172,18 @@ describe('space review queue · 列表', () => {
     expect(page.queryByRole('button', { name: 'spaces.review.approve' })).toBeNull()
     expect(page.getByText(/not a course/)).toBeTruthy()
   })
+
+  // 审核时间和申请时间一样按读者的时钟说成「几小时前」，不是把接口里的 ISO 串原样印出来。
+  it('审过的那一条说什么时候审的，不印 ISO 时间串', async () => {
+    const reviewedAt = new Date(Date.now() - 3 * 3600_000 - 60_000).toISOString().replace('Z', '+00:00')
+    reviews.mockResolvedValue({
+      data: { items: [application({ reviewStatus: 'APPROVED', reviewedBy: 'admin', reviewedAt })] },
+    })
+    const page = mountPage()
+    await page.findByText('Programming course')
+    expect(page.queryByText(new RegExp(reviewedAt.slice(0, 10)))).toBeNull()
+    expect(page.getByText('3 hours ago')).toBeTruthy()
+  })
 })
 
 describe('space review queue · 分页', () => {
