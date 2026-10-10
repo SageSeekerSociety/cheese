@@ -24,6 +24,8 @@ const { t } = useI18n()
 </script>
 
 <template>
+  <!-- 分类那一格带自己的 aria-label：v-select 拿「打开 / 关闭」那句给输入框作名字，
+       盖过 BaseField 的 <label for>，读屏念出来的就是「打开」。 -->
   <TaskFormSection :title="t('tasks.form.classify')">
     <div class="tf-grid">
       <BaseField :label="t('tasks.form.category')" required :error="categoryIdControl['error-messages']?.[0]">
@@ -37,6 +39,7 @@ const { t } = useI18n()
             :aria-required="required"
             :error="invalid"
             :items="categoryItems"
+            :aria-label="t('tasks.form.category')"
             :no-data-text="t('tasks.form.noCategories')"
             item-title="title"
             item-value="value"

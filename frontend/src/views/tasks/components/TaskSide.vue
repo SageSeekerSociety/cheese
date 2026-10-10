@@ -63,7 +63,15 @@
         </div>
         <div v-if="task.rank">
           <dt>{{ t('tasks.side.rank') }}</dt>
-          <dd><v-rating :model-value="task.rank" readonly density="compact" size="x-small" /></dd>
+          <dd>
+            <v-rating
+              :model-value="task.rank"
+              :item-aria-label="rankStarLabel"
+              readonly
+              density="compact"
+              size="x-small"
+            />
+          </dd>
         </div>
         <div>
           <dt>{{ t('tasks.side.claimed') }}</dt>
@@ -161,6 +169,11 @@ const formText = computed(() => {
   const max = task.maxTeamSize ?? 1
   return min === max ? t('tasks.side.formTeam', { n: min }) : t('tasks.side.formTeamRange', { min, max })
 })
+
+/** 每颗星的读屏名字。Vuetify 自己的那句是「评分 N / 5」，这一行说的是难度。
+ *  Vuetify 拿到这句后自己往 {0}（第几颗）{1}（一共几颗）里填数，所以这两个占位符原样
+ *  穿过 vue-i18n 交给它。 */
+const rankStarLabel = computed(() => t('tasks.side.rankStar', { n: '{0}', of: '{1}' }))
 
 const deadlineText = computed(() => {
   const at = props.task.deadline

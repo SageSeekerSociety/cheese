@@ -402,4 +402,12 @@ describe('题目详情', () => {
     const days = await mount({ defaultDeadline: 30 })
     expect(days.container.textContent).toContain(i18n.global.t('tasks.side.periodValue', { n: 30 }))
   })
+
+  it('题目信息里的难度星，每颗读出来是「难度 N / 5」，不是「评分」', async () => {
+    const { container } = await mount({ rank: 2 })
+
+    const stars = Array.from(container.querySelectorAll('.v-rating button')).map((b) => b.getAttribute('aria-label'))
+    expect(stars).toContain('难度 2 / 5')
+    expect(stars.every((name) => name?.startsWith('难度 '))).toBe(true)
+  })
 })

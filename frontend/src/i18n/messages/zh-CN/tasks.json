@@ -254,6 +254,7 @@
     "multiple": "可多次提交",
     "once": "仅可提交一次",
     "rank": "难度",
+    "rankStar": "难度 {n} / {of}",
     "claimed": "已领取",
     "claimedPeople": "{n} 人",
     "claimedTeams": "{n} 支队伍",

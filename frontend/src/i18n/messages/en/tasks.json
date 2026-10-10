@@ -251,6 +251,7 @@
     "multiple": "Multiple allowed",
     "once": "One only",
     "rank": "Difficulty",
+    "rankStar": "Difficulty {n} of {of}",
     "claimed": "Claimed",
     "claimedPeople": "{n} people",
     "claimedTeams": "{n} teams",
