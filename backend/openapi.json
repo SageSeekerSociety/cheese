@@ -38888,7 +38888,7 @@
           "Teams"
         ],
         "summary": "Enumerate Team Members",
-        "description": "Return team members for a given team.",
+        "description": "Return team members for a given team.\n\nEach row says whether the reader may remove that member (``canRemove``),\nby the rule the remove endpoint enforces. The reader's own row says no:\nleaving is its own action, not a removal from the roster.",
         "operationId": "get_team_members_teams__teamId__members_get",
         "parameters": [
           {
