@@ -32,7 +32,7 @@ def _connect_workspace(client, project, room):
             from app.domain.agent_session.services import AgentSessionService
 
             await AgentSessionService(session).remember_place(
-                conversation_id=topic.id,
+                conversation_id=task_id,
                 agent_handle="cheese",
                 work_lease={"kind": "device"},
                 runtime_location={
