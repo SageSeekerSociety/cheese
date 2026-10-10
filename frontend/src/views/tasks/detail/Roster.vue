@@ -18,8 +18,9 @@
 
 <script setup lang="ts">
 // 「领取者」页签：取名单与提交、批领取申请、设截止；画面在 `RosterView.vue`。
-// 逐版评审那张对话框挂在题目详情那一层（它自己取数），这里只在总线上说要看谁的；
-// 评审完那一层发 `roster-changed`，这里重新取一遍。
+// 逐版评审那张对话框挂在题目详情那一层（它自己取数），这里只在总线上说要看谁的。
+// 这里批了、拒了、改了截止，或者那张对话框里判了一版，都在总线上发 `participation-changed`：
+// 这里听见了重读名单，题目页听见了重读我自己那一份（出题人也可能领了自己的题）。
 import type { Task, TaskMembership } from '@/types'
 import type { Latest } from './RosterView.vue'
 
@@ -112,7 +113,7 @@ async function approve(id: number) {
         .valueOf(),
     })
     toast.success(t('tasks.roster.approved', { name: nameOf(id) }))
-    await load()
+    events.emit('participation-changed')
   } catch {
     toast.error(t('tasks.roster.approveFailed'))
   } finally {
@@ -126,7 +127,7 @@ async function reject(id: number, reason: string) {
   try {
     await TasksApi.updateParticipant(task.id, id, { approved: 'DISAPPROVED', rejectReason: reason || undefined })
     toast.success(t('tasks.roster.rejectDone', { name: nameOf(id) }))
-    await load()
+    events.emit('participation-changed')
   } catch {
     toast.error(t('tasks.roster.rejectFailed'))
   }
@@ -138,12 +139,12 @@ async function setDeadline(id: number, at: number) {
   try {
     await TasksApi.updateParticipant(task.id, id, { deadline: at })
     toast.success(t('tasks.roster.deadlineSaved'))
-    await load()
+    events.emit('participation-changed')
   } catch {
     toast.error(t('tasks.roster.deadlineFailed'))
   }
 }
 
-onMounted(() => events.on('roster-changed', load))
+onMounted(() => events.on('participation-changed', load))
 watch(() => props.taskData?.id, load, { immediate: true })
 </script>

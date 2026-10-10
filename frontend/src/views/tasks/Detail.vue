@@ -240,14 +240,13 @@ const showSide = computed(() => route.name !== routeNames.participants && route.
 // ── 逐版评审 ────────────────────────────────────────────────────────────────────
 //
 // 「领取者」页签点「评审」或「查看提交」，在总线上说要看谁的；对话框挂在这一层，因为
-// 它自己取数。关掉时发 `roster-changed`，那个页签重新取一遍，表里的状态才跟得上。
+// 它自己取数。判了一版就发 `participation-changed`：领取者的表和我自己的进度都跟着重读。
 
 const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
 const reviewing = ref<{ id: number; name: string } | null>(null)
 
 function closeReview() {
   reviewing.value = null
-  events.emit('roster-changed')
 }
 
 function editTask() {
@@ -263,6 +262,14 @@ async function load() {
   setDynamicTitle(task.name, 'TaskShell')
   if (task.submitterType === 'TEAM') loadJoinedTeams()
   if (myIdentity.value) loadMine()
+}
+
+/** 有人的领取或提交变了：页头的主操作和右栏的进度都从我那一份报名和它最新一版来，两样一起重读。
+ *  不转圈：页签内容（比如刚批完的领取者表）留在原地。 */
+async function reloadMine() {
+  await loadTaskData({ quiet: true })
+  if (myIdentity.value) await loadMine()
+  else myLatest.value = null
 }
 
 onMounted(() => {
@@ -281,9 +288,9 @@ onMounted(() => {
   events.on('review-participant', (who) => {
     reviewing.value = who
   })
-  // 交作业的表单交上了一版：右栏的进度和页签上的版本号都从 `myLatest` 来，重读它。
-  events.on('submitted', () => {
-    loadMine()
+  // 批了领取、判了一版、交上一版：页头、右栏的进度和页签上的版本号都跟着重读。
+  events.on('participation-changed', () => {
+    reloadMine()
   })
 
   load()
@@ -469,6 +476,7 @@ onMounted(() => {
       :outlined="true"
       :highlight-latest="true"
       :title="t('tasks.page.reviewTitle', { name: reviewing.name })"
+      @changed="events.emit('participation-changed')"
     />
   </v-dialog>
 

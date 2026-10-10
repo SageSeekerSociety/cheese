@@ -20,6 +20,9 @@ const taskDetail = vi.fn()
 const listSubmissions = vi.fn()
 const getParticipants = vi.fn()
 const createSubmission = vi.fn()
+const updateParticipant = vi.fn()
+const postSubmissionReview = vi.fn()
+const getSubmissionQueue = vi.fn()
 
 vi.mock('@/network/api/tasks', () => ({
   TasksApi: {
@@ -27,7 +30,12 @@ vi.mock('@/network/api/tasks', () => ({
     listSubmissions: (...a: unknown[]) => listSubmissions(...a),
     getParticipants: (...a: unknown[]) => getParticipants(...a),
     createSubmission: (...a: unknown[]) => createSubmission(...a),
+    updateParticipant: (...a: unknown[]) => updateParticipant(...a),
+    postSubmissionReview: (...a: unknown[]) => postSubmissionReview(...a),
   },
+}))
+vi.mock('@/network/api/spaces', () => ({
+  SpacesApi: { getSubmissionQueue: (...a: unknown[]) => getSubmissionQueue(...a) },
 }))
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -59,6 +67,7 @@ vi.mock('@/views/tasks/components', async () => {
   }
 })
 
+import TaskRoster from './detail/Roster.vue'
 import TaskSubmit from './detail/Submit.vue'
 import TaskDetail from './Detail.vue'
 
@@ -120,7 +129,8 @@ function makeRouter() {
           { path: 'submissions', name: 'TasksSubmissions', component: stub },
           // 交作业是真表单：交上之后外框（我的进度、页签上的版本号）跟不跟得上，要它来量。
           { path: 'submit', name: 'TasksSubmit', component: TaskSubmit },
-          { path: 'participants', name: 'TasksParticipants', component: stub },
+          // 领取者也是真页签：出题人在这里批了领取、判了一版，页头和我的进度跟不跟得上，要它来量。
+          { path: 'participants', name: 'TasksParticipants', component: TaskRoster },
           { path: 'insights', name: 'TasksInsights', component: stub },
         ],
       },
@@ -145,13 +155,18 @@ async function mount(
     {
       global: {
         plugins: [createVuetify({ components, directives }), router, createPinia(), i18n],
-        // 交作业表单里那张上传进度框：jsdom 没有 visualViewport，浮层一挂就抛。
-        stubs: { VDialog: true },
+        // 对话框原地摊开：jsdom 没有 visualViewport，浮层一挂就抛；开着的时候里面的东西照常画。
+        stubs: {
+          VDialog: {
+            props: ['modelValue'],
+            template: '<div v-if="modelValue"><slot /></div>',
+          },
+        },
       },
     }
   )
   await waitFor(() => expect(utils.container.querySelector('h1')?.textContent).toContain('把红黑树插一遍'))
-  return utils
+  return { ...utils, router }
 }
 
 const t = (key: string) => i18n.global.t(key)
@@ -162,6 +177,11 @@ function claimButton(container: Element) {
 
 function hrefs(container: Element): string[] {
   return Array.from(container.querySelectorAll('a')).map((a) => a.getAttribute('href') ?? '')
+}
+
+/** 字正好是这一句的那颗按钮：领取者页签上的筛选也是按钮（「待批准领取」「待评审」），按包含找会找错。 */
+function buttonNamed(scope: Element, text: string): HTMLButtonElement | null {
+  return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.trim() === text) ?? null
 }
 
 function buttonWith(scope: Element, text: string): HTMLButtonElement | null {
@@ -177,6 +197,7 @@ describe('题目详情', () => {
     AccountService.user = null
     listSubmissions.mockImplementation(async () => ({ data: { submissions: [], page: {} } }))
     getParticipants.mockImplementation(async () => ({ data: { participants: [] } }))
+    getSubmissionQueue.mockImplementation(async () => ({ data: { submissions: [] } }))
   })
 
   afterEach(() => {
@@ -305,6 +326,103 @@ describe('题目详情', () => {
       a.getAttribute('href')?.endsWith('/submissions')
     )
     expect(mineTab?.querySelector('.td__tab-count')?.textContent).toBe('1')
+  })
+
+  it('出题人在「领取者」里批了自己的领取：回到「说明」，页头已是「提交作业」，不用刷新', async () => {
+    AccountService.user = { id: 1, nickname: '蔡松洋' } as never
+    let approved = 'NONE'
+    getParticipants.mockImplementation(async () => ({
+      data: {
+        participants: [
+          { id: 11, member: { id: 1, name: '蔡松洋', intro: '', avatarId: null }, createdAt: Date.now(), approved },
+        ],
+      },
+    }))
+    updateParticipant.mockImplementation(async () => {
+      approved = 'APPROVED'
+      return {}
+    })
+    const { container, router } = await mount(
+      { joined: true, submittable: false, participants: { total: 1, examples: [] } },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE' }] },
+      `${BASE}/participants`
+    )
+    // 批准之后再问，接口说的就是批过的那一份。
+    taskDetail.mockImplementation(async () =>
+      payload(
+        { joined: true, submittable: approved === 'APPROVED', participants: { total: 1, examples: [] } },
+        { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved }] }
+      )
+    )
+    await waitFor(() => expect(buttonNamed(container, t('tasks.roster.approve'))).not.toBeNull())
+
+    await fireEvent.click(buttonNamed(container, t('tasks.roster.approve'))!)
+    await waitFor(() => expect(updateParticipant).toHaveBeenCalled())
+    await router.push(BASE)
+
+    await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submit`))
+    expect(claimButton(container)).toBeNull()
+    expect(container.textContent).not.toContain(t('tasks.page.claim.pending'))
+    expect(container.textContent).toContain(t('tasks.side.noSubmission'))
+  })
+
+  it('出题人在「领取者」里判了自己那一版：回到「说明」，我的进度写的是判过的结果', async () => {
+    AccountService.user = { id: 1, nickname: '蔡松洋' } as never
+    let review: Record<string, unknown> = { reviewed: false }
+    const version = () => ({
+      id: 90,
+      version: 1,
+      participantId: 11,
+      createdAt: Date.now(),
+      content: [],
+      submitter: { nickname: '蔡松洋' },
+      review,
+    })
+    listSubmissions.mockImplementation(async () => ({
+      data: { submissions: [version()], page: { page_start: 0, page_size: 10, has_more: false, total: 1 } },
+    }))
+    getParticipants.mockImplementation(async () => ({
+      data: {
+        participants: [
+          {
+            id: 11,
+            member: { id: 1, name: '蔡松洋', intro: '', avatarId: null },
+            createdAt: Date.now(),
+            approved: 'APPROVED',
+          },
+        ],
+      },
+    }))
+    getSubmissionQueue.mockImplementation(async () => ({ data: { submissions: [version()] } }))
+    postSubmissionReview.mockImplementation(async () => {
+      review = { reviewed: true, detail: { accepted: false, score: 0, comment: '' } }
+      return {}
+    })
+    const { container, router } = await mount(
+      { joined: true, submittable: true, participants: { total: 1, examples: [] } },
+      APPROVED_ME
+    )
+    await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionPending', { n: 1 })))
+
+    await router.push(`${BASE}/participants`)
+    await waitFor(() => expect(buttonNamed(container, t('tasks.roster.review'))).not.toBeNull())
+    await fireEvent.click(buttonNamed(container, t('tasks.roster.review'))!)
+    const reject = await waitFor(() => {
+      const radio = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="radio"]')).find(
+        (r) => r.value === 'false'
+      )
+      expect(radio).toBeTruthy()
+      return radio!
+    })
+    reject.checked = true
+    await fireEvent.input(reject)
+    await fireEvent.change(reject)
+    await fireEvent.click(buttonWith(container, t('tasks.submissionHistory.submit'))!)
+    await waitFor(() => expect(postSubmissionReview).toHaveBeenCalled())
+    await router.push(BASE)
+
+    await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionFailed', { n: 1 })))
+    expect(container.textContent).not.toContain(i18n.global.t('tasks.side.versionPending', { n: 1 }))
   })
 
   it('不是出题人：领取者和数据两个页签都没有，名单接口也不问', async () => {

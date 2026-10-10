@@ -79,10 +79,12 @@ export function useTaskData() {
     }
   })
 
-  // 加载任务数据
-  const loadTaskData = async () => {
-    loading.value = true
-    error.value = null
+  // 加载任务数据。`quiet` 是页面已经画着、只是这道题上的事变了：不转圈，读不到也不把整页换成报错。
+  const loadTaskData = async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    if (!quiet) {
+      loading.value = true
+      error.value = null
+    }
 
     try {
       const { data } = await TasksApi.detail(taskId.value)
@@ -98,7 +100,7 @@ export function useTaskData() {
         }
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : t('tasks.loadFailed')
+      if (!quiet) error.value = err instanceof Error ? err.message : t('tasks.loadFailed')
       console.error('Failed to load task:', err)
     } finally {
       loading.value = false
