@@ -50,8 +50,19 @@ parts:
     at: 1
     until: 2
   - kind: line
-    text: 暂无设备
-    sub: 已接入的设备
+    text: 已接入的设备
+    at: 1
+    until: 2
+  - kind: bars
+    lines: 2
+    at: 1
+    until: 2
+  - kind: bars
+    lines: 2
+    at: 1
+    until: 2
+  - kind: bars
+    lines: 1
     at: 1
     until: 2
   - kind: head
@@ -96,10 +107,19 @@ parts:
   - kind: line
     text: 接入的设备可以运行 AI 队友的任务
     at: 4
+  - kind: line
+    text: 已接入的设备
+    at: 4
   - kind: row
     title: 我的 MacBook
     sub: 提供给 我自己的项目
     status: 在线
+    at: 4
+  - kind: bars
+    lines: 2
+    at: 4
+  - kind: bars
+    lines: 1
     at: 4
 ```
 :::
@@ -132,12 +152,24 @@ parts:
   - kind: bars
     lines: 3
     until: 1
+  - kind: line
+    text: 频道成员
+    at: 1
+    until: 2
   - kind: row
     title: 你
     at: 1
     until: 2
   - kind: row
     title: 芝士
+    at: 1
+    until: 2
+  - kind: bars
+    lines: 1
+    at: 1
+    until: 2
+  - kind: bars
+    lines: 1
     at: 1
     until: 2
   - kind: line
@@ -171,11 +203,20 @@ parts:
     press: 4
     at: 3
     until: 4
+  - kind: line
+    text: 频道成员
+    at: 4
   - kind: row
     title: 你
     at: 4
   - kind: row
     title: 芝士
+    at: 4
+  - kind: bars
+    lines: 1
+    at: 4
+  - kind: bars
+    lines: 1
     at: 4
   - kind: line
     text: 本频道运行在：我的 MacBook

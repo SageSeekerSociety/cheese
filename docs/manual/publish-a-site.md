@@ -64,6 +64,18 @@ parts:
     lines: 2
     at: 1
     until: 2
+  - kind: line
+    text: 最近进展
+    at: 1
+    until: 2
+  - kind: bars
+    lines: 2
+    at: 1
+    until: 2
+  - kind: bars
+    lines: 1
+    at: 1
+    until: 2
   - kind: head
     title: 发布网站
     at: 2
@@ -100,6 +112,15 @@ parts:
     at: 3
   - kind: bars
     lines: 2
+    at: 3
+  - kind: line
+    text: 最近进展
+    at: 3
+  - kind: bars
+    lines: 2
+    at: 3
+  - kind: bars
+    lines: 1
     at: 3
 ```
 :::
