@@ -6066,10 +6066,12 @@ export interface paths {
         };
         /**
          * Project Getting Started
-         * @description 「开始清单」里要问服务端的那一条：这个人在项目里跟 AI 队友说上过话没有。
+         * @description 「开始清单」里要问服务端的两条：这个人在项目里跟 AI 队友说上过话没有，和
+         *     项目的代码仓库里有没有合进过一次被采纳的改动。
          *
          *     说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问
-         *     （`block.queries.talked_with_agent`）。问的是调用者自己。
+         *     （`block.queries.talked_with_agent`），问的是调用者自己。合进仓库那一条看
+         *     验收卡（`review.queries.change_landed`），不看仓库接没接上。
          */
         get: operations["project_getting_started_projects__project_id__getting_started_get"];
         put?: never;
@@ -14386,6 +14388,8 @@ export interface components {
         GettingStartedOut: {
             /** Talked */
             talked: boolean;
+            /** Landed */
+            landed: boolean;
         };
         /** GettingStartedOutEnvelope */
         GettingStartedOutEnvelope: {

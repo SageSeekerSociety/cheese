@@ -67,6 +67,8 @@ class GettingStartedOut(BaseModel):
 
     #: 调用者在项目里哪段对话里跟 AI 队友说上过话（他说过，AI 队友也说过）。
     talked: bool
+    #: 项目的代码仓库里已经合进了一次被采纳的改动。
+    landed: bool
 
 
 class ForgeAttributionUpdate(BaseModel):
