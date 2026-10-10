@@ -50,14 +50,33 @@
                 <v-radio :label="t('tasks.submissionHistory.accept')" :value="true"></v-radio>
                 <v-radio :label="t('tasks.submissionHistory.reject')" :value="false"></v-radio>
               </v-radio-group>
-              <v-text-field
-                v-model.number="score"
+              <!-- A score is what a pass is worth (the result reads 「已通过 N 分」); a
+                   rejection reads 「已驳回」 with no number, so it asks for none. -->
+              <BaseField
+                v-if="accepted !== false"
                 :label="t('tasks.submissionHistory.score')"
-                type="number"
-                min="0"
-                max="100"
-                v-bind="scoreProps"
-              />
+                required
+                :error="scoreError"
+                class="mb-4"
+              >
+                <template #default="{ id, describedby, invalid, required }">
+                  <v-text-field
+                    :id="id"
+                    :model-value="score"
+                    :aria-describedby="describedby"
+                    :aria-invalid="invalid"
+                    :aria-required="required"
+                    :error="invalid"
+                    type="number"
+                    min="0"
+                    max="100"
+                    variant="outlined"
+                    density="comfortable"
+                    hide-details
+                    @update:model-value="score = $event === '' ? undefined : Number($event)"
+                  />
+                </template>
+              </BaseField>
               <v-textarea
                 v-model="comment"
                 autocomplete="off"
@@ -157,6 +176,7 @@ import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseField from '@/components/base/BaseField.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
 import { TasksApi } from '@/network/api/tasks'
 
@@ -232,21 +252,37 @@ const calcSubmissionReviewText = (review: TaskSubmissionReview) => {
   return review.detail.accepted ? t('tasks.submissionHistory.accept') : t('tasks.submissionHistory.reject')
 }
 
-const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({
+const { handleSubmit, defineField, isSubmitting, resetForm, errors } = useForm({
+  initialValues: { accepted: true },
   validationSchema: toTypedSchema(
-    z.object({
-      accepted: z.boolean().optional().default(true),
-      score: z.number().min(0).max(100),
-      comment: z.string().max(255).optional().default(''),
-    })
+    z
+      .object({
+        accepted: z.boolean().default(true),
+        score: z.number().optional(),
+        comment: z.string().max(255).optional().default(''),
+      })
+      .superRefine((values, ctx) => {
+        if (!values.accepted) return
+        const { score } = values
+        if (score === undefined || !Number.isInteger(score) || score < 0 || score > 100) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['score'],
+            message: t('tasks.submissionHistory.scoreRequired'),
+          })
+        }
+      })
   ),
 })
 
 const [accepted, acceptedProps] = defineField('accepted', vuetifyConfig)
-const [score, scoreProps] = defineField('score', vuetifyConfig)
+const [score] = defineField('score')
 const [comment, commentProps] = defineField('comment', vuetifyConfig)
+const scoreError = computed(() => errors.value.score)
 
-const submitReview = handleSubmit(async (values) => {
+const submitReview = handleSubmit(async (form) => {
+  // The review row keeps a score either way; a rejection's is never shown, so it is 0.
+  const values = { accepted: form.accepted, score: form.accepted ? form.score ?? 0 : 0, comment: form.comment }
   if (latestSubmission.value.review && latestSubmission.value.review.reviewed) {
     try {
       await TasksApi.patchSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
