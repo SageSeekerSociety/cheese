@@ -17,6 +17,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const getAcceptCards = vi.fn()
 
 // 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
+// 看卡的人就是卡上点名的审阅人：采纳和退回只给他。
+vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => null }))
 vi.mock('@/api/reviewComments', () => ({
   listReviewComments: vi.fn(async () => ({ comments: [] })),
   writeReviewComment: vi.fn(),

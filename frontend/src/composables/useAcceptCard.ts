@@ -44,11 +44,14 @@ export interface AcceptCardHost {
   topicId: string
   topicStatus: string
   taskId?: string | null
+  /** 谁在看这张卡。默认是登录的那个账号；演示页没有登录的人，读者扮的是卡上点名的审阅人。 */
+  viewer?: string
 }
 
 export function useAcceptCard(props: AcceptCardHost) {
   const store = useWorkspaceStore()
-  const AUTHOR = myHandle()
+  // 读成 computed：演示页里卡随剧本换，扮的审阅人跟着那张卡走。
+  const me = computed(() => props.viewer ?? myHandle())
 
   const acceptCards = ref<AcceptCard[]>([])
   // This topic's cards are in. Distinguishes 「没有卡」 from 「还没问过」 for anyone
@@ -197,7 +200,7 @@ export function useAcceptCard(props: AcceptCardHost) {
         title:
           mergeBadge.value && pending.merge_state.who !== 'human'
             ? mergeBadge.value.label
-            : pending.reviewer_handle === AUTHOR
+            : pending.reviewer_handle === me.value
               ? t('work.room.accept.waitingOnYou')
               : t('work.room.accept.waitingOn', { name: reviewerName.value }),
       }
@@ -223,9 +226,11 @@ export function useAcceptCard(props: AcceptCardHost) {
   // 还在跑、芝士在修的时候按钮点了也合不进去，那一刻要人做的事是等，不是决定；真要
   // 在这时强行采纳，入口在「改动」页顶部的「更多操作」里。冲突卡留着「重新采纳」，
   // 平台托管的仓库没有检查可等，采纳纯是人的判断。
+  // 采纳和退回只有卡上点名的审阅人能做（后端 `acceptReviewerOnly` / `returnReviewerOnly`）：
+  // 别人看到的是「待某人审阅」，要接手就在「改动」页的「更多操作」里改由他人审阅。
   const decisionOpen = computed(() => {
     const card = pendingCard.value
-    if (!card) return false
+    if (!card || card.reviewer_handle !== me.value) return false
     if (card.status === 'conflict' || platformLane.value || needsPr.value) return true
     return card.merge_state.who === 'human' || !acceptBlockedTitle.value
   })
@@ -383,7 +388,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      await approveCard(card.id, AUTHOR)
+      await approveCard(card.id, me.value)
       await loadAcceptCard()
     } catch (e) {
       store.reportError(e, t('topic.accept.approveFailed'))
@@ -417,7 +422,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      const updated = await acceptCard(card.id, AUTHOR, card.merge_state.head_sha)
+      const updated = await acceptCard(card.id, me.value, card.merge_state.head_sha)
       if (updated.status === 'conflict') {
         store.error = t('topic.accept.conflict', { agent: store.agentName })
       }
@@ -440,7 +445,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      await revokeCard(card.id, AUTHOR)
+      await revokeCard(card.id, me.value)
       // 卡已经定了：开着的退回框和里面那半句理由不再适用。
       showRejectInput.value = false
       rejectNote.value = ''
@@ -492,7 +497,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     try {
       await rejectCard(
         card.id,
-        AUTHOR,
+        me.value,
         rejectNote.value,
         comments.toSend.value.map((c) => c.id)
       )
@@ -598,7 +603,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     onRejectCard,
     onVoidCard,
     // 画的时候顺手要用的
-    author: AUTHOR,
+    author: me,
     agentName: computed(() => store.agentName),
     agentHandle: computed(() => store.agentHandle),
   }
