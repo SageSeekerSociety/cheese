@@ -531,6 +531,7 @@
     "accept": "Pass",
     "reject": "Reject",
     "score": "Score",
+    "scoreRequired": "A pass needs a score: a whole number from 0 to 100",
     "comment": "Comment",
     "cancelReview": "Withdraw review",
     "submit": "Submit",

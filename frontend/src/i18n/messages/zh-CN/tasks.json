@@ -534,6 +534,7 @@
     "accept": "通过",
     "reject": "驳回",
     "score": "评分",
+    "scoreRequired": "通过时要给分：填 0–100 的整数",
     "comment": "评论",
     "cancelReview": "撤销评审",
     "submit": "提交",
