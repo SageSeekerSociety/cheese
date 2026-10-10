@@ -145,6 +145,9 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 |---|---|---|---|
 | [快速开始](/quickstart) | 新建项目；交给芝士并开始任务；检查并采纳 | 三个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
 | [把一件事交给芝士并验收](/working-with-cheese) | 在频道里交给芝士；把消息转为任务并开始；审阅并采纳 | 一个 `demo-panel` 加两个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
+| [和同学一起做一个项目](/team-project) | 建团队并批准同学加入；在团队下建项目；把自己负责的部分转为任务 | 三个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
+| [加入别人的团队](/join-a-team) | 用团队链接申请加入 | 一个 `:::walk` | 同上 |
+| [邀请一个人加入你的项目](/invite-to-project) | 邀请一位外部成员 | 一个 `:::walk` | 同上 |
 | [提示词注入与上下文管理](/dev/context) | 一轮里上下文窗口怎么被填满，各占多少、谁看得见 | `demo-context` | `gen/prompt.py` 真跑 `build_system_prompt`，按行首的 `## ` 切块，字符数 ÷ 1.6 折成 token |
 | [一条消息怎么变成芝士的一轮](/dev/turn) | 一轮的七步 | `demo-steps` + `embed: turn` | 这一页自己那七节（每步链回本节）；画面是剧本 `scenes/turn.json` |
 | [一条消息怎么变成芝士的一轮](/dev/turn#seats) | 两个队友在同一个话题里并行 | `demo-steps` + `embed: seats` | 「同一话题里的几个 AI 队友」那六节；画面是剧本 `scenes/seats.json` |

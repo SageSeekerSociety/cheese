@@ -62,11 +62,6 @@ const SHOTS = {
   }],
   overview: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/overview`); await settle(page, 2000); return { clip: { x: 340, y: 30, width: 1100, height: 640 } } }],
   tasks: [desktop, async (page, { pid }) => { await page.goto(`${APP}/projects/${pid}/tasks`); await settle(page); return { clip: { x: 340, y: 30, width: 1100, height: 300 } } }],
-  'task-page': [desktop, async (page, { pid, rooms, tasks }) => {
-    await page.goto(`${APP}/projects/${pid}/tasks/${tasks['表单字段精简']}`)
-    await page.locator('.accept-dock').first().waitFor()
-    await settle(page, 2500)
-  }],
   // The accept card above the task's input box, with a margin of the page around it.
   'task-card': [desktop, async (page, { pid, rooms, tasks }) => {
     await page.goto(`${APP}/projects/${pid}/tasks/${tasks['表单字段精简']}`)
@@ -83,17 +78,6 @@ const SHOTS = {
   teams: [desktop, async (page) => { await page.goto(`${APP}/teams`); await settle(page); return { clip: { x: 64, y: 30, width: 1376, height: 320 } } }],
   feedback: [desktop, async (page) => { await page.goto(`${APP}/feedback`); await settle(page); return { clip: { x: 260, y: 40, width: 980, height: 560 } } }],
   'feedback-new': [desktop, async (page) => { await page.goto(`${APP}/feedback/new`); await settle(page); return { clip: { x: 280, y: 40, width: 880, height: 820 } } }],
-  // The team the fixture's project belongs to (seeded, owned by alice).
-  'team-link': [desktop, async (page) => {
-    await page.goto(`${APP}/teams/team-1/members`)
-    await settle(page)
-    // The team link is an input value, which the origin swap below does not reach.
-    await page.evaluate(([from, to]) => { for (const i of document.querySelectorAll('input')) i.value = i.value.replaceAll(from, to) }, [new URL(APP).origin, PUBLIC])
-    const top = await page.getByText('团队链接', { exact: true }).first().boundingBox()
-    const right = await page.getByRole('button', { name: '重置链接' }).boundingBox()
-    const end = await page.getByRole('tab', { name: '成员列表' }).boundingBox()
-    return { clip: { x: top.x - 24, y: top.y - 16, width: right.x + right.width + 24 - (top.x - 24), height: end.y - top.y - 8 } }
-  }],
   'm-work-home': [phone, async (page) => { await page.goto(`${APP}/`); await settle(page) }],
   'm-room': [phone, async (page, { pid, rooms }) => { await page.goto(`${APP}/projects/${pid}/channels/${rooms['报名表单改版']}`); await settle(page, 2000) }],
 }

@@ -16,7 +16,7 @@
 │   ├── 快速开始 quickstart.md
 │   └── 把一件事交给芝士并验收 working-with-cheese.md
 ├── 教程（按任务分组，一篇教一件事；分组和顺序以 docs/site/src/structure.mjs 为准）
-│   ├── 组队协作：team-project / invite-to-project / join-a-team / split-work
+│   ├── 组队协作：team-project / join-a-team / invite-to-project
 │   ├── 做题目：solve-a-challenge / ask-about-a-challenge / team-challenge / resubmit
 │   ├── 出题目：publish-a-challenge / guide-the-teammate
 │   ├── 成果：review-changes / publish-a-site
@@ -73,10 +73,9 @@
 
 | 页面 | 负责什么 | 边界与相关页面 |
 |---|---|---|
-| `team-project.md` | 建团队、拉同学进来 → 在「综合」里转为任务 → 和芝士写任务文档 → 开始 → 中途改要求 → 验收 → 交出去 | 团队、项目、任务、验收的完整规则链接功能页 |
+| `team-project.md` | 建团队、请同学加入 → 在团队下建项目 → 每人把自己那部分转为任务 → 协作者与转交 → 在「全部任务」和「总览」看进度 | 单个任务从写要求到采纳归 `working-with-cheese.md`；团队、项目、任务的完整规则链接功能页 |
+| `join-a-team.md` | 用链接申请、搜索申请或在「待办」接受邀请加入团队；组长一侧的建团队与批准在 `team-project.md` | 团队规则见 `teams.md` |
 | `invite-to-project.md` | 不建团队，按用户名或邮箱把一个人邀请进项目 | 项目成员规则见 `projects.md` |
-| `join-a-team.md` | 用链接申请、搜索申请或在「待办」接受邀请加入团队 | 团队规则见 `teams.md` |
-| `split-work.md` | 同一频道里每人负责一个任务，用协作者、转交、「全部任务」和「总览」推进 | 任务规则见 `tasks.md` |
 | `solve-a-challenge.md` | 加入空间 → 看题 → 领取 → 在题目建的项目里和芝士做 → 提交 | 详细规则链接空间与题目、提交 |
 | `ask-about-a-challenge.md` | 在题目页用「问芝士」弄懂题目、要提示不要答案 | 额度见 `quota.md` |
 | `team-challenge.md` | 以团队身份领取团队题目，一起做、一起交 | 详细规则链接空间与题目、团队、提交 |

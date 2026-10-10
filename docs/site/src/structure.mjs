@@ -7,7 +7,7 @@ export const SECTIONS = [
   ['start', '开始使用', 'rocket', [['入门', ['overview', 'quickstart', 'working-with-cheese']]]],
   // One tutorial teaches one task, step by step; grouped by what the task is about.
   ['tutorials', '教程', 'bulb', [
-    ['组队协作', ['team-project', 'invite-to-project', 'join-a-team', 'split-work']],
+    ['组队协作', ['team-project', 'join-a-team', 'invite-to-project']],
     ['做题目', ['solve-a-challenge', 'ask-about-a-challenge', 'team-challenge', 'resubmit']],
     ['出题目', ['publish-a-challenge', 'guide-the-teammate']],
     ['成果', ['review-changes', 'publish-a-site']],
@@ -38,7 +38,7 @@ export const DEV = [
 ]
 
 // Pages that moved; their old URLs keep working.
-export const REDIRECTS = { compute: 'devices', members: 'teams' }
+export const REDIRECTS = { compute: 'devices', members: 'teams', 'split-work': 'team-project' }
 
 // Hand-picked highlights per release, [text, PR]. The full list comes from git.
 export const HIGHLIGHTS = {
