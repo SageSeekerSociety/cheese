@@ -140,7 +140,7 @@ async def _tell_the_reviewer(
 
 
 async def _announce_filed(
-    session: AsyncSession, topic: Topic, card: AcceptCard, task: Task, *, artifact: str
+    session: AsyncSession, topic: Topic, card: AcceptCard, task: Task
 ) -> None:
     """递卡说一声，并通知等着这件事的两个人。
 
@@ -155,6 +155,9 @@ async def _announce_filed(
 
     房间里那一行用第三人称：一屋子人都看得见它，而「待你验收」只对其中一个人
     成立。改动主题（最长 72 字）进 `detail`，房间里那一行保持一行。
+
+    那一行点的是任务的名字，不是产物的：交合并时产物就是项目的仓库，名字是项目
+    名，一个频道里每张卡都会念同一个名字，读的人分不出递上来的是哪一件。
     """
     detail = "\n\n".join(
         part
@@ -165,7 +168,7 @@ async def _announce_filed(
         session,
         place_id=topic.id,
         task_id=task.id,
-        content=say("cardFiled", artifact=artifact, reviewer=card.reviewer_handle),
+        content=say("cardFiled", task=task.title, reviewer=card.reviewer_handle),
         meta=notice(
             EVENT_CARD_FILED,
             severity=SEVERITY_INFO,

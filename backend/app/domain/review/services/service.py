@@ -121,12 +121,8 @@ class AcceptService:
             admits_reviewer=admits_reviewer,
         )
 
-    async def _announce_filed(
-        self, topic: Topic, card: AcceptCard, task: Task, *, artifact: str
-    ) -> None:
-        return await notices._announce_filed(
-            self, topic=topic, card=card, task=task, artifact=artifact
-        )
+    async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
+        return await notices._announce_filed(self, topic=topic, card=card, task=task)
 
     async def _announce_new_artifact(
         self, topic: Topic, name: str, *, task_id: uuid.UUID

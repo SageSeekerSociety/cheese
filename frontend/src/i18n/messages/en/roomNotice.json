@@ -42,7 +42,7 @@
   "blockUpgradedTaskId": "Task {id}",
   "blockUpgradedToRoom": "A message was turned into a channel",
   "blockUpgradedToTask": "A message was turned into a task",
-  "cardFiled": "“{artifact}” submitted, waiting for {reviewer} to review",
+  "cardFiled": "“{task}” submitted, waiting for {reviewer} to review",
   "cardRedescribed": "{actor} edited the review description (synced to the PR)",
   "cardRedescribedDetail": "Title before: {beforeSubject}\nTitle after: {afterSubject}\n\nBody before: {beforeBody}\n\nBody after: {afterBody}",
   "cardRejectedClosed": "{who} sent the changes back; the original task is closed",

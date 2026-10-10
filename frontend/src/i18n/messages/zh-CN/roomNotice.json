@@ -42,7 +42,7 @@
   "blockUpgradedTaskId": "活 {id}",
   "blockUpgradedToRoom": "一条消息已转为频道",
   "blockUpgradedToTask": "一条消息已转为任务",
-  "cardFiled": "《{artifact}》已提交，待 {reviewer} 审阅",
+  "cardFiled": "《{task}》已提交，待 {reviewer} 审阅",
   "cardRedescribed": "{actor} 修改了审阅说明（已同步到 PR）",
   "cardRedescribedDetail": "改前标题：{beforeSubject}\n改后标题：{afterSubject}\n\n改前正文：{beforeBody}\n\n改后正文：{afterBody}",
   "cardRejectedClosed": "{who} 退回了改动，原任务已关闭",

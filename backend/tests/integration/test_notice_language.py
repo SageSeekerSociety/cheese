@@ -54,7 +54,17 @@ def test_a_filed_card_line_names_its_sentence(client, app_world):
     (line,) = _events(client, tid, "card_filed")
     content = line["meta"]["i18n"]["content"]
     assert content["key"] == "cardFiled"
-    assert content["params"]["reviewer"] == "alice"
-    assert line["content"] == (
-        f"《{content['params']['artifact']}》已提交，待 alice 审阅"
-    )
+    assert content["params"] == {"task": "Test delivery", "reviewer": "alice"}
+    assert line["content"] == "《Test delivery》已提交，待 alice 审阅"
+
+
+def test_a_filed_merge_names_the_task_not_the_project(client, app_world):
+    """A merge delivers the project's repository, whose name is the project's:
+    the channel line has to say which task was handed in."""
+    pid, tid, _cid, _number, _head = _ready_card(client, app_world)
+    project = client.get(f"/projects/{pid}").json()["data"]
+
+    (line,) = _events(client, tid, "card_filed")
+
+    assert "Test delivery" in line["content"]
+    assert f"《{project['name']}》" not in line["content"]
