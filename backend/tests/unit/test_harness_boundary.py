@@ -57,6 +57,9 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     "app.api.routes.installer": ("CLAUDE_PINNED_VERSION",),
     # A machine is asked as it connects whether that login is good (#2991).
     "app.api.routes.connector": ("owner_login",),
+    # A Linux machine is asked as it says hello whether it can make the sandbox
+    # the install needs, so the automatic pick can pass over one that cannot.
+    "app.domain.agent.device_hub": ("BUBBLEWRAP_PROBE",),
     # --- 会话核心：每个骨架的驱动在这里，驱动认得骨架的零件，也只在这里 ---
     "app.domain.agent.session_host.claude_code": (
         "ClaudeLaunch",

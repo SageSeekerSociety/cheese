@@ -38,7 +38,7 @@ from app.domain.agent.device_contract import (
     LinkInterrupted,
     ViewerTransport,
 )
-from app.domain.agent.harness.claude_code.remote_execution import bootstrap
+from app.domain.agent.harness.claude_code import BUBBLEWRAP_PROBE
 
 # The failures, the screen shape and the call timings are re-exported from
 # ``device_contract`` — they were written down here, so importing them from here
@@ -930,12 +930,12 @@ class DeviceHub:
 
     async def _probe_sandbox(self, device: HubDevice, generation: int) -> None:
         """Ask a Linux machine that just said hello to make the sandbox the
-        install will need (`bootstrap.BUBBLEWRAP_PROBE`), and keep the answer
+        install will need (`BUBBLEWRAP_PROBE`), and keep the answer
         for this connection. One that cannot be asked keeps None."""
         try:
             result = await self.exec(
                 device.device_id,
-                ["bwrap", *bootstrap.BUBBLEWRAP_PROBE],
+                ["bwrap", *BUBBLEWRAP_PROBE],
                 timeout=SANDBOX_PROBE_S,
             )
         except (DeviceOffline, TimeoutError):
