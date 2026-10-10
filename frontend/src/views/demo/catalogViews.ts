@@ -22,6 +22,7 @@ import {
 } from './catalogSharedFixtures'
 
 import ArtifactVersionList from '@/views/artifact/ArtifactVersionList.vue'
+import SpaceReviewNoticeView from '@/views/spaces/detail/SpaceReviewNoticeView.vue'
 import TeamProfile from '@/views/teams/TeamProfile.vue'
 
 /** 两件都要 Vuetify 的画法、一套语言包，卡片按钮还要一条 name 指得上的路由。 */
@@ -100,6 +101,29 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
         note: '申请交出去之后停在原地等：这一格说的就是「已提交申请，等待团队管理员审批」，没有别的东西可按。',
         props: { team: teamProfile({ joinStatus: 'pending' }) },
         expect: '已提交申请，等待团队管理员审批',
+      },
+    ],
+  },
+  {
+    id: 'space-review-notice',
+    title: 'SpaceReviewNoticeView',
+    about:
+      '所有者打开自己那块还没过审的空间时看到的一屏：说清它在审核中还是被驳回了（驳回带原因），出去的路回空间列表 —— 「我的空间申请」在那里。',
+    file: 'src/views/spaces/detail/SpaceReviewNoticeView.vue',
+    component: SpaceReviewNoticeView,
+    needs: UI_T_R,
+    states: [
+      {
+        name: '待审核',
+        note: '刚建好、还没人审：这里还发不了题，邀请码也还用不了。',
+        props: { status: 'PENDING' },
+        expect: '空间还在审核中',
+      },
+      {
+        name: '被驳回，带原因',
+        note: '审核人写了原因就照写，再说去哪里改了重交。',
+        props: { status: 'REJECTED', reason: '空间名称没说清是哪门课' },
+        expect: '空间名称没说清是哪门课',
       },
     ],
   },
