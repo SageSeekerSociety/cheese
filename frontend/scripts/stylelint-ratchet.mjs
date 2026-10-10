@@ -6,6 +6,10 @@
 //   node scripts/stylelint-ratchet.mjs --update   rewrite the baseline downward
 //   node scripts/stylelint-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
+// `--files <glob>` (repeatable) and `--baseline <file>` judge other files
+// against another baseline. They exist so ratchet-report.test.mjs can run this
+// script on a fixture instead of linting the whole tree a second time.
+//
 // The comparison logic lives in stylelint-ratchet-core.mjs and is unit-tested;
 // this file is only the I/O around it. Structure deliberately mirrors
 // tsc-ratchet.mjs — including the two failure modes that matter:
@@ -33,7 +37,16 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
-const BASELINE = resolve(ROOT, 'stylelint-baseline.json')
+
+function options(name) {
+  return process.argv.flatMap((arg, i) => (arg === name ? [process.argv[i + 1]] : []))
+}
+
+function option(name, fallback) {
+  return options(name)[0] ?? fallback
+}
+
+const BASELINE = resolve(ROOT, option('--baseline', 'stylelint-baseline.json'))
 const update = process.argv.includes('--update')
 const ID = 'stylelint-tokens'
 
@@ -53,9 +66,11 @@ const BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : 'stylelint'
 // (browserslist, deprecations) does not parse.
 const REPORT_PATH = resolve(tmpdir(), `stylelint-ratchet-${process.pid}.json`)
 
+const targets = options('--files').length ? options('--files') : TARGETS
+
 const run = spawnSync(
   BIN,
-  [...TARGETS, '--config', 'stylelint.config.cjs', '--formatter', 'json', '--output-file', REPORT_PATH],
+  [...targets, '--config', 'stylelint.config.cjs', '--formatter', 'json', '--output-file', REPORT_PATH],
   {
     cwd: ROOT,
     encoding: 'utf8',
