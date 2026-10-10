@@ -478,6 +478,9 @@ routes:
   - {protocol: "http", method: "GET", path: "/admin/stats/product", auth: "platform.admin", owner: "platform_stats"}
   - {protocol: "http", method: "GET", path: "/admin/stats/integrations", auth: "platform.admin", owner: "platform_stats"}
   - {protocol: "http", method: "GET", path: "/admin/stats/machines", auth: "platform.admin", owner: "machine"}
+  # app.api.routes.admin_training_use
+  - {protocol: "http", method: "GET", path: "/admin/users/{handle}/training-use", auth: "platform.admin", owner: "admin"}
+  - {protocol: "http", method: "PUT", path: "/admin/users/{handle}/training-use", auth: "platform.admin", owner: "admin"}
   # app.api.routes.agent_control
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/agent/control", auth: "controller.room", owner: "agent.execution"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/agent/control", auth: "controller.room", owner: "agent.execution"}

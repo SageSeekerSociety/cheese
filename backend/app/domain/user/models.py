@@ -75,6 +75,13 @@ class User(Base):
     work_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Their school or employer, as they wrote it; read with `work_role`.
     organization: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # When they asked that their content not be used to train models or be given,
+    # anonymised, to partners (privacy policy 1.2); NULL means they have not. No
+    # such export exists yet: whatever first exports user content for training or
+    # for partners must leave out everyone with this set.
+    training_opted_out_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
