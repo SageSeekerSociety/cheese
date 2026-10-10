@@ -1259,8 +1259,21 @@ async def _install(
                 row.work_lease = {**holding, "claim_until": now.isoformat()}
             await db.commit()
             if isinstance(exc, launch.SandboxRefused):
-                # The machine cannot make the room's sandbox, and said why.
-                return {"unavailable": str(exc)}
+                # The machine cannot make the room's sandbox, and said why, in
+                # words for its owner: the room is told whose machine it is
+                # and what it can do meanwhile, with that reason passed on.
+                device = await sql_device_service(db).get_device(device_id)
+                owner = await db.get(User, device.owner_user_id) if device else None
+                return {
+                    "unavailable": str(
+                        say(
+                            "sandboxRefused",
+                            machine=device.name if device else device_id,
+                            owner=owner.username if owner else "",
+                            reason=str(exc),
+                        )
+                    )
+                }
             if isinstance(exc, ExecutorSetupFailed):
                 logger.warning("executor installation failed: %s", exc)
                 return {

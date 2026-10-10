@@ -151,6 +151,30 @@ def test_unavailable_search_tools_do_not_search_the_session_host():
     """)
 
 
+def test_a_command_the_machine_cannot_take_is_refused_in_its_own_words():
+    """The platform's answer to a Bash call it cannot place is a sentence; the
+    model and the room read that sentence, not its content blocks as JSON."""
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const said = 'This computer cannot give the channel an isolated environment.';
+        const $ = {
+          session: {id: async () => 'session'},
+          env: {get: async () => undefined},
+          mcp: {call: async () => ({
+            isError: true, content: [{type: 'text', text: said}],
+          })},
+        };
+        const result = await handlers['tool.call']($, {
+          tool: 'Bash', tool_use_id: 'run', command: 'git log -1',
+        }, () => {throw new Error('ran without the platform');});
+        assert.equal(result.deny, said);
+    """)
+
+
 def test_isolated_subagents_run_without_the_isolation_they_asked_for():
     _run_proxy("""
         import assert from 'node:assert/strict';

@@ -740,6 +740,7 @@
   "pdfScanFallbackFailed": "第 {page} 页是扫描件（没有文字层）：已把这一页渲染成图片发给模型，但模型仍没读出可用内容（{detail}）。",
   "deviceIsolatedUnsupported": "这个频道在这台电脑上按隔离环境运行，而这种启动方式会让 agent 直接跑在电脑上、不在任何隔离环境里。平台拒绝启动，不会把整台电脑暴露给这个频道。",
   "sandboxUnavailableWindows": "这个频道在隔离环境里运行，Windows 电脑上没有隔离环境。可以安装 WSL，把 WSL 登记为一台电脑并为这个频道选它；或者由电脑的主人为这个频道开启整台电脑的访问权限。",
+  "sandboxRefused": "「{machine}」没法给这个频道隔离环境，命令没有执行。对话和平台工具仍可用；可以换成云端环境，要继续用这台电脑，需要它的主人 {owner} 按电脑给出的原因处理：{reason}",
   "visibilityInvalid": "电脑访问范围只能是「isolated」或「host」",
   "visibilityNeedsDevice": "只有指定了一台登记的电脑，才能选电脑访问范围",
   "taskComputeOwnerOnly": "只有负责人、项目管理员或任务所用设备的主人可以更换它的环境",

@@ -740,6 +740,7 @@
   "pdfScanFallbackFailed": "Page {page} is a scan (no text layer). It was rendered as an image and sent to the model, but the model still couldn't read anything usable ({detail}).",
   "deviceIsolatedUnsupported": "This channel runs in an isolated environment on this computer, and this way of starting an agent would run it on the computer directly, outside any isolation. The platform refuses rather than expose the whole computer to the channel.",
   "sandboxUnavailableWindows": "This channel runs in an isolated environment, which Windows computers do not have. Install WSL, enroll it as a computer and choose it for this channel, or have the computer's owner give this channel full computer access.",
+  "sandboxRefused": "{machine} can't give this channel an isolated environment, so the command didn't run. Conversation and platform tools still work. Switch to the cloud environment to carry on, or have the computer's owner, {owner}, deal with what it reported: {reason}",
   "visibilityInvalid": "Computer access must be “isolated” or “host”",
   "visibilityNeedsDevice": "Computer access can only be chosen together with a named enrolled computer",
   "taskComputeOwnerOnly": "Only the task's owner, a project manager or the owner of the device it uses can change its environment",
