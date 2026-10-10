@@ -112,12 +112,6 @@ class RunnerIntake:
         """
         received_at = time.monotonic()
         channel = str(topic_id)
-        # Capture the user's arrival-time expectation before the database write.
-        # The live session may finish while the message is being persisted; that
-        # race is still a delivery fallback, not an ordinary idle-topic message.
-        live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
-            self._broker.active_turn_ids(channel)
-        )
         (
             payloads,
             user_block_id,
@@ -143,6 +137,17 @@ class RunnerIntake:
             None,
         )
         recipient_handle = (recipient or {}).get("handle")
+        # Was this message meant to reach a session that was already running?
+        # Asked of the RECIPIENT's own seat, never of the room: teammates in one
+        # room run side by side, so a message @-ing an idle one queues beside
+        # another one's live turn — that is the ordinary path, not a degraded
+        # delivery, and claiming otherwise put a false 「未能送达」 line in the
+        # room. The handle is the same key `merge_into_running_turn` filters on,
+        # so "a live handoff was expected" and "the handoff failed" answer with
+        # one key rather than two that can disagree.
+        live_delivery_expected = recipient_handle is not None and (
+            chat_service.has_running_turn(topic_id, recipient_handle)
+        )
         mentioned = any(
             (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
             for payload in payloads

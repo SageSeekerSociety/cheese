@@ -38,7 +38,9 @@ class MessageService(Protocol):
 
     live: LiveWork
 
-    def has_running_turn(self, topic_id: uuid.UUID) -> bool: ...
+    def has_running_turn(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool: ...
 
     def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None: ...
 

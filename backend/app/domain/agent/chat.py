@@ -512,15 +512,6 @@ class ChatService(SessionRecovery):
         # 重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
         # 一段话重新递上来，两边都拼就是同一句说两遍。
         platform_turn = platform_wrote_this and not is_resume
-        # Record the arrival-time state before persistence and acknowledgements.
-        # If live work ends during either operation, queueing is still a fallback
-        # from the user's attempted live handoff and must be reported.
-        live_delivery_expected = (
-            summon
-            and not is_resume
-            and nudge_event is None
-            and self.has_running_turn(topic_id)
-        )
         if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
@@ -578,27 +569,33 @@ class ChatService(SessionRecovery):
             # transaction. Neither accepting the human message here nor an RPC
             # acknowledgement proves the native session read the input.
 
-        # A turn is already running on this topic. Don't queue behind it —
-        # hand the message to the session that is running RIGHT NOW.
-        #
-        # The platform used to be stricter than the tool it drives: an
-        # interactive Claude Code accepts input while it works and folds it into
-        # the run, but we serialized turns on top of that, so one slow command
-        # made every later message wait the whole turn out. Injecting instead
-        # gets the message in front of 芝士 in seconds.
-        #
-        # Only the hooks-driven backends can take it (they own a live screen).
-        # If the handoff fails, the message remains pending and runs through the
-        # normal queue, but that degradation must be visible in the room.
-        if user_block_id is not None and (
-            live_delivery_expected or self.has_running_turn(topic_id)
-        ):
+        # 收件人：点名的实例（恢复/重发那一类），或落库时记在消息上的那位。
+        # 注入、降级判断和座位锁共用一个答案，所以只解析一次。
+        recipient_handle = None
+        if recipient_instance_id is not None:
+            async with self._sessions() as session:
+                instance = await session.get(AgentInstance, recipient_instance_id)
+                if instance is None or not instance.is_active:
+                    raise self._refuse_turn(say("addressedAgentUnavailable"))
+                recipient_handle = instance.handle
+        seat_handle = await self._turn_seat_handle(
+            topic_id,
+            user_block_id=user_block_id,
+            recipient_handle=recipient_handle,
+        )
+
+        # A turn is already running for THIS seat: hand the message to it rather
+        # than queue behind it. 判据是收件人自己那一席在不在跑，不是房间里有没有
+        # 人在跑 —— 另一位队友在跑、收件人空闲时，排队本来就是正常路径，不记降级。
+        # 这一支进去就说明本来指望实时递交，所以除了真递进去，剩下的都是降级。
+        if user_block_id is not None and self.has_running_turn(topic_id, seat_handle):
             delivered = await self.merge_into_running_turn(
                 topic_id,
                 user_block_ids,
                 content,
                 author,
                 attachments,
+                recipient_handle=seat_handle,
             )
             if isinstance(delivered, InputReconciliationPending):
                 checking, checking_meta = delivery_checking_notice()
@@ -623,18 +620,6 @@ class ChatService(SessionRecovery):
                 topic_id, fallback_text, turn_id, meta=fallback_meta
             )
 
-        recipient_handle = None
-        if recipient_instance_id is not None:
-            async with self._sessions() as session:
-                instance = await session.get(AgentInstance, recipient_instance_id)
-                if instance is None or not instance.is_active:
-                    raise self._refuse_turn(say("addressedAgentUnavailable"))
-                recipient_handle = instance.handle
-        seat_handle = await self._turn_seat_handle(
-            topic_id,
-            user_block_id=user_block_id,
-            recipient_handle=recipient_handle,
-        )
         async with self._prompt_lock(topic_id, turn_id, seat_handle):
             async for frame in self.turn_preparation.converse(
                 topic_id=topic_id,
