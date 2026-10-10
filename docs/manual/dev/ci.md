@@ -83,7 +83,7 @@ scenarios:
 
 ## 哪些跑在托管 runner，哪些跑在自己的机器上 {#runners}
 
-`Required CI` 选中的套件全部用 GitHub 托管的 `ubuntu-latest`，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个仓库实际不受它约束：2026-09-30 到 10-01 的一天里同时在跑的托管 job 最多 61 个，合并队列的 job 等 runner 的 90 分位是 0.1 分钟。
+`Required CI` 选中的套件都跑在 GitHub 托管的 runner 上，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。后端测试的 pure、contract、integration 三层用 `ubuntu-24.04-arm`，其余用 `ubuntu-latest`：arm64 机器是 4 个真实核心，x64 机器是 2 核超线程、CPU 代际不固定，而这三层会把核心占满。生产是 x64，所以 prod 发版（`deploy-prod.yml`）会在 `ubuntu-latest` 上对发版的 commit 再跑一遍完整后端测试，通过并经人批准后才部署。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个仓库实际不受它约束：2026-09-30 到 10-01 的一天里同时在跑的托管 job 最多 61 个，合并队列的 job 等 runner 的 90 分位是 0.1 分钟。
 
 自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上只跑本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
 

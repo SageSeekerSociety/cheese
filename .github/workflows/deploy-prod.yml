@@ -95,9 +95,19 @@ jobs:
           issue-title: "Approve prod (RUC) deploy${{ github.event.release.tag_name && format(' of {0}', github.event.release.tag_name) || '' }}"
           issue-body: "Deploying to cheese.ruc.edu.cn (prod RUC box). Comment `approve` to proceed or `deny` to cancel."
 
+  # Everyday CI runs the backend layers on arm64 runners (test.yml); production
+  # runs on x64. So before a release reaches it, the same suite runs once on
+  # x64 against the commit being deployed, alongside the approval.
+  x86-tests:
+    if: github.event_name != 'release' || !startsWith(github.event.release.tag_name, 'forgejo-cli-')
+    uses: ./.github/workflows/test.yml
+    with:
+      runner: ubuntu-latest
+      ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+
   deploy:
-    needs: gate
-    if: ${{ needs.gate.result == 'success' }}
+    needs: [gate, x86-tests]
+    if: ${{ needs.gate.result == 'success' && needs.x86-tests.result == 'success' }}
     # See deploy-dev.yml: records a deployment so the target is queryable. The
     # `production` environment already exists (deploy.yml uses it) and carries
     # no protection rules, so the human gate stays where it is — in `gate`.
