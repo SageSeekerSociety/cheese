@@ -15,7 +15,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { addTopicMember, removeTopicMember } from '../api'
 import { useRowMenu } from '../composables/useRowMenu'
 import { t } from '../i18n'
-import { memberName } from '../lib/agentNames'
+import { memberName, shownHandle } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
 import { externalHandles } from '../lib/externalMembers'
 import { whenIdle } from '../lib/idle'
@@ -173,6 +173,7 @@ const addable = computed(() => {
       .map((m) => ({
         title: memberName(m) || m.user_handle,
         value: m.user_handle,
+        handle: shownHandle(m.user_handle, m),
         agent: !!m.agent,
         external: externals.value.has(m.user_handle),
         face: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : '',
@@ -284,7 +285,7 @@ async function onRemove(handle: string) {
           />
           <span class="roster__who">
             <span class="roster__name">{{ memberName(m) || m.member_handle }}</span>
-            <span class="roster__handle">{{ m.member_handle }}</span>
+            <span class="roster__handle">{{ shownHandle(m.member_handle, m) }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />
@@ -353,7 +354,7 @@ async function onRemove(handle: string) {
               </template>
               <span class="roster__who">
                 <span class="roster__name">{{ item.raw.title }}</span>
-                <span class="roster__handle">{{ item.raw.value }}</span>
+                <span class="roster__handle">{{ item.raw.handle }}</span>
               </span>
               <template #append>
                 <span v-if="item.raw.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
