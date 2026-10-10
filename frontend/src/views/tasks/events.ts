@@ -32,6 +32,7 @@ export interface TaskEvents {
   'reload-joined-teams': undefined // 重新加载已加入的队伍
   'review-participant': { id: number; name: string } // 领取者页签：打开某人的逐版评审
   'roster-changed': undefined // 逐版评审关掉了，领取者页签重新取一遍
+  submitted: undefined // 交上了一版：题目页重读我的最新一版（我的进度、「我的提交」上的数）
 }
 
 // 创建任务模块的事件总线

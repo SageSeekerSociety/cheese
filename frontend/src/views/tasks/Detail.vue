@@ -275,6 +275,10 @@ onMounted(() => {
   events.on('review-participant', (who) => {
     reviewing.value = who
   })
+  // 交作业的表单交上了一版：右栏的进度和页签上的版本号都从 `myLatest` 来，重读它。
+  events.on('submitted', () => {
+    loadMine()
+  })
 
   load()
 })
