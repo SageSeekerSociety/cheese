@@ -193,6 +193,11 @@ parts:
     text: 从一件具体的事开始
     sub: 芝士可以查找资料、起草文档，或和你一起拆分任务
     at: 3
+  - kind: checklist
+    title: 开始清单
+    items: 让成果进代码仓库 | 跟芝士说第一句话 | 把要用的材料放进来 | 把同事请进来
+    done: 1
+    at: 3
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
     button: 交给芝士
@@ -344,14 +349,109 @@ parts:
 
 ## 查看各人的进度 {#progress}
 
-两个页面汇总项目里所有任务的进度：
+「全部任务」列出项目里的所有任务，「总览」按人汇总每位同学手上的任务。
 
-- 「全部任务」：在左侧栏顶部的项目名菜单中点「全部任务」。任务按「待处理」「检查中」「进行中」「未开始」分组，每行写着所在频道、负责人和状态。上方按「我负责的」「我协作的」「其他人的」筛选。
-- 「总览」：左侧栏最上方的一项。「谁在做什么」按人列出每位同学手上的任务，「最近进展」按天列出最近两周新建、开始和采纳的任务。
+:::walk
+1. 点左侧栏顶部的项目名，在菜单中点「全部任务」。任务按「待处理」「进行中」「未开始」等分组，每行写着负责人和状态。
+2. 点上方的「其他人的」，只看同学负责的任务。
+3. 点左侧栏最上方的「总览」。「谁在做什么」按人列出每位同学手上的任务。
 
-![「全部任务」页：上方按「全部」「我负责的」「我协作的」「其他人的」筛选，任务分在「待处理」「进行中」下面，每行写着所在频道、负责人和状态](/images/tasks.jpg)
+```demo-panel
+title: 查看三位同学的任务
+walk: true
+align: top
+parts:
+  - kind: head
+    title: "# 综合"
+    until: 1
+  - kind: bars
+    lines: 2
+    until: 1
+  - kind: bars
+    lines: 2
+    until: 1
+  - kind: head
+    title: 全部任务
+    button: 新建任务
+    at: 1
+    until: 3
+  - kind: tabs
+    items: 全部 | 我负责的 | 我协作的 | 其他人的
+    active: 全部
+    at: 1
+    until: 2
+  - kind: tabs
+    items: 全部 | 我负责的 | 我协作的 | 其他人的
+    active: 其他人的
+    at: 2
+    until: 3
+  - kind: line
+    text: 待处理
+    at: 1
+    until: 3
+  - kind: task
+    title: B 树的删除
+    owner: 陈默 负责
+    status: 待你审阅
+    at: 1
+    until: 3
+  - kind: line
+    text: 进行中
+    at: 1
+    until: 2
+  - kind: task
+    title: B 树的插入和查找
+    owner: 你 负责
+    status: 已开始
+    at: 1
+    until: 2
+  - kind: line
+    text: 未开始
+    at: 1
+    until: 3
+  - kind: task
+    title: 实验报告
+    owner: 王珊 负责
+    status: 讨论中
+    at: 1
+    until: 3
+  - kind: head
+    title: 总览
+    at: 3
+  - kind: line
+    text: 谁在做什么
+    at: 3
+  - kind: bars
+    who: 你
+    lines: 1
+    at: 3
+  - kind: task
+    title: B 树的插入和查找
+    owner: 你 负责
+    status: 已开始
+    at: 3
+  - kind: bars
+    who: 陈默
+    lines: 1
+    at: 3
+  - kind: task
+    title: B 树的删除
+    owner: 陈默 负责
+    status: 待你审阅
+    at: 3
+  - kind: bars
+    who: 王珊
+    lines: 1
+    at: 3
+  - kind: task
+    title: 实验报告
+    owner: 王珊 负责
+    status: 讨论中
+    at: 3
+```
+:::
 
-「待处理」里的任务在等某个人，状态写成「待你开始」「待你审阅」等。各分组的含义见[全部任务](/tasks#board)。
+「待处理」里的任务在等某个人，状态写成「待你开始」「待你审阅」等。「总览」里的「最近进展」按天列出最近两周新建、开始和采纳的任务。各分组的含义见[全部任务](/tasks#board)。
 
 ## 分工的建议 {#tips}
 
