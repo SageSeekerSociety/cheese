@@ -705,6 +705,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   const composer = useChatComposer({
     topic: place,
+    ownLine: () => place()?.id === topic()?.id,
     alwaysSummon,
     showComposer,
     rows,
