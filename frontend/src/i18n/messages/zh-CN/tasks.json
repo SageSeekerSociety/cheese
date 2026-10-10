@@ -621,7 +621,7 @@
     "avoid": "暂不使用",
     "materials": "会被带上的资料",
     "materialCount": "{n} 份",
-    "materialsNone": "这块板还没有资料",
+    "materialsNone": "这个空间还没有资料",
     "from": {
       "space": "来自空间",
       "category": "来自项目集",

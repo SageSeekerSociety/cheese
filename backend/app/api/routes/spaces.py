@@ -52,6 +52,7 @@ from app.domain.user.repositories import (
     UserRealNameRepository,
     UserRepository,
 )
+from app.domain.user.services import languages_by_ids
 
 _logger = logging.getLogger(__name__)
 
@@ -838,6 +839,7 @@ async def create_space(
     task_templates = _expect_list(payload.task_templates, "taskTemplates")
     classification_topic_ids: list[int] = payload.classification_topics or []
 
+    languages = await languages_by_ids(db, [auth_user.user_id])
     space = await service.create_space(
         name=payload.name,
         intro=payload.intro,
@@ -847,6 +849,7 @@ async def create_space(
         owner_id=auth_user.user_id,
         task_templates=task_templates,
         visible_task_limit=payload.visible_task_limit,
+        language=languages.get(auth_user.user_id),
     )
     if classification_topic_ids:
         await service.replace_classification_topics(
