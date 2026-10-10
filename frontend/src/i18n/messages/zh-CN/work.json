@@ -32,6 +32,7 @@
   },
   "allSpaces": "全部空间",
   "emptyTitle": "暂无{project}",
+  "firstProjectName": "{name}的项目",
   "joinAction": "用邀请码加入",
   "joinBody": "邀请码由空间的创建者提供",
   "joinCancel": "取消",
@@ -56,12 +57,6 @@
       "action": "去团队"
     },
     "settingsNote": "AI 队友和代码仓库都在项目里配：进项目后打开「项目设置」，第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
-  },
-  "startGuide": {
-    "aria": "上手引导",
-    "project": "从这里开一个项目",
-    "materials": "资料库里放也行",
-    "skip": "跳过引导"
   },
   "sessionMachine": {
     "machine": "换到",
@@ -985,32 +980,24 @@
       "readingAttachment": "{agent}正在读附件…",
       "quoteChanged": "原文已改动"
     },
-    "gettingStarted": {
-      "title": "开始清单",
-      "dismiss": "不再提示",
-      "talk": "跟{agent}说第一句话",
-      "talkHint": "就在下面那个输入框里",
-      "materials": "把要用的材料放进来",
-      "materialsAction": "打开资料库",
-      "repo": "让成果进代码仓库",
-      "repoAction": "连接仓库",
-      "people": "把同事请进来",
-      "peopleAction": "去名册",
-      "note": "AI 队友和代码仓库都在项目设置里改：第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
-    },
     "chat": {
       "pickTopic": "选择一个频道开始对话",
       "starter": {
-        "research": "查找资料",
-        "researchText": "帮我查找相关资料，注明来源，并整理成文档。我要了解的是：",
-        "draft": "起草文档",
-        "draftText": "帮我起草一份文档，先和我确认目标与读者。我想写的是：",
-        "breakdown": "拆解任务",
-        "breakdownText": "帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是："
+        "tidy": "整理或改写一份材料",
+        "tidyHint": "课件、论文、报告、表格",
+        "tidyText": "帮我整理或改写附件里的材料。先给我看你打算怎么改，确认后再动手。我想要的是：",
+        "research": "查资料，写成一份报告",
+        "researchHint": "带来源，可下载",
+        "researchText": "帮我查找资料，注明来源，整理成一份报告。先给我看大纲，确认后再写全文。我要了解的是：",
+        "build": "做一个网页或小工具",
+        "buildHint": "做好就能打开预览",
+        "buildText": "帮我做一个网页，做好后给我预览链接。先给我看页面结构，确认后再开始做。我想做的是：",
+        "plan": "拆解一件事，排好分工",
+        "planHint": "适合团队项目",
+        "planText": "帮我把目标拆成可执行的任务，给出分工建议和时间安排。先给我看拆分思路。我的目标是："
       },
       "startAria": "开始项目协作",
-      "startTitle": "从一件具体的事开始",
-      "startBody": "{agent}可以查找资料、起草文档，或和你一起拆分任务",
+      "startTitle": "你想先做点什么？",
       "loadingOlder": "加载更早的消息…",
       "older": "更早的消息",
       "newMessagesBelow": "以下是新消息",

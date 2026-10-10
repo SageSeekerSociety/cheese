@@ -90,7 +90,6 @@
     "src/components/common/SessionRestoreGate.vue",
     "src/components/common/SettingsOverlay.vue",
     "src/components/common/ShortcutSheet.vue",
-    "src/components/common/StartGuide.vue",
     "src/components/common/TeachingFields.vue",
     "src/components/common/TeachingMaterialPicker.vue",
     "src/components/common/ThemeToggle.vue",

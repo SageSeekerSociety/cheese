@@ -16,6 +16,15 @@ export function listAwaitingMe(): Promise<ListPayload<WaitingItem>> {
   return request<ListPayload<WaitingItem>>('/awaiting-me')
 }
 
+/** 新账号的第一个项目：每个账号只建一次，由服务端判（`POST /users/me/first-project`）。
+ *  建过的再问回 null。 */
+export function createFirstProject(name: string): Promise<{ project_id: string | null }> {
+  return request<{ project_id: string | null }>('/users/me/first-project', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
 export function createProject(
   name: string,
   teamId?: number,
@@ -91,13 +100,4 @@ export function requestSiteSession(projectId: string): Promise<{ url: string; gr
   return request<{ url: string; grant: string }>(`/projects/${encodeURIComponent(projectId)}/site-session`, {
     method: 'POST',
   })
-}
-
-/**
- * 「开始清单」里要问服务端的两条：我在这个项目里跟 AI 队友说上过话没有——在哪段
- * 对话里都算，任务里的对话也算（频道那一栏读不到那里）；项目的代码仓库里合进过
- * 一次被采纳的改动没有（`landed`）。
- */
-export function getGettingStarted(projectId: string): Promise<{ talked: boolean; landed: boolean }> {
-  return request<{ talked: boolean; landed: boolean }>(`/projects/${encodeURIComponent(projectId)}/getting-started`)
 }

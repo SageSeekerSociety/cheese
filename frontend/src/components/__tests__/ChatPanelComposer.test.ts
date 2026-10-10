@@ -47,8 +47,6 @@ vi.mock('../../api', async () => {
   return {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    // 项目本体上那张「开始清单」的仓库判据。
-    getGettingStarted: vi.fn().mockResolvedValue({ talked: false, landed: false }),
     getForgeConnection: vi.fn().mockResolvedValue({
       kind: 'forgejo',
       connected: false,
@@ -190,13 +188,13 @@ describe('对话栏自己的输入栏', () => {
     const { container, rerender, getByRole, queryByRole } = mountPanel({}, 'starter-project')
     await rerender({ topic: { ...topic('starter-project'), kind: 'root' } })
     await flush()
-    await fireEvent.click(getByRole('button', { name: '起草文档' }))
+    await fireEvent.click(getByRole('button', { name: /查资料，写成一份报告/ }))
     const box = composerBox(container)!
     expect(box.value).toContain('@芝士')
-    expect(box.value).toContain('文档')
+    expect(box.value).toContain('报告')
     expect(document.activeElement).toBe(box)
     expect(sent).toHaveLength(0)
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
     await fireEvent.update(box, '@芝士 帮我起草一份项目介绍')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
@@ -208,14 +206,14 @@ describe('对话栏自己的输入栏', () => {
   it('does not offer starter drafts in an archived project or a regular conversation', async () => {
     const { rerender, queryByRole } = mountPanel({}, 'starter-archived')
     await flush()
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
     await rerender({ topic: { ...topic('starter-archived'), kind: 'root', status: 'archived' } })
     await flush()
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
   })
 
   // 任务页的对话栏拿的也是频道这只房间（kind 是 root）。起手区块是频道主线的，
-  // 新建的空任务里不该冒出「从一件具体的事开始」。
+  // 新建的空任务里不该冒出起手卡。
   it('does not offer starter drafts in a task of the channel', async () => {
     const vuetify = createVuetify({ components, directives })
     const { queryByRole, queryByText } = render(ChatPanel, {
@@ -229,8 +227,8 @@ describe('对话栏自己的输入栏', () => {
       global: { plugins: [vuetify, i18n, attachments] },
     })
     await flush()
-    expect(queryByText('从一件具体的事开始')).toBeNull()
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    expect(queryByText('你想先做点什么？')).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
   })
 
   // 退休判据是「芝士在这个房间里说过话」，不是「房间里有没有东西」。新用户常常先
@@ -259,7 +257,7 @@ describe('对话栏自己的输入栏', () => {
     const { rerender, queryByRole } = mountPanel({}, 'starter-talked')
     await rerender({ topic: { ...topic('starter-talked'), kind: 'root' } })
     await flush()
-    expect(queryByRole('button', { name: '起草文档' })).toBeTruthy()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeTruthy()
   })
 
   it('retires the starter drafts once 芝士 has spoken in the room', async () => {
@@ -285,116 +283,7 @@ describe('对话栏自己的输入栏', () => {
     const { rerender, queryByRole } = mountPanel({}, 'starter-answered')
     await rerender({ topic: { ...topic('starter-answered'), kind: 'root' } })
     await flush()
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
-  })
-
-  // 项目建的时候给 AI 队友起了名字，清单第一步说的是这个名字，不是平台的「芝士」。
-  it('names the room’s own teammate in the start checklist', async () => {
-    const api = await import('../../api')
-    vi.mocked(api.listTopicMembers).mockResolvedValueOnce({
-      data: [
-        { member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
-        { member_handle: 'cheese-spark', name: '火花', role: 'member', agent: true },
-      ],
-      total: 2,
-    } as never)
-    const { rerender, findByText, queryByText } = mountPanel({}, 'checklist-named')
-    await rerender({ topic: { ...topic('checklist-named'), kind: 'root' } })
-    await flush()
-    expect(await findByText('跟火花说第一句话')).toBeTruthy()
-    expect(queryByText('跟芝士说第一句话')).toBeNull()
-  })
-
-  // 支线和任务页里的对话栏拿的也是项目本体这只房间。清单在那里各画一份、各按自己
-  // 那条对话判，同一张清单就在三处各说各的（dev，2026-10-09）。
-  it('draws the start checklist on the project’s own line, not in its 支线 or tasks', async () => {
-    const vuetify = createVuetify({ components, directives })
-    const elsewhere = render(ChatPanel, {
-      props: {
-        topic: { ...topic('checklist-line'), kind: 'root' },
-        conversationId: 'thread-of-checklist-line',
-        showComposer: true,
-        hideHeader: true,
-        members,
-      },
-      global: { plugins: [vuetify, i18n, attachments] },
-    })
-    await flush()
-    expect(elsewhere.queryByText('开始清单')).toBeNull()
-    elsewhere.unmount()
-
-    const { rerender, findByText } = mountPanel({}, 'checklist-line')
-    await rerender({ topic: { ...topic('checklist-line'), kind: 'root' } })
-    await flush()
-    expect(await findByText('开始清单')).toBeTruthy()
-  })
-
-  // 支线开着时页面上有两只输入框。引导只画在项目本体那一栏，它要指的也得是那一栏的
-  // 输入框——不能因为支线那只后挂上来，圈就套到旁边去（dev，2026-10-09）。
-  it('points the start guide at the project line’s composer while a 支线 is open', async () => {
-    const vuetify = createVuetify({ components, directives })
-    const room = { ...topic('guide-anchor-line'), kind: 'root' as const }
-    const main = render(ChatPanel, {
-      props: { topic: room, showComposer: true, hideHeader: true, members },
-      global: { plugins: [vuetify, i18n, attachments] },
-    })
-    await flush()
-    const thread = render(ChatPanel, {
-      props: {
-        topic: room,
-        conversationId: 'thread-of-guide-anchor-line',
-        inThread: true,
-        showComposer: true,
-        hideHeader: true,
-        members,
-      },
-      global: { plugins: [vuetify, i18n, attachments] },
-    })
-    await flush()
-
-    const { guideAnchor } = await import('../../composables/useStartGuide')
-    for (const name of ['composer-input', 'composer-attach']) {
-      expect(main.container.contains(guideAnchor(name)), name).toBe(true)
-      expect(thread.container.contains(guideAnchor(name)), name).toBe(false)
-    }
-    thread.unmount()
-    main.unmount()
-  })
-
-  it('counts a reply from the teammate in a 支线 as having talked to it', async () => {
-    const api = await import('../../api')
-    vi.mocked(api.listBlocks).mockResolvedValueOnce({
-      data: [
-        {
-          id: 'm3',
-          conversation_id: 'checklist-thread',
-          kind: 'message',
-          content: '帮我列一下报名表要哪些字段',
-          author: 'alice',
-          author_type: 'participant',
-          created_at: '2026-10-09T10:00:00Z',
-          thread: {
-            id: 'thread-1',
-            room_id: 'checklist-thread',
-            root_block_id: 'm3',
-            reply_count: 1,
-            last_reply_at: '2026-10-09T10:01:00Z',
-            last_reply: null,
-            participants: ['alice', 'cheese-topica'],
-            tasks: [],
-          },
-        } as never,
-      ],
-      total: 1,
-      has_more: false,
-      oldest_id: 'm3',
-      has_newer: false,
-      newest_id: null,
-    })
-    const { rerender, findByText } = mountPanel({}, 'checklist-thread')
-    await rerender({ topic: { ...topic('checklist-thread'), kind: 'root' } })
-    await flush()
-    expect((await findByText('跟芝士说第一句话')).classList).toContain('gs__label--done')
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
   })
 
   it('previews a document and sends its uploaded path', async () => {

@@ -157,6 +157,22 @@ async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> bo
     return True
 
 
+async def account_awaiting_first_project(
+    session: AsyncSession, user_id: int
+) -> User | None:
+    """这个账号还没得到过第一个项目时返回它，行锁到事务结束；得到过就返回 None。
+
+    调用方在同一个事务里建项目、写 `first_project_at`：两个标签页同时进来，后一个
+    等前一个提交后读到已写的时间，不会再建一个（`POST /users/me/first-project`）。
+    """
+    user = await session.scalar(
+        select(User).where(User.id == user_id).with_for_update()
+    )
+    if user is None or user.first_project_at is not None:
+        return None
+    return user
+
+
 async def lookup_account(session: AsyncSession, q: str) -> dict | None:
     """``{id, handle, name, avatar_id}`` for an exact username or email, or None.
 

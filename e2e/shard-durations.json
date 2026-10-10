@@ -116,9 +116,5 @@
   "[components] › design-region-note.spec.ts › replacement metadata retires the draft while new bytes are pending, without restoring old focus": 2.6,
   "[components] › design-region-note.spec.ts › the initially focused compact entry cancels once with Escape and hands focus back": 2.6,
   "[components] › design-region-note.spec.ts › version standalone caller retains its natural-pixel selection and retires it with the resource": 2.8,
-  "[components] › design-region-note.spec.ts › zoom, scroll and local resize retain the same input, draft and original region": 3.1,
-  "[components] › start-guide-placement.spec.ts › the materials bubble covers no control (1440px)": 3.9,
-  "[components] › start-guide-placement.spec.ts › the materials bubble covers no control (390px)": 3.6,
-  "[components] › start-guide-placement.spec.ts › the talk bubble covers no control (1440px)": 3.4,
-  "[components] › start-guide-placement.spec.ts › the talk bubble covers no control (390px)": 3.3
+  "[components] › design-region-note.spec.ts › zoom, scroll and local resize retain the same input, draft and original region": 3.1
 }

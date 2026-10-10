@@ -1,25 +1,51 @@
 import type { RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
-/** 登录的人该落在哪：上次待的项目，读不到清单就落在待办。
+/** 登录的人该落在哪：上次待的项目；一个项目都没有的新账号先给它建一个，落在那个项目的
+ *  「综合」上；读不到清单就落在待办。
  *
  *  根路由守卫用它，会话恢复层（components/common/SessionRestoreGate.vue）也用它
  *  ——弱网下恢复成功时首屏那次导航早就结束了，得把这份决定重走一遍。 */
 export async function landingForMember(): Promise<RouteLocationRaw> {
-  const [{ queryClient }, { projectsQuery }, { workspaceProject }, { lastOpenedProjectId }] = await Promise.all([
-    import('@/query/client'),
-    import('@/query/projects'),
-    import('@/components/common/Navigation/destinations'),
-    import('@/stores/workspace'),
-  ])
+  const [{ queryClient }, { projectsQuery, refreshProjects }, { workspaceProject }, { lastOpenedProjectId }] =
+    await Promise.all([
+      import('@/query/client'),
+      import('@/query/projects'),
+      import('@/components/common/Navigation/destinations'),
+      import('@/stores/workspace'),
+    ])
   try {
     // 和左边栏读的是同一份：刚读过就不再问。
     const projects = await queryClient.fetchQuery(projectsQuery())
     const projectId = workspaceProject(projects, null, lastOpenedProjectId())
     if (projectId) return { name: 'workspace-project', params: { projectId } }
+    if (!projects.length) {
+      // 新账号登录后第一屏就是自己项目的「综合」，想做的事从那里的起手卡上挑
+      // （ChatTimeline 的 `showStarters`），不用先找到「新建项目」。每个账号只给
+      // 一次，由服务端判：建过的账号后来退出或删光了项目，回 null，照旧落在待办上。
+      const first = await firstProject()
+      if (first) {
+        await refreshProjects()
+        const made = (await queryClient.fetchQuery(projectsQuery())).find((p) => p.id === first)
+        return made?.root_topic_id
+          ? { name: 'workspace-topic', params: { projectId: first, topicId: made.root_topic_id } }
+          : { name: 'workspace-project', params: { projectId: first } }
+      }
+    }
   } catch {
     // 项目清单读不到时落在待办上：那一页不依赖这份清单也能用。
   }
   return { name: 'inbox' }
+}
+
+async function firstProject(): Promise<string | null> {
+  const [{ createFirstProject }, { default: AccountService }, { t }] = await Promise.all([
+    import('@/api'),
+    import('@/services/account'),
+    import('@/i18n'),
+  ])
+  const me = AccountService.user
+  const name = t('work.firstProjectName', { name: me?.nickname || me?.username || '' })
+  return (await createFirstProject(name)).project_id
 }
 
 // 推广页（了解知是、方案、下载）是写给还没装上的人看的。桌面 app 里的人已经装上了，
@@ -49,8 +75,8 @@ export default {
         publicLanding: true,
       },
       component: () => import('@/views/home/Landing.vue'),
-      // 登录后落回上次待的那个项目：每天的第一件事是接着干活。一个项目都没有的人
-      // 没有地方可回，落在待办上——那一页给他新建项目、用邀请码加入空间两条路。
+      // 登录后落回上次待的那个项目：每天的第一件事是接着干活。新账号落在给它建好
+      // 的第一个项目上（`landingForMember`）。
       beforeEnter: async () => {
         // AccountService's API client imports the router; load it after route construction.
         const { default: AccountService } = await import('@/services/account')

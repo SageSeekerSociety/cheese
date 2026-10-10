@@ -13,7 +13,7 @@ const FRONTEND_PORT = process.env.E2E_FRONTEND_PORT ?? '3000';
 // (`/src/...`, `/node_modules/.vite/deps/...`) rather than visiting the app.
 // A production build has no such paths, so on CI they get a dev server of
 // their own; locally the one frontend server is already a dev server.
-const COMPONENT_SPECS = ['chat-file-reference-hit-area.spec.ts', 'design-region-note.spec.ts', 'chat-back-to-latest.spec.ts', 'start-guide-placement.spec.ts'];
+const COMPONENT_SPECS = ['chat-file-reference-hit-area.spec.ts', 'design-region-note.spec.ts', 'chat-back-to-latest.spec.ts'];
 const COMPONENT_PORT = process.env.CI ? (process.env.E2E_COMPONENT_PORT ?? '3300') : FRONTEND_PORT;
 const STUB_GATEWAY_PORT = process.env.E2E_STUB_GATEWAY_PORT ?? '4010';
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;

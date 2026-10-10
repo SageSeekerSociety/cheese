@@ -7,99 +7,60 @@ order: 1
 
 # 快速开始 {#quickstart}
 
-创建第一个项目，让 AI 队友芝士写一份三句话的项目介绍，再检查它交回的结果。
+进入第一个项目，让 AI 队友芝士写一份三句话的项目介绍，再检查它交回的结果。
 
 :::before
 需要一个知是账号，并已登录。
 :::
 
-## 创建项目 {#project}
+## 进入第一个项目 {#project}
 
-项目是一件长期要做的事所在的地方，成员、芝士和文件都属于项目。
+项目是一件长期要做的事所在的地方，成员、芝士和文件都属于项目。频道是项目成员交流的地方，列在左侧栏的频道列表中；「综合」是每个项目自带的频道。
 
 :::walk
-1. 点「待办」页上的「新建项目」。已经有项目时，点最左侧一列项目图标下方的「＋」。
-2. 在「项目名称」中填写「组会资料」，点「下一步」。其余几项保持默认。
-3. 点「创建项目」。页面进入新项目的频道「综合」。
+1. 登录新账号。页面进入为你建好的项目「你的名字的项目」，停在频道「综合」上，列着四件可以先做的事。
+2. 点「查资料，写成一份报告」。一条写好的请求出现在输入框里，末尾留着要你补充的内容。改完再发送；不发送不会交给芝士。
 
 ```demo-panel
-title: 新建项目「组会资料」
+title: 第一次登录后的「综合」
 walk: true
 align: top
 parts:
   - kind: head
-    title: 待办
-    until: 1
-  - kind: line
-    text: 开一个自己的项目
-    button: 新建项目
-    press: 1
-    until: 1
-  - kind: head
-    title: 新建项目
-    at: 1
-    until: 2
-  - kind: field
-    label: 项目名称
-    at: 1
-    until: 2
-  - kind: field
-    label: 你打算做什么（可选）
-    at: 1
-    until: 2
-  - kind: field
-    label: 归属
-    value: 你的名字
-    at: 1
-    until: 2
-  - kind: field
-    label: 代码仓库
-    value: 平台托管（默认）
-    at: 1
-    until: 2
-  - kind: buttons
-    actions: 取消 | 下一步
-    pressing: 下一步
-    press: 2
-    at: 1
-    until: 2
-  - kind: head
-    title: 项目的 AI 队友
-    at: 2
-    until: 3
-  - kind: field
-    label: 队友名字
-    value: 芝士
-    at: 2
-    until: 3
-  - kind: buttons
-    actions: 取消 | 返回 | 创建项目
-    pressing: 创建项目
-    press: 3
-    at: 2
-    until: 3
-  - kind: head
     title: "# 综合"
-    at: 3
   - kind: line
-    text: 从一件具体的事开始
-    sub: 芝士可以查找资料、起草文档，或和你一起拆分任务
-    at: 3
-  - kind: checklist
-    title: 开始清单
-    items: 让成果进代码仓库 | 跟芝士说第一句话 | 把要用的材料放进来 | 把同事请进来
-    done: 1
-    at: 3
+    text: 你想先做点什么？
+    until: 1
+  - kind: row
+    title: 整理或改写一份材料
+    sub: 课件、论文、报告、表格
+    until: 1
+  - kind: row
+    title: 查资料，写成一份报告
+    sub: 带来源，可下载
+    until: 1
+  - kind: row
+    title: 做一个网页或小工具
+    sub: 做好就能打开预览
+    until: 1
+  - kind: row
+    title: 拆解一件事，排好分工
+    sub: 适合团队项目
+    until: 1
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
     button: 交给芝士
-    at: 3
+    until: 1
+  - kind: composer
+    placeholder: 输入消息，@芝士 交给它处理
+    type: "@芝士 帮我查找资料，注明来源，整理成一份报告。先给我看大纲，确认后再写全文。我要了解的是："
+    button: 交给芝士
+    at: 1
+    until: 2
 ```
 :::
 
-「队友名字」是这个项目里 AI 队友的名字，已随机填好，也可改成别的名字。界面上显示你填写的名字，本文档称它芝士。
-
-频道是项目成员交流的地方，列在左侧栏的频道列表中；「综合」是每个项目自带的频道。
+另建项目时，点最左侧一列项目图标下方的「＋」，填写「项目名称」后点「下一步」，再点「创建项目」。新项目的 AI 队友默认叫芝士，可以在「队友名字」中改成别的名字；本文档称它芝士。
 
 ## 把一件事交给芝士 {#talk}
 

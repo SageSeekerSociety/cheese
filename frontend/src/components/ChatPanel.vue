@@ -7,7 +7,6 @@
 // one RoomMessage already draws around a row — a composable knows what the room
 // is doing, a view knows what it looks like — and the views under ./chat are
 // those pieces: header, timeline, new-message pill, error toast.
-import type { GettingStartedStepKey } from '../composables/useGettingStarted'
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 
@@ -15,8 +14,6 @@ import { computed, watch } from 'vue'
 
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
-import { useGettingStarted } from '../composables/useGettingStarted'
-import { useStartGuide } from '../composables/useStartGuide'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
@@ -26,8 +23,6 @@ import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
-import StartGuide from './common/StartGuide.vue'
-import GettingStartedCard from './room/GettingStartedCard.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
@@ -249,9 +244,6 @@ const {
   composerRef,
   starterPrompts,
   showStarters,
-  // 「开始清单」的两条房间内判据（其余两条问服务端和名册）。
-  agentHasSpoken,
-  roomHasAttachment,
   startDraft,
   pendingAtts,
   attsUploading,
@@ -297,56 +289,6 @@ watch(loadingHistory, (loading, was) => {
 // themselves — a template binding would unwrap them into elements. Passing them
 // inside a plain object keeps them intact: props are shallow, not deep.
 const timelineRefs = { scrollRef, contentRef }
-
-// 「开始清单」：只画在项目本体（root 话题）上。判据和退休规则都在这个 composable
-// 里，这里只把手的四个来源交给它。
-const { skipped: guideSkipped, skip: skipGuide } = useStartGuide()
-
-// 项目本体上还串着一层手把手引导（高亮圈 + 气泡）：它指的就是这张清单上还没做掉的
-// 那一行。所以下面直接吃 `gettingStartedSteps` 找第一条没做的，不另算一遍——两张
-// 东西于是永远说同一件事。清单卡做完两件必做的就退场，气泡还要把「接仓库」「请同
-// 事」这两步带下去，所以它的场子不跟着卡走，见 `alsoProbe`。
-// 项目本体自己的那一栏才算：支线和任务页里的对话栏拿的也是这只房间（`topic` 是
-// root），但它们是房间里的别的对话。在那里再画一份，每一份按自己那条对话判「说
-// 过话没有」，同一张清单在三处各说各的。
-const onProjectLine = computed(
-  () => !props.conversationId && props.topic?.kind === 'root' && props.topic.status !== 'archived'
-)
-const guideOn = computed(() => !guideSkipped.value && !!props.topic?.project_id && onProjectLine.value)
-
-const {
-  visible: showGettingStarted,
-  steps: gettingStartedSteps,
-  dismiss: dismissGettingStarted,
-} = useGettingStarted({
-  projectId: () => props.topic?.project_id ?? null,
-  on: () => onProjectLine.value,
-  agentHasSpoken: () => agentHasSpoken.value,
-  roomHasAttachment: () => roomHasAttachment.value,
-  members: () => props.members,
-  alsoProbe: () => guideOn.value,
-})
-
-/** 气泡停在哪一步；清单上一条都没剩下就是 null（整条引导走完了）。 */
-const startGuideStep = computed<GettingStartedStepKey | null>(() =>
-  guideOn.value ? gettingStartedSteps.value.find((s) => !s.done)?.key ?? null : null
-)
-
-/** 这一步指的按钮。中间三步都指着项目菜单那颗：菜单里那两项只在菜单开着时才存在，
- *  指菜单的入口才是「一直看得见」的那个东西。 */
-const START_GUIDE_ANCHORS: Record<GettingStartedStepKey, string[]> = {
-  talk: ['composer-input'],
-  materials: ['composer-attach'],
-  repo: ['project-menu'],
-  people: ['project-menu'],
-}
-
-// 卡上那一颗写的是「不再提示」，在引导这一层就该连气泡一起收掉：两颗说的都是
-// 「别教我了」，不该点了这张、那张还照样冒出来。
-function dismissAndSkip() {
-  dismissGettingStarted()
-  skipGuide()
-}
 
 // Per-row questions the view asks. The panel hands over data; these are read
 // off it once for the one row that needs them, not once per render.
@@ -430,7 +372,6 @@ defineExpose({ send, linkDown, submitQuestion })
           :working="awaitingReply"
           :show-starters="showStarters"
           :starter-prompts="starterPrompts"
-          :agent-seat="agentSeat ?? undefined"
           :agent-name="agentName"
           :refs="refMaps"
           :outbox="outbox"
@@ -510,26 +451,6 @@ defineExpose({ send, linkDown, submitQuestion })
 
       <ChatErrorToast :message="errorMsg" @close="errorMsg = null" />
 
-      <!-- 开始清单：和验收卡同一格，理由也一样——它是一串等人做的下一步，贴在这里
-           才一直看得见。四步做掉两步（说上话、放进材料）它就自己退场，不用人收。 -->
-      <GettingStartedCard
-        v-if="showGettingStarted && topic.project_id"
-        :steps="gettingStartedSteps"
-        :project-id="topic.project_id"
-        :agent-name="agentName"
-        @dismiss="dismissAndSkip"
-      />
-
-      <!-- 手把手引导：一次只亮一步，高亮圈套在要点的按钮上，气泡写一句要做什么。没
-           有「下一步」——人真去做了那件事，事实一变，它自己就走到下一步。 -->
-      <StartGuide
-        v-if="startGuideStep"
-        :step="startGuideStep"
-        :anchors="START_GUIDE_ANCHORS[startGuideStep]"
-        :agent="agentName"
-        @skip="skipGuide"
-      />
-
       <!-- 贴在输入框上方的那一条（验收卡）。它不随对话滚：等人做的决定要一直看得见，
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
@@ -562,7 +483,6 @@ defineExpose({ send, linkDown, submitQuestion })
           :agent-seat="agentSeat"
           :agent-name="agentName"
           :always-summon="alwaysSummon"
-          :guided="onProjectLine"
           :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
           :atts="pendingAtts"
           :atts-uploading="attsUploading"
