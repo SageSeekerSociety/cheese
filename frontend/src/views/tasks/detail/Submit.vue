@@ -228,12 +228,14 @@ import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
+import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
 
 const CountdownTimer = defineAsyncComponent(() => import('@/components/common/CountdownTimer.vue'))
 
 const routeNames = TASK_ROUTE_NAMES
+const events = useEvents()
 
 const props = defineProps<{
   taskData: Task | null
@@ -461,6 +463,8 @@ const submitTask = async () => {
     // 使用参与者ID而不是成员ID进行提交
     await TasksApi.createSubmission(props.taskData.id, currentIdentity.value.id, finalSubmissionContent)
     toast.success(t('tasks.submit.submitted'))
+    // 题目页外框只在打开时读一次我的最新一版；不说一声，「我的进度」和「我的提交」上的数要等刷新才变。
+    events.emit('submitted')
 
     // 跳转到提交记录页面
     router.push({

@@ -19,12 +19,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const taskDetail = vi.fn()
 const listSubmissions = vi.fn()
 const getParticipants = vi.fn()
+const createSubmission = vi.fn()
 
 vi.mock('@/network/api/tasks', () => ({
   TasksApi: {
     detail: (...a: unknown[]) => taskDetail(...a),
     listSubmissions: (...a: unknown[]) => listSubmissions(...a),
     getParticipants: (...a: unknown[]) => getParticipants(...a),
+    createSubmission: (...a: unknown[]) => createSubmission(...a),
   },
 }))
 
@@ -57,6 +59,7 @@ vi.mock('@/views/tasks/components', async () => {
   }
 })
 
+import TaskSubmit from './detail/Submit.vue'
 import TaskDetail from './Detail.vue'
 
 import i18n, { setLocale } from '@/i18n'
@@ -115,7 +118,8 @@ function makeRouter() {
         children: [
           { path: '', name: 'TasksDetail', component: stub },
           { path: 'submissions', name: 'TasksSubmissions', component: stub },
-          { path: 'submit', name: 'TasksSubmit', component: stub },
+          // 交作业是真表单：交上之后外框（我的进度、页签上的版本号）跟不跟得上，要它来量。
+          { path: 'submit', name: 'TasksSubmit', component: TaskSubmit },
           { path: 'participants', name: 'TasksParticipants', component: stub },
           { path: 'insights', name: 'TasksInsights', component: stub },
         ],
@@ -127,14 +131,24 @@ function makeRouter() {
   })
 }
 
-async function mount(task: Record<string, unknown> = {}, participation: Record<string, unknown> = {}) {
+async function mount(
+  task: Record<string, unknown> = {},
+  participation: Record<string, unknown> = {},
+  path: string = BASE
+) {
   taskDetail.mockImplementation(async () => payload(task, participation))
   const router = makeRouter()
-  await router.push(BASE)
+  await router.push(path)
   await router.isReady()
   const utils = render(
     { template: '<router-view />' },
-    { global: { plugins: [createVuetify({ components, directives }), router, createPinia(), i18n] } }
+    {
+      global: {
+        plugins: [createVuetify({ components, directives }), router, createPinia(), i18n],
+        // 交作业表单里那张上传进度框：jsdom 没有 visualViewport，浮层一挂就抛。
+        stubs: { VDialog: true },
+      },
+    }
   )
   await waitFor(() => expect(utils.container.querySelector('h1')?.textContent).toContain('把红黑树插一遍'))
   return utils
@@ -241,6 +255,31 @@ describe('题目详情', () => {
       queryReview: true,
     })
     await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionPassed', { n: 3 })))
+  })
+
+  it('交上一版之后，我的进度和「我的提交」上的版本号当场跟上，不用刷新', async () => {
+    let versions: { id: number; version: number; review: { reviewed: boolean } }[] = []
+    listSubmissions.mockImplementation(async () => ({ data: { submissions: versions, page: {} } }))
+    createSubmission.mockImplementation(async () => {
+      versions = [{ id: 90, version: 1, review: { reviewed: false } }]
+      return {}
+    })
+    const { container, getByRole } = await mount(
+      { submittable: true, submissionSchema: [{ type: 'TEXT', prompt: '成果说明' }] },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', canSubmit: true }] },
+      `${BASE}/submit`
+    )
+    await waitFor(() => expect(container.textContent).toContain(t('tasks.side.noSubmission')))
+
+    await fireEvent.update(getByRole('textbox', { name: '成果说明' }), '旋转了三次')
+    await fireEvent.submit(container.querySelector('form')!)
+
+    await waitFor(() => expect(createSubmission).toHaveBeenCalledWith(TASK_ID, 11, [{ text: '旋转了三次' }]))
+    await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionPending', { n: 1 })))
+    const mineTab = Array.from(container.querySelectorAll('a')).find((a) =>
+      a.getAttribute('href')?.endsWith('/submissions')
+    )
+    expect(mineTab?.querySelector('.td__tab-count')?.textContent).toBe('1')
   })
 
   it('不是出题人：领取者和数据两个页签都没有，名单接口也不问', async () => {
