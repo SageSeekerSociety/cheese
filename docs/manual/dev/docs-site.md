@@ -155,6 +155,10 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [环境](/environment) | 频道的环境 | 一个 `demo-panel` | 同上 |
 | [自有设备](/devices) | 批准一台命令行接入的设备 | 一个 `demo-panel` | 同上 |
 | [额度](/quota) | 额度用完时频道里的提示 | 一个 `demo-panel` | 同上 |
+| [频道](/rooms) | 支线那一行的状态 | 一个 `demo-panel` | 同上 |
+| [AI 队友](/agents) | 直接发送和交给芝士 | 一个 `demo-panel` | 同上 |
+| [任务](/tasks) | 任务卡跟着任务更新 | 一个 `demo-panel` | 同上 |
+| [验收与采纳](/accept) | 分几次交付时的「采纳」 | 一个 `demo-panel` | 同上 |
 | [提示词注入与上下文管理](/dev/context) | 一轮里上下文窗口怎么被填满，各占多少、谁看得见 | `demo-context` | `gen/prompt.py` 真跑 `build_system_prompt`，按行首的 `## ` 切块，字符数 ÷ 1.6 折成 token |
 | [一条消息怎么变成芝士的一轮](/dev/turn) | 一轮的七步 | `demo-steps` + `embed: turn` | 这一页自己那七节（每步链回本节）；画面是剧本 `scenes/turn.json` |
 | [一条消息怎么变成芝士的一轮](/dev/turn#seats) | 两个队友在同一个话题里并行 | `demo-steps` + `embed: seats` | 「同一话题里的几个 AI 队友」那六节；画面是剧本 `scenes/seats.json` |
