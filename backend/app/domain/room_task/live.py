@@ -18,7 +18,11 @@ conversation are told when it flushed
 - a turn in the task reaching its session or ending (运行中): the turn's
   interval is written with a bulk `update(AgentTurn)`, which a flush hook does
   not see, so its writer (`AgentTurnRepository`) queues the frames through
-  `turns_moved` in the same session.
+  `turns_moved` in the same session;
+- the task's first instruction moving on its ledger (`agent/opening.py`): it
+  waiting to try again, or giving up, is what the overview says while the
+  document is empty, and no turn moves when it happens. That module's own
+  flush hook hands the conversations over (`moved_in_flush`).
 
 Both frames name the ROOM: the sidebar's row is the room's, and a task id is not
 an address (`GET /topics/{task}` answers 404). A rollback tells nobody. A bulk
@@ -79,19 +83,28 @@ def _note_tasks(session: Session, _context) -> None:
     for row in session.dirty:
         if isinstance(row, Task) and _changed_on_screen(row):
             _tell(session, row.id, row.room_id)
-    asked = {
-        row.conversation_id
-        for row in (*session.new, *session.dirty)
-        if isinstance(row, Block) and _a_question_moved(session, row)
-    }
-    if asked:
-        # On the flush's own connection: no ORM query (it would autoflush
-        # mid-flush), and nothing left running after the session is done.
-        rooms = session.connection().execute(
-            select(Task.id, Task.room_id).where(Task.id.in_(asked))
-        )
-        for task_id, room_id in rooms:
-            _tell(session, task_id, room_id)
+    moved_in_flush(
+        session,
+        {
+            row.conversation_id
+            for row in (*session.new, *session.dirty)
+            if isinstance(row, Block) and _a_question_moved(session, row)
+        },
+    )
+
+
+def moved_in_flush(session: Session, conversations: set[uuid.UUID]) -> None:
+    """From inside a flush: the ones of these conversations that are tasks are
+    told once ``session`` commits."""
+    if not conversations:
+        return
+    # On the flush's own connection: no ORM query (it would autoflush
+    # mid-flush), and nothing left running after the session is done.
+    rooms = session.connection().execute(
+        select(Task.id, Task.room_id).where(Task.id.in_(conversations))
+    )
+    for task_id, room_id in rooms:
+        _tell(session, task_id, room_id)
 
 
 async def turns_moved(

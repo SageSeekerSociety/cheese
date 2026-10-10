@@ -13,7 +13,9 @@ The rules, stated before the code:
   turn ended having said nothing;
 - a task created empty has no such first turn;
 - an instruction that has not started half an hour after it was given gives up
-  instead of trying for ever.
+  instead of trying for ever;
+- a page already showing the task hears when the instruction gives up, and
+  reads it failed without a reload.
 """
 
 import asyncio
@@ -22,11 +24,18 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 
+from tests.ask_fixtures import wait_turn_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     join_project_team,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
+)
+from tests.integration.test_a_task_change_reaches_every_page_showing_it import (
+    _drain,
+    _told,
 )
 
 
@@ -134,14 +143,11 @@ def test_a_task_created_empty_has_no_first_turn(client):
     assert _opening(client, r.json()["data"]["id"]) is None
 
 
-def test_an_instruction_not_started_in_half_an_hour_gives_up(client):
-    from app.api.deps import get_chat_service, get_work_runner
+def _age(client, task):
+    """The first instruction has been tried and has not started for half an hour."""
     from app.domain.delivery.models import Delivery
-    from app.domain.delivery.timer import deliver_due
 
-    _, task = _task_from_message(client)
-
-    async def _age():
+    async def _aged():
         async with client.test_factory() as session:
             await session.execute(
                 update(Delivery)
@@ -149,6 +155,7 @@ def test_an_instruction_not_started_in_half_an_hour_gives_up(client):
                 .values(
                     state="pending",
                     attempts=3,
+                    sent_at=None,
                     lease_until=None,
                     retry_at=None,
                     recorded_at=datetime.now(UTC) - timedelta(minutes=31),
@@ -156,13 +163,42 @@ def test_an_instruction_not_started_in_half_an_hour_gives_up(client):
             )
             await session.commit()
 
-    asyncio.run(_age())
-    # The ledger's sweep, which runs on a clock, in the app's own loop.
+    asyncio.run(_aged())
+
+
+def _sweep(client):
+    """The ledger's sweep, which runs on a clock, in the app's own loop."""
+    from app.api.deps import get_chat_service, get_work_runner
+    from app.domain.delivery.timer import deliver_due
+
     chat = client.app.dependency_overrides[get_chat_service]()
     client.portal.call(
         lambda: deliver_due(chat.session_factory, chat=chat, runner=get_work_runner())
     )
 
+
+def test_an_instruction_not_started_in_half_an_hour_gives_up(client):
+    _, task = _task_from_message(client)
+    _age(client, task)
+
+    _sweep(client)
+
+    assert _opening(client, task) == "failed"
+
+
+def test_a_page_showing_the_task_hears_its_first_instruction_give_up(client):
+    channel, task = _task_from_message(client)
+    # Whatever the first attempt set going is over: what the page hears next is
+    # the sweep's alone.
+    wait_work_idle()
+    wait_turn_idle(client, task)
+    _age(client, task)
+
+    with room_socket(client, task, "alice") as page:
+        _drain(page)
+        _sweep(client)
+
+        assert _told(page, channel)
     assert _opening(client, task) == "failed"
 
 

@@ -5,6 +5,10 @@ Nothing new is stored for it. The instruction is a delivery like any other,
 marked with what it is for (``purpose``), and the turn it started is an agent
 turn like any other; this reads the two and says what someone opening the task
 should be told while its document is still empty.
+
+Pages showing the task hear when the instruction moves on its ledger — waits to
+try again, gives up — through the task's own live path (`room_task.live`), so
+an open overview does not keep saying 正在整理 after it failed.
 """
 
 from __future__ import annotations
@@ -12,13 +16,15 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import event, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_handle_column
+from app.domain.room_task.live import moved_in_flush
 
 #: The payload key a task instruction carries what it is for under.
 PURPOSE = "purpose"
@@ -26,6 +32,34 @@ PURPOSE = "purpose"
 OPENING = "opening"
 
 OpeningState = Literal["drafting", "waiting", "failed"]
+
+#: What :func:`opening_state` reads off the instruction's ledger row.
+_READS = ("state", "retry_at", "attempt_id")
+
+
+def _moved(session: Session, row: object) -> bool:
+    """A task's first instruction was written, or moved on its ledger."""
+    if not isinstance(row, Delivery) or (row.payload or {}).get(PURPOSE) != OPENING:
+        return False
+    if row in session.new:
+        return True
+    attrs = inspect(row).attrs
+    return any(attrs[key].history.has_changes() for key in _READS)
+
+
+@event.listens_for(Session, "after_flush")
+def _note_openings(session: Session, _context) -> None:
+    # `new` / `dirty` still describe what this flush wrote while it runs. A bulk
+    # `update(Delivery)` is not seen here; those move a turn or the task's row
+    # alongside, which tell the pages themselves.
+    moved_in_flush(
+        session,
+        {
+            row.conversation_id
+            for row in (*session.new, *session.dirty)
+            if _moved(session, row)
+        },
+    )
 
 
 async def opening_state(
