@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { railItems, shortcutTarget, tabItems, workspaceProject } from './destinations'
 
 import { setLocale } from '@/i18n'
+import { rememberProject } from '@/lib/addresses'
 import { DEFAULT_SHELL } from '@/lib/shell'
 
 beforeEach(() => setLocale('zh-CN'))
@@ -37,12 +38,41 @@ describe('一级导航的两份清单', () => {
   it('项目里的每一页都算站在那个项目的格子上，别的项目不算', () => {
     const rail = items(railItems(sources(11, 'p1'), DEFAULT_SHELL))
     const p1 = rail.find((i) => i.to === '/projects/p1')!
-    for (const path of ['/projects/p1', '/projects/p1/running', '/projects/p1/topics/t9', '/projects/p1/settings']) {
+    for (const path of ['/projects/p1', '/projects/p1/running', '/projects/p1/channels/t9', '/projects/p1/settings']) {
       expect(p1.match?.(path), path).toBe(true)
     }
     for (const path of ['/projects/p10/running', '/projects/p0', '/inbox']) {
       expect(p1.match?.(path), path).toBe(false)
     }
+  })
+
+  // #3029 把地址换成短名后，这一格比的还是 UUID，永远不算选中，竖条一直没画出来。
+  it('地址里写短名、旧短名或 UUID，都算站在那个项目的格子上', () => {
+    rememberProject('p-uuid', 'old-name')
+    rememberProject('p-uuid', 'demo')
+    const projects = [{ id: 'p-uuid', slug: 'demo', name: '演示' }] as Project[]
+    const rail = items(railItems({ ...sources(0), projects }, DEFAULT_SHELL))
+    const tile = rail.find((i) => i.projectId === 'p-uuid')!
+    for (const path of [
+      '/projects/demo',
+      '/projects/demo/channels/7',
+      '/projects/old-name/tasks/3',
+      '/projects/p-uuid/settings',
+    ]) {
+      expect(tile.match?.(path), path).toBe(true)
+    }
+    for (const path of ['/projects/demo2', '/projects/other/channels/7', '/inbox']) {
+      expect(tile.match?.(path), path).toBe(false)
+    }
+  })
+
+  // 点格子直接落到短地址的频道页，不再先去旧的 topics 地址等重定向。
+  it('有短名的项目，格子落点用短名和 channels 地址', () => {
+    const projects = [{ id: 'p-uuid', slug: 'demo', name: '演示' }] as Project[]
+    const rail = items(railItems({ ...sources(0), projects, projectLastTopic: () => 't9' }, DEFAULT_SHELL))
+    expect(rail.find((i) => i.projectId === 'p-uuid')?.to).toBe('/projects/demo/channels/t9')
+    const fresh = items(railItems({ ...sources(0), projects }, DEFAULT_SHELL))
+    expect(fresh.find((i) => i.projectId === 'p-uuid')?.to).toBe('/projects/demo')
   })
 
   // 浮层上那个 ⌘N 在很长一段时间里指着一个不存在的功能：显示了键，没人绑它。
@@ -153,7 +183,7 @@ describe('项目格子自己带信号', () => {
     const rail = items(
       railItems({ ...sources(2, 'p0'), projectLastTopic: (id) => (id === 'p1' ? 't9' : null) }, DEFAULT_SHELL)
     )
-    expect(rail.find((i) => i.projectId === 'p1')?.to).toBe('/projects/p1/topics/t9')
+    expect(rail.find((i) => i.projectId === 'p1')?.to).toBe('/projects/p1/channels/t9')
     // 没记过（或记着的不在了，宿主交回 null）的落回项目首页。
     expect(rail.find((i) => i.projectId === 'p0')?.to).toBe('/projects/p0')
   })
@@ -161,8 +191,8 @@ describe('项目格子自己带信号', () => {
   // ⌘N 和点这一格走的是同一个地址：两处落点不一样的话，快捷键会把人带去别处。
   it('⌘N 跟着落到同一个话题', () => {
     const rail = railItems({ ...sources(2, 'p0'), projectLastTopic: () => 't9' }, DEFAULT_SHELL)
-    expect(shortcutTarget(rail, 2)).toBe('/projects/p0/topics/t9')
-    expect(shortcutTarget(rail, 3)).toBe('/projects/p1/topics/t9')
+    expect(shortcutTarget(rail, 2)).toBe('/projects/p0/channels/t9')
+    expect(shortcutTarget(rail, 3)).toBe('/projects/p1/channels/t9')
   })
 })
 
