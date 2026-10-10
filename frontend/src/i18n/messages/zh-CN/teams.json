@@ -34,6 +34,7 @@
     "inviteLabel": "用户名或邮箱",
     "invitePlaceholder": "输入完整的用户名或邮箱",
     "inviteNotFound": "找不到这个用户名或邮箱",
+    "alreadyIn": "已经在团队里",
     "inviteLookupFailed": "查找失败，请重试",
     "roleLabel": "角色",
     "inviteMessageLabel": "邀请消息（可选）",
