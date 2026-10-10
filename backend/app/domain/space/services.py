@@ -2,7 +2,7 @@ import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.space.material_service import member_readable_material_ids
@@ -173,6 +173,15 @@ class SpaceLabels:
         return {space_id: SpaceLabel(name=name) for space_id, name in rows.items()}
 
 
+#: The first category a new space gets, named in its creator's UI language
+#: (``User.language``; unset reads as Chinese, as everywhere a person is
+#: addressed). Its name is ordinary data the owner can rename afterwards.
+DEFAULT_CATEGORY: Final[dict[str, tuple[str, str]]] = {
+    "zh-CN": ("默认分类", "新建空间时自动创建的分类"),
+    "en": ("General", "Created with the space"),
+}
+
+
 class SpaceService:
     def __init__(
         self,
@@ -289,6 +298,7 @@ class SpaceService:
         owner_id: int,
         task_templates: list,
         visible_task_limit: int | None = None,
+        language: str | None = None,
     ) -> Space:
         self._validate_strings(name=name)
         if not isinstance(intro, str) or not isinstance(description, str):
@@ -306,12 +316,15 @@ class SpaceService:
             visible_task_limit=visible_task_limit,
         )
 
-        # Default category "General". It declares no 壳, so projects under it
-        # run the default one unless a 题目 or the project itself says otherwise.
+        # The default category. It declares no 壳, so projects under it run
+        # the default one unless a 题目 or the project itself says otherwise.
+        category_name, category_description = DEFAULT_CATEGORY.get(
+            language or "zh-CN", DEFAULT_CATEGORY["zh-CN"]
+        )
         default_category = await self._category_repo.create_category(
             space_id=space.id,
-            name="General",
-            description="Auto generated default category",
+            name=category_name,
+            description=category_description,
             display_order=0,
         )
         space.default_category_id = default_category.id
