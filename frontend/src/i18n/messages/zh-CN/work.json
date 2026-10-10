@@ -1374,7 +1374,9 @@
     "archivedBody": "内容都还在。项目所有者取消归档后，可以继续使用",
     "backToProjects": "回到我的项目",
     "forbiddenTitle": "你不是这个项目的成员",
-    "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单"
+    "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单",
+    "missingTitle": "打不开这个项目",
+    "missingBody": "这个项目不存在，或者你不是它的成员。需要访问权限的话，找项目里的人把你加进成员名单"
   },
   "topicState": {
     "draft": "草稿",

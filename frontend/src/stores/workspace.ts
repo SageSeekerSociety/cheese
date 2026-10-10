@@ -22,6 +22,7 @@ import {
 import { ApiError, isProjectArchivedError } from '@/api'
 import { setChannelMembersOnly } from '@/api/topicMembers'
 import { t } from '@/i18n'
+import { type ProjectRefusal, projectRefusal } from '@/lib/addresses'
 import { memberName } from '@/lib/agentNames'
 import { externalHandles } from '@/lib/externalMembers'
 import { identityChanges } from '@/lib/identity'
@@ -91,12 +92,15 @@ export function lastOpenedProjectId(): string | null {
 export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projectId = ref<string | null>(null)
   const pid = computed(() => projectId.value ?? '')
+  // 地址里的项目没换成 UUID，守卫已经问过服务端为什么（`projectRefusal`）：不再拿短名去
+  // 请求，那只会被当成参数不合法挡回来，侧栏上露出一句「请求参数不合法」。
+  const refused = ref<ProjectRefusal | null>(null)
   // 跟着登录的人变：换了人，未读读的是新的人那一份。
   const me = computed(() => {
     void identityChanges.value
     return myHandle()
   })
-  const hasProject = computed(() => !!projectId.value)
+  const hasProject = computed(() => !!projectId.value && !refused.value)
 
   // 进了项目、或者哪一页要了（`refreshProjects`）才读：没打开任何项目时 store 不替谁去问。
   const projectsWanted = ref(false)
@@ -230,7 +234,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   function reportError(e: unknown, fallback: string) {
     // 项目在这期间被所有者归档了：那不是一次失败，是这个项目换了状态，整块换成说明。
     if (isProjectArchivedError(e)) {
-      accessDenied.value = 'archived'
+      denied.value = 'archived'
       return
     }
     error.value = e instanceof Error ? e.message : fallback
@@ -245,15 +249,18 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
    *
    * 两档分开，因为下一步动作不一样：没登录的人要去登录，登录了的人得去要权限。
    */
-  const accessDenied = ref<'unauthenticated' | 'forbidden' | 'archived' | null>(null)
+  const denied = ref<'unauthenticated' | 'forbidden' | 'archived' | null>(null)
   // 换了人（或者从没登录变成登录了）：上一个身份进不来，不代表这一个也进不来。
   watch(me, () => {
-    accessDenied.value = null
+    denied.value = null
   })
+  const accessDenied = computed<'unauthenticated' | 'forbidden' | 'missing' | 'archived' | null>(
+    () => refused.value ?? denied.value
+  )
   function noteAccess(e: unknown) {
     if (!(e instanceof ApiError)) return false
-    if (e.status === 401) accessDenied.value = 'unauthenticated'
-    else if (e.status === 403) accessDenied.value = 'forbidden'
+    if (e.status === 401) denied.value = 'unauthenticated'
+    else if (e.status === 403) denied.value = 'forbidden'
     else return false
     return true
   }
@@ -286,7 +293,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       if (!list || !projectId.value) return
       // 项目归档了没有，看它的总览房间：总览只会随项目一起归档（单独归档它会被后端拒），
       // 所以这一位不用多发一个请求就读得出来。
-      if (list.some((topic) => topic.kind === 'root' && topic.status === 'archived')) accessDenied.value = 'archived'
+      if (list.some((topic) => topic.kind === 'root' && topic.status === 'archived')) denied.value = 'archived'
       // 读到的清单里没有记着的那个话题了：忘掉它，rail 这一格回落项目首页。
       const remembered = lastTopicByProject.value[projectId.value]
       if (remembered && list.length > 0 && !list.some((row) => row.id === remembered)) {
@@ -317,7 +324,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     // 这一次按现在的身份重读。
     const retry = projectId.value === id
     projectId.value = id
-    accessDenied.value = null
+    refused.value = projectRefusal(id) ?? null
+    denied.value = null
     error.value = null
     persistLayout()
     if (retry) {
@@ -342,7 +350,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       error.value = e instanceof Error ? e.message : t('shell.workspaceErrors.unarchive')
       return false
     }
-    accessDenied.value = null
+    denied.value = null
     await Promise.all([refreshProjectList(), queryClient.invalidateQueries({ queryKey: keys.project(id) })])
     return true
   }
@@ -565,6 +573,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     projects,
     projectsSettled,
     accessDenied,
+    projectRefused: computed(() => refused.value !== null),
     noteAccess,
     openedProject,
     topics,

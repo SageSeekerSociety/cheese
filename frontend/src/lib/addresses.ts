@@ -12,6 +12,7 @@ import type { RouteLocationNormalized, RouteLocationRaw, RouteParamsGeneric } fr
 import type { NumberedKind, ThingAddress } from '../api/addresses'
 
 import { addressOf, resolveNumber, resolveProject } from '../api/addresses'
+import { ApiError } from '../api/http'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const NUMBER = /^\d+$/
@@ -33,6 +34,8 @@ const slugById = new Map<string, string>()
 // 编号的东西：`项目/种类/编号` 和 `种类/UUID` 都指向同一份地址。
 const byNumber = new Map<string, ThingAddress>()
 const byId = new Map<string, ThingAddress>()
+// 换不出 UUID 的项目参数，和服务端给的原因（`projectRefusal`）。
+const refusedByRef = new Map<string, ProjectRefusal>()
 // 同一个查询只发一次。
 const pending = new Map<string, Promise<unknown>>()
 
@@ -85,6 +88,19 @@ export function rememberNumbered(
 /** 地址里的项目参数（短名、旧短名或 UUID）对应的 UUID；还没查过的原样返回。 */
 export function projectUuid(ref: string): string {
   return projectIdByRef.get(ref) ?? ref
+}
+
+/**
+ * 地址里的项目为什么换不出 UUID：没登录（`unauthenticated`），或者服务端说没有这个项目
+ * （`missing`——不是成员也答成没有，后端不肯透露一个看不到的项目存不存在）。查得到的、
+ * 还没查过的、或者只是网络没通的，都没有原因。
+ *
+ * 页面拿着换不出的短名去请求，只会被当成参数不合法挡回来：得在请求之前就知道进不来。
+ */
+export type ProjectRefusal = 'unauthenticated' | 'missing'
+
+export function projectRefusal(ref: string): ProjectRefusal | undefined {
+  return refusedByRef.get(ref)
 }
 
 export function projectSlug(id: string): string | undefined {
@@ -159,8 +175,11 @@ async function projectOf(ref: string): Promise<{ id: string; slug: string } | nu
     const found = await once(`p/${ref}`, () => resolveProject(ref))
     rememberProject(found.id, found.slug)
     if (!isUuid(ref)) projectIdByRef.set(ref, found.id)
+    refusedByRef.delete(ref)
     return found
-  } catch {
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) refusedByRef.set(ref, 'unauthenticated')
+    else if (e instanceof ApiError && (e.status === 403 || e.status === 404)) refusedByRef.set(ref, 'missing')
     return null
   }
 }
@@ -190,8 +209,19 @@ async function thingByNumber(projectId: string, kind: NumberedKind, number: stri
 }
 
 /**
+ * 没登录的人进项目框：不查，短名一个也换不出来（每个项目都要登录才查得到），直接记成
+ * 「要登录」。UUID 不用记，页面拿它去请求，服务端自己会答要登录。
+ */
+export function noteSignedOut(to: RouteLocationNormalized): true {
+  if (!to.matched.some((r) => r.meta?.projectFrame === true)) return true
+  const ref = to.params.projectId
+  if (typeof ref === 'string' && ref && !isUuid(ref)) refusedByRef.set(ref, 'unauthenticated')
+  return true
+}
+
+/**
  * 全局守卫：项目框里的地址落地成短的那一种。查不到的（没有这个项目、看不到、编号不
- * 存在）原样放行，由页面自己说找不到。
+ * 存在）原样放行，由页面自己说找不到；项目查不到的原因记在 `projectRefusal`。
  */
 export async function canonicalAddress(to: RouteLocationNormalized): Promise<true | RouteLocationRaw> {
   if (!to.matched.some((r) => r.meta?.projectFrame === true)) return true
