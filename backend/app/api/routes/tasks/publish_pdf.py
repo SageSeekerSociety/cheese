@@ -29,10 +29,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
-from app.domain.space.repositories import (
-    SpaceCategoryRepository,
-    SpaceRepository,
-)
+from app.domain.space.repositories import SpaceRepository
 from app.domain.tag.repositories import TagRepository
 from app.domain.task.inputs import (
     apply_pdf_task_options,
@@ -99,16 +96,11 @@ async def preview_task_from_pdf(
     if len(pdf_bytes) > MAX_PDF_BYTES:
         raise BadRequestError("PDF file is too large (max 15MB)")
 
-    resolved_category_id = category_id
-    if resolved_category_id is None:
-        category_repo = SpaceCategoryRepository(session=db)
-        categories = await category_repo.list_categories_for_space(
-            space_id, include_archived=False
-        )
-        for category in categories:
-            if category.name.strip().lower() == "general":
-                resolved_category_id = category.id
-                break
+    # No category picked: the space's default one, by id — its name is the
+    # owner's to change and depends on the creator's language.
+    resolved_category_id = (
+        category_id if category_id is not None else space.default_category_id
+    )
 
     default_topic_ids: list[int] = []
     global_topic_repo = TagRepository(session=db)
