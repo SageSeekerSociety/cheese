@@ -222,6 +222,7 @@
   "siteAssetUrlInvalid": "An asset URL in the website's HTML is malformed",
   "sitePublishForbidden": "Only the project owner or a team admin can publish the website",
   "siteRevisionChanged": "The project's accepted version has changed. Refresh, then publish",
+  "reviewerNotAPerson": "The reviewer has to be a person: {handle} is an AI teammate, and nobody could accept a change handed to it. Choose a member to review instead.",
   "reviewerNotInTopic": "Reviewer {handle} isn't in the project this channel belongs to, so nobody could accept the review if it went to them. Add them to the project first, or choose another reviewer (look up the exact handle with `cheese_members`).",
   "protocolExternalAccept": "Under the institution agreement, this channel must be accepted by an external member",
   "reviewEndedNoReassign": "The review has ended; it can't be passed to someone else",

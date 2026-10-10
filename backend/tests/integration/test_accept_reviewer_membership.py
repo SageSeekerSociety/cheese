@@ -128,10 +128,29 @@ def test_a_card_can_be_routed_to_a_member_of_the_room(client):
     assert r.json()["data"]["reviewer_handle"] == MEMBER
 
 
-def test_a_card_can_be_routed_to_the_rooms_own_agent_seat(client):
-    """A seat in the room is what a teammate holds — it is in no project's team,
-    and it is exactly who a room's own agent must be able to hand work to."""
+def test_a_card_cannot_be_routed_to_an_ai_teammate(client):
+    """The room's AI teammate is in the room, but it cannot accept a change in a
+    collaborative project — a card routed to it is acceptable by nobody."""
     pid = _project(client)
+    room = _room(client, pid)
+    seat = room_agent_seat(client, room)
+    task = _task(client, room, "一条活", reviewer=OWNER)
+
+    r = _file(
+        client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=seat
+    )
+
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["i18n"]["key"] == "reviewerNotAPerson"
+    assert _cards(client, room) == []
+
+
+def test_an_autonomous_project_can_route_a_card_to_its_ai_teammate(client):
+    """Autonomous mode is where the AI may accept, so there it may review."""
+    client.headers.update(session_auth_headers(OWNER))
+    r = post_project(client, json={"name": "P", "ai_mode": "autonomous"})
+    assert r.status_code == 200, r.text
+    pid = r.json()["data"]["id"]
     room = _room(client, pid)
     seat = room_agent_seat(client, room)
     task = _task(client, room, "一条活", reviewer=seat)
@@ -142,6 +161,24 @@ def test_a_card_can_be_routed_to_the_rooms_own_agent_seat(client):
 
     assert r.status_code == 200, r.text
     assert r.json()["data"]["reviewer_handle"] == seat
+
+
+def test_a_task_cannot_start_with_an_ai_teammate_reviewing_it(client):
+    pid = _project(client)
+    room = _room(client, pid)
+    seat = room_agent_seat(client, room)
+    task = open_task(client, room, "一条活", owner=OWNER, start=False)
+
+    r = client.post(
+        f"/topics/{task['id']}/start",
+        json={"reviewer_handle": seat},
+        headers=session_auth_headers(OWNER),
+    )
+
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["i18n"]["key"] == "reviewerNotAPerson"
+    got = client.get(f"/topics/{task['id']}/task", headers=session_auth_headers(OWNER))
+    assert got.json()["data"]["started_at"] is None
 
 
 # --- 改派 -------------------------------------------------------------------
@@ -161,6 +198,23 @@ def test_a_card_cannot_be_reassigned_to_somebody_the_room_refuses(client):
     assert r.status_code == 403, r.text
     assert r.json()["error"]["i18n"]["key"] == "reviewerNotInTopic"
     # 原审阅人还在：一次没生效的改派不该悄悄留下半张卡。
+    assert _cards(client, room)[0]["reviewer_handle"] == MEMBER
+
+
+def test_a_card_cannot_be_reassigned_to_an_ai_teammate(client):
+    pid = _project(client)
+    join_project_team(client, pid, MEMBER)
+    room = _room(client, pid)
+    seat = room_agent_seat(client, room)
+    task = _task(client, room, "一条活", reviewer=MEMBER)
+    card = _file(
+        client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=MEMBER
+    ).json()["data"]
+
+    r = _reassign(client, card["id"], seat)
+
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["i18n"]["key"] == "reviewerNotAPerson"
     assert _cards(client, room)[0]["reviewer_handle"] == MEMBER
 
 

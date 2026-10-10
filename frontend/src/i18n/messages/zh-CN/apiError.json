@@ -222,6 +222,7 @@
   "siteAssetUrlInvalid": "网站 HTML 中的资源地址格式无效",
   "sitePublishForbidden": "只有项目负责人或团队管理员可以发布网站",
   "siteRevisionChanged": "项目已采纳的版本发生变化，请刷新后再发布",
+  "reviewerNotAPerson": "审阅人得是一个人：{handle} 是 AI 队友，交给它的改动谁也采纳不了。请换一位成员审阅。",
   "reviewerNotInTopic": "审阅人 {handle} 不在这个频道所在的项目里，提交给他也没人能采纳。先把他加进项目，或者换一位审阅人（`cheese_members` 查准确 handle）。",
   "protocolExternalAccept": "按机构协议，这个频道须由外部成员采纳",
   "reviewEndedNoReassign": "审阅已结束，无法改由他人审阅",
