@@ -426,7 +426,7 @@ jobs:
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
             -p scripts.ci_evidence --ci-evidence-dir="$RUNNER_TEMP/backend-results" \
             --reruns 1 --reruns-delay 1 \
-            --dist worksteal --tb=short --durations=30 \
+            --dist loadfile --no-loadscope-reorder --tb=short --durations=30 \
             --junitxml="$RUNNER_TEMP/backend-results/results.xml" 2>&1 \
             | tee "$RUNNER_TEMP/backend-results/pytest.log"
 
