@@ -1008,5 +1008,7 @@
   "taskFileEditsOverlap": "这个文件在你打开之后又被改过，有和你改的位置重叠的地方，逐处选一个版本",
   "addressedAgentUnavailable": "所寻址的智能体不可用",
   "fileTooLarge": "文件太大（上限 {mb}MB）",
-  "submissionPastDeadline": "你的提交截止时间已过，不能再交新的一版。需要延期请联系出题人"
+  "submissionPastDeadline": "你的提交截止时间已过，不能再交新的一版，也不能再改已交的版本。需要延期请联系出题人",
+  "submissionClaimNotApproved": "领取获批后才能提交",
+  "submissionChallengeEnded": "这道题已结束，不能再提交"
 }

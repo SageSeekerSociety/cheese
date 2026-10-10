@@ -1008,5 +1008,7 @@
   "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each",
   "addressedAgentUnavailable": "The addressed agent is unavailable",
   "fileTooLarge": "The file is too large ({mb}MB max)",
-  "submissionPastDeadline": "Your submission deadline has passed, so no new version can be handed in. Ask the challenge's author to extend it"
+  "submissionPastDeadline": "Your submission deadline has passed, so no version can be handed in or changed. Ask the challenge's author to extend it",
+  "submissionClaimNotApproved": "Your claim must be approved before you can hand work in",
+  "submissionChallengeEnded": "This challenge has ended, so no work can be handed in"
 }

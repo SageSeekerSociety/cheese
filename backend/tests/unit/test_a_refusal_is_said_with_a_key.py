@@ -298,7 +298,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/tasks/participation.py": 25,
     "app/api/routes/tasks/publish_pdf.py": 8,
     "app/api/routes/tasks/roster.py": 12,
-    "app/api/routes/tasks/submissions.py": 15,
+    "app/api/routes/tasks/submissions.py": 13,
     "app/api/routes/teams.py": 8,
     "app/api/routes/topic_members.py": 2,
     "app/api/routes/topics.py": 9,
