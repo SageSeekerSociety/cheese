@@ -3,6 +3,7 @@
     "label": "Quick replies",
     "recommended": "Recommended",
     "answered": "{name}: {text}",
-    "noneOfThese": "None of these"
+    "noneOfThese": "None of these",
+    "closed": "Closed — no longer waiting for an answer"
   }
 }

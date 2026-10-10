@@ -106,9 +106,9 @@ async function until(ready: () => boolean, times = 200) {
   for (let i = 0; i < times && !ready(); i++) await settle()
 }
 
-async function open(topic: string) {
+async function open(topic: string, extra: Record<string, unknown> = {}) {
   const ui = render(Panel, {
-    props: { topic: topicOf(topic), showComposer: true },
+    props: { topic: topicOf(topic), showComposer: true, ...extra },
     global: { plugins: [vuetify, i18n] },
   })
   await until(() => !!ui.container.querySelector('[data-mid]'))
@@ -134,6 +134,14 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(sent[0].url).toContain('/topics/t-click/messages')
     expect(sent[0].body.content).toBe('按项目')
     expect(sent[0].body.reply_to).toBe('q-t-click')
+  })
+
+  it('任务关了、没人答过的题不再给点，说它不再等回答', async () => {
+    history = [question('t-closed')]
+    const { container, queryByRole } = await open('t-closed', { askClosed: true })
+    expect(container.textContent).toContain('预算按哪个口径统计？')
+    expect(queryByRole('button', { name: /按部门/ })).toBeNull()
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('已结束，不再等回答')
   })
 
   it('有人答过之后，快捷回复收成谁说了什么', async () => {

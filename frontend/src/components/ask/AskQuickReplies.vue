@@ -7,6 +7,8 @@
  * it as a message replying to the question — exactly what typing it would do.
  * Typing anything else in the input box answers too, so nothing here takes the
  * composer over. Once anyone has answered, the buttons give way to who said what.
+ * Where nobody can answer any more (its task closed, its channel archived) the
+ * question stays as it was asked and says it no longer waits for an answer.
  */
 import type { Block } from '../../cx_types'
 
@@ -18,6 +20,8 @@ import { askAnswers, askOptions } from '../../lib/blockDisplay'
 const props = defineProps<{
   block: Block
   names: Record<string, string>
+  /** 这里已经不能回答了：任务关了、频道归档了。 */
+  closed?: boolean
 }>()
 const emit = defineEmits<{ (e: 'reply', text: string): void }>()
 
@@ -41,6 +45,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
         {{ t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text }) }}
       </li>
     </ul>
+    <p v-else-if="closed" class="ask-replies__closed t-meta">{{ t('ask.replies.closed') }}</p>
     <div
       v-else
       class="ask-replies__options"
@@ -66,6 +71,10 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 <style scoped>
 .ask-replies {
   margin-top: 8px;
+}
+.ask-replies__closed {
+  margin: 0;
+  color: var(--muted);
 }
 .ask-replies__options {
   display: flex;

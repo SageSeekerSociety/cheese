@@ -254,6 +254,12 @@ const composerClosed = computed(() => {
   return taskPage.takesPart.value ? null : t('work.task.ownerOnlyNotice', { name: store.agentName })
 })
 
+// 提问只在这件事还开着时等回答：任务关了、频道归档了，题跟着结束（待办里同样不再
+// 列它）。只是「我不能说话」（任务只有负责人能说）不算，题还在等别人。
+const askClosed = computed(() =>
+  props.taskId ? !!taskPage.task.value && !taskPage.isOpen.value : selectedTopic.value?.status === 'archived'
+)
+
 // 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
 // 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
 const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
@@ -669,6 +675,7 @@ void openPlace()
             :task-id="taskId ?? null"
             :task-agent-handle="currentTask?.agent_handle ?? null"
             :composer-closed="composerClosed"
+            :ask-closed="askClosed"
             :accept-elsewhere="focusMode"
             v-on="chatEvents"
             @open-room="backToRoom"
@@ -837,6 +844,7 @@ void openPlace()
                 :task-id="taskId ?? null"
                 :task-agent-handle="currentTask?.agent_handle ?? null"
                 :composer-closed="composerClosed"
+                :ask-closed="askClosed"
                 accept-review-button
                 v-on="chatEvents"
                 @open-room="backToRoom"

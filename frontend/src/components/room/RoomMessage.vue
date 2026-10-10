@@ -35,6 +35,8 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   block: Block
+  /** 这里已经不能回答提问了（任务关了、频道归档了）：选项不再给点。 */
+  askClosed?: boolean
   /** 被回复的那一条；没有就是 null（AI 的 reply_to 是隐式的，不画引用条）。 */
   parent: Block | null
   parentName: string | null
@@ -405,6 +407,7 @@ function renderPlain(text: string): string {
         v-if="askOptions(block)"
         :block="block"
         :names="refs.mentionNames"
+        :closed="askClosed"
         @reply="emit('ask-reply', block, $event)"
       />
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
