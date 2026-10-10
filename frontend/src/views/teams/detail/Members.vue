@@ -151,7 +151,7 @@
                   >{{ t('teams.members.roleAdmin') }}</v-chip
                 >
               </v-list-item-title>
-              <!-- What this role can actually do. A bare 队长/管理员 label leaves the
+              <!-- What this role can actually do. A bare 所有者/管理员 label leaves the
                    difference between an admin and a member unstated. -->
               <v-list-item-subtitle>{{ memberRoleNote(member.role) }}</v-list-item-subtitle>
               <template #append>

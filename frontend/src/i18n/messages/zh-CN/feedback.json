@@ -704,7 +704,11 @@
     "field": {
       "title": {
         "label": "标题",
-        "placeholder": "一句话说清发生了什么"
+        "placeholder": {
+          "bug": "一句话说清发生了什么",
+          "suggestion": "一句话说清想让哪里变好",
+          "other": "一句话说清这件事"
+        }
       },
       "body": {
         "bug": {
