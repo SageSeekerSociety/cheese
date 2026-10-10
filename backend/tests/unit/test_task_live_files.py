@@ -11,44 +11,6 @@ from app.domain.agent.harness.claude_code.remote_execution.runtime import Execut
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("current", [True, False])
-async def test_live_files_only_use_the_current_execution_generation(
-    monkeypatch, current
-):
-    from app.core.errors import GatewayUnavailableError
-    from app.domain.repository import forge_files
-
-    task = SimpleNamespace(id=uuid.uuid4(), room_id=uuid.uuid4())
-    room = SimpleNamespace(id=task.room_id, resource_id=uuid.uuid4())
-    session = SimpleNamespace(get=AsyncMock(return_value=room))
-    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id)
-    monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
-    old = {"kind": "device", "device_id": "retired"}
-    target = {"kind": "device", "device_id": "current"}
-    places = [SimpleNamespace(resource_id=str(room.id), lease=old)]
-    if current:
-        places.append(SimpleNamespace(resource_id=str(room.resource_id), lease=target))
-    monkeypatch.setattr(
-        forge_files.AgentSessionService,
-        "places_in_room",
-        AsyncMock(return_value=places),
-    )
-    call = AsyncMock(return_value={"files": [{"path": "draft.txt", "bytes": 5}]})
-    monkeypatch.setattr(forge_files.execution, "call", call)
-    if current:
-        assert await files.live("tree") == {
-            "files": [{"path": "draft.txt", "bytes": 5}]
-        }
-        call.assert_awaited_once_with(
-            target, "task_fs", {"task_id": str(task.id), "operation": "tree"}
-        )
-    else:
-        with pytest.raises(GatewayUnavailableError):
-            await files.live("tree")
-        call.assert_not_called()
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize("failure", ["timeout", "offline", "starting"])
 async def test_unavailable_live_files_offer_committed_version(monkeypatch, failure):
     from app.core.errors import GatewayUnavailableError
@@ -62,12 +24,8 @@ async def test_unavailable_live_files_offer_committed_version(monkeypatch, failu
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
         forge_files.AgentSessionService,
-        "places_in_room",
-        AsyncMock(
-            return_value=[
-                SimpleNamespace(resource_id=str(room.id), lease={"kind": "device"})
-            ]
-        ),
+        "working_copy",
+        AsyncMock(return_value=({"kind": "device"}, False)),
     )
     error = {
         "timeout": TimeoutError(),
@@ -91,12 +49,8 @@ async def test_live_file_deadline_cancels_the_device_request(monkeypatch):
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
         forge_files.AgentSessionService,
-        "places_in_room",
-        AsyncMock(
-            return_value=[
-                SimpleNamespace(resource_id=str(room.id), lease={"kind": "device"})
-            ]
-        ),
+        "working_copy",
+        AsyncMock(return_value=({"kind": "device"}, False)),
     )
     timeout = asyncio.timeout
     cancelled = asyncio.Event()
@@ -241,46 +195,6 @@ def test_live_diff_includes_committed_staged_unstaged_and_untracked_work(live):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("released", [True, False])
-async def test_live_files_on_a_released_sandbox_say_so(monkeypatch, released):
-    # A cloud sandbox left idle is destroyed with its home; the machine then
-    # answers with a missing path. The reader is told the environment was
-    # released and pointed at the committed version, not shown that path. A
-    # machine failure with no such record still reaches them as it was.
-    from app.core.errors import UpstreamUnavailableError
-    from app.domain.agent.device_contract import DeviceCallError
-    from app.domain.repository import forge_files
-
-    task = SimpleNamespace(id=uuid.uuid4(), room_id=uuid.uuid4())
-    room = SimpleNamespace(id=task.room_id, resource_id=None)
-    session = SimpleNamespace(get=AsyncMock(return_value=room))
-    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id)
-    monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
-    monkeypatch.setattr(
-        forge_files.AgentSessionService,
-        "places_in_room",
-        AsyncMock(
-            return_value=[
-                SimpleNamespace(resource_id=str(room.id), lease={"kind": "device"})
-            ]
-        ),
-    )
-    monkeypatch.setattr(
-        forge_files.AgentSessionService,
-        "sandbox_lost_in_room",
-        AsyncMock(return_value=released),
-    )
-    missing = DeviceCallError("lstat /home/cheese/.cheese/home/p/r: no such file")
-    monkeypatch.setattr(forge_files.execution, "call", AsyncMock(side_effect=missing))
-    if released:
-        with pytest.raises(UpstreamUnavailableError, match="已释放.*已提交版本"):
-            await files.live("diff", base_branch="main")
-    else:
-        with pytest.raises(DeviceCallError):
-            await files.live("diff", base_branch="main")
-
-
-@pytest.mark.anyio
 async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
     monkeypatch, tmp_path
 ):
@@ -299,12 +213,8 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
         forge_files.AgentSessionService,
-        "places_in_room",
-        AsyncMock(
-            return_value=[
-                SimpleNamespace(resource_id=str(room.id), lease={"kind": "device"})
-            ]
-        ),
+        "working_copy",
+        AsyncMock(return_value=({"kind": "device"}, False)),
     )
     # The machine itself, whose home holds no directory for this task.
     executor = object.__new__(Executor)

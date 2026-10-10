@@ -151,7 +151,7 @@ def test_a_document_on_a_card_branch_is_read_and_written_there(client, contract)
         async with client.test_factory() as session:
             room = await session.get(Topic, tid)
             await AgentSessionService(session).remember_place(
-                conversation_id=tid,
+                conversation_id=task.id,
                 agent_handle="cheese",
                 work_lease={"kind": "device"},
                 runtime_location={
