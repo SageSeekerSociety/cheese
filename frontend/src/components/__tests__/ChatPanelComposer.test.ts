@@ -48,7 +48,7 @@ vi.mock('../../api', async () => {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     // 项目本体上那张「开始清单」的仓库判据。
-    getGettingStarted: vi.fn().mockResolvedValue({ talked: false }),
+    getGettingStarted: vi.fn().mockResolvedValue({ talked: false, landed: false }),
     getForgeConnection: vi.fn().mockResolvedValue({
       kind: 'forgejo',
       connected: false,

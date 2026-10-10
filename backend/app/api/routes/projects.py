@@ -73,7 +73,7 @@ from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
 from app.domain.review.github_pr import parse_github_repo
-from app.domain.review.queries import latest_cards_by_task
+from app.domain.review.queries import change_landed, latest_cards_by_task
 from app.domain.room_task import naming, presentation
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
@@ -600,16 +600,19 @@ async def project_getting_started(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """「开始清单」里要问服务端的那一条：这个人在项目里跟 AI 队友说上过话没有。
+    """「开始清单」里要问服务端的两条：这个人在项目里跟 AI 队友说上过话没有，和
+    项目的代码仓库里有没有合进过一次被采纳的改动。
 
     说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问
-    （`block.queries.talked_with_agent`）。问的是调用者自己。
+    （`block.queries.talked_with_agent`），问的是调用者自己。合进仓库那一条看
+    验收卡（`review.queries.change_landed`），不看仓库接没接上。
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
     talked = await talked_with_agent(db, project_id, actor.handle)
-    return ok(GettingStartedOut(talked=talked).model_dump())
+    landed = await change_landed(db, project_id)
+    return ok(GettingStartedOut(talked=talked, landed=landed).model_dump())
 
 
 @router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])

@@ -118,3 +118,59 @@ def test_only_a_reply_in_a_conversation_the_person_spoke_in_counts(client):
     # 平台以芝士的名义记的一行（提醒、闸门结论）也不是它开口回答。
     _say(client, project, channel, "cheese", author_type=AuthorType.platform)
     assert _talked(client, project, "alice") is False
+
+
+# 「让成果进代码仓库」：仓库里合进过一次被采纳的改动。仓库接没接上不算——平台托管
+# 的项目一建好就有仓库（dev，2026-10-10：往资料库放一个文件，这一步就打了勾）。
+
+
+def _card(client, channel: str, *, merged: bool) -> None:
+    from datetime import UTC, datetime
+
+    from app.domain.review.models import AcceptCard, AcceptStatus
+
+    async def seed() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                AcceptCard(
+                    topic_id=uuid.UUID(channel),
+                    reviewer_handle="alice",
+                    status=AcceptStatus.accepted,
+                    decided_by="alice",
+                    decided_at=datetime.now(UTC),
+                    pr_merged_at=datetime.now(UTC) if merged else None,
+                )
+            )
+            await session.commit()
+
+    client.portal.call(seed)
+
+
+def _landed(client, project: str) -> bool:
+    r = client.get(
+        f"/projects/{project}/getting-started", headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["landed"]
+
+
+def test_a_new_project_has_landed_nothing_in_its_repository(client):
+    assert _landed(client, _project(client)) is False
+
+
+def test_an_accepted_change_merged_into_the_repository_counts(client):
+    project = _project(client)
+    _card(client, _channel(client, project), merged=True)
+    assert _landed(client, project) is True
+
+
+def test_an_acceptance_that_merged_nothing_does_not_count(client):
+    project = _project(client)
+    _card(client, _channel(client, project), merged=False)
+    assert _landed(client, project) is False
+
+
+def test_a_merge_in_another_project_does_not_count(client):
+    project, other = _project(client), _project(client)
+    _card(client, _channel(client, other), merged=True)
+    assert _landed(client, project) is False

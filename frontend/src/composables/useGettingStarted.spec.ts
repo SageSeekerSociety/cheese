@@ -8,11 +8,11 @@
 import { effectScope, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ library: vi.fn(), forge: vi.fn(), started: vi.fn() }))
+const mocks = vi.hoisted(() => ({ library: vi.fn(), started: vi.fn() }))
 
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
-  return { ...actual, getForgeConnection: mocks.forge, getGettingStarted: mocks.started }
+  return { ...actual, getGettingStarted: mocks.started }
 })
 vi.mock('../lib/libraryApi', async () => {
   const actual = await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')
@@ -25,7 +25,6 @@ const okLibrary = (count: number) => ({
   data: Array.from({ length: count }, (_, i) => ({ path: `f${i}` })),
   total: count,
 })
-const forge = (connected: boolean) => ({ kind: 'forgejo', connected, repo: null, url: null })
 
 function inScope<T>(fn: () => T): { value: T; stop: () => void } {
   const scope = effectScope()
@@ -71,8 +70,7 @@ function done(key: string, steps: { key: string; done: boolean }[]): boolean {
 
 beforeEach(() => {
   mocks.library.mockReset().mockResolvedValue(okLibrary(0))
-  mocks.forge.mockReset().mockResolvedValue(forge(false))
-  mocks.started.mockReset().mockResolvedValue({ talked: false })
+  mocks.started.mockReset().mockResolvedValue({ talked: false, landed: false })
   localStorage.clear()
 })
 afterEach(() => localStorage.clear())
@@ -103,8 +101,8 @@ describe('useGettingStarted', () => {
     gs.stop()
   })
 
-  it('仓库接上了、名册上有第二个人：各自打勾，但卡片还在（必做的没做完）', async () => {
-    mocks.forge.mockResolvedValue(forge(true))
+  it('仓库里合进过一次采纳的改动、名册上有第二个人：各自打勾，但卡片还在（必做的没做完）', async () => {
+    mocks.started.mockResolvedValue({ talked: false, landed: true })
     const gs = setup({
       members: [{ user_handle: 'me' }, { user_handle: 'cheese', agent: true }, { user_handle: 'bobby' }],
     })
@@ -129,7 +127,7 @@ describe('useGettingStarted', () => {
 
   // 跟芝士的来回可能只发生在任务对话里，这一栏读不到那里（dev，2026-10-09）。
   it('在任务里跟芝士说上过话也算：服务端说说过了，这一步打勾', async () => {
-    mocks.started.mockResolvedValue({ talked: true })
+    mocks.started.mockResolvedValue({ talked: true, landed: false })
     const gs = setup()
     await flush()
     expect(done('talk', gs.steps.value)).toBe(true)
@@ -142,7 +140,7 @@ describe('useGettingStarted', () => {
     expect(done('talk', gs.steps.value)).toBe(false)
 
     gs.onLine.value = false
-    mocks.started.mockResolvedValue({ talked: true })
+    mocks.started.mockResolvedValue({ talked: true, landed: false })
     await flush()
     gs.onLine.value = true
     await flush()
@@ -150,11 +148,48 @@ describe('useGettingStarted', () => {
     gs.stop()
   })
 
-  it('这一栏自己看见芝士开过口，就不再去问服务端', async () => {
+  it('这一栏自己看见芝士开过口就算说过话，服务端没看见也不改回去', async () => {
     const gs = setup({ agentHasSpoken: true })
     await flush()
     expect(done('talk', gs.steps.value)).toBe(true)
-    expect(mocks.started).not.toHaveBeenCalled()
+    gs.stop()
+  })
+
+  // dev，2026-10-10：平台托管的项目往资料库里放一个文件，仓库就备好了、算「接上了」，
+  // 这一步跟着打勾，而仓库里什么都没合进去过。
+  it('仓库接上了但还没合进过采纳的改动：「让成果进代码仓库」不打勾', async () => {
+    mocks.library.mockResolvedValue(okLibrary(1))
+    mocks.started.mockResolvedValue({ talked: false, landed: false })
+    const gs = setup()
+    await flush()
+    expect(done('materials', gs.steps.value)).toBe(true)
+    expect(done('repo', gs.steps.value)).toBe(false)
+    gs.stop()
+  })
+
+  it('去采纳了一次交付再回到这一栏，重新问一次，这一步打勾', async () => {
+    const gs = setup()
+    await flush()
+    expect(done('repo', gs.steps.value)).toBe(false)
+
+    gs.onLine.value = false
+    mocks.started.mockResolvedValue({ talked: false, landed: true })
+    await flush()
+    gs.onLine.value = true
+    await flush()
+    expect(done('repo', gs.steps.value)).toBe(true)
+    gs.stop()
+  })
+
+  it('说过话、也进过仓库了，就不再去问服务端', async () => {
+    mocks.started.mockResolvedValue({ talked: true, landed: true })
+    const gs = setup()
+    await flush()
+    gs.onLine.value = false
+    await flush()
+    gs.onLine.value = true
+    await flush()
+    expect(mocks.started).toHaveBeenCalledTimes(1)
     gs.stop()
   })
 
@@ -163,23 +198,23 @@ describe('useGettingStarted', () => {
     await flush()
     expect(gs.visible.value).toBe(false)
     expect(mocks.library).not.toHaveBeenCalled()
-    expect(mocks.forge).not.toHaveBeenCalled()
+    expect(mocks.started).not.toHaveBeenCalled()
     gs.stop()
   })
 
-  it('房间里已经放过附件就不再问资料库；卡片退场后也不再问仓库', async () => {
+  it('房间里已经放过附件就不再问资料库；卡片退场后也不再问服务端', async () => {
     const gs = setup({ roomHasAttachment: true, agentHasSpoken: true })
     await flush()
     expect(mocks.library).not.toHaveBeenCalled()
-    expect(mocks.forge).not.toHaveBeenCalled()
+    expect(mocks.started).not.toHaveBeenCalled()
     gs.stop()
   })
 
-  it('引导还在场时，卡片退场了也继续问仓库——不然气泡会把「不知道」当成「还没接」', async () => {
+  it('引导还在场时，卡片退场了也继续问仓库那一步——不然气泡会把「不知道」当成「还没做」', async () => {
     const gs = setup({ agentHasSpoken: true, roomHasAttachment: true, alsoProbe: true })
     await flush()
     expect(gs.visible.value).toBe(false)
-    expect(mocks.forge).toHaveBeenCalled()
+    expect(mocks.started).toHaveBeenCalled()
     gs.stop()
   })
 

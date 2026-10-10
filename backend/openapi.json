@@ -21754,7 +21754,7 @@
           "projects"
         ],
         "summary": "Project Getting Started",
-        "description": "「开始清单」里要问服务端的那一条：这个人在项目里跟 AI 队友说上过话没有。\n\n说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问\n（`block.queries.talked_with_agent`）。问的是调用者自己。",
+        "description": "「开始清单」里要问服务端的两条：这个人在项目里跟 AI 队友说上过话没有，和\n项目的代码仓库里有没有合进过一次被采纳的改动。\n\n说话可能发生在任务对话里，频道那一栏读不到那里，所以按整个项目问\n（`block.queries.talked_with_agent`），问的是调用者自己。合进仓库那一条看\n验收卡（`review.queries.change_landed`），不看仓库接没接上。",
         "operationId": "project_getting_started_projects__project_id__getting_started_get",
         "parameters": [
           {
@@ -55637,11 +55637,16 @@
           "talked": {
             "type": "boolean",
             "title": "Talked"
+          },
+          "landed": {
+            "type": "boolean",
+            "title": "Landed"
           }
         },
         "type": "object",
         "required": [
-          "talked"
+          "talked",
+          "landed"
         ],
         "title": "GettingStartedOut",
         "description": "「开始清单」要服务端回答的那一条（`GET /projects/{id}/getting-started`）。"

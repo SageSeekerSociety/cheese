@@ -3,7 +3,11 @@
 //
 // 每一步「做没做」都从别处的真实状态推出来，不落字段、不加迁移，也不记「看过
 // 没有」：这个人在项目里跟芝士说上过话没有（这一栏看得见的加上服务端答的）、这
-// 个人往项目里放过材料没有、代码仓库接上没有、名册上有没有第二个人。两件必做的都做完，这张卡自己就没有存在的理由了。
+// 个人往项目里放过材料没有、代码仓库里合进过一次被采纳的改动没有（服务端答）、
+// 名册上有没有第二个人。两件必做的都做完，这张卡自己就没有存在的理由了。
+//
+// 「让成果进代码仓库」不看仓库接没接上：平台托管的项目一建好就有仓库，往资料库里
+// 放个文件也会把它备好，那时候里面什么成果都还没有，打勾就是说假话。
 //
 // 唯一落盘的是右上角那一下「不再提示」——那是一个人的选择，不是项目的数据，所以
 // 放在他自己这台机器上（localStorage），不占数据库。
@@ -11,7 +15,7 @@ import type { ProjectMemberRow } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { getForgeConnection, getGettingStarted } from '../api'
+import { getGettingStarted } from '../api'
 import { listProjectLibrary } from '../lib/libraryApi'
 import { myHandle } from '../me'
 
@@ -38,10 +42,9 @@ export interface GettingStartedOptions {
   /**
    * 除了这张卡，还有谁在读这几个事实（项目本体上那层手把手引导）。
    *
-   * 卡做完两件必做的就退场，引导还要往下走到「接仓库」「请同事」——那两步的事实
-   * 正是资料库和仓库这两条网络判据给的，卡一退场就问不到了，「不知道」会被当成
-   * 「还没做」，气泡于是指着已经接好的仓库让人再连一次。所以卡之外还有人要读时，
-   * 这两条继续问。
+   * 卡做完两件必做的就退场，引导还要往下走到「进仓库」「请同事」——「进仓库」的
+   * 事实是服务端那条网络判据给的，卡一退场就问不到了，「不知道」会被当成「还没
+   * 做」，气泡于是指着已经做完的那一步。所以卡之外还有人要读时，网络判据继续问。
    */
   alsoProbe?: () => boolean
 }
@@ -64,9 +67,10 @@ export function useGettingStarted(opts: GettingStartedOptions) {
   const projectId = computed(opts.projectId)
   const dismissed = ref(false)
   const libraryCount = ref<number | null>(null)
-  const forgeConnected = ref<boolean | null>(null)
   /** 服务端说他在项目里别的对话里跟芝士说上过话没有；还没问到是 null。 */
   const talkedElsewhere = ref<boolean | null>(null)
+  /** 服务端说项目的仓库里合进过一次被采纳的改动没有；还没问到是 null。 */
+  const landed = ref<boolean | null>(null)
 
   // 换项目（或第一次拿到 project_id）就重新读一遍：上一条关掉的记录、上一个项目
   // 取到的资料库和仓库状态都不能跟着过来。
@@ -75,8 +79,8 @@ export function useGettingStarted(opts: GettingStartedOptions) {
     (pid) => {
       dismissed.value = readDismissed(pid)
       libraryCount.value = null
-      forgeConnected.value = null
       talkedElsewhere.value = null
+      landed.value = null
     },
     { immediate: true }
   )
@@ -85,7 +89,7 @@ export function useGettingStarted(opts: GettingStartedOptions) {
   // 材料两条路都算数：直接拖进这个房间，或者放进项目资料库。房间里那份本地就知
   // 道，所以只在「房间里还没有附件」时才去问资料库——大部分人是在房间里给的。
   const materialsDone = computed(() => opts.roomHasAttachment() || (libraryCount.value ?? 0) > 0)
-  const repoDone = computed(() => forgeConnected.value === true)
+  const repoDone = computed(() => landed.value === true)
   const peopleDone = computed(() => {
     const me = myHandle()
     return opts.members().some((m) => !m.agent && m.user_handle !== me)
@@ -103,11 +107,11 @@ export function useGettingStarted(opts: GettingStartedOptions) {
   )
 
   // 两张网络判据各问一次，问完就停：清单画在项目本体上，而项目本体是每次进来都
-  // 会开的那一页，不该每次开都多发两个请求。仓库那条只在「还有人读它」时才问。
+  // 会开的那一页，不该每次开都多发两个请求。服务端那张一次答「说过话没有」和「进
+  // 过仓库没有」两条，两条都打了勾就不再问。
   const probesOn = computed(() => visible.value || (opts.alsoProbe?.() ?? false))
   const needsLibrary = computed(() => probesOn.value && !opts.roomHasAttachment() && libraryCount.value === null)
-  const needsForge = computed(() => probesOn.value && forgeConnected.value === null)
-  const needsTalk = computed(() => probesOn.value && !opts.agentHasSpoken() && talkedElsewhere.value !== true)
+  const needsServer = computed(() => probesOn.value && !(talkDone.value && repoDone.value))
 
   async function loadLibrary() {
     const pid = projectId.value
@@ -122,26 +126,19 @@ export function useGettingStarted(opts: GettingStartedOptions) {
     }
   }
 
-  async function loadTalk() {
+  async function loadServer() {
     const pid = projectId.value
     if (!pid) return
     try {
       const state = await getGettingStarted(pid)
-      if (projectId.value === pid) talkedElsewhere.value = state.talked
+      if (projectId.value !== pid) return
+      talkedElsewhere.value = state.talked
+      landed.value = state.landed
     } catch {
-      // 问不到就照这一栏自己看到的算。
-      if (projectId.value === pid) talkedElsewhere.value = false
-    }
-  }
-
-  async function loadForge() {
-    const pid = projectId.value
-    if (!pid) return
-    try {
-      const conn = await getForgeConnection(pid)
-      if (projectId.value === pid) forgeConnected.value = conn.connected
-    } catch {
-      if (projectId.value === pid) forgeConnected.value = false
+      // 问不到就照这一栏自己看到的算；仓库那一步照「还没做」算——说少了只是多提示一次。
+      if (projectId.value !== pid) return
+      talkedElsewhere.value = false
+      landed.value = false
     }
   }
 
@@ -152,20 +149,13 @@ export function useGettingStarted(opts: GettingStartedOptions) {
     },
     { immediate: true }
   )
+  // 这两条都在别处发生：人去任务里跟芝士聊完、或者去采纳了一次交付，再回到这一栏，
+  // 得重新问一次。所以除了第一次要读，每次回到这一栏（`on` 由假变真）时，还没做完
+  // 就再问。
   watch(
-    needsForge,
-    (on) => {
-      if (on) void loadForge()
-    },
-    { immediate: true }
-  )
-
-  // 说话这一条会在别处发生：人去任务里跟芝士聊完再回到这一栏，得重新问一次。所以
-  // 除了第一次要读，每次回到这一栏（`on` 由假变真）时，还没做完就再问。
-  watch(
-    [needsTalk, () => opts.on()] as const,
+    [needsServer, () => opts.on()] as const,
     ([need, on], [wasNeed, wasOn]) => {
-      if (need && (!wasNeed || (on && !wasOn))) void loadTalk()
+      if (need && (!wasNeed || (on && !wasOn))) void loadServer()
     },
     { immediate: true }
   )
