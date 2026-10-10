@@ -103,10 +103,11 @@ const INFO = ic('info')
 //   :::before … :::  what the reader needs before starting, in a grey box under the lede
 //   :::walk … :::    a numbered list and a `demo-panel` with `walk: true`: the panel
 //                    shows the screen after each step, and the steps drive it
+//   :::map … :::     a nested list drawn as boxes inside boxes: what contains what
 //   ```prompt        a message to send to 芝士, with a copy button
 //   > [!TIP] / > [!IMPORTANT] / > [!WARNING] / > [!NOTE]   a callout of that kind; a plain `>` is a note
 // The `:::` lines are dropped from the text version, so a model reads plain Markdown.
-const CONTAINERS = ['steps', 'cards', 'before', 'walk']
+const CONTAINERS = ['steps', 'cards', 'before', 'walk', 'map']
 marked.use({
   extensions: [{
     name: 'container',
@@ -143,6 +144,23 @@ marked.use({
           return `<li data-walk-step="${i + 1}">${one ? this.parser.parseInline(it.tokens[0].tokens) : this.parser.parse(it.tokens)}</li>`
         }).join('')
         return `<div class="walk" data-walk><ol class="walk-list">${items}</ol><div class="walk-panel">${panel}</div></div>`
+      }
+      if (token.kind === 'map') {
+        // Each item is a box: its first line is the label (`名字：说明` sets the name in
+        // bold), its sub-list the boxes inside it, siblings stacked. The text version is
+        // the list itself.
+        const list = token.tokens.find((t) => t.type === 'list')
+        if (!list || token.tokens.some((t) => t.type !== 'list' && t.type !== 'space')) throw new Error(':::map holds one nested list: - 名字：说明')
+        const boxes = (items, depth) => items.map((item) => {
+          const head = item.tokens.find((t) => t.type === 'text' || t.type === 'paragraph')
+          const kids = item.tokens.find((t) => t.type === 'list')
+          if (!head) throw new Error(`a :::map box needs a label: «${item.text}»`)
+          const label = this.parser.parseInline(head.tokens)
+          const m = /^([^：]+)：([\s\S]+)$/.exec(label)
+          const text = m ? `<b>${m[1]}</b><span>${m[2]}</span>` : `<b>${label}</b>`
+          return `<div class="map-box map-d${depth}"><p class="map-label">${text}</p>${kids ? `<div class="map-kids">${boxes(kids.items, depth + 1)}</div>` : ''}</div>`
+        }).join('')
+        return `<figure class="map">${boxes(list.items, 1)}</figure>`
       }
       const list = token.tokens.find((t) => t.type === 'list')
       if (!list || token.tokens.some((t) => t.type !== 'list' && t.type !== 'space')) throw new Error(':::cards holds one list: - [title](/page#id)：one line')

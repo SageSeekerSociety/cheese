@@ -179,6 +179,9 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
   ok(/立即派活/.test(made) && /not a string the product shows/.test(made), `a label the product does not show fails the build: «${made}»`)
   const long = run('title: 太长\ncaption: 一行\nparts:\n  - kind: msg\n    who: 你\n    say: 一\n    at: 5')
   ok(/at most 4/.test(long), `a demo of more than four beats fails the build: «${long}»`)
+  eq(run('title: 对话框\ncaption: 一行\nparts:\n  - kind: field\n    label: 项目名称\n    value: 组会资料\n  - kind: buttons\n    actions: 取消 | 下一步\n    pressing: 下一步\n    press: 1'), '', 'a dialog quoting real field and button labels builds')
+  const field = run('title: 假字段\ncaption: 一行\nparts:\n  - kind: field\n    label: 项目代号\n  - kind: buttons\n    actions: 取消 | 下一步\n    pressing: 下一步\n    press: 1')
+  ok(/项目代号/.test(field) && /not a string the product shows/.test(field), `a field label the product does not show fails the build: «${field}»`)
   const still = run('title: 不动\ncaption: 一行\nparts:\n  - kind: msg\n    who: 你\n    say: 一')
   ok(/picture/.test(still), `a panel where nothing changes fails the build: «${still}»`)
 }
