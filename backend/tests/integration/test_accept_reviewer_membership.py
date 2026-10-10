@@ -145,6 +145,24 @@ def test_a_card_cannot_be_routed_to_an_ai_teammate(client):
     assert _cards(client, room) == []
 
 
+def test_an_autonomous_project_can_route_a_card_to_its_ai_teammate(client):
+    """Autonomous mode is where the AI may accept, so there it may review."""
+    client.headers.update(session_auth_headers(OWNER))
+    r = post_project(client, json={"name": "P", "ai_mode": "autonomous"})
+    assert r.status_code == 200, r.text
+    pid = r.json()["data"]["id"]
+    room = _room(client, pid)
+    seat = room_agent_seat(client, room)
+    task = _task(client, room, "一条活", reviewer=seat)
+
+    r = _file(
+        client, pid, room, task["id"], "feat(x): deliver it", reviewer_handle=seat
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["reviewer_handle"] == seat
+
+
 def test_a_task_cannot_start_with_an_ai_teammate_reviewing_it(client):
     pid = _project(client)
     room = _room(client, pid)

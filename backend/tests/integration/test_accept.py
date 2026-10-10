@@ -171,24 +171,32 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
 
 
 def test_ai_cannot_accept_own_work_collaborative(client):
-    # Default project ai_mode is collaborative. Route the card TO the AI so the
-    # reviewer-identity check passes and `_forbid_ai` is what actually fires —
-    # and to the seat that is really in this room's roster: a card is filed only to
-    # somebody this room admits, and the room-membership gate on the decision routes
-    # has to pass for them too. The bare ``cheese`` handle is on no roster; every
-    # topic's 分身 acts as ``cheese-<topic hex>`` (see `_forbid_ai`, which matches
-    # the whole namespace).
+    # Default project ai_mode is collaborative. The AI cannot be handed its own
+    # change to review, and a card handed to a person is not its to accept. The
+    # seat is the one really in this room's roster — every topic's 分身 acts as
+    # ``cheese-<hex>``, never the bare ``cheese``.
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     ai = room_agent_seat(client, tid)
-    cid = _make_card(client, tid, ai)
+    routed = client.post(
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": ai,
+            "focus": "最懂",
+        },
+    )
+    assert routed.status_code == 422, routed.text
+    assert routed.json()["error"]["i18n"]["key"] == "reviewerNotAPerson"
+    cid = _make_card(client, tid, "alice")
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
         json={"decided_by": ai, "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers(ai),
     )
-    assert r.status_code == 422
+    assert r.status_code in (403, 422), r.text
 
     # Card untouched, topic still active.
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]

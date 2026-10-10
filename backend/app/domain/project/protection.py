@@ -31,7 +31,8 @@ import httpx
 
 from app.core.forge_http import forge_client
 from app.core.sentences import say
-from app.domain.project.models import Project
+from app.domain.identity.handles import looks_like_agent_handle, names_a_person
+from app.domain.project.models import AiMode, Project
 
 BRANCH_PROTECTION_KEY = "branch_protection"
 
@@ -140,6 +141,22 @@ def branch_protection_of(project: Project | None) -> BranchProtection:
 
 
 # --- Write side -----------------------------------------------------------
+
+
+def can_take_review(project: Project | None, handle: str) -> bool:
+    """Whether a change routed to ``handle`` for review is one they can accept.
+
+    A person always can. An AI teammate can only in an autonomous project: in a
+    collaborative one AI never accepts (``reviewers._forbid_ai``), so a card or
+    task routed to it is acceptable by nobody and sits there looking routed.
+    """
+    if names_a_person(handle):
+        return True
+    return (
+        project is not None
+        and project.ai_mode == AiMode.autonomous
+        and looks_like_agent_handle(handle)
+    )
 
 
 def _validate_glob(path: object) -> str:

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from app.core.config import settings
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
-from app.domain.identity.handles import looks_like_agent_handle, names_a_person
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.models import AiMode, Project
 from app.domain.review.models import (
     AcceptCard,
@@ -22,7 +22,7 @@ from app.domain.topic.models import Topic
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
-from app.domain.project.protection import branch_protection_of
+from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES,
@@ -101,10 +101,10 @@ async def _require_reviewer_in_room(
     挂的是同一只开关（`authz_enforce_topic_access`）：开关关掉时采纳那道门本来
     就不问成员资格，此时按房间名册拦下递卡只会让一个配置里合法的人递不出去。
 
-    审阅人还得是一个人，这一条不挂开关：AI 队友在协作模式下采纳不了（`_forbid_ai`），
-    递给它的卡同样谁也采纳不了；审阅本来就是人对 AI 交来的东西把关。
+    审阅人还得是能采纳的人，这一条不挂开关：协作模式下 AI 队友采纳不了
+    （`_forbid_ai`），递给它的卡同样谁也采纳不了（`can_take_review`）。
     """
-    if not names_a_person(handle):
+    if not can_take_review(await self._projects.get(topic.project_id), handle):
         raise UnprocessableEntityError(say("reviewerNotAPerson", handle=handle))
     if not settings.authz_enforce_topic_access:
         return

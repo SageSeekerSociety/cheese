@@ -13,7 +13,7 @@ from app.domain.block.models import Block
 from app.domain.identity.handles import names_a_person
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
-from app.domain.project.protection import branch_protection_of
+from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
@@ -364,8 +364,8 @@ class TaskService:
         )
         if not reviewer:
             raise UnprocessableEntityError(say("reviewerRequired"))
-        # 交上来的改动由人采纳：审阅人定成 AI 队友，这件事的每一次交付都没人能收。
-        if not names_a_person(reviewer):
+        # 审阅人定成采纳不了的人（协作模式下的 AI 队友），这件事的每一次交付都没人能收。
+        if not can_take_review(project, reviewer):
             raise UnprocessableEntityError(say("reviewerNotAPerson", handle=reviewer))
         doc = (
             await Documents(self._session).get(task.document_id)
