@@ -13,11 +13,18 @@ from app.domain.device.models import (
     DeviceHealthRow,
     DeviceProjectRow,
     DeviceRow,
+    DeviceSandboxRow,
     DeviceTeamRow,
     DeviceTopicRow,
     HostedDeviceRow,
 )
-from app.domain.device.repository import AuthCode, Device, HostHealth, TopicDevice
+from app.domain.device.repository import (
+    AuthCode,
+    Device,
+    HostHealth,
+    SandboxCheck,
+    TopicDevice,
+)
 from app.domain.device.supply import Supply, Visibility
 from app.domain.project.models import Project
 
@@ -385,3 +392,30 @@ class SqlDeviceRepository:
             )
         ).all()
         return {row.device_id: self._health(row) for row in rows}
+
+    async def save_sandbox_check(self, check: SandboxCheck) -> None:
+        row = await self._session.get(DeviceSandboxRow, check.device_id)
+        if row is None:
+            row = DeviceSandboxRow(device_id=check.device_id)
+            self._session.add(row)
+        row.isolates = check.isolates
+        row.reason = check.reason
+        row.checked_at = check.checked_at
+        await self._session.flush()
+
+    async def list_sandbox_checks(
+        self, device_ids: Sequence[str]
+    ) -> dict[str, SandboxCheck]:
+        if not device_ids:
+            return {}
+        rows = await self._session.scalars(
+            select(DeviceSandboxRow).where(
+                DeviceSandboxRow.device_id.in_(list(device_ids))
+            )
+        )
+        return {
+            row.device_id: SandboxCheck(
+                row.device_id, row.isolates, row.reason, row.checked_at
+            )
+            for row in rows
+        }

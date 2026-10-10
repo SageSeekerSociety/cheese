@@ -11,13 +11,10 @@ repository 模块，且那道守卫是对的：值类型不该住在数据访问
 
 import enum
 
-from app.core.sentences import NoticeText, say
-
 __all__ = [
     "Supply",
     "Visibility",
     "default_visibility",
-    "sandbox_unavailable",
 ]
 
 
@@ -53,9 +50,9 @@ class Visibility(enum.StrEnum):
     (`remote_execution/bootstrap.sandbox_argv`), on Cloud machines and enrolled
     ones alike. It is the default everywhere (#2320); `host` is the 档 a
     machine's owner picks for a room on purpose. Whether a given enrolled
-    machine can give a session a sandbox depends on what it runs
-    (`sandbox_unavailable`), and one that cannot refuses an `isolated` room
-    rather than running it over the whole machine.
+    machine can give a session a sandbox is what it said when asked
+    (`device.sandbox`), and one that cannot refuses an `isolated` room rather
+    than running it over the whole machine.
     """
 
     isolated = "isolated"  # one sandbox per session — blast radius is the session
@@ -74,27 +71,3 @@ def default_visibility() -> Visibility:
     directory and its project's package store, and neither the machine owner's
     files (the connector's credential is among them) nor other sessions'."""
     return Visibility.isolated
-
-
-# The connector systems with no isolated environment, and the sentence a room
-# there is refused with. Which environment a system gets is the bootstrap's to
-# build (`bootstrap.sandbox_tools`): bubblewrap on Linux, `sandbox-exec` on
-# macOS. A system gains one by leaving this table in the same change that
-# teaches the bootstrap to build it. Windows gets it through WSL, whose
-# connector is a Linux one.
-_NO_SANDBOX = {
-    "windows": "sandboxUnavailableWindows",
-}
-
-
-def sandbox_unavailable(target: str) -> NoticeText | None:
-    """Why an enrolled machine whose connector build is ``target``
-    (``<os>-<arch>``, as its `hello` names it) cannot give a session an
-    isolated environment, or None when it can or the build is not known yet.
-
-    An `isolated` room there is refused with this sentence rather than run
-    over the whole machine; the machine's owner can give the room full machine
-    access instead. The install on the machine refuses the same way for a
-    machine this side has not heard from (`bootstrap.sandbox_argv`)."""
-    key = _NO_SANDBOX.get(target.split("-", 1)[0])
-    return say(key) if key is not None else None

@@ -8,7 +8,8 @@ Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device_topic`` (a topic's pinned device — affinity, v4) and ``device_health``
 (a machine's rolling failure streak / quarantine — #186) and
 ``device_claude_login`` (whether its owner's own Claude Code is logged in for
-the platform — #2991). ``SqlDeviceRepository``
+the platform — #2991) and ``device_sandbox`` (whether it can give a session a
+sandbox). ``SqlDeviceRepository``
 converts between these rows and the dataclasses; the service never sees them.
 """
 
@@ -213,6 +214,29 @@ class DeviceClaudeLoginRow(Base):
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class DeviceSandboxRow(Base):
+    """Whether a machine a person enrolled can give a session a sandbox, as it
+    last answered: asked when it connects and when its owner asks again
+    (`device.sandbox`). The machine runs the very check its install runs, so
+    the answer is the install's own; ``reason`` is what it said when it cannot,
+    worded for its owner.
+    """
+
+    __tablename__ = "device_sandbox"
+
+    device_id: Mapped[str] = mapped_column(
+        ForeignKey(
+            "device.device_id", ondelete="CASCADE", name="fk_device_sandbox_device_id"
+        ),
+        primary_key=True,
+    )
+    isolates: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

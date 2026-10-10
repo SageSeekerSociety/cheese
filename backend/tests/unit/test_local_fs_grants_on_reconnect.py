@@ -56,6 +56,7 @@ async def _no_login_check(*_args) -> None:
 @pytest.fixture
 def hub(monkeypatch, db_factory):
     monkeypatch.setattr(owner_login, "refresh_on_connect", _no_login_check)
+    monkeypatch.setattr(connector, "_check_sandbox", _no_login_check)
     monkeypatch.setattr(device_hub, "_devices", {})
     monkeypatch.setattr(device_hub, "_screens", {})
     monkeypatch.setattr(device_hub, "_by_screen_token", {})

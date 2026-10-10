@@ -55,8 +55,9 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     # A machine is told which build to fetch before its owner logs in their own
     # Claude Code for the platform (`cheesehost claude login`, #2991).
     "app.api.routes.installer": ("CLAUDE_PINNED_VERSION",),
-    # A machine is asked as it connects whether that login is good (#2991).
-    "app.api.routes.connector": ("owner_login",),
+    # A machine is asked as it connects whether that login is good (#2991),
+    # and whether it can make the sandbox its install makes (`device.sandbox`).
+    "app.api.routes.connector": ("executor_launch", "owner_login"),
     # --- 会话核心：每个骨架的驱动在这里，驱动认得骨架的零件，也只在这里 ---
     "app.domain.agent.session_host.claude_code": (
         "ClaudeLaunch",

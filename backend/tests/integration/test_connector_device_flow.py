@@ -436,3 +436,51 @@ def test_a_machine_that_went_away_says_when_it_was_last_seen(client, monkeypatch
         while last_seen() is None and time.monotonic() < deadline:
             time.sleep(0.05)
     assert last_seen() is not None
+
+
+def test_an_owner_reads_and_asks_again_whether_their_machine_can_isolate(
+    client, monkeypatch
+):
+    """What the machine said about giving a session a sandbox is its owner's to
+    read, reason included, and to ask again after changing what it lacked."""
+    import json
+    from unittest.mock import AsyncMock
+
+    owner = _login(client, "rowan")
+    code = client.post(
+        "/connector/auth/device/start", json={"device_name": "rowans-box"}
+    ).json()["device_code"]
+    client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(owner)
+    )
+    device_id = client.post(
+        "/connector/auth/device/poll", json={"device_code": code}
+    ).json()["device_id"]
+    said = {"isolates": False, "reason": "AppArmor here restricts user namespaces."}
+    from app.domain.agent.device_hub import device_hub
+
+    monkeypatch.setattr(device_hub, "is_online", lambda _device: True)
+    monkeypatch.setattr(
+        device_hub,
+        "exec",
+        AsyncMock(side_effect=lambda *a, **k: {"exit": 0, "stdout": json.dumps(said)}),
+    )
+
+    def mine() -> dict:
+        devices = client.get("/connector/my/devices", headers=_bearer(owner)).json()
+        return next(d for d in devices["devices"] if d["device_id"] == device_id)
+
+    assert mine()["sandbox"] is None
+    asked = client.post(
+        f"/connector/my/devices/{device_id}/sandbox", headers=_bearer(owner)
+    )
+    assert asked.status_code == 200, asked.text
+    assert asked.json()["isolates"] is False
+    assert mine()["sandbox"]["reason"] == said["reason"]
+
+    said = {"isolates": True}
+    asked = client.post(
+        f"/connector/my/devices/{device_id}/sandbox", headers=_bearer(owner)
+    )
+    assert asked.json()["isolates"] is True
+    assert mine()["sandbox"]["reason"] is None

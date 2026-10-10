@@ -111,27 +111,6 @@ def test_a_room_nobody_chose_for_runs_isolated():
     assert default_visibility() is Visibility.isolated
 
 
-@pytest.mark.parametrize(
-    ("target", "key"),
-    [
-        ("darwin-arm64", None),
-        ("darwin-amd64", None),
-        ("windows-amd64", "sandboxUnavailableWindows"),
-        ("linux-amd64", None),
-        ("linux-arm64", None),
-        # A machine this backend process has not heard from yet: the install
-        # on it decides (`bootstrap.sandbox_argv`).
-        ("", None),
-    ],
-)
-def test_which_machines_have_no_isolated_environment_yet(target, key):
-    from app.domain.device.supply import sandbox_unavailable
-
-    reason = sandbox_unavailable(target)
-
-    assert (reason.key if reason is not None else None) == key
-
-
 def test_no_binding_point_picks_a_visibility_of_its_own():
     """四个绑定点都问，没有一个自己挑。
 

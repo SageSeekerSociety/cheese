@@ -189,6 +189,22 @@ def script(project_id, resource_id, env, *, sandbox, platform_machine):
     )
 
 
+# The install's own sandbox check, alone: what a machine a person enrolled
+# answers when it connects (`device.sandbox`), so the answer recorded for it is
+# the one its install would give.
+_SANDBOX_CHECK = """
+try:
+    sandbox_tools(None, False)
+    print(json.dumps({"isolates": True}))
+except SandboxUnavailable as exc:
+    print(json.dumps({"isolates": False, "reason": str(exc)}))
+"""
+
+
+def sandbox_check_script() -> str:
+    return Path(bootstrap.__file__).read_text() + _SANDBOX_CHECK
+
+
 def private_script(target: dict, env: dict) -> str:
     source = Path(private.__file__).read_text()
     return (

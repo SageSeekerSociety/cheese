@@ -8,7 +8,13 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 
-from app.domain.device.repository import AuthCode, Device, HostHealth, TopicDevice
+from app.domain.device.repository import (
+    AuthCode,
+    Device,
+    HostHealth,
+    SandboxCheck,
+    TopicDevice,
+)
 from app.domain.device.supply import Supply, Visibility
 
 
@@ -19,6 +25,7 @@ class InMemoryDeviceRepository:
         self._hosted_device_ids: set[str] = set()
         self._topic_device: dict[uuid.UUID, TopicDevice] = {}
         self._health: dict[str, HostHealth] = {}
+        self._sandbox: dict[str, SandboxCheck] = {}
 
     async def save_code(self, code: AuthCode) -> None:
         self._codes[code.code] = code
@@ -153,3 +160,11 @@ class InMemoryDeviceRepository:
         return {
             d: self._health[d] for d in device_ids if self._health.get(d) is not None
         }
+
+    async def save_sandbox_check(self, check: SandboxCheck) -> None:
+        self._sandbox[check.device_id] = check
+
+    async def list_sandbox_checks(
+        self, device_ids: Sequence[str]
+    ) -> dict[str, SandboxCheck]:
+        return {d: self._sandbox[d] for d in device_ids if d in self._sandbox}

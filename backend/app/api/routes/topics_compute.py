@@ -87,12 +87,7 @@ from app.domain.agent.market import (
     compute_selectable,
     visibility_listings,
 )
-from app.domain.device.supply import (
-    Supply,
-    Visibility,
-    default_visibility,
-    sandbox_unavailable,
-)
+from app.domain.device.supply import Supply, Visibility, default_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.services import HostPool
@@ -152,6 +147,7 @@ async def get_topic_compute_profile(
     device_online = await project_device_online(db, topic.project_id)
     device_service = sql_device_service(db)
     devices = await device_service.list_devices_for_project(topic.project_id)
+    refusing = await device_service.refusing_sandboxes([d.device_id for d in devices])
     if the_task is not None:
         # Someone else's own computer is not offered for this task.
         devices = [
@@ -211,16 +207,12 @@ async def get_topic_compute_profile(
                     # Whether the reader may give a room this whole machine.
                     "owned": actor.via == "token"
                     and actor.user_id == device.owner_user_id,
-                    # Why a session here cannot have a sandbox, in the reader's
-                    # language, or None (also before the machine said hello).
+                    # That it said it cannot give a session a sandbox, in the
+                    # reader's language, or None (also before it was asked). Its
+                    # reason is its owner's to read, on the devices page.
                     "sandbox_unavailable": (
-                        reason.descriptor()
-                        if (
-                            reason := sandbox_unavailable(
-                                device_hub.target(device.device_id)
-                            )
-                        )
-                        is not None
+                        say("sandboxUnavailable").descriptor()
+                        if device.device_id in refusing
                         else None
                     ),
                 }

@@ -228,8 +228,8 @@ def visibility_listings() -> list[PoolListing]:
     which one a room gets when nobody picks, and comes from `device.supply`, the
     answer every binding point reads too, so this catalogue cannot tell someone
     their room is boxed while the binding gives it the whole machine. Whether
-    one particular machine can sandbox a session depends on what it runs, and
-    the room's compute profile says that per machine (``sandbox_unavailable``).
+    one particular machine can sandbox a session is what it said when asked
+    (`device.sandbox`), and the room's compute profile says that per machine.
 
     ``host``'s description IS the #282 safety line, so whoever renders the picker
     or the room badge reads the warning straight from the catalogue."""
