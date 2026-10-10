@@ -3250,6 +3250,15 @@ body.dragging .dock-resize::after {
   white-space: nowrap;
 }
 
+/* A narrow panel wraps the owner and status onto a second line instead of squeezing the title to a few characters. */
+.dp-task {
+  flex-wrap: wrap;
+}
+
+.dp-task-owner {
+  white-space: nowrap;
+}
+
 .dp-review {
   display: flex;
   min-height: 44px;
