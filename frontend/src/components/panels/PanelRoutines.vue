@@ -130,10 +130,8 @@ const emit = defineEmits<{
 <style scoped>
 .routine-panel {
   display: flex;
-  /* `tabbody` 是一条 flex 行（`WorkPanel.vue`），所以这一格得自己说要占满：没写
-     `flex` 的 flex 子项按内容收缩，空状态那两行字多宽它就只有多宽，右半条面板空着
-     ——屏幕上看着就是「没铺满」。另外四格各自都写了这一条（`.panel-site` /
-     `.panel-changes` / `.doc` / `.panel-preview`），这一格漏了。 */
+  /* 没写 `flex` 的 flex 子项按内容收缩。面板里 `WorkPanel.vue` 的 `.tabbody` 已经替每一格
+     写了；这一条留给不经过它挂载的地方（组件目录）。 */
   flex: 1 1 auto;
   flex-direction: column;
   min-width: 0;
