@@ -112,8 +112,7 @@ class DeviceService:
         ``self_hosted``, the MicroCloud sweep says ``cloud`` (入口决定待遇: never
         derived from what the machine looks like). A third entry point that forgets
         it is a pyright error, not a machine someone deletes by surprise a year
-        later. Access is not decided here: it belongs to each topic binding
-        (``device_topic.visibility``)."""
+        later."""
         entry = await self._live_code(code_value)
         if entry.status == DeviceStatus.APPROVED and entry.device_id is not None:
             existing = await self._repo.get_device(entry.device_id)

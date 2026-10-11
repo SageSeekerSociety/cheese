@@ -29,13 +29,12 @@ Handing a topic to a different agent therefore destroys nothing — the new agen
 looks up a key that has no row and starts fresh, and handing it back finds the
 old row still there.
 
-A row also carries WHERE this conversation's process runs, and a copy of the
-work computer it was given. 一个话题一个容器（2026-09-28 决定）：一间房只有一条
-算力选择，房间里的会话都工作在它算出来的那台机器上；一个任务没有自己的选择时也用
-它所在房间的那一项，有就用自己的（``tasks.compute_config``）。所以那一列
-（``execution_request`` / ``work_lease``）是那项选择的副本，解析的时候问的是选择
-本身（``machine/session_work._attempt``）。进程在哪台会话机上仍然是这条会话自己的
-事（``runtime_location``）。
+A row also carries WHERE this conversation's process runs, and the machine its
+work was placed on (``execution_request`` / ``work_lease``). Which execution
+environment that placement follows is the agent's own, kept per (conversation,
+agent) in ``agent_environments``; a room, a task or a project holds only the
+default a new agent takes (``machine/environments.environment_of``). 进程在哪
+台会话机上仍然是这条会话自己的事（``runtime_location``）。
 """
 
 import uuid
