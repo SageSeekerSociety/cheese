@@ -4,9 +4,9 @@
  * 条目多了、`catalog.ts` 又顶到近一千行的上限，所以另起一份分册。规矩见 `catalog.ts`，
  * 数据见 `catalogScenesSpacesDetailFixtures.ts`。
  */
-import type { CatalogEntry, CatalogNeed } from './catalog'
 import type { UserRefTarget } from '@/lib/userRef'
 import type { Task } from '@/types'
+import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import { announcement, memberRow, publishedTask, task, templateDraft } from './catalogScenesSpacesDetailFixtures'
 

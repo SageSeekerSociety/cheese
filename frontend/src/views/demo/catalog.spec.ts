@@ -230,9 +230,7 @@ describe('组件预览站', () => {
       })
       // 菜单还关着，那两条去处没渲染出来。
       expect(document.body.textContent).not.toContain('邀请码')
-      const activator = Array.from(document.querySelectorAll('button')).find((b) =>
-        b.textContent?.includes('邀请成员')
-      )
+      const activator = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes('邀请成员'))
       expect(activator, '没找到页头那颗「邀请成员」').toBeTruthy()
       await fireEvent.click(activator!)
       await waitFor(() => expect(document.body.textContent).toContain('邀请码'))

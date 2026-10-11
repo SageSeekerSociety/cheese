@@ -35,7 +35,11 @@ const catalogTargets = [
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
   { path: '/spaces/:spaceId/manage/settings/templates', name: 'SpacesDetailSettingsTemplates', component: blank },
   { path: '/spaces/:spaceId/manage/settings/invite-codes', name: 'SpacesDetailSettingsInviteCodes', component: blank },
-  { path: '/spaces/:spaceId/manage/settings/domain-groups', name: 'SpacesDetailSettingsDomainGroups', component: blank },
+  {
+    path: '/spaces/:spaceId/manage/settings/domain-groups',
+    name: 'SpacesDetailSettingsDomainGroups',
+    component: blank,
+  },
   { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
   { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
