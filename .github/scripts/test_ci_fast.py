@@ -55,6 +55,7 @@ class CiFastTest(unittest.TestCase):
         git(self.repo, "init", "-b", "main")
         git(self.repo, "config", "user.email", "test@example.com")
         git(self.repo, "config", "user.name", "Test")
+        (self.repo / ".gitignore").write_text(".ci-fast-ran\n")
         (self.repo / "backend/.venv").mkdir(parents=True)
         (self.repo / "frontend/node_modules").mkdir(parents=True)
         (self.repo / "backend/app").mkdir(parents=True)
@@ -97,7 +98,7 @@ class CiFastTest(unittest.TestCase):
         if env_extra:
             env.update(env_extra)
         return subprocess.run(
-            [sys.executable, str(SCRIPT), *extra],
+            [sys.executable, str(SCRIPT), "--tier", "static", *extra],
             cwd=self.repo, capture_output=True, text=True, env=env, timeout=120,
         )
 
@@ -394,7 +395,7 @@ class CiFastTest(unittest.TestCase):
         (worktree / "frontend/node_modules").mkdir(parents=True)
         # the worktree shares refs, including refs/remotes/origin/main
         proc = subprocess.run(
-            [sys.executable, str(SCRIPT)],
+            [sys.executable, str(SCRIPT), "--tier", "static"],
             cwd=worktree, capture_output=True, text=True,
             env={**self.env, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", "pre-commit")},
             timeout=120,
@@ -405,6 +406,179 @@ class CiFastTest(unittest.TestCase):
         ).strip()
         rep = json.loads((Path(gitdir) / "ci-fast-report.json").read_text())
         self.assertEqual(rep["status"], "pass")
+
+    def quick_tools(self, passed=2, skipped=0, missing_title=False):
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        body = f'''#!{sys.executable}
+import json, pathlib, sys
+args = sys.argv[1:]
+if pathlib.Path(sys.argv[0]).name == "gh":
+    print("feat: actual PR title")
+    sys.exit({1 if missing_title else 0})
+if "--outputFile" in args:
+    target = args[args.index("--outputFile") + 1]
+    json.dump({{"numPassedTests": {passed}, "numPendingTests": {skipped},
+               "numFailedTests": 0, "testResults": [
+               {{"name": str(pathlib.Path.cwd() / "src/i18n/catalog.spec.ts")}},
+               {{"name": str(pathlib.Path.cwd() / "src/i18n/english.spec.ts")}}]}}, open(target, "w"))
+if "--project" in args:
+    config = json.load(open(args[args.index("--project") + 1]))
+    assert config["references"] == []
+    assert config["extends"].endswith("/frontend/tsconfig.json")
+    assert any(p.endswith("/frontend/env.d.ts") for p in config["include"])
+    print(json.dumps(config))
+'''
+        for tool in ("pnpm", "node", "gh"):
+            target = tools / tool
+            target.write_text(body)
+            target.chmod(0o755)
+        return {"PATH": str(tools) + os.pathsep + self.env["PATH"], "CI_FAST_PRECOMMIT": "uvx pre-commit"}
+
+    def test_quick_runs_related_i18n_and_narrow_types(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: verify local checks", env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rows = {r["id"]: r for r in self.report()["ran"]}
+        self.assertEqual(rows["frontend-unit"]["evidence"]["passed"], 2)
+        self.assertIn("related", rows["frontend-unit"]["command"])
+        self.assertIn("--run", rows["frontend-unit"]["command"])
+        self.assertIn("--maxWorkers=1", rows["frontend-unit"]["command"])
+        self.assertIn("frontend-i18n", rows)
+        config_path = rows["frontend-typecheck-changed"]["command"][-2]
+        self.assertFalse(Path(config_path).exists(), "temporary project must be cleaned")
+
+    def test_quick_empty_tests_are_unknown(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: check emptiness", env_extra=self.quick_tools(passed=0))
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertEqual(self.report()["status"], "unknown")
+
+    def test_quick_partial_skips_are_unknown(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: check skip", env_extra=self.quick_tools(skipped=1))
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+
+    def test_quick_title_does_not_substitute_head_for_pr(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", env_extra=self.quick_tools(missing_title=True))
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIsNone(self.report()["title"]["value"])
+        proc = self.run_ci_fast("--tier", "quick", env_extra={"PATH": str(self.tmp / "tools") + os.pathsep + self.env["PATH"]})
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+
+    def test_quick_invalid_title_fails(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "a bad title", env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertEqual(self.report()["title"]["value"], "a bad title")
+
+    def test_global_budget_records_all_remaining_checks(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--budget", "0.5")
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertLess(self.report()["seconds"], 3)
+        self.assertTrue(any(r["result"] in ("budget", "timeout") for r in self.report()["ran"]))
+
+
+class SelectionEvidenceTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def put(self, path, text):
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+
+    def test_backend_follows_imports_not_names(self):
+        from ci_fast_backend import select_backend
+        self.put("backend/app/invoice.py", "VALUE = 1\n")
+        self.put("backend/app/adapter.py", "from .invoice import VALUE\n")
+        self.put("backend/tests/unit/test_unrelated_name.py", "def test_it():\n    from app.adapter import VALUE\n")
+        self.put("backend/tests/unit/test_invoice_named_but_unrelated.py", "def test_it(): pass\n")
+        paths, reason = select_backend(self.root, ["backend/app/invoice.py"])
+        self.assertIn("tests/unit/test_unrelated_name.py", paths)
+        self.assertNotIn("tests/unit/test_invoice_named_but_unrelated.py", paths)
+        self.assertIn("tests/unit/test_sentences.py", paths)
+        self.assertIn("transitive", reason)
+
+    def test_backend_deleted_module_keeps_consumers(self):
+        from ci_fast_backend import select_backend
+        self.put("backend/tests/unit/test_any_name.py", "from app.gone import value\n")
+        paths, _ = select_backend(self.root, ["backend/app/gone.py"])
+        self.assertIn("tests/unit/test_any_name.py", paths)
+
+    def test_backend_unknown_module_and_meta_widen(self):
+        from ci_fast_backend import select_backend
+        self.put("backend/tests/unit/test_a.py", "def test_it(): pass\n")
+        self.put("backend/tests/unit/test_b.py", "def test_it(): pass\n")
+        for changed in (["backend/app/new.py"], ["backend/tests/conftest.py"], ["backend/pyproject.toml"]):
+            paths, reason = select_backend(self.root, changed)
+            self.assertIn("tests/unit/test_a.py", paths)
+            self.assertIn("tests/unit/test_b.py", paths)
+            self.assertIn("fallback", reason)
+
+    def test_backend_literal_module_import_is_selected(self):
+        from ci_fast_backend import select_backend
+        self.put("backend/app/special.py", "VALUE = 1\n")
+        self.put("backend/tests/unit/test_indirect.py", 'import importlib\nx = importlib.import_module("app.special")\n')
+        paths, _ = select_backend(self.root, ["backend/app/special.py"])
+        self.assertIn("tests/unit/test_indirect.py", paths)
+
+    def test_frontend_delete_forces_full_and_temp_project_inherits(self):
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/new.vue", "<template><p>Hello</p></template>")
+        plan, _ = test_plan(self.root, ["frontend/src/old.vue", "frontend/src/new.vue"], {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "full")
+        self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+        plan, _ = test_plan(self.root, ["frontend/src/new.vue"], {"frontend": True}, self.root)
+        types = next(p for p in plan if p["id"] == "frontend-typecheck-changed")
+        config = json.loads(Path(types["command"][3]).read_text())
+        self.assertEqual(config["references"], [])
+        self.assertIn(str(self.root / "frontend/src/new.vue"), config["files"])
+        self.assertIn(str(self.root / "frontend/env.d.ts"), config["include"])
+
+    def test_junit_empty_partial_skip_and_errors_do_not_green(self):
+        from ci_fast_checks import validate_evidence
+        xml = self.root / "results.xml"
+        evidence = {"kind": "junit", "path": str(xml)}
+        for body, expected in (("", "unknown"), ('<testcase><skipped/></testcase><testcase/>', "unknown"),
+                               ('<testcase><error/></testcase>', "fail")):
+            xml.write_text(f"<testsuites><testsuite>{body}</testsuite></testsuites>")
+            self.assertEqual(validate_evidence(evidence)["result"], expected)
+        xml.write_text('<testsuites><testsuite><testcase/></testsuite></testsuites>')
+        self.assertEqual(validate_evidence(evidence)["evidence"]["passed"], 1)
+
+
+class BoundedProcessTest(unittest.TestCase):
+    def test_timeout_reaps_created_group(self):
+        from ci_fast_process import execute
+        with tempfile.TemporaryDirectory() as tmp:
+            result = execute([sys.executable, "-c", "import time; time.sleep(10)"], tmp, 0.3)
+        self.assertEqual(result["result"], "timeout")
+        self.assertLess(result["seconds"], 2)
+
+    def test_signal_and_missing_binary_are_not_check_failures(self):
+        from ci_fast_process import execute
+        result = execute([sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"], "/tmp", 2)
+        self.assertEqual(result["result"], "unknown")
+        self.assertEqual(execute(["/no-such-ci-fast-command"], "/tmp", 2)["result"], "blocked")
+        self.assertEqual(execute([sys.executable], "/tmp", 0)["result"], "budget")
+
+    def test_memory_guard_uses_group_rss(self):
+        from ci_fast_process import execute
+        result = execute([sys.executable, "-c", "import time; x=bytearray(32*1024*1024); time.sleep(5)"], "/tmp", 2, memory_mib=24)
+        self.assertEqual(result["result"], "memory")
+        self.assertGreaterEqual(result["peak_rss_mib"], 24)
 
 
 if __name__ == "__main__":

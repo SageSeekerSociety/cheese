@@ -123,6 +123,9 @@
   ],
   "cifast": [
     ".github/scripts/ci-fast.py",
+    ".github/scripts/ci_fast_backend.py",
+    ".github/scripts/ci_fast_checks.py",
+    ".github/scripts/ci_fast_process.py",
     ".github/scripts/test_ci_fast.py",
     ".github/scripts/required-ci.py",
     ".github/scripts/required-ci-paths.json",
