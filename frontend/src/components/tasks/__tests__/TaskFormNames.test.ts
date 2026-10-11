@@ -74,8 +74,7 @@ describe('发题表单：读屏念出来的名字', () => {
     const view = mountForm()
 
     // 焦点落在下拉里的那个输入框上，读屏念的是它的名字。
-    const input = view.getByRole('textbox', { name: 'tasks.form.category' })
-    expect(input.closest('[role="combobox"]')).not.toBeNull()
-    expect(view.queryByRole('textbox', { name: /^(open|打开)$/i })).toBeNull()
+    expect(view.getByRole('combobox', { name: /^tasks\.form\.category\b/ })).toBeTruthy()
+    expect(view.queryByRole('combobox', { name: /^(open|打开)$/i })).toBeNull()
   })
 })

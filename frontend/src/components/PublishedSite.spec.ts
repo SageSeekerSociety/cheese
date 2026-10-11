@@ -178,7 +178,7 @@ describe('网站', () => {
     mount()
 
     await openPublish('发布')
-    await fireEvent.mouseDown(await screen.findByRole('combobox'))
+    await fireEvent.mouseDown(await screen.findByRole('combobox', { name: '网站入口' }))
     await fireEvent.click(await screen.findByRole('option', { name: 'docs/index.html' }))
     await fireEvent.click(dialogButton('发布')!)
 

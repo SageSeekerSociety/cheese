@@ -103,6 +103,8 @@ beforeEach(() => {
   FakeWebSocket.instances = []
   listTopicMembers.mockResolvedValue({ data: [], total: 0 })
   vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.stubGlobal('visualViewport', new EventTarget())
+  vi.stubGlobal('devicePixelRatio', 1)
 })
 
 // 队友在干活时，对话里它最近出现的那个头像跟着状态动，更早的头像不动；这一轮结束，

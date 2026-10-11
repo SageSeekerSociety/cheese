@@ -142,14 +142,14 @@ describe('room work computer choice', () => {
     expect(list[0].textContent).toContain('实验室工作站')
     expect(within(list[0]).getByText('项目默认')).toBeTruthy()
     expect(screen.queryByText('家里那台')).toBeNull()
-    expect(screen.getByRole('button', { name: /其他配置与设备/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^其他配置与设备/ })).toBeTruthy()
   })
   it('sets the machine the whole room runs on', async () => {
     setTopicComputeChoice.mockResolvedValue({ choice: lab, proposal: null })
     const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     expect(screen.getByText(/频道里所有 AI 队友共用这一个环境.*推没推上去都会更换/)).toBeTruthy()
-    await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
+    await fireEvent.click(screen.getByRole('button', { name: /^实验室工作站/ }))
     await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab, {}))
     expect(emitted().changed).toHaveLength(1)
   })
@@ -173,14 +173,14 @@ describe('room work computer choice', () => {
     )
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     expect(screen.queryByText('房间初始配置')).toBeNull()
-    await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
+    await fireEvent.click(screen.getByRole('button', { name: /^实验室工作站/ }))
     await waitFor(() => expect(setTopicComputeChoice).toHaveBeenCalledWith('topic-1', lab, {}))
   })
   it('keeps a named offline default visible without silently substituting cloud', async () => {
     const home = { ...lab, name: '家里那台', device_id: 'home' }
     mountPicker(profile({ choice: home, project_default: home }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    expect(screen.getByRole('button', { name: /家里那台.*自有设备.*离线/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^家里那台.*自有设备.*离线/ })).toBeTruthy()
     expect(setTopicComputeChoice).not.toHaveBeenCalled()
   })
   it('says a choice became a proposal instead of changing silently', async () => {
@@ -190,7 +190,7 @@ describe('room work computer choice', () => {
     })
     const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
+    await fireEvent.click(screen.getByRole('button', { name: /^实验室工作站/ }))
     expect((await screen.findByRole('status')).textContent).toContain('这一步等 @andyl 点头。')
     expect(emitted().changed).toBeUndefined()
   })
@@ -198,7 +198,7 @@ describe('room work computer choice', () => {
     setTopicComputeChoice.mockRejectedValueOnce(new ApiError(409, '正在准备环境，稍后再换', 'ConflictError'))
     const { emitted } = mountPicker(profile({ project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    await fireEvent.click(screen.getByRole('button', { name: /实验室工作站/ }))
+    await fireEvent.click(screen.getByRole('button', { name: /^实验室工作站/ }))
     expect((await screen.findByRole('alert')).textContent).toContain('正在准备环境')
     expect(setTopicComputeChoice).toHaveBeenLastCalledWith('topic-1', lab, {})
     expect(screen.queryByRole('button', { name: /不推送/ })).toBeNull()
@@ -271,7 +271,7 @@ describe('cloud sandbox choice', () => {
     setTopicComputeChoice.mockResolvedValue({ choice: cloud, proposal: null })
     mountPicker(profile({ choice: lab, project_default: lab }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    await fireEvent.click(screen.getByRole('button', { name: /其他配置与设备/ }))
+    await fireEvent.click(screen.getByRole('button', { name: /^其他配置与设备/ }))
     expect(screen.queryByLabelText(/CPU|内存|磁盘/)).toBeNull()
     await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
     await waitFor(() =>
@@ -288,8 +288,8 @@ describe('whole cloud VM choice', () => {
   async function openForm(state: TopicComputeProfile) {
     mountPicker(state)
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    await fireEvent.click(screen.getByRole('button', { name: /其他配置与设备/ }))
-    await fireEvent.mouseDown(await screen.findByRole('combobox'))
+    await fireEvent.click(screen.getByRole('button', { name: /^其他配置与设备/ }))
+    await fireEvent.mouseDown(await screen.findByRole('combobox', { name: '环境' }))
   }
 
   it('is offered where the deployment has one, and saved as cloud with the whole machine', async () => {
@@ -317,8 +317,8 @@ describe('whole cloud VM choice', () => {
     const vm: ComputeChoice = { ...cloud, whole_machine: true }
     mountPicker(profile({ choice: vm, project_default: cloud, cloud_vm_available: true }))
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
-    const current = screen.getByRole('button', { name: /整台云虚拟机/ })
+    const current = screen.getByRole('button', { name: /^整台云虚拟机/ })
     expect(current.textContent).toContain('每个会话一台独立的云虚拟机')
-    expect(screen.getByRole('button', { name: /云端环境/ })).not.toBe(current)
+    expect(screen.getByRole('button', { name: /^云端环境/ })).not.toBe(current)
   })
 })

@@ -179,7 +179,7 @@ LOCAL_DECL = re.compile(r"\b(?:const|let|var|function|class)\s+([A-Za-z_$][A-Za-
 #: Vuetify's components, auto-registered by the build: not ours to grade, so
 #: trusted — but by NAME, not by prefix. A globally registered `VReport` is
 #: indistinguishable from `VBtn` until the names are checked. The list is the
-#: repo's own auto-import table (vuetify 3.9.3, `dist/json/importMap.json`);
+#: repo's own auto-import table (vuetify 3.13.5, `dist/json/importMap.json`);
 #: a name it does not have (`VOverflowBtn` — exported once, never in the
 #: table) is not Vuetify.
 VUETIFY_TAGS = {
@@ -187,7 +187,7 @@ VUETIFY_TAGS = {
     "VAutocomplete", "VAvatar", "VBadge", "VBanner", "VBannerActions",
     "VBannerText", "VBottomNavigation", "VBottomSheet", "VBreadcrumbs",
     "VBreadcrumbsDivider", "VBreadcrumbsItem", "VBtn", "VBtnGroup", "VBtnToggle",
-    "VCard", "VCardActions", "VCardItem", "VCardSubtitle", "VCardText",
+    "VCalendar", "VCard", "VCardActions", "VCardItem", "VCardSubtitle", "VCardText",
     "VCardTitle", "VCarousel", "VCarouselItem", "VCheckbox", "VCheckboxBtn",
     "VChip", "VChipGroup", "VClassIcon", "VCode", "VCol", "VColorPicker",
     "VCombobox", "VComponentIcon", "VConfirmEdit", "VContainer", "VCounter",
@@ -196,10 +196,10 @@ VUETIFY_TAGS = {
     "VDatePicker", "VDatePickerControls", "VDatePickerHeader", "VDatePickerMonth",
     "VDatePickerMonths", "VDatePickerYears", "VDefaultsProvider", "VDialog",
     "VDialogBottomTransition", "VDialogTopTransition", "VDialogTransition",
-    "VDivider", "VEmptyState", "VExpandTransition", "VExpandXTransition",
+    "VDivider", "VEmptyState", "VExpandBothTransition", "VExpandTransition", "VExpandXTransition",
     "VExpansionPanel", "VExpansionPanelText", "VExpansionPanelTitle",
     "VExpansionPanels", "VFab", "VFabTransition", "VFadeTransition", "VField",
-    "VFieldLabel", "VFileInput", "VFooter", "VForm", "VHover", "VIcon", "VImg",
+    "VFieldLabel", "VFileInput", "VFooter", "VForm", "VHotkey", "VHover", "VIcon", "VImg",
     "VInfiniteScroll", "VInput", "VItem", "VItemGroup", "VKbd", "VLabel",
     "VLayout", "VLayoutItem", "VLazy", "VLigatureIcon", "VList", "VListGroup",
     "VListImg", "VListItem", "VListItemAction", "VListItemMedia",

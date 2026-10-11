@@ -7,12 +7,17 @@
 // The link comes after the control in the markup and is placed beside the label
 // by the grid, so Tab goes from one field's box to the next field's box and
 // reaches the link after its own box rather than before it.
+//
+// The label's id is `<inputId>-label` on purpose: Vuetify's text fields put
+// `aria-labelledby="<id>-label"` on their <input>, aiming at a label of their
+// own that they do not render when the label lives out here. Taking that id
+// makes the reference land on this label instead of on nothing.
 defineProps<{ label: string; inputId: string }>()
 </script>
 
 <template>
   <div class="account-field">
-    <label :for="inputId" class="account-field__label">{{ label }}</label>
+    <label :id="`${inputId}-label`" :for="inputId" class="account-field__label">{{ label }}</label>
     <div class="account-field__control"><slot /></div>
     <div v-if="$slots.aside" class="account-field__aside"><slot name="aside" /></div>
   </div>

@@ -51,7 +51,10 @@
       </div>
 
       <div class="srow srow--field">
-        <label class="srow__k" for="profile-nickname">{{ t('account.profile.nickname') }}</label>
+        <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
+        <label id="profile-nickname-label" class="srow__k" for="profile-nickname">{{
+          t('account.profile.nickname')
+        }}</label>
         <v-text-field
           id="profile-nickname"
           v-model="nickname"
@@ -72,7 +75,7 @@
       </div>
 
       <div class="srow srow--field">
-        <label class="srow__k" for="profile-intro">{{ t('account.profile.intro') }}</label>
+        <label id="profile-intro-label" class="srow__k" for="profile-intro">{{ t('account.profile.intro') }}</label>
         <v-textarea
           id="profile-intro"
           v-model="intro"

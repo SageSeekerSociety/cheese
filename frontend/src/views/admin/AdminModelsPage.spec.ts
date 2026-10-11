@@ -478,7 +478,7 @@ describe('模型管理 · 审计区 diff', () => {
 describe('模型管理 · 档位', () => {
   async function tierSelectOf(page: ReturnType<typeof mountPage>, label: string) {
     const row = (await page.findByText(label)).closest('tr') as HTMLElement
-    return within(row).getByRole('combobox')
+    return within(row).getByRole('combobox', { name: 'models.table.column.tier' })
   }
 
   it('改一条模型的档位，写的是这条模型和选中的那一档，然后重拉列表', async () => {
