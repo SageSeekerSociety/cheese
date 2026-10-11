@@ -30,14 +30,12 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
-from app.domain.user.models import (
-    UserSession,
-)
 from app.domain.user.services import (
     UserAuthService,
     UserProfileService,
     user_profile_service,
 )
+from app.domain.user.sessions import SessionService
 
 if TYPE_CHECKING:
     pass
@@ -57,7 +55,6 @@ from app.api.routes.users._common import (
 from app.core.client_address import resolved_client_address
 from app.domain.passkey.models import PasskeyCredential
 from app.domain.user.login_security import TOTPService
-from app.domain.user.models import User
 from app.domain.user.verification_service import (
     EmailCodePurpose,
     EmailVerificationService,
@@ -131,13 +128,7 @@ async def _account_without_email(
         )
     started = None
     if session_id is not None:
-        started = await session.scalar(
-            select(UserSession.created_at).where(
-                UserSession.id == session_id,
-                UserSession.user_id == user.id,
-                UserSession.revoked_at.is_(None),
-            )
-        )
+        started = await SessionService(session).started_at(user.id, session_id)
     if started is None or datetime.now(UTC) - started > ADD_EMAIL_SIGN_IN_WINDOW:
         raise ForbiddenError(
             "Sign in again to add an email address", {"reason": "reauth_required"}
@@ -207,12 +198,13 @@ async def add_email(
 )
 async def get_my_auth_methods(
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """The ways ``/auth/sudo`` accepts from this account, for the caller only:
     what an account has is nobody else's business."""
 
-    user = await session.get(User, auth_user.user_id)
+    user = await auth_service.get_user(auth_user.user_id)
     if user is None:
         raise NotFoundError("User not found")
     passkeys = await session.scalar(
@@ -241,12 +233,13 @@ async def get_my_auth_methods(
 async def request_sudo_email_code(
     request: Request,
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Sent to the account's own address, under the same quotas as every
     other mailed code. Refused where ``/auth/sudo`` would refuse the code."""
 
-    user = await session.get(User, auth_user.user_id)
+    user = await auth_service.get_user(auth_user.user_id)
     if user is None:
         raise NotFoundError("User not found")
     two_factor = await TOTPService(session).is_2fa_enabled(user.id)

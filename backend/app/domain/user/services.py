@@ -456,6 +456,18 @@ class UserAuthService:
     async def get_user_by_email(self, email: str) -> User | None:
         return await self._user_repo.get_by_email(email)
 
+    async def get_user(self, user_id: int) -> User | None:
+        """The account row itself, alive only (``deleted_at IS NULL``).
+
+        The signed-in-caller routes read a couple of the caller's own columns
+        off it (``email``, ``hashed_password``). Like this class's other reads
+        it comes through ``UserRepository``, so a retired account reads as
+        absent — the route may not reach for ``session.get(User, ...)`` itself
+        (C2 in ``.importlinter``). ``get_user_with_profile`` is the same row
+        together with the caller's profile; this one is the bare account.
+        """
+        return await self._user_repo.get_by_id(user_id)
+
     async def update_password(self, user_id: int, new_password: str) -> None:
         hashed = await hash_password(new_password)
         await self._user_repo.update_password(user_id, hashed)
