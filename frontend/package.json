@@ -140,6 +140,7 @@
     "globals": "^15.15.0",
     "happy-dom": "^13.10.1",
     "jsdom": "^29.1.1",
+    "msw": "^2",
     "openapi-typescript": "7.13.0",
     "prettier": "3.2.4",
     "sass": "^1.89.2",
