@@ -9,10 +9,10 @@ import type { RoomFile } from '@/api/roomFiles'
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import AppPage from '@/components/common/AppPage.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import AppPage from '@/components/common/AppPage.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import { t } from '@/i18n'
 import { fmtBytes } from '@/lib/changesTree'
@@ -73,12 +73,7 @@ function readSelected(asPdf: boolean): Promise<ArrayBuffer> {
     <div class="room-files">
       <!-- 清单：手机上看着一份文件时让出整页。 -->
       <section v-if="mdAndUp || !selected" class="room-files__list">
-        <BaseLoadError
-          v-if="error"
-          :title="t('files.room.loadError')"
-          :error="error"
-          @retry="emit('retry')"
-        />
+        <BaseLoadError v-if="error" :title="t('files.room.loadError')" :error="error" @retry="emit('retry')" />
 
         <div
           v-else-if="loading && !files.length"
@@ -90,7 +85,12 @@ function readSelected(asPdf: boolean): Promise<ArrayBuffer> {
         </div>
 
         <ul v-else-if="files.length" class="room-files__rows">
-          <li v-for="file in files" :key="file.path" class="room-files__row" :class="{ 'room-files__row--on': selected?.path === file.path }">
+          <li
+            v-for="file in files"
+            :key="file.path"
+            class="room-files__row"
+            :class="{ 'room-files__row--on': selected?.path === file.path }"
+          >
             <button type="button" class="room-files__open" @click="selected = file">
               <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="room-files__icon" />
               <span class="room-files__id">
@@ -118,23 +118,31 @@ function readSelected(asPdf: boolean): Promise<ArrayBuffer> {
             <template v-if="folder(selected)"> · {{ folder(selected) }}</template>
           </p>
           <div v-if="mdAndUp" class="room-files__actions">
-            <BaseButton kind="primary" size="sm" prepend-icon="mdi-download-outline" @click="emit('download', selected)">
+            <BaseButton
+              kind="primary"
+              size="sm"
+              prepend-icon="mdi-download-outline"
+              @click="emit('download', selected)"
+            >
               {{ t('work.library.download') }}
             </BaseButton>
-            <BaseButton size="sm" prepend-icon="mdi-close" :aria-label="t('work.library.close')" @click="selected = null">
+            <BaseButton
+              size="sm"
+              prepend-icon="mdi-close"
+              :aria-label="t('work.library.close')"
+              @click="selected = null"
+            >
               {{ t('work.library.close') }}
             </BaseButton>
           </div>
         </header>
         <div class="room-files__preview">
-          <FileBytesPreview
-            :filename="selected.path"
-            :source="selected.path"
-            :read="readSelected"
-          />
+          <FileBytesPreview :filename="selected.path" :source="selected.path" :read="readSelected" />
         </div>
         <div v-if="!mdAndUp" class="room-files__bar">
-          <BaseButton kind="primary" block @click="emit('download', selected)">{{ t('work.library.download') }}</BaseButton>
+          <BaseButton kind="primary" block @click="emit('download', selected)">{{
+            t('work.library.download')
+          }}</BaseButton>
         </div>
       </section>
     </div>

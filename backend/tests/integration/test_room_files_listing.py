@@ -30,7 +30,9 @@ def _files(client, room: str, handle: str = "owner"):
     return response.json()["data"]
 
 
-def _write(client, project: str, room: str, path: str, data: bytes, mtime: float | None = None):
+def _write(
+    client, project: str, room: str, path: str, data: bytes, mtime: float | None = None
+):
     """把一份文件放进房间自己的目录 —— 干活的那台机器干的就是这件事。"""
     library.write_room_file(uuid.UUID(project), uuid.UUID(room), path, data)
     if mtime is not None:
@@ -43,7 +45,9 @@ def test_a_room_lists_its_own_files_newest_first(client):
     最前，带路径、大小和改动时间。"""
     project, room = _room(client)
     _write(client, project, room, "screenshot.png", b"a" * 10, mtime=1_700_000_000)
-    _write(client, project, room, "runs/2026-09-14/周报.md", b"b" * 20, mtime=1_700_000_200)
+    _write(
+        client, project, room, "runs/2026-09-14/周报.md", b"b" * 20, mtime=1_700_000_200
+    )
     _write(client, project, room, "文献综述.docx", b"c" * 30, mtime=1_700_000_100)
 
     body = _files(client, room)
@@ -87,9 +91,7 @@ def test_over_the_cap_the_page_says_so_instead_of_hiding_it(client, monkeypatch)
     """目录失控（远超正常量级）时只列最近改的那几份，并且明说不是全部 —— 不闷着。"""
     project, room = _room(client)
     for index in range(6):
-        _write(
-            client, project, room, f"{index}.md", b"x", mtime=1_700_000_000 + index
-        )
+        _write(client, project, room, f"{index}.md", b"x", mtime=1_700_000_000 + index)
     monkeypatch.setattr(library, "MAX_LISTED_ROOM_FILES", 2)
 
     body = _files(client, room)
