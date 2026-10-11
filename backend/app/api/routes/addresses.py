@@ -9,19 +9,21 @@ anyone else as if it did not exist. The rules are in
   GET /addresses/projects/{ref}                     a slug, old slug or id → the project
   GET /addresses/projects/{ref}/{kind}/{number}     a number → the thing
   GET /addresses/of/{kind}/{id}                     a thing → its short address
+  GET /addresses/refs?ids=…                         `<#id>` references → what each names
   PUT /projects/{project_id}/slug                   rename the project in addresses
 """
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, Query
+from pydantic import BaseModel, RootModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.doc_access import reach
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.routes.topics import _actor_in_place
 from app.core.errors import (
     ConflictError,
@@ -31,6 +33,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.membership.services import MemberService
+from app.domain.mentions import conversation_refs
 from app.domain.project.address import (
     Addressed,
     Numbered,
@@ -41,6 +44,7 @@ from app.domain.project.address import (
     thing_by_number,
 )
 from app.domain.project.services import ProjectService
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/addresses", tags=["addresses"])
@@ -129,6 +133,63 @@ async def address_of(
     await _authorize_thing(db, resolver, thing)
     project = await ProjectService(db).get_or_404(thing.project_id)
     return ok(_address(project.slug, thing))
+
+
+#: How many references one read answers: a page of chat or a document names
+#: far fewer, and a longer list is somebody asking for something else.
+REFS_PER_READ = 100
+
+
+class ConversationRefOut(BaseModel):
+    kind: str
+    title: str
+    room_id: str
+    project_id: str
+
+
+class ConversationRefs(RootModel[dict[str, ConversationRefOut]]):
+    """What each id that names something names, by id."""
+
+
+@router.get("/refs", **typed_response(ConversationRefs))
+async def resolve_refs(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    ids: Annotated[str, Query(max_length=REFS_PER_READ * 37)] = "",
+) -> dict:
+    """What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a
+    task or a 支线, its title and the room it is in. An id that names none of
+    them, or one the caller may not see, is absent from the answer — so a
+    private channel is not told apart from one that was never made."""
+    wanted: list[uuid.UUID] = []
+    for raw in ids.split(",")[:REFS_PER_READ]:
+        try:
+            wanted.append(uuid.UUID(raw.strip()))
+        except ValueError:
+            continue
+    refs = await conversation_refs(db, wanted)
+    by_project: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for ref in refs.values():
+        by_project.setdefault(ref.project_id, set()).add(ref.room_id)
+    readable: set[uuid.UUID] = set()
+    for project_id, room_ids in by_project.items():
+        actor = await resolver.resolve(project_id=project_id, read_only=True)
+        rooms = await TopicRepository(db).get_many(room_ids)
+        readable |= await resolver.readable_topic_ids(
+            actor, project_id=project_id, topics=rooms
+        )
+    return ok(
+        {
+            str(ref.id): {
+                "kind": ref.kind.value,
+                "title": ref.title,
+                "room_id": str(ref.room_id),
+                "project_id": str(ref.project_id),
+            }
+            for ref in refs.values()
+            if ref.room_id in readable
+        }
+    )
 
 
 class SlugIn(BaseModel):
