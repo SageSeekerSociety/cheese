@@ -27,12 +27,14 @@ export interface OnboardingAnswers {
   organization?: string
   invitees: string[]
   solo: boolean
+  /** 桌面端：芝士在这台电脑上干活。 */
+  device_id?: string | null
 }
 export type WorkRole = 'student' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
 
 export function finishOnboarding(
   answers: OnboardingAnswers
-): Promise<{ project_id: string; root_topic_id: string | null; not_invited: string[] }> {
+): Promise<{ project_id: string; root_topic_id: string | null; not_invited: string[]; on_device: boolean }> {
   return request('/users/me/onboarding', { method: 'POST', body: JSON.stringify(answers) })
 }
 

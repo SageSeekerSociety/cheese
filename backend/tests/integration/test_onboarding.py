@@ -1,11 +1,14 @@
 """The new-user guide: its answers become the person's project and what every AI
-teammate knows about them; 上手三步 reads what has really happened."""
+teammate knows about them; the guide in the project reads what has really
+happened."""
 
 import uuid
 from datetime import UTC, datetime
 
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake.rooms import room_roster
+from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
 from app.domain.topic.models import Topic
 
 
@@ -124,6 +127,52 @@ def test_every_ai_teammate_reads_who_the_person_said_they_are(
     rows = _portal.call(roster)
     mine = next(r for r in rows if r["handle"] == person.username)
     assert mine["about"] == "学生，中国人民大学"
+
+
+def _computer(db_session, _portal, owner_id: int) -> str:
+    async def enroll() -> str:
+        devices = sql_device_service(db_session)
+        device = await devices.approve(
+            await devices.start("laptop"),
+            owner_user_id=owner_id,
+            supply=Supply.self_hosted,
+        )
+        await db_session.flush()
+        return device.device_id
+
+    return _portal.call(enroll)
+
+
+def _room_default(api_client, token, room) -> dict | None:
+    resp = api_client.get(f"/topics/{room}/environment", headers=_headers(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["default"]
+
+
+def test_from_the_desktop_app_the_teammate_works_on_this_computer(
+    api_client, user_client, db_session, _portal
+):
+    person = user_client.create_user()
+    token = _token(api_client, person)
+    computer = _computer(db_session, _portal, person.user_id)
+    done = _finish(api_client, token, device_id=computer)
+    assert done["on_device"] is True
+    assert _room_default(api_client, token, done["root_topic_id"]) == {
+        "kind": "sandbox",
+        "spec": f"devices_of:{person.user_id}",
+    }
+
+
+def test_someone_elses_computer_is_not_used_and_the_project_is_made_anyway(
+    api_client, user_client, db_session, _portal
+):
+    person, other = user_client.create_user(), user_client.create_user()
+    token = _token(api_client, person)
+    computer = _computer(db_session, _portal, other.user_id)
+    done = _finish(api_client, token, device_id=computer)
+    assert done["on_device"] is False
+    assert _room_default(api_client, token, done["root_topic_id"]) is None
+    assert done["project_id"] in [p["id"] for p in _projects(api_client, token)]
 
 
 def test_start_steps_follow_what_happened(api_client, user_client, db_session, _portal):

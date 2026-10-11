@@ -57476,6 +57476,18 @@
             "type": "boolean",
             "title": "Solo",
             "default": true
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
           }
         },
         "type": "object",
@@ -57510,13 +57522,18 @@
             },
             "type": "array",
             "title": "Not Invited"
+          },
+          "on_device": {
+            "type": "boolean",
+            "title": "On Device"
           }
         },
         "type": "object",
         "required": [
           "project_id",
           "root_topic_id",
-          "not_invited"
+          "not_invited",
+          "on_device"
         ],
         "title": "OnboardingOut"
       },

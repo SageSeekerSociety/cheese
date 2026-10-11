@@ -15090,6 +15090,8 @@ export interface components {
              * @default true
              */
             solo: boolean;
+            /** Device Id */
+            device_id?: string | null;
         };
         /** OnboardingOut */
         OnboardingOut: {
@@ -15102,6 +15104,8 @@ export interface components {
             root_topic_id: string | null;
             /** Not Invited */
             not_invited: string[];
+            /** On Device */
+            on_device: boolean;
         };
         /** OnboardingOutEnvelope */
         OnboardingOutEnvelope: {

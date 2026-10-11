@@ -12,7 +12,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
-import { finishOnboarding, setTopicComputeChoice, uploadAttachment } from '@/api'
+import { finishOnboarding, uploadAttachment } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
 import { t } from '@/i18n'
@@ -148,7 +148,9 @@ async function finish(skipAll = false) {
         solo: solo.value,
       }
   try {
-    const done = await finishOnboarding(answers)
+    const wantsDevice = !skipAll && desktop && onThisComputer.value
+    const done = await finishOnboarding({ ...answers, device_id: wantsDevice ? await thisComputer() : null })
+    if (wantsDevice && !done.on_device) toast.warning(t('welcome.deviceFailed'))
     rememberOnAccount(skipAll)
     const room = done.root_topic_id
     if (room) {
@@ -157,7 +159,6 @@ async function finish(skipAll = false) {
       // 输入框里那句和起手卡写进去的一样带 @：直接回车只发给成员，芝士不会接。
       const draft = request.value ? `@${t('work.room.defaultAgentName')} ${request.value}` : ''
       if (!skipAll && (draft || atts.length)) saveComposerDraft(room, { draft, reply: null, atts })
-      if (!skipAll && desktop && onThisComputer.value) await useThisComputer(room)
     }
     if (done.not_invited.length)
       toast.warning(t('welcome.notInvited', { names: done.not_invited.join(t('welcome.preview.listSep')) }))
@@ -188,16 +189,14 @@ function rememberOnAccount(skipAll: boolean) {
   localStorage.setItem('user', JSON.stringify(AccountService.user))
 }
 
-// 桌面端选了「用这台电脑」：接上这台电脑，把「综合」放到它上面的隔离目录里。接不上
-// 就留在云端，说一声，不拦着人进项目。
-async function useThisComputer(room: string) {
+// 桌面端选了「用这台电脑」：先接上这台电脑，建项目时把它带上，服务端把它加进项目、
+// 让「综合」里的芝士在它上面的隔离环境里干活。接不上就留在云端，说一声，不拦着人进项目。
+async function thisComputer(): Promise<string | null> {
   try {
     await startConnecting({ quiet: true })
-    const device = await desktopBridge()?.thisDevice()
-    if (!device) throw new Error('no device')
-    await setTopicComputeChoice(room, { name: null, profile: 'device', device_id: device }, { visibility: 'isolated' })
+    return (await desktopBridge()?.thisDevice()) ?? null
   } catch {
-    toast.warning(t('welcome.deviceFailed'))
+    return null
   }
 }
 
