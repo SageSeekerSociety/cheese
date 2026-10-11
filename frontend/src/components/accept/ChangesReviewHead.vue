@@ -74,10 +74,13 @@ const title = computed(() => {
   return c.change_subject || t('work.room.accept.change')
 })
 
+// 每行一条，列表自己编号：交付的人常把「1. 」「- 」也写进去，照抄就成了「1. 1. …」。
+// 「1.5 倍」这种以数字开头的正文不算编号。
+const LIST_MARK = /^(?:\d{1,2}[.、)）](?!\d)|[（(]\d{1,2}[)）]|[-*•])\s*/
 const focusItems = computed(() =>
   props.card.focus
     .split('\n')
-    .map((line) => line.trim())
+    .map((line) => line.trim().replace(LIST_MARK, '').trim())
     .filter(Boolean)
 )
 

@@ -2007,7 +2007,7 @@
     "crowded": "技能越多，越难选对合适的一项",
     "delete": "删除",
     "deleteFailed": "删除失败",
-    "deleteHint": "删除后之后的频道不再带着它，历史版本也一起删除",
+    "deleteHint": "删除后，之后的频道不再带着它，历史版本也一起删除",
     "deleteTitle": "删除「{title}」",
     "detail": {
       "callName": "调用名 {name}",
