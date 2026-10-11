@@ -346,6 +346,20 @@ class SpaceService:
             return "OWNER"
         return "ADMIN"
 
+    @staticmethod
+    def admin_role_from_name(name: str) -> SpaceAdminRole | None:
+        """The stored role for a client-supplied role name (``OWNER``/``ADMIN``).
+
+        ``None`` for anything else, so the caller keeps its own error message.
+        Beside the enum so a route can turn the name into the value
+        ``add_admin`` / ``update_admin_role`` expect without importing
+        ``SpaceAdminRole`` itself.
+        """
+        return {
+            "OWNER": SpaceAdminRole.OWNER,
+            "ADMIN": SpaceAdminRole.ADMIN,
+        }.get(name.upper())
+
     async def invite_codes_by_ids(
         self, code_ids: Sequence[int]
     ) -> dict[int, SpaceInviteCode]:
