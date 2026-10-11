@@ -582,7 +582,7 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",
-        "CLAUDE.md": "subject: the check reads it to judge it, so every edit is the measurement",
+        "AGENTS.md": "subject: the check reads it to judge it, so every edit is the measurement",
         "backend/sandbox/skills/cheese/SKILL.md": (
             "subject: the check reads it to judge it, so every edit is the measurement"
         ),
