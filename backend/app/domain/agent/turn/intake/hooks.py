@@ -66,6 +66,7 @@ from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.usage.credits import (
     CREDITS_EXHAUSTED_META,
     credits_event,
+    refused_for_credits,
 )
 
 logger = logging.getLogger(__name__)
@@ -348,13 +349,18 @@ class HookEvents:
                             detail_label=say("labelDetails"),
                         ),
                     )
-                elif await self.credits_refused(turn_id):
+                elif refused_for_credits(event.text) or await self.credits_refused(
+                    turn_id
+                ):
                     # Admission already told the room WHY this turn is ending
                     # (#715): it refused every `/v1/messages` call for spent
                     # credits, and Claude Code's own reading of that refusal
                     # — "Invalid API key" — is wrong advice for a spent
                     # balance. Repeat the platform's own line, with the reason
                     # the credits give now, rather than Claude Code's text.
+                    # The gateway's budget brake stops a turn admission let
+                    # through, with no stamp; its refusal in the turn's own
+                    # failure is the same news, and a retry cannot succeed.
 
                     policy = await self.policy(topic_id)
                     line = credits_event((policy or {}).get("credits_exhausted"))
