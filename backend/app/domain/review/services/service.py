@@ -154,6 +154,16 @@ class AcceptService:
     async def list_for_topic(self, topic_id: uuid.UUID) -> tuple[list[AcceptCard], int]:
         return await cards.list_for_topic(self, topic_id=topic_id)
 
+    async def latest_cards_by_task(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        return await cards.latest_cards_by_task(self, task_ids=task_ids)
+
+    async def live_cards_for_places(
+        self, place_ids: list[uuid.UUID]
+    ) -> list[AcceptCard]:
+        return await cards.live_cards_for_places(self, place_ids=place_ids)
+
     async def open_pr_card_ids(
         self, project_id: uuid.UUID | None = None
     ) -> list[uuid.UUID]:
