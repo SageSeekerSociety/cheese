@@ -73,6 +73,7 @@ import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
 import { SETTINGS_ENTRIES } from './catalogSettings'
+import { SETTINGS_DATA_ENTRIES } from './catalogSettingsData'
 import { SHARED_ENTRIES } from './catalogShared'
 import { SHELL_ENTRIES } from './catalogShell'
 import { SKILL_ENTRIES } from './catalogSkills'
@@ -606,6 +607,10 @@ export const CATALOG: CatalogEntry[] = [
   // 项目设置那一组（从 1041 行的 ProjectSettingsView 拆出来的六块）在自己的文件里：
   // `catalogSettings.ts`（数据在 `catalogSettingsFixtures.ts`）。
   ...SETTINGS_ENTRIES,
+  // 再一组：设置页里那五件 `Project*Settings`（数据、保存、轮询、授权回跳都下沉到
+  // `composables/useProject*Settings.ts` 之后升成的 A 级）在自己的文件里：
+  // `catalogSettingsData.ts`（数据在 `catalogSettingsDataFixtures.ts`）。
+  ...SETTINGS_DATA_ENTRIES,
   // 市场页和节点看板、外壳上的版本徽标与首页外框：`catalogMarket.ts`、`catalogShell.ts`。
   ...MARKET_ENTRIES,
   ...SHELL_ENTRIES,

@@ -1,56 +1,35 @@
 <script setup lang="ts">
 // 项目只给默认：新会话开工时用哪个环境。已经在干活的会话各有各的环境，改默认不搬
 // 它们；它们现在在哪，写在「现在的分布」里。平台挑的机器只数个数，不点名。
+// 取数与保存由页面接线；设备会话入口也由页面传入，这里只转发 changed。
+import type { Component } from 'vue'
 import type { Environment, ProjectComputeConfigs } from '../types/compute'
 
-import { onMounted, ref, watch } from 'vue'
-
-import { holdRevealGate } from '@/composables/useRevealGate'
-
-import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
 import { t } from '../i18n'
 import { environmentName } from '../lib/environment'
 
-import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 import EnvironmentPicker from './EnvironmentPicker.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
 
-const props = defineProps<{ projectId: string }>()
-const state = ref<ProjectComputeConfigs | null>(null)
-const error = ref('')
-const busy = ref(false)
-const editing = ref(false)
+defineProps<{
+  projectId: string
+  deviceSessionsComponent?: Component
+  state: ProjectComputeConfigs | null
+  error: string
+  busy: boolean
+  editing: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'toggle'): void
+  (e: 'save', env: Environment): void
+  (e: 'changed'): void
+}>()
+
 // English says 1 agent / 2 agents; the count's own key carries the plural.
 const agents = (count: number) => t('work.projectMachine.agents', { count })
-async function load() {
-  error.value = ''
-  try {
-    state.value = await getProjectComputeConfigs(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectMachine.loadFailed')
-  }
-}
-async function save(env: Environment) {
-  if (!state.value?.can_manage) return
-  busy.value = true
-  error.value = ''
-  try {
-    const result = await saveProjectComputeConfigs(props.projectId, { default: env })
-    state.value = { ...state.value, ...result }
-    window.dispatchEvent(new Event('project-compute-updated'))
-    editing.value = false
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectMachine.saveFailed')
-  } finally {
-    busy.value = false
-  }
-}
-// 首次取数期间占住设置页的显示闸，见 useRevealGate。
-const releaseGate = holdRevealGate()
-onMounted(() => load().finally(releaseGate))
-watch(() => props.projectId, load)
 </script>
 
 <template>
@@ -68,7 +47,7 @@ watch(() => props.projectId, load)
             size="sm"
             class="ml-auto"
             :disabled="busy"
-            @click="editing = !editing"
+            @click="emit('toggle')"
             >{{ editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change') }}</BaseButton
           >
         </div>
@@ -81,8 +60,8 @@ watch(() => props.projectId, load)
         :devices="state.devices"
         :specs="state.specs"
         :busy="busy"
-        @select="save"
-        @cancel="editing = false"
+        @select="(env) => emit('save', env)"
+        @cancel="emit('toggle')"
       />
 
       <div class="distribution" data-testid="project-distribution">
@@ -106,13 +85,14 @@ watch(() => props.projectId, load)
                 agents: agents(device.agents),
               })
             }}
-            <DeviceSessionsSwitch
-              v-if="state.can_manage"
+            <component
+              :is="deviceSessionsComponent"
+              v-if="deviceSessionsComponent && state.can_manage"
               :project-id="projectId"
               :device="{ device_id: device.device_id, name: device.name ?? t('compute.env.removedDevice') }"
               :devices="state.devices"
               :specs="state.specs"
-              @changed="load"
+              @changed="emit('changed')"
             />
           </li>
         </ul>
