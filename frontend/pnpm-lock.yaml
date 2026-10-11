@@ -212,6 +212,9 @@ importers:
       pinia:
         specifier: ^2.3.1
         version: 2.3.1(typescript@5.9.2)(vue@3.5.18(typescript@5.9.2))
+      pinyin-pro:
+        specifier: 3.29.4
+        version: 3.29.4
       prismjs:
         specifier: ^1.30.0
         version: 1.30.0
@@ -4583,6 +4586,9 @@ packages:
     peerDependenciesMeta:
       typescript:
         optional: true
+
+  pinyin-pro@3.29.4:
+    resolution: {integrity: sha512-SPXpDT2cHEy+d26V1RXYMlVzXN42hotFAak1fzyWPi4o2dKXb61UqD4pzxDJHwk6gbv8vQ6EfErd+hYX0Qhzug==}
 
   pluralize@8.0.0:
     resolution: {integrity: sha512-Nc3IT5yHzflTfbjgqWcCPpo7DaKy4FnpB0l/zCAW0Tc7jxAiuqSxHasntB3D7887LSrA93kDJ9IXovxJYxyLCA==}
@@ -10201,6 +10207,8 @@ snapshots:
       typescript: 5.9.2
     transitivePeerDependencies:
       - '@vue/composition-api'
+
+  pinyin-pro@3.29.4: {}
 
   pluralize@8.0.0: {}
 
