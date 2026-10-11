@@ -39,6 +39,8 @@ export interface TimelineKeysDeps {
   showBarAt: (row: HTMLElement) => void
   /** 只有触屏：没有动作条，操作在长按出来的面板里。 */
   touchOnly: Ref<boolean>
+  /** 表情选择条开在哪一条上：开着时 Esc 是收起它的。 */
+  reactionPickerFor: Ref<string | null>
   /** 在已经载入的最早一条上再往上：拼一页更早的进来，和滚到顶一样。 */
   loadOlder: () => void
 }
@@ -51,7 +53,7 @@ const OWNED = '[data-feed-of]'
 const LINE_PX = 40
 
 export function useTimelineKeys(deps: TimelineKeysDeps) {
-  const { scrollRef, contentRef, bar, showBarAt, touchOnly, loadOlder } = deps
+  const { scrollRef, contentRef, bar, showBarAt, touchOnly, reactionPickerFor, loadOlder } = deps
 
   /** 上次停过的那一条；null 是还没进来过，那就是最新一条。 */
   let current: string | null = null
@@ -247,6 +249,9 @@ export function useTimelineKeys(deps: TimelineKeysDeps) {
     if (!inside || id === null || id !== current) return
     if (e.key === 'Tab') return onControlTab(e, target, id, feed)
     if (e.key !== 'Escape') return
+    // 这一下 Esc 是收起别的东西的：焦点所在那颗开着的菜单（⋯，文件的 ⋯）、表情选择条。
+    // 菜单收起时自己把焦点还给那颗按钮，这里再把焦点拉回这一条就抢走了它。
+    if (target.closest('[aria-expanded="true"]') || reactionPickerFor.value) return
     const item = itemsOf(feed).find((el) => idOf(el) === id)
     if (!item) return
     e.preventDefault()

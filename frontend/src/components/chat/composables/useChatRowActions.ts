@@ -228,7 +228,7 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
   useEventListener(scrollRef, 'contextmenu', onRowContextMenu)
 
   // 键盘在消息之间走：整列一个 Tab 停靠点，↑↓ 换一条，Enter 进到一条的按钮里。
-  useTimelineKeys({ scrollRef, contentRef, bar, showBarAt, touchOnly, loadOlder })
+  useTimelineKeys({ scrollRef, contentRef, bar, showBarAt, touchOnly, reactionPickerFor, loadOlder })
 
   useEventListener(scrollRef, 'focusin', onRowFocus)
   useEventListener(scrollRef, 'focusout', onRowBlur)
