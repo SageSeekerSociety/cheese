@@ -41,8 +41,10 @@ export interface Thread {
   root_block_id: string
   reply_count: number
   last_reply_at: string | null
-  created_by: string
-  created_at: string
+  /** 还在读这一条时先画的那一份（拿手上那块主线消息拼的，`query/room`）没有这两个：
+   *  那块消息只带着支线的 id、回复数和最后一句。谁都不读它们。 */
+  created_by?: string
+  created_at?: string
   root?: Block | null
 }
 
