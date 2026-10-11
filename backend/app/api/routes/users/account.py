@@ -33,13 +33,10 @@ from app.db.session import get_db
 from app.domain.user.models import (
     UserSession,
 )
-from app.domain.user.repositories import (
-    UserProfileRepository,
-    UserRepository,
-)
 from app.domain.user.services import (
     UserAuthService,
     UserProfileService,
+    user_profile_service,
 )
 
 if TYPE_CHECKING:
@@ -72,8 +69,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 async def get_user_profile_service(
     db=Depends(get_db),
 ) -> UserProfileService:
-    profile_repo = UserProfileRepository(session=db)
-    return UserProfileService(profile_repo=profile_repo)
+    return user_profile_service(db)
 
 
 def _email_taken() -> ConflictError:
@@ -192,7 +188,7 @@ async def add_email(
         raise _email_taken()
     await _check_email_code(request, email, payload.code)
     try:
-        await UserRepository(session=session).update_email(user, email)
+        await auth_service.update_email(user, email)
     except IntegrityError:
         raise _email_taken() from None
     user_dto = await auth_service.build_user_dto(
