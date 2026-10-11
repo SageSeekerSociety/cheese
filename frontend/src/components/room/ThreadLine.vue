@@ -38,6 +38,12 @@ const replies = computed(() => props.summary?.reply_count ?? 0)
 const faces = computed(() => (props.summary?.participants ?? []).slice(0, FACES))
 // 一轮出错、还没有任何回复的支线：那句为什么没回答在支线里，这一行是去看它的入口。
 const failed = computed(() => !props.replying && !!props.summary?.failed)
+// 额度用完不是「回复失败」：重试没有用，主线上直接说额度用完了。
+const failedText = computed(() =>
+  props.summary?.failed_code === 'credits_exhausted'
+    ? t('work.room.thread.failedCredits')
+    : t('work.room.thread.failed')
+)
 
 const last = computed(() => {
   const reply = props.summary?.last_reply
@@ -92,7 +98,7 @@ const last = computed(() => {
       <v-icon v-else size="14" class="thread-line__icon">mdi-forum-outline</v-icon>
       <span v-if="replies > 0" class="thread-line__count">{{ t('work.room.thread.replies', { count: replies }) }}</span>
       <span v-if="replies > 0 && time" class="thread-line__time t-meta">{{ time }}</span>
-      <span v-if="failed" class="thread-line__failed">{{ t('work.room.thread.failed') }}</span>
+      <span v-if="failed" class="thread-line__failed">{{ failedText }}</span>
       <template v-if="replying">
         <span class="thread-line__replying">{{
           status

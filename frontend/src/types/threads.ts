@@ -28,6 +28,8 @@ export interface ThreadSummary {
   tasks: ThreadTask[]
   /** 最后一条回复之后，AI 队友在这条支线里的一轮出错了。 */
   failed?: boolean
+  /** 那一轮为什么出错：`credits_exhausted` 是额度用完，重试没有用。 */
+  failed_code?: string | null
   /** 此刻在这条支线里有一轮在跑的 AI 队友（handle）。只在主线那一行上有。 */
   replying?: string[]
 }

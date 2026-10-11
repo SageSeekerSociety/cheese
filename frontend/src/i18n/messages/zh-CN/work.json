@@ -1195,7 +1195,8 @@
         "open": "进行中",
         "closed": "已关闭"
       },
-      "failed": "回复失败"
+      "failed": "回复失败",
+      "failedCredits": "额度已用完"
     },
     "pin": {
       "pin": "置顶到频道",
