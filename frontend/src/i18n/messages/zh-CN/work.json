@@ -488,6 +488,7 @@
       "summonOn": "已 {'@'}{name}，点击取消",
       "summonOff": "发送并交给{name}（⌘/Ctrl+Enter）",
       "keysHint": "Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给{name}，可直接粘贴图片",
+      "keysHintSend": "Enter 发送，Shift+Enter 换行，可直接粘贴图片",
       "pasteHint": "可直接粘贴图片",
       "placeholderDm": "给{name}发消息",
       "placeholder": "输入消息，{'@'}{name} 交给它处理",

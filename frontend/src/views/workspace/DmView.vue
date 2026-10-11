@@ -137,6 +137,7 @@ function handleMentionClick(handle: string) {
       :pr-header="false"
       :hide-header="!mdAndUp"
       :always-summon="agentHandle !== null"
+      :hand-off="agentHandle === null"
       :title-override="title"
       :back-label="t('navigation.project.members')"
       :members="store.members"
