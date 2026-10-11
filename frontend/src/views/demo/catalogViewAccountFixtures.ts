@@ -13,6 +13,9 @@
 import type OAuthCompleteView from '@/views/account/OAuthCompleteView.vue'
 import type { SignInWay } from '@/views/account/SignInView.vue'
 
+import { t } from '@/i18n'
+import { oauthProviderIcon, oauthProviderName } from '@/views/account/oauthProvider'
+
 type OAuthCompleteProps = InstanceType<typeof OAuthCompleteView>['$props']
 
 /** 一次第三方登录带回来的身份。 */
@@ -39,11 +42,22 @@ export const CONSENT_DOCUMENTS: AcceptedDocuments = {
   privacy: '2026-01-01',
 }
 
-/** 登录页上「进入的方式」清单：容器按这台浏览器上次用了哪一样排过序。 */
+/** 这台浏览器上真会出现在登录页的那个第三方提供方。 */
+const OAUTH_PROVIDER_ID = 'ruc'
+
+/**
+ * 登录页上「进入的方式」清单，按容器算出来的默认次序摆：容器先列第三方提供方，
+ * 再是这台设备支不支持通行密钥，最后才是邮箱验证码 —— 和 `SignIn.vue` 里那个
+ * `alternatives` 计算一模一样，文案和图标也复用产品自己的 `t`、`oauthProviderIcon`。
+ */
 export const SIGN_IN_WAYS: SignInWay[] = [
-  { key: 'passkey', label: '用通行密钥登录', icon: 'mdi-fingerprint' },
-  { key: 'email_code', label: '用邮箱验证码登录', icon: 'mdi-email-outline' },
-  { key: 'oauth:school-sso', label: '用学校账号登录', icon: 'mdi-school-outline' },
+  {
+    key: `oauth:${OAUTH_PROVIDER_ID}`,
+    label: t('account.signIn.withProvider', { provider: oauthProviderName(OAUTH_PROVIDER_ID) }),
+    icon: oauthProviderIcon(OAUTH_PROVIDER_ID),
+  },
+  { key: 'passkey', label: t('account.signIn.passkey'), icon: 'mdi-key-chain' },
+  { key: 'email_code', label: t('account.signIn.emailCode'), icon: 'mdi-email-outline' },
 ]
 
 /** 浏览器里登录走完之后，要把这份登录交给 app 的那个账号。 */
