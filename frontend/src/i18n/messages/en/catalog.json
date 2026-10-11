@@ -373,20 +373,6 @@
       "note": "A freehand stroke and a rectangle annotation, laid back onto the image to scale."
     }
   },
-  "previewPanelSketchCanvas": {
-    "about": "The annotation canvas on an image: drag out strokes and tap out text on this layer; coordinates landing on the image are recorded in original pixels.",
-    "s1": {
-      "name": "Lands on the image",
-      "note": "A canvas covering the image, aligned to scale; drag a stroke, and on release that stroke (in original pixels) is sent up."
-    }
-  },
-  "previewPanelRasterRegion": {
-    "about": "Frame a region on an image: drag a rectangle, or when there are content boundaries, drag to snap to a block's edge or click to frame the whole block.",
-    "s1": {
-      "name": "Can frame",
-      "note": "On: the block under the cursor is outlined first to show 'clicking here will frame this'."
-    }
-  },
   "previewPanelRegionNote": {
     "about": "The small card that appears when pointing at a region of an image: it says what it points at, then write what to change, send or cancel.",
     "s1": {
@@ -903,7 +889,7 @@
     },
     "s2": {
       "name": "First load",
-      "note": "Overview not yet in hand: three KPIs draw skeletons, the table hasn't started."
+      "note": "Overview not yet in hand: three KPIs draw skeletons; the table header is already up, but there are no data rows yet."
     },
     "s3": {
       "name": "Read failure doesn't say 'none'",

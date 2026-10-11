@@ -32,6 +32,7 @@ import {
 } from './catalogSpaceTasksFixtures'
 
 import { t } from '@/i18n'
+import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
 import PublishTaskView from '@/views/spaces/detail/PublishTaskView.vue'
 import BasicInfoView from '@/views/spaces/detail/settings/BasicInfoView.vue'
@@ -98,7 +99,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       maxFileBytes: 20_000_000,
       materials: SPACE_MATERIALS,
       materialsState: 'ready',
-      libraryTo: '/spaces/7/settings/materials',
+      libraryTo: spaceLibraryPath('7'),
       publishing: false,
       drafts: PUBLISH_DRAFT_ONE,
       teaching: {},
@@ -212,7 +213,10 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
           return t('catalog.spaceSettingsIndexView.s2.note')
         },
         props: { active: null },
-        expectSelector: '.so__item:not(.so__item--active)',
+        // `active` 为空时目录里一项都不高亮：默认那一格（s1）点亮的是首项（Basic），这里钉
+        // 首项**没有** active 类，两格互斥。happy-dom 认不了 `:has()`，「一个 active 都没有」
+        // 这种「缺席」用 expectSelector 表达不出来，只能落到具体那一项上。
+        expectSelector: '.so__item:first-of-type:not(.so__item--active)',
       },
     ],
   },
@@ -229,7 +233,7 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       teaching: SPACE_TEACHING,
       materials: SPACE_MATERIALS,
       materialsState: 'ready',
-      libraryTo: '/spaces/7/settings/materials',
+      libraryTo: spaceLibraryPath('7'),
       saving: false,
     },
     states: [

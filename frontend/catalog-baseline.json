@@ -105,6 +105,8 @@
     "src/components/library/LibraryDocumentHits.vue",
     "src/components/panels/doc/DocEditLayer.vue",
     "src/components/panels/doc/DocKeyboardBar.vue",
+    "src/components/panels/preview/DesignRasterRegion.vue",
+    "src/components/panels/preview/DesignSketchCanvas.vue",
     "src/components/profile/ActivityHeatmap.vue",
     "src/components/room/ChannelNotifyMenu.vue",
     "src/components/room/ChecklistMessage.vue",

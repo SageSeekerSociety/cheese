@@ -246,7 +246,9 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
           return t('catalog.adminRunRecordsPageView.s2.note')
         },
         props: { overview: null, loading: true },
-        expectSelector: '[role="table"]',
+        // 总览还没到：三张 KPI 画骨架，表头已经摆出来、但还没有数据行。`:only-child` 钉住
+        // 「表里只剩这截表头」：数据到货那一格，表头后面跟着一行行按钮，就不再是独苗。
+        expectSelector: '.rr-table .rr-row--head:only-child',
       },
       {
         get name() {

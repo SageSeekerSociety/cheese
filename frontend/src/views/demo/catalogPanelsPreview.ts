@@ -5,6 +5,10 @@
  * 单独一份，和 `catalogPanelsDoc.ts` 同一个理由：`catalog.ts` 已经九百行上下、接近 `frontend/src` 的文件规模上限；
  * 这一册从 `catalogPanels.ts` spread 进去。样例数据在
  * `catalogPanelsPreviewFixtures.ts`。
+ *
+ * 不列的两件：标注画布（`DesignSketchCanvas`）与框选区域（`DesignRasterRegion`）要一张
+ * 已加载的图片和它的定位容器才画得出绘画/框选，本批还没为它们构造那样的夹具，空壳那一格
+ * 暂不登记（日后补上夹具即可加回）。
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
@@ -19,9 +23,7 @@ import {
 } from './catalogPanelsPreviewFixtures'
 
 import DesignImage from '@/components/panels/preview/DesignImage.vue'
-import DesignRasterRegion from '@/components/panels/preview/DesignRasterRegion.vue'
 import DesignRegionNote from '@/components/panels/preview/DesignRegionNote.vue'
-import DesignSketchCanvas from '@/components/panels/preview/DesignSketchCanvas.vue'
 import DesignSketchOverlay from '@/components/panels/preview/DesignSketchOverlay.vue'
 import DesignSketchToolbar from '@/components/panels/preview/DesignSketchToolbar.vue'
 import DesignViewportToolbar from '@/components/panels/preview/DesignViewportToolbar.vue'
@@ -398,50 +400,6 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         },
         props: { strokes: [SKETCH_PEN, SKETCH_RECT], scale: 1, naturalWidth: 480 },
         expectSelector: 'svg.sketch-overlay',
-      },
-    ],
-  },
-  {
-    id: 'preview-panel-sketch-canvas',
-    title: 'DesignSketchCanvas · 标注画布',
-    get about() {
-      return t('catalog.previewPanelSketchCanvas.about')
-    },
-    file: 'src/components/panels/preview/DesignSketchCanvas.vue',
-    component: DesignSketchCanvas,
-    needs: T,
-    states: [
-      {
-        get name() {
-          return t('catalog.previewPanelSketchCanvas.s1.name')
-        },
-        get note() {
-          return t('catalog.previewPanelSketchCanvas.s1.note')
-        },
-        props: { image: null, identity: 'demo.png', tool: 'pen', color: '#E03131', width: 4 },
-        expectSelector: '.sketch-layer',
-      },
-    ],
-  },
-  {
-    id: 'preview-panel-raster-region',
-    title: 'DesignRasterRegion · 框一块区域',
-    get about() {
-      return t('catalog.previewPanelRasterRegion.about')
-    },
-    file: 'src/components/panels/preview/DesignRasterRegion.vue',
-    component: DesignRasterRegion,
-    needs: T,
-    states: [
-      {
-        get name() {
-          return t('catalog.previewPanelRasterRegion.s1.name')
-        },
-        get note() {
-          return t('catalog.previewPanelRasterRegion.s1.note')
-        },
-        props: { image: null, enabled: true, identity: 'demo.png' },
-        expectSelector: '.raster-region',
       },
     ],
   },
