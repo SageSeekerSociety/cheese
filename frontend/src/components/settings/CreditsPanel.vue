@@ -28,6 +28,7 @@ const exhausted = computed<boolean>(() => {
 
 /** 额度是小数（1 额度 = 1 万 tokens），所以精度跟着量级走。 */
 function fmt(n: number): string {
+  if (n === 0) return '0'
   if (Math.abs(n) >= 100) return n.toFixed(0)
   if (Math.abs(n) >= 1) return n.toFixed(2)
   return n.toFixed(4)
@@ -59,7 +60,7 @@ watch(
       </div>
       <template v-else>
         <div class="credit-remaining" :class="{ 'credit-remaining--empty': exhausted }">
-          {{ fmt(credits.credits_remaining) }}
+          {{ fmt(Math.max(0, credits.credits_remaining)) }}
           <span class="credit-remaining__unit">{{ t('work.projectSettings.credits.remaining') }}</span>
         </div>
         <div class="credit-bar mb-2">
