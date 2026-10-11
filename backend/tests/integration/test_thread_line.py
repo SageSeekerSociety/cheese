@@ -14,6 +14,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.thread.models import Thread
+from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 from tests.integration.conftest import (
     join_project_team,
     post_message,
@@ -83,7 +84,7 @@ def test_an_empty_thread_with_nobody_answering_has_no_line(client):
     assert _line_under(client, tid, root["id"]) is None
 
 
-def _turn_failed(client, thread_id):
+def _turn_failed(client, thread_id, content=None, meta=None):
     async def _write() -> None:
         async with client.test_factory() as s:
             thread = await s.get(Thread, uuid.UUID(thread_id))
@@ -95,8 +96,8 @@ def _turn_failed(client, thread_id):
                     kind=BlockKind.event,
                     author_type=AuthorType.platform,
                     author="system",
-                    content="本轮未完成：这条会话的机器尚未配置或未连接",
-                    meta={"event_type": "turn_failed", "severity": "error"},
+                    content=content or "本轮未完成：这条会话的机器尚未配置或未连接",
+                    meta=meta or {"event_type": "turn_failed", "severity": "error"},
                 )
             )
             await s.commit()
@@ -163,3 +164,22 @@ def test_a_checklist_posted_in_a_thread_tells_the_channel(client, monkeypatch):
 
     assert (tid, "threads") in heard
     assert _line_under(client, tid, root["id"])["reply_count"] == 2
+
+
+def test_a_thread_the_credits_refused_says_so_on_the_main_line(client):
+    """Spent credits are not a failure anyone can retry: the line under the
+    message carries why, so the channel can say the credits ran out."""
+    tid = _channel(client)
+    root = post_message(client, tid, "alice", {"content": "把周报改一版"})
+    thread = _thread(client, root["id"], "alice")
+    _turn_failed(
+        client,
+        thread,
+        content=credits_event("本月额度已用完，11月1日重置。"),
+        meta=CREDITS_EXHAUSTED_META,
+    )
+
+    line = _line_under(client, tid, root["id"])
+
+    assert line["failed"] is True
+    assert line["failed_code"] == "credits_exhausted"

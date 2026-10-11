@@ -1195,7 +1195,8 @@
         "open": "Open",
         "closed": "Closed"
       },
-      "failed": "Reply failed"
+      "failed": "Reply failed",
+      "failedCredits": "Out of credits"
     },
     "pin": {
       "pin": "Pin to channel",

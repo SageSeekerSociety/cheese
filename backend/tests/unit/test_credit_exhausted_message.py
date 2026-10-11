@@ -25,6 +25,7 @@ from app.domain.agent.turn.state.notices import _is_out_of_credit
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
 from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
+from app.domain.usage.ledger import month_end, month_of
 from tests.conftest import (
     StubChannel,
     close_topic_subscriptions,
@@ -210,8 +211,12 @@ async def test_a_turn_the_budget_brake_stopped_says_the_credits_ran_out(
     async with db_factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
     notices = [b for b in blocks if b.author_type == AuthorType.platform]
-    assert any(b.content.startswith(CREDITS_EXHAUSTED_EVENT) for b in notices)
-    assert not any("cheese project budget" in (b.content or "") for b in notices)
+    # The ledger had not settled the turn yet; the line still says the month's
+    # credits are spent and when they come back, as admission says it.
+    resets = month_end(month_of(datetime.now(UTC)))
+    assert [b.content for b in notices] == [
+        f"本月额度已用完，{resets.month}月{resets.day}日重置。这一轮没有执行。"
+    ]
     assert not any((b.meta or {}).get("retryable") for b in notices)
 
 
