@@ -431,6 +431,7 @@ defineExpose({ send, linkDown, submitQuestion })
           @unpin="pins.unpin"
           @keep="keepFile"
         >
+          <template #timeline-start><slot name="timeline-start" /></template>
           <template #timeline-end><slot name="timeline-end" /></template>
         </ChatTimeline>
       </ErrorBoundary>

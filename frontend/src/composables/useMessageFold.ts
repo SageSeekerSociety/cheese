@@ -18,7 +18,15 @@ import { cancelMeasure, observeSize, queueMeasure } from '../lib/foldMeasure'
 //
 // `canFold` 说这一条现在收不收：还没落库的那条（正在写、正在送）不收，它的正文每帧
 // 都在长。
-export function useMessageFold(el: Ref<HTMLElement | null>, canFold: Ref<boolean>, revision?: Ref<unknown>) {
+//
+// `toggleEl` 是那颗「展开 / 收起」（要的时候才给）：展开后它在正文末尾，正文高过一屏时
+// 就掉到视野外，收回来得靠它——展开完把它带进视野。频道消息行没传，那一颗跟着行一起长。
+export function useMessageFold(
+  el: Ref<HTMLElement | null>,
+  canFold: Ref<boolean>,
+  revision?: Ref<unknown>,
+  toggleEl?: Ref<HTMLElement | null>
+) {
   const foldable = ref(false)
   const expanded = ref(false)
   const foldPx = ref(0)
@@ -76,19 +84,20 @@ export function useMessageFold(el: Ref<HTMLElement | null>, canFold: Ref<boolean
   // 展开/收起只改这一条自己的高度，它上面的东西一个像素都没动，滚到哪就还是哪。
   // 会动的只剩一种情况：Chrome 的滚动锚定，或壳里的 ResizeObserver 顺手挪了一下。
   // 量这一行的顶、把差补回去。停在底部的人交给壳钉底，不抢。
+  // 展开以后那颗「收起」在正文末尾：正文高过一屏时它掉到视野外，点开的人就找不回来了，
+  // 所以补完滚动把它带进视野（已经在视野里就不动）。收起来的时候不动，那一颗就在原地。
   function toggle() {
     const row = (el.value?.closest('.im-row') as HTMLElement | null) ?? el.value
     const scroller = scrollParent(el.value)
     const beforeTop = row?.getBoundingClientRect().top ?? 0
     const pinned = scroller ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80 : false
     expanded.value = !expanded.value
-    if (row && scroller && !pinned) {
-      void nextTick(() => {
-        requestAnimationFrame(() => {
-          scroller.scrollTop += row.getBoundingClientRect().top - beforeTop
-        })
+    void nextTick(() => {
+      requestAnimationFrame(() => {
+        if (row && scroller && !pinned) scroller.scrollTop += row.getBoundingClientRect().top - beforeTop
+        if (expanded.value) toggleEl?.value?.scrollIntoView?.({ block: 'nearest' })
       })
-    }
+    })
   }
 
   onMounted(() => {

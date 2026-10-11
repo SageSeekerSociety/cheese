@@ -334,8 +334,15 @@ function emitOutboxLeave(el: Element, done: () => void) {
     <!-- Screen readers hear one line per newly arrived message (who + the start of it), never the streaming text. -->
     <p class="visually-hidden" role="status" aria-live="polite" data-testid="chat-live">{{ liveAnnouncement }}</p>
     <!-- Single wrapper so a ResizeObserver can watch the timeline's total
-             content height (rows + streaming bubble + timeline-end slot). -->
+             content height (the host's start slot + rows + streaming bubble +
+             timeline-end slot). -->
     <div :ref="contentRef" class="tl-content">
+      <!-- Start of the conversation — the host puts what stands above the first
+             message here (a thread's opening message). Inside the scroller, with
+             the rows: it scrolls with them rather than pinning above them, where
+             a long one would push the replies out and carry its own 收起 out of
+             reach. -->
+      <slot name="timeline-start" />
       <RoomHoverBar
         :block="barBlock"
         :shown="bar.shown"

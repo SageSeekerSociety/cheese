@@ -95,10 +95,11 @@ watch(
 )
 
 const root = computed<Block | null>(() => thread.value?.root ?? null)
-// 挂着的那条消息长了也收起来：顶栏这一段一长，下面支线自己的回复就被推下去了。判据、
-// 量高和那颗「展开 / 收起」都是频道消息行用的同一份（composables/useMessageFold）。
-// 它是已经落库的消息，一直可以收。
+// 挂着的那条消息长了也收起来：它长起来，支线自己的回复就被推到屏幕外。判据、量高和那颗
+// 「展开 / 收起」都是频道消息行用的同一份（composables/useMessageFold）。它是已经落库的
+// 消息，一直可以收。
 const rootFoldEl = ref<HTMLElement | null>(null)
+const rootFoldToggleEl = ref<HTMLElement | null>(null)
 const {
   foldable: rootFoldable,
   expanded: rootExpanded,
@@ -108,7 +109,9 @@ const {
 } = useMessageFold(
   rootFoldEl,
   computed(() => true),
-  computed(() => root.value?.content)
+  computed(() => root.value?.content),
+  // 展开后那颗「收起」在正文末尾，正文高过一屏就掉到视野外：交给它自己把按钮带回来。
+  rootFoldToggleEl
 )
 // 从这条支线挂着的那条消息拆出去的任务，和频道主线上那条消息下面的卡是同一份：只读
 // 这一条带着的（`blocks=`），不读整个频道的。
@@ -178,72 +181,6 @@ function toTask() {
 
     <p v-if="error" class="thread-pane__error t-meta" role="alert">{{ error }}</p>
     <template v-else>
-      <article v-if="root" v-show="!processTurn" class="thread-root">
-        <!-- 队友一律 CheeseAvatar（和消息行同一套标记）；人走 UserAvatar：挑过头像的显示
-             头像，没挑过就按 handle 取色画首字母（颜色跟 handle，不跟昵称）。 -->
-        <CheeseAvatar
-          v-if="isAgentBlock(root)"
-          class="thread-root__avatar"
-          :size="28"
-          :name="nameOf(root.author)"
-          :handle="root.author"
-        />
-        <UserAvatar
-          v-else
-          class="thread-root__avatar"
-          :size="28"
-          :name="nameOf(root.author)"
-          :avatar="avatarOf(root.author)"
-          :seed="root.author"
-        />
-        <div class="thread-root__body">
-          <div class="thread-root__head">
-            <span class="thread-root__name">{{ nameOf(root.author) }}</span>
-            <span class="t-meta thread-root__time">{{ rootTime }}</span>
-          </div>
-          <div
-            ref="rootFoldEl"
-            class="fold"
-            :class="{ 'fold-clamped': rootClamped }"
-            :style="rootClamped ? { maxHeight: `${rootFoldPx}px` } : undefined"
-          >
-            <MarkdownView
-              v-if="isAgentBlock(root)"
-              class="thread-root__text"
-              :source="root.content"
-              as="chat"
-              :names="refs"
-            />
-            <div v-else class="thread-root__text thread-root__text--plain" v-html="renderPlain(root.content, refs)" />
-            <div v-if="rootClamped" class="fold-fade" aria-hidden="true" />
-          </div>
-          <button
-            v-if="rootFoldable"
-            type="button"
-            class="fold-toggle"
-            :aria-expanded="rootExpanded"
-            data-testid="thread-root-fold"
-            @click="toggleRootFold"
-          >
-            <v-icon size="16">{{ rootExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
-            {{ rootExpanded ? t('work.room.message.showLess') : t('work.room.message.showMore') }}
-          </button>
-        </div>
-      </article>
-      <div v-if="tasks.length" v-show="!processTurn" class="thread-pane__tasks">
-        <TaskCard
-          v-for="task in tasks"
-          :key="task.id"
-          :task="task"
-          :owner-name="task.owner ? nameOf(task.owner) : null"
-          in-list
-          @open="emit('open-task', $event)"
-        />
-      </div>
-      <div v-if="thread" v-show="!processTurn" class="thread-pane__divider t-meta">
-        <span>{{ t('work.room.thread.replies', { count: thread.reply_count }) }}</span>
-        <span class="thread-pane__rule" />
-      </div>
       <ChatPanel
         v-show="!processTurn"
         class="thread-pane__chat"
@@ -263,6 +200,82 @@ function toTask() {
         @upgrade-message="emit('to-task', $event)"
         @open-process="processTurn = $event"
       >
+        <!-- 这条支线挂着的那条消息（连同从这里转出的任务、回复条数）交给对话的滚动区：
+             它跟着回复一起滚，而不是钉在面板顶上。钉着的话，长消息一展开就把回复挤没、
+             把正文末尾那颗「收起」顶到看不见的地方——点开就再收不回来了。 -->
+        <template #timeline-start>
+          <article v-if="root" class="thread-root">
+            <!-- 队友一律 CheeseAvatar（和消息行同一套标记）；人走 UserAvatar：挑过头像的显示
+                 头像，没挑过就按 handle 取色画首字母（颜色跟 handle，不跟昵称）。 -->
+            <CheeseAvatar
+              v-if="isAgentBlock(root)"
+              class="thread-root__avatar"
+              :size="28"
+              :name="nameOf(root.author)"
+              :handle="root.author"
+            />
+            <UserAvatar
+              v-else
+              class="thread-root__avatar"
+              :size="28"
+              :name="nameOf(root.author)"
+              :avatar="avatarOf(root.author)"
+              :seed="root.author"
+            />
+            <div class="thread-root__body">
+              <div class="thread-root__head">
+                <span class="thread-root__name">{{ nameOf(root.author) }}</span>
+                <span class="t-meta thread-root__time">{{ rootTime }}</span>
+              </div>
+              <div
+                ref="rootFoldEl"
+                class="fold"
+                :class="{ 'fold-clamped': rootClamped }"
+                :style="rootClamped ? { maxHeight: `${rootFoldPx}px` } : undefined"
+              >
+                <MarkdownView
+                  v-if="isAgentBlock(root)"
+                  class="thread-root__text"
+                  :source="root.content"
+                  as="chat"
+                  :names="refs"
+                />
+                <div
+                  v-else
+                  class="thread-root__text thread-root__text--plain"
+                  v-html="renderPlain(root.content, refs)"
+                />
+                <div v-if="rootClamped" class="fold-fade" aria-hidden="true" />
+              </div>
+              <button
+                v-if="rootFoldable"
+                ref="rootFoldToggleEl"
+                type="button"
+                class="fold-toggle"
+                :aria-expanded="rootExpanded"
+                data-testid="thread-root-fold"
+                @click="toggleRootFold"
+              >
+                <v-icon size="16">{{ rootExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+                {{ rootExpanded ? t('work.room.message.showLess') : t('work.room.message.showMore') }}
+              </button>
+            </div>
+          </article>
+          <div v-if="tasks.length" class="thread-pane__tasks">
+            <TaskCard
+              v-for="task in tasks"
+              :key="task.id"
+              :task="task"
+              :owner-name="task.owner ? nameOf(task.owner) : null"
+              in-list
+              @open="emit('open-task', $event)"
+            />
+          </div>
+          <div v-if="thread" class="thread-pane__divider t-meta">
+            <span>{{ t('work.room.thread.replies', { count: thread.reply_count }) }}</span>
+            <span class="thread-pane__rule" />
+          </div>
+        </template>
         <template #timeline-end>
           <AgentFeedbackCard :topic-id="threadId" />
         </template>
