@@ -20,7 +20,8 @@
 │   ├── 做题目：solve-a-challenge / ask-about-a-challenge / team-challenge / resubmit
 │   ├── 出题目：publish-a-challenge / guide-the-teammate
 │   ├── 成果：publish-a-site
-│   └── 环境：use-your-computer
+│   ├── 环境：use-your-computer
+│   └── 扩展芝士：connect-a-service / add-a-skill
 ├── 使用 Cheese
 │   ├── 题目 challenges.md
 │   ├── 空间 spaces.md
@@ -39,6 +40,8 @@
 │   ├── 额度 quota.md
 │   ├── 反馈中心 feedback.md
 │   ├── 发布成果 sites.md
+│   ├── 连接与集成 connections.md
+│   ├── 技能 skills.md
 │   └── 账号与登录 account.md
 └── 常见问题
     └── 常见问题与排障 troubleshooting.md
@@ -89,6 +92,8 @@
 | `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `spaces.md` |
 | `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
 | `use-your-computer.md` | 接入自己的 Mac 或 Windows 电脑，让频道改用它，把本地数据交给芝士 | 服务器接入、隔离和自己的 Claude Code 见 `devices.md`；任务环境见 `environment.md` |
+| `connect-a-service.md` | 以 Notion 为例：让芝士在项目里声明 MCP 服务、在项目设置里连接、让芝士读页面、断开 | 连接的种类、状态和权限见 `connections.md` |
+| `add-a-skill.md` | 以组会周报为例：新建一项技能、让芝士照着做、修改技能 | 提议、导入、版本规则见 `skills.md` |
 
 ### 使用 Cheese {#feature-pages}
 
@@ -113,6 +118,8 @@
 | `quota.md` | 团队「额度」页、个人「芝士额度」、耗尽提示和当前可操作范围 | 设备连接归 `devices.md`；不编造自行调整或发放额度入口 |
 | `sites.md` | 导出与发布中的 Site 发布、发布结果与管理入口、当前能力和限制 | 普通文件下载归 `files.md`；不承诺整个项目导出 |
 | `account.md` | 创建账号、登录方式、第一次用第三方账号登录、添加邮箱、通行密钥、密码与安全、两步验证、桌面端登录、个人资料与个人主页、实名信息、界面语言与外观 | 通知设置归 `inbox.md`；设备归 `devices.md`；芝士额度归 `quota.md` |
+| `connections.md` | 个人连接（邮箱、飞书）与项目连接（GitHub、MCP 服务）：在哪里管理、用谁的账号、连接状态、芝士能做什么、断开 | 连接 GitHub 仓库的步骤归 `projects.md`；完整的 Notion 流程归 `connect-a-service.md` |
+| `skills.md` | 项目技能的字段、芝士怎么用、平台自带的技能、手写 / 芝士提议 / 导入三种来源、版本与删除、权限 | 一步步新建技能归 `add-a-skill.md` |
 
 上表定义的是页面职责，不代表其中每一个字段、状态、权限和限制都已经完成事实验证。正文只能写入经过验证的行为。
 

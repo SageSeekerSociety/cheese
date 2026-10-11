@@ -150,7 +150,10 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [邀请一个人加入你的项目](/invite-to-project) | 邀请一位外部成员 | 一个 `:::walk` | 同上 |
 | [把网页发布成网站](/publish-a-site) | 在「总览」中发布网站 | 一个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
 | [让芝士在你自己的电脑上工作](/use-your-computer) | 接入这台电脑；让频道改用这台电脑 | 两个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
+| [把外部服务连给芝士](/connect-a-service) | 在项目设置中连接 Notion | 一个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
+| [给芝士装一个技能](/add-a-skill) | 新建一项技能 | 一个 `:::walk` | 同上 |
 | [团队](/teams) | 复制团队链接 | 一个 `demo-panel` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
+| [连接与集成](/connections) | 连接一个 MCP 服务器 | 一个 `demo-panel` | 同上 |
 | [发布网站](/sites) | 发布更新 | 一个 `demo-panel` | 同上 |
 | [环境](/environment) | 频道的环境 | 一个 `demo-panel` | 同上 |
 | [自有设备](/devices) | 批准一台命令行接入的设备 | 一个 `demo-panel` | 同上 |
