@@ -4,7 +4,7 @@
 
 // [key, tab label, icon, groups: [group label, [slug, ...]]]
 export const SECTIONS = [
-  ['start', '开始使用', 'rocket', [['入门', ['overview', 'quickstart', 'working-with-cheese']]]],
+  ['start', '开始使用', 'rocket', [['入门', ['overview', 'quickstart', 'working-with-cheese', 'apps']]]],
   // One tutorial teaches one task, step by step; grouped by what the task is about.
   ['tutorials', '教程', 'bulb', [
     ['组队协作', ['team-project', 'join-a-team', 'invite-to-project']],
