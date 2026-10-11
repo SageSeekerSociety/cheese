@@ -158,19 +158,40 @@ const endLabels = computed(() => {
   return [{ text: fmtNum(v), x: x(s.values.length - 1) - 6, y: y(v) - 8 }]
 })
 
+/** 一个 x 轴字大约占多宽：12px 轴字每字符约 7px（与 `padLeft` 同一把尺），两边
+ *  各留 4px。按最长的那个算 —— 窗口跨进两位数日期（「10/10」）时字一下变宽。 */
+const tickW = computed(() => 8 + 7 * Math.max(0, ...props.xLabels.map((label) => label.length)))
+
+/** 一个刻度字横向占的区间：首个靠左、末个靠右、其余居中（与模板的 text-anchor 一致）。 */
+const tickSpan = (tick: { i: number; anchor: 'start' | 'middle' | 'end' }): [number, number] => {
+  const at = x(tick.i)
+  const w = tickW.value
+  if (tick.anchor === 'start') return [at, at + w]
+  if (tick.anchor === 'end') return [at - w, at]
+  return [at - w / 2, at + w / 2]
+}
+
 /** x 轴抽稀：标 `ceil((n-1)/6)` 的倍数位与最后一天 —— 7 天全标（stride=1），
  *  30 天标 6+1 个，90 天标 0/15/30/45/60/75/89 共 7 个。轴上永远读得出两端和
- *  走向，中间的交给 hover。 */
+ *  走向，中间的交给 hover。
+ *
+ *  窄画布上一格放不下一个字时，步长再放大到放得下；最后一天靠右对齐，紧挨着它的
+ *  那个居中的字若仍会压上去，就让位给最后一天（两端永远在）。390px 宽的 7 天窗口
+ *  里，「10/10」和「10/11」曾经叠在一起。 */
 const xTicks = computed(() => {
   const n = props.xLabels.length
   if (n === 0) return []
-  const stride = Math.max(1, Math.ceil((n - 1) / 6))
+  const fit = step.value > 0 ? Math.ceil(tickW.value / step.value) : 1
+  const stride = Math.max(1, Math.ceil((n - 1) / 6), fit)
   const out: { i: number; anchor: 'start' | 'middle' | 'end' }[] = []
   for (let i = 0; i < n; i += stride) {
     out.push({ i, anchor: i === 0 ? 'start' : 'middle' })
   }
   if (n - 1 > out[out.length - 1]!.i) out.push({ i: n - 1, anchor: 'end' })
   else out[out.length - 1]!.anchor = 'end'
+  while (out.length > 2 && tickSpan(out[out.length - 2]!)[1] > tickSpan(out[out.length - 1]!)[0]) {
+    out.splice(out.length - 2, 1)
+  }
   return out
 })
 
