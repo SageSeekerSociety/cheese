@@ -31,6 +31,7 @@ agent 是同一句话，分岔只在**怎么送到**，那是 `identity/arrival.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -175,14 +176,15 @@ async def settle_proposal(
     event_type: str,
     key: str,
     value: uuid.UUID,
-    content: str,
+    content: str | Callable[[dict], str],
 ) -> None:
     """一条「芝士提议了什么、等人确认」的行，在人定下来以后改成定下来的样子。
 
     那一行写着「等人处理」和一颗「去确认」；人保存了、拒了或删了之后它还那样写，
     读的人就会以为那件事还在等。所以同一行原地改：`content` 说结果，`who` 清空
     （没人在管了），`state` 记成 `over`，前端据此不再画「去确认」。开着这个房间的
-    页面在提交之后收到改过的这一行。
+    页面在提交之后收到改过的这一行。`content` 也可以按那一行原来的 `meta` 给出
+    （同一件东西的「新增」和「修改」两种提议，结果说法不同）。
     """
     rows = await session.scalars(
         select(Block).where(
@@ -195,9 +197,10 @@ async def settle_proposal(
     for block in rows:
         if (block.meta or {}).get("state") == "over":
             continue
-        block.content = content
+        said = content(block.meta or {}) if callable(content) else content
+        block.content = said
         block.meta = with_keys(
-            {**(block.meta or {}), "who": "", "state": "over"}, content=content
+            {**(block.meta or {}), "who": "", "state": "over"}, content=said
         )
         await session.flush()
         show_once_committed(
