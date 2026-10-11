@@ -40,15 +40,19 @@ exec cheese sync --all
 
 class SandboxRefused(RuntimeError):
     """The machine refused to install a room's executor because it cannot
-    give the room its isolated environment (`bootstrap.SandboxUnavailable`);
-    the message is the machine's, saying what would let it."""
+    give the room its isolated environment (`bootstrap.SandboxUnavailable`).
+    ``said`` is the sentence for its owner about what would let it."""
+
+    def __init__(self, said: dict):
+        super().__init__(said.get("key"))
+        self.said = said
 
 
 def refused(installed: dict) -> SandboxRefused | None:
     """The refusal an install's exec result reports, if it is one."""
     if installed.get("exit") != bootstrap.SANDBOX_UNAVAILABLE_EXIT:
         return None
-    return SandboxRefused((installed.get("stderr") or "").strip())
+    return SandboxRefused(json.loads((installed.get("stderr") or "").strip()))
 
 
 def can_prepare(info, sandbox=None):
@@ -197,7 +201,7 @@ try:
     sandbox_tools(None, False)
     print(json.dumps({"isolates": True}))
 except SandboxUnavailable as exc:
-    print(json.dumps({"isolates": False, "reason": str(exc)}))
+    print(json.dumps({"isolates": False, "said": exc.said}))
 """
 
 

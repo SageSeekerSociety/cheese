@@ -78,11 +78,11 @@ def owner(tmp_path, monkeypatch):
     return home
 
 
-def _refusal(payload, capsys) -> str:
+def _refusal(payload, capsys) -> dict:
     with pytest.raises(SystemExit) as exited:
         bootstrap.configure(payload)
     assert exited.value.code == bootstrap.SANDBOX_UNAVAILABLE_EXIT
-    return capsys.readouterr().err
+    return json.loads(capsys.readouterr().err)
 
 
 @linux
@@ -106,9 +106,8 @@ def test_an_isolated_room_this_machine_cannot_isolate_is_refused_and_nothing_run
 
     said = _refusal(_payload(project, resource, sandbox=True), capsys)
 
-    assert "Restart cheesehost" in said
+    assert said["key"] == "sandboxNotPlaced"
     assert not system_ran.exists()
-    assert "full machine access" in said
     assert not asked.exists()
     state = owner / ".cheese/home" / str(project) / str(resource) / ".cheese/executor"
     assert not Path(runtime.socket_path(state)).exists()
@@ -132,9 +131,13 @@ def test_a_machine_that_allows_no_user_namespaces_is_told_what_to_change(
 
     said = _refusal(_payload(uuid.uuid4(), uuid.uuid4(), sandbox=True), capsys)
 
-    assert "setting up uid map: Permission denied" in said
-    assert "user namespace" in said
-    assert "full machine access" in said
+    assert "setting up uid map: Permission denied" in said["params"]["detail"]
+    assert said["key"] in {
+        "sandboxAppArmor",
+        "sandboxUsernsCloneOff",
+        "sandboxUserNamespacesOff",
+        "sandboxNoUserNamespaces",
+    }
     assert not (owner / ".cheese/sandboxes").exists()
 
 

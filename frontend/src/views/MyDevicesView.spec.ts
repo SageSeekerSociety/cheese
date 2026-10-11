@@ -149,18 +149,18 @@ describe('the screens open on a device', () => {
     expect(await screen.findByText('现场 · @Kimi')).toBeTruthy()
   })
 
-  it('tells the owner a machine cannot isolate a channel, in its own words, as it answers again', async () => {
-    const reason = 'AppArmor here restricts unprivileged user namespaces.'
+  it('tells the owner, in their language, why a machine cannot isolate a channel, as it answers again', async () => {
+    const reason = { key: 'sandboxAppArmor', params: {} }
     const said = { isolates: false, reason, checked_at: '2026-10-10T00:00:00Z' }
     listMyDevices.mockResolvedValue({
       devices: [
         { device_id: 'd1', name: 'lab-box', online: true, project_ids: [], team_ids: [], screens: [], sandbox: said },
       ],
     })
-    checkSandbox.mockResolvedValue({ ...said, reason: 'asked again' })
+    checkSandbox.mockResolvedValue({ ...said, reason: { key: 'sandboxNotPlaced', params: {} } })
     mount()
 
-    expect(await screen.findByText('asked again')).toBeTruthy()
+    expect(await screen.findByText(/cheesehost 还没在这台电脑上放好 bubblewrap/)).toBeTruthy()
     expect(checkSandbox).toHaveBeenCalledWith('d1')
     expect(screen.getByTestId('device-sandbox').textContent).toContain('给不了频道隔离环境')
   })

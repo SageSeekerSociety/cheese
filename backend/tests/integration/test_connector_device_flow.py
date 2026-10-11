@@ -456,7 +456,7 @@ def test_an_owner_reads_and_asks_again_whether_their_machine_can_isolate(
     device_id = client.post(
         "/connector/auth/device/poll", json={"device_code": code}
     ).json()["device_id"]
-    said = {"isolates": False, "reason": "AppArmor here restricts user namespaces."}
+    said = {"isolates": False, "said": {"key": "sandboxAppArmor", "params": {}}}
     from app.domain.agent.device_hub import device_hub
 
     monkeypatch.setattr(device_hub, "is_online", lambda _device: True)
@@ -476,7 +476,7 @@ def test_an_owner_reads_and_asks_again_whether_their_machine_can_isolate(
     )
     assert asked.status_code == 200, asked.text
     assert asked.json()["isolates"] is False
-    assert mine()["sandbox"]["reason"] == said["reason"]
+    assert mine()["sandbox"]["reason"] == {"key": "sandboxAppArmor", "params": {}}
 
     said = {"isolates": True}
     asked = client.post(

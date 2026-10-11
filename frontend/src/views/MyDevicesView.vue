@@ -33,6 +33,7 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import DeviceTeamsPicker from '@/components/settings/DeviceTeamsPicker.vue'
 import { t } from '@/i18n'
 import { screenAgentName } from '@/lib/agentNames'
+import { renderNoticeMessage } from '@/lib/noticeText'
 import { relTime } from '@/lib/relTime'
 import accountService from '@/services/account'
 import { lastSeenOf, systemOf } from '@/types/devices'
@@ -459,7 +460,9 @@ function claudePlan(plan: string | null | undefined): string {
           <!-- 它说过自己给不了会话沙箱：频道里的人只知道这台不行，原因和办法在这里给机主。 -->
           <div v-if="sandboxOf(d)?.isolates === false" class="device__meta" data-testid="device-sandbox">
             {{ t('account.devices.sandboxUnavailable') }}
-            <div v-if="sandboxOf(d)?.reason" class="device__reason">{{ sandboxOf(d)?.reason }}</div>
+            <div v-if="sandboxOf(d)?.reason" class="device__reason">
+              {{ renderNoticeMessage(sandboxOf(d)?.reason, '') }}
+            </div>
           </div>
 
           <!-- 这台设备在给哪些团队、以及自己名下的项目用：每一枚链到那个团队的设备页，「修改」在这里改。 -->
@@ -680,10 +683,8 @@ function claudePlan(plan: string | null | undefined): string {
   font-family: var(--font-mono);
 }
 
-/* The machine's own words: commands to copy, so they keep their spacing and wrap anywhere. */
+/* What the machine said, with a command to copy: it wraps anywhere rather than overflow. */
 .device__reason {
-  font-family: var(--font-mono);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
