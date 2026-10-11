@@ -164,3 +164,58 @@ describe('each task made on its own in the channel keeps its own card', () => {
     expect(screen.getByText('Draft the release notes')).toBeTruthy()
   })
 })
+
+describe('every row in the timeline has a name, on screen or not', () => {
+  // A row off screen is not rendered (content-visibility) and the browser then has
+  // no contents to name it from; emptying the rows stands in for that.
+  function event(id: string, content: string, meta: Record<string, unknown> = {}): Block {
+    return {
+      id,
+      conversation_id: 't',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content,
+      created_at: '2026-09-01T10:00:00Z',
+      meta: { platform: true, ...meta },
+    } as Block
+  }
+
+  it('platform lines and created tasks keep their name with nothing drawn', () => {
+    const blocks = [
+      said('a', 'first'),
+      event('n1', '平台 PR #1459 已在 GitHub 上被人工合并'),
+      said('b', 'second'),
+      event('n2', '<@lin> 更新了文档「周报」'),
+      said('c', 'third'),
+      event('n3', '<@lin> 创建了任务「新任务」，由 <@lin> 负责', { action: 'task_created', task_id: 't3' }),
+    ]
+    const rows = collapseNotices(blocks)
+    const task: TaskLine = {
+      id: 't3',
+      title: 'Fix the login redirect',
+      owner: 'lin',
+      creator: 'lin',
+      status: '待你审阅',
+      tone: 'mine',
+      accepted: null,
+      at: '',
+    }
+    const { container } = mount({
+      rows,
+      runEdges: rows.map(() => 'start'),
+      refs: { mentionNames: { lin: '林' }, topicTitles: {} },
+      nameOf: (handle: string) => (handle === 'lin' ? '林' : handle),
+      noticeAgent: (b: Block) => (b.id === 'n2' ? { name: '芝士', handle: 'cheese' } : null),
+      taskOf: (id: string) => (id === 't3' ? task : null),
+    })
+    const items = [...container.querySelectorAll('[data-feed-item]')]
+    expect(items).toHaveLength(6)
+    for (const item of items) item.replaceChildren()
+
+    expect(screen.getByRole('article', { name: '10:00：平台 PR #1459 已在 GitHub 上被人工合并' })).toBeTruthy()
+    expect(screen.getByRole('article', { name: '芝士，10:00：@林 更新了文档「周报」' })).toBeTruthy()
+    expect(screen.getByRole('article', { name: '林，10:00：新建了任务 Fix the login redirect' })).toBeTruthy()
+    expect(screen.getByRole('article', { name: 'me，10:00：second' })).toBeTruthy()
+  })
+})

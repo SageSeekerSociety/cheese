@@ -17,10 +17,11 @@ import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 
-import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
+import { noticeLine } from '../../lib/noticeLine'
 import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
@@ -317,12 +318,25 @@ function settleRow(e: AnimationEvent) {
 function emitOutboxLeave(el: Element, done: () => void) {
   emit('outbox-leave', el, done)
 }
-// 事件行和「新建了任务」那一条，读屏读到的名字就是这一行自己的字（谁、做了什么、几点）：
-// aria-labelledby 指向自己。id 带上这一列的前缀：同一条可能同时开在两栏里。
-const uid = useId()
-function rowId(id: string): string {
-  return `${uid}-row-${id}`
+// 事件行和「新建了任务」那一条，读屏读到的名字和消息一样：谁、几点、说了什么（没有署名
+// 的只有后两样）。由这一条本身算出来，不指向行里画出来的字：离屏的行不渲染
+// （content-visibility），Chrome 算不出被跳过的内容，指向自己的那些行在屏幕外就没有名字。
+function rowLabel(name: string | null, iso: string, text: string): string {
+  const time = props.fmtTime(iso)
+  return name ? t('work.room.chat.messageLabel', { name, time, text }) : t('work.room.chat.eventLabel', { time, text })
 }
+const rowLabels = computed(() =>
+  props.rows.map(({ block, notice }, i) => {
+    const task = createdTasks.value[i]
+    if (task) {
+      const creator = task.creator ? (props.nameOf ?? String)(task.creator) : null
+      return rowLabel(creator, block.created_at, `${t('work.room.taskCard.created')} ${task.title}`)
+    }
+    if (!notice) return ''
+    const agent = agentOf(block, notice)?.name ?? null
+    return rowLabel(agent, block.created_at, noticeLine(block, notice, agent, props.refs))
+  })
+)
 </script>
 
 <template>
@@ -426,7 +440,6 @@ function rowId(id: string): string {
             </TimelineMark>
             <TaskCreatedPost
               v-if="createdTasks[i]"
-              :id="rowId(m.id)"
               :class="{ 'tl-arrive': arrived.has(m.id) }"
               :task="createdTasks[i]!"
               :creator="createdTasks[i]!.creator"
@@ -439,12 +452,11 @@ function rowId(id: string): string {
               :data-feed-item="m.id"
               role="article"
               tabindex="-1"
-              :aria-labelledby="rowId(m.id)"
+              :aria-label="rowLabels[i]"
               @open="emit('open-card', $event)"
             />
             <RoomNotice
               v-else-if="notice"
-              :id="rowId(m.id)"
               :class="{ 'tl-arrive': arrived.has(m.id) }"
               :block="m"
               :notice="notice"
@@ -465,7 +477,7 @@ function rowId(id: string): string {
               :data-feed-item="m.id"
               role="article"
               tabindex="-1"
-              :aria-labelledby="rowId(m.id)"
+              :aria-label="rowLabels[i]"
               @animationend="settleRow"
               @open-resource="emitOpenResource"
               @open-card="emit('open-card', $event)"

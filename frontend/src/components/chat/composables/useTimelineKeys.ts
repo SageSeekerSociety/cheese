@@ -127,6 +127,13 @@ export function useTimelineKeys(deps: TimelineKeysDeps) {
     item.scrollIntoView?.({ block: 'nearest' })
   }
 
+  /** 焦点进到一条里的一个按钮上，并且滚到看得见它。动作条浮在这一行顶边的上面：贴着
+   *  可见区顶边的那一行，它的条在可见区外面，焦点落上去看不到。 */
+  function focusControl(el: HTMLElement) {
+    el.focus({ preventScroll: true })
+    el.scrollIntoView?.({ block: 'nearest' })
+  }
+
   async function enter(item: HTMLElement) {
     const id = idOf(item)
     current = id
@@ -136,7 +143,7 @@ export function useTimelineKeys(deps: TimelineKeysDeps) {
     inside = true
     sync()
     const first = controlsOf(id)[0]
-    if (first) return first.focus({ preventScroll: true })
+    if (first) return focusControl(first)
     inside = false
     sync()
   }
@@ -208,14 +215,14 @@ export function useTimelineKeys(deps: TimelineKeysDeps) {
         if (item) focusItem(item)
       } else if (at === firstOwn) {
         e.preventDefault()
-        list[at - 1].focus({ preventScroll: true })
+        focusControl(list[at - 1])
       }
       return
     }
     if (at < list.length - 1) {
       if (inBar(target) && !inBar(list[at + 1])) {
         e.preventDefault()
-        list[at + 1].focus({ preventScroll: true })
+        focusControl(list[at + 1])
       }
       return
     }
