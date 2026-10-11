@@ -13,7 +13,7 @@ import { computed, ref, watch } from 'vue'
 import { deleteReviewComment, editReviewComment, listReviewComments, writeReviewComment } from '@/api/reviewComments'
 import { myHandle } from '@/me'
 import { keys } from '@/query/keys'
-import { fromSnapshot } from '@/query/snapshot'
+import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
 
 export interface ReviewCommentsHost {
   taskId: () => string | null | undefined
@@ -59,6 +59,8 @@ export function useReviewComments(host: ReviewCommentsHost) {
   })
 
   let seq = 0
+  /** `items` 此刻摆的是哪件任务的。 */
+  let shownFor: string | null = null
   async function load() {
     const task = host.taskId()
     const mine = ++seq
@@ -66,6 +68,10 @@ export function useReviewComments(host: ReviewCommentsHost) {
       items.value = []
       return
     }
+    // 换了一件任务：先画上一次在那件任务里看到的，读回来再换（见 query/snapshot 的 `lastSeen`）。
+    if (task !== shownFor)
+      items.value = lastSeen<{ comments: ReviewComment[] }>(keys.taskReviewComments(task))?.comments ?? []
+    shownFor = task
     try {
       // 只有进任务时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
       const res = await fromSnapshot(keys.taskReviewComments(task), () => listReviewComments(task))
@@ -114,6 +120,12 @@ export function useReviewComments(host: ReviewCommentsHost) {
     else next.delete(id)
     held.value = next
   }
+
+  // 这里写过、删过的也记下来，下次进这件任务先画的就是改过之后的样子。
+  watch(items, (rows) => {
+    const task = host.taskId()
+    if (task) seen(keys.taskReviewComments(task), { comments: rows })
+  })
 
   watch(
     () => [host.taskId(), host.pendingCard()?.id ?? null] as const,

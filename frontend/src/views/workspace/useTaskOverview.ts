@@ -10,7 +10,7 @@ import { getTaskRelated, retryTaskOpening } from '@/api/tasks'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { roomProgressQuery } from '@/query/room'
-import { fromSnapshot } from '@/query/snapshot'
+import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
 
 export function useTaskOverview(opts: {
   taskId: () => string | undefined
@@ -26,6 +26,7 @@ export function useTaskOverview(opts: {
     try {
       // 只有进任务时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
       const got = await fromSnapshot(keys.taskRelated(id), () => getTaskRelated(id))
+      seen(keys.taskRelated(id), got)
       if (opts.taskId() === id) related.value = got
     } catch {
       // 相关是背景信息，拿不到就不画。
@@ -60,8 +61,9 @@ export function useTaskOverview(opts: {
 
   watch(
     () => opts.taskId(),
-    () => {
-      related.value = null
+    (id) => {
+      // 先画上一次在这件任务里看到的，读回来再换（见 query/snapshot 的 `lastSeen`）。
+      related.value = (id && lastSeen<TaskRelated>(keys.taskRelated(id))) || null
       void loadRelated()
     },
     { immediate: true }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { FeedbackProposal } from '@/cx_types'
 
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { useNavigation } from '@/composables/useNavigation'
@@ -14,7 +14,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 import { keys } from '@/query/keys'
-import { fromSnapshot } from '@/query/snapshot'
+import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
 import { useFeedbackStore } from '@/stores/feedback'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -59,8 +59,9 @@ function nameOf(handle: string): string {
 }
 const navigation = useNavigation()
 
-/** 这个话题里还活着的提案。拉不到就是空数组（提案是顺路问一句，不该让对话栏报错）。 */
-const proposals = ref<FeedbackProposal[]>([])
+/** 这个话题里还活着的提案。拉不到就是空数组（提案是顺路问一句，不该让对话栏报错）。
+ *  再进来先画上一次在这里看到的那几张，`load` 回来再换（见 query/snapshot 的 `lastSeen`）。 */
+const proposals = ref<FeedbackProposal[]>(lastSeen(keys.roomFeedbackProposals(props.topicId)) ?? [])
 /** 已经发出去的：block_id → 那条反馈的 id。卡在这一轮里变成一张凭证。 */
 const submitted = ref<Record<string, string>>({})
 /** 已经「不用」的：本地立刻收起。服务端那边同一件事已经落库了。 */
@@ -90,6 +91,12 @@ async function load() {
 
 onMounted(load)
 defineExpose({ reload: load })
+
+// 下一次进来先画的：还在问的那几张。「不用」掉的、已经发出去的，下次进来本来就不在了。
+watch(
+  () => proposals.value.filter((p) => !dismissed.value.has(p.block_id) && !submitted.value[p.block_id]),
+  (asking) => seen(keys.roomFeedbackProposals(props.topicId), asking)
+)
 
 function visibleCards(): FeedbackProposal[] {
   return proposals.value.filter((p) => !dismissed.value.has(p.block_id))
