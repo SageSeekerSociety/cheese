@@ -16,6 +16,7 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import { DOC_TOPIC, docSession, NO_REPO, NOTHING_CHANGED } from './catalogFixtures'
+import { DOC_PANEL_ENTRIES } from './catalogPanelsDoc'
 import {
   BUILD_LOG_BYTES,
   CHANGES_TASK,
@@ -44,6 +45,7 @@ import {
   threadTime,
   WORKSPACE_FILES,
 } from './catalogPanelsFixtures'
+import { PREVIEW_PANEL_ENTRIES } from './catalogPanelsPreview'
 import { DEMO_PROJECT, DEMO_TOPIC } from './demoPanels'
 
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
@@ -508,4 +510,6 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
     ],
   },
+  ...DOC_PANEL_ENTRIES,
+  ...PREVIEW_PANEL_ENTRIES,
 ]
