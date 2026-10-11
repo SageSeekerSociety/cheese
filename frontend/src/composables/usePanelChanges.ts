@@ -72,6 +72,9 @@ export function usePanelChanges(props: PanelChangesProps) {
       : status
   })
   const sourceUnavailable = computed(() => tasksLoaded.value && !currentTask.value)
+  // 还没有分支的任务：没有机器打开过它，它还没有改过任何东西。这是「暂无改动」，
+  // 不是「打不开」，也不必去问。
+  const noWorkYet = computed(() => !!currentTask.value && !currentTask.value.branch_name)
   // 没人挑过时按任务的状态定：待审阅时看交上来的那一版，审阅的就是它；现场的工作区
   // 那时可能已经不在了（云沙箱空闲一会儿就收回）。其余还开着的任务看现场。
   const requestedSource = ref<FileSource | null>(null)
@@ -93,7 +96,7 @@ export function usePanelChanges(props: PanelChangesProps) {
         ? (await listRoomTasks(room, { limit: 0, ids: [taskId] })).data.find((row) => row.id === taskId)
         : undefined
       if (request !== taskRequest) return
-      taskRow.value = task?.branch_name ? task : undefined
+      taskRow.value = task
       tasksLoaded.value = true
     } catch (error) {
       if (request === taskRequest) {
@@ -107,6 +110,21 @@ export function usePanelChanges(props: PanelChangesProps) {
   const fileView = ref<FileView>('diff')
 
   const loading = ref(false)
+  // 有几个读还在路上（这件任务、diff、文件列表）。哪一个先回来都不算完：转圈要等最后
+  // 一个，不然先回来的那个把它关掉，剩下的还没到，面板就先说一句「暂无改动」。
+  let inFlight = 0
+  function startLoad(): () => void {
+    const epoch = sourceEpoch
+    inFlight += 1
+    loading.value = true
+    let done = false
+    return () => {
+      if (done || epoch !== sourceEpoch) return
+      done = true
+      inFlight -= 1
+      if (inFlight === 0) loading.value = false
+    }
+  }
   // A background re-fetch: spins only the 刷新 button, never replaces the panel.
   const refreshing = ref(false)
   const errorMsg = ref<string | null>(null)
@@ -133,9 +151,9 @@ export function usePanelChanges(props: PanelChangesProps) {
     const task = selectedTask.value
     const pid = props.projectId
     const epoch = sourceEpoch
-    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value) return
+    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value || noWorkYet.value) return
+    const done = opts.silent ? null : startLoad()
     if (opts.silent) refreshing.value = true
-    else loading.value = true
     errorMsg.value = null
     try {
       const diff = await getGitDiff(pid, tid, task, fileSource.value)
@@ -148,10 +166,8 @@ export function usePanelChanges(props: PanelChangesProps) {
         errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
       }
     } finally {
-      if (selectedTask.value === task && sourceEpoch === epoch) {
-        loading.value = false
-        refreshing.value = false
-      }
+      done?.()
+      if (selectedTask.value === task && sourceEpoch === epoch) refreshing.value = false
     }
   }
 
@@ -419,11 +435,9 @@ export function usePanelChanges(props: PanelChangesProps) {
     const task = selectedTask.value
     const pid = props.projectId
     const epoch = sourceEpoch
-    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value) return
-    if (!opts.silent) {
-      loading.value = true
-      errorMsg.value = null
-    }
+    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value || noWorkYet.value) return
+    const done = opts.silent ? null : startLoad()
+    if (!opts.silent) errorMsg.value = null
     try {
       const listed = (await listFiles(pid, tid, task, fileSource.value)).data
       // Guard against a source switch mid-flight — without it the previous source's
@@ -451,7 +465,7 @@ export function usePanelChanges(props: PanelChangesProps) {
       if (sourceEpoch !== epoch || opts.silent) return
       errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
-      if (selectedTask.value === task && sourceEpoch === epoch) loading.value = false
+      done?.()
     }
   }
 
@@ -614,12 +628,18 @@ export function usePanelChanges(props: PanelChangesProps) {
   // the drawer used ("opening the tool loads it"). One surface now, so both halves
   // load together — the tree cannot mark what the diff has not told it yet. ----
   async function loadAll(opts: { silent?: boolean; fresh?: boolean } = {}) {
-    await loadTasks()
-    if (taskLoadError.value) return
-    void checkRepo()
-    if (noRepo.value) return
-    void loadGit(opts)
-    void loadFiles(opts)
+    // 先问这件任务，再取 diff 和文件：问的这一下也算在转圈里。
+    const done = opts.silent ? null : startLoad()
+    try {
+      await loadTasks()
+      if (taskLoadError.value) return
+      void checkRepo()
+      if (noRepo.value) return
+      void loadGit(opts)
+      void loadFiles(opts)
+    } finally {
+      done?.()
+    }
   }
 
   // 项目没接代码仓库时，文件和提交记录都拿不到，后端答的是一句「项目没有代码仓库」。
@@ -690,6 +710,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     filesInFlight = null
     pendingOpen = null
     fileSaving.value = false
+    inFlight = 0
     loading.value = false
     gitDiff.value = ''
     errorMsg.value = null
