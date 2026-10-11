@@ -76,7 +76,7 @@ from app.domain.machine.supply import pick_offering
 from app.domain.machine.warm import WarmPoolService
 from app.domain.membership.roster import roster
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import TopicStatus
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.usage.compute import VM, admit_start, vm_spec
 from app.domain.user.services import user_by_handle
 
@@ -570,19 +570,20 @@ class HostPool:
             await self._repo.delete_home(home)
 
     async def keep_on_device(
-        self, session_id: uuid.UUID, *, device_id: str, spec: str, resource_id: str
+        self,
+        session_id: uuid.UUID,
+        *,
+        topic: Topic,
+        device_id: str,
+        spec: str,
+        resource_id: str,
     ) -> None:
         """The session's sandbox is on ``device_id``, a person's computer: its
         home there is kept up to date, or made. Every tool call of the session
-        comes through here, as it does through ``place`` on a host. Raises
-        ``SandboxRemoving`` while its previous sandbox is being destroyed."""
+        comes through here, as it does through ``place`` on a host, with its
+        room ``topic`` already locked. Raises ``SandboxRemoving`` while its
+        previous sandbox is being destroyed."""
 
-        agent_session = await self._session.get(AgentSession, session_id)
-        if agent_session is None:
-            raise NotFoundError("agent session not found")
-        topic = await self._lock_room(
-            await room_of(self._session, agent_session.conversation_id)
-        )
         home = await self._repo.current_home(session_id)
         if home is not None:
             home = await self._repo.lock_home(home.id)

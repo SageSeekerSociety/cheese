@@ -825,6 +825,7 @@ async def _attempt(
         try:
             await HostPool(db, hub=hub).keep_on_device(
                 session_id,
+                topic=topic,
                 device_id=selected.device_id,
                 spec=environment.spec,
                 resource_id=work_resource,
