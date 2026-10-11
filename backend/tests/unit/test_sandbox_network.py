@@ -33,6 +33,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     sandbox_host,
 )
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+from tests.support import bubblewrap
 
 HELPER = Path(sandbox_host.__file__)
 RUNNER = Path(environment_runner.__file__)
@@ -129,6 +130,7 @@ class Room:
 def rooms(tmp_path, monkeypatch, capsys):
     owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
+    bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     started: list[Room] = []
 
@@ -381,6 +383,7 @@ def test_an_environment_log_is_read_from_the_rooms_own_directory_only(tmp_path):
 def _unsandboxed_install(tmp_path, monkeypatch):
     owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
+    bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = owner / ".cheese/home" / str(project) / str(resource)
@@ -530,6 +533,7 @@ def test_a_sandboxed_rooms_terminal_marker_ends_no_terminal(tmp_path, monkeypatc
     if shutil.which("tmux") is None:
         pytest.skip("needs tmux")
     monkeypatch.setenv("HOME", str(tmp_path))
+    bubblewrap.place(tmp_path)
     home = _sandboxed_home(tmp_path)
     work = home.parent / "work"
     checksum = subprocess.run(

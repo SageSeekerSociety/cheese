@@ -593,12 +593,9 @@ def platform_file(platform_dir, name):
 # Where `sandbox_host.py` is installed, root's and outside every release: the
 # connector user runs it through `sudo -n`, and only root may change it.
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
-# The programs a sandbox needs from the machine, by the package that has them.
-SANDBOX_PACKAGES = {
-    "bwrap": "bubblewrap",
-    "ip": "iproute2",
-    "iptables-restore": "iptables",
-}
+# The programs a Cloud machine's sandbox network needs, by the package that has
+# them. bwrap is not among them: cheesehost places the platform's own.
+SANDBOX_PACKAGES = {"ip": "iproute2", "iptables-restore": "iptables"}
 SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
@@ -639,15 +636,15 @@ def sandbox_tools(release, platform_machine):
     before anything of the room's is touched. On macOS, `sandbox-exec`
     instead (`confinement.start_seatbelt`).
 
-    Other systems have no isolated environment yet (`NO_SANDBOX`). A machine
-    the platform provisioned (`platform_machine`) needs bubblewrap, `ip` and
-    iptables, and this release's `sandbox_host.py` as `SANDBOX_HOST`; one
-    enrolled before the platform needed them gets them here. A machine a
-    person enrolled is theirs: nothing is installed there, its sandbox has no
-    network or limits of its own (that takes root), and it needs only a
-    bubblewrap that can make a user namespace, or the room is refused with
-    what to install or change. Either way a room meant to be isolated never
-    runs over the whole machine instead."""
+    Other systems have no isolated environment yet (`NO_SANDBOX`). On Linux
+    the sandbox is made with the bwrap cheesehost places (`placed_bubblewrap`),
+    whatever the system has. A machine the platform provisioned
+    (`platform_machine`) also needs `ip`, iptables and this release's
+    `sandbox_host.py` as `SANDBOX_HOST`, installed here. A machine a person
+    enrolled is theirs: nothing is installed there, its sandbox has no network
+    or limits of its own (that takes root), and its bwrap must be able to make a
+    user namespace, or the room is refused with what to change. Either way a
+    room meant to be isolated never runs over the whole machine instead."""
     if sys.platform == "darwin":
         return seatbelt()
     if not sys.platform.startswith("linux"):
@@ -688,7 +685,7 @@ def sandbox_tools(release, platform_machine):
             failure,
         )
         sudo(["mv", "-f", staged, SANDBOX_HOST], failure)
-    return shutil.which("bwrap", path=SYSTEM_PATH)
+    return placed_bubblewrap()
 
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
@@ -706,16 +703,22 @@ def seatbelt():
     return SANDBOX_EXEC
 
 
-def enrolled_bubblewrap():
-    """Where `bwrap` is on a machine a person enrolled, once it is known to
-    make a sandbox there, as the person and not as root."""
-    found = shutil.which("bwrap")
-    if not found:
+def placed_bubblewrap():
+    """The bwrap cheesehost places when it starts (`cli/internal/devenv`)."""
+    found = Path.home() / PLATFORM_DIR / "runtime/bubblewrap/bwrap"
+    if not os.access(found, os.X_OK):
         raise SandboxUnavailable(
             "This room runs in an isolated environment, made with the bubblewrap "
             "cheesehost places on this machine when it starts, and it is not "
             "there. Restart cheesehost and try again. " + FULL_ACCESS_INSTEAD
         )
+    return str(found)
+
+
+def enrolled_bubblewrap():
+    """Where `bwrap` is on a machine a person enrolled, once it is known to
+    make a sandbox there, as the person and not as root."""
+    found = placed_bubblewrap()
     probe = subprocess.run(
         [found, "--unshare-user", "--unshare-pid", "--ro-bind", "/", "/"]
         + ["--proc", "/proc", "--dev", "/dev", "true"],
