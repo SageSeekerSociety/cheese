@@ -53,6 +53,21 @@ export function demoEditor(markdown = ''): Editor {
   return editor
 }
 
+/**
+ * 一把**带撤销栈**的编辑器。共享文档里的撤销来自协同扩展，独立的一把（`standalone`）
+ * 换成 StarterKit 自带的那个 —— 手机上那条浮条（`variant: 'bar'`）要的正是它，别的
+ * 那几格不用。
+ */
+export function demoEditorStandalone(markdown = ''): Editor {
+  const editor = new TiptapEditor({
+    element: document.createElement('div'),
+    extensions: docExtensions({ standalone: true }),
+    content: '',
+  })
+  if (markdown) editor.commands.setContent(markdown, { contentType: 'markdown' })
+  return editor
+}
+
 /** 这篇标签页里的那一份协同文档？不用 —— 只给 DocSurface 一格就够了。 */
 export function docSurfaceSession() {
   return docSession(DOC_MARKDOWN)

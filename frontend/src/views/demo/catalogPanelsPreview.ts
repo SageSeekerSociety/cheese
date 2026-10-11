@@ -171,8 +171,18 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
     component: PreviewPickToggle,
     needs: UI,
     states: [
-      { name: '开着', note: '开着时按钮发亮，再点一下关掉。', props: { on: true }, expect: '圈选' },
-      { name: '关着', note: '关着时是默认的样子。', props: { on: false }, expect: '圈选' },
+      {
+        name: '开着',
+        note: '开着时按钮发亮（给的是图标，字在 aria-label 里），再点一下关掉。',
+        props: { on: true },
+        expectSelector: '[data-testid="preview-pick"]',
+      },
+      {
+        name: '关着',
+        note: '关着时是默认的样子。',
+        props: { on: false },
+        expectSelector: '[data-testid="preview-pick"]',
+      },
     ],
   },
   {
@@ -181,6 +191,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
     about: '应用那一档的圈选：应用没有桥读不到 DOM，就在 iframe 上盖一层透明遮罩，读者拖出一个矩形。',
     file: 'src/components/panels/preview/PreviewRegionPick.vue',
     component: PreviewRegionPick,
+    needs: [],
     states: [
       {
         name: '盖在页面上',
@@ -218,6 +229,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
       '涂黑样式的小预览图（工具栏那一排）：实心一颗黑块，马赛克 3×3，噪点 7×7 —— 灰格由固定的式子推出来，每次渲染一样。',
     file: 'src/components/panels/preview/RedactStyleSwatch.vue',
     component: RedactStyleSwatch,
+    needs: [],
     states: [
       { name: '实心', note: '一颗黑块。', props: { style: 'solid' }, expectSelector: 'svg.redact-swatch' },
       { name: '马赛克', note: '3×3 的灰格。', props: { style: 'mosaic' }, expectSelector: 'svg.redact-swatch' },
@@ -262,6 +274,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
     about: '把屏上已有的标注画在一层 SVG 上（选中 / 编辑的条上带把手）：画笔、直线、箭头、矩形、椭圆、文字、涂黑。',
     file: 'src/components/panels/preview/DesignSketchOverlay.vue',
     component: DesignSketchOverlay,
+    needs: [],
     states: [
       {
         name: '画过的几笔',

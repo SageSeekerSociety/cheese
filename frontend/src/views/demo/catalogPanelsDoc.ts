@@ -14,6 +14,7 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
   demoEditor,
+  demoEditorStandalone,
   DOC_AGENT,
   DOC_AGENT_HANDLE,
   DOC_DIFF,
@@ -85,6 +86,7 @@ function topBarProps(over: Record<string, unknown> = {}): Record<string, unknown
 }
 
 const editorForBubble = demoEditor(DOC_MARKDOWN)
+const editorForBar = demoEditorStandalone(DOC_MARKDOWN)
 const editorForLink = demoEditor(DOC_MARKDOWN)
 
 export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
@@ -145,7 +147,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
     about: '顶栏上「谁也在这儿」：同一篇文档打开着的其他人的头像，人是圆的、AI 队友是方的，超过四个收成「+N」。',
     file: 'src/components/panels/doc/DocPresence.vue',
     component: DocPresence,
-    needs: T,
+    needs: UI,
     states: [
       {
         name: '一屋子人',
@@ -167,6 +169,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
     about: '文档里那几张小卡片和横条上用的按钮：默认、一组里唯一的主动作（深底）、不可用三种。',
     file: 'src/components/panels/doc/DocEditButton.vue',
     component: DocEditButton,
+    needs: [],
     states: [
       { name: '默认', note: '浅底描边，卡片上的次要动作。', slot: '接受', expect: '接受' },
       {
@@ -300,9 +303,9 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '手机上的那一条',
-        note: '手机上贴在键盘上方：没选中字时 AI 队友和评论按不了，格式对着光标处要打的字，末尾多了撤销、重做。',
+        note: '手机上贴在键盘上方：没选中字时 AI 队友和评论按不了，格式对着光标处要打的字，末尾多了撤销、重做（这一格用的是带撤销栈的那把编辑器）。',
         props: {
-          editor: editorForBubble,
+          editor: editorForBar,
           agentName: DOC_AGENT,
           agentHandle: DOC_AGENT_HANDLE,
           editable: true,
@@ -325,11 +328,18 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '填地址',
-        note: '选中的字上还没有链接：直接给输入框和「保存 / 取消」，回车就是保存。',
+        note: '选中的字还没链接：一个地址输入框，配保存和取消 —— 存下去就把链接加到那几个字上。位置贴着那几个字自己算（这里的坐标是零，框就贴在正文左上角）。',
         props: {
-          target: { editor: editorForLink, doc: editorForLink.state.doc, from: 0, to: 0, mark: null, href: '' },
+          target: {
+            editor: editorForLink,
+            doc: editorForLink.state.doc,
+            from: 0,
+            to: 0,
+            mark: null,
+            href: 'https://example.com',
+          },
         },
-        expect: '保存',
+        expect: '保存链接',
       },
     ],
   },
@@ -626,7 +636,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
       '一条评论串一张卡：上面是评的那几个字，下面是来回的每一句；AI 队友在答时说它到了哪一步。在看的那张才给回复框和解决。',
     file: 'src/components/panels/doc/DocThreadCard.vue',
     component: DocThreadCard,
-    needs: T,
+    needs: UI,
     states: [
       {
         name: '看着一串',
@@ -706,7 +716,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
     about: '评论栏里的内容：写评论的框，和一串串评论 —— 没解决的和已解决的分开看，每一串一张卡，对话直接摊开。',
     file: 'src/components/panels/doc/DocComments.vue',
     component: DocComments,
-    needs: T,
+    needs: UI,
     states: [
       {
         name: '没解决的',
