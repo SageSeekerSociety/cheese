@@ -214,6 +214,35 @@ describe('组件预览站', () => {
         })
       }
     }
+
+    // 上面那一组是**静态**挂：「成员页」页头那颗「邀请成员」是个懒挂的 `v-menu`，菜单
+    // 内容要等点开才渲染 —— 里面那两条 `:to`（邀请码 / 邮箱域名组）在没点开时根本没进
+    // 过渲染，名字没在 `demoRouter` 里注册也看不出来。这一条真把菜单点开，守的正是静态
+    // 挂护不住的那一处：名字缺了，点开这一刻 `router-link` 会当场抛，菜单画不出来。
+    it('members-view：点开邀请菜单，两条按 name 指路的去处也接得上（懒挂，静态挂看不到）', async () => {
+      const entry = CATALOG.find((e) => e.id === 'members-view')
+      expect(entry).toBeTruthy()
+      render(entry!.component, {
+        props: stateProps(entry!, entry!.states[0]),
+        global: {
+          plugins: [createVuetify({ components, directives }), i18n, demoRouter(), createPinia()],
+        },
+      })
+      // 菜单还关着，那两条去处没渲染出来。
+      expect(document.body.textContent).not.toContain('邀请码')
+      const activator = Array.from(document.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('邀请成员')
+      )
+      expect(activator, '没找到页头那颗「邀请成员」').toBeTruthy()
+      await fireEvent.click(activator!)
+      await waitFor(() => expect(document.body.textContent).toContain('邀请码'))
+      const links = Array.from(document.querySelectorAll('a'))
+      const codes = links.find((a) => a.textContent?.includes('邀请码'))
+      const domains = links.find((a) => a.textContent?.includes('邮箱域名组'))
+      // 路径照 `router/spaces.ts`：名字在表里、href 也对得上真页面。
+      expect(codes?.getAttribute('href')).toBe('/spaces/8/manage/settings/invite-codes')
+      expect(domains?.getAttribute('href')).toBe('/spaces/8/manage/settings/domain-groups')
+    })
   })
 
   describe('页面本身', () => {
