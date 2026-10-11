@@ -131,6 +131,14 @@
   },
   "ROOM_NOTICE": {
     "body": "在「{topicTitle}」",
+    "settled": "在「{topicTitle}」，已{outcome}",
+    "outcome": {
+      "accepted": "采纳",
+      "rejected": "退回",
+      "voided": "作废",
+      "archived": "随房间归档"
+    },
+    "settledUnknown": "办结",
     "untitled": "平台有一条提示"
   },
   "CHEESE_QUESTION": {

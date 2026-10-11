@@ -51,6 +51,9 @@ from app.domain.review.room_notices import (
     _record_task_nudge as _record_task_nudge_from_room,
 )
 from app.domain.review.room_notices import (
+    _settle_the_card as _settle_the_card_from_room,
+)
+from app.domain.review.room_notices import (
     _tell_the_reviewer as _tell_the_reviewer_from_room,
 )
 from app.domain.room_task.models import Task, TaskStatus
@@ -119,6 +122,12 @@ async def _tell_the_reviewer(
     return await _tell_the_reviewer_from_room(
         self._session, card, topic, content, meta=meta, also=also
     )
+
+
+async def _settle_the_card(
+    self: pkg.AcceptService, card: AcceptCard, outcome: str
+) -> None:
+    return await _settle_the_card_from_room(self._session, card, outcome)
 
 
 async def _notify_ready(
