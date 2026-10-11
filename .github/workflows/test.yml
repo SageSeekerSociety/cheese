@@ -202,7 +202,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {layer: pure, shard: '0/1', floor: 4000, timeout: 10}
+          # Two pure shards: at one, the pure layer was often the merge queue's
+          # slowest job, CPU-bound on its runner. Go back to one if the queue's
+          # wait for a runner grows by more than the second shard saves.
+          - {layer: pure, shard: '0/2', floor: 4000, timeout: 10}
+          - {layer: pure, shard: '1/2', floor: 4000, timeout: 10}
           - {layer: contract, shard: '0/1', floor: 200, timeout: 5}
           # Five integration shards: at four, an integration shard was usually the
           # merge queue's slowest job. Go back to four if the queue's wait for a
