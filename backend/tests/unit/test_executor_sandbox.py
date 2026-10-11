@@ -22,7 +22,7 @@ from app.domain.agent import environment_runner
 from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.support import executor_release
+from tests.support import bubblewrap, executor_release
 
 RUNTIME = Path(runtime.__file__)
 
@@ -256,6 +256,7 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
     started from, which no room can write; an unsandboxed room's installation
     is the platform's as it always was."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    bubblewrap.place(tmp_path)
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = tmp_path / ".cheese/home" / project / resource
     installed = home / ".cheese"
@@ -291,6 +292,7 @@ def test_a_room_started_from_an_earlier_release_is_stopped_where_a_helper_runs(
     still has to stop: a room that never stops is never asleep, and is billed
     for as running."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    bubblewrap.place(tmp_path)
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = tmp_path / ".cheese/home" / project / resource
     (home / ".cheese/executor").mkdir(parents=True)
@@ -326,6 +328,7 @@ def test_the_install_writes_through_no_link_a_room_left_in_its_home(
     the executor's output into the owner's files."""
     owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
+    bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     project, resource = uuid.uuid4(), uuid.uuid4()
     platform = owner / ".cheese/home" / str(project) / str(resource) / ".cheese"
@@ -372,6 +375,7 @@ def test_git_in_a_sandboxed_rooms_checkout_runs_in_a_sandbox_too(
     teardown's own git in that room (`cleanup.git`, which prunes the room's
     repositories) sees none of the owner's files."""
     monkeypatch.setenv("HOME", str(tmp_path))
+    bubblewrap.place(tmp_path)
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = tmp_path / ".cheese/home" / project / resource
     checkout = home / "room"
@@ -400,6 +404,7 @@ def test_a_sandboxed_session_reaches_its_own_room_and_nothing_else(
 ):
     owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
+    bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     project, resource = uuid.uuid4(), uuid.uuid4()
     home = owner / ".cheese/home" / str(project) / str(resource)
@@ -494,6 +499,7 @@ def test_a_sandboxed_executor_survives_its_own_room_rewriting_its_programs(
     with the programs it ships, never with the ones the room's config names."""
     owner = tmp_path / "owner"
     monkeypatch.setenv("HOME", str(owner))
+    bubblewrap.place(owner)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     project, resource = uuid.uuid4(), uuid.uuid4()
     payload = payload_for(

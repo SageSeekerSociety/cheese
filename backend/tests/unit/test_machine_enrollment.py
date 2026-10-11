@@ -478,7 +478,7 @@ def _tool_check_block() -> str:
     return script[start : script.index("\ndone", start) + len("\ndone")]
 
 
-@pytest.mark.parametrize("missing", ["tmux", "git", "python3", "bwrap"])
+@pytest.mark.parametrize("missing", ["tmux", "git", "python3", "ip"])
 def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
     """Each of these fails SILENTLY when discovered later, which is the whole
     reason the check is here rather than in whatever breaks first.
@@ -488,7 +488,7 @@ def test_a_machine_missing_one_of_these_refuses_to_enrol(missing):
     python3 the connector (Go) comes up fine and every room on the machine dies
     at environment preparation instead, because the platform's own programs on a
     machine — `cheese` and the environment helper — are python3. Without
-    bwrap no session on the machine can have the sandbox it runs in.
+    ip no session on the machine can have the network its sandbox runs with.
 
     None is guaranteed by the image: MicroCloud's LXC template lists git but not
     tmux, and the VM template installs neither.
@@ -523,21 +523,21 @@ sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
     assert not calls.exists(), "nothing should have been installed"
 
 
-def test_a_machine_without_bwrap_is_given_the_package_that_has_it(tmp_path):
-    """Every session on a Cloud machine runs in a bubblewrap sandbox, and the
+def test_a_machine_without_ip_is_given_the_package_that_has_it(tmp_path):
+    """Every session on a Cloud machine has a network of its own, and the
     command is not the package's name."""
     import subprocess
 
     calls = tmp_path / "sudo-calls"
     harness = f"""
-command() {{ [ "$2" = bwrap ] && return 1; return 0; }}
+command() {{ [ "$2" = ip ] && return 1; return 0; }}
 sudo() {{ printf '%s\\n' "$*" >> {calls}; }}
 {_tool_check_block()}
 """
     done = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
 
     assert done.returncode == 0, done.stderr
-    assert calls.read_text().split("\n")[0] == "-n apt-get install -y -q bubblewrap"
+    assert calls.read_text().split("\n")[0] == "-n apt-get install -y -q iproute2"
 
 
 def test_nothing_is_installed_before_cloud_init_has_finished(tmp_path):
@@ -553,7 +553,7 @@ def test_nothing_is_installed_before_cloud_init_has_finished(tmp_path):
     block = script[start : script.index("\ndone", start) + len("\ndone")]
     calls = tmp_path / "calls"
     harness = f"""
-command() {{ [ "$2" = bwrap ] && return 1; return 0; }}
+command() {{ [ "$2" = ip ] && return 1; return 0; }}
 cloud-init() {{ printf 'cloud-init %s\\n' "$*" >> {calls}; }}
 sudo() {{ printf 'sudo %s\\n' "$*" >> {calls}; }}
 {block}
@@ -563,7 +563,7 @@ sudo() {{ printf 'sudo %s\\n' "$*" >> {calls}; }}
     assert done.returncode == 0, done.stderr
     assert calls.read_text().splitlines()[:2] == [
         "cloud-init status --wait",
-        "sudo -n apt-get install -y -q bubblewrap",
+        "sudo -n apt-get install -y -q iproute2",
     ]
 
 
