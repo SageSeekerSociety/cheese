@@ -2,13 +2,14 @@
 
 import shutil
 import uuid
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Protocol
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.conditional import conditional_json
@@ -51,11 +52,7 @@ from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
-from app.domain.review.models import AcceptCard
 from app.domain.review.services import AcceptService
-from app.domain.review.services.service import (
-    AcceptCardRepository as AcceptCardRepository,
-)
 from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
@@ -66,7 +63,6 @@ from app.domain.room_task.services import (
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, thread_opening, threads_of_rooms
-from app.domain.topic.models import Topic
 from app.domain.topic.schemas import (
     CheckResultIn,
     LockIn,
@@ -89,6 +85,49 @@ from app.domain.webhook import service as webhook_service
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+class TopicRow(presentation.TopicSignals, Protocol):
+    """这一层从一个房间行上读到的形状。
+
+    结构协议，不是 ORM 类：路由不该按名字 import `app.domain.topic.models`（C2，
+    `.importlinter`），而它手上的每一行都来自同域的 `TopicService`（ORM 行）。成员
+    按模型的原样声明 `Mapped[...]`（`presentation.TopicSignals`），pyright 才拿得它
+    比得过那一行；`TopicOut.model_validate` 只读属性、不认类，所以这几位就是这里需
+    要的全部。
+    """
+
+
+class CardRow(presentation.CardRow, Protocol):
+    """这一层从一张验收卡上读到的形状 —— ORM 行，按 `AcceptCard` 的原样声明 `Mapped`。
+
+    行来自 `AcceptService`。除了卡面要的五个信号（`presentation.CardRow`）之外，这
+    里还读它挂在哪、骑哪个 PR、什么时候建的。和 `presentation.CardRow` 一样，成员是
+    `Mapped[...]` 而不是普通标量 —— pyright 比的是类成员，ORM 行的属性是 `Mapped`
+    描述符，读出来才解包成值。
+    """
+
+    id: Mapped[uuid.UUID]
+
+    task_id: Mapped[uuid.UUID | None]
+
+    topic_id: Mapped[uuid.UUID]
+
+    reviewer_handle: Mapped[str]
+
+    decided_at: Mapped[datetime | None]
+
+    note: Mapped[str]
+
+    gate_passed_at: Mapped[datetime | None]
+
+    gate_output: Mapped[str]
+
+    pr_number: Mapped[int | None]
+
+    pr_url: Mapped[str | None]
+
+    created_at: Mapped[datetime]
 
 
 async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
@@ -180,7 +219,7 @@ def _asks_me(
     return {tid for tid, who in asked.items() if who == viewer}
 
 
-async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[AcceptCard]:
+async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[CardRow]:
     """这些房间（连同名下的活）上还没结算的验收卡，一次查完。
 
     房间自己那张（`_own_cards`）和「卡停在检查红上」（`_stuck_on_checks`）都从
@@ -200,7 +239,7 @@ async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[Accep
     )
 
 
-def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
+def _own_cards(cards: Sequence[CardRow]) -> dict[uuid.UUID, CardRow]:
     """每个房间**自己**那张还没结算的验收卡。
 
     `task_id is None` 才是房间自己的卡：一条活递的卡把房间记在 `topic_id` 上，不
@@ -214,13 +253,13 @@ def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
     }
 
 
-def _latest_per_place(cards: list[AcceptCard]) -> dict[tuple, AcceptCard]:
+def _latest_per_place(cards: Sequence[CardRow]) -> dict[tuple, CardRow]:
     """同一个地方（房间自己，或某一条活）只留最新那张：旧卡被新卡顶掉后可能还没
     结算，它说的不代表现在。"""
     return {(c.topic_id, c.task_id): c for c in cards}
 
 
-def _stuck_on_checks(cards: list[AcceptCard]) -> dict[uuid.UUID, StuckCard]:
+def _stuck_on_checks(cards: Sequence[CardRow]) -> dict[uuid.UUID, StuckCard]:
     """房间（连同名下的活）里，最新那张卡停在「检查红 / 冲突，要 AI 修」上的。
 
     同一个地方（房间自己，或某一条活）只看最新那张：旧卡被新卡顶掉后可能还没结算，
@@ -235,11 +274,11 @@ def _stuck_on_checks(cards: list[AcceptCard]) -> dict[uuid.UUID, StuckCard]:
 
 
 def _topic_out(
-    topic: Topic,
+    topic: TopicRow,
     running_ids: set[uuid.UUID],
     last_activity: dict[uuid.UUID, datetime],
     relevance: dict[uuid.UUID, TopicRelevance] | None = None,
-    cards: dict[uuid.UUID, AcceptCard] | None = None,
+    cards: Mapping[uuid.UUID, CardRow] | None = None,
     now: datetime | None = None,
     managed_ids: set[uuid.UUID] | None = None,
     asked: Mapping[uuid.UUID, str | None] | None = None,
@@ -817,7 +856,7 @@ async def topic_usage(
 _GATE_OUTPUT_TAIL = 2000
 
 
-def _card_snapshot(card: AcceptCard) -> dict:
+def _card_snapshot(card: CardRow) -> dict:
     return {
         "id": str(card.id),
         "status": str(card.status),
