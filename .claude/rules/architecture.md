@@ -91,13 +91,14 @@ Freeze policy, which is the whole ratchet:
   exemption.
 - Shrinking is free and needs no edit: a frozen pair that no longer exists is a
   warning, never a failure. Run
-  `uv run python scripts/boundary_baseline.py --update` to drop the stale lines
-  (it refuses to *add* any without `--freeze-new`, so accepting new debt is a
-  visible act). C3's frozen list is a cycle-breaker set, and that set is not
-  unique: recomputed from scratch it can come out as a different set of the
-  same knot, which `--update` reports as new violations and refuses. When that
-  happens, delete exactly the lines `lint-imports` lists under "No matches for
-  ignored import" instead of freezing a reshuffled set.
+  `uv run python scripts/boundary_baseline.py --update` to drop the stale lines.
+  C1 and C2 refuse to *add* a violation unless you pass `--freeze-new`, so
+  accepting new debt is a visible act. C3's frozen list is a cycle-breaker set,
+  and that set is not unique: recomputed from scratch it comes out as a
+  different cut of the same knot, so C3 is never recomputed — `--update` drops
+  exactly the pairs the checker reports under "No matches for ignored import",
+  reads them off `check_boundaries.py --json`, and writes no other C3 line, even
+  with `--freeze-new`.
 - Exit 2 means "could not judge" (a missing `app` on the path, an unparseable
   config, a contract that stopped running) and is never a pass.
 
