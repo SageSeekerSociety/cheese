@@ -392,8 +392,9 @@ async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
         key="skill_id",
         value=row.id,
         content=lambda meta: say(
-            ("skillEdit" if meta.get("edit") else "skillProposal")
-            + ("Saved" if saved else "NotSaved"),
+            ("skillEditSaved" if saved else "skillEditNotSaved")
+            if meta.get("edit")
+            else ("skillProposalSaved" if saved else "skillProposalNotSaved"),
             title=row.title,
         ),
     )
