@@ -65,7 +65,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation import services as conversations
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Supply, Visibility, default_visibility
+from app.domain.device.supply import Visibility, default_visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
@@ -309,16 +309,14 @@ def _launcher_command(topic_id: uuid.UUID, seat: str = "") -> list[str]:
 
 
 class DeviceChannel(Channel):
-    """The REMOTE channel: a screen on a user's enrolled machine, opened over
-    the frozen link.Msg link (DeviceHub). The screen is a ``HubScreen``.
+    """The executor channel: a screen on a machine — one a person enrolled or
+    one the platform owns — opened over the frozen link.Msg link (DeviceHub).
+    The screen is a ``HubScreen``.
 
     Enrollment, device resolution and the launcher shipped to the machine are
     what this file is about; what runs on the screen is the harness's runner."""
 
     name = "device"
-    # 人接入的机器：平台只能停止使用它，不能销毁它。「谁开的」是一个常量，不从机器
-    # 长什么样推 (#282 决定 2)。基类的 `owns` 读的就是这一位。
-    supply = Supply.self_hosted
     # ``_ensure_screen`` below builds the whole model environment on the machine
     # — one shape, the metering-proxy env, and no other. The machine holds no
     # provider credential, and which model a request runs on is settled per

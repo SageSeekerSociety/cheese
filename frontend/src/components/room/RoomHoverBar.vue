@@ -431,6 +431,9 @@ function onFocusOut(event: FocusEvent) {
   background: none;
   color: var(--muted);
   cursor: pointer;
+  /* 键盘进到这一条、焦点落在条上时，时间线把它滚进可见区（useTimelineKeys）：连同画在
+     按钮外面 4px 的焦点环和条自己的边框一起，不只是按钮本身。 */
+  scroll-margin-block: 6px;
   transition:
     background-color var(--dur-quick) var(--ease-standard),
     color var(--dur-quick) var(--ease-standard);

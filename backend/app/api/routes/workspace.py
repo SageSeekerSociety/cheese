@@ -22,7 +22,7 @@ from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
-from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/projects", tags=["workspace"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-async def require_project_access(
+async def require_place_access(
     project_id: uuid.UUID,
     request: Request,
     db: DbSession,
@@ -40,8 +40,8 @@ async def require_project_access(
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
-) -> None:
-    """Reject a caller with no claim on this project.
+) -> Task | None:
+    """Reject a caller with no claim on this project; answer the task it names.
 
     These routes return the source itself and checked only that the project
     EXISTS — not a check on the caller, so an unauthenticated request carrying a
@@ -97,11 +97,23 @@ async def require_project_access(
         await resolver.authorize_topic(actor, project_id=project_id, topic_id=room.id)
         if request.method == "PUT" and room.status == TopicStatus.archived:
             raise ValidationError(say("roomArchivedFilesReadOnly"))
-    if work is not None:
-        if request.method == "PUT" and work.status != TaskStatus.open:
-            raise ValidationError(say("taskEndedFilesReadOnly"))
-        if work.branch_name is None:
-            raise NotFoundError("Historical task has no individual workspace")
+    if work is not None and request.method == "PUT" and work.status != TaskStatus.open:
+        raise ValidationError(say("taskEndedFilesReadOnly"))
+    return work
+
+
+async def require_project_access(
+    work: Annotated[Task | None, Depends(require_place_access)],
+) -> None:
+    """Access, plus a task's own worktree for the routes that read and write it.
+
+    A task that arrived without a branch gets one only when a machine first
+    opens it (`give_branch`), so until then it has no files of its own to serve.
+    Asking what work it holds is not reading them: the work summary takes
+    `require_place_access` alone and answers "nothing changed yet".
+    """
+    if work is not None and work.branch_name is None:
+        raise NotFoundError("Historical task has no individual workspace")
 
 
 @router.get("/{project_id}/files", dependencies=[Depends(require_project_access)])
@@ -258,7 +270,7 @@ async def git_diff(
 
 @router.get(
     "/{project_id}/topics/{topic_id}/work-summary",
-    dependencies=[Depends(require_project_access)],
+    dependencies=[Depends(require_place_access)],
 )
 async def topic_work_summary(
     project_id: uuid.UUID, topic_id: uuid.UUID, db: DbSession

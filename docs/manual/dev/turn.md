@@ -34,7 +34,7 @@ steps:
     desc: 人的消息先广播出去，再进这位队友的座位锁。它没有在跑的一轮就开一轮，有就把消息送进正在跑的会话；另一位队友在跑不挡它。
     link: /dev/turn#serialize
   - label: 找到会话、选机器
-    desc: ComputePool 回答这一轮在哪跑：本机沙盒容器、中心会话加远端执行、用户接入的设备，或者云端沙箱。需要落会话时先花最多 15 秒探一下机器还在不在。
+    desc: ComputePool 回答这一轮用哪个骨架跑：会话在中心会话机上，工具经同一条执行通道落到会话的机器上。需要落会话时先花最多 15 秒探一下机器还在不在。
     link: /dev/turn#compute
   - label: 启动或续跑骨架
     desc: 骨架是 Claude Code、Codex、Pi 三种之一，会话 id 存在话题上，下一轮续跑同一个会话。同时按话题所处阶段注入那一段操作说明。
@@ -60,7 +60,7 @@ steps:
 
 ## 3. 找到会话、选机器 {#compute}
 
-`ComputePool`（`compute.py`）回答「这一轮在哪跑」，有四种供给：本机沙盒容器、中心会话加远端执行（`central_provider.py`）、设备（`device_provider.py`）、云端沙箱（`cloud_provider.py`）。每种都保持一个可以重连的长会话，而不是一次性子进程。
+`ComputePool`（`compute.py`）回答「这一轮用哪个骨架跑」：每个骨架一个后端，会话都在中心会话机上（`central_provider.py`），工具经同一条执行通道（`device_provider.py`）落到会话的机器上，不管那台是人接入的电脑还是平台的机器。每个后端都保持一个可以重连的长会话，而不是一次性子进程。
 
 会话进程和干活的那台机器是两层，见[「会话机」这一层](/dev/overview#session-machine)；四种机器怎么被选中和准备见[设备与机器接入](/dev/machines#kinds)；一个工具调用怎么从会话机落到工作机器上见[执行通道](/dev/execution)。
 

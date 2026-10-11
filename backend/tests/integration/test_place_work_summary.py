@@ -12,6 +12,7 @@ import uuid
 
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.room_task.models import Task
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.integration.test_connector_viewer import _login
 from tests.machine_work import declare_task, machine_commits
@@ -71,6 +72,28 @@ def test_a_task_has_a_work_summary_of_its_own(client):
     r = _summary(client, pid, task)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["has_run"] is False
+
+
+def test_a_task_no_machine_has_opened_yet_still_has_a_summary(client):
+    """一件还没有自己分支的任务（没有电脑打开过它）也答得出：没有改动，跑没跑过照实说。
+
+    它没有自己的文件可读，但「它手上有什么活」不是读文件。答 404 的话，任务页每次
+    打开都报一条错，「现场」那一格也不知道该不该摆出来。"""
+    pid, room = _room(client)
+    task = _task(client, room)
+
+    async def _no_branch() -> None:
+        async with client.test_factory() as s:
+            row = await s.get(Task, uuid.UUID(task))
+            row.branch_name = None
+            await s.commit()
+
+    client.portal.call(_no_branch)
+    _seed_session(client, task)
+
+    r = _summary(client, pid, task)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == {"changed_files": [], "has_run": True}
 
 
 def test_a_room_that_has_run_says_so(client):

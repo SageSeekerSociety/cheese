@@ -44,7 +44,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.review import notes
+from app.domain.review import notes, room_notices
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 
@@ -99,6 +99,9 @@ async def close_cards_for_archived_topic(
             continue
         was = card.status
         card.status = AcceptStatus.revoked
+        # 房间关掉，卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱
+        # 里说着「等你」。
+        await room_notices._settle_the_card(session, card, "archived")
         if pr_left_open(card):
             # 骑着未合并的 PR：停止跟进，但不替任何人去关它。
             notes.record(

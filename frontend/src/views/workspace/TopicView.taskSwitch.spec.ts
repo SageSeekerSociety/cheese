@@ -48,7 +48,7 @@ vi.mock('@/stores/workspace', () => ({
     members: [],
     unreadMap: {},
     chatPct: 50,
-    rememberTopic: vi.fn(),
+    rememberPlace: vi.fn(),
     loadingTopics: false,
     markRead: vi.fn(),
     refreshTopics: vi.fn(),

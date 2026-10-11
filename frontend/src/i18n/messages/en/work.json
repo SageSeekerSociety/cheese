@@ -1012,7 +1012,8 @@
       "topicFallback": "Channel",
       "timelineLabel": "Conversation",
       "liveNew": "{name}: {text}",
-      "messageLabel": "{name}, {time}: {text}"
+      "messageLabel": "{name}, {time}: {text}",
+      "eventLabel": "{time}: {text}"
     },
     "header": {
       "disconnected": "Disconnected",

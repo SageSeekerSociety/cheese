@@ -30,7 +30,8 @@ const props = withDefaults(
     error?: string
     /** 房间名，键是房间 id。项目总览页给。 */
     roomNames?: Record<string, string>
-    /** 结果那几行要不要指回规则所在的房间。房间右侧那一格里指过去就是原地。 */
+    /** 结果文件那几行要不要整串指回规则所在的房间。项目总览页给 —— 那一页上没有能
+     *  开文件的面板；房间右侧那一格不给，那里的每一份都当场点开。 */
     linkRooms?: boolean
     /** 人名 → 显示名。名册查询在调用方，这一串只收结果。 */
     userNames?: Record<string, string>
@@ -55,6 +56,8 @@ const emit = defineEmits<{
   (e: 'edit', routine: Routine): void
   (e: 'delete', routine: Routine): void
   (e: 'toggle-runs', routine: Routine): void
+  /** 点了某次执行交回的一份结果文件。谁来开它由调用方办。 */
+  (e: 'open-file', path: string): void
   /** 点了行里的某个人名：去他的成员页 / 主页。跳路由是最外层的事。 */
   (e: 'navigate', target: UserRefTarget): void
 }>()
@@ -127,6 +130,7 @@ function confirmDelete() {
           @run-now="emit('run-now', r)"
           @edit="emit('edit', r)"
           @toggle-runs="emit('toggle-runs', r)"
+          @open-file="(path) => emit('open-file', path)"
           @delete="confirming = r"
           @navigate="(t) => emit('navigate', t)"
         />
