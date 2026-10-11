@@ -524,8 +524,8 @@ export type MemberTopic = Pick<Topic, 'id' | 'title' | 'status'>
 // GET /api/projects/{id}/members/{handle}/summary
 export interface MemberSummary {
   handle: string
-  /** 他在这个项目里的来路：所有者、团队成员、外部成员；查不到是 null。 */
-  source?: 'owner' | 'team' | 'external' | null
+  /** 他在这个项目里的来路：所有者、团队成员、外部成员、AI 队友（带 instance_handle）；查不到是 null。 */
+  source?: 'owner' | 'team' | 'external' | 'agent' | null
   topics_started: MemberTopic[]
   topics_active?: MemberTopic[]
   weekly_contributions?: number

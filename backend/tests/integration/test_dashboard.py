@@ -77,3 +77,34 @@ def test_space_board_empty_for_space_without_links(client):
     space_id = seed_space(client, "空书院")
     board = client.get(f"/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 0
+
+
+def test_an_ai_teammates_summary_says_it_is_one_and_how_to_message_it(client):
+    """The member page of an AI teammate names it a teammate, not a person who
+    came in with the team, and carries the handle its private chat opens by."""
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
+    pid = p["id"]
+    headers = session_auth_headers("user-1")
+    # Opening a private chat with the default teammate is what seats it.
+    assert (
+        client.get(
+            f"/projects/{pid}/private-chat?user_handle=user-1", headers=headers
+        ).status_code
+        == 200
+    )
+    roster = client.get(f"/projects/{pid}/members", headers=headers).json()["data"][
+        "data"
+    ]
+    agent = next(m for m in roster if m.get("agent"))
+
+    s = client.get(
+        f"/projects/{pid}/members/{agent['user_handle']}/summary", headers=headers
+    ).json()["data"]
+
+    assert s["source"] == "agent"
+    chat = client.get(
+        f"/projects/{pid}/private-chat?user_handle=user-1"
+        f"&agent_handle={s['instance_handle']}",
+        headers=headers,
+    )
+    assert chat.status_code == 200

@@ -2,6 +2,7 @@
   "profile": {
     "joined": "{date}加入",
     "edit": "编辑资料",
+    "dm": "私聊",
     "notFound": "该用户不存在",
     "loadFailed": "个人主页加载失败",
     "retry": "重试",
@@ -28,7 +29,8 @@
     },
     "role": {
       "owner": "所有者",
-      "team": "团队成员"
+      "team": "团队成员",
+      "agent": "AI 队友"
     },
     "topics": {
       "recent": "最近参与的频道",
