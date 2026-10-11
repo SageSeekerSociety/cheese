@@ -65,7 +65,7 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider.runtime], provider.name),
+        compute=ComputePool([provider.runtime]),
     )
     async with factory() as session:
         await registered(session, "alice")
@@ -1372,7 +1372,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider.runtime], provider.name),
+        compute=ComputePool([provider.runtime]),
     )
 
     async with factory() as session:
@@ -1488,7 +1488,7 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider.runtime], provider.name),
+        compute=ComputePool([provider.runtime]),
     )
 
     async with factory() as session:

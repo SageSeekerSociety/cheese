@@ -44,7 +44,7 @@ async def _room(factory, tmp_path) -> tuple[ChatService, Screen, uuid.UUID]:
     chat = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=ComputePool([screen.runtime], screen.name),
+        compute=ComputePool([screen.runtime]),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )

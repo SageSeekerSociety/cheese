@@ -1502,8 +1502,7 @@ def test_every_backend_in_the_deployed_pool_gets_the_same_liveness_policy():
     from app.domain.agent.compute import build_compute_pool
 
     pool = build_compute_pool()
-    for name in pool.machines():
-        backend = pool.select(provider_id=name)
+    for backend in pool._runtimes():
         assert backend.no_progress_s == settings.agent_no_progress_s
         assert backend.unread_grace_s == settings.agent_unread_grace_s
         assert backend.hard_ceiling_s == settings.agent_turn_hard_ceiling_s

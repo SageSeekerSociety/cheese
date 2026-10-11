@@ -81,7 +81,7 @@ def test_new_full_service_process_reuses_original_native_executor(
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(machine.workspace),
-        compute=ComputePool([before.runtime], before.name),
+        compute=ComputePool([before.runtime]),
     )
     app.dependency_overrides[get_chat_service] = lambda: old
     try:

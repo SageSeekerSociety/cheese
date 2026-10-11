@@ -253,7 +253,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([channel.runtime], channel.name),
+        compute=ComputePool([channel.runtime]),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     _, room = _room(client)
@@ -337,7 +337,7 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([channel.runtime], channel.name),
+        compute=ComputePool([channel.runtime]),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     _, room = _room(client)

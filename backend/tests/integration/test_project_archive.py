@@ -183,7 +183,7 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
     chat = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=ComputePool([screen.runtime], screen.name),
+        compute=ComputePool([screen.runtime]),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
