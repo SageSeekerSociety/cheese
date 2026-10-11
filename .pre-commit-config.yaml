@@ -225,7 +225,7 @@ repos:
 
       # --- repo-wide guards ---------------------------------------------
       # always_run because it judges relationships across the tree — duplicate
-      # topic notes, a platform command leaking into CLAUDE.md — which no single
+      # topic notes, a platform command leaking into AGENTS.md — which no single
       # changed path predicts.
       - id: repo-rules
         name: repo rules (datetime, HTTPException, palette, platform CLI, …)

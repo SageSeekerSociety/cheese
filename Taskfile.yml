@@ -46,14 +46,14 @@ tasks:
       - echo "Setup complete! Run 'task dev' to start backend + frontend."
 
   git:config:
-    desc: Repo-local git settings that CLAUDE.md's rules depend on
+    desc: Repo-local git settings that AGENTS.md's rules depend on
     cmds:
       # autostash turns `git pull` into a stash push and pop, and the stash is
       # one stack for the whole repository — no worktree owns an entry, and
       # nothing warns either side. Agents work in parallel worktrees here, so an
       # autostash pop lands somebody else's uncommitted work in your tree and
       # drops it from theirs. Two entries in this repo's stash are already
-      # labelled as having been popped by the wrong worktree. CLAUDE.md says
+      # labelled as having been popped by the wrong worktree. AGENTS.md says
       # never to stash; git does it for you unless this is off, and it is on by
       # default for many people through their global config.
       - git config --local merge.autoStash false
