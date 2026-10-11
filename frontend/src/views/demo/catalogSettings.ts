@@ -137,7 +137,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
   {
     id: 'settings-forge-repo',
     title: 'ForgeRepoStatus',
-    about: '由平台托管的项目（forgejo）的代码仓库那一块：一行状态，加一颗「打开仓库」。',
+    about: '由平台托管的项目（forgejo）的代码仓库那一块：一行状态。不给去 Forgejo 的链接：人在那边没有账号。',
     file: 'src/components/settings/ForgeRepoStatus.vue',
     component: ForgeRepoStatus,
     needs: UI,
@@ -157,7 +157,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '仓库还在准备',
-        note: '刚建的项目：仓库还没备好，`url` 也还没有，所以「打开仓库」那颗整个不画（没地址的按钮点了只会开一个空白页）。',
+        note: '刚建的项目：仓库还没备好。',
         props: { forge: forgeConn({ kind: 'forgejo', connected: false }) },
         expect: '仓库准备中',
       },

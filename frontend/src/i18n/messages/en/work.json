@@ -1631,7 +1631,6 @@
       "title": "Code repository",
       "hosted": "Hosted on the platform",
       "preparing": "Preparing the repository",
-      "open": "Open repository",
       "hint": "The hosting service can't be changed after the project is created"
     },
     "upstream": {
