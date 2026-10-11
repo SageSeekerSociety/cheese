@@ -141,15 +141,12 @@ model_list:
       api_base: os.environ/RUC_DEEPSEEK_API_BASE
       api_key: os.environ/RUC_DEEPSEEK_API_KEY_1
       order: 1
-      # Used internally without a price of its own: the price only drives the
-      # budget brake, and a conversation should spend the same here as on
-      # DeepSeek's API. The official miss rate does not do that. DeepSeek's API
-      # answers about 94% of agent input from its cache; RUC's per-node caches
-      # answered under 1% of it (2026-10-09 to 10-11), so every input token was
-      # billed as a miss, about 15 times what the same work cost there. Input
-      # is priced at DeepSeek's blended rate instead:
-      # 0.06 × $0.30/M + 0.94 × $0.006/M ≈ $0.0236/M.
-      input_cost_per_token: 0.0000000236
+      # Used internally without a price of its own. The official rates are the
+      # estimate, so the budget brake behaves the same on either backend; that
+      # holds only while RUC's cache hits as DeepSeek's does, which needs
+      # Claude Code's billing line kept out of the prompt
+      # (system_billing_line.py).
+      input_cost_per_token: 0.0000003
       output_cost_per_token: 0.0000012
       cache_read_input_token_cost: 0.000000006
     # Each row merges its own copy: LiteLLM writes the deployment id into
@@ -370,6 +367,9 @@ litellm_settings:
   # Requests routed to ChatGPT carry the Claude Code session as `session_id`,
   # which is what keeps a conversation on one Codex machine and its prompt
   # cache hitting (#2597, `chatgpt_session.py`).
-  callbacks: ["cheese_chatgpt_session.handler"]
+  # Upstreams that are not Anthropic get requests without Claude Code's
+  # billing line, whose per-request hash otherwise defeats their prefix cache
+  # (`system_billing_line.py`).
+  callbacks: ["cheese_chatgpt_session.handler", "cheese_billing_line.handler"]
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true
