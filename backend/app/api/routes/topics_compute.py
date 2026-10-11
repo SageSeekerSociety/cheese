@@ -96,9 +96,33 @@ from app.domain.machine.session_work import room_machine_visibility
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
+from app.domain.room_task.place import session_keeps_work
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
+
+
+async def _keeps_nothing(db, session_id, room_id, choice) -> dict | None:
+    """What the session ``session_id`` that just moved its conversation may do
+    on the machine it moved to, when its work is not kept (a 支线, a task its
+    owner has not started); None for any other caller. Moving does not change
+    that: the place decides it, not the machine (`routes/execution.py`). On a
+    machine that is not its own — a person's whole machine, a whole cloud VM —
+    it only reads, and an agent told only which machine it now has learned
+    that from a refused command and moved again, chasing a push no machine
+    would give it."""
+    if not session_id or await session_keeps_work(db, session_id):
+        return None
+    if choice.profile == COMPUTE_DEVICE:
+        visibility = (
+            await sql_device_service(db).room_visibility(room_id, choice.device_id)
+            if choice.device_id
+            else default_visibility()
+        )
+        own = visibility is Visibility.isolated
+    else:
+        own = not choice.whole_machine
+    return {"reads_only": not own}
 
 
 async def _may_move_task(db, resolver, actor, topic, task) -> bool:
@@ -491,6 +515,9 @@ async def set_topic_compute_profile(
                 "choice": choice.model_dump(),
                 "device_id": device_id if name == COMPUTE_DEVICE else None,
                 "proposal": None,
+                "keeps_nothing": await _keeps_nothing(
+                    db, scoped_session, topic_id, choice
+                ),
             }
         )
     binding = await device_service.topic_binding(topic_id)
@@ -523,5 +550,6 @@ async def set_topic_compute_profile(
             "choice": choice.model_dump(),
             "device_id": device_id if name == COMPUTE_DEVICE else None,
             "proposal": None,
+            "keeps_nothing": await _keeps_nothing(db, scoped_session, topic_id, choice),
         }
     )

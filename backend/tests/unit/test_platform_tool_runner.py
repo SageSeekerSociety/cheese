@@ -523,6 +523,29 @@ def test_machine_reports_its_session_choice():
     assert "Workstation" in out and "推送到分支" in out and "点头" not in out
 
 
+def _moved(keeps_nothing):
+    host = Host(
+        {
+            ("PUT", f"/topics/{_ROOM}/compute-profile"): {
+                "current": "device",
+                "keeps_nothing": keeps_nothing,
+            }
+        }
+    )
+    return run("cheese_machine", {"profile": "device"}, host)
+
+
+def test_a_session_that_keeps_nothing_is_told_moving_does_not_change_it():
+    """A 支线's session, or an unstarted task's, that moves onto a machine it
+    does not hold alone is told there that it only reads and that a task is how
+    to change the project, so it does not move again looking for a push."""
+    said = _moved({"reads_only": True})
+    assert "只能读" in said and "创建一个任务" in said
+    assert "只能读" not in _moved({"reads_only": False})
+    assert "创建一个任务" in _moved({"reads_only": False})
+    assert "创建一个任务" not in _moved(None)
+
+
 def test_a_page_that_could_not_be_read_says_how_each_rung_failed():
     host = Host({("POST", "/fetch"): {"ok": False, "trail": "md:404 http:403"}})
     with pytest.raises(cheese.PlatformToolError, match="md:404 http:403"):
