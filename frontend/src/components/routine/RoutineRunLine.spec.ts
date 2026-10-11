@@ -41,6 +41,19 @@ describe('例行任务的一次执行', () => {
     expect(ui.getByTestId('routine-run-missed').textContent).toContain('工作电脑的环境准备失败')
   })
 
+  it('跑成后交回的结果文件点得开，屏幕上写文件名、路径写在提示里', async () => {
+    const ui = mount({ status: 'succeeded', outputs: ['周报/2026-10-11.md', '周报/明细.csv'] })
+    const file = ui.getByRole('button', { name: '2026-10-11.md' })
+    expect(file.getAttribute('title')).toBe('周报/2026-10-11.md')
+    await fireEvent.click(file)
+    expect(ui.emitted()['open-file']).toEqual([['周报/2026-10-11.md']])
+  })
+
+  it('还没跑完的那次执行没有结果文件可点', () => {
+    const ui = mount({ status: 'running', outputs: ['周报/2026-10-11.md'] })
+    expect(ui.queryByTestId('routine-run-files')).toBeNull()
+  })
+
   it('没有支线那一行时，能去看这次执行', async () => {
     const ui = mount({ status: 'succeeded' })
     await fireEvent.click(ui.getByRole('button', { name: '查看这次运行' }))

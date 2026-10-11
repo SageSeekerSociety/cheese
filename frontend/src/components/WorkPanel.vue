@@ -881,7 +881,8 @@ defineExpose({
             @mention-click="emit('mention-click', $event)"
           />
           <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
-             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
+             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。规则交回的结果文件点开
+             在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoutinePanelHost
             v-if="mounted.has('routines')"
             v-show="active === 'routines'"
@@ -889,6 +890,7 @@ defineExpose({
             :topic-id="topicId"
             :project-id="projectId"
             :refresh-tick="refreshTick"
+            @open-file="openFile"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
             <PanelDocHost
