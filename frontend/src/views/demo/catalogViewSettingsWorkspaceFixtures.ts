@@ -11,9 +11,8 @@
  * 那几个 props —— 它们各自承载在页面组件上，从 `$props` 里取（demo 源文件引用旧的
  * 网络层会把 `legacy-network` 的账记上新的一笔）。
  */
-import type { BoardPhrase, RoomTask } from '@/cx_types'
-import type { MyTeam, ProjectArtifact, ProjectSite, ProjectSiteInfo } from '@/cx_types'
-import type { ListPayload } from '@/cx_types'
+import type { ProjectArtifact } from '@/api'
+import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, RoomTask } from '@/cx_types'
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
 import type { ChannelEntry } from '@/types/channelDirectory'

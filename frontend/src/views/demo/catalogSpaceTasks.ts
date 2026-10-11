@@ -31,6 +31,7 @@ import {
   TASK_ROSTER,
 } from './catalogSpaceTasksFixtures'
 
+import { t } from '@/i18n'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
 import PublishTaskView from '@/views/spaces/detail/PublishTaskView.vue'
 import BasicInfoView from '@/views/spaces/detail/settings/BasicInfoView.vue'
@@ -159,14 +160,14 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       spaceName: '操作系统 2026 秋',
       avatar: '',
       groups: SPACE_SETTINGS_GROUPS,
-      active: 'basic',
-      title: '基本信息',
+      active: 'SpacesDetailSettingsBasic',
+      title: t('spaces.settings.tabs.basic'),
       backTo: { name: 'SpacesDetailTasksList', params: { spaceId: '7' } },
     },
     states: [
       {
         name: '选中了基本信息这一栏',
-        note: '默认这一格：左边的目录列出「这块板」几栏、当前这一项是选中的，右边摆的是它的内容。',
+        note: '默认这一格：左边目录列出空间设置的七栏（当前是「基本信息」）、这一项高亮，右边摆的是它的内容。',
         props: {},
         // `active` 指到哪一项，目录里就哪一项高亮 —— 这一格钉的就是那一下。
         expectSelector: '.so__item.so__item--active',

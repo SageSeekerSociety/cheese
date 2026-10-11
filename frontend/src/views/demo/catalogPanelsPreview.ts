@@ -2,7 +2,7 @@
  * `panels/preview/` 这一册：预览面板拆出来的那些零件 —— 网页/幻灯片/表格的视图、
  * 设计图与标注画布、定位框、修订清单、保存历史、在线编辑器……
  *
- * 单独一份，和 `catalogPanelsDoc.ts` 同一个理由：`catalog.ts` 顶到一千行上限；
+ * 单独一份，和 `catalogPanelsDoc.ts` 同一个理由：`catalog.ts` 已经九百行上下、接近 `frontend/src` 的文件规模上限；
  * 这一册从 `catalogPanels.ts` spread 进去。样例数据在
  * `catalogPanelsPreviewFixtures.ts`。
  */
@@ -173,15 +173,15 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '开着',
-        note: '开着时按钮发亮（给的是图标，字在 aria-label 里），再点一下关掉。',
+        note: '开着时按钮发亮（给的是图标，字在 title 里），再点一下关掉。',
         props: { on: true },
-        expectSelector: '[data-testid="preview-pick"]',
+        expectSelector: '[data-testid="preview-pick"][aria-pressed="true"]',
       },
       {
         name: '关着',
         note: '关着时是默认的样子。',
         props: { on: false },
-        expectSelector: '[data-testid="preview-pick"]',
+        expectSelector: '[data-testid="preview-pick"][aria-pressed="false"]',
       },
     ],
   },
@@ -196,6 +196,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
       {
         name: '盖在页面上',
         note: '平时是一层看不见的透明遮罩：按下、拖、抬手，拖出来的那块会带几何和当时的视口发上去。太小的一下（多半是点了一下）不报。',
+        props: {},
         expectSelector: '[data-testid="preview-region-pick"]',
       },
     ],
@@ -212,7 +213,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         name: '桌面',
         note: '选的是桌面、比例 100%。',
         props: { device: 'desktop', scale: 1, fitted: false },
-        expect: '适合视口',
+        expect: '100%',
       },
       {
         name: '缩了一半',
@@ -231,9 +232,24 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
     component: RedactStyleSwatch,
     needs: [],
     states: [
-      { name: '实心', note: '一颗黑块。', props: { style: 'solid' }, expectSelector: 'svg.redact-swatch' },
-      { name: '马赛克', note: '3×3 的灰格。', props: { style: 'mosaic' }, expectSelector: 'svg.redact-swatch' },
-      { name: '噪点', note: '7×7 的灰格。', props: { style: 'noise' }, expectSelector: 'svg.redact-swatch' },
+      {
+        name: '实心',
+        note: '一颗黑块。',
+        props: { style: 'solid' },
+        expectSelector: 'svg.redact-swatch rect:only-child',
+      },
+      {
+        name: '马赛克',
+        note: '3×3 的灰格。',
+        props: { style: 'mosaic' },
+        expectSelector: 'svg.redact-swatch rect:nth-child(9):last-child',
+      },
+      {
+        name: '噪点',
+        note: '7×7 的灰格。',
+        props: { style: 'noise' },
+        expectSelector: 'svg.redact-swatch rect:nth-child(49):last-child',
+      },
     ],
   },
   {
@@ -249,7 +265,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         name: '画笔',
         note: '用画笔：颜色轮摆出来，有笔画时右边出现「说一句要改什么」和「加入对话」。',
         props: { tool: 'pen', color: '#E03131', canUndo: true, canRedo: false, hasStrokes: true, canSend: false },
-        expect: '加入对话',
+        expectSelector: '.sketch-toolbar__note',
       },
       {
         name: '涂黑',
@@ -264,7 +280,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           redact: true,
           redactStyle: 'mosaic',
         },
-        expect: '加入对话',
+        expectSelector: '.sketch-toolbar__styles svg.redact-swatch',
       },
     ],
   },

@@ -42,7 +42,7 @@ export const SKETCH_RECT: ShapeStroke = {
   tool: 'rect',
   color: '#1971C2',
   width: 3,
-  region: { x: 60, y: 90, w: 160, h: 80 },
+  region: { x: 60, y: 90, width: 160, height: 80 },
   text: '这块要改',
 }
 
@@ -77,7 +77,7 @@ const FILE_ROWS: RoomFileRevision[] = [
     id: 'rev-3',
     path: 'readme.md',
     seq: 3,
-    version: 3,
+    version: 'revision-3',
     size: 2048,
     author: 'wang',
     author_kind: 'human',
@@ -90,7 +90,7 @@ const FILE_ROWS: RoomFileRevision[] = [
     id: 'rev-2',
     path: 'readme.md',
     seq: 2,
-    version: 2,
+    version: 'revision-2',
     size: 1980,
     author: 'cheese',
     author_kind: 'agent',

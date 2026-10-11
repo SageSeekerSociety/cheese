@@ -24,10 +24,23 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
   component: blank,
 }))
 
-/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表，以及登录页、空间任务列表、个人主页、项目总览里那两项产物的去向），它们各要一条真名字。 */
+/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表，以及登录页、空间任务列表、个人主页、空间设置目录那七栏、项目总览里那两项产物的去向），它们各要一条真名字。 */
 const catalogTargets = [
   { path: '/account/signin', name: 'SignIn', component: blank },
   { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
+  // 空间设置那一层的七条子路由（`settings/Index.vue` 的 `SECTIONS`，名字与路径照
+  // `router/spaces.ts` 的 `manage/settings` 子树）。目录左边的链接按这些名字指路。
+  { path: '/spaces/:spaceId/manage/settings/basic', name: 'SpacesDetailSettingsBasic', component: blank },
+  { path: '/spaces/:spaceId/manage/settings/categories', name: 'SpacesDetailSettingsCategories', component: blank },
+  { path: '/spaces/:spaceId/manage/settings/templates', name: 'SpacesDetailSettingsTemplates', component: blank },
+  { path: '/spaces/:spaceId/manage/settings/invite-codes', name: 'SpacesDetailSettingsInviteCodes', component: blank },
+  {
+    path: '/spaces/:spaceId/manage/settings/domain-groups',
+    name: 'SpacesDetailSettingsDomainGroups',
+    component: blank,
+  },
+  { path: '/spaces/:spaceId/manage/settings/guidance', name: 'SpacesDetailSettingsGuidance', component: blank },
+  { path: '/spaces/:spaceId/manage/settings/materials', name: 'SpacesDetailSettingsMaterials', component: blank },
   { path: '/users/:handle', name: 'UserPage', component: blank },
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },

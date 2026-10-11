@@ -26,6 +26,8 @@ import type { PublishDraft } from '@/views/spaces/detail/publishDrafts'
 import type BriefView from '@/views/tasks/detail/BriefView.vue'
 import type RosterView from '@/views/tasks/detail/RosterView.vue'
 
+import { t } from '@/i18n'
+
 /** 附件那一行的形状（`BriefView` 的 `attachments` 里的一条）。 */
 type TaskAttachmentData = InstanceType<typeof BriefView>['$props']['attachments'][number]
 /** 报名最新一版提交的形状（`RosterView` 的 `latestByParticipant` 的值）。 */
@@ -72,42 +74,56 @@ export const SPACE_TASK_BOARD: Space = {
   teaching: { currentWeek: 6, allowedTopics: ['进程调度', '死锁'] },
 }
 
-/** 设置目录左边的五栏，`IndexView` 的 `groups`。 */
+/**
+ * 设置目录左边那几栏，`IndexView` 的 `groups` —— 和 `settings/Index.vue` 里那七项一样：
+ * 一项一条路由，`key` 就是路由名，`label` 走语言包。产品里这一组没有分组标题（标题位给
+ * 的是空间名），所以这里也不给 `title`。
+ */
 export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
   {
-    key: 'board',
-    title: '这块板',
+    key: 'space',
     items: [
       {
-        key: 'basic',
-        label: '基本信息',
+        key: 'SpacesDetailSettingsBasic',
+        label: t('spaces.settings.tabs.basic'),
         to: { name: 'SpacesDetailSettingsBasic', params: { spaceId: '7' } },
-        icon: 'mdi-cog-outline',
+        icon: 'mdi-information-outline',
       },
       {
-        key: 'guidance',
-        label: '给 AI 队友的指导',
+        key: 'SpacesDetailSettingsCategories',
+        label: t('spaces.settings.tabs.categories'),
+        to: { name: 'SpacesDetailSettingsCategories', params: { spaceId: '7' } },
+        icon: 'mdi-shape-outline',
+      },
+      {
+        key: 'SpacesDetailSettingsTemplates',
+        label: t('spaces.settings.tabs.templates'),
+        to: { name: 'SpacesDetailSettingsTemplates', params: { spaceId: '7' } },
+        icon: 'mdi-file-document-outline',
+      },
+      {
+        key: 'SpacesDetailSettingsInviteCodes',
+        label: t('spaces.settings.tabs.inviteCodes'),
+        to: { name: 'SpacesDetailSettingsInviteCodes', params: { spaceId: '7' } },
+        icon: 'mdi-ticket-outline',
+      },
+      {
+        key: 'SpacesDetailSettingsDomainGroups',
+        label: t('spaces.settings.tabs.domainGroups'),
+        to: { name: 'SpacesDetailSettingsDomainGroups', params: { spaceId: '7' } },
+        icon: 'mdi-email-outline',
+      },
+      {
+        key: 'SpacesDetailSettingsGuidance',
+        label: t('spaces.settings.tabs.guidance'),
         to: { name: 'SpacesDetailSettingsGuidance', params: { spaceId: '7' } },
         icon: 'mdi-robot-outline',
       },
       {
-        key: 'materials',
-        label: '资料库',
+        key: 'SpacesDetailSettingsMaterials',
+        label: t('spaces.settings.tabs.materials'),
         to: { name: 'SpacesDetailSettingsMaterials', params: { spaceId: '7' } },
         icon: 'mdi-folder-outline',
-      },
-    ],
-  },
-  {
-    key: 'danger',
-    title: '危险区',
-    items: [
-      {
-        key: 'archive',
-        label: '归档空间',
-        to: { name: 'SpacesDetailSettingsBasic', params: { spaceId: '7' } },
-        icon: 'mdi-archive-outline',
-        danger: true,
       },
     ],
   },

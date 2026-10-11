@@ -2,7 +2,7 @@
  * `panels/doc/` 这一册：文档面板拆出来的那些零件 —— 顶栏、浮条、大纲、吐槽栏、
  * AI 队友那几张卡、修改记录、版本对比……一格一格摆出来。
  *
- * 单独一份，和 `catalogDoc.ts` 同一个理由：`catalog.ts` 已经顶到一千行的上限；
+ * 单独一份，和 `catalogDoc.ts` 同一个理由：`catalog.ts` 已经九百行上下、接近 `frontend/src` 的文件规模上限；
  * `catalogPanels.ts` 是它的把手，这里的两份数组从那里 spread 进去。样例数据在
  * `catalogPanelsDocFixtures.ts`。
  *
@@ -11,6 +11,8 @@
  * 整件不出现的（DocEditLayer、DocKeyboardBar），这里不列，原因写在任务的覆盖名单里。
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
+
+import { defineComponent, h } from 'vue'
 
 import {
   demoEditor,
@@ -89,6 +91,15 @@ const editorForBubble = demoEditor(DOC_MARKDOWN)
 const editorForBar = demoEditorStandalone(DOC_MARKDOWN)
 const editorForLink = demoEditor(DOC_MARKDOWN)
 
+/** 链接框用绝对定位；目录也给它一层定位正文，避免浮到页头。 */
+const PositionedLinkCallout = defineComponent({
+  inheritAttrs: false,
+  setup(_props, { attrs }) {
+    return () =>
+      h('div', { class: 'doc-body', style: { position: 'relative', minHeight: '160px' } }, [h(DocLinkCallout, attrs)])
+  },
+})
+
 export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-doc-top-bar',
@@ -159,7 +170,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
         name: '一个人',
         note: '只有一个人在这儿时画一张脸，没有「+N」。',
         props: { peers: [DOC_PEERS[0]] },
-        expectSelector: '.doc-presence__face',
+        expectSelector: '.doc-presence__face:only-child',
       },
     ],
   },
@@ -171,7 +182,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
     component: DocEditButton,
     needs: [],
     states: [
-      { name: '默认', note: '浅底描边，卡片上的次要动作。', slot: '接受', expect: '接受' },
+      { name: '默认', note: '浅底描边，卡片上的次要动作。', props: {}, slot: '接受', expect: '接受' },
       {
         name: '主动作',
         note: '一深底；一组里只有一个，接受和全部接受会同时在屏幕上。',
@@ -271,7 +282,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
           canComment: true,
           hasSelection: true,
         },
-        expect: '评论',
+        expectSelector: '.doc-bubble--float .mdi-link-variant',
       },
       {
         name: '不能改',
@@ -314,7 +325,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
           variant: 'bar',
           hasSelection: false,
         },
-        expect: '评论',
+        expectSelector: '.doc-bubble--bar [aria-label="撤销"]',
       },
     ],
   },
@@ -323,20 +334,20 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
     title: 'DocLinkCallout · 链接框',
     about: '给选中的字加链接、改链接、去掉链接的那个浮框。位置贴着那几个字自己算。',
     file: 'src/components/panels/doc/DocLinkCallout.vue',
-    component: DocLinkCallout,
+    component: PositionedLinkCallout,
     needs: UI,
     states: [
       {
         name: '填地址',
-        note: '选中的字还没链接：一个地址输入框，配保存和取消 —— 存下去就把链接加到那几个字上。位置贴着那几个字自己算（这里的坐标是零，框就贴在正文左上角）。',
+        note: '选中的字还没链接：一个空地址输入框，配保存和取消 —— 存下去就把链接加到那几个字上。目录用定位容器；离屏编辑器坐标为零。',
         props: {
           target: {
             editor: editorForLink,
             doc: editorForLink.state.doc,
-            from: 0,
-            to: 0,
+            from: 1,
+            to: 5,
             mark: null,
-            href: 'https://example.com',
+            href: '',
           },
         },
         expect: '保存链接',
@@ -386,7 +397,7 @@ export const DOC_PANEL_ENTRIES: CatalogEntry[] = [
           nameOf: docNameOf,
           mentionNames: DOC_MENTION_NAMES,
         },
-        expect: '修改记录',
+        expectSelector: '.doc-history__item[aria-current="true"]',
       },
       {
         name: '还没有记录',
