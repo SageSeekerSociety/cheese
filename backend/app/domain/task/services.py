@@ -25,6 +25,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.tag.models import Tag
 from app.domain.task.claims import members_claiming_through_another_team
 from app.domain.task.models import (
     Task,
@@ -32,14 +33,17 @@ from app.domain.task.models import (
     TaskSubmission,
     TaskSubmissionEntry,
     TaskSubmissionReview,
+    TaskSubmissionSchemaEntry,
 )
 from app.domain.task.repositories import (
+    TaskAccessDomainRepository,
     TaskMembershipRepository,
     TaskRepository,
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
     TaskSubmissionReviewRepository,
     TaskSubmissionSchemaRepository,
+    TopicRepository,
 )
 from app.domain.task.submission_state import (
     COMPLETION_STATUS_NOT_SUBMITTED,
@@ -65,15 +69,20 @@ class _FallbackTeam:
 
 
 class TaskService:
-    def __init__(self, repo: TaskRepository) -> None:
+    def __init__(
+        self, repo: TaskRepository, session: AsyncSession | None = None
+    ) -> None:
         self._repo = repo
+        # 只有 ``of`` 造出来时才带 session。单元测试直接 ``TaskService(repo)``
+        # 用 AsyncMock 的仓库构造，那些用例不碰下面这几个写方法。
+        self._session = session
 
     async def get_task(self, task_id: int) -> Task | None:
         return await self._repo.get_by_id(task_id)
 
     @classmethod
     def of(cls, session: AsyncSession) -> "TaskService":
-        return cls(TaskRepository(session=session))
+        return cls(TaskRepository(session=session), session=session)
 
     async def list_joined(self, user_id: int, *, limit: int = 30) -> Sequence[Task]:
         """The tasks ``user_id`` takes part in, across every space."""
@@ -157,6 +166,102 @@ class TaskService:
             lifecycle=lifecycle,
         )
 
+    # --- 给路由用的薄写方法 -------------------------------------------------
+    # 这些是同一域内的读写，路由（``tasks/_common.py``、``tasks/lifecycle.py``）
+    # 原来自己 new 出 TaskRepository 再调；收进 service 后路由不再碰这一域的
+    # models/repositories。语义与 repository 上同名方法逐字一致。
+
+    def _require_session(self) -> AsyncSession:
+        assert self._session is not None, "TaskService.of() sets the session"
+        return self._session
+
+    async def has_prior_pending_task_for_creator(self, task: Task) -> bool:
+        return await self._repo.has_prior_pending_task_for_creator(task)
+
+    async def save(self, task: Task) -> Task:
+        return await self._repo.save(task)
+
+    async def create_task(
+        self,
+        *,
+        name: str,
+        intro: str,
+        description: str,
+        creator_id: int,
+        space_id: int,
+        category_id: int,
+        submitter_type: int,
+        deadline: datetime | None,
+        registration_start_at: datetime | None,
+        participant_limit: int | None,
+        default_deadline: int,
+        resubmittable: bool,
+        editable: bool,
+        rank: int | None,
+        require_real_name: bool,
+        min_team_size: int | None,
+        max_team_size: int | None,
+        team_locking_policy: str,
+        access_control_enabled: bool = False,
+    ) -> Task:
+        return await self._repo.create_task(
+            name=name,
+            intro=intro,
+            description=description,
+            creator_id=creator_id,
+            space_id=space_id,
+            category_id=category_id,
+            submitter_type=submitter_type,
+            deadline=deadline,
+            registration_start_at=registration_start_at,
+            participant_limit=participant_limit,
+            default_deadline=default_deadline,
+            resubmittable=resubmittable,
+            editable=editable,
+            rank=rank,
+            require_real_name=require_real_name,
+            min_team_size=min_team_size,
+            max_team_size=max_team_size,
+            team_locking_policy=team_locking_policy,
+            access_control_enabled=access_control_enabled,
+        )
+
+    async def replace_topic_relations(
+        self, *, task_id: int, topic_ids: Sequence[int]
+    ) -> None:
+        await self._repo.replace_topic_relations(task_id=task_id, topic_ids=topic_ids)
+
+    async def add_topic_relations(
+        self, *, task_id: int, topic_ids: Sequence[int]
+    ) -> None:
+        await self._repo.add_topic_relations(task_id=task_id, topic_ids=topic_ids)
+
+    async def list_topics(self, task_id: int) -> Sequence[Tag]:
+        return await TopicRepository(session=self._require_session()).list_by_task_id(
+            task_id
+        )
+
+    async def list_submission_schema(
+        self, task_id: int
+    ) -> Sequence[TaskSubmissionSchemaEntry]:
+        return await TaskSubmissionSchemaRepository(
+            session=self._require_session()
+        ).list_by_task_id(task_id)
+
+    async def replace_submission_schema(
+        self, task_id: int, entries: list[dict]
+    ) -> None:
+        await TaskSubmissionSchemaRepository(
+            session=self._require_session()
+        ).replace_schema(task_id, entries)
+
+    async def replace_access_domains(
+        self, *, task_id: int, domains: Sequence[str]
+    ) -> None:
+        await TaskAccessDomainRepository(
+            session=self._require_session()
+        ).replace_domains(task_id=task_id, domains=domains)
+
 
 class TaskMembershipService:
     def __init__(
@@ -172,6 +277,25 @@ class TaskMembershipService:
         self._space_repo = space_repo
         self._space_rank_repo = space_rank_repo
         self._team_repo = team_repo
+
+    @classmethod
+    def of(
+        cls,
+        session: AsyncSession,
+        *,
+        realname_repo: UserRealNameRepository | None = None,
+        space_repo: SpaceRepository | None = None,
+        space_rank_repo: SpaceUserRankRepository | None = None,
+        team_repo: "TeamRepository | None" = None,
+    ) -> "TaskMembershipService":
+        """路由工厂用的构造：同域的成员仓库在这里建，跨域的由调用方传进来。"""
+        return cls(
+            repo=TaskMembershipRepository(session=session),
+            realname_repo=realname_repo,
+            space_repo=space_repo,
+            space_rank_repo=space_rank_repo,
+            team_repo=team_repo,
+        )
 
     async def list_memberships_for_task(
         self,
@@ -770,6 +894,24 @@ class TaskSubmissionService:
         # 单元测试那种「四个仓库全是 AsyncMock」的构造：那里没有库可写，也就不推。
         self._session = session
 
+    @classmethod
+    def of(
+        cls,
+        session: AsyncSession,
+        *,
+        attachments: AttachmentService,
+    ) -> "TaskSubmissionService":
+        """路由工厂用的构造：同域的四个仓库在这里建，附件服务由调用方传进来。"""
+        return cls(
+            submission_repo=TaskSubmissionRepository(session=session),
+            entry_repo=TaskSubmissionEntryRepository(session=session),
+            review_repo=TaskSubmissionReviewRepository(session=session),
+            membership_repo=TaskMembershipRepository(session=session),
+            schema_repo=TaskSubmissionSchemaRepository(session=session),
+            attachments=attachments,
+            session=session,
+        )
+
     async def _build_member_summary(self, membership: TaskMembership) -> dict:
         """Build a minimal TaskParticipantSummaryDTO-like dict."""
         return {
@@ -1191,6 +1333,23 @@ class TaskSubmissionReviewService:
         # 行。路由工厂永远传 session；为 None 只在单元测试那种全 AsyncMock 的构造里
         # 出现，那里没有库可写。
         self._session = session
+
+    @classmethod
+    def of(
+        cls,
+        session: AsyncSession,
+        *,
+        rank_service: SpaceRankService | None = None,
+    ) -> "TaskSubmissionReviewService":
+        """路由工厂用的构造：同域的四个仓库在这里建，排名服务由调用方传进来。"""
+        return cls(
+            review_repo=TaskSubmissionReviewRepository(session=session),
+            submission_repo=TaskSubmissionRepository(session=session),
+            membership_repo=TaskMembershipRepository(session=session),
+            task_repo=TaskRepository(session=session),
+            rank_service=rank_service,
+            session=session,
+        )
 
     async def get_review_dto(self, submission_id: int) -> dict:
         review = await self._review_repo.get_by_submission_id(submission_id)
