@@ -124,7 +124,8 @@ const toHomeRoot = computed(() => {
 const behind = computed(() => {
   void nav?.route
   const back = nav?.historyState?.back
-  if (typeof back !== 'string') return null
+  // `nav` 单独判一次：能读到 `back` 说明宿主装了路由，可类型上这是两件事。
+  if (!nav || typeof back !== 'string') return null
   try {
     return nav.router.resolve(back)
   } catch {
@@ -150,7 +151,11 @@ const behindPointsHere = computed(() => {
     // `workspace-project` 要知道是哪个项目），站在这边解会把这一页的参数填进去，
     // 解出来的就不是它那颗 ← 真会去的地方了。`to` 那一处站在自己这一页，正好该用
     // 默认的当前路由。
-    return nav?.router.resolve({ name: parent, params: {} }, from).path === route.path
+    //
+    // 第二参是 vue-router 的 currentLocation：按名字解析时它只读 `params`，用来补
+    // 目标路由缺的必填参数；但类型上它要求 `name` 非空，而 `resolve()` 的结果允许无名
+    // 路由（`null`）。按住那一处的 `name` 重建一份，别的字段原样带过去。
+    return nav?.router.resolve({ name: parent, params: {} }, { ...from, name: from.name ?? '' }).path === route.path
   } catch {
     return false
   }
