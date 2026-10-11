@@ -32,14 +32,26 @@ const router = () =>
     ],
   })
 
-function mount(props: Record<string, unknown>) {
+/** 每一条 props 都给：`render` 的 `props` 是必填的组件 props，测试只想改一两样时
+ *  从这一份上盖。 */
+type ExploreViewProps = InstanceType<typeof ExploreView>['$props']
+const base: ExploreViewProps = {
+  mdAndUp: false,
+  searchFailed: false,
+  reason: null,
+  forbidden: false,
+  searchQuery: '',
+  searchTeamsData: [],
+  hasSearched: false,
+  searchError: null,
+}
+
+function mount(props: Partial<ExploreViewProps> = {}) {
   return render(ExploreView, {
-    props,
+    props: { ...base, ...props },
     global: { plugins: [createVuetify({ components, directives }), i18n, router()] },
   })
 }
-
-const base = { mdAndUp: false, searchFailed: false, reason: null, forbidden: false }
 
 beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)

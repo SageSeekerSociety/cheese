@@ -27,9 +27,14 @@ const router = () =>
     ],
   })
 
-function mount(props: Record<string, unknown>) {
+/** 每一条 props 都给：`render` 的 `props` 是必填的组件 props，测试只想改一两样时
+ *  从这一份上盖。 */
+type MineViewProps = InstanceType<typeof MineView>['$props']
+const base: MineViewProps = { isLoadingMyTeams: false, loadMyTeamsError: false, myTeams: [] }
+
+function mount(props: Partial<MineViewProps> = {}) {
   return render(MineView, {
-    props,
+    props: { ...base, ...props },
     global: { plugins: [createVuetify({ components, directives }), i18n, router()] },
   })
 }
@@ -39,13 +44,13 @@ afterEach(cleanup)
 
 describe('我的团队', () => {
   it('还在读的时候画转圈，不说「还没有加入团队」', () => {
-    const view = mount({ isLoadingMyTeams: true, loadMyTeamsError: false, myTeams: [] })
+    const view = mount({ isLoadingMyTeams: true })
     expect(view.container.querySelector('.v-progress-circular')).not.toBeNull()
     expect(view.queryByText('还没有加入团队')).toBeNull()
   })
 
   it('读失败画「加载失败」，点重试就是请页面重取一次', async () => {
-    const view = mount({ isLoadingMyTeams: false, loadMyTeamsError: true, myTeams: [] })
+    const view = mount({ loadMyTeamsError: true })
     expect(view.queryByText('加载失败')).not.toBeNull()
     expect(view.queryByText('还没有加入团队')).toBeNull()
 
@@ -54,13 +59,13 @@ describe('我的团队', () => {
   })
 
   it('读回来了、一个团队都没有，才说「还没有加入团队」', () => {
-    const view = mount({ isLoadingMyTeams: false, loadMyTeamsError: false, myTeams: [] })
+    const view = mount()
     expect(view.queryByText('还没有加入团队')).not.toBeNull()
     expect(view.queryByText('加载失败')).toBeNull()
   })
 
   it('有团队就一列画出来，每一行都链到那个团队', () => {
-    const view = mount({ isLoadingMyTeams: false, loadMyTeamsError: false, myTeams: MY_TEAMS })
+    const view = mount({ myTeams: MY_TEAMS })
     expect(view.queryByText('城市数据实验室')).not.toBeNull()
     expect(view.queryByText('数学建模社')).not.toBeNull()
     expect(view.queryByText('还没有加入团队')).toBeNull()

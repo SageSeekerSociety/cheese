@@ -16,14 +16,10 @@ import AdminSpacesPageView from './AdminSpacesPageView.vue'
 import i18n, { setLocale } from '@/i18n'
 import { APPLICATIONS } from '@/views/demo/catalogScenesMiscFixtures'
 
-function mount(props: Record<string, unknown>) {
-  return render(AdminSpacesPageView, {
-    props,
-    global: { plugins: [createVuetify({ components, directives }), i18n] },
-  })
-}
-
-const base = {
+/** 每一条 props 都给：`render` 的 `props` 是必填的组件 props，测试只想改一两样时
+ *  从这一份上盖。`selected` 标成组件自己的类型。 */
+type AdminSpacesPageViewProps = InstanceType<typeof AdminSpacesPageView>['$props']
+const base: AdminSpacesPageViewProps = {
   status: 'PENDING',
   items: [],
   loading: false,
@@ -33,8 +29,15 @@ const base = {
   saving: false,
   pageSize: 50,
   writeError: '',
-  selected: null as null,
+  selected: null,
   reason: '',
+}
+
+function mount(props: Partial<AdminSpacesPageViewProps> = {}) {
+  return render(AdminSpacesPageView, {
+    props: { ...base, ...props },
+    global: { plugins: [createVuetify({ components, directives }), i18n] },
+  })
 }
 
 beforeAll(() => {

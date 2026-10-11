@@ -26,14 +26,11 @@ const router = () =>
     ],
   })
 
-function mount(props: Record<string, unknown>) {
-  return render(ComputeView, {
-    props,
-    global: { plugins: [createVuetify({ components, directives }), i18n, router()] },
-  })
-}
-
-const base = {
+/** 每一条 props 都给：`render` 的 `props` 是必填的组件 props，测试只想改一两样时
+ *  从这一份上盖。`base` 标成组件自己的 props 类型，字面量（`scope`）就收窄到
+ *  `'team' | 'own'`，盖上去的那一份也是同一个类型。 */
+type ComputeViewProps = InstanceType<typeof ComputeView>['$props']
+const base: ComputeViewProps = {
   scope: 'team',
   loading: false,
   loadFailed: false,
@@ -47,6 +44,13 @@ const base = {
   teamId: 1,
   myDeviceIds: new Set<string>(),
   error: null,
+}
+
+function mount(props: Partial<ComputeViewProps> = {}) {
+  return render(ComputeView, {
+    props: { ...base, ...props },
+    global: { plugins: [createVuetify({ components, directives }), i18n, router()] },
+  })
 }
 
 beforeEach(() => setLocale('zh-CN'))
