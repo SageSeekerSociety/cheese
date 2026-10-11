@@ -239,7 +239,7 @@ test('管理员把一条反馈走完四级，指派、优先级、内部备注�
   // 敲 `Enter` 会打在一个还没到的候选列表上，什么都不会发生，界面上却看不出区别：
   // 框里照样写着 alice，服务端那边一个字节都没动。这条断言后来是由下面那一格
   // （`.qrow__assignee`，读的是服务端）兜住的——第一次跑正是它红的。
-  const assignee = detail.getByRole('textbox', { name: /指派给/ });
+  const assignee = detail.getByRole('combobox', { name: /指派给/ });
   await assignee.fill('alice');
   // 候选项按类名找，**不按 `role="option"`**：这个下拉的候选项是自定义的 `#item`
   // 槽（昵称当标题、handle 当副标题、前面挂头像），渲染出来是普通的 `generic`
