@@ -52,6 +52,8 @@ steps:
 | 虚拟机沙箱 | 每条会话一台 MicroCloud 虚拟机，虚拟机本身就是沙箱，有 sudo 和 Docker；会话用完、闲置或房间清理后删掉 | `machine/services.py`、`machine/cloud_vm.py` |
 | 中心会话 + 执行机 | 会话在中心主机，工具调用落到租用的机器上 | `central_provider.py` |
 
+沙箱不管在哪台机器上，生命周期都一样：每个沙箱在 `sandbox_homes` 里有一行（平台主机上的记 `host_id`，某人电脑上的记 `device_id`），带着它的规格；空闲超过规格的空闲时间（`Spec.idle_s`）就由 `machine/lifecycle.py` 删掉，机器离线时跳过。会话换走时，主机上的那一行当场还回去，某人电脑上的那一行留下、不再属于任何会话，由同一次清扫在空闲后删掉。
+
 ## 连接 {#link}
 
 会话进程和干活的机器分开时，一次工具调用怎么落到机器上，见[执行通道](/dev/execution)；连接器的命令见 [cheese CLI 原理](/dev/cli#connector)。

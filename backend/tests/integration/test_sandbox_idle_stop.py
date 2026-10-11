@@ -33,7 +33,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.machine import lifecycle
 from app.domain.machine import session_work as work_lease
-from app.domain.machine.models import AiStatus, CloudHost, CloudHostHome, MachineStatus
+from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.sandbox_wait import SANDBOX_LOST
@@ -227,7 +227,7 @@ def tool_call(case, seat, timeout=5, *, tells_agent=False):
     ).json()["data"]
 
 
-def home_of(case, seat) -> CloudHostHome | None:
+def home_of(case, seat) -> SandboxHome | None:
     async def read():
         async with case.client.test_request_factory() as db:
             return await CloudHostRepository(db).current_home(seat.session)
@@ -296,8 +296,8 @@ def time_passes(case, seat, idle: timedelta):
     async def age():
         async with case.client.test_request_factory() as db:
             await db.execute(
-                update(CloudHostHome)
-                .where(CloudHostHome.session_id == seat.session)
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
                 .values(active_at=datetime.now(UTC) - idle)
             )
             await db.commit()
@@ -510,8 +510,8 @@ def test_a_tool_call_during_an_unfinished_removal_waits_and_then_gets_a_new_sand
     async def later():
         async with cloud.client.test_request_factory() as db:
             await db.execute(
-                update(CloudHostHome)
-                .where(CloudHostHome.session_id == seat.session)
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
                 .values(stopped_at=datetime.now(UTC) - lifecycle.STOP_HOLD)
             )
             await db.commit()
