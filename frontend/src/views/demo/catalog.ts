@@ -68,6 +68,7 @@ import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
+import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
 import { SETTINGS_ENTRIES } from './catalogSettings'
 import { SHARED_ENTRIES } from './catalogShared'
@@ -586,6 +587,7 @@ export const CATALOG: CatalogEntry[] = [
   // 几个路由页拆出来的画面那一组（设备审批、已归档的项目、打开预览 / 网站，以及项目里的
   // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。
+  ...SCENES_SPACES_ENTRIES,
   ...SCENES_WORKSPACE_ENTRIES,
   // 通知渲染那一组（十件「一条动态长什么样」，数据在 `catalogNotificationsFixtures.ts`）
   // 在自己的文件里：`catalogNotifications.ts`。
