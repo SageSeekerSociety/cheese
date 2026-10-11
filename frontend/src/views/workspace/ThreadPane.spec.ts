@@ -58,10 +58,20 @@ function task(id: string, origin: string, title = '一件任务'): RoomTask {
   } as RoomTask
 }
 
+// 对话那一栏的替身：支线页头那条消息要从它自己的滚动区里进去（真身上是 ChatTimeline 的
+// #timeline-start，落在 `.messages` 那一格里），所以替身也把两个槽摆出来。槽摆出来，
+// 页脚那张反馈卡就跟着挂了上来（真卡片要 pinia 和两个仓库），照下面那条用例的做法换成替身。
+const CHAT_PANEL_STUB = {
+  template: '<div data-testid="chat-scroll"><slot name="timeline-start" /><slot name="timeline-end" /></div>',
+}
+
 function mount() {
   return render(ThreadPane as Component, {
     props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
-    global: { plugins: [vuetify], stubs: { ChatPanel: true, MarkdownView: true } },
+    global: {
+      plugins: [vuetify],
+      stubs: { ChatPanel: CHAT_PANEL_STUB, MarkdownView: true, AgentFeedbackCard: true },
+    },
   })
 }
 
@@ -128,7 +138,8 @@ describe('支线', () => {
         global: {
           plugins: [vuetify],
           stubs: {
-            ChatPanel: true,
+            ChatPanel: CHAT_PANEL_STUB,
+            AgentFeedbackCard: true,
             MarkdownView: {
               props: ['source'],
               template: '<div class="thread-root__text" style="line-height: 24px">{{ source }}</div>',
@@ -150,6 +161,15 @@ describe('支线', () => {
     }
   })
 
+  it('页头这条初始消息在对话的滚动区里，跟回复一起滚', async () => {
+    // 不钉在面板顶上：钉着的话，它一展开就把下面的回复挤没、把正文末尾那颗「收起」顶到
+    // 看不见的地方——点开就再收不回来。对话的滚动区是 ChatPanel 里那一格，页头这条消息
+    // 从它的 #timeline-start 进去（替身摆的是同一个位置关系）。
+    getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
+    const { container } = mount()
+    await waitFor(() => expect(container.querySelector('[data-testid="chat-scroll"] .thread-root')).not.toBeNull())
+  })
+
   it('反馈卡接在支线的对话后面', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     const { container } = render(ThreadPane as Component, {
@@ -158,7 +178,7 @@ describe('支线', () => {
         plugins: [vuetify],
         stubs: {
           MarkdownView: true,
-          ChatPanel: { template: '<div><slot name="timeline-end" /></div>' },
+          ChatPanel: CHAT_PANEL_STUB,
           AgentFeedbackCard: { props: ['topicId'], template: '<i class="feedback-probe">{{ topicId }}</i>' },
         },
       },
