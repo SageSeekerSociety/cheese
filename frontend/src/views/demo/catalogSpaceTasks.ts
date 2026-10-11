@@ -100,10 +100,11 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '一次发一道',
-        note: '默认这一格：一张发题表，发布按钮是「发布」，按钮旁边那句写着「发布后需管理员审核」。',
+        note: '默认这一格：一张发题表（题目内容在最上面，右上角挂着「从文件导入」「使用模板」），发布按钮是「发布」，按钮旁边那句写着「发布后需管理员审核」。',
         props: {},
-        // 只有装好了（`ready`）才挂表单，表单里才有 AI 指导那一块：拿它把「表在不在」钉住。
-        expectSelector: '[data-testid="publish-teaching"]',
+        // 单道题才有「题目内容」那一块，它右上角那两颗动作按钮里有一颗是稳定的锚：装好
+        // 了（`ready`）且不是从文件读出的多道（否则只留选题参数、不下这一块）才在。
+        expectSelector: '[data-testid="publish-import"]',
       },
       {
         name: '一次发好几道',
