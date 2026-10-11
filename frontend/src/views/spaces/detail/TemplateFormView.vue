@@ -51,10 +51,8 @@ function saveTemplate() {
     <v-form class="tform__form" @submit.prevent="saveTemplate">
       <section class="settings-card">
         <div class="srow">
-          <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
-          <label id="tpl-name-label" class="srow__k" for="tpl-name">{{
-            t('spaces.detail.templateForm.templateName')
-          }}</label>
+          <!-- The name span's id is its field's id + "-label": Vuetify names each field's inner control with aria-labelledby="<id>-label", so this id is what carries the field's accessible name. A <span>, not a <label>, because the control is a package field rather than a native one. -->
+          <span id="tpl-name-label" class="srow__k">{{ t('spaces.detail.templateForm.templateName') }}</span>
           <v-text-field
             id="tpl-name"
             v-model="template.name"
@@ -66,9 +64,7 @@ function saveTemplate() {
           />
         </div>
         <div class="srow srow--top">
-          <label id="tpl-desc-label" class="srow__k" for="tpl-desc">{{
-            t('spaces.detail.templateForm.templateDescription')
-          }}</label>
+          <span id="tpl-desc-label" class="srow__k">{{ t('spaces.detail.templateForm.templateDescription') }}</span>
           <v-textarea
             id="tpl-desc"
             v-model="template.description"
@@ -81,9 +77,7 @@ function saveTemplate() {
           />
         </div>
         <div class="srow">
-          <label id="tpl-title-label" class="srow__k" for="tpl-title">{{
-            t('spaces.detail.templateForm.contestTitle')
-          }}</label>
+          <span id="tpl-title-label" class="srow__k">{{ t('spaces.detail.templateForm.contestTitle') }}</span>
           <v-text-field
             id="tpl-title"
             v-model="template.title"
@@ -141,9 +135,7 @@ function saveTemplate() {
           </v-radio-group>
         </div>
         <div class="srow">
-          <label id="tpl-deadline-label" class="srow__k" for="tpl-deadline">{{
-            t('tasks.form.defaultDeadline')
-          }}</label>
+          <span id="tpl-deadline-label" class="srow__k">{{ t('tasks.form.defaultDeadline') }}</span>
           <div class="tform__range">
             <span class="tform__to">{{ t('spaces.detail.templateForm.deadlinePrefix') }}</span>
             <v-text-field

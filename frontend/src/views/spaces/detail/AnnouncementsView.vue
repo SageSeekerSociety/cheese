@@ -32,7 +32,8 @@ const props = defineProps<{
   loaded: boolean
   isManager: boolean
   submitting: boolean
-  notifyCount: number
+  /** 发一条会通知到几个人；不是管理员时（`useSpaceAnnouncements` 取不到）为 null。 */
+  notifyCount: number | null
   /** 一条都没读到、而且是读失败了：这时候「暂无公告」是假话，换成错误那一块。 */
   failed: boolean
   errorReason: string | null
