@@ -17,9 +17,10 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.prompt import _pending_platform_notices, _platform_preamble
 from app.domain.block.repositories import BlockRepository
 from app.main import app
-from tests.conftest import stub_compute, wait_work_idle
+from tests.conftest import seed_user, stub_compute, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
+    inbox,
     join_project_team,
     open_task,
     post_message,
@@ -237,29 +238,27 @@ def test_an_agents_edit_stores_what_publishing_it_stores(client, make_room):
 # ---- What an edit does beyond the text ----
 
 
-def _mentions(client, project: str, handle: str) -> list[dict]:
-    """The @ alerts ``handle`` has in this project."""
-    response = client.get(
-        f"/projects/{project}/alerts", headers=session_auth_headers(handle)
-    )
-    assert response.status_code == 200, response.text
-    return [a for a in response.json()["data"]["data"] if a["kind"] == "MENTION"]
+def _mentions(client, handle: str) -> list[dict]:
+    """The mentions in ``handle``'s inbox."""
+    return inbox(client, handle, "MENTION")
 
 
 def test_an_edit_notifies_only_whom_it_newly_mentions(client):
+    for who in ("bob", "carol"):
+        seed_user(client, who)
     room, project = _room(client)
     join_project_team(client, project, "carol")
     said = _say(client, room, "alice", "@bob 看一下")
-    assert len(_mentions(client, project, "bob")) == 1
-    assert _mentions(client, project, "carol") == []
+    assert len(_mentions(client, "bob")) == 1
+    assert _mentions(client, "carol") == []
 
     _edit(client, said, "@bob @carol 看一下", session_auth_headers("alice"))
-    assert len(_mentions(client, project, "carol")) == 1, "carol is newly mentioned"
-    assert len(_mentions(client, project, "bob")) == 1, "bob was told when it was sent"
+    assert len(_mentions(client, "carol")) == 1, "carol is newly mentioned"
+    assert len(_mentions(client, "bob")) == 1, "bob was told when it was sent"
 
     _edit(client, said, "@bob @carol 再看一下", session_auth_headers("alice"))
-    assert len(_mentions(client, project, "carol")) == 1
-    assert len(_mentions(client, project, "bob")) == 1
+    assert len(_mentions(client, "carol")) == 1
+    assert len(_mentions(client, "bob")) == 1
 
 
 def _read_by_a_turn(client, block_id: str) -> None:

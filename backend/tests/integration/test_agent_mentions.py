@@ -16,9 +16,10 @@ from sqlalchemy import select
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.delivery import mention
 from app.domain.delivery.models import Delivery
-from tests.conftest import wait_work_idle
+from tests.conftest import seed_user, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
+    inbox,
     join_project_team,
     post_message,
     post_project,
@@ -35,6 +36,7 @@ def test_quoted_mentions_and_paths_never_name_an_ai_or_notify_a_person(
     client, stub_hooks, quoted_text
 ):
     project_id, room_id, cheese, reviewer = _room_with_two_agents(client)
+    seed_user(client, "bob")
     join_project_team(client, project_id, "bob")
     channel = client.get(f"/topics/{room_id}/thread").json()["data"]["room_id"]
     added = client.post(
@@ -58,10 +60,7 @@ def test_quoted_mentions_and_paths_never_name_an_ai_or_notify_a_person(
     assert len(arrivals) == 1, arrivals
     assert prompt_quote(arrivals[0][1]) == quote
     assert _deliveries(client, room_id) == []
-    alerts = client.get(
-        f"/projects/{project_id}/alerts", headers=session_auth_headers("bob")
-    ).json()["data"]["data"]
-    assert alerts == []
+    assert inbox(client, "bob", "MENTION") == []
 
 
 def test_a_quoted_ai_name_does_not_wake_anyone_without_an_authored_mention(
@@ -270,16 +269,13 @@ def test_a_person_naming_two_agents_wakes_both(client, stub_hooks):
 
 
 def test_a_person_mentioned_by_a_teammate_is_told_the_teammates_own_name(client):
-    """The alert says who @-ed you by the name the teammate goes by, the one its
-    chip in the room shows; never one fixed name for every teammate."""
+    """The notification says who @-ed you by the name the teammate goes by, the
+    one its chip in the room shows; never one fixed name for every teammate."""
     project_id, room_id, _, reviewer = _room_with_two_agents(client)
+    seed_user(client, "bob")
     join_project_team(client, project_id, "bob")
     _publish(client, room_id, _as(project_id, room_id, reviewer), "<@bob> 看一下")
     wait_work_idle()
 
-    alerts = client.get(
-        f"/projects/{project_id}/alerts", headers=session_auth_headers("bob")
-    ).json()["data"]["data"]
-    [alert] = [a for a in alerts if a["kind"] == "MENTION"]
-    assert alert["title"].startswith("评审 "), alert["title"]
-    assert "芝士" not in alert["title"]
+    [mention] = inbox(client, "bob", "MENTION")
+    assert mention["contextMetadata"]["authorName"] == "评审"

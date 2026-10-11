@@ -375,6 +375,8 @@
   "pushNotice": "A new notice from the platform",
   "pushQuestion": "A new question",
   "pushAwaitingAnswer": "Waiting for your answer",
+  "pushMentioned": "{who} mentioned you in “{room}”",
+  "pushThreadReply": "{who} replied in a thread in “{room}”",
   "pushAway": "{count} new notifications while you were away",
   "sandboxPreparing": "Preparing the environment",
   "sandboxReady": "The environment is ready",

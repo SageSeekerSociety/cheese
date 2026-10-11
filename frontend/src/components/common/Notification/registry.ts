@@ -23,13 +23,13 @@ import RenderTeamJoinRequestNotification from '@/components/common/Notification/
 import RenderTeamRequestApprovedNotification from '@/components/common/Notification/renders/RenderTeamRequestApprovedNotification.vue'
 import RenderTeamRequestCanceledNotification from '@/components/common/Notification/renders/RenderTeamRequestCanceledNotification.vue'
 import RenderTeamRequestRejectedNotification from '@/components/common/Notification/renders/RenderTeamRequestRejectedNotification.vue'
+import RenderThreadReplyNotification from '@/components/common/Notification/renders/RenderThreadReplyNotification.vue'
 
 // 通知类型到渲染组件的映射
 const notificationRendererRegistry: Record<NotificationType, Component> = {
   MENTION: RenderMentionNotification,
   REPLY: RenderReplyNotification,
-  // 标题和正文是后端写好的那一句，照原样显示。
-  THREAD_REPLY: RenderDefaultNotification,
+  THREAD_REPLY: RenderThreadReplyNotification,
   REACTION: RenderReactionNotification,
   PROJECT_INVITE: RenderProjectInviteNotification,
   DEADLINE_REMIND: RenderDeadlineRemindNotification,

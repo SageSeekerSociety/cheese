@@ -375,6 +375,8 @@
   "pushNotice": "平台有一条提示",
   "pushQuestion": "有一个新问题",
   "pushAwaitingAnswer": "等你回答",
+  "pushMentioned": "{who} 在「{room}」提到了你",
+  "pushThreadReply": "{who} 在「{room}」的支线里回复了",
   "pushAway": "离开期间有 {count} 条新通知",
   "sandboxPreparing": "正在准备环境",
   "sandboxReady": "环境已就绪",

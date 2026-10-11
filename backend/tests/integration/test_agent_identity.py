@@ -22,6 +22,7 @@ from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import (
     in_thread,
+    inbox,
     post_message,
     post_project,
     room_socket,
@@ -266,13 +267,6 @@ def _post_without_summon(client, topic_id: str, content: str, author: str) -> No
     post_message(client, topic_id, author, {"content": content})
 
 
-def _notifs(client, project_id: str, handle: str) -> list[dict]:
-    return client.get(
-        f"/projects/{project_id}/alerts",
-        headers=session_auth_headers(handle),
-    ).json()["data"]["data"]
-
-
 def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client, bearer):
     """The two paths differ on purpose.
 
@@ -296,10 +290,10 @@ def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client, bearer):
     )
 
     _post_without_summon(client, topic_id, "<@all> 大家看一下", author="alice")
-    assert _notifs(client, project_id, "ops") == []
+    assert inbox(client, "ops", "MENTION") == []
 
     _post_without_summon(client, topic_id, "<@ops> 帮忙看下告警", author="alice")
-    assert len(_notifs(client, project_id, "ops")) == 1
+    assert len(inbox(client, "ops", "MENTION")) == 1
 
 
 def test_human_members_are_not_mistaken_for_agents(client):
