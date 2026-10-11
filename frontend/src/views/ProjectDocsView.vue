@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
 import { usePageActive } from '@/composables/usePageActive'
+import { useProjectAgentName } from '@/composables/useProjectAgentName'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import { deleteMemory, getProjectWeeklies, listMemory } from '../api'
@@ -45,6 +46,7 @@ const AUTHOR = myHandle()
 const router = useRouter()
 // 单测里这一页是孤立渲染的，没有 store：队友名字就用默认的。
 const workspace = getCurrentInstance()?.appContext.config.globalProperties.$pinia ? useWorkspaceStore() : null
+const agentName = useProjectAgentName()
 
 const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
 
@@ -159,7 +161,7 @@ const dialog = useDialog()
 // 删掉找不回，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
 async function removeMemory(id: string) {
   const confirmed = await dialog
-    .confirm(t('project.docs.memoryDeleteBody'), {
+    .confirm(t('project.docs.memoryDeleteBody', { name: agentName.value }), {
       title: t('project.docs.memoryDeleteTitle'),
       confirmLabel: t('project.docs.memoryDelete'),
       danger: true,
@@ -221,7 +223,9 @@ useCommands(() => {
         <!-- 章程的顶栏（在线的人、建议、评论……）画在这一行的右边，不另起一行。 -->
         <div v-if="kind === 'charter'" id="charter-doc-bar" class="docs-tabs__bar" />
       </div>
-      <p v-if="kind === 'charter'" class="t-body c-muted mt-2">{{ t('project.docs.charterHint') }}</p>
+      <p v-if="kind === 'charter'" class="t-body c-muted mt-2">
+        {{ t('project.docs.charterHint', { name: agentName }) }}
+      </p>
     </div>
 
     <div v-if="loading" class="d-flex justify-center py-10">
@@ -289,7 +293,7 @@ useCommands(() => {
                由芝士写，所以要说清的是**怎么让它写**，不是它已经在写了。 -->
         <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
           <div>{{ t('project.docs.weekliesEmpty') }}</div>
-          <div class="text-caption mt-1">{{ t('project.docs.weekliesHint') }}</div>
+          <div class="text-caption mt-1">{{ t('project.docs.weekliesHint', { name: agentName }) }}</div>
           <BaseButton
             v-if="rootTopicId"
             :to="topicTo(rootTopicId)"

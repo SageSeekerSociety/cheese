@@ -14,6 +14,7 @@ import type { Topic } from '../cx_types'
 import { computed, getCurrentInstance, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
+import { useProjectAgentName } from '@/composables/useProjectAgentName'
 import { useRoutineList } from '@/composables/useRoutineList'
 
 import { listTopics } from '../api'
@@ -33,6 +34,7 @@ const route = useRoute()
 // 是孤立渲染的，那里没有路由、没有 store，照样画，只是人名不可点、画 handle。
 const app = getCurrentInstance()?.appContext.config.globalProperties
 const workspace = app?.$pinia ? useWorkspaceStore() : null
+const agentName = useProjectAgentName()
 
 /** 人名 → 显示名：行里的人名只画字（`UserRef`），名册在这里查一次。 */
 const userNames = computed(() =>
@@ -133,7 +135,7 @@ useCommands(() => [
 <template>
   <AppPage :title="t('navigation.project.routines')">
     <div>
-      <p class="t-body c-muted mb-6">{{ t('routines.intro') }}</p>
+      <p class="t-body c-muted mb-6">{{ t('routines.intro', { name: agentName }) }}</p>
 
       <RoutineBoard
         :routines="routines"

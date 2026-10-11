@@ -1,5 +1,6 @@
 import { createVuetify } from 'vuetify'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/i18n'
@@ -53,6 +54,8 @@ import ProjectDocsView from './ProjectDocsView.vue'
 
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 // 这一页读的是缓存里这个项目、这一面的那一份：每个用例先摆好它看到的，再渲染。
 function show(kind: 'charter' | 'weeklies' | 'memory', payload: Record<string, unknown> = {}) {
@@ -143,6 +146,40 @@ describe('章程', () => {
     remoteEdit('overview', '我们给高中生做算法课。\n\n每周二上课。')
 
     await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('每周二上课'))
+    view.unmount()
+  })
+})
+
+describe('称呼项目的 AI 队友用它自己的名字', () => {
+  it('队友改名叫小杉，章程的提示说的是给小杉下指令', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    seedProjects([])
+    seedProject('p', {
+      topics: [],
+      members: [{ user_handle: 'cheese-742841cae293', name: '小杉', agent: true, project_default: true }],
+      unread: {},
+      privateUnread: {},
+      notifyLevels: {},
+    })
+    const store = useWorkspaceStore()
+    store.openProject('p')
+    await waitFor(() => expect(store.agentName).toBe('小杉'))
+    queryClient.setQueryData(keys.projectDocs('p', 'charter'), {
+      rootTopicId: 'root',
+      rootTopic: null,
+      overviewId: null,
+      weeklies: [],
+      memoryEntries: [],
+    })
+
+    const view = render(ProjectDocsView, {
+      props: { projectId: 'p', kind: 'charter' },
+      global: { plugins: [createVuetify(), pinia] },
+    })
+
+    expect(view.getByText('改了就等于给小杉下指令')).toBeTruthy()
+    expect(view.queryByText('改了就等于给芝士下指令')).toBeNull()
     view.unmount()
   })
 })

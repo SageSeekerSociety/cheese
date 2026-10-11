@@ -8,6 +8,8 @@ import type { MailDraftView, MailOutcome } from '../../lib/platformNotice'
 
 import { computed } from 'vue'
 
+import { useProjectAgentName } from '@/composables/useProjectAgentName'
+
 import { useMailDraftActions } from '../../composables/useMailDraftActions'
 import i18n, { t } from '../../i18n'
 import { myHandle } from '../../me'
@@ -22,6 +24,7 @@ const props = defineProps<{
   me?: string | null
 }>()
 
+const agentName = useProjectAgentName()
 const { busy, error, local, send, discard } = useMailDraftActions(() => props.mail.draftId)
 const ended = computed(() => local.value ?? props.outcome)
 const mine = computed(() => {
@@ -73,7 +76,7 @@ function when(iso: string | null): string {
       <BaseButton kind="ghost" size="sm" :loading="busy === 'discard'" :disabled="!!busy" @click="discard">
         {{ t('work.room.mail.discard') }}
       </BaseButton>
-      <span class="mail-card__hint">{{ t('work.room.mail.hint') }}</span>
+      <span class="mail-card__hint">{{ t('work.room.mail.hint', { name: agentName }) }}</span>
     </div>
     <div v-else class="mail-card__state" data-testid="mail-waiting">
       {{ t('work.room.mail.waiting', { owner: mail.owner }) }}
