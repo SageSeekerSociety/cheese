@@ -1116,9 +1116,10 @@ routes:
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/nodes", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/comments", auth: "document.reader", owner: "living_doc"}
   # app.api.routes.topics_compute
-  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/compute-profile", auth: "actor.topic", owner: "machine"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/environment", auth: "actor.topic", owner: "machine"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/environment-default", auth: "actor.topic", owner: "machine"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/sessions/{session_id}/environment", auth: "actor.topic", owner: "machine"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/sessions/{session_id}/work-lease", auth: "capability.session.lease", owner: "machine"}
-  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/compute-profile", auth: "actor.topic", owner: "machine"}
   # app.api.routes.topics_deliveries
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/deliveries", auth: "actor.topic.enforced", owner: "delivery"}
   # app.api.routes.document_agent

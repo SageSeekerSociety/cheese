@@ -1,5 +1,5 @@
-// 项目设置里的工作电脑：只有「新 agent 默认用」和「现在的分布」，没有常用配置。
-import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
+// 项目设置里的环境：只有「新 AI 队友默认使用」和「现在的分布」。沙箱按规格数个数，不说在哪台机器上。
+import type { Environment, ProjectComputeConfigs } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -17,23 +17,21 @@ import { setLocale } from '../i18n'
 
 import ProjectComputeSettings from './ProjectComputeSettings.vue'
 
-const cloud: ComputeChoice = {
-  name: null,
-  profile: 'cloud',
-  device_id: null,
-}
+const standard: Environment = { kind: 'sandbox', spec: 'standard' }
+const vm: Environment = { kind: 'sandbox', spec: 'vm' }
 
 function configs(overrides: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
   return {
-    default: cloud,
+    default: standard,
     can_manage: true,
-    devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],
-    cloud_available: true,
-    cloud_vm_available: false,
+    devices: [{ device_id: 'lab', name: '实验室工作站', online: true, owned: false }],
+    specs: [
+      { spec: 'standard', label: '标准' },
+      { spec: 'vm', label: '虚拟机' },
+    ],
     distribution: {
-      cloud: 3,
-      cloud_vm: 0,
-      devices: [{ device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: true }],
+      sandboxes: [{ spec: 'standard', label: '标准', agents: 3 }],
+      devices: [{ device_id: 'lab', name: '实验室工作站', agents: 2 }],
     },
     ...overrides,
   }
@@ -81,28 +79,35 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('project work computer settings', () => {
+describe('project environment settings', () => {
   it('shows only the default for new agents and where started agents are now', async () => {
     api.getProjectComputeConfigs.mockResolvedValue(configs())
     const row = await mount()
 
     expect(row.textContent).toContain('新 AI 队友默认使用')
-    expect(row.textContent).toContain('云端环境')
-    expect(screen.getByText('只影响尚未开始运行的 AI 队友，已在运行的继续用原来的环境')).toBeTruthy()
+    expect(row.textContent).toContain('沙箱 · 标准')
     const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('当前分布')).toBeTruthy()
-    expect(distribution.getByText(/云端环境 · 3 个 AI 队友/)).toBeTruthy()
-    expect(distribution.getByText(/实验室工作站 · 2 个 AI 队友 · 能访问整台电脑/)).toBeTruthy()
-    expect(screen.queryByText(/常用/)).toBeNull()
+    expect(distribution.getByText(/沙箱 · 标准 · 3 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/实验室工作站 · 2 个 AI 队友/)).toBeTruthy()
   })
 
-  it('counts agents on whole cloud VMs apart from those in sandboxes', async () => {
-    api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { cloud: 1, cloud_vm: 2, devices: [] } }))
+  it('counts sandboxes of each spec apart', async () => {
+    api.getProjectComputeConfigs.mockResolvedValue(
+      configs({
+        distribution: {
+          sandboxes: [
+            { spec: 'standard', label: '标准', agents: 1 },
+            { spec: 'vm', label: '虚拟机', agents: 2 },
+          ],
+          devices: [],
+        },
+      })
+    )
     await mount()
 
     const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText(/云端环境 · 1 个 AI 队友/)).toBeTruthy()
-    expect(distribution.getByText(/整台云虚拟机 · 2 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/沙箱 · 标准 · 1 个 AI 队友/)).toBeTruthy()
+    expect(distribution.getByText(/沙箱 · 虚拟机 · 2 个 AI 队友/)).toBeTruthy()
   })
 
   it('counts one agent as one in English', async () => {
@@ -110,11 +115,10 @@ describe('project work computer settings', () => {
     api.getProjectComputeConfigs.mockResolvedValue(
       configs({
         distribution: {
-          cloud: 1,
-          cloud_vm: 0,
+          sandboxes: [{ spec: 'standard', label: 'Standard', agents: 1 }],
           devices: [
-            { device_id: 'lab', name: 'Lab', agents: 1, machine_access: false },
-            { device_id: 'rig', name: 'Rig', agents: 2, machine_access: false },
+            { device_id: 'lab', name: 'Lab', agents: 1 },
+            { device_id: 'rig', name: 'Rig', agents: 2 },
           ],
         },
       })
@@ -122,74 +126,13 @@ describe('project work computer settings', () => {
     await mount()
 
     const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('Cloud environment · 1 agent')).toBeTruthy()
+    expect(distribution.getByText('Sandbox · Standard · 1 agent')).toBeTruthy()
     expect(distribution.getByText('Lab · 1 agent')).toBeTruthy()
     expect(distribution.getByText('Rig · 2 agents')).toBeTruthy()
   })
 
-  // The platform's choices carry no name: each screen names them in its own
-  // language. A device keeps its own name in every language.
-  it('names the platform choices in English and keeps a device its own name', async () => {
-    setLocale('en')
-    api.getProjectComputeConfigs.mockResolvedValue(
-      configs({
-        distribution: {
-          cloud: 0,
-          cloud_vm: 0,
-          devices: [
-            { device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: false },
-            { device_id: null, name: null, agents: 1, machine_access: false },
-          ],
-        },
-      })
-    )
-    const row = await mount()
-
-    expect(row.textContent).toContain('Cloud environment')
-    const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('实验室工作站 · 2 agents')).toBeTruthy()
-    expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
-  })
-
-  it('does not show a label an older row stored on a platform choice', async () => {
-    setLocale('en')
-    api.getProjectComputeConfigs.mockResolvedValue(
-      configs({
-        default: { ...cloud, name: '云端 · 标准配置' },
-        distribution: {
-          cloud: 0,
-          cloud_vm: 0,
-          devices: [{ device_id: null, name: '自有设备 · 自动选择', agents: 1, machine_access: false }],
-        },
-      })
-    )
-    const row = await mount()
-
-    expect(row.textContent).toContain('Cloud environment')
-    expect(row.textContent).not.toContain('云端')
-    const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('Own device · Picked automatically · 1 agent')).toBeTruthy()
-  })
-
-  it('saves the cloud without a name, so no language is stored for everyone', async () => {
-    api.getProjectComputeConfigs.mockResolvedValue(
-      configs({ default: { ...cloud, name: '实验室工作站', profile: 'device', device_id: 'lab' } })
-    )
-    api.saveProjectComputeConfigs.mockResolvedValue({ default: cloud })
-    await mount()
-
-    await fireEvent.click(screen.getByRole('button', { name: '更换' }))
-    await fireEvent.mouseDown(screen.getByLabelText('环境'))
-    await fireEvent.click(await screen.findByRole('option', { name: /^云端/ }))
-    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
-
-    await waitFor(() =>
-      expect(api.saveProjectComputeConfigs).toHaveBeenCalledWith('p1', { default: { ...cloud, whole_machine: false } })
-    )
-  })
-
   it('says so when no agent has started', async () => {
-    api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { cloud: 0, cloud_vm: 0, devices: [] } }))
+    api.getProjectComputeConfigs.mockResolvedValue(configs({ distribution: { sandboxes: [], devices: [] } }))
     await mount()
 
     expect(screen.getByText('暂无运行中的 AI 队友')).toBeTruthy()
@@ -197,22 +140,30 @@ describe('project work computer settings', () => {
 
   it('lets a manager change the default and tells open rooms', async () => {
     api.getProjectComputeConfigs.mockResolvedValue(configs())
-    const lab: ComputeChoice = { ...cloud, name: '实验室工作站', profile: 'device', device_id: 'lab' }
-    api.saveProjectComputeConfigs.mockResolvedValue({ default: lab })
+    api.saveProjectComputeConfigs.mockResolvedValue({ default: vm })
     const updated = vi.fn()
     window.addEventListener('project-compute-updated', updated)
     await mount()
 
     await fireEvent.click(screen.getByRole('button', { name: '更换' }))
-    await fireEvent.mouseDown(screen.getByLabelText('环境'))
-    await fireEvent.click(await screen.findByRole('option', { name: /实验室工作站/ }))
-    await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
+    await fireEvent.update(document.querySelector('[data-testid="env-spec-vm"] input')!)
+    await fireEvent.click(screen.getByRole('button', { name: '使用这个环境' }))
 
-    await waitFor(() => expect(api.saveProjectComputeConfigs).toHaveBeenCalledWith('p1', { default: lab }))
-    expect(api.saveProjectComputeConfigs.mock.calls[0][1]).not.toHaveProperty('favorites')
-    await waitFor(() => expect(screen.getByTestId('project-default').textContent).toContain('实验室工作站'))
+    await waitFor(() => expect(api.saveProjectComputeConfigs).toHaveBeenCalledWith('p1', { default: vm }))
+    await waitFor(() => expect(screen.getByTestId('project-default').textContent).toContain('虚拟机'))
     expect(updated).toHaveBeenCalledTimes(1)
     window.removeEventListener('project-compute-updated', updated)
+  })
+
+  it('cancelling the change saves nothing', async () => {
+    api.getProjectComputeConfigs.mockResolvedValue(configs())
+    await mount()
+
+    await fireEvent.click(screen.getByRole('button', { name: '更换' }))
+    await fireEvent.update(document.querySelector('[data-testid="env-spec-vm"] input')!)
+    await fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    expect(api.saveProjectComputeConfigs).not.toHaveBeenCalled()
   })
 
   it('does not offer the change to someone who cannot manage the project', async () => {
@@ -224,25 +175,13 @@ describe('project work computer settings', () => {
     expect(screen.queryByRole('button', { name: '查看并更换…' })).toBeNull()
   })
 
-  it('offers a manager to view and switch the agents on each named device', async () => {
-    api.getProjectComputeConfigs.mockResolvedValue(
-      configs({
-        distribution: {
-          cloud: 1,
-          cloud_vm: 0,
-          devices: [
-            { device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: true },
-            // Picked when those sessions lease; there is no one device to list yet.
-            { device_id: null, name: null, agents: 1, machine_access: true },
-          ],
-        },
-      })
-    )
+  it('offers a manager to view and switch the agents on each listed device', async () => {
+    api.getProjectComputeConfigs.mockResolvedValue(configs())
     await mount()
 
     const rows = within(screen.getByTestId('project-distribution')).getAllByRole('listitem')
-    expect(within(rows[1]).getByRole('button', { name: '查看并更换…' })).toBeTruthy()
+    // 沙箱不说在哪台机器上，也就没有一台可以打开来换：只有直接跑在某台电脑上的有这颗按钮。
     expect(within(rows[0]).queryByRole('button', { name: '查看并更换…' })).toBeNull()
-    expect(within(rows[2]).queryByRole('button', { name: '查看并更换…' })).toBeNull()
+    expect(within(rows[1]).getByRole('button', { name: '查看并更换…' })).toBeTruthy()
   })
 })

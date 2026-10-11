@@ -89,9 +89,15 @@ class Room:
         self.native_receipts: dict[uuid.UUID, InputReceipt] = {}
         self.completions: list[WorkCompletion] = []
         self.terminations: list[WorkTermination] = []
+        #: Works whose session died with their inputs still unfinished, as the
+        #: room's books were told (`reads.Abandoned`).
+        self.abandoned: list[uuid.UUID | None] = []
 
         async def consume(_project, _topic, work, event, _eid, _seen, _unsolicited):
             self.events.append((work, event))
+
+        async def abandoned(work):
+            self.abandoned.append(work)
 
         async def receipt(evidence: InputReceipt):
             assert evidence.identity == self.identities[evidence.identity.input_id]
@@ -149,6 +155,7 @@ class Room:
                 receipts=receipt,
                 completions=completion,
                 terminations=termination,
+                abandoned=abandoned,
             ),
             unread=oldest_unread,
             memory=AsyncMock(),
@@ -296,6 +303,9 @@ async def test_a_session_whose_process_exited_ends_the_turn_visibly():
         (ended,) = room.results()
         assert ended.is_error
         assert ended.text == "Claude Code session process exited"
+        # The runner said the process exited: nothing will report on the inputs
+        # this work held, so the room's books are told to end them.
+        assert room.abandoned == [room.work]
     finally:
         await room.close()
 
@@ -320,6 +330,9 @@ async def test_a_runner_out_of_reach_too_long_ends_the_turn(monkeypatch):
         assert ended.text != "Claude Code session process exited"
         assert "没有应答" in ended.text
         assert time.monotonic() - lost_at >= 0.5
+        # Merely out of reach is not death: the runner may be back with the
+        # inputs still taken, so the room says nothing about them.
+        assert room.abandoned == []
     finally:
         await room.close()
 

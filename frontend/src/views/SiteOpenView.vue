@@ -1,17 +1,19 @@
 <script setup lang="ts">
+// 网站落地页的容器：读地址里的项目，向后端要一份 Site 会话，再把 grant 用 POST
+// 交给内容站（POST 让只读授权不进 URL、历史和 referrer）。画面在
+// `SiteOpenViewView.vue`，只收 props、只发 `retry`。
 import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { ApiError, authToken, requestSiteSession } from '../api'
 import { t } from '../i18n'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import SiteOpenViewView from './SiteOpenViewView.vue'
 
 const route = useRoute()
 const loading = ref(false)
 const error = ref('')
 const needsLogin = ref(!authToken())
-const loginLink = { name: 'SignIn' }
 
 async function openSite() {
   const projectId = String(route.params.projectId)
@@ -58,17 +60,5 @@ watch(
 </script>
 
 <template>
-  <v-container class="py-8">
-    <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
-    <h1 v-if="$vuetify.display.mdAndUp" class="t-page-title mb-4">{{ t('project.open.site.title') }}</h1>
-    <template v-if="needsLogin">
-      <p class="t-body mb-4">{{ t('project.open.site.membersOnly') }}</p>
-      <BaseButton kind="primary" :to="loginLink">{{ t('project.open.signIn') }}</BaseButton>
-    </template>
-    <template v-else-if="error">
-      <v-alert type="error" class="mb-4">{{ error }}</v-alert>
-      <BaseButton kind="secondary" :loading="loading" @click="openSite">{{ t('project.open.retry') }}</BaseButton>
-    </template>
-    <v-progress-circular v-else indeterminate :aria-label="t('project.open.site.opening')" />
-  </v-container>
+  <SiteOpenViewView :loading="loading" :error="error" :needs-login="needsLogin" @retry="openSite" />
 </template>

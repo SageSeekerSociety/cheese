@@ -6,6 +6,7 @@ to ``rest``, when there is one, and is dropped otherwise."""
 import uuid
 
 from app.domain.agent.reads import (
+    Abandoned,
     Completed,
     Reachable,
     Received,
@@ -23,6 +24,7 @@ def room_reader(
     receipts=None,
     completions=None,
     terminations=None,
+    abandoned=None,
     reachability=None,
     live=None,
     rest: RoomReader | None = None,
@@ -30,7 +32,7 @@ def room_reader(
     """``events(project, topic, work, event, eid, text_seen, unsolicited)``,
     ``activity(project, topic, work, active, agent_handle=...)``,
     ``receipts(receipt)``, ``completions(completion)``,
-    ``terminations(termination)``,
+    ``terminations(termination)``, ``abandoned(work)``,
     ``reachability(project, topic, work, reachable, reason)``,
     ``live(topic, work, author, blocks)``."""
 
@@ -43,6 +45,8 @@ def room_reader(
             heard = completions and completions(event.completion)
         elif isinstance(event, Terminated):
             heard = terminations and terminations(event.termination)
+        elif isinstance(event, Abandoned):
+            heard = abandoned and abandoned(work)
         elif isinstance(event, Working):
             heard = activity and activity(
                 session.project_id,

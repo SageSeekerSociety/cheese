@@ -201,3 +201,57 @@ export type SpaceMaterialVisibility = 'members' | 'admins'
  * 失效的 —— 那等于让人凭一次网络失败删掉有效的引用。
  */
 export type SpaceMaterialsState = 'loading' | 'ready' | 'error'
+
+// ---- 「我发布的题目」（`SpacesApi.getMyPublishedTasks` 的形状）-----------------
+//
+// 这几个原来长在 `@/network/api/spaces/types` 里；挪到领域类型这儿，是因为「题目列表」
+// 拆出来的那半张画面（`views/spaces/detail/TasksView.vue`）只认 props、不连网络层，
+// 不能从 `@/network` 取类型。网络层再从这儿转出去，对外形状一个字没变。
+
+/** 我发布的题目挂在哪个分类下。 */
+export type SpaceMyPublishedTaskCategory = {
+  id: number
+  name: string
+}
+
+/** 审到哪一步了。 */
+export type AnalyticsApproveType = 'NONE' | 'APPROVED' | 'DISAPPROVED'
+
+/** 这道题在别人眼里可不可见。 */
+export type SpaceTaskVisibilityStatus =
+  | 'PENDING_APPROVAL'
+  | 'REJECTED'
+  | 'APPROVED_HIDDEN'
+  | 'APPROVED_VISIBLE'
+  | 'ENDED'
+
+/** 「我发布的」列表里的一行：出题人自己看的题目，带审核状态和几项计数。 */
+export type SpaceMyPublishedTask = {
+  taskId: number
+  taskName: string
+  category: SpaceMyPublishedTaskCategory
+  approved: AnalyticsApproveType
+  visibilityStatus: SpaceTaskVisibilityStatus
+  isVisible: boolean
+  createdAt: number
+  publishedAt?: number | null
+  endedAt?: number | null
+  deadline?: number | null
+  /** 领取人数上限；`null` = 不限（真库用 0 表示不限，接口一律折成 null）。 */
+  participantLimit: number | null
+  participantCount: number
+  approvedParticipantCount: number
+  pendingParticipantApprovalCount: number
+  submittedParticipantCount: number
+  pendingReviewCount: number
+  successfulParticipantCount: number
+  failedParticipantCount: number
+  submissionConversionRate: number
+  successRate: number
+  latestSubmissionAt?: number | null
+}
+
+/** `SpaceMyPublishedTask` 的一页。 */
+export type SpaceMyPublishedTasks = {
+  tasks: SpaceMyPublishedTask[]
+}

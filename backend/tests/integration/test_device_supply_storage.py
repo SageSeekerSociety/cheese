@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError
-from app.domain.device.models import DeviceRow, DeviceTopicRow
+from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
@@ -140,72 +140,5 @@ def test_supply_defaults_to_self_hosted_when_omitted(
             )
         ).one()
         assert row.supply == "self_hosted"
-
-    _portal.call(_run)
-
-
-def test_hosted_subtype_migration_backfills_devices_and_topic_visibility(
-    db_session: AsyncSession, _portal: "BlockingPortal"
-):
-    backfill = _load_hosted_backfill()
-    hosted_topic, cloud_topic = uuid.uuid4(), uuid.uuid4()
-
-    async def _run() -> None:
-        # The backfill ran against the schema of its own revision, where a device
-        # still carried a visibility of its own; this transaction is rolled back.
-        await db_session.execute(
-            text(
-                "ALTER TABLE device ADD COLUMN visibility VARCHAR(16)"
-                " NOT NULL DEFAULT 'host'"
-            )
-        )
-        for device_id, supply in (
-            ("legacy-hosted", Supply.self_hosted),
-            ("legacy-cloud", Supply.cloud),
-        ):
-            db_session.add(
-                DeviceRow(
-                    device_id=device_id,
-                    name=device_id,
-                    token=f"tok-{device_id}",
-                    owner_user_id=1,
-                    created_at=datetime.now(UTC),
-                    supply=supply,
-                )
-            )
-        await db_session.flush()
-        db_session.add_all(
-            [
-                DeviceTopicRow(topic_id=hosted_topic, device_id="legacy-hosted"),
-                DeviceTopicRow(topic_id=cloud_topic, device_id="legacy-cloud"),
-            ]
-        )
-        await db_session.flush()
-        report = await db_session.run_sync(
-            lambda session: backfill(session.connection())
-        )
-        hosted_ids = set(
-            (
-                await db_session.execute(text("SELECT device_id FROM hosted_device"))
-            ).scalars()
-        )
-        rows = (
-            await db_session.execute(
-                text("SELECT topic_id, visibility FROM device_topic")
-            )
-        ).all()
-
-        # Only self_hosted devices get a subtype row — that is the split. But BOTH
-        # bindings get their device's visibility copied onto them.
-        assert report == {"hosted_devices": 1, "topic_bindings": 2}
-        assert hosted_ids == {"legacy-hosted"}
-        visibility = {row.topic_id: row.visibility for row in rows}
-        assert visibility[hosted_topic] == "host"
-        # The cloud binding too, and this one is load-bearing: a backfill that
-        # joined through `hosted_device` would leave every cloud topic on the
-        # column's `isolated` default, which is the one value both
-        # `resolve_pinned_device` refuses — stranding every existing
-        # cloud topic the moment this migration ran.
-        assert visibility[cloud_topic] == "host"
 
     _portal.call(_run)

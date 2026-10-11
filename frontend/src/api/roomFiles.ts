@@ -259,9 +259,7 @@ export interface RoomFile {
 
 /** 这个房间的文件区：它自己的东西都在这一处——贴进来的截图、芝士交付的文档、定时
  *  任务交回的结果。最近改的在最前；`truncated` 为真时说清单不是全部。 */
-export function listRoomFiles(
-  topicId: string
-): Promise<{ data: RoomFile[]; total: number; truncated: boolean }> {
+export function listRoomFiles(topicId: string): Promise<{ data: RoomFile[]; total: number; truncated: boolean }> {
   return request(`/topics/${encodeURIComponent(topicId)}/files`)
 }
 

@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Index, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -172,3 +173,36 @@ class AgentSession(UuidPk, Timestamps, Base):
             runtime=location.get("runtime") or {},
             lease=self.work_lease,
         )
+
+
+class AgentEnvironment(Base):
+    """The execution environment one agent works in, in one conversation
+    (``agent.environment``): which sandbox spec, or which self-hosted machine.
+
+    Kept beside the session rows rather than on them: a session row is keyed by
+    harness too, so a change of the project's harness opens a new row, and the
+    agent's environment is its own whichever harness runs it. Written the first
+    time the agent needs one (from the task's, room's or project's default) and
+    whenever someone changes it; read on every tool call that needs hands
+    (``machine/session_work``).
+    """
+
+    __tablename__ = "agent_environments"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_agent_environments_conversation_id",
+        ),
+        primary_key=True,
+    )
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    environment: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Who chose it, as an actor (``identity.actor.Actor``): a sandbox on the
+    # platform's machines is charged to the project, and the platform records
+    # who asked for it. None when it came from a default.
+    chosen_by: Mapped[dict | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

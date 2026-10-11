@@ -214,18 +214,6 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
             "device_id": center,
             "resource_id": str(operation.resource_id),
         }
-    binding = await sql_device_service(session).topic_binding(operation.topic_id)
-    if binding is not None:
-        if (
-            not device_hub.is_online(binding.device_id)
-            or binding.device_id not in inventory
-        ):
-            raise RuntimeError("room's bound device is offline or its inventory failed")
-        entries[(binding.device_id, str(operation.resource_id))] = {
-            "kind": "device",
-            "device_id": binding.device_id,
-            "resource_id": str(operation.resource_id),
-        }
     for device_id, paths in inventory.items():
         for _kind, project, resource in paths:
             if project == str(operation.project_id) and resource in resource_ids:

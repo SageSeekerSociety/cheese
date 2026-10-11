@@ -3,7 +3,7 @@
  *
  * 形状照 `cx_types` 的 `MarketNodes` / `MarketPools` 写（`GET /api/market/nodes`、
  * `GET /api/market/pools` 的回包），少一个键多一个键都在 `vue-tsc` 那里当场红。自有设备
- * 的名字取自 `COMPUTE_DEVICES`（选工作电脑那张表单用的那两台），模型名取自模型管理那一组
+ * 的名字取自 `COMPUTE_DEVICES`（选环境那张表单用的那两台），模型名取自模型管理那一组
  * 的夹具，免得同一台机器、同一个模型在预览站的两处叫两个名字。
  *
  * 条目本身在 `catalogMarket.ts`。
@@ -14,45 +14,45 @@ import { COMPUTE_DEVICES } from './catalogFixtures'
 
 const [LAB, HOME] = COMPUTE_DEVICES
 
-/** 三台节点：平台的云端（没选时落在这里）、在线的实验室工作站、离线的家里那台。 */
+/** 三种规格：平台的标准沙箱（没选时用它）、虚拟机沙箱、成员自己的设备。 */
 export const MARKET_NODES: MarketNodes = {
   nodes: [
     {
-      id: 'cloud',
-      label: '云端环境',
-      kind: 'cloud',
+      id: 'standard',
+      label: '标准沙箱',
+      kind: 'standard',
       online: true,
       current: true,
-      detail: 'sandbox · 12 个会话在跑',
-      description: '平台提供的沙箱，每个会话一台，开箱即用。',
+      detail: '平台的机器 · 12 个会话在跑',
+      description: '每位 AI 队友一个沙箱，在平台的机器上，只看得到自己的工作目录。',
     },
     {
-      id: `device:${LAB.device_id}`,
-      label: LAB.name,
-      kind: 'device',
-      online: LAB.online,
+      id: 'vm',
+      label: '虚拟机沙箱',
+      kind: 'vm',
+      online: true,
       current: false,
-      detail: 'linux/amd64 · 上次心跳 8 秒前',
-      description: '项目授权的自有设备，跑要 GPU 或要读本地数据的任务。',
+      detail: '平台的机器',
+      description: '一整台虚拟机给一位 AI 队友：能跑 Docker、KVM、装内核模块。',
     },
     {
-      id: `device:${HOME.device_id}`,
-      label: HOME.name,
-      kind: 'device',
-      online: HOME.online,
+      id: 'devices_of',
+      label: '自己的设备',
+      kind: 'devices_of',
+      online: LAB.online || HOME.online,
       current: false,
-      detail: 'darwin/arm64 · 上次心跳 3 小时前',
-      description: '连不上时不接新任务，回来之后自动重新上线。',
+      detail: `${LAB.name} 在线`,
+      description: '沙箱放在项目成员自己接入的电脑上。',
     },
   ],
   active_turns_total: 7,
-  current_provider: 'cloud',
+  current_provider: 'standard',
 }
 
 /** 一台节点都没有：部署还没配任何算力。 */
 export const MARKET_NODES_EMPTY: MarketNodes = { nodes: [], active_turns_total: 0, current_provider: '' }
 
-/** 目录：两个 AI 模型（一个默认、一个暂未开通）和三种工作电脑。 */
+/** 目录：两个 AI 模型（一个默认、一个暂未开通）和三种沙箱规格。 */
 export const MARKET_POOLS: MarketPools = {
   ai: [
     {
@@ -79,32 +79,32 @@ export const MARKET_POOLS: MarketPools = {
   compute: [
     {
       kind: 'compute',
-      id: 'cloud',
-      label: '云端环境',
+      id: 'standard',
+      label: '标准沙箱',
       tier: 'included',
-      price: '平台补贴',
-      description: '每个会话一个沙箱；要 Docker 时可换成整台云虚拟机。',
+      price: '按时长计费',
+      description: '每位 AI 队友一个沙箱，在平台的机器上。',
       available: true,
       default: true,
     },
     {
       kind: 'compute',
-      id: 'device',
-      label: '自有设备',
-      tier: 'byo',
-      price: '免费',
-      description: '接入你自己的电脑，任务在它上面跑。',
-      available: true,
+      id: 'vm',
+      label: '虚拟机沙箱',
+      tier: 'included',
+      price: '按规格和时长计费',
+      description: '一整台虚拟机给一位 AI 队友：能跑 Docker、KVM、装内核模块。',
+      available: false,
       default: false,
     },
     {
       kind: 'compute',
-      id: 'gpu',
-      label: 'GPU 云主机',
-      tier: 'testing',
-      price: '内测中',
-      description: '带显卡的整台机器，跑训练和推理。',
-      available: false,
+      id: 'devices_of',
+      label: '自己的设备',
+      tier: 'byo',
+      price: '不收费',
+      description: '沙箱放在项目成员自己接入的电脑上。',
+      available: true,
       default: false,
     },
   ],
