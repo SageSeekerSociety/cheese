@@ -90,6 +90,83 @@ async def main():
                 assert caught is error
         assert records[-1]["category"] == expected
         assert "secret" not in json.dumps(records)
+    # A refusal names the limit behind it, never the message, which names the key.
+    for message, expected in (
+        (
+            "Rate limit exceeded for api_key: secret-key-hash. Limit type: "
+            "max_parallel_requests. Current limit: 3, Remaining: 0. Limit resets at: "
+            "secret time",
+            {"limit_type": "max_parallel_requests", "limit": 3, "remaining": 0},
+        ),
+        (
+            "No deployments available for selected model, secret detail",
+            {"limit_type": "upstream_no_deployment"},
+        ),
+        ("secret unrecognised refusal", {}),
+    ):
+        response = httpx.Response(
+            429,
+            json={"error": {"type": "rate_limit_error", "message": message}},
+            request=httpx.Request("POST", "https://secret.invalid"),
+        )
+        error = httpx.HTTPStatusError(
+            "secret HTTP error", request=response.request, response=response
+        )
+        records = []
+
+        async def refuse(*args, **kwargs):
+            raise error
+
+        with patch.object(
+            timing.logger, "info", lambda _, value: records.append(json.loads(value))
+        ):
+            try:
+                await timing.trace_post(refuse)(
+                    None, logging_obj=SimpleNamespace(litellm_call_id="refused")
+                )
+            except httpx.HTTPStatusError:
+                pass
+        end = records[-1]
+        assert end["category"] == "rate_limit", end
+        assert {k: end[k] for k in expected} == expected, end
+        assert not {"limit_type", "limit", "remaining"} - set(expected) & set(end), end
+        assert "secret" not in json.dumps(records)
+    # Both records of a call say which deployment, group, conversation and attempt.
+    for session, logged in (
+        ("0f1e2d3c-1111-2222-3333-444455556666", "0f1e2d3c-1111-2222-3333-444455556666"),
+        ("secret value\r\nx: y", None),
+    ):
+        records = []
+        attempt = SimpleNamespace(
+            litellm_call_id="attributed",
+            litellm_params={
+                "model_info": {"id": "deployment-9"},
+                "metadata": {
+                    "model_group": "deepseek-flash",
+                    "session_id": session,
+                    "attempted_retries": 1,
+                    "attempted_fallbacks": 0,
+                },
+            },
+        )
+
+        async def served(*args, **kwargs):
+            return httpx.Response(200, json={}, request=httpx.Request("POST", "https://secret.invalid"))
+
+        with patch.object(
+            timing.logger, "info", lambda _, value: records.append(json.loads(value))
+        ):
+            await timing.trace_post(served)(None, logging_obj=attempt)
+        for record in (records[0], records[-1]):
+            assert record["deployment"] == "deployment-9", record
+            assert record["model_group"] == "deepseek-flash", record
+            assert record["attempted_retries"] == 1, record
+            assert record["attempted_fallbacks"] == 0, record
+            assert record.get("session") == logged, record
+        assert [r["phase"] for r in records][0] == "request_start"
+        assert records[-1]["phase"] == "request_end"
+        assert "secret" not in json.dumps(records)
+    print("Refusals name their limit; records name deployment, group, session, attempt")
     unread = httpx.Response(429, stream=Body("complete"))
     assert timing.failure_fields(response=unread)["category"] == "rate_limit"
     assert not unread.is_stream_consumed
