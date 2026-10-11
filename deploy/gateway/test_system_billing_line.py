@@ -61,7 +61,10 @@ async def main():
     base = f"http://127.0.0.1:{server.server_address[1]}"
     router = Router(
         model_list=[
-            {"model_name": "open-model", "litellm_params": {"model": "anthropic/m", "api_base": base, "api_key": "k"}},
+            {"model_name": "open-model", "litellm_params": {"model": "anthropic/m", "api_base": base, "api_key": "k", "order": 1}},
+            # deepseek-flash's shape: a self-hosted copy, then a provider's own
+            # API with no api_base. Neither is Anthropic.
+            {"model_name": "open-model", "litellm_params": {"model": "deepseek/m", "api_key": "k", "order": 2}},
             {"model_name": "claude", "litellm_params": {"model": "anthropic/claude-x", "api_key": "k"}},
             {"model_name": "claude-pinned", "litellm_params": {"model": "anthropic/claude-x", "api_base": "https://api.anthropic.com", "api_key": "k"}},
             {"model_name": "mixed", "litellm_params": {"model": "anthropic/m", "api_base": base, "api_key": "k"}},
