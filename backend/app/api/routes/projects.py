@@ -58,10 +58,6 @@ from app.domain.project.protection import (
     branch_protection_of,
     github_repo_snapshot,
 )
-from app.domain.project.repositories import (
-    ProjectGitInstallationRepository,
-    ProjectRepository,
-)
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
     ProjectCreate,
@@ -246,7 +242,7 @@ async def list_projects(
     else:
         who = await resolver.resolve()
         if who.authenticated:
-            projects = await ProjectRepository(db).list_visible_to(
+            projects = await service.list_visible_to(
                 handle=who.handle, user_id=who.user_id
             )
             total = len(projects)
@@ -299,7 +295,7 @@ async def projects_for_task(
     """
     actor = await resolver.resolve()
     await resolver.authorize_task(actor, task_id=task_id)
-    projects = await ProjectRepository(db).list_for_external_task(task_id)
+    projects = await ProjectService(db).list_for_external_task(task_id)
     items = await _project_payloads(db, projects)
     return ok(page(items, len(items)))
 
@@ -319,7 +315,7 @@ async def project_for_team(
     """
     actor = await resolver.resolve()
     await resolver.authorize_team(actor, team_id=team_id)
-    project = await ProjectRepository(db).get_by_team(team_id)
+    project = await ProjectService(db).get_by_team(team_id)
     data = await _project_payload(db, project) if project is not None else None
     return ok(data)
 
@@ -775,7 +771,7 @@ async def require_project_steward(
     if not actor.authenticated:
         raise NotFoundError("Project not found")
     handle = actor.handle
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     if await MemberService(db).manages(project_id, handle):
@@ -873,7 +869,7 @@ async def set_project_owner(
     handle = str(body.get("owner_handle") or "").strip()
     if not handle:
         raise ValidationError(say("ownerHandleRequired"))
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     team_changed_from: int | None = None
@@ -979,13 +975,13 @@ async def get_branch_protection(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     bp = branch_protection_of(project)
 
     await follow_github_rename(project_id, db)
-    installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
+    installation = await ProjectService(db).installation_for_project(project_id)
     if installation is None:
         merge_method, gh = "squash", GITHUB_UNBOUND
     else:
@@ -1036,13 +1032,13 @@ async def set_branch_protection(
     never dual-written. Who may change review policy is the steward dependency's
     question: the project's owner, or an owner/admin of its team.
     """
-    repo = ProjectRepository(db)
-    project = await repo.get(project_id)
+    service = ProjectService(db)
+    project = await service.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     # What is written here is read from what is stored (the current rule, merged
     # with the body), so the read has to happen under the lock.
-    await repo.lock_settings(project)
+    await service.lock_settings(project)
     new_settings = {**(project.settings or {})}
     if any(key in body for key in _BRANCH_PROTECTION_KEYS):
         try:

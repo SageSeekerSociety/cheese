@@ -244,7 +244,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.notifications_flat", "app.domain.user.repositories"),
         ("app.api.routes.project_environment", "app.domain.machine.repositories"),
         ("app.api.routes.project_environment", "app.domain.user.repositories"),
-        ("app.api.routes.projects", "app.domain.project.repositories"),
         ("app.api.routes.questions", "app.domain.answers.repositories"),
         ("app.api.routes.questions", "app.domain.discussion.repositories"),
         ("app.api.routes.questions", "app.domain.questions.repositories"),
@@ -292,7 +291,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # users.py 名下的三条 repository 债按代码现在住的地方重新入账：账户读写、用户
         # 目录查询、用户偏好各自摸自己摸的那几条。拆模块没有新增跨包的边，也没还掉任何
         # 一条，只是发起方换了名字，所以按同一笔债入账（记法同下面的 users_team）。
-        ("app.api.routes.users.account", "app.domain.user.repositories"),
         ("app.api.routes.users.directory", "app.domain.answers.repositories"),
         ("app.api.routes.users.directory", "app.domain.questions.repositories"),
         ("app.api.routes.users.directory", "app.domain.user.repositories"),
