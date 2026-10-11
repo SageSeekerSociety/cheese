@@ -630,7 +630,7 @@ const navSources = computed<NavSources>(() => ({
   projectMenu,
   awaitingCount: awaitingCount.value,
   projectAwaitingCount: (id) => awaitingByProject.value[id] ?? 0,
-  projectLastTopic: (id) => workspace.lastTopicIdFor(id),
+  projectLastPlace: (id) => workspace.placeFor(id),
   unreadActivity: unreadActivity.value > 0,
 }))
 

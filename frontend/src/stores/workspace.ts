@@ -52,13 +52,26 @@ import { projectsQuery, refreshProjects } from '@/query/projects'
 // 侧栏能常驻、内容区随便换页的原因。
 const LAYOUT_KEY = 'cheesex.layout'
 
+/**
+ * 上次在某个项目里待的地方：一个任务页，或者一个频道。
+ *
+ * `room` 是它所在的频道。记着的是任务时，任务本身在频道清单里看不见（任务是另一份
+ * 清单，很沉，rail 不为它多发一次请求），但频道不见了就说明这个地方已经打不开——
+ * 所以任务的这一种要连频道一起记，读频道清单时校验的就是它。
+ */
+export interface RememberedPlace {
+  kind: 'task' | 'channel'
+  id: string
+  room: string
+}
+
 interface StoredLayout {
   chatPct?: number
   /** 右侧面板开着还是收着，这个人自己选过一次之后就照它来；没选过按宽度定。 */
   panelOpen?: boolean
   lastProjectId?: string
-  /** 每个项目上次打开的话题 id：回到那个项目时，rail 那一格直接落回这个房间。 */
-  lastTopicByProject?: Record<string, string>
+  /** 每个项目上次待的地方：回到那个项目时，rail 那一格直接落回它。 */
+  lastPlaceByProject?: Record<string, RememberedPlace>
 }
 
 function loadLayout(): StoredLayout {
@@ -70,15 +83,18 @@ function loadLayout(): StoredLayout {
   }
 }
 
-// 存进来的这份是整个浏览器一份，可能是老版本写的、也可能被人手改过：只留下
-// projectId → topicId 都是字符串的那些，别的当没记过。
-function validTopicMap(value: unknown): Record<string, string> {
+// 存进来的这份是整个浏览器一份，可能是老版本写的、也可能被人手改过：只留下三项
+// 都齐、而且都说得通的那些，别的当没记过。
+function validPlaceMap(value: unknown): Record<string, RememberedPlace> {
   if (typeof value !== 'object' || value === null) return {}
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, string] => {
-      return typeof entry[1] === 'string'
-    })
-  )
+  const places: Record<string, RememberedPlace> = {}
+  for (const [projectKey, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const { kind, id, room } = raw as Partial<RememberedPlace>
+    if ((kind !== 'task' && kind !== 'channel') || typeof id !== 'string' || typeof room !== 'string') continue
+    places[projectKey] = { kind, id, room }
+  }
+  return places
 }
 
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
@@ -184,9 +200,9 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const stored = loadLayout()
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
   const panelPref = ref<boolean | null>(typeof stored.panelOpen === 'boolean' ? stored.panelOpen : null)
-  // 每个项目上次打开的话题。rail 的项目格子用它落回那个房间，而不是每次都落在
-  // 项目首页（每天都走的主路径不该多加一跳）。
-  const lastTopicByProject = ref<Record<string, string>>(validTopicMap(stored.lastTopicByProject))
+  // 每个项目上次待的地方。rail 的项目格子用它落回那里，而不是每次都落在项目首页
+  //（每天都走的主路径不该多加一跳）。
+  const lastPlaceByProject = ref<Record<string, RememberedPlace>>(validPlaceMap(stored.lastPlaceByProject))
   function persistLayout() {
     localStorage.setItem(
       LAYOUT_KEY,
@@ -194,7 +210,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
         chatPct: chatPct.value,
         panelOpen: panelPref.value ?? undefined,
         lastProjectId: projectId.value ?? undefined,
-        lastTopicByProject: lastTopicByProject.value,
+        lastPlaceByProject: lastPlaceByProject.value,
       })
     )
   }
@@ -207,28 +223,35 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     persistLayout()
   }
 
-  /** 记住正待着的这个房间是**哪个项目**的：回到项目时 rail 那一格落回它。 */
-  function rememberTopic(projectKey: string, topicId: string) {
-    if (!projectKey || !topicId || lastTopicByProject.value[projectKey] === topicId) return
-    lastTopicByProject.value = { ...lastTopicByProject.value, [projectKey]: topicId }
+  /**
+   * 记住正待着的这个**地方**是哪个项目的：回到项目时 rail 那一格落回它。
+   *
+   * 在任务页上记的是那件任务——只记它所在的频道，回来就只到频道、到不了任务，
+   * 而那正是「回到我昨天做的那件事」差的那一步。
+   */
+  function rememberPlace(projectKey: string, place: RememberedPlace) {
+    if (!projectKey || !place.id || !place.room) return
+    const held = lastPlaceByProject.value[projectKey]
+    if (held && held.kind === place.kind && held.id === place.id && held.room === place.room) return
+    lastPlaceByProject.value = { ...lastPlaceByProject.value, [projectKey]: place }
     persistLayout()
   }
 
   /**
-   * 这个项目上次打开的话题；不在了就交回 null，落回项目首页。
+   * 这个项目上次待的地方；没记过就交回 null，落回项目首页。
    *
-   * 「还在不在」在读到这个项目的清单时校验：记着的那个话题被删了、或被收成了别的
-   * 房间，就不该再把人送进一个打不开的房间。
+   * 「还在不在」在读到这个项目的频道清单时校验：记着的那件任务所在频道被删了、或被
+   * 收成了别的房间，就不该再把人送进一个打不开的房间。
    */
-  function lastTopicIdFor(projectKey: string): string | null {
-    return lastTopicByProject.value[projectKey] ?? null
+  function placeFor(projectKey: string): RememberedPlace | null {
+    return lastPlaceByProject.value[projectKey] ?? null
   }
 
-  function forgetRememberedTopic(projectKey: string) {
-    if (!(projectKey in lastTopicByProject.value)) return
-    const next = { ...lastTopicByProject.value }
+  function forgetPlace(projectKey: string) {
+    if (!(projectKey in lastPlaceByProject.value)) return
+    const next = { ...lastPlaceByProject.value }
     delete next[projectKey]
-    lastTopicByProject.value = next
+    lastPlaceByProject.value = next
     persistLayout()
   }
 
@@ -296,10 +319,10 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       // 项目归档了没有，看它的总览房间：总览只会随项目一起归档（单独归档它会被后端拒），
       // 所以这一位不用多发一个请求就读得出来。
       if (list.some((topic) => topic.kind === 'root' && topic.status === 'archived')) denied.value = 'archived'
-      // 读到的清单里没有记着的那个话题了：忘掉它，rail 这一格回落项目首页。
-      const remembered = lastTopicByProject.value[projectId.value]
-      if (remembered && list.length > 0 && !list.some((row) => row.id === remembered)) {
-        forgetRememberedTopic(projectId.value)
+      // 读到的清单里没有记着的那个地方了：忘掉它，rail 这一格回落项目首页。
+      const remembered = lastPlaceByProject.value[projectId.value]
+      if (remembered && list.length > 0 && !list.some((row) => row.id === remembered.room)) {
+        forgetPlace(projectId.value)
       }
     }
   )
@@ -512,10 +535,11 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const topic = topics.value.find((row) => row.id === topicId)
     // 归档的正是 rail 记着的那一个：就地忘掉（归档的话题还在清单里，读清单时的检查
     // 找不到它）。失败时这一步要退回去。
-    const wasRemembered = status === 'archived' && !!topic && lastTopicByProject.value[topic.project_id] === topicId
+    const held = topic ? lastPlaceByProject.value[topic.project_id] : undefined
+    const wasRemembered = status === 'archived' && !!topic && held?.room === topicId
     if (topic) {
       await patchRows(topicId, (row) => ({ ...row, status }))
-      if (wasRemembered) forgetRememberedTopic(topic.project_id)
+      if (wasRemembered) forgetPlace(topic.project_id)
     }
     try {
       const updated = await write()
@@ -524,7 +548,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     } catch (e) {
       if (topic) {
         await patchRows(topicId, (row) => ({ ...row, status: topic.status }))
-        if (wasRemembered) rememberTopic(topic.project_id, topicId)
+        if (wasRemembered && held) rememberPlace(topic.project_id, held)
       }
       reportError(e, failed)
     }
@@ -619,8 +643,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     renameTopic,
     archive,
     unarchive,
-    rememberTopic,
-    lastTopicIdFor,
+    rememberPlace,
+    placeFor,
     create,
     upgradeMessage,
   }
