@@ -8,6 +8,7 @@
 // doing. The two animation sets (`arrived` / `delivered`) are read
 // here as class bindings and cleared by the row's own animationend.
 import type { Ref } from 'vue'
+import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { AgentFace } from '../../lib/agentFace'
 import type { TaskLine } from '../../lib/channelTasks'
@@ -86,6 +87,10 @@ const props = defineProps<{
   typing: { block: Block; edge: RunEdge }[]
   editingId: string | null
   editSaving: boolean
+  /** 编辑那条消息时的 @ 候选：和房间输入区同一份名册、同一份话题表。
+   *  只 @ 人、话题和群播——编辑框不放附件，所以没有资料库那一级。 */
+  mentionPool: MentionPoolEntry[]
+  topicList: Topic[]
   /** Bound with `:ref`, so the pane the panel measures is this one. */
   scrollRef: Ref<HTMLElement | null>
   contentRef: Ref<HTMLElement | null>
@@ -516,6 +521,8 @@ const rowLabels = computed(() =>
               :editing="editingId === m.id"
               :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
               :saving="editSaving"
+              :mention-pool="mentionPool"
+              :topic-list="topicList"
               :pinnable="pinnable"
               :pinned="!!pinnedIds?.has(m.id)"
               :data-row-id="m.id"
