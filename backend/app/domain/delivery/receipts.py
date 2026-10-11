@@ -14,7 +14,6 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.errors import ValidationError
 from app.domain.block.input_effects import apply_input_echo, consume_input_blocks
 from app.domain.block.models import Block
-from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_holds import unread_input_with_over_work
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
@@ -48,7 +47,7 @@ async def _mention_summon_block(session, identity, delivery) -> uuid.UUID | None
     except ValueError:
         return None
     # The platform owns this mark; the message must be there for it to land on.
-    if await BlockRepository(session).get(block_id) is None:
+    if await session.get(Block, block_id) is None:
         return None
     return block_id
 
