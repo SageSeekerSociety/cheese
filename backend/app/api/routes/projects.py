@@ -2,11 +2,13 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Protocol
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
@@ -49,7 +51,6 @@ from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.forge import follow_github_rename
-from app.domain.project.models import Project
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
     GITHUB_UNBOUND,
@@ -57,10 +58,6 @@ from app.domain.project.protection import (
     apply_branch_protection_update,
     branch_protection_of,
     github_repo_snapshot,
-)
-from app.domain.project.repositories import (
-    ProjectGitInstallationRepository,
-    ProjectRepository,
 )
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
@@ -94,10 +91,25 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
-def _shelled(project: Project, shell: Shell, team: TeamLabel | None) -> dict:
+# The route reads project attributes returned by ProjectService. Keep the route
+# independent from the ORM class; the members are declared ``Mapped[...]``
+# exactly as the model declares them, because pyright matches a caller's model
+# against these *class* members — a plain ``int`` here would not accept
+# ``Mapped[int]``. Reading one off an instance still yields the wrapped value.
+# Same shape as ``SpaceRow`` in ``routes/spaces.py``.
+class ProjectRow(Protocol):
+    id: Mapped[uuid.UUID]
+    name: Mapped[str]
+    slug: Mapped[str]
+    owner_handle: Mapped[str | None]
+    team_id: Mapped[int]
+    external_task_id: Mapped[int | None]
+
+
+def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
     """One project's wire payload: the 壳 it runs under, its team's handle and name.
 
-    Neither is a column on `Project`, so neither can come from `model_validate`:
+    Neither is a column on a project row, so neither can come from `model_validate`:
     the 壳 is resolved from the project's own settings, its 赛题 and that 赛题's
     项目集, and the handle is what links to the team go by. Every route that
     returns a project goes through `_project_payloads`, or the frontend would
@@ -117,7 +129,9 @@ def _shelled(project: Project, shell: Shell, team: TeamLabel | None) -> dict:
     )
 
 
-async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict]:
+async def _project_payloads(
+    db: DbSession, projects: Sequence[ProjectRow]
+) -> list[dict]:
     """Every project's payload, without a query per project."""
     shells = await effective_shells(db, projects)
     teams = await team_service(db).labels_of(
@@ -129,7 +143,7 @@ async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict
     ]
 
 
-async def _project_payload(db: DbSession, project: Project) -> dict:
+async def _project_payload(db: DbSession, project: ProjectRow) -> dict:
     return (await _project_payloads(db, [project]))[0]
 
 
@@ -246,7 +260,7 @@ async def list_projects(
     else:
         who = await resolver.resolve()
         if who.authenticated:
-            projects = await ProjectRepository(db).list_visible_to(
+            projects = await service.list_visible_to(
                 handle=who.handle, user_id=who.user_id
             )
             total = len(projects)
@@ -299,7 +313,7 @@ async def projects_for_task(
     """
     actor = await resolver.resolve()
     await resolver.authorize_task(actor, task_id=task_id)
-    projects = await ProjectRepository(db).list_for_external_task(task_id)
+    projects = await ProjectService(db).list_for_external_task(task_id)
     items = await _project_payloads(db, projects)
     return ok(page(items, len(items)))
 
@@ -319,7 +333,7 @@ async def project_for_team(
     """
     actor = await resolver.resolve()
     await resolver.authorize_team(actor, team_id=team_id)
-    project = await ProjectRepository(db).get_by_team(team_id)
+    project = await ProjectService(db).get_by_team(team_id)
     data = await _project_payload(db, project) if project is not None else None
     return ok(data)
 
@@ -775,7 +789,7 @@ async def require_project_steward(
     if not actor.authenticated:
         raise NotFoundError("Project not found")
     handle = actor.handle
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     if await MemberService(db).manages(project_id, handle):
@@ -873,7 +887,7 @@ async def set_project_owner(
     handle = str(body.get("owner_handle") or "").strip()
     if not handle:
         raise ValidationError(say("ownerHandleRequired"))
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     team_changed_from: int | None = None
@@ -929,7 +943,9 @@ async def set_project_owner(
     return ok(await _project_payload(db, project))
 
 
-async def _project_is_personal_to_its_owner(db: AsyncSession, project: Project) -> bool:
+async def _project_is_personal_to_its_owner(
+    db: AsyncSession, project: ProjectRow
+) -> bool:
     """Whether the project sits in its own owner's personal team.
 
     Then its team is a one-person team that exists only to hold this person's
@@ -979,13 +995,13 @@ async def get_branch_protection(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     bp = branch_protection_of(project)
 
     await follow_github_rename(project_id, db)
-    installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
+    installation = await ProjectService(db).installation_for_project(project_id)
     if installation is None:
         merge_method, gh = "squash", GITHUB_UNBOUND
     else:
@@ -1036,13 +1052,13 @@ async def set_branch_protection(
     never dual-written. Who may change review policy is the steward dependency's
     question: the project's owner, or an owner/admin of its team.
     """
-    repo = ProjectRepository(db)
-    project = await repo.get(project_id)
+    service = ProjectService(db)
+    project = await service.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     # What is written here is read from what is stored (the current rule, merged
     # with the body), so the read has to happen under the lock.
-    await repo.lock_settings(project)
+    await service.lock_settings(project)
     new_settings = {**(project.settings or {})}
     if any(key in body for key in _BRANCH_PROTECTION_KEYS):
         try:

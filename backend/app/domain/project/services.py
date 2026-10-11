@@ -13,8 +13,11 @@ from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.documents import seed
 from app.domain.living_doc.services import DocumentJournal, Documents
-from app.domain.project.models import AiMode, Project
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.models import AiMode, Project, ProjectGitInstallation
+from app.domain.project.repositories import (
+    ProjectGitInstallationRepository,
+    ProjectRepository,
+)
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.teaching import protocol_for_task
 from app.domain.team.services import team_service
@@ -64,6 +67,7 @@ class ProjectService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = ProjectRepository(session)
+        self._installations = ProjectGitInstallationRepository(session)
         self._topics = TopicRepository(session)
         self._ledger = Ledger(session)
         self._members = TopicMemberService(session)
@@ -374,6 +378,36 @@ class ProjectService:
     async def list_for_team(self, team_id: int) -> list[Project]:
         """A team's 项目 page, newest first."""
         return await self._repo.list_by_team(team_id)
+
+    async def list_visible_to(
+        self, *, handle: str | None, user_id: int | None
+    ) -> list[Project]:
+        """这个人有份的项目（``/projects`` 那条侧边栏列表）。
+
+        谁算「有份」——他拥有的、在名册上的、或所属团队的——全写在
+        ``ProjectRepository.list_visible_to`` 里；路由走这道门，不自己构造仓储
+        （架构守卫）。
+        """
+        return await self._repo.list_visible_to(handle=handle, user_id=user_id)
+
+    async def list_for_external_task(self, task_id: int) -> list[Project]:
+        """这条赛题开出来的每个项目（``/projects/by-task``）。"""
+        return await self._repo.list_for_external_task(task_id)
+
+    async def get_by_team(self, team_id: int) -> Project | None:
+        """这个知是团队的那个 AI 工作台项目（P4 原生绑定），最新的一条；没有是
+        None（``/projects/by-team`` 用它显示/隐藏「AI 工作台」入口）。"""
+        return await self._repo.get_by_team(team_id)
+
+    async def installation_for_project(
+        self, project_id: uuid.UUID
+    ) -> ProjectGitInstallation | None:
+        """这个项目绑定的 GitHub 安装，没绑是 None。
+
+        ``branch-protection`` 那一页要读它绑的仓库名才问这里，不自己构造
+        ``ProjectGitInstallationRepository``（架构守卫）。
+        """
+        return await self._installations.get_by_project(project_id)
 
     async def _accept_task_protocol(self, project: Project, task_id: int) -> None:
         """Apply the 赛题's 机构协议 to a freshly created project (#370).

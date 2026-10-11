@@ -48,6 +48,16 @@ def _metadata_map_of(notification: Notification) -> dict[str, Any]:
     return metadata_raw if isinstance(metadata_raw, dict) else {}
 
 
+def notification_type_of(value: str) -> NotificationType:
+    """``/notifications?type=`` 那个名字对应的 ``NotificationType``。
+
+    未知的名字抛 ``ValueError``，调用方把它翻成 400。收在这里，路由就不必为解析这
+    一个值 import ``notification.models``（守卫见
+    ``tests/unit/test_domain_import_guard.py``）。
+    """
+    return NotificationType(value)
+
+
 class NotificationQueryService:
     """Python port of notification query operations.
 
@@ -64,6 +74,19 @@ class NotificationQueryService:
         self._resolver_map: dict[str, EntityInfoResolver] = {
             r.supported_entity_type(): r for r in (resolvers or [])
         }
+
+    @classmethod
+    def from_session(
+        cls,
+        session: AsyncSession,
+        resolvers: Sequence[EntityInfoResolver] | None = None,
+    ) -> "NotificationQueryService":
+        """拿 session 直接造一个 —— 给**别的领域**用。
+
+        接这个频道的站内信读者（HTTP 路由、别的领域）不该知道底下的 repository 叫
+        什么、怎么造：那一步是跨领域摸 repository，守卫拦的就是它。
+        """
+        return cls(NotificationRepository(session), resolvers=resolvers)
 
     async def get_notification_by_id_for_current_user(
         self, user_id: int, notification_id: int

@@ -29,8 +29,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.conversation.services import of_room
-from app.domain.machine.models import MachineStatus
-from app.domain.machine.repositories import CloudHostRepository
+from app.domain.machine.services import HostPool, host_failed
 from app.domain.machine.session_reports import leases_on_peoples_devices
 from app.domain.membership.roster import roster
 from app.domain.membership.services import MemberService
@@ -187,17 +186,14 @@ async def get_room_environment(
     leases = await leases_on_peoples_devices(db, topic_id)
     lease = leases[0] if leases else None
     if lease is None:
-        hosts = [
-            host
-            for _home, host in await CloudHostRepository(db).room_homes(
-                topic_id, str(topic.resource_id or topic.id)
-            )
-        ]
+        hosts = await HostPool(db).room_hosts(
+            topic_id, str(topic.resource_id or topic.id)
+        )
         if not hosts:
             # No sandbox is placed until a session requests execution. A chat
             # message alone is not a pending placement.
             state = {"state": "unbound"}
-        elif any(host.status == MachineStatus.error for host in hosts):
+        elif any(host_failed(host) for host in hosts):
             log = say("envSandboxFailed")
             state = {"state": "failed", "log": log, **notice_keys(log=log)}
         else:

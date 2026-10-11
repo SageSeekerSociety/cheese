@@ -2,7 +2,7 @@
 
 import shutil
 import uuid
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
@@ -21,6 +21,7 @@ from app.api.message_effects import announce_edited_message
 from app.api.response import ok, page
 from app.api.room_task_rows import tasks_under_blocks
 from app.api.routes.projects import rail_tasks
+from app.api.routes.topics_rows import CardRow, TopicRow
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
 from app.core.db import get_db
@@ -51,8 +52,7 @@ from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
-from app.domain.review.models import AcceptCard
-from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
@@ -63,13 +63,6 @@ from app.domain.room_task.services import (
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, thread_opening, threads_of_rooms
-from app.domain.topic.models import RoomCleanup, Topic
-from app.domain.topic.repositories import (
-    SortOrder,
-    TopicProgressRepository,
-    TopicRepository,
-    TopicSortField,
-)
 from app.domain.topic.schemas import (
     CheckResultIn,
     LockIn,
@@ -78,7 +71,12 @@ from app.domain.topic.schemas import (
     TopicCreate,
     TopicOut,
 )
-from app.domain.topic.services import TopicRelevance, TopicService
+from app.domain.topic.services import (
+    SortOrder,
+    TopicRelevance,
+    TopicService,
+    TopicSortField,
+)
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
@@ -178,7 +176,7 @@ def _asks_me(
     return {tid for tid, who in asked.items() if who == viewer}
 
 
-async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[AcceptCard]:
+async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[CardRow]:
     """这些房间（连同名下的活）上还没结算的验收卡，一次查完。
 
     房间自己那张（`_own_cards`）和「卡停在检查红上」（`_stuck_on_checks`）都从
@@ -191,14 +189,14 @@ async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[Accep
     if not room_ids:
         return []
     # 结算过的也带上最近一周的：「退回了还没重递」要靠它看出来（`_stuck_on_checks`）。
-    return await AcceptCardRepository(db).list_recent_for_places(
+    return await AcceptService(db).list_recent_for_places(
         room_ids,
         open_statuses=archive.OPEN_CARD_STATUSES,
         settled_since=datetime.now(UTC) - REPLY_LOOKBACK,
     )
 
 
-def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
+def _own_cards(cards: Sequence[CardRow]) -> dict[uuid.UUID, CardRow]:
     """每个房间**自己**那张还没结算的验收卡。
 
     `task_id is None` 才是房间自己的卡：一条活递的卡把房间记在 `topic_id` 上，不
@@ -212,13 +210,13 @@ def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
     }
 
 
-def _latest_per_place(cards: list[AcceptCard]) -> dict[tuple, AcceptCard]:
+def _latest_per_place(cards: Sequence[CardRow]) -> dict[tuple, CardRow]:
     """同一个地方（房间自己，或某一条活）只留最新那张：旧卡被新卡顶掉后可能还没
     结算，它说的不代表现在。"""
     return {(c.topic_id, c.task_id): c for c in cards}
 
 
-def _stuck_on_checks(cards: list[AcceptCard]) -> dict[uuid.UUID, StuckCard]:
+def _stuck_on_checks(cards: Sequence[CardRow]) -> dict[uuid.UUID, StuckCard]:
     """房间（连同名下的活）里，最新那张卡停在「检查红 / 冲突，要 AI 修」上的。
 
     同一个地方（房间自己，或某一条活）只看最新那张：旧卡被新卡顶掉后可能还没结算，
@@ -233,11 +231,11 @@ def _stuck_on_checks(cards: list[AcceptCard]) -> dict[uuid.UUID, StuckCard]:
 
 
 def _topic_out(
-    topic: Topic,
+    topic: TopicRow,
     running_ids: set[uuid.UUID],
     last_activity: dict[uuid.UUID, datetime],
     relevance: dict[uuid.UUID, TopicRelevance] | None = None,
-    cards: dict[uuid.UUID, AcceptCard] | None = None,
+    cards: Mapping[uuid.UUID, CardRow] | None = None,
     now: datetime | None = None,
     managed_ids: set[uuid.UUID] | None = None,
     asked: Mapping[uuid.UUID, str | None] | None = None,
@@ -401,7 +399,7 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
     projects = await ProjectRepository(db).list_visible_to(
         handle=who.handle, user_id=who.user_id
     )
-    topics = await TopicRepository(db).names_in_projects(
+    topics = await TopicService(db).names_in_projects(
         [p.id for p in projects], viewer=who.handle
     )
     return ok(
@@ -815,7 +813,7 @@ async def topic_usage(
 _GATE_OUTPUT_TAIL = 2000
 
 
-def _card_snapshot(card: AcceptCard) -> dict:
+def _card_snapshot(card: CardRow) -> dict:
     return {
         "id": str(card.id),
         "status": str(card.status),
@@ -869,10 +867,9 @@ async def topic_status(
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    filed, _ = await AcceptService(db).list_for_topic(place.room_id)
     cards = [
-        card
-        for card in await AcceptCardRepository(db).list_for_topic(place.room_id)
-        if place.task is None or card.task_id == place.task.id
+        card for card in filed if place.task is None or card.task_id == place.task.id
     ]
     credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
@@ -1042,7 +1039,7 @@ async def write_topic_progress(
     if plans_the_turn:
         work = runner.live_work_for_topic(place.conversation_id)
         turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-        await TopicProgressRepository(db).save(
+        await TopicService(db).save_progress(
             place.conversation_id, items, turn_id=turn_id
         )
         await db.commit()
@@ -1302,9 +1299,7 @@ async def cleanup_status(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id, enforce=True
     )
-    operation = (
-        await db.get(RoomCleanup, topic.cleanup_id) if topic.cleanup_id else None
-    )
+    operation = await TopicService(db).cleanup_operation(topic)
     if operation is None:
         return ok({"state": "not_scheduled"})
     return ok(

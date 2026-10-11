@@ -12,7 +12,7 @@
 
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,9 +36,7 @@ from app.domain.notification.services import (
     asks_for_decision,
 )
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review import archive
-from app.domain.review.models import AcceptCard
-from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.services import AcceptService
 from app.domain.room_task import awaiting, presentation
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.thread.services import onto_rooms, threads_of_rooms
@@ -70,18 +68,16 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 async def _room_cards(
     db: AsyncSession, topic_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, AcceptCard]:
+) -> dict[uuid.UUID, Any]:
     """每个房间**自己**那张还没结算的验收卡。
 
     `task_id is None` 才是房间自己的：一条活递的卡把房间记在 `topic_id` 上，不过滤
     的话，一条活在等验收会让它上面那个房间也显示成等验收。哪些状态算「还没结算」
-    不在这里数 —— 那张表是 `review/archive.py` 维护的。
+    由 review 领域的 service 决定（那张表是 `review/archive.py` 维护的），路由不自己数。
     """
     if not topic_ids:
         return {}
-    cards = await AcceptCardRepository(db).list_live_for_places(
-        topic_ids, statuses=archive.OPEN_CARD_STATUSES
-    )
+    cards = await AcceptService(db).live_cards_for_places(topic_ids)
     # 按 created_at 升序回来，所以同一个房间后写的覆盖先写的 = 留下最新那张。
     return {c.topic_id: c for c in cards if c.task_id is None}
 
@@ -138,7 +134,7 @@ async def waiting_items(
     topic_ids = [t.id for t in topics]
 
     blocks = BlockRepository(db)
-    task_cards = await AcceptCardRepository(db).latest_by_task(task_ids)
+    task_cards = await AcceptService(db).latest_cards_by_task(task_ids)
     room_cards = await _room_cards(db, topic_ids)
     beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
     # {地点: 这道题在等谁}。一个待确认问题只有**发起那一轮的人**能回答，提问那一刻

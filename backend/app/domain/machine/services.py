@@ -139,6 +139,17 @@ def accepting(host: CloudHost) -> bool:
     )
 
 
+def host_failed(host: CloudHost) -> bool:
+    """Whether a host is in the pool's error state — a sandbox that could not
+    come up.
+
+    房间读那条路由借它把状态说成 ``failed`` 而不是 ``pending``（见
+    ``routes/project_environment.py``）。判据收在 machine 领域里，路由就不必为了
+    这一个比较 import ``machine.models`` 的 ``MachineStatus``。
+    """
+    return host.status == MachineStatus.error
+
+
 def _counts_toward_cap(host: CloudHost) -> bool:
     return host.released_at is None
 

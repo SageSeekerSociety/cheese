@@ -97,6 +97,11 @@ class TeamService:
     async def get_team(self, team_id: int) -> Team | None:
         return await self._repo.get_by_id(team_id)
 
+    async def add_member(
+        self, team_id: int, user_id: int, role: int
+    ) -> TeamUserRelation:
+        return await self._repo.add_member(team_id, user_id, role)
+
     async def labels_of(self, team_ids: set[int]) -> dict[int, TeamLabel]:
         """team id -> what links to it go by and what it is called.
 

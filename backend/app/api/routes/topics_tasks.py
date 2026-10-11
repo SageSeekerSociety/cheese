@@ -9,8 +9,9 @@ addressed by the task's own conversation id — `GET|PATCH /topics/{task}/task`
 document go through the same routes as a room's (`/messages`, `/title`,
 `/document`), with the task's id.
 
-`_actor_in_place`, `DbSession` and the repositories come from topics.py, so the
-import guard and `.importlinter` see no new edges.
+`_actor_in_place`, `DbSession` and the block/project/usage repositories come from
+topics.py, so the import guard and `.importlinter` see no new edges; the accept
+card is read through `AcceptService`, not a repository re-export.
 """
 
 import uuid
@@ -28,7 +29,6 @@ from app.api.place import task_conversation
 from app.api.response import ok, page
 from app.api.room_task_rows import named_task, task_rows
 from app.api.routes.topics import (
-    AcceptCardRepository,
     BlockRepository,
     DbSession,
     ProjectRepository,
@@ -58,6 +58,7 @@ from app.domain.living_doc.services import Documents
 from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
+from app.domain.review.services import AcceptService
 from app.domain.review.task_landing import tell_origin
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.closing import close_task
@@ -201,7 +202,7 @@ async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dic
     """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
     snapshot a subscription to it opens with. The caller has authorised the
     reader."""
-    cards = await AcceptCardRepository(db).latest_by_task([task.id])
+    cards = await AcceptService(db).latest_by_task([task.id])
     out = await _task_out(db, chat, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
@@ -280,7 +281,7 @@ async def _task_out(db, chat: ChatService, task, card=None) -> dict:
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
     if card is None:
-        card = (await AcceptCardRepository(db).latest_by_task([task.id])).get(task.id)
+        card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     running = await running_tasks(chat, db, [task])
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")

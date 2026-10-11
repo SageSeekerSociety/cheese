@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
-from sqlalchemy import select
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -50,16 +49,6 @@ from app.domain.task.claims import own_claim
 from app.domain.task.inputs import (
     map_approve_type,
     map_approve_type_to_int,
-)
-from app.domain.task.models import (
-    TaskTagRelation,
-)
-from app.domain.task.repositories import (
-    TaskAccessDomainRepository,
-    TaskMembershipRepository,
-    TaskRepository,
-    TaskSubmissionSchemaRepository,
-    TopicRepository,
 )
 from app.domain.task.services import (
     TaskMembershipService,
@@ -238,14 +227,12 @@ async def get_task(
             )
 
     # Fetch submissionSchema
-    schema_repo = TaskSubmissionSchemaRepository(session=db)
-    schema_entries = await schema_repo.list_by_task_id(task_id)
+    schema_entries = await service.list_submission_schema(task_id)
     task_dict["submissionSchema"] = _submission_schema_to_api(schema_entries)
 
     # Fetch topics if queryTopics is true
     if queryTopics:
-        topic_repo = TopicRepository(session=db)
-        topic_entities = await topic_repo.list_by_task_id(task_id)
+        topic_entities = await service.list_topics(task_id)
         topics_list = [
             {
                 "id": t.id,
@@ -288,14 +275,14 @@ async def patch_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: PatchTaskRequest,
     db=Depends(get_db),
+    service: TaskService = Depends(get_task_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Patch basic mutable fields of a task.
 
     当前实现对齐 Kotlin PatchTaskRequestDTO 的大部分字段，但暂不处理 submissionSchema。
     """
-    task_repo = TaskRepository(session=db)
-    task = await task_repo.get_by_id(task_id)
+    task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
 
@@ -376,7 +363,7 @@ async def patch_task(
         if payload.approved is not None:
             next_approved = map_approve_type(payload.approved)
             if next_approved == 0 and task.approved != 0:
-                if await task_repo.has_prior_pending_task_for_creator(task):
+                if await service.has_prior_pending_task_for_creator(task):
                     raise BadRequestError(
                         "Creator has earlier pending tasks that must be reviewed first"
                     )
@@ -442,7 +429,6 @@ async def patch_task(
 
     if payload.access_domain_group_ids is not None:
         domain_repo = SpaceDomainGroupDomainRepository(session=db)
-        access_domain_repo = TaskAccessDomainRepository(session=db)
 
         if task.access_control_enabled and payload.access_domain_group_ids:
             await ensure_domain_groups_belong_to_space(
@@ -456,11 +442,11 @@ async def patch_task(
             all_domains: list[str] = []
             for gid in payload.access_domain_group_ids:
                 all_domains.extend(groups_domains.get(gid, []))
-            await access_domain_repo.replace_domains(
+            await service.replace_access_domains(
                 task_id=task.id, domains=list(dict.fromkeys(all_domains))
             )
         else:
-            await access_domain_repo.replace_domains(task_id=task.id, domains=[])
+            await service.replace_access_domains(task_id=task.id, domains=[])
 
     # categoryId 更新：需验证归属 space 且未归档/未删除
     if payload.category_id is not None:
@@ -476,40 +462,17 @@ async def patch_task(
 
     # submissionSchema: 覆盖更新（先删后插）。
     if payload.submission_schema is not None:
-        schema_repo = TaskSubmissionSchemaRepository(session=db)
-        await schema_repo.replace_schema(task.id, payload.submission_schema)
+        await service.replace_submission_schema(task.id, payload.submission_schema)
 
     # 话题列表：简单覆盖语义，先全部软删除，再插入新集合。
     if payload.topics is not None:
-        topics: list[int] = payload.topics
-
-        # 软删除旧关系
-        now = datetime.now(UTC)
-        rel_stmt = select(TaskTagRelation).where(
-            TaskTagRelation.task_id == task.id,
-            TaskTagRelation.deleted_at.is_(None),
-        )
-        result = await db.execute(rel_stmt)
-        existing = list(result.scalars().all())
-        for rel in existing:
-            rel.deleted_at = now
-
-        # 插入新的
-        for topic_id in topics:
-            rel = TaskTagRelation(
-                task_id=task.id,
-                tag_id=topic_id,
-                created_at=now,
-                updated_at=now,
-                deleted_at=None,
-            )
-            db.add(rel)
+        await service.replace_topic_relations(task_id=task.id, topic_ids=payload.topics)
 
     # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
     apply_task_teaching(task, coerce_teaching(payload.teaching))
 
     task.updated_at = datetime.now(UTC)
-    task = await task_repo.save(task)
+    task = await service.save(task)
     # Commit before answering. ``get_db`` commits in its teardown, which FastAPI
     # runs after the response has gone out, so a client told a task is approved
     # could open the board on its next request and not find the task there yet.
@@ -517,8 +480,7 @@ async def patch_task(
     await db.commit()
 
     # Fetch submissionSchema for response
-    schema_repo = TaskSubmissionSchemaRepository(session=db)
-    schema_entries = await schema_repo.list_by_task_id(task.id)
+    schema_entries = await service.list_submission_schema(task.id)
     task_response = _task_to_api_model(task)
     task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
     task_response = (
@@ -671,8 +633,8 @@ async def get_tasks(
     # queryJoinability / queryUserDeadline). Each flag implies the others enough
     # in practice that the cheapest correct thing is to populate them together.
     if queryJoined or querySubmittability or queryJoinability or queryUserDeadline:
-        membership_service = TaskMembershipService(
-            repo=TaskMembershipRepository(session=db),
+        membership_service = TaskMembershipService.of(
+            db,
             realname_repo=UserRealNameRepository(session=db),
             space_repo=SpaceRepository(session=db),
             space_rank_repo=SpaceUserRankRepository(session=db),
@@ -737,6 +699,8 @@ async def get_tasks(
 async def delete_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     db=Depends(get_db),
+    service: TaskService = Depends(get_task_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a task and its participants.
@@ -744,10 +708,7 @@ async def delete_task(
     NOTE: 与 Kotlin 版本类似，这里只做软删除；
     提交记录的删除将在后续引入 submission ORM 时一并处理。
     """
-    task_repo = TaskRepository(session=db)
-    membership_repo = TaskMembershipRepository(session=db)
-
-    task = await task_repo.get_by_id(task_id)
+    task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
 
@@ -757,13 +718,13 @@ async def delete_task(
     now = datetime.now(UTC)
     task.deleted_at = now
 
-    memberships = await membership_repo.list_memberships_for_task(
+    memberships = await membership_service.list_memberships_for_task(
         task_id=task_id, approved=None
     )
     for m in memberships:
         m.deleted_at = now
 
-    await task_repo.save(task)
+    await service.save(task)
     # membership 更新会随着同一 Session 的 flush 一并持久化
 
 
@@ -776,12 +737,12 @@ async def delete_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     db=Depends(get_db),
+    service: TaskService = Depends(get_task_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a participant by membership id."""
-    task_repo = TaskRepository(session=db)
-    task = await task_repo.get_by_id(task_id)
+    task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
 
@@ -810,12 +771,12 @@ async def delete_task_participant_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     member: Annotated[int, Query(description="Member ID (user or team)")],
     db=Depends(get_db),
+    service: TaskService = Depends(get_task_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> None:
     """Soft delete a participant by task + member id."""
-    task_repo = TaskRepository(session=db)
-    task = await task_repo.get_by_id(task_id)
+    task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
 
@@ -846,12 +807,12 @@ async def patch_task_membership_by_member(
     member: Annotated[int, Query(description="Member ID (user or team)")],
     payload: PatchTaskParticipantRequest,
     db=Depends(get_db),
+    service: TaskService = Depends(get_task_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     """Patch a TaskMembership identified by (taskId, memberId) and return all participants."""  # noqa: E501
-    task_repo = TaskRepository(session=db)
-    task = await task_repo.get_by_id(task_id)
+    task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
 

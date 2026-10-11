@@ -65,6 +65,7 @@ from app.domain.topic.models import (
     RoomCleanup,
     Topic,
     TopicKind,
+    TopicProgress,
     TopicRole,
     TopicStatus,
 )
@@ -1077,6 +1078,44 @@ class TopicService:
         if row is None:
             return [], None
         return [dict(item) for item in row.items], row.updated_at
+
+    async def save_progress(
+        self,
+        conversation_id: uuid.UUID,
+        items: list[dict],
+        *,
+        turn_id: uuid.UUID | None = None,
+    ) -> TopicProgress:
+        """进度层 (#187) 的写侧: overwrite this topic's checklist.
+
+        The write counterpart of `get_progress`, served here so a route no
+        longer reaches ``TopicProgressRepository`` itself for the one row it
+        writes.
+        """
+        return await TopicProgressRepository(self._session).save(
+            conversation_id, items, turn_id=turn_id
+        )
+
+    async def names_in_projects(
+        self, project_ids: list[uuid.UUID], *, viewer: str
+    ) -> list[Topic]:
+        """These projects' rooms, named, as ``viewer`` may see them.
+
+        ``GET /topics/names`` — the command palette's cross-project room
+        search. The route used to build ``TopicRepository`` for it; the query
+        and its ordering ("最后活动时间 desc") are unchanged, only the caller is.
+        """
+        return await self._repo.names_in_projects(project_ids, viewer=viewer)
+
+    async def cleanup_operation(self, topic: Topic) -> RoomCleanup | None:
+        """The room's scheduled cleanup, or None when it has none.
+
+        ``RoomCleanup`` lives on this side of the boundary, so the route asks
+        the service for the row instead of naming the model in a ``db.get``.
+        """
+        if not topic.cleanup_id:
+            return None
+        return await self._session.get(RoomCleanup, topic.cleanup_id)
 
     def require_doc_writable(self, place: Place) -> None:
         """归档后工作面冻结 (spec §6.3): an archived room's document takes no
