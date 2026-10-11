@@ -117,11 +117,15 @@ export function heldPreview(roomId: string): PreviewInfo | null | undefined {
 /**
  * 任务房间里那个任务。任务清单里已经有这一件（侧栏、任务清单、时间线带回来的）时，
  * 打开任务页先画那一行，不等这一次读。
+ *
+ * 手上没有这一件（整页刷新、直接打开链接）就不等快照，直接问：任务页要先有这一件才挂
+ * 得上对话栏，而带快照的那次订阅是对话栏挂上之后才发的，等它只能干等到超时。
  */
 export function roomTaskQuery(taskId: string) {
   return queryOptions({
     queryKey: keys.roomTask(taskId),
-    queryFn: (): Promise<RoomTask> => fromSnapshot(keys.roomTask(taskId), () => getTask(taskId)),
+    queryFn: (): Promise<RoomTask> =>
+      listedTask(taskId) ? fromSnapshot(keys.roomTask(taskId), () => getTask(taskId)) : getTask(taskId),
     placeholderData: () => listedTask(taskId),
   })
 }
