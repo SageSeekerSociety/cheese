@@ -7,6 +7,8 @@
     v-if="item.type === 'item'"
     ref="tileRef"
     :to="item.to"
+    :tag="isAction ? 'button' : undefined"
+    :type="isAction ? 'button' : undefined"
     rounded="lg"
     :border="false"
     class="app-rail-item"
@@ -117,6 +119,9 @@ const emit = defineEmits<{
 const { item } = toRefs(navBarProps)
 
 const projectId = computed(() => (item.value.type === 'item' ? item.value.projectId : undefined))
+/** 只有动作、没有去处的格子（「＋新建项目」）：VCard 只在有 `to` 时才渲染成能聚焦的
+ *  链接，否则是一个 div，键盘走不到。这种格子渲染成 button。 */
+const isAction = computed(() => item.value.type === 'item' && !item.value.to && !!item.value.action)
 
 const badge = computed(() => (item.value.type === 'item' ? item.value.badge || 0 : 0))
 const dot = computed(() => item.value.type === 'item' && !badge.value && !!item.value.dot)
@@ -203,6 +208,14 @@ function warmDestination() {
 </script>
 
 <style lang="scss">
+/* 渲染成 button 的那种格子（只有动作的「＋新建项目」）：去掉浏览器给 button 的内边距、
+   边框和字体，长相和链接格子一样。 */
+button.app-rail-item {
+  padding: 0;
+  border: 0;
+  font: inherit;
+}
+
 .app-rail-item {
   position: relative;
   width: 48px;
