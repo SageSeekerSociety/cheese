@@ -21,10 +21,13 @@ interface Seat {
 
 const seats: Seat[] = []
 
-/** 按下去该去哪一栏。被 keep-alive 收起来的那一栏不在文档里，不算。 */
+/** 按下去该去哪一栏。被 keep-alive 收起来的那一栏不在文档里，不算。焦点在一个开着的
+ *  浮层（搜索面板、对话框、菜单）里时哪一栏都不去：把焦点拉到它背后的输入框，浮层还
+ *  开着、Esc 也关不掉它了。 */
 function seatToFocus(): Seat | undefined {
-  const live = seats.filter((seat) => seat.open() && seat.root.value?.isConnected)
   const active = document.activeElement
+  if (active?.closest('.v-overlay--active')) return undefined
+  const live = seats.filter((seat) => seat.open() && seat.root.value?.isConnected)
   return live.find((seat) => active && seat.root.value?.contains(active)) ?? live[0]
 }
 

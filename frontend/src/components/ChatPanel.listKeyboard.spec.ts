@@ -272,4 +272,19 @@ describe('回到输入框的快捷键', () => {
     await flush()
     expect(active()).toBe(composer())
   })
+
+  // 搜索面板、对话框开着时焦点在它里面：拉到背后的输入框，浮层还开着、Esc 也关不掉它。
+  it('焦点在一个开着的浮层里时不动', async () => {
+    await mount()
+    const overlay = document.createElement('div')
+    overlay.className = 'v-overlay v-overlay--active'
+    const input = document.createElement('input')
+    overlay.append(input)
+    document.body.append(overlay)
+    input.focus()
+    press('C', { code: 'KeyC', altKey: true, shiftKey: true })
+    await flush()
+    expect(active()).toBe(input)
+    overlay.remove()
+  })
 })
