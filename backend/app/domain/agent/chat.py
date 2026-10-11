@@ -1000,6 +1000,22 @@ class ChatService(SessionRecovery):
 
         await finish_work_termination(self, termination, terminate_work_inputs)
 
+    async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
+        """End the inputs of a work whose session died inside it.
+
+        A session that dies at its work reports neither a completion nor a
+        terminal: the runner that would have written one is the process that is
+        gone. The death ends the turn's interval in the same breath, and an
+        interval that is closed is out of the orphan sweep's reach
+        (``turn_inputs.open_turns`` reads open ones), so nothing else collects
+        these rows. Unfinished they refuse the seat every later message
+        (``seat_has_unfinished_input``) — the room goes silent for as long as it
+        is left alone. What the runner itself reported is death; being merely
+        out of reach is not, and those inputs stay held.
+        """
+
+        await turn_inputs.end_inputs_of_abandoned_work(self._sessions, work_id)
+
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""
         return self._compute.session_controls(topic_id)

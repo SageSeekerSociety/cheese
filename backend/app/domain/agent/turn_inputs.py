@@ -497,6 +497,27 @@ async def close_dead_turns(session_factory, turn_ids) -> None:
         await session.commit()
 
 
+async def end_inputs_of_abandoned_work(session_factory, work_id) -> int:
+    """End the inputs of one work whose session died inside it.
+
+    The fact behind it is ``reads.Abandoned``, read from the seat that watched
+    the session go: same remedy as :func:`close_dead_turns`, for the work no
+    sweep reaches twice. The death ends the turn's interval where the room
+    heard it (``AgentTurnRepository.close_one``), and the orphan sweep reads
+    open intervals only — so an input left unfinished here holds its seat for
+    good unless this ends it. Only ``terminated_at`` / ``termination`` are
+    written, exactly as the sweep writes them: holds stay held and nothing is
+    consumed, so nothing inside these inputs is sent again.
+    """
+
+    async with session_factory() as session:
+        ended = await terminate_inputs_of_dead_works(
+            session, [work_id], reason="orphaned"
+        )
+        await session.commit()
+    return ended
+
+
 #: Read for one fact only, so the agent domain does not import the task model.
 _tasks = table(
     "tasks",

@@ -51,6 +51,7 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.reads import (
+    Abandoned,
     CaughtUp,
     Completed,
     ControlsMoved,
@@ -758,6 +759,12 @@ class RoomSessions:
             # being out of reach is not — a machine still being prepared
             # looks exactly the same, and that one stays "unknown".
             self.dead.add((seat, live.conversation))
+            # Nothing will report on the inputs this work held: the runner that
+            # would have written a completion or a terminal is the process that
+            # is gone. The turn's interval ends with the result above, which is
+            # what puts it out of the orphan sweep's reach, so the room ends
+            # them here or they hold a seat no later message can take.
+            await self._hear(live.session, Read(str(work), Abandoned()))
 
     # --- starting and speaking -----------------------------------------------
 
