@@ -4,12 +4,11 @@ import shutil
 import uuid
 from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.conditional import conditional_json
@@ -22,6 +21,7 @@ from app.api.message_effects import announce_edited_message
 from app.api.response import ok, page
 from app.api.room_task_rows import tasks_under_blocks
 from app.api.routes.projects import rail_tasks
+from app.api.routes.topics_rows import CardRow, TopicRow
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
 from app.core.db import get_db
@@ -85,49 +85,6 @@ from app.domain.webhook import service as webhook_service
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
-
-
-class TopicRow(presentation.TopicSignals, Protocol):
-    """这一层从一个房间行上读到的形状。
-
-    结构协议，不是 ORM 类：路由不该按名字 import `app.domain.topic.models`（C2，
-    `.importlinter`），而它手上的每一行都来自同域的 `TopicService`（ORM 行）。成员
-    按模型的原样声明 `Mapped[...]`（`presentation.TopicSignals`），pyright 才拿得它
-    比得过那一行；`TopicOut.model_validate` 只读属性、不认类，所以这几位就是这里需
-    要的全部。
-    """
-
-
-class CardRow(presentation.CardRow, Protocol):
-    """这一层从一张验收卡上读到的形状 —— ORM 行，按 `AcceptCard` 的原样声明 `Mapped`。
-
-    行来自 `AcceptService`。除了卡面要的五个信号（`presentation.CardRow`）之外，这
-    里还读它挂在哪、骑哪个 PR、什么时候建的。和 `presentation.CardRow` 一样，成员是
-    `Mapped[...]` 而不是普通标量 —— pyright 比的是类成员，ORM 行的属性是 `Mapped`
-    描述符，读出来才解包成值。
-    """
-
-    id: Mapped[uuid.UUID]
-
-    task_id: Mapped[uuid.UUID | None]
-
-    topic_id: Mapped[uuid.UUID]
-
-    reviewer_handle: Mapped[str]
-
-    decided_at: Mapped[datetime | None]
-
-    note: Mapped[str]
-
-    gate_passed_at: Mapped[datetime | None]
-
-    gate_output: Mapped[str]
-
-    pr_number: Mapped[int | None]
-
-    pr_url: Mapped[str | None]
-
-    created_at: Mapped[datetime]
 
 
 async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
