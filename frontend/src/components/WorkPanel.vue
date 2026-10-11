@@ -950,18 +950,13 @@ defineExpose({
 }
 .tabpane-chat {
   display: flex;
-  /* tabbody 是一条 flex 行，这一格必须占满它——按内容收缩的话，输入框只有半屏宽。 */
-  flex: 1 1 auto;
   width: 100%;
-  min-width: 0;
   min-height: 0;
   height: 100%;
 }
 .tabpane-slot {
   display: flex;
-  flex: 1 1 auto;
   width: 100%;
-  min-width: 0;
   min-height: 0;
 }
 .tabpane-in {
@@ -992,6 +987,13 @@ defineExpose({
   min-height: 0;
   /* Panel tab switches cross-fade this block only (lib/viewTransition.ts). */
   view-transition-name: wp-tabbody;
+}
+/* tabbody 是一条 flex 行，所以每一格都得占满它。按内容收缩的一格只有它最宽的那一行那么宽：
+   项目文件那一格挂上时编辑器还没来，它就只有路径那一条宽，Monaco 量到这个宽度、写进自己的
+   inline width，这一格从此再也撑不开，面板右边空一条。由这里替每一格说，不靠每一格自己记得。 */
+.tabbody > * {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {
