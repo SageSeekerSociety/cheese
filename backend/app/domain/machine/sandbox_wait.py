@@ -7,15 +7,15 @@ from app.domain.machine.models import (
     GONE,
     MAX_ENROLL_ATTEMPTS,
     CloudHost,
-    CloudHostHome,
     MachineStatus,
+    SandboxHome,
 )
 
 # What a tool waiting on its cloud sandbox is told.
 SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
-EXECUTOR_SETUP_FAILED = "工作电脑上的执行器没能装好：{reason}；对话和平台工具仍可用。"
-VM_PREPARING = "云虚拟机正在准备；对话和平台工具仍可用。"
-VM_ERROR = "云虚拟机出错：供应方报告错误。对话和平台工具仍可用。"
+EXECUTOR_SETUP_FAILED = "执行环境里的执行器没能装好：{reason}；对话和平台工具仍可用。"
+VM_PREPARING = "虚拟机沙箱正在准备，要几分钟；对话和平台工具仍可用。"
+VM_ERROR = "虚拟机沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 # What a session is told, once, with the first tool call that succeeds in a
 # new sandbox: its old one was destroyed when idle (``lifecycle``) or given up
 # with its host (``HostPool._fail``). Either records it under ``LOST_KEY`` in
@@ -33,7 +33,7 @@ async def _home_removed(db, session_id) -> bool:
     """The sandbox being destroyed is gone, so the next attempt places the
     session in a new one."""
     stopped = await db.scalar(
-        select(CloudHostHome.stopped_at).where(CloudHostHome.session_id == session_id)
+        select(SandboxHome.stopped_at).where(SandboxHome.session_id == session_id)
     )
     return stopped is None
 

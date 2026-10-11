@@ -293,7 +293,7 @@ def test_with_no_price_set_no_cloud_sandbox_starts(cloud, monkeypatch, caplog):
         answer = tool_call(cloud, seat)
 
     assert answer["unavailable"] == (
-        "云端环境暂时无法启动：平台还没有设定云端算力的价格。对话和平台工具仍可用。"
+        "平台提供的环境暂时无法启动：平台还没有设定算力价格。对话和平台工具仍可用。"
     )
     assert home_of(cloud, seat) is None
     assert cloud.provider.created == []

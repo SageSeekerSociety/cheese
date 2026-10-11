@@ -53,6 +53,8 @@ covers:
 
 所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的才按有没有采纳写「已采纳」「已完成」「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。唯一的例外是 `closing_since` 那一会儿：任务还开着，已经写「已采纳」。
 
+窗口跟着关闭一起结束：任何一条关闭路径都清掉 `closing_since`（`close_task`）。关了的任务没有在等的总结，而留着它，负责人重开时拿到的会是一条开着却写「已采纳」的任务 —— 左侧栏要 `closing_since` 为空、「未完成」要它不显示「已采纳」、「已关闭」要 `status` 是 closed，三个哪儿都不收它（2026-10-11，任务 #58）。
+
 ## 一条任务是一段对话 {#conversation}
 
 任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。只有负责人和做这条任务的 AI 队友在里面说话（`POST /topics/{task}/messages` 只收负责人，或这条任务自己的会话），其他人能读，要说的话去房间说。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
@@ -79,11 +81,11 @@ covers:
 
 **开始**（`POST /topics/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的改动留不下：能讨论、写文档、在机器上读代码和跑命令，不能把改动同步或推送进项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。
 
-**转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务若用着或占着新负责人不能用的电脑（原负责人自己的），先照换电脑的流程挪到新负责人能用的那台（`compute_configs.choice_for_owner`：任务自己的选择、房间的选择、项目默认，依次跳过别人的个人电脑）；推送不成功就不转交，说明原因。
+**转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务里执行环境落在新负责人不能用的电脑上的队友（原负责人自己的电脑，不进沙箱或那人电脑的规格），先照换环境的流程换到新负责人能用的那个（`environments.usable_by_owner`：任务的默认、房间的默认、项目默认，不能用的跳过，最后是标准沙箱），任务指着这样一台电脑的默认清掉；推送不成功就不转交，说明原因。
 
 **关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。任务一关闭——负责人关、写总结的那一轮结束或被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的那一轮就被打断，写下的留着：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。
 
-平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。工作电脑按 项目默认 → 房间（`topics.compute_config`）→ 任务（`tasks.compute_config`）取，任务第一次要机器时从房间的选择抄一份，之后房间再换也不跟着动；负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/compute-profile` 换；设备页的批量挪走对任务会话走的就是这一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`compute_configs.works_tasks_of`）：选不了，抄房间的选择时遇到它就改用项目默认，「系统挑一台」时跳过它。
+平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。任务里每位队友的执行环境是自己的；它第一次要手时按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目默认 取一份，之后默认再变也不跟着动。负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/sessions/{session}/environment` 换一位、用 `PUT /topics/{task}/environment-default` 改任务的默认；设备页的批量挪走对任务会话走的就是前一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`environment.works_tasks_of`）：选不了，那个人电脑的沙箱也不放在上面。
 
 ## 工作目录怎么来 {#worktree}
 
@@ -154,6 +156,8 @@ covers:
 
 - 最后一步：任务关闭，`after_close` 收拾机器上的工作目录。
 - 不是最后一步：任务开着，`TaskService.next_step` 把它换到一条从默认分支切出的新分支上（`task/<id>` 之后是 `task/<id>-2`、`-3`……），清掉 `pr_number`，下一步开自己的 PR；平台在任务的会话里留一条指令叫芝士接着做。叠在它旧分支上的任务由 `retarget_completed_dependencies` 改到默认分支。
+
+**一笔合并只落地一次**：`delivery_landed` 按 PR 号认，已经在 `task_landings` 里落过的那一笔直接不做。几条路看到的是同一笔合并，而任务可能早换到下一步的分支上、或者已经被重开了 —— 第二次落地会把已经走过去的任务再关一次。没有 PR 的交付（一份产物、一个网址）不写 `task_landings`，也就不受这条约束。
 
 机器上的工作目录在下一次 `cheese worktree` 时跟过去（`_follow_task_branch`）：`delivered_head` 之后的提交变基到最新的默认分支上，没提交的文件原样带过去；和最新代码冲突就留在原分支上不动，报出冲突让芝士先解决。只有这件任务自己早先的分支会被跟过去，芝士自己切出的分支不动。
 

@@ -38,7 +38,7 @@ defineProps<{ board: MarketNodes | null; loading: boolean; error: string | null 
             n.online ? t('work.nodeBoard.online') : t('work.nodeBoard.offline')
           }}</span>
           <span class="node-card__kind">{{
-            n.kind === 'device' ? t('work.nodeBoard.device') : t('work.nodeBoard.cloud')
+            n.kind === 'devices_of' ? t('work.nodeBoard.device') : t('work.nodeBoard.cloud')
           }}</span>
           <span v-if="n.current" class="node-card__current">{{ t('work.nodeBoard.current') }}</span>
         </div>

@@ -183,7 +183,6 @@ async def send_chat_message(
         quoted_context=body.quoted_context.model_dump(mode="json")
         if body.quoted_context
         else None,
-        provision_actor=actor,
         client_id=str(body.request_id),
     )
     stored = await BlockRepository(db).get(anchor_id)

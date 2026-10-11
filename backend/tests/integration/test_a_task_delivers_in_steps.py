@@ -186,6 +186,38 @@ def test_the_owner_reopens_a_completed_task_onto_the_latest_code(client, app_wor
     assert task["pr_number"] is None
 
 
+def test_a_task_closed_in_its_write_up_window_reopens_out_of_it(client, app_world):
+    """在写总结的那一会儿里关掉，窗口跟着关闭一起结束；重开出来的是一个正常的、
+    开着的任务。
+
+    窗口是「最后一步已采纳、总结还没写完」，这段时间里它已经显示「已采纳」。这
+    时候负责人点关闭，任务进 closed —— 留着的 `closing_since` 毫无意义，而它的
+    害处要等到重开才显出来：`status` 是 open，界面上却还是「已采纳」，两个列表
+    都不收它（2026-10-11，任务 #58）。"""
+    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["presentation"]["column"] == "done"  # 还在写总结的窗口里
+
+    closed = client.post(
+        f"/topics/{task_id}/close",
+        json={"conclusion": "先到这里"},
+        headers=session_auth_headers(task["owner_handle"]),
+    )
+    assert closed.status_code == 200, closed.text
+
+    reopened = client.post(
+        f"/topics/{task_id}/reopen",
+        headers=session_auth_headers(task["owner_handle"]),
+    )
+    assert reopened.status_code == 200, reopened.text
+
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "open"
+    assert task["presentation"]["column"] != "done"
+    # 窗口里的那句「已采纳」不会留在重开出来的任务上。
+    assert task["presentation"]["phrase"] != "accepted"
+
+
 def test_an_open_task_cannot_be_reopened(client):
     from tests.integration.test_tasks import _room
 

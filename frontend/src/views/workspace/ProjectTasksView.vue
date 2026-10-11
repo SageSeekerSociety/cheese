@@ -202,7 +202,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
     <div v-else-if="failed" class="tasks__empty t-body c-muted" role="alert">
       {{ t('work.channelTasks.loadFailed') }}
       <button type="button" class="tasks__retry" @click="emit('retry')">
-        {{ t('work.roomMachine.retry') }}
+        {{ t('global.loadError.retry') }}
       </button>
     </div>
     <div v-else-if="!shown.length" class="tasks__empty t-body c-muted">
@@ -252,7 +252,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
       <div v-if="closed && closedFailed" class="tasks__empty t-body c-muted" role="alert">
         {{ t('work.channelTasks.loadFailed') }}
         <button type="button" class="tasks__retry" @click="emit('more')">
-          {{ t('work.roomMachine.retry') }}
+          {{ t('global.loadError.retry') }}
         </button>
       </div>
       <div v-else-if="closed && closedHasMore" ref="sentinel" class="tasks__more" data-testid="tasks-more">

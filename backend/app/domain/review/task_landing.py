@@ -10,7 +10,8 @@ watched on the default branch for a while (`landing_watch`).
 
 Every path that sees a delivery merge comes through here — an accept click,
 the merge queue, the poller, a PR merged by hand — so none of them can keep
-closing a task the card said goes on.
+closing a task the card said goes on, and none of them can land one merge on
+a task twice.
 """
 
 import logging
@@ -54,8 +55,13 @@ async def delivery_landed(
     head: str | None,
     pr_number: int | None,
     completes: bool,
-) -> None:
-    """``task``'s delivery merged. ``completes``: it was the task's last step."""
+) -> bool:
+    """``task``'s delivery merged. ``completes``: it was the task's last step.
+
+    Says whether the merge landed on the task this time: one that has already
+    landed there does not land twice (`_already_landed`)."""
+    if await _already_landed(session, task, pr_number):
+        return False
     now = datetime.now(UTC)
     task.accepted_at = now
     task.accepted_by = by or task.accepted_by
@@ -86,17 +92,44 @@ async def delivery_landed(
         if pr_number is not None
         else say("taskLandedNoPr", title=said_title(task)),
     )
+    return True
+
+
+async def _already_landed(
+    session: AsyncSession, task: Task, pr_number: int | None
+) -> bool:
+    """Whether this merge has already landed on ``task``: a row in
+    `task_landings`, written by every landing that has a PR.
+
+    A merge nobody has landed leaves no row, and lands as it always did. A
+    merge that did leaves one — and landing it a second time would drag a
+    task that has since gone on from the next step, or been reopened, back
+    into a write-up window it has already been through.
+
+    Deliveries with no PR of their own (an artifact, a URL out of the task's
+    folder) leave no row and are not held back."""
+    if pr_number is None:
+        return False
+    return await _landing_exists(session, task.id, pr_number)
+
+
+async def _landing_exists(
+    session: AsyncSession, task_id: uuid.UUID, pr_number: int
+) -> bool:
+    return (
+        await session.scalar(
+            select(TaskLanding.id).where(
+                TaskLanding.task_id == task_id, TaskLanding.pr_number == pr_number
+            )
+        )
+    ) is not None
 
 
 async def _watch(
     session: AsyncSession, task: Task, pr_number: int, now: datetime
 ) -> None:
     """Start watching the merge of ``pr_number`` on the default branch, once."""
-    if await session.scalar(
-        select(TaskLanding.id).where(
-            TaskLanding.task_id == task.id, TaskLanding.pr_number == pr_number
-        )
-    ):
+    if await _landing_exists(session, task.id, pr_number):
         return
     session.add(
         TaskLanding(

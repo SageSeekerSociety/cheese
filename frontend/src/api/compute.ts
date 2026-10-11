@@ -1,5 +1,5 @@
 import type { MarketNodes, MarketPools, ProjectCredits } from '../cx_types'
-import type { ComputeChoice, ProjectComputeConfigs, TopicComputeProfile } from '../types/compute'
+import type { Environment, ProjectComputeConfigs, TopicEnvironment } from '../types/compute'
 
 import { request } from './http'
 
@@ -31,10 +31,10 @@ export function getResourceLimits(): Promise<ResourceLimits> {
   return request('/projects/resource-limits')
 }
 
-// 房间的工作电脑：房间这一项（还没开工的 AI 队友开工时用哪台），和每个会话在哪台上。
-// A task's id: that task's own work computer.
-export function getTopicComputeProfile(topicId: string): Promise<TopicComputeProfile> {
-  return request<TopicComputeProfile>(`/topics/${encodeURIComponent(topicId)}/compute-profile`)
+// 一段对话（房间，或者用任务的 id 时那个任务）的执行环境：新会话默认用哪个，和每条
+// 会话各自在哪个环境里。
+export function getTopicEnvironment(topicId: string): Promise<TopicEnvironment> {
+  return request<TopicEnvironment>(`/topics/${encodeURIComponent(topicId)}/environment`)
 }
 
 // The project's agent sessions on one self-hosted device, for a project manager
@@ -69,22 +69,27 @@ export interface ComputeProposal {
   content: string
 }
 
-// 一个话题一个容器：改的是整个房间，每条会话都跟着搬，搬之前尽力推送一次，推没推上去都搬。`ifIdle` 跳过正在干活的
-// 房间（409 SessionWorking）；`visibility` 是房间在点名那台上能看到什么，不给就保持原样，新绑上的是隔离环境。
-export function setTopicComputeChoice(
+// 新会话默认：只管以后开工的会话，已经在干活的一条也不搬。null 让它跟上一级走。
+export function setEnvironmentDefault(
   topicId: string,
-  choice: ComputeChoice,
-  options: {
-    ifIdle?: boolean
-    visibility?: 'host' | 'isolated'
-  } = {}
-): Promise<{ choice: ComputeChoice; proposal: ComputeProposal | null }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
+  environment: Environment | null
+): Promise<{ proposal?: ComputeProposal | null }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/environment-default`, {
     method: 'PUT',
-    body: JSON.stringify({
-      choice,
-      ...(options.ifIdle ? { if_idle: true } : {}),
-      ...(options.visibility ? { visibility: options.visibility } : {}),
-    }),
+    body: JSON.stringify({ environment }),
+  })
+}
+
+// 换一条会话的环境：只搬这一条。搬之前它尽力推送一次，推没推上去都换。`ifIdle` 跳过
+// 正在干活的（409 SessionWorking）。
+export function setSessionEnvironment(
+  topicId: string,
+  sessionId: string,
+  environment: Environment,
+  options: { ifIdle?: boolean } = {}
+): Promise<{ proposal?: ComputeProposal | null }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/sessions/${encodeURIComponent(sessionId)}/environment`, {
+    method: 'PUT',
+    body: JSON.stringify({ environment, ...(options.ifIdle ? { if_idle: true } : {}) }),
   })
 }

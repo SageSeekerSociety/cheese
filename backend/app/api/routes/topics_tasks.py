@@ -45,17 +45,18 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
-from app.domain.agent.compute_configs import choice_for_owner, works_tasks_of
+from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
 from app.domain.agent_instance.own import may_work_for
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
 from app.domain.machine import session_work
-from app.domain.machine.session_reports import devices_held_by
+from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
 from app.domain.review.task_landing import tell_origin
 from app.domain.room_task import binding, presentation
@@ -547,21 +548,37 @@ async def update_task(
 
 async def _move_off_former_owners_computer(db, actor, place, task, owner) -> None:
     """A person's own computer works only that person's tasks: before a task
-    changes hands, it moves to a computer its new owner may use, pushing its
-    work first. A push that fails leaves the task with its owner and says why."""
+    changes hands, each agent in it whose environment is on someone else's own
+    computer moves to one its new owner may use, pushing its work first, and a
+    default naming such a computer is cleared. A push that fails leaves the
+    task with its owner and says why."""
 
     room = await TopicService(db).get_or_404(place.room_id)
     project = await ProjectRepository(db).get(place.project_id)
-    target = await choice_for_owner(db, room, task, project, owner)
-    held = await devices_held_by(db, task.id)
-    stays = not task.compute_config or target.model_dump() == task.compute_config
-    if stays and all(
-        [await works_tasks_of(db, device, project, owner) for device in held]
-    ):
-        return
-    await session_work.request_choice(
-        db, topic_id=place.room_id, actor=actor, choice=target, task=task
-    )
+    if not await usable_by_owner(db, task.default_environment, project, owner):
+        task.default_environment = None
+    sessions = AgentSessionService(db)
+    for handle, chosen in (await sessions.environments_in(task.id)).items():
+        if await usable_by_owner(db, chosen.environment, project, owner):
+            continue
+        row = await sessions.latest(task.id, handle)
+        if row is None:
+            continue
+        target = default_for(room, task, project.settings if project else None)
+        environment = (
+            target.environment
+            if await usable_by_owner(
+                db, target.environment.model_dump(), project, owner
+            )
+            else default_environment()
+        )
+        await session_work.switch_environment(
+            db,
+            topic_id=place.room_id,
+            session_id=row.id,
+            actor=actor,
+            environment=environment,
+        )
 
 
 class TeammateTaskIn(BaseModel):

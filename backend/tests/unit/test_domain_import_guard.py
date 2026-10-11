@@ -116,6 +116,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。这条边在
         # api/doc_agent.py 时就有，挪进领域层才进了这本账。
         ("app.domain.agent.document.question", "app.domain.block.repositories"),
+        # agent.turn.steps.reminders 是从 agent.chat 里挪出来的那一块（平台往正
+        # 在跑的一轮里说话的两条扫底：沉默提醒、清单停着提醒）。它摸的
+        # repository 只有 block 一个，正是原先 chat.py 里 `remind_silent_turns` 那
+        # 一段跟着它走的：读一条消息、拿提问的人是谁（定这一句话用哪种语言）。
+        # block 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同
+        # 一件事。拆模块没有新增跨包的边，只是发起方从 chat.py 换成了
+        # reminders.py，所以按同一笔债入账。
+        ("app.domain.agent.turn.steps.reminders", "app.domain.block.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),

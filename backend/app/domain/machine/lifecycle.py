@@ -1,8 +1,12 @@
-"""Cloud sandboxes are destroyed once idle.
+"""Sandboxes are destroyed once idle, on every machine.
+
+A sandbox on one of the platform's hosts and one on a person's computer have
+the same lifecycle; only the idle time differs, and that is the spec's
+(``agent.environment.Spec.idle_s``).
 
 A sandbox is **idle** when its room runs no turn and its session has asked for
-no tool for ``cloud_sandbox_idle_stop_s`` — counted from the later of its last
-tool call (``CloudHostHome.active_at``) and the end of the last turn in the
+no tool for its spec's idle time — counted from the later of its last
+tool call (``SandboxHome.active_at``) and the end of the last turn in the
 conversation its session works in. A command the executor is still running for
 the session — a Bash call sent to the background, a long build or test whose
 result the next turn reads (``running_commands``) — keeps an idle sandbox up
@@ -15,8 +19,9 @@ of credits is destroyed as soon as its room runs no turn (``metering``), idle
 or not.
 
 **Destroyed**, a sandbox's executor and everything still running in its home
-are stopped and the home is deleted from its host (``sandbox_home.destroy``);
-then its row goes, and with it the host's slot. Nothing of the sandbox is kept:
+are stopped and the home is deleted from its machine (``sandbox_home.destroy``);
+then its row goes, and on a host with it the host's slot. A machine that is
+offline is skipped until it is back. Nothing of the sandbox is kept:
 what lasts is the conversation, what the session pushed, and the snapshot
 each turn's checkpoint uploads. The session's next tool call places it in a
 new sandbox, which starts like any new one, and that call's result
@@ -29,7 +34,7 @@ does not finish — the host failed it, this process stopped — leaves the mark
 and a later sweep removes the home again once ``STOP_HOLD`` has passed.
 
 A session's whole cloud VM is released by the same idle measure, held for
-``cloud_vm_idle_release_s`` (``cloud_vm``), on the same clock
+its spec's idle time (``cloud_vm``), on the same clock
 (``runner.SandboxSweeper``).
 """
 
@@ -45,10 +50,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.agent import execution, resource_cleanup
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.machine import metering, sandbox_home
-from app.domain.machine.models import CloudHost, CloudHostHome
+from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
 from app.domain.machine.repositories import CloudHostRepository
 
@@ -105,6 +111,14 @@ async def run_on_host(hub, device_id: str, action: str, timeout: float, **reques
     return json.loads(str(result["stdout"]).strip().splitlines()[-1])
 
 
+def _idle_for(spec: str) -> timedelta:
+    """How long a sandbox of ``spec`` is kept idle; a spec that no longer
+    exists is held to the standard one's."""
+    known = spec_of(spec) or spec_of(STANDARD)
+    assert known is not None
+    return timedelta(seconds=known.idle_s)
+
+
 class SandboxLifecycle:
     def __init__(self, session: AsyncSession, hub=None) -> None:
         self._session = session
@@ -128,7 +142,9 @@ class SandboxLifecycle:
         """Destroy every idle sandbox, and finish every removal left
         unfinished; returns how many were destroyed."""
         now = datetime.now(UTC)
-        idle_for = timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
+        # The shortest idle time of any spec, to narrow the rows; each is then
+        # held to its own spec's.
+        idle_for = _idle_for(STANDARD)
 
         # A turn running in the conversation the home's session works in, or
         # one that ended within the idle time, keeps that sandbox up. Not the
@@ -141,8 +157,8 @@ class SandboxLifecycle:
             .where(
                 AgentTurn.conversation_id
                 == select(AgentSession.conversation_id)
-                .where(AgentSession.id == CloudHostHome.session_id)
-                .correlate(CloudHostHome)
+                .where(AgentSession.id == SandboxHome.session_id)
+                .correlate(SandboxHome)
                 .scalar_subquery(),
                 or_(
                     AgentTurn.stopped_at.is_(None),
@@ -153,28 +169,35 @@ class SandboxLifecycle:
         )
         rows = await self._session.execute(
             select(
-                CloudHostHome.id,
-                CloudHostHome.session_id,
-                CloudHostHome.topic_id,
-                CloudHostHome.active_at,
-                CloudHostHome.stopped_at,
-                CloudHost.device_id,
-            )
-            .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
-            .where(
-                CloudHost.released_at.is_(None),
-                CloudHost.device_id.is_not(None),
-                # A session's whole cloud VM is released, not destroyed here
-                # (``cloud_vm``).
-                CloudHost.whole_machine.is_(False),
-                or_(
-                    CloudHostHome.stopped_at < now - STOP_HOLD,
-                    (CloudHostHome.stopped_at.is_(None))
-                    & (CloudHostHome.active_at < now - idle_for)
-                    & or_(CloudHostHome.session_id.is_(None), ~session_active),
+                SandboxHome.id,
+                SandboxHome.session_id,
+                SandboxHome.topic_id,
+                SandboxHome.active_at,
+                SandboxHome.stopped_at,
+                SandboxHome.spec,
+                func.coalesce(CloudHost.device_id, SandboxHome.device_id).label(
+                    "device_id"
                 ),
             )
-            .order_by(CloudHostHome.active_at)
+            .outerjoin(CloudHost, CloudHost.id == SandboxHome.host_id)
+            .where(
+                # On a person's computer, or on a live host.
+                or_(
+                    SandboxHome.host_id.is_(None),
+                    CloudHost.released_at.is_(None)
+                    & CloudHost.device_id.is_not(None)
+                    # A session's whole cloud VM is released, not destroyed
+                    # here (``cloud_vm``).
+                    & CloudHost.whole_machine.is_(False),
+                ),
+                or_(
+                    SandboxHome.stopped_at < now - STOP_HOLD,
+                    (SandboxHome.stopped_at.is_(None))
+                    & (SandboxHome.active_at < now - idle_for)
+                    & or_(SandboxHome.session_id.is_(None), ~session_active),
+                ),
+            )
+            .order_by(SandboxHome.active_at)
         )
         candidates = list(rows.all())
         await self._session.commit()
@@ -189,7 +212,7 @@ class SandboxLifecycle:
                 # An unfinished removal: done again, whatever it is now.
                 idle = now - home.active_at
             else:
-                since = await self._idle_since(home, now, idle_for)
+                since = await self._idle_since(home, now, _idle_for(home.spec))
                 if since is None:
                     continue
                 idle = now - since
@@ -281,8 +304,7 @@ class SandboxLifecycle:
         if home is None or (
             home.stopped_at is None
             and idle is not None
-            and now - home.active_at
-            < timedelta(seconds=settings.cloud_sandbox_idle_stop_s)
+            and now - home.active_at < _idle_for(home.spec)
         ):
             await self._session.commit()
             return False
@@ -341,7 +363,7 @@ class SandboxLifecycle:
         await self._session.commit()
         await publish_line(topic_id, line)
         logger.info(
-            "cloud sandbox %s destroyed %s",
+            "sandbox %s destroyed %s",
             home_id,
             "with its credits spent" if unpaid else f"after {idle} idle",
         )

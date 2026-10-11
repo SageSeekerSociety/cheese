@@ -63,29 +63,6 @@
     "confirm": "推送并更换",
     "unavailable": "{name} · 不可用"
   },
-  "roomMachine": {
-    "taskHeading": "这个任务的环境",
-    "taskHint": "更换前先把这个任务的改动推送到分支，推没推上去都会更换；每一轮结束时的改动都有快照保存。",
-    "edit": "改",
-    "heading": "这个频道的环境",
-    "hint": "频道里所有 AI 队友共用这一个环境。更换前每个队友先把改动推送到分支，推没推上去都会更换；每一轮结束时的改动都有快照保存。",
-    "more": "其他配置与设备",
-    "projectDefault": "项目默认",
-    "wholeMachine": "能访问整台电脑",
-    "wholeMachineNotice": "让它看到整台电脑（能操作这台电脑上的服务和其他频道）",
-    "online": "在线",
-    "offline": "离线",
-    "removed": "已移出团队",
-    "loadFailed": "环境加载失败",
-    "saveFailed": "选择环境失败",
-    "retry": "重试",
-    "here": "本频道运行在：{name}",
-    "accessHeading": "这个频道在 {name} 上能看到什么",
-    "isolated": "隔离环境",
-    "isolatedHint": "只有自己的工作目录和本项目的包缓存；看不到电脑主人的文件、装在主人用户目录里的工具，也看不到别的频道。",
-    "host": "整台电脑",
-    "hostOwnerOnly": "只有这台电脑的主人能开启"
-  },
   "deviceInUse": {
     "line": "正在用：{project} · {room} · {agent}",
     "attached": "仅供 {projects} 使用"
@@ -108,8 +85,7 @@
     "collapse": "收起",
     "hint": "只影响尚未开始运行的 AI 队友，已在运行的继续用原来的环境",
     "distribution": "当前分布",
-    "onCloud": "云端环境 · {agents}",
-    "onCloudVm": "整台云虚拟机 · {agents}",
+    "onPlatform": "{env} · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "{count} 个 AI 队友",
     "noneStarted": "暂无运行中的 AI 队友",
@@ -322,6 +298,7 @@
       "exitFocus": "退出专注模式",
       "newTask": "新建任务",
       "newTaskFailed": "未能新建任务，稍后重试",
+      "files": "文件",
       "rename": "重命名",
       "copyLink": "复制链接",
       "markRead": "标为已读",
@@ -1972,18 +1949,6 @@
       "hint": "项目的链接里用这个短名，只能用小写字母、数字和连字符。改名后旧链接仍能打开这个项目，旧短名也不会给别的项目使用"
     }
   },
-  "computeChoice": {
-    "cloud": "云端环境",
-    "cloudVm": "整台云虚拟机",
-    "deviceOnline": "{name} · 在线",
-    "deviceOffline": "{name} · 离线",
-    "environment": "环境",
-    "none": "暂无可用的环境",
-    "cloudHint": "每个会话在自己的云端环境里工作，首次运行时自动准备",
-    "cloudVmHint": "每个会话一台独立的云虚拟机，有 sudo，能跑 Docker、要 KVM 的任务和内核模块。准备要几分钟；会话闲置后先把改动推送到分支，再释放虚拟机",
-    "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
-    "submit": "使用此配置"
-  },
   "projectTransfer": {
     "lookupFailed": "没有找到这个账号",
     "loadFailed": "加载成员失败",
@@ -2098,7 +2063,7 @@
     "online": "在线",
     "offline": "离线",
     "device": "自有设备",
-    "cloud": "云端环境",
+    "cloud": "平台提供",
     "current": "没有选择时落在这里"
   },
   "push": {

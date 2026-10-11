@@ -248,6 +248,8 @@ def _jobs():
     return periodic_jobs(
         chat=SimpleNamespace(
             remind_silent_turns=_noop,
+            # 同一件事的另一半：一轮可以一直在说话，清单却停在开工那一版。
+            remind_stale_checklists=_noop,
             sweep_memory_dreams=_noop,
             session_factory=lambda: None,
         ),

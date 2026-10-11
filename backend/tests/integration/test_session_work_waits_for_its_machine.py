@@ -18,7 +18,6 @@ import pytest
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
-from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
@@ -86,7 +85,7 @@ def cloud_rooms(client, monkeypatch):
             seats = []
             for room_id in rooms:
                 topic = await db.get(Topic, room_id)
-                topic.compute_config = standard_choice("cloud").model_dump()
+                topic.default_environment = {"kind": "sandbox", "spec": "standard"}
                 agent = await IdentityService(db).ensure_room_agent_user(room_id)
                 row = await AgentSessionService(db).ensure(
                     room_id, "cheese", harness="claude-code"
@@ -95,7 +94,7 @@ def cloud_rooms(client, monkeypatch):
                 row.runtime_location = {
                     "device_id": "center",
                     "resource_id": resource,
-                    "channel": "cloud",
+                    "channel": "device",
                 }
                 token = bind_resource_token(
                     mint_scoped_token(

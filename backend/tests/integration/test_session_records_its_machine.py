@@ -128,25 +128,18 @@ def channel(client, monkeypatch, executors=("executor",)):
     return central
 
 
-def _room_choice(client, topic, executor):
-    """This room works on ``executor`` — the ROOM's choice, not a session's.
-
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：手落在哪台机器上由房间那一项
-    答，会话行上那份只是跟着写的副本，所以这里摆的是房间。
-    """
+def _self_hosted(client, executor) -> dict:
     return {
-        "choice": {
-            "name": executor,
-            "profile": "device",
-            "device_id": client.session_test_devices[executor],
-        }
+        "kind": "self_hosted",
+        "device_id": client.session_test_devices[executor],
     }
 
 
 async def _on_the_room(client, topic, executor) -> None:
+    """New agents in this room run on ``executor``: the room's default."""
     async with client.test_factory() as db:
         room = await db.get(Topic, topic)
-        room.compute_config = _room_choice(client, topic, executor)["choice"]
+        room.default_environment = _self_hosted(client, executor)
         await db.commit()
 
 
@@ -172,14 +165,10 @@ def _open(central, project, topic, agent, *, resume=None):
 
 
 @pytest.mark.anyio
-async def test_two_sessions_in_one_room_land_on_the_rooms_machine(
+async def test_two_sessions_started_under_a_rooms_default_both_take_it(
     client, room, monkeypatch
 ):
-    """一个房间两条会话，落在同一台机器上；同一条会话的下一轮还是那一份。
-
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：房间里坐着的每一条会话都工作
-    在房间那一项算出来的那台机器上，所以第二条会话开工时不会再自己挑一台。
-    """
+    """一个房间两条会话都按房间的默认开工；同一条会话的下一轮还是那一份。"""
     project, topic = room
     central = channel(client, monkeypatch, executors=("hands-a", "hands-b"))
     await _on_the_room(client, topic, "hands-a")
@@ -216,36 +205,6 @@ async def test_two_sessions_in_one_room_land_on_the_rooms_machine(
 
 
 @pytest.mark.anyio
-async def test_an_automatic_room_gives_the_second_session_the_first_ones_machine(
-    client, room, monkeypatch
-):
-    """「系统挑一台」的房间：第二条会话拿到第一条已经在用的那一台。
-
-    One machine per room is the point of the automatic pool too: 两台在线的机器里先来
-    的那位随手挑中了一台，后来的人就该站到同一台上——各挑一台正是「一个房间两个队
-    友在两台机器上」的那条路（``_roommates_device``）。
-    """
-    project, topic = room
-    central = channel(client, monkeypatch, executors=("hands-a", "hands-b"))
-    await _on_the_room(client, topic, "hands-a")
-    async with client.test_factory() as db:
-        room_row = await db.get(Topic, topic)
-        # 「自动选一台」：房间不点名，机器由第一条会话落定时挑中的那台决定。
-        room_row.compute_config = {"name": "自有设备 · 自动选择", "profile": "device"}
-        await db.commit()
-
-    _open(central, project, topic, "ada")
-    _open(central, project, topic, "linus")
-
-    async with client.test_factory() as db:
-        sessions = AgentSessionService(db)
-        ada = await sessions.place(topic, "ada", harness=harness_for(None))
-        linus = await sessions.place(topic, "linus", harness=harness_for(None))
-    assert ada is not None and linus is not None
-    assert linus.lease["device_id"] == ada.lease["device_id"]
-
-
-@pytest.mark.anyio
 async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
     """Replacing the room's machine preserves the stored resume token.
 
@@ -267,24 +226,17 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
         )
         await db.commit()
 
-    # The room's machine changes through the room's own endpoint — 一个话题一个容
-    # 器，所以这就是「这个房间换机器」。The native session host and its files stay
-    # in place; this is not host-loss recovery.
+    # The session's environment changes through its own endpoint. The native
+    # session host and its files stay in place; this is not host-loss recovery.
     async with client.test_factory() as db:
         row = await AgentSessionService(db).ensure(
             topic, "ada", harness=harness_for(None)
         )
         before_resource = row.work_lease["resource_id"]
     moved = client.put(
-        f"/topics/{topic}/compute-profile",
+        f"/topics/{topic}/sessions/{row.id}/environment",
         headers=session_auth_headers("alice"),
-        json={
-            "choice": {
-                "name": "Second hands",
-                "profile": "device",
-                "device_id": client.session_test_devices["hands-b"],
-            }
-        },
+        json={"environment": _self_hosted(client, "hands-b")},
     )
     assert moved.status_code == 200, moved.text
     central._hub.call_executor.return_value = {

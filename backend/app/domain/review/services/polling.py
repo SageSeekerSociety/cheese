@@ -528,12 +528,17 @@ async def _advance_github_card(
 
 async def _mark_task_merged(
     self: pkg.AcceptService, card: AcceptCard, *, delivered_head: str | None = None
-) -> None:
+) -> bool:
+    """Record ``card``'s merge on its task; False when it does not land there.
+
+    A merge the task has already had does not land again — see
+    `task_landing._already_landed`. A caller that has words for a batch that
+    just landed says them on this answer."""
     if card.task_id is None:
-        return
+        return False
 
     task = await TaskService(self._session).require_in_room(card.topic_id, card.task_id)
-    await delivery_landed(
+    return await delivery_landed(
         self._session,
         task,
         by=card.decided_by,
@@ -600,19 +605,20 @@ async def _poll_pr_card(
             # The review remains a return. GitHub establishes a separate
             # fact about the batch, including the head that actually landed.
             card.pr_merged_at = status.merged_at or datetime.now(UTC)
-            await self._mark_task_merged(card, delivered_head=status.head_sha)
+            landed = await self._mark_task_merged(card, delivered_head=status.head_sha)
             await self._session.flush()
-            self._notify_merge_result(
-                topic,
-                say("acceptDoneAfterReturn", pr=number),
-                task_id=card.task_id,
-                meta=notice(
-                    EVENT_ACCEPT_DONE,
-                    severity=SEVERITY_INFO,
-                    who=WHO_PLATFORM,
-                    detail=card.pr_url or "",
-                ),
-            )
+            if landed:
+                self._notify_merge_result(
+                    topic,
+                    say("acceptDoneAfterReturn", pr=number),
+                    task_id=card.task_id,
+                    meta=notice(
+                        EVENT_ACCEPT_DONE,
+                        severity=SEVERITY_INFO,
+                        who=WHO_PLATFORM,
+                        detail=card.pr_url or "",
+                    ),
+                )
             return
         await self._settle_external_merge(card=card, topic=topic, status=status)
         return

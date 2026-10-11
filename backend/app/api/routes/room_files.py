@@ -15,11 +15,12 @@ from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker, get_chat_service
-from app.api.response import ok, page
+from app.api.response import Page, ok, page, typed_response
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import (
@@ -90,6 +91,39 @@ def _bytes_response(data: bytes, name: str, version: str) -> Response:
             "X-Cheese-Version": version,
         },
     )
+
+
+class RoomFileOut(BaseModel):
+    """文件区里的一份文件：路径、大小、最后一次改动的时间。"""
+
+    path: str
+    bytes: int
+    modified_at: str
+
+
+class RoomFileListOut(Page[RoomFileOut]):
+    """文件区的清单：``data`` 是文件，``truncated`` 说清单是不是全部。"""
+
+    truncated: bool
+
+
+@router.get("/topics/{topic_id}/files", **typed_response(RoomFileListOut))
+async def list_files(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。
+
+    这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫
+    什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，
+    这份清单就是那个目录本身，也是界面上看得见它的那一处。
+
+    `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
+    """
+    place, _ = await _in_room(db, resolver, topic_id)
+    items, total = await asyncio.to_thread(
+        library.list_room_files, place.project_id, place.room_id
+    )
+    return ok({**page(items, total), "truncated": total > len(items)})
 
 
 @router.get("/topics/{topic_id}/files/raw")

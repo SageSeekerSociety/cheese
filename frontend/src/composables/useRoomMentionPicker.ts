@@ -1,8 +1,9 @@
 /** 输入框里的 `@` 补全：这个房间的人、话题、群播，以及项目的资料库。
  *
- * 从 `components/room/RoomComposer.vue` 里搬出来的（#2143），一行没改。搬出来是
- * 因为它**自己去拉资料库**——那一步不该发生在 `src/components` 下
- * （`.claude/rules/architecture.md`：件只管画，取数在页面或 composable 里）。
+ * 从 `components/room/RoomComposer.vue` 里搬出来的（#2143）。菜单、候选和高亮的判断
+ * 都在这里；**资料库那一级的数据由宿主给进来**（`deps.listLibrary`），这一层自己不认识
+ * 接口，所以它装得进任何一件输入框——改消息的那个框就是靠这一条才接得上的。
+ * （`.claude/rules/architecture.md`：件只管画，取数在页面或 composable 里。）
  *
  * 两级菜单不是装饰：一个项目的文件会比房间里的人多得多，平铺进候选等于把「@ 一个
  * 人」这件事挤掉。所以没打字的时候资料库只是一行入口（`category`），走进去才列
@@ -19,7 +20,6 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import { t } from '../i18n'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
-import { listProjectLibrary } from '../lib/libraryApi'
 
 /** 能被 @ 到的人：这个房间里的，加上项目里还没进这个房间的。 */
 export interface MentionPoolEntry {
@@ -92,8 +92,15 @@ export interface MentionPickerDeps {
   topicList: () => Topic[]
   /** 挑完人、点完按钮之后要把光标还给输入框——这是最烦人的一处。 */
   focus: () => void
-  /** 挑中的是一份文件：它不是一个能 @ 的人，是附在这条消息上的一样东西。 */
-  onAddLibraryFile: (path: string) => void
+  /** 挑中的是一份文件：它不是一个能 @ 的人，是附在这条消息上的一样东西。
+   *  不填的宿主没有地方放附件（比如改消息的那个框）——它也不接 `listLibrary`，
+   *  所以文件那一类根本出不来。 */
+  onAddLibraryFile?: (path: string) => void
+  /** 资料库那一级的数据：按打的字去服务端取一页文件。
+   *  **这一层自己不取数**，由宿主给进来（`.claude/rules/architecture.md`：件只管画，
+   *  取数在页面或 composable 里）；不填就没有资料库那一级——改消息的那个框没有地方放
+   *  附件，它连这一级都不开。 */
+  listLibrary?: (projectId: string, query: string, limit: number) => Promise<LibraryFile[]>
   /** 用键盘换高亮之后把那一项滚进视野（菜单自己有高度上限、自己滚）。 */
   scrollActiveIntoView: () => void
 }
@@ -141,15 +148,15 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
   // （`librarySequence`）。
   let librarySequence = 0
   async function loadLibrary(q: string) {
+    const list = deps.listLibrary
     const projectId = deps.topic()?.project_id
     const key = `${projectId}\n${q}`
-    if (!projectId || libraryFor.value === key) return
+    if (!list || !projectId || libraryFor.value === key) return
     libraryFor.value = key
     const sequence = ++librarySequence
     try {
-      const page = await listProjectLibrary(projectId, { flat: true, q, limit: LIBRARY_PICKS })
-      if (sequence === librarySequence)
-        libraryFiles.value = page.data.filter((row): row is LibraryFile => row.type === 'file')
+      const rows = await list(projectId, q, LIBRARY_PICKS)
+      if (sequence === librarySequence) libraryFiles.value = rows
     } catch {
       // 挑文件是输入栏里的一个便利，不是这条消息发不出去的理由。
       if (sequence === librarySequence) {
@@ -255,7 +262,7 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
       // 文件不是一个能 @ 的人：挑中它是把它附在这条消息上，所以那个 @ 连同半个
       // 名字都从正文里拿掉，文件去待发条里待着。
       deps.draft.value = deps.draft.value.replace(/@([^\s@]*)$/, '')
-      deps.onAddLibraryFile(item.insert)
+      deps.onAddLibraryFile?.(item.insert)
       void nextTick(deps.focus)
       return
     }

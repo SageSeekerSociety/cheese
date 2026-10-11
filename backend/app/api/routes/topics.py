@@ -1162,7 +1162,6 @@ async def summon_agent(
             if seat
             else say("pendingHandedOver", actor=f"<@{actor.handle}>")
         ),
-        provision_actor=actor,
     )
     return ok({"started": True})
 

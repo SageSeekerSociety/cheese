@@ -1,25 +1,18 @@
 """撞上项目档位策略的那次调用，产物是给人的一条提议（结论 3 后半、结论 40 后半）。
 
-## 一个闸门，两个调用者
+## 闸门管的是模型
 
-「要一台自托管机器」和「这一轮用一个更贵的模型」看起来是两件事，对平台却是同一
-件：**一次要花别人东西的调用，项目策略说它不该自己发生。** 产物不是报错，也不是
-挂在那里等——是一条给人的提议，下一步在那个人手上。
-
-两个调用者刚好是两个，所以这里是一个抽象而不是两段 if：
-
-- 轮次组装（`agent/chat.py`）——这一轮要用的模型（`room_task/binding.py` 解析出来
-  的那个）落在哪一档；
-- 选工作电脑（`api/routes/topics.py` 的 `set_topic_compute_profile`、
-  `machine/session_work.py` 的 `request_choice`）——要的是自托管的那台机器还是 Cloud。
+这一轮要用的模型（`room_task/binding.py` 解析出来的那个）落在哪一档，轮次组装
+（`agent/chat.py`）在占用之前问这里。产物不是报错，也不是挂在那里等——是一条给人
+的提议，下一步在那个人手上。执行环境不过这道闸门：它是每位 AI 队友自己的，花不花
+项目的钱由沙箱的规格说（`agent/environment.py`），钱不够在放沙箱的那一刻拒绝。
 
 ## 档位是资源的一个事实，写在目录里
 
-结论 3 说模型是「工作占用的资源，与机器（地点）同形」，所以两者共用一套档位的词，
-而且那些词只在**目录**里声明一次（`agent/market.py`）：订阅模型在 `_SUB_MODELS`
-的那一列，工作电脑在 `COMPUTE_TIERS`。这里只做比较，不认识任何一个型号——策略说的是
-「哪几档可以自己发生」，不是一张型号白名单。白名单的毛病是它会过期：目录里加一个
-新型号，白名单不认识它，于是最贵的那个新模型反而随便用。
+档位的词只在**目录**里声明一次（`agent/market.py` 的 `_SUB_MODELS` 那一列）。这里
+只做比较，不认识任何一个型号——策略说的是「哪几档可以自己发生」，不是一张型号白名
+单。白名单的毛病是它会过期：目录里加一个新型号，白名单不认识它，于是最贵的那个新
+模型反而随便用。
 
 ## 三个答案，其中一个是抛出去的
 
@@ -34,11 +27,7 @@
 
 ## 默认与今天等价
 
-项目没说话时：不限档、超档拒绝。不限档意味着这个闸门对今天所有项目透明，所以部署
-窗口里新旧两份代码读同一份设置得到同一个行为。
-
-要让「自托管机器要机主同意」（结论 40）生效，项目把 `byo` 从允许档位里去掉，处置
-写成 `propose`；此后要那台机器的调用会变成一条提议，收件人是机主本人。
+项目没说话时：不限档、超档拒绝。不限档意味着这个闸门对今天所有项目透明。
 """
 
 from __future__ import annotations
@@ -61,10 +50,9 @@ DISPOSITIONS: Final = frozenset({DENY, PROPOSE})
 
 
 class Resource(enum.StrEnum):
-    """闸门管的两种资源。两个调用者各一种。"""
+    """闸门管的资源。"""
 
     model = "model"
-    machine = "machine"
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +175,6 @@ def check(call: Call, policy: Policy, actor: str) -> Allowed | Proposal:
 
 _WHAT: Final[dict[Resource, str]] = {
     Resource.model: say("policyResourceModel"),
-    Resource.machine: say("policyResourceMachine"),
 }
 
 

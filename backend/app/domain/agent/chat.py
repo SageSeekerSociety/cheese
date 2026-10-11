@@ -24,7 +24,6 @@ from functools import partial
 from sqlalchemy import select as _select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import settings
 from app.core.errors import BaseError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, own_limit, turn_inputs
@@ -66,7 +65,6 @@ from app.domain.agent.harness.prompt import (
     live_input_lines,
     platform_prompt,
     publication_prompt,
-    silence_reminder,
     strip_platform_notice,
 )
 from app.domain.agent.input_registration import confirm_receipt, input_registrar
@@ -163,7 +161,11 @@ from app.domain.agent.turn.intake.rooms import room_roster
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
-from app.domain.agent.turn.state.live import HookWorkState, LiveWork
+from app.domain.agent.turn.state.live import LiveWork
+
+# 一轮还跑着的时候平台往它里面说的两句话（沉默、清单停在原地），连同各自的扫底。
+# 用 `TurnNotices` 收窄到 `ChatService` 对外的几样，所以这里不用反向被 import。
+from app.domain.agent.turn.steps import reminders
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage
@@ -189,7 +191,6 @@ from app.domain.delivery.receipts import (
     complete_work_inputs,
     terminate_work_inputs,
 )
-from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
     names_a_person,
     recipient_seat,
@@ -494,7 +495,6 @@ class ChatService(SessionRecovery):
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
@@ -641,7 +641,6 @@ class ChatService(SessionRecovery):
                 user_block_id=user_block_id,
                 is_resume=is_resume,
                 continuation_id=continuation_id,
-                provision_actor=provision_actor,
                 platform_turn=platform_turn,
                 delivery_id=delivery_id,
                 recipient_instance_id=recipient_instance_id,
@@ -657,7 +656,6 @@ class ChatService(SessionRecovery):
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         recipient_handle: str | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
@@ -675,7 +673,6 @@ class ChatService(SessionRecovery):
                 author=author,
                 user_block_id=user_block_id,
                 continuation_id=continuation_id,
-                provision_actor=provision_actor,
                 recipient_instance_id=recipient_instance_id,
             ):
                 yield frame
@@ -798,79 +795,13 @@ class ChatService(SessionRecovery):
 
     async def remind_silent_turns(self) -> int:
         """Queue an internal reminder while a room response is still running."""
-        now = datetime.now(UTC)
-        due = [
-            state
-            for state in self.live.hook_work.values()
-            # Background inspections have their own notification policy. Only
-            # work answering a person owes a periodic chat update.
-            if state.reply_to is not None
-            and (
-                now
-                - max(
-                    state.last_chat_at or state.started_at,
-                    state.last_progress_reminder_at
-                    or (state.last_chat_at or state.started_at),
-                )
-            ).total_seconds()
-            >= settings.chat_progress_reminder_after_s
-            and state.work_id in self.live.active_turn_ids.get(state.topic_id, ())
-        ]
+        return await reminders.remind_silent_turns(self, datetime.now(UTC))
 
-        async def remind(state: HookWorkState) -> bool:
-            if self.live.hook_work.get(
-                (state.topic_id, state.work_id)
-            ) is not state or state.work_id not in self.live.active_turn_ids.get(
-                state.topic_id, ()
-            ):
-                return False
-            silent_for = now - (state.last_chat_at or state.started_at)
-            minutes = int(silent_for.total_seconds() // 60)
-            # 平台自己那句话按提问的人的语言说（`user.language`）——他就是还在等
-            # 的那个人。查不到时是 None，说存下来的中文。
-            async with self._sessions() as session:
-                asked = (
-                    await BlockRepository(session).get(state.reply_to)
-                    if state.reply_to
-                    else None
-                )
-                language = await language_of(
-                    session, asked.author if asked is not None else None
-                )
-            try:
-                # Repeats every `chat_progress_reminder_after_s` of continued
-                # silence. A publication clears this and `last_chat_at` together,
-                # so speaking is what stops the reminders; tool output and
-                # duplicate send requests are not speaking.
-                state.last_progress_reminder_at = now
-                # A blocked terminal must not hold up reminders in other rooms.
-                async with asyncio.timeout(5):
-                    delivered = await self.notify_running_turn(
-                        state.topic_id, silence_reminder(minutes, language)
-                    )
-                # THAT a reminder fired was already visible — the periodic
-                # loop logs `chat progress reminder: <count>` on any cycle whose
-                # result is worth reporting (app/core/background.py). What a
-                # count cannot carry is which room, which turn, how long it had
-                # been dark, and whether the transport took it, and those are
-                # the four things needed to tell 「the agent was reminded and
-                # stayed quiet」 from 「the reminder never reached it」.
-                logger.info(
-                    "chat progress reminder topic=%s turn=%s silent_min=%d "
-                    "delivered=%s",
-                    state.topic_id,
-                    state.work_id,
-                    minutes,
-                    delivered,
-                )
-                return delivered is True
-            except Exception:  # noqa: BLE001 — one room must not stop the sweep
-                logger.exception(
-                    "chat progress reminder failed (topic=%s)", state.topic_id
-                )
-                return False
-
-        return sum(await asyncio.gather(*(remind(state) for state in due)))
+    async def remind_stale_checklists(self) -> int:
+        """Ask a running turn whose own checklist stopped moving to write it
+        again. Both sweeps share one interval: each asks whether something
+        visible about this turn has stopped moving."""
+        return await reminders.remind_stale_checklists(self, datetime.now(UTC))
 
     async def notify_running_turn(
         self,

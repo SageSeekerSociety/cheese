@@ -18,16 +18,12 @@ import sys
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
 
-from app.domain.agent.compute_configs import ComputeChoice
 from app.domain.agent.executor_transport import MACHINE_OUT_OF_REACH
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import mcp_process
-from app.domain.agent.market import compute_listings
 
 TASK = "9f8e7d6c-0000-4000-8000-000000000000"
 #: The conversation these sessions run in (CHEESE_TOPIC): a task's own
@@ -136,11 +132,7 @@ CALLS = {
         "/feedback/FB-12/claim",
     ),
     "cheese_run_records": ({"group": "errors"}, "GET", "/run-records"),
-    "cheese_machine": (
-        {"profile": "cloud"},
-        "PUT",
-        f"/topics/{TOPIC}/compute-profile",
-    ),
+    "cheese_environment": ({}, "GET", f"/topics/{TOPIC}/environment"),
     "cheese_note": (
         {"thread": "9f8e7d6c-0000-0000-0000-000000000000", "content": "口径改了"},
         "POST",
@@ -210,7 +202,7 @@ NEEDS_THE_MACHINE = {
 }
 
 #: 只等那台机器、什么也不写到平台上的那一样。
-WAITS_FOR_THE_MACHINE = {"cheese_wait_machine"}
+WAITS_FOR_THE_MACHINE = {"cheese_wait_environment"}
 
 #: 这条传输自己的四个口子，不是产品动作。
 TRANSPORT = {
@@ -485,7 +477,7 @@ def test_waiting_for_a_machine_that_is_gone_says_so_at_once(machine_is_gone):
     """等一台够不着的机器，当场说够不着，不把 agent 晾到超时。"""
     process, platform_calls, _ = machine_is_gone
 
-    outcome = _call(process, "cheese_wait_machine", {})
+    outcome = _call(process, "cheese_wait_environment", {})
 
     assert outcome == {"deny": MACHINE_OUT_OF_REACH}
     assert platform_calls == []
@@ -495,10 +487,10 @@ def test_waiting_for_a_machine_that_is_here_returns_ready(machine_is_here):
     """机器在：等它就是在它上面跑一条什么也不做的命令，跑通就是就绪。"""
     process, _, executor_calls = machine_is_here
 
-    outcome = _call(process, "cheese_wait_machine", {})
+    outcome = _call(process, "cheese_wait_environment", {})
 
     assert "deny" not in outcome, outcome
-    assert "工作电脑已就绪" in json.dumps(outcome, ensure_ascii=False)
+    assert "执行环境已就绪" in json.dumps(outcome, ensure_ascii=False)
     assert [c["params"]["args"]["command"] for c in executor_calls] == ["true"]
 
 
@@ -578,35 +570,3 @@ def test_the_feedback_tool_says_when_to_use_it(machine_is_gone):
     assert "什么时候不该提" in description
     assert "用户的使用方式" in description
     assert "中途" in description
-
-
-def test_cheese_machine_declares_exactly_the_profiles_the_backend_accepts(
-    machine_is_gone,
-):
-    """`cheese_machine` 的 schema 是 agent 手上唯一的契约：`profile` 能填什么，要写在
-    `enum` 里，而且要和后端的算力目录是同一组。
-
-    以前它只写了「算力档位名」，agent 连猜 default、standard、small 几次，每次拿回
-    422，最后去问人「档位名是什么」。
-    """
-    process, _, _ = machine_is_gone
-    profile = _tools_by_name(process)["cheese_machine"]["inputSchema"]["properties"][
-        "profile"
-    ]
-    declared = profile["enum"]
-
-    catalog = {
-        pool.id
-        for pool in compute_listings(
-            SimpleNamespace(microcloud_base_url="", microcloud_tenant_secret=""),
-            device_online=True,
-        )
-    }
-    assert set(declared) == catalog
-
-    for value in declared:
-        ComputeChoice.model_validate({"name": "契约", "profile": value})
-    for guess in ("default", "standard", "cheese-box", "small", "medium"):
-        assert guess not in declared
-        with pytest.raises(ValidationError):
-            ComputeChoice.model_validate({"name": "契约", "profile": guess})

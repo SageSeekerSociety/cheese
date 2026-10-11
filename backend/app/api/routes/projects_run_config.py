@@ -60,27 +60,24 @@ the same prefix and tags, is all it takes.
 import uuid
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.projects import DbSession
-from app.core.config import settings
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.compute_configs import (
-    ProjectComputeConfigs,
-    project_configs,
-    validate_choice,
-)
-from app.domain.agent.market import (
-    COMPUTE_CLOUD,
-    COMPUTE_TIERS,
-    cloud_vm_provisionable,
-    compute_selectable,
+from app.domain.agent.environment import (
+    default_environment,
+    dump,
+    parse,
+    project_default,
 )
 from app.domain.agent_instance.configuration import model_choices, project_pool
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.services import HostPool
+from app.domain.machine.environments import check_allowed, offered_specs
 from app.domain.machine.session_reports import device_sessions, project_distribution
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
@@ -179,13 +176,16 @@ async def save_default_model(
     return ok(state)
 
 
-# --- Compute pool (design §3): which machine runs this project's sandbox ---
+# --- Execution environment: what a new agent in this project gets ---
 
 
 @router.get("/{project_id}/compute-configs")
 async def get_compute_configs(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
+    """The environment a new agent in this project gets, where its agents
+    are now, the sandbox specs it is offered and the people's computers it
+    has."""
     # deferred-import: tests replace this name on app.domain.agent.device_hub
     from app.domain.agent.device_hub import device_hub
 
@@ -199,27 +199,37 @@ async def get_compute_configs(
         await MemberService(db).require_manager(project_id, actor)
     except ForbiddenError:
         can_manage = False
-    devices = await sql_device_service(db).list_devices_for_project(project_id)
-
+    devices = [
+        device
+        for device in await sql_device_service(db).list_devices_for_project(project_id)
+        if device.supply is Supply.self_hosted
+    ]
+    specs = await offered_specs(db, project)
+    labels = {spec["spec"]: spec["label"] for spec in specs}
+    distribution = await project_distribution(db, project_id)
     return ok(
         {
-            **project_configs(project.settings).model_dump(),
+            "default": dump(project_default(project.settings) or default_environment()),
             "can_manage": can_manage,
-            # Where the project's agents are working now; the default only
-            # decides for agents that have not started.
-            "distribution": await project_distribution(db, project_id),
             "devices": [
                 {
                     "device_id": d.device_id,
                     "name": d.name,
                     "online": device_hub.is_online(d.device_id),
+                    "owned": actor.via == "token" and actor.user_id == d.owner_user_id,
                 }
                 for d in devices
             ],
-            "cloud_available": any(
-                p.id == COMPUTE_CLOUD for p in compute_selectable(settings)
-            ),
-            "cloud_vm_available": cloud_vm_provisionable(settings),
+            "specs": specs,
+            # Where the project's agents are now; the default only decides for
+            # agents that have not needed an environment yet.
+            "distribution": {
+                "sandboxes": [
+                    {**entry, "label": labels.get(entry["spec"], entry["spec"])}
+                    for entry in distribution["sandboxes"]
+                ],
+                "devices": distribution["devices"],
+            },
         }
     )
 
@@ -234,7 +244,7 @@ async def list_device_sessions(
     """The project's agent sessions on one self-hosted device, for a project
     manager to switch some of them elsewhere (「现在的分布」 → 查看并更换).
 
-    Each switch then goes through the room's own route, with its checks. A
+    Each switch then goes through the session's own route, with its checks. A
     session in a room the caller cannot open is counted in ``hidden`` and not
     listed, so its room's title stays in that room.
     """
@@ -255,13 +265,19 @@ async def list_device_sessions(
     return ok({"sessions": listed, "hidden": hidden})
 
 
-@router.put("/{project_id}/compute-configs")
+class ComputeConfigsIn(BaseModel):
+    default: dict
+
+
+@router.put("/{project_id}/compute-configs", dependencies=[ROUTE_DECIDES])
 async def save_compute_configs(
     project_id: uuid.UUID,
-    body: ProjectComputeConfigs,
+    body: ComputeConfigsIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
+    """What a new agent in this project gets. A manager's choice; nobody
+    already working moves."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     service = ProjectService(db)
@@ -269,12 +285,12 @@ async def save_compute_configs(
     if project is None:
         raise NotFoundError("Project not found")
     await MemberService(db).require_manager(project_id, actor)
-    await validate_choice(db, project_id, body.default)
-    await HostPool(db).admit_choice(project_id, actor, body.default)
+    environment = parse(body.default)
+    await check_allowed(db, project, environment, actor)
     await service.merge_settings(
-        project, {"compute_configs": body.model_dump()}, remove=("compute_profile",)
+        project, {"execution_environment": environment.model_dump()}
     )
-    return ok(body.model_dump())
+    return ok({"default": dump(environment)})
 
 
 # --- 档位策略 (结论 3 后半 / 40 后半): 哪几档可以自己发生，超档怎么办 -----
@@ -301,7 +317,6 @@ async def get_tier_policy(
             gate.OVER_TIER_KEY: policy.over_tier,
             "tiers": sorted(
                 {choice["tier"] for choice in model_choices(project.settings)}
-                | set(COMPUTE_TIERS.values())
             ),
         }
     )
