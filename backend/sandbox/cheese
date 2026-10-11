@@ -236,16 +236,25 @@ _FEEDBACK_STATUS = {
 }
 
 
-# The only profiles `PUT /topics/{topic}/compute-profile` accepts. This script is
-# shipped to machines on its own and cannot import the backend, so the set is a
-# literal; tests/contract/test_platform_tools.py fails when it and the backend's
-# compute catalog differ.
-MACHINE_PROFILES = ("cloud", "device")
-MACHINE_PROFILE_DESCRIPTION = (
-    "只有两个值：cloud 是平台的云端，每个会话一个沙箱，配合 whole_machine "
-    "换成每个会话一整台云虚拟机；device 是项目已授权的自有设备，配合 device_id "
-    "指定哪一台，不填 device_id 就自动选一台在线的。"
+ENVIRONMENT_SPEC_DESCRIPTION = (
+    "沙箱规格：standard 是平台的标准沙箱；vm 是一整台虚拟机做的沙箱，有 sudo，"
+    "能跑 Docker、要 KVM 的任务和内核模块，准备要几分钟；devices_of:<编号> "
+    "是那个人自己接入的电脑上的沙箱。不填就列出这个项目能选的规格和你现在的环境。"
 )
+
+
+def _own_session(env) -> str:
+    """This session's id, as its credential names it (``session`` in the
+    claims ``cxss_<base64 json>.<signature>`` carries)."""
+    body = env.get("CHEESE_TOKEN", "").rpartition(".")[0].removeprefix("cxss_")
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except ValueError:
+        claims = None
+    session = claims.get("session") if isinstance(claims, dict) else None
+    if not session:
+        raise ValueError("This credential names no session")
+    return str(session)
 
 _CONTRIBUTOR = {
     "type": "array",
@@ -324,7 +333,9 @@ PLATFORM_TOOLS = ToolTable(
             "todo_write",
             "把步骤清单整份写进对话：第一次调用发一条清单消息，之后每次调用改的是你"
             "当前那条清单消息。还在做同一个请求就一直改这一条；有人提了新的请求，带上"
-            "new=true 另发一条。做完时再调用一次，所有项标 completed，并用 result "
+            "new=true 另发一条。每做完一步就再调用一次，把做完的标成 completed、"
+            "正在做的那一项标成 in_progress——中间不写，看清单的人就一直看到开工那一版。"
+            "做完时再调用一次，所有项标 completed，并用 result "
             "写一句落下了什么，它接在清单下面。每次传完整的清单，不是增量；"
             f"最多 {TODO_MAX_ITEMS} 项，每项 ≤{TODO_MAX_CHARS} 字；"
             "同一时刻只让一项 in_progress。在任务里时，清单记在这个任务上，"
@@ -793,30 +804,16 @@ PLATFORM_TOOLS = ToolTable(
             },
         ),
         _tool(
-            "cheese_machine",
-            "更换你自己的工作电脑，后续文件和命令操作使用新电脑。"
-            "只能选择项目授权的资源。更换前平台先在原来那台上把改动推送到分支，"
-            "推送失败或原来那台连不上就不换；新电脑从分支拉代码。",
-            {
-                "profile": {
-                    "type": "string",
-                    "enum": list(MACHINE_PROFILES),
-                    "description": MACHINE_PROFILE_DESCRIPTION,
-                },
-                "device_id": _text("自有设备的 id，只有 device 能指定"),
-                "whole_machine": {
-                    "type": "boolean",
-                    "description": "只配 cloud：每个会话一整台云虚拟机，有 sudo，"
-                    "能跑 Docker、要 KVM 的任务和内核模块，沙箱里做不了的活用它；"
-                    "准备要几分钟",
-                },
-            },
-            ["profile"],
+            "cheese_environment",
+            "查看或更换你自己的执行环境：后续文件和命令操作跑在什么样的沙箱里。"
+            "只换你自己，这里的其他队友不受影响；只能选项目能用的规格。更换前平台"
+            "在原来那里尽力把改动推送到分支一次，推没推上去都会换；新环境从分支拉代码。",
+            {"spec": {"type": "string", "description": ENVIRONMENT_SPEC_DESCRIPTION}},
         ),
         _tool(
-            "cheese_wait_machine",
-            "工作电脑还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
-            "要等机器就用它，别用 sleep：预热好的机器常常几秒就好，sleep 只会白等。"
+            "cheese_wait_environment",
+            "执行环境还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
+            "要等就用它，别用 sleep：沙箱常常几秒就好，sleep 只会白等。"
             "文件和命令工具本身也会等，所以只在你想先等好再做别的时候调它。",
         ),
         _tool(
@@ -1467,15 +1464,14 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST" if tool == "cheese_feedback_claim" else "DELETE",
             "path": f"/feedback/{ref}/claim?topic={topic}",
         }
-    if tool == "cheese_machine":
-        body = {
-            "profile": args["profile"],
-            **_given(args, "device_id", "whole_machine"),
-        }
+    if tool == "cheese_environment":
+        spec = str(args.get("spec") or "").strip()
+        if not spec:
+            return {"method": "GET", "path": f"/topics/{topic}/environment"}
         return {
             "method": "PUT",
-            "path": f"/topics/{topic}/compute-profile",
-            "body": body,
+            "path": f"/topics/{topic}/sessions/{_own_session(env)}/environment",
+            "body": {"environment": {"kind": "sandbox", "spec": spec}},
         }
     if tool == "cheese_note":
         # 收件人是**那条线程**，不是一个 handle：同 handle 是守卫（I14②），由后端
@@ -2390,7 +2386,7 @@ def _wait_machine(args: dict, host) -> str:
     started = datetime.now(UTC)
     host.wait_machine()
     waited = round((datetime.now(UTC) - started).total_seconds())
-    return f"工作电脑已就绪（等了 {waited} 秒）。" if waited else "工作电脑已就绪。"
+    return f"执行环境已就绪（等了 {waited} 秒）。" if waited else "执行环境已就绪。"
 
 
 _STEPS = {
@@ -2409,7 +2405,7 @@ _STEPS = {
     "cheese_feedback_claim": _feedback_claim,
     "cheese_feedback_release": _feedback_release,
     "cheese_run_records": _run_records,
-    "cheese_wait_machine": _wait_machine,
+    "cheese_wait_environment": _wait_machine,
 }
 
 
@@ -2517,32 +2513,43 @@ def _say_fetch(args, data, env) -> str:
     return f"{data.get('text', '')}\n\n[来源：{data.get('rung', '?')}（{note}）]"
 
 
-def _say_machine(args, data, env) -> str:
+def _say_environment(args, data, env) -> str:
     data = data or {}
-    if data.get("session"):
-        choice = data["session"]["choice"]
-        return (
-            f"改动已推送到分支，工作电脑已设为 {choice['name']}，"
-            "下次执行操作时使用；在新电脑上从分支拉代码继续。"
-        )
-    if data.get("proposal"):
-        return f"已提请 {data['proposal']['approver']} 点头，等他拍板。"
-    said = f"这个频道的工作电脑现在是 {data.get('current')}。"
-    # 支线和还没开始的任务里的会话改动留不下，换到哪台机器都一样：只听到「换好
-    # 了」，它会在命令被拒以后再换一台，去找一台推得上去的机器，而没有这样的机器。
-    keeps_nothing = data.get("keeps_nothing")
-    if keeps_nothing is None:
+    if "specs" in data:
+        try:
+            mine = _own_session(env)
+        except ValueError:
+            mine = ""
+        current = next(
+            (
+                row.get("environment")
+                for row in data.get("sessions") or []
+                if row.get("session_id") == mine
+            ),
+            None,
+        ) or data.get("effective_default")
+        labels = {s["spec"]: s["label"] for s in data["specs"]}
+        if current and current.get("kind") == "self_hosted":
+            now = "你现在直接跑在一台人自己的电脑上，没有沙箱（这只能由那台电脑的主人设）。"
+        elif current:
+            spec = current.get("spec", "")
+            now = f"你现在的执行环境是「{labels.get(spec, spec)}」沙箱。"
+        else:
+            now = "你还没有执行环境，第一次执行操作时用这里的默认。"
+        offered = "\n".join(f"- {s['spec']}：{s['label']}" for s in data["specs"])
+        return f"{now}\n这个项目能选的沙箱规格：\n{offered or '（没有）'}"
+    spec = ((data.get("environment") or {}).get("spec")) or args.get("spec", "")
+    said = (
+        f"你的执行环境已换成规格 {spec} 的沙箱，下次执行操作时生效；"
+        "原来那里的改动平台尽力推送过一次，新环境从分支拉代码。"
+    )
+    if not data.get("keeps_nothing"):
         return said
-    if keeps_nothing.get("reads_only"):
-        here = (
-            "这台机器不归这个会话独占（整台机器授权的设备、整台云虚拟机），"
-            "在上面只能读文件，不能执行命令、不能改文件。"
-        )
-    else:
-        here = "在这台上可以跑命令、改文件，但改动推送不进项目。"
+    # 支线和还没开始的任务里的会话改动留不下，换到哪里都一样：只听到「换好了」，
+    # 它会在推送被拒以后再换，去找一个推得上去的环境，而没有这样的环境。
     return (
-        f"{said}这个会话在支线或还没开始的任务里，改动留不下，换机器不会改变这一点：{here}"
-        "要改项目，创建一个任务。"
+        f"{said}这个会话在支线或还没开始的任务里，改动留不下，换环境不会改变这一点："
+        "能跑命令、改文件，但推送不进项目；要改项目，创建一个任务。"
     )
 
 
@@ -2716,7 +2723,7 @@ _SAY = {
     "cheese_feedback_propose": lambda a, d, e: (
         f"已提案（卡 id {(d or {}).get('block_id')}），等人按「提交反馈」。"
     ),
-    "cheese_machine": _say_machine,
+    "cheese_environment": _say_environment,
     # `delivered` 是这条工具的答案本身：便条直接进那条线程正在跑的那一轮，那边这一
     # 刻没在跑就没人接住。一律说「已递」，调用方会当作对面已经知道了往下走。
     "cheese_note": lambda a, d, e: (

@@ -44,7 +44,7 @@ export const keys = {
   roomPreview: (roomId: string) => ['room', roomId, 'preview'] as const,
   roomPins: (roomId: string) => ['room', roomId, 'pins'] as const,
   roomThreads: (roomId: string) => ['room', roomId, 'threads'] as const,
-  roomComputeProfile: (roomId: string) => ['room', roomId, 'compute-profile'] as const,
+  roomEnvironment: (roomId: string) => ['room', roomId, 'environment'] as const,
   /** 这段对话里还活着的反馈提案卡。 */
   roomFeedbackProposals: (roomId: string) => ['room', roomId, 'feedback-proposals'] as const,
   /** 这个房间里 AI 队友提议、还在等人的技能。 */

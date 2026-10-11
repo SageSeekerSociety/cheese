@@ -417,7 +417,7 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([screen.runtime], screen.name),
+        compute=ComputePool([screen.runtime]),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     with room_socket(client, topic_id, "user-1") as ws:
@@ -477,7 +477,7 @@ def _run_on_non_embedding_backend(client, tmp_path) -> _NoEmbedScreen:
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([screen.runtime], screen.name),
+        compute=ComputePool([screen.runtime]),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen

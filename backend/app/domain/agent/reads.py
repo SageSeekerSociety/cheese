@@ -36,6 +36,14 @@ class Ended:
 
 
 @dataclass(frozen=True)
+class Abandoned:
+    """A work whose session is gone with its inputs still unfinished, and
+    nobody left to report on them: the runner that would have written a
+    completion or a terminal is the process that died. Read with the work it
+    belongs to, so the room can end those inputs itself."""
+
+
+@dataclass(frozen=True)
 class Working:
     """The session started or stopped working on the work this is read for."""
 
@@ -103,6 +111,7 @@ class Read:
         AgentEvent
         | Writing
         | Ended
+        | Abandoned
         | Working
         | Received
         | Completed

@@ -1,5 +1,7 @@
 """Project scripts: human stewardship, room pinning, and explicit application."""
 
+import uuid
+
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
@@ -94,7 +96,6 @@ def test_room_from_another_project_cannot_be_read_or_changed(client):
 
 
 def test_active_room_refuses_application_but_project_can_save_future_config(client):
-    import uuid
 
     from app.api.deps import get_chat_service
 
@@ -118,7 +119,6 @@ def test_active_room_refuses_application_but_project_can_save_future_config(clie
 
 async def test_image_migration_keeps_other_settings_and_pins_all_rooms(db_factory):
     import importlib.util
-    import uuid
     from pathlib import Path
 
     import sqlalchemy as sa
@@ -196,9 +196,7 @@ def test_applying_holds_no_room_lock_while_the_machine_is_reset(client, monkeypa
     device call queued every writer of the row with a pool connection each)."""
     import asyncio
     import threading
-    import uuid
     from datetime import UTC, datetime
-    from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from sqlalchemy import text
@@ -210,11 +208,12 @@ def test_applying_holds_no_room_lock_while_the_machine_is_reset(client, monkeypa
     topic_id = room(client, project_id)
     base = f"/projects/{project_id}/environment"
     before = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
-    binding = SimpleNamespace(device_id="machine")
     monkeypatch.setattr(
         routes,
-        "sql_device_service",
-        lambda db: SimpleNamespace(topic_binding=AsyncMock(return_value=binding)),
+        "leases_on_peoples_devices",
+        AsyncMock(
+            return_value=[{"device_id": "machine", "resource_id": str(uuid.uuid4())}]
+        ),
     )
     monkeypatch.setattr(routes.device_hub, "is_online", lambda device_id: True)
     monkeypatch.setattr(routes.device_hub, "screens_for_topic", lambda tid: [])

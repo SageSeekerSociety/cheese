@@ -36,6 +36,7 @@
     "missed": "Didn't run",
     "missedBecause": "Didn't run: {reason}",
     "took": "Took {minutes} min",
+    "files": "Result files",
     "open": "View this run"
   },
   "run": {

@@ -16,13 +16,13 @@ order: 1
 - 上传文件时：[「超过 10MB，无法上传」](#upload-failed)
 - 题目页上：[「暂时无法参与」](#claim-blocked)、[没有「提交作业」](#submission-unavailable)
 
-## 提示「这条会话的环境尚未配置或未连接」 {#device-offline}
+## 提示电脑没有连上平台 {#device-offline}
 
-这个频道选的电脑不在线，或者频道还没有选电脑，这一轮以「本轮未完成：」结束。处理办法见[自有设备 · 提示「这个频道的环境没有连接」](/devices#device-offline)。
+AI 队友的环境要用的那台电脑不在线，它的文件和命令操作暂时做不了，对话照常。处理办法见[自有设备 · 提示电脑没有连上平台](/devices#device-offline)。
 
-## 提示「工作电脑的环境准备失败」 {#environment-failed}
+## 提示「执行环境准备失败」 {#environment-failed}
 
-AI 队友开始工作前，平台先运行项目设置的脚本，其中一段出错了；提示写明出错在「准备脚本」还是「启动脚本」。处理办法见[环境 · 提示工作电脑的环境准备失败](/environment#environment-failed)。
+AI 队友开始工作前，平台先运行项目设置的脚本，其中一段出错了；提示写明出错在「准备脚本」还是「启动脚本」。处理办法见[环境 · 提示执行环境准备失败](/environment#environment-failed)。
 
 ## 提示「本轮未完成」或「本轮意外中断」 {#turn-failed}
 

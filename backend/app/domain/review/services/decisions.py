@@ -305,6 +305,8 @@ async def reject(
 
     await self._cancel_queued_accept(card)
     card.status = AcceptStatus.rejected
+    # 退回也是结局：等验收人动手的那几句一起收掉。
+    await self._settle_the_card(card, "rejected")
     card.decided_by = decided_by
     card.decided_at = datetime.now(UTC)
     notes.record(card, None, note)
@@ -332,6 +334,9 @@ async def revoke(
         raise ValidationError(say("revokeAcceptForbidden"))
 
     card.status = AcceptStatus.revoked
+    # 已采纳的卡上通常没有积着的话（采纳那一拍就收过了）；这里管的是这张卡还有
+    # 别的话躺在谁的收件箱里的情况，收一遍是空转。
+    await self._settle_the_card(card, "voided")
     card.decided_by = decided_by
     card.decided_at = datetime.now(UTC)
 
@@ -587,6 +592,8 @@ async def void(
             f"合并还是关闭：{card.pr_url or '（无链接）'}{reason}"
         )
     card.status = AcceptStatus.revoked
+    # 作废是结局：等验收人动手的那几句一起收掉。
+    await self._settle_the_card(card, "voided")
     notes.record(card, notes.NoteCode.voided, archive.prefix_note(card.note, headline))
     # 只在空的时候补：作废人始终写在 note 里，已有的决议痕迹不覆盖。
     if card.decided_by is None:

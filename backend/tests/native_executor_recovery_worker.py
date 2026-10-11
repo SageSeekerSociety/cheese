@@ -133,7 +133,7 @@ async def run(descriptor):
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=descriptor["workspace"],
-        compute=ComputePool([channel.runtime], channel.name),
+        compute=ComputePool([channel.runtime]),
     )
     topic, work = uuid.UUID(descriptor["topic"]), uuid.UUID(descriptor["work"])
     try:

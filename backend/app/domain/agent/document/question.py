@@ -331,14 +331,14 @@ _RULES = (
 #: What the session can see of the task's work, with the task's machine and
 #: without it (`document/machine.py`).
 _MACHINE = (
-    "你能用 read、ls、find、grep 读这个任务工作电脑上的代码（{workspace}），用 git 看"
+    "你能用 read、ls、find、grep 读这个任务执行环境里的代码（{workspace}），用 git 看"
     "提交记录、某次提交、每行是谁改的，以及这个分支相对主干改了什么。那是任务里队友正"
     "在用的工作目录，包括还没提交的改动，可能有改到一半的地方；引用代码时说明是任务当"
     "前的代码。你不能运行命令，也不能改代码，要做这些时在回复里说明，请人在任务里交给"
     "任务里的队友。"
 )
 _NO_MACHINE = (
-    "这次没有可读的工作电脑，你读不到代码，也不能运行命令。问题要看代码时，"
+    "这次没有可读的执行环境，你读不到代码，也不能运行命令。问题要看代码时，"
     "如实说这次没有看代码。"
 )
 

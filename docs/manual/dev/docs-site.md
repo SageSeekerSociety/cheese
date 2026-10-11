@@ -149,7 +149,7 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [加入别人的团队](/join-a-team) | 用团队链接申请加入，等批准 | 一个 `:::walk` | 同上 |
 | [邀请一个人加入你的项目](/invite-to-project) | 邀请一位外部成员 | 一个 `:::walk` | 同上 |
 | [把网页发布成网站](/publish-a-site) | 在「总览」中发布网站 | 一个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
-| [让芝士在你自己的电脑上工作](/use-your-computer) | 接入这台电脑；让频道改用这台电脑 | 两个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
+| [让芝士在你自己的电脑上工作](/use-your-computer) | 接入这台电脑；让芝士改用这台电脑 | 两个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
 | [把外部服务连给芝士](/connect-a-service) | 在项目设置中连接 Notion | 一个 `:::walk` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |
 | [给芝士装一个技能](/add-a-skill) | 新建一项技能 | 一个 `:::walk` | 同上 |
 | [团队](/teams) | 复制团队链接 | 一个 `demo-panel` | 页面里的 fence，界面字样对照 `frontend/src/i18n/messages/zh-CN/` |

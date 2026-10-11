@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import Select, delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -343,8 +343,34 @@ async def settle(session: AsyncSession, event_id: uuid.UUID, outcome: dict) -> N
     一句已经不成立的话，还要人自己去点「已读」。结果并进 `payload`，渲染的一侧
     据此说现在的状态；账本上的 `payload` 也跟着改，补发写回来的才是现在这句话。
     """
-    now = _utcnow()
     keys = select(Delivery.dedup_key).where(Delivery.event_id == event_id)
+    await _settle(session, keys, outcome)
+
+
+async def settle_card(session: AsyncSession, card_id: uuid.UUID, outcome: dict) -> None:
+    """这张验收卡办完了：关于它的每一条提示一并结掉。
+
+    一张卡等的是**一件事**，说的话却有好几句：递上来时「待你审阅」，检查全绿时
+    「可以采纳了」，机器推不动时「不会自动合并」。一次决定把这几句一起作废，而它
+    们是几条各投各的事件（`dedup_key` 跟事件走，一条事件一个人只发一次），所以按
+    事件结不掉 —— 卡的身份随每一句一起投出去（`payload.cardId`，
+    `agent/announce.py`），一个卡号就够。
+
+    结的是「等验收人动手」的那些；说**结局**的那几条（合了、作废了、PR 被关了）
+    不带卡号：它们正是在这个决定之后才说出来的。
+    """
+    await _settle(
+        session,
+        select(Delivery.dedup_key).where(
+            Delivery.payload["cardId"].as_string() == str(card_id)
+        ),
+        outcome,
+    )
+
+
+async def _settle(session: AsyncSession, keys: Select, outcome: dict) -> None:
+    """把 `keys` 选出来的那几笔投递结掉。"""
+    now = _utcnow()
     for row in await session.scalars(
         select(Notification).where(Notification.delivery_key.in_(keys))
     ):
@@ -352,7 +378,7 @@ async def settle(session: AsyncSession, event_id: uuid.UUID, outcome: dict) -> N
         row.read = True
         row.resolved_at = now
     for delivery in await session.scalars(
-        select(Delivery).where(Delivery.event_id == event_id)
+        select(Delivery).where(Delivery.dedup_key.in_(keys))
     ):
         delivery.payload = {**(delivery.payload or {}), **outcome}
     await session.flush()

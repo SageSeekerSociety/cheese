@@ -92,6 +92,7 @@ async def announce(
     points_at: Event = NAMES_NOBODY,
     event_id: uuid.UUID | None = None,
     task_id: uuid.UUID | None = None,
+    about_card: uuid.UUID | None = None,
     published_by_caller: bool = False,
 ) -> Block | None:
     """把 `content` 说进房间，并投给这条事件点到的那些人。
@@ -108,6 +109,11 @@ async def announce(
     就是房间里刚落下的那一行 —— 一次性的提示说完即止，它的身份和它那一行同生。给
     得出一个更长命的身份的调用点才填它：同一件事被问第二遍仍然是同一条事件，那个
     id 不能每次新建（`domain/policy/proposals.py`）。
+
+    `about_card` 是这句话说的那张验收卡：随投递一起记下（`payload.cardId`），卡的
+    那次决定据此把这一批提示一起结掉（`delivery/ledger.py` 的 `settle_card`）。
+    一张卡的话有好几句、投出去还各投各的，所以「谁和谁是一批」只能由这个参数说。
+    说**结局**的那几条（合了、作废了）不要填它：它们是决定之后才要说的话。
 
     提交之后这一行当场推给开着那段对话的页面（`live_notices`）。
     `published_by_caller` 是调用方自己拿返回的 block 去推、要和它自己的帧排好先后
@@ -149,6 +155,7 @@ async def announce(
         content=content,
         meta=meta or {},
         points_at=points_at,
+        about_card=about_card,
         event_id=event_id,
     )
     return block
@@ -445,6 +452,7 @@ async def _notify(
     meta: dict,
     points_at: Event,
     event_id: uuid.UUID | None = None,
+    about_card: uuid.UUID | None = None,
 ) -> None:
     await deliver(
         session,
@@ -464,6 +472,9 @@ async def _notify(
                 **notice_message(block.meta),
                 "eventType": str(meta.get("event_type") or ""),
                 "severity": str(meta.get("severity") or SEVERITY_INFO),
+                # 这一批提示说的是哪张卡 —— 卡的决定把这一批一起结掉
+                # （`delivery/ledger.py` 的 `settle_card`）。
+                **({"cardId": str(about_card)} if about_card is not None else {}),
             },
             occurred_at=block.created_at,
         ),

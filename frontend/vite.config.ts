@@ -260,51 +260,59 @@ function chunkName(id: string): string | null {
   if (id.includes('oxc-project')) {
     return 'runtime-helpers'
   }
-  if (id.includes('node_modules')) {
+  const at = id.indexOf('node_modules')
+  if (at !== -1) {
+    // Match package names against the path from `node_modules` on, never the
+    // directory the checkout sits in: a clone under `…/vuetify-upgrade/` once
+    // sent every module to the `vuetify` chunk (10 MB, past the PWA precache
+    // limit), and `vue`, `marked` or `zod` in a parent directory would do the
+    // same. The pnpm store directory (`.pnpm/<name>@<version>_<peers>`) stays
+    // in, so chunks come out as they did.
+    const pkg = id.slice(at)
     // Monaco is the largest package in node_modules and only the code
     // panels use it, yet the catch-all `vendor` at the bottom pulled it
     // into the one chunk every page preloads (1.29 MB gzipped, most of
     // it Monaco). In its own chunk it is reachable only from the lazy
     // TopicView route, so first paint no longer pays for it.
-    if (id.includes('monaco-editor')) {
+    if (pkg.includes('monaco-editor')) {
       return 'monaco'
     }
-    if (id.includes('prosemirror')) {
+    if (pkg.includes('prosemirror')) {
       return 'prosemirror'
     }
-    if (id.includes('dompurify')) {
+    if (pkg.includes('dompurify')) {
       return 'dompurify'
     }
-    if (id.includes('marked')) {
+    if (pkg.includes('marked')) {
       return 'marked'
     }
-    if (id.includes('zod')) {
+    if (pkg.includes('zod')) {
       return 'zod'
     }
-    if (id.includes('tiptap')) {
+    if (pkg.includes('tiptap')) {
       return 'tiptap'
     }
-    if (id.includes('vuetify')) {
+    if (pkg.includes('vuetify')) {
       return 'vuetify'
     }
     // Vue 及其相关
-    if (id.match(/(vue|vue-router)/)) {
+    if (pkg.match(/(vue|vue-router)/)) {
       return 'vue'
     }
     // lodash 单独一个 chunk
-    if (id.includes('lodash')) {
+    if (pkg.includes('lodash')) {
       return 'lodash'
     }
     // Editor.js 相关依赖归为一组
-    if (id.includes('@editorjs')) {
+    if (pkg.includes('@editorjs')) {
       return 'editorjs'
     }
     // dayjs 单独一个 chunk
-    if (id.includes('dayjs')) {
+    if (pkg.includes('dayjs')) {
       return 'dayjs'
     }
     // axios 如果使用量较大，也可单独拆分
-    if (id.includes('axios')) {
+    if (pkg.includes('axios')) {
       return 'axios'
     }
     // Everything else is left to Rolldown, which places a package by who

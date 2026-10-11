@@ -17577,7 +17577,7 @@
           "market"
         ],
         "summary": "List Pools",
-        "description": "The full catalog: every AI pool and compute pool on offer, each with its\ntier, price, and whether it's available to select. Powers the 市场 browse\nview; a project selects from these in its settings.",
+        "description": "The full catalog: every AI pool and sandbox spec on offer, each with\nits tier, price, and whether it's available to select. Powers the 市场\nbrowse view; a project selects from these in its settings.",
         "operationId": "list_pools_market_pools_get",
         "responses": {
           "200": {
@@ -17601,7 +17601,7 @@
           "market"
         ],
         "summary": "List Nodes",
-        "description": "节点看板: the compute pools this deployment can run a turn on, with\nliveness and current load (in-flight turns).\n\nBuilt from the same catalogue the 市场 browses, so the board cannot show a\nnode the picker does not offer — it used to show exactly one, the platform's\nown container host, which was the one pool the catalogue never listed.",
+        "description": "节点看板: the sandbox specs this deployment can place an agent's\nenvironment on, with liveness and current load (in-flight turns).\n\nBuilt from the same catalogue the 市场 browses, so the board cannot show a\nnode the picker does not offer.",
         "operationId": "list_nodes_market_nodes_get",
         "responses": {
           "200": {
@@ -23461,6 +23461,7 @@
           "projects"
         ],
         "summary": "Get Compute Configs",
+        "description": "The environment a new agent in this project gets, where its agents\nare now, the sandbox specs it is offered and the people's computers it\nhas.",
         "operationId": "get_compute_configs_projects__project_id__compute_configs_get",
         "parameters": [
           {
@@ -23504,6 +23505,7 @@
           "projects"
         ],
         "summary": "Save Compute Configs",
+        "description": "What a new agent in this project gets. A manager's choice; nobody\nalready working moves.",
         "operationId": "save_compute_configs_projects__project_id__compute_configs_put",
         "parameters": [
           {
@@ -23522,7 +23524,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProjectComputeConfigs"
+                "$ref": "#/components/schemas/ComputeConfigsIn"
               }
             }
           }
@@ -23559,7 +23561,7 @@
           "projects"
         ],
         "summary": "List Device Sessions",
-        "description": "The project's agent sessions on one self-hosted device, for a project\nmanager to switch some of them elsewhere (「现在的分布」 → 查看并更换).\n\nEach switch then goes through the room's own route, with its checks. A\nsession in a room the caller cannot open is counted in ``hidden`` and not\nlisted, so its room's title stays in that room.",
+        "description": "The project's agent sessions on one self-hosted device, for a project\nmanager to switch some of them elsewhere (「现在的分布」 → 查看并更换).\n\nEach switch then goes through the session's own route, with its checks. A\nsession in a room the caller cannot open is counted in ``hidden`` and not\nlisted, so its room's title stays in that room.",
         "operationId": "list_device_sessions_projects__project_id__devices__device_id__sessions_get",
         "parameters": [
           {
@@ -27246,6 +27248,50 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewCommentOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/files": {
+      "get": {
+        "tags": [
+          "room-files"
+        ],
+        "summary": "List Files",
+        "description": "这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。\n\n这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫\n什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，\n这份清单就是那个目录本身，也是界面上看得见它的那一处。\n\n`truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。",
+        "operationId": "list_files_topics__topic_id__files_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomFileListOutEnvelope"
                 }
               }
             }
@@ -42467,14 +42513,14 @@
         }
       }
     },
-    "/topics/{topic_id}/compute-profile": {
+    "/topics/{topic_id}/environment": {
       "get": {
         "tags": [
           "topics"
         ],
-        "summary": "Get Topic Compute Profile",
-        "description": "A conversation's work computer — a room's, or a task's: the one choice\nevery session of that conversation works on. A session that has not\nstarted answers the same choice, the machine it will get.",
-        "operationId": "get_topic_compute_profile_topics__topic_id__compute_profile_get",
+        "summary": "Get Environment",
+        "description": "Each agent's environment in this conversation, the default a new agent\ngets here and where it comes from, the sandbox specs this project is\noffered, and the people's computers one may run on unisolated.",
+        "operationId": "get_environment_topics__topic_id__environment_get",
         "parameters": [
           {
             "name": "topic_id",
@@ -42493,9 +42539,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Topic Compute Profile Topics  Topic Id  Compute Profile Get"
+                  "$ref": "#/components/schemas/TopicEnvironmentOutEnvelope"
                 }
               }
             }
@@ -42511,14 +42555,16 @@
             }
           }
         }
-      },
+      }
+    },
+    "/topics/{topic_id}/environment-default": {
       "put": {
         "tags": [
           "topics"
         ],
-        "summary": "Set Topic Compute Profile",
-        "description": "A conversation's work computer: a room's, or a task's.\n\nEvery session working on the choice moves with it, each after one\nbest-effort checkpoint (``machine/session_work.request_choice``): for the\nroom, its own sessions and those of tasks that follow it; for a task, the\ntask's. Only the task's owner, a project manager or the owner of a device\nthe task holds changes a task's, or the task's own session. A person's own\ncomputer works only that person's tasks.",
-        "operationId": "set_topic_compute_profile_topics__topic_id__compute_profile_put",
+        "summary": "Set Environment Default",
+        "description": "What a new agent in this conversation gets; None to take the room's\n(for a task) or the project's. Nobody already here moves. A person's\nchoice: an agent changes only its own environment.",
+        "operationId": "set_environment_default_topics__topic_id__environment_default_put",
         "parameters": [
           {
             "name": "topic_id",
@@ -42536,9 +42582,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Body"
+                "$ref": "#/components/schemas/EnvironmentDefaultIn"
               }
             }
           }
@@ -42549,9 +42593,71 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Set Topic Compute Profile Topics  Topic Id  Compute Profile Put"
+                  "$ref": "#/components/schemas/EnvironmentDefaultOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/sessions/{session_id}/environment": {
+      "put": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Set Session Environment",
+        "description": "Give one agent here another environment. Only that agent moves, after\none best-effort checkpoint where it was. An agent may change its own,\nnever another's, and never to a machine without isolation.",
+        "operationId": "set_session_environment_topics__topic_id__sessions__session_id__environment_put",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionEnvironmentIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionEnvironmentChangeOutEnvelope"
                 }
               }
             }
@@ -52783,52 +52889,19 @@
         ],
         "title": "CompareSheetOut"
       },
-      "ComputeChoice": {
+      "ComputeConfigsIn": {
         "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 60
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "profile": {
-            "type": "string",
-            "enum": [
-              "cloud",
-              "device"
-            ],
-            "title": "Profile"
-          },
-          "device_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Device Id"
-          },
-          "whole_machine": {
-            "type": "boolean",
-            "title": "Whole Machine",
-            "default": false
+          "default": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Default"
           }
         },
-        "additionalProperties": false,
         "type": "object",
         "required": [
-          "profile"
+          "default"
         ],
-        "title": "ComputeChoice",
-        "description": "Which machine a room works on: a cloud sandbox, a whole cloud VM, or a\nself-hosted device.\n\nCloud is either a sandbox on a platform host, or with ``whole_machine`` a\nwhole virtual machine for each session, for work a sandbox cannot do\n(Docker, KVM, kernel modules, root). Neither has a spec to choose: every\nsandbox gets the same fixed share of a host, and every VM the deployment's\none VM size. ``name`` is only ever a device's own name, a proper\nnoun that reads the same in every language. A choice the platform describes\n— the cloud, and 「any online device」 — carries no name: it is identified\nby its fields, and each reader's screen renders its own label for it. A\nstored name would be one language's words shown to every member of the\nproject."
+        "title": "ComputeConfigsIn"
       },
       "ConclusionIn": {
         "properties": {
@@ -53880,6 +53953,122 @@
         "additionalProperties": false,
         "type": "object",
         "title": "EnvironmentConfig"
+      },
+      "EnvironmentDefaultIn": {
+        "properties": {
+          "environment": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          }
+        },
+        "type": "object",
+        "title": "EnvironmentDefaultIn"
+      },
+      "EnvironmentDefaultOut": {
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sandbox"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SelfHosted"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "sandbox": "#/components/schemas/Sandbox",
+                    "self_hosted": "#/components/schemas/SelfHosted"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "default"
+        ],
+        "title": "EnvironmentDefaultOut"
+      },
+      "EnvironmentDefaultOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EnvironmentDefaultOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "EnvironmentDefaultOutEnvelope"
+      },
+      "EnvironmentDeviceOut": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "owned": {
+            "type": "boolean",
+            "title": "Owned"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_id",
+          "name",
+          "online",
+          "owned"
+        ],
+        "title": "EnvironmentDeviceOut"
       },
       "EventChoiceIn": {
         "properties": {
@@ -58991,19 +59180,6 @@
         ],
         "title": "ProgressIn"
       },
-      "ProjectComputeConfigs": {
-        "properties": {
-          "default": {
-            "$ref": "#/components/schemas/ComputeChoice"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "default"
-        ],
-        "title": "ProjectComputeConfigs"
-      },
       "ProjectCreate": {
         "properties": {
           "id": {
@@ -60021,6 +60197,93 @@
         ],
         "title": "ReviewSpaceRequest"
       },
+      "RoomFileListOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RoomFileOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total",
+          "truncated"
+        ],
+        "title": "RoomFileListOut",
+        "description": "文件区的清单：``data`` 是文件，``truncated`` 说清单是不是全部。"
+      },
+      "RoomFileListOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RoomFileListOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoomFileListOutEnvelope"
+      },
+      "RoomFileOut": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          },
+          "modified_at": {
+            "type": "string",
+            "title": "Modified At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "bytes",
+          "modified_at"
+        ],
+        "title": "RoomFileOut",
+        "description": "文件区里的一份文件：路径、大小、最后一次改动的时间。"
+      },
       "RoutineIn": {
         "properties": {
           "title": {
@@ -60184,6 +60447,44 @@
         "type": "object",
         "title": "RoutinePatch"
       },
+      "Sandbox": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "sandbox",
+            "title": "Kind",
+            "default": "sandbox"
+          },
+          "spec": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Spec",
+            "default": "standard"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Sandbox"
+      },
+      "SandboxSpecOut": {
+        "properties": {
+          "spec": {
+            "type": "string",
+            "title": "Spec"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "spec",
+          "label"
+        ],
+        "title": "SandboxSpecOut"
+      },
       "SearchIn": {
         "properties": {
           "query": {
@@ -60290,6 +60591,28 @@
         "title": "SelectionIn",
         "description": "A selection in the living document, as the editor writes it out."
       },
+      "SelfHosted": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "self_hosted",
+            "title": "Kind"
+          },
+          "device_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Device Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "device_id"
+        ],
+        "title": "SelfHosted"
+      },
       "SendEmailCodeRequest": {
         "properties": {
           "email": {
@@ -60314,6 +60637,159 @@
           "email"
         ],
         "title": "SendEmailCodeRequest"
+      },
+      "SessionEnvironmentChangeOut": {
+        "properties": {
+          "environment": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sandbox"
+              },
+              {
+                "$ref": "#/components/schemas/SelfHosted"
+              }
+            ],
+            "title": "Environment",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "sandbox": "#/components/schemas/Sandbox",
+                "self_hosted": "#/components/schemas/SelfHosted"
+              }
+            }
+          },
+          "keeps_nothing": {
+            "type": "boolean",
+            "title": "Keeps Nothing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "environment",
+          "keeps_nothing"
+        ],
+        "title": "SessionEnvironmentChangeOut"
+      },
+      "SessionEnvironmentChangeOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionEnvironmentChangeOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "SessionEnvironmentChangeOutEnvelope"
+      },
+      "SessionEnvironmentIn": {
+        "properties": {
+          "environment": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Environment"
+          },
+          "if_idle": {
+            "type": "boolean",
+            "title": "If Idle",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "environment"
+        ],
+        "title": "SessionEnvironmentIn"
+      },
+      "SessionEnvironmentOut": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "agent_handle": {
+            "type": "string",
+            "title": "Agent Handle"
+          },
+          "seat_handle": {
+            "type": "string",
+            "title": "Seat Handle"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sandbox"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SelfHosted"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "sandbox": "#/components/schemas/Sandbox",
+                    "self_hosted": "#/components/schemas/SelfHosted"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "agent_handle",
+          "seat_handle",
+          "environment",
+          "status",
+          "online"
+        ],
+        "title": "SessionEnvironmentOut"
       },
       "SheetCellQuoteIn": {
         "properties": {
@@ -61341,6 +61817,130 @@
           "title"
         ],
         "title": "TopicCreate"
+      },
+      "TopicEnvironmentOut": {
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sandbox"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SelfHosted"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "sandbox": "#/components/schemas/Sandbox",
+                    "self_hosted": "#/components/schemas/SelfHosted"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "default_from": {
+            "type": "string",
+            "enum": [
+              "task",
+              "room",
+              "project",
+              "deployment"
+            ],
+            "title": "Default From"
+          },
+          "effective_default": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sandbox"
+              },
+              {
+                "$ref": "#/components/schemas/SelfHosted"
+              }
+            ],
+            "title": "Effective Default",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "sandbox": "#/components/schemas/Sandbox",
+                "self_hosted": "#/components/schemas/SelfHosted"
+              }
+            }
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionEnvironmentOut"
+            },
+            "type": "array",
+            "title": "Sessions"
+          },
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentDeviceOut"
+            },
+            "type": "array",
+            "title": "Devices"
+          },
+          "specs": {
+            "items": {
+              "$ref": "#/components/schemas/SandboxSpecOut"
+            },
+            "type": "array",
+            "title": "Specs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "default",
+          "default_from",
+          "effective_default",
+          "sessions",
+          "devices",
+          "specs"
+        ],
+        "title": "TopicEnvironmentOut"
+      },
+      "TopicEnvironmentOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TopicEnvironmentOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TopicEnvironmentOutEnvelope"
       },
       "TopicMemberCreate": {
         "properties": {

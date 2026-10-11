@@ -79,12 +79,47 @@ class AgentSessionService:
         row = await self._repo.get(conversation_id, agent_handle, harness)
         return row.place() if row is not None else None
 
-    async def ids_on_choice(
-        self, room_id: uuid.UUID, task_id: uuid.UUID | None = None
-    ) -> list[uuid.UUID]:
-        """The sessions that move when this room's (or this task's) work
-        computer changes, in a stable order."""
-        return await self._repo.ids_on_choice(room_id, task_id)
+    async def devices_held_in_room(self, room_id: uuid.UUID) -> list[str]:
+        """The people's machines the room's sessions (its tasks' included) hold
+        a lease on now: a sandbox on one of the platform's machines is not one."""
+        held: list[str] = []
+        for row in await self._repo.placed_in_room(room_id):
+            lease = row.work_lease or {}
+            device_id = lease.get("device_id")
+            if device_id and not lease.get("platform") and device_id not in held:
+                held.append(device_id)
+        return held
+
+    async def latest(self, conversation_id: uuid.UUID, agent_handle: str):
+        """This agent's most recent session row here, whatever its harness."""
+        return await self._repo.latest(conversation_id, agent_handle)
+
+    async def environment(
+        self, conversation_id: uuid.UUID, agent_handle: str, *, lock: bool = False
+    ):
+        """This agent's execution environment here, as stored, or None."""
+        return await self._repo.environment(conversation_id, agent_handle, lock=lock)
+
+    async def environments_in(self, conversation_id: uuid.UUID):
+        """Every agent's stored environment in this conversation, by handle."""
+        return await self._repo.environments_in(conversation_id)
+
+    async def set_environment(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        environment: dict,
+        *,
+        chosen_by: dict | None,
+        only_if_unset: bool = False,
+    ):
+        return await self._repo.set_environment(
+            conversation_id,
+            agent_handle,
+            environment,
+            chosen_by=chosen_by,
+            only_if_unset=only_if_unset,
+        )
 
     async def remember_place(
         self,

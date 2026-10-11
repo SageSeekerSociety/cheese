@@ -49,7 +49,7 @@ def test_a_machine_that_is_not_ours_states_no_size() -> None:
 
     pool = build_compute_pool()
 
-    assert _sandbox_limits(pool.select(provider_id="device")) is None
+    assert _sandbox_limits(pool.select()) is None
 
 
 def test_the_section_is_absent_when_there_is_nothing_to_open_with() -> None:

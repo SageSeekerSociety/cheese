@@ -69,7 +69,12 @@ describe('一级导航的两份清单', () => {
   // 点格子直接落到短地址的频道页，不再先去旧的 topics 地址等重定向。
   it('有短名的项目，格子落点用短名和 channels 地址', () => {
     const projects = [{ id: 'p-uuid', slug: 'demo', name: '演示' }] as Project[]
-    const rail = items(railItems({ ...sources(0), projects, projectLastTopic: () => 't9' }, DEFAULT_SHELL))
+    const rail = items(
+      railItems(
+        { ...sources(0), projects, projectLastPlace: () => ({ kind: 'channel', id: 't9', room: 't9' }) },
+        DEFAULT_SHELL
+      )
+    )
     expect(rail.find((i) => i.projectId === 'p-uuid')?.to).toBe('/projects/demo/channels/t9')
     const fresh = items(railItems({ ...sources(0), projects }, DEFAULT_SHELL))
     expect(fresh.find((i) => i.projectId === 'p-uuid')?.to).toBe('/projects/demo')
@@ -177,20 +182,41 @@ describe('项目格子自己带信号', () => {
     expect(items(rail).find((i) => i.to === '/projects/p0')?.badge).toBeUndefined()
   })
 
-  // 每天的主路径是「回到昨天那个房间」：从 rail 点回项目，直接落回上次开的话题，
+  // 每天的主路径是「回到昨天那个房间」：从 rail 点回项目，直接落回上次待的地方，
   // 而不是先落在项目首页再多点一跳。
-  it('上次打开的话题还在，项目格子直接落到那个话题', () => {
+  it('上次待的频道还在，项目格子直接落到那个频道', () => {
     const rail = items(
-      railItems({ ...sources(2, 'p0'), projectLastTopic: (id) => (id === 'p1' ? 't9' : null) }, DEFAULT_SHELL)
+      railItems(
+        {
+          ...sources(2, 'p0'),
+          projectLastPlace: (id) => (id === 'p1' ? { kind: 'channel', id: 't9', room: 't9' } : null),
+        },
+        DEFAULT_SHELL
+      )
     )
     expect(rail.find((i) => i.projectId === 'p1')?.to).toBe('/projects/p1/channels/t9')
     // 没记过（或记着的不在了，宿主交回 null）的落回项目首页。
     expect(rail.find((i) => i.projectId === 'p0')?.to).toBe('/projects/p0')
   })
 
+  // 只落到「任务所在的频道」还差最后一步：昨天一直在做的那件事就摆在那条频道里，
+  // 还要自己找出来再点一次。落点要直接是那件任务，地址里带上它所在的频道。
+  it('上次待的是任务页，项目格子落到那件任务', () => {
+    const rail = items(
+      railItems(
+        { ...sources(1, 'p0'), projectLastPlace: () => ({ kind: 'task', id: 'task-7', room: 't9' }) },
+        DEFAULT_SHELL
+      )
+    )
+    expect(rail.find((i) => i.projectId === 'p0')?.to).toBe('/projects/p0/tasks/task-7')
+  })
+
   // ⌘N 和点这一格走的是同一个地址：两处落点不一样的话，快捷键会把人带去别处。
-  it('⌘N 跟着落到同一个话题', () => {
-    const rail = railItems({ ...sources(2, 'p0'), projectLastTopic: () => 't9' }, DEFAULT_SHELL)
+  it('⌘N 跟着落到同一个地方', () => {
+    const rail = railItems(
+      { ...sources(2, 'p0'), projectLastPlace: () => ({ kind: 'channel', id: 't9', room: 't9' }) },
+      DEFAULT_SHELL
+    )
     expect(shortcutTarget(rail, 2)).toBe('/projects/p0/channels/t9')
     expect(shortcutTarget(rail, 3)).toBe('/projects/p1/channels/t9')
   })

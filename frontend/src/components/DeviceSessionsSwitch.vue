@@ -1,16 +1,16 @@
 <script setup lang="ts">
-// 「现在的分布」里一台自有设备上的 agent：列出来，选一些换到另一台工作电脑。一个话题
-// 一个容器（2026-09-28，推翻结论 60）：换的是它所在的整个房间，走和成员名册同一条
-// 更换（先尽力推送一次，推没推上去都换），同房间的队友一起搬；房间正在干活的跳过，不打断。
-import type { ComputeChoice, TopicComputeDevice } from '../types/compute'
+// 「现在的分布」里直接跑在某台电脑上的 agent：列出来，选一些换到别的环境——沙箱，
+// 或者自己的另一台电脑。每条会话各换各的（#2320），同一段对话里别的队友不跟着搬；换之
+// 前它先尽力推送一次，推没推上去都换。正在干活的跳过，不打断。
+import type { Environment, EnvironmentDevice, SandboxSpec } from '../types/compute'
 import type { DeviceSession } from '../types/deviceSessions'
 
 import { computed, ref, watch } from 'vue'
 
-import { listDeviceSessions, setTopicComputeChoice } from '../api'
+import { listDeviceSessions, setSessionEnvironment } from '../api'
 import { t } from '../i18n'
 import { teammateName } from '../lib/agentNames'
-import { choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
+import { environmentName } from '../lib/environment'
 import { relTime } from '../lib/relTime'
 import { topicTitle } from '../lib/topicState'
 
@@ -21,9 +21,8 @@ import UserRef from '@/components/common/UserRefLink.vue'
 const props = defineProps<{
   projectId: string
   device: { device_id: string; name: string }
-  devices: TopicComputeDevice[]
-  cloudAvailable: boolean
-  projectDefault: ComputeChoice
+  devices: EnvironmentDevice[]
+  specs: SandboxSpec[]
 }>()
 // The distribution counts move once any session has switched. Told when the
 // dialog closes: reloading under it could remove the row it hangs on.
@@ -42,38 +41,29 @@ const running = ref(false)
 const outcomes = ref<Record<string, Outcome>>({})
 const moved = ref(false)
 
+// 换到哪：每种规格的沙箱，以及自己登记的另一台电脑（别人的电脑只有它的主人能指定）。
 const choices = computed(() => {
-  const cloud: ComputeChoice = {
-    name: null,
-    profile: 'cloud',
-    device_id: null,
-  }
-  const devices = props.devices
-    .filter((device) => device.device_id !== props.device.device_id)
-    .map((device): ComputeChoice => ({ ...cloud, name: device.name, profile: 'device', device_id: device.device_id }))
-  const leaving = (choice: ComputeChoice) => choice.profile === 'device' && choice.device_id === props.device.device_id
-  return compactChoices(props.projectDefault, cloud, ...devices)
-    .filter((choice) => !leaving(choice))
-    .map((choice) => {
-      const available =
-        choice.profile === 'cloud'
-          ? props.cloudAvailable
-          : props.devices.some(
-              (device) =>
-                device.device_id !== props.device.device_id &&
-                (!choice.device_id || device.device_id === choice.device_id) &&
-                device.online
-            )
-      return {
-        title: available ? choiceName(choice) : t('work.sessionMachine.unavailable', { name: choiceName(choice) }),
-        value: choiceKey(choice),
-        props: { disabled: !available },
-        choice,
-      }
+  const options: { title: string; value: string; props: { disabled: boolean }; env: Environment }[] = props.specs.map(
+    ({ spec }) => {
+      const env: Environment = { kind: 'sandbox', spec }
+      return { title: environmentName(env, [], props.specs), value: `sandbox:${spec}`, props: { disabled: false }, env }
+    }
+  )
+  for (const d of props.devices) {
+    if (d.device_id === props.device.device_id || !d.owned) continue
+    const env: Environment = { kind: 'self_hosted', device_id: d.device_id }
+    const name = environmentName(env, props.devices)
+    options.push({
+      title: d.online ? name : t('work.sessionMachine.unavailable', { name }),
+      value: `device:${d.device_id}`,
+      props: { disabled: !d.online },
+      env,
     })
+  }
+  return options
 })
-const picked = computed(
-  () => choices.value.find((choice) => choice.value === target.value && !choice.props.disabled)?.choice
+const picked = computed<Environment | null>(
+  () => choices.value.find((c) => c.value === target.value && !c.props.disabled)?.env ?? null
 )
 // A session already moved is no longer on this device; it cannot be picked again.
 const selectable = computed(() => sessions.value.filter((s) => outcomes.value[s.id]?.state !== 'done'))
@@ -82,7 +72,7 @@ const allSelected = computed(
 )
 
 const sessionRoom = (s: DeviceSession) => s.task_title ?? topicTitle({ title: s.topic_title })
-// 换的是一段对话的工作电脑：房间自己的，或者某个任务的。
+// 会话所在的那段对话：房间自己的，或者某个任务的。
 const conversationOf = (s: DeviceSession) => s.task_id ?? s.topic_id
 
 function toggleAll() {
@@ -103,35 +93,25 @@ async function load() {
   }
 }
 
-// 换的是一段对话：答案落在它在这台设备上的每一行上。
-function settle(conversation: string, outcome: Outcome) {
-  const room = sessions.value.filter((s) => conversationOf(s) === conversation).map((s) => s.id)
-  for (const id of room) outcomes.value[id] = outcome
-  if (outcome.state === 'done') selected.value = selected.value.filter((id) => !room.includes(id))
-}
-
-async function switchOne(session: DeviceSession, choice: ComputeChoice) {
+async function switchOne(session: DeviceSession, env: Environment) {
   try {
-    await setTopicComputeChoice(conversationOf(session), choice, { ifIdle: true })
-    settle(conversationOf(session), { state: 'done', message: t('work.bulkSwitch.done') })
+    await setSessionEnvironment(conversationOf(session), session.id, env, { ifIdle: true })
+    outcomes.value[session.id] = { state: 'done', message: t('work.bulkSwitch.done') }
+    selected.value = selected.value.filter((id) => id !== session.id)
     moved.value = true
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : t('global.updateFailed')
-    settle(conversationOf(session), { state: 'failed', message })
+    outcomes.value[session.id] = { state: 'failed', message }
   }
 }
 
 // One after another: every checkpoint runs on the same machine, the one being left.
 async function run() {
-  const choice = picked.value
-  if (!choice || !selected.value.length) return
+  const env = picked.value
+  if (!env || !selected.value.length) return
   running.value = true
-  // 一段对话只换一次：同一段对话的几行选了几行，都是同一次更换。
-  const rooms = new Set<string>()
   for (const session of sessions.value.filter((s) => selected.value.includes(s.id))) {
-    if (rooms.has(conversationOf(session))) continue
-    rooms.add(conversationOf(session))
-    await switchOne(session, choice)
+    await switchOne(session, env)
   }
   running.value = false
 }

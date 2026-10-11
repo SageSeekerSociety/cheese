@@ -22,21 +22,22 @@ The remaining sections describe ordinary work topics and their selected compute 
 
 ---
 
-## 一、两条执行路，都是别人的机器
+## 一、执行环境：沙箱，或者一台人自己的电脑
 
-代码里装配了两个（`agent/compute.py` 的 `build_compute_pool`）：
+每位 AI 队友在每个对话里有自己的执行环境（`agent/environment.py`，记在 `agent_environments`）。它是下面两种之一：
 
-| 路 | 机器是什么 | 谁的 |
+| 执行环境 | 是什么 | 谁的机器 |
 |---|---|---|
-| **自托管设备** | 用户自己接进来的机器（笔记本、常驻服务器） | 别人的 |
-| **Cloud** | 平台云主机池里的一个沙箱，每条会话一个；宿主机由平台调度，多个项目的沙箱共用一台 | 我们开的，随时可以销毁重建 |
-| **Cloud · 整台云虚拟机** | 每条会话一整台云虚拟机，有 sudo，能跑 Docker、要 KVM 的任务和内核模块；房间选 Cloud 时打开 `whole_machine` | 我们开的，会话用完就删 |
+| **沙箱**，规格 `standard` | 平台机器上的一个沙箱，每条会话一个；放在哪台宿主机上由平台调度，多个项目的沙箱共用一台 | 平台的，随时可以销毁重建，按时长计费 |
+| **沙箱**，规格 `vm` | 一整台虚拟机做的沙箱，有 sudo，能跑 Docker、要 KVM 的任务和内核模块 | 平台的，会话用完就删，按规格和时长计费 |
+| **沙箱**，规格 `devices_of:<用户>` | 这个人接入这个项目、给得出沙箱的某一台电脑上的沙箱 | 那个人的，不收费 |
+| **不进沙箱**（`self_hosted`） | 直接跑在选定的那台人自己的电脑上，看得见整台机器 | 那个人的；只有他本人能选 |
 
-设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装；整台云虚拟机还要运维配了虚拟机的规格（`MICROCLOUD_VM_OFFERING_ID`），没配时选不到。
+规格之间是平级的，沙箱从不点名机器：放在哪台由规格说（`machine/environments.py` 的 `device_for_spec`，平台的规格交给 `HostPool.place`）。平台的规格只在这个部署配了云平台的地址和密钥时可选；`vm` 还要运维配了虚拟机的规格（`MICROCLOUD_VM_OFFERING_ID`）。
 
-整台云虚拟机走的还是 Cloud 那条执行路（`cloud_provider.py`），区别在落点：`HostPool.place` 不往宿主机上放沙箱，而是为这条会话开一台虚拟机（`CloudHost.whole_machine`），不从预热池领，不放别的会话。它和宿主机一起算进平台的容量上限（`CLOUD_POOL_MAX_HOSTS`）。规格只有一种（`CLOUD_VM_CORES` / `CLOUD_VM_MEMORY_MB` / `CLOUD_VM_DISK_GB`，默认 4 核、8 GB、40 GB），记在虚拟机那一行上，连同为哪个项目开的；按「规格 × 时长」收费时从释放那一处（`services._vm_released`）读。虚拟机在三种时候删：房间换走、房间清理删掉了会话目录、会话闲置 `CLOUD_VM_IDLE_RELEASE_S`（默认 30 分钟，闲置的定义和沙箱相同：房间没在跑任务，会话最后一次工具调用和房间最后一轮结束都在这之前）。闲置释放前先像换机器一样做一次尽力而为的 checkpoint（`machine/cloud_vm.py`），推没推上去都释放；会话下一次要用时再开一台新的，要等几分钟。
+`vm` 规格的沙箱和别的沙箱走同一条执行通道，区别在落点：`HostPool.place` 不往宿主机上放沙箱，而是为这条会话开一台虚拟机（`CloudHost.whole_machine`），不从预热池领，不放别的会话。它和宿主机一起算进平台的容量上限（`CLOUD_POOL_MAX_HOSTS`）。规格只有一种（`CLOUD_VM_CORES` / `CLOUD_VM_MEMORY_MB` / `CLOUD_VM_DISK_GB`，默认 4 核、8 GB、40 GB），记在虚拟机那一行上，连同为哪个项目开的；按「规格 × 时长」收费时从释放那一处（`services._vm_released`）读。虚拟机在三种时候删：会话换走、房间清理删掉了会话目录、会话闲置 `CLOUD_VM_IDLE_RELEASE_S`（默认 30 分钟，闲置的定义和沙箱相同：房间没在跑任务，会话最后一次工具调用和房间最后一轮结束都在这之前）。闲置释放前先像换环境一样做一次尽力而为的 checkpoint（`machine/cloud_vm.py`），推没推上去都释放；会话下一次要用时再开一台新的，要等几分钟。
 
-These choices select the ordinary room's execution machine. Claude Code runs on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
+These environments decide each session's execution machine. Claude Code runs on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
 
 ## 这些机器上有什么工具
 
@@ -128,54 +129,27 @@ store 播种**——store 是被下一个新房间填起来的。
 本来就排在系统字体前面，屏蔽掉只会白白拿走用户自己装的字。缺中文字体的失败是静默的：
 typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 
-## 二、菜单和执行层现在是同一个答案
+## 二、没人选过时用哪个
 
-项目设置里能选的算力（`agent/market.py` 的 `compute_listings`）就是上面这两条。哪一条挂「默认」，和一个没有做过选择的话题实际落在哪，**是同一个函数算出来的**：`compute_default_name`。
+一位队友第一次要手时，平台按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目的默认（`settings.execution_environment`）→ 标准沙箱 取一份，写成它自己的（`machine/environments.py` 的 `environment_of`）。之后默认再改，已经有环境的队友一个也不动。
 
-```python
-# agent/market.py
-Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
-```
+能选的规格就是 `GET /topics/{id}/environment` 的 `specs`（`environments.offered_specs`）：配了云平台的部署有 `standard`，配了虚拟机规格的还有 `vm`，项目里每位有电脑给得出沙箱的人各有一个 `devices_of:<用户>`。市场页列的是同样几种（`agent/market.py` 的 `compute_listings`）。
 
-`build_compute_pool` 拿的就是这个值。**这两个答案必须是一个函数**：分开写就会分家，而分家之后看不出来——界面上写着一台机器，话题跑在另一台上，两边各自都是自洽的。
+## 三、放不下的时候
 
-一轮活的落点按这个顺序定（`agent/work_policy.py` 的 `resolve_compute_id`，轮次组装 `room/turn.py` 里问它）：
+**一个沙箱没地方放时，这次工具调用得到一句明确的话，对话和平台工具照常。** 平台的规格在没配云平台的部署上放不下，会说这个部署没有平台的机器、可以换一种规格；某个人的设备都不在线或都给不了沙箱时，说这个规格的电脑现在用不了。不会悄悄换到别的规格上。
 
-1. 话题自己选的（第一轮跑完就钉住）
-2. 项目记住的上一次选择
-3. 团队的默认
-4. 都没有 → `compute_default_name()`
+配了云平台时，一条会话第一次要动手，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。项目的额度用完时，平台的规格拒绝，并说额度用完了。`vm` 规格每条会话第一次要动手时都现开一台，房间里收到的是「正在准备虚拟机沙箱」；虚拟机不休眠，会话闲置后推送、释放，下次要用再开一台。
 
-## 三、一台机器都没有的时候
+## 四、沙箱里看得见什么
 
-**没有设备连上来、也没配 Cloud 的部署，一轮活会失败，并且说清楚为什么。**
+沙箱里的执行器只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目和机器主人自己的文件（自托管设备上主人用户目录里装的工具也在其中）。平台的机器上，沙箱连得上公网，连不上内网、机器本身和别的沙箱，内存、CPU、进程数有上限；人自己的电脑上，沙箱和机器共用网络、不设上限。Linux 上要有 bubblewrap 和非特权用户命名空间，缺了的话安装程序在动会话之前就拒绝，那台电脑之后不再放沙箱，这一次换到同一个规格的另一台去。
 
-默认落到自托管设备那条路上，而那条路开工前先解析「这个项目有哪台在线的机器」，解析不到就直接停：
+macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`）：规则跟着命令行传进去，不落在会话能改的文件里。它没有 pid 命名空间，所以信号只能发给同一个沙箱里的进程，Unix socket 只能连会话自己的目录，LaunchServices 和剪贴板也不给用，这几样都会替沙箱在外面办事。停房间时，会话的进程一起结束，用 `setsid` 脱离、被 launchd 收养的也在内：认它们靠的是每个进程甩不掉的 Seatbelt 规则——在沙箱里、能写这个会话的目录、不能写装着各会话目录的那一层（`environment_runner.end_seatbelt`，系统的 `sandbox_check`）。Windows 没有沙箱：Windows 设备上不放沙箱，只能不进沙箱地用。沙箱怎么搭见 `docs/remote-execution.md`。
 
-```
-没有在线的绑定设备可运行本轮（self-hosted 设备未连接）
-```
+不进沙箱的会话看得见整台机器：能操作上面的服务、进得去别的会话的目录。只有那台电脑的主人本人以人的身份登录时能选（`PUT /topics/{id}/sessions/{session}/environment`），会话凭据选不了。
 
-这条话进房间，是一条明确的失败，不是一次静默的降级。市场页的算力选择器同时是空的——`available` 两条都是假，没有东西可选。两边说的是同一件事。
-
-配了 Cloud 的部署则相反：默认是 Cloud。一条会话第一次要动手时，平台把它的沙箱放到池里一台还有空位的宿主机上；都满了就从预热池领一台，预热池也空了才现开一台，这时房间里先收到「正在准备沙箱」，就绪后工具调用自动接着跑。池子到了平台的容量上限时，这条会话被告知云端资源紧张、稍后再试。沙箱空闲一段时间后休眠，文件留在宿主机上，下一次工具调用把它唤醒；休眠很久的沙箱归档到对象存储，下次用时在任意一台宿主机上恢复（见 `docs/microcloud.md`）。选了整台云虚拟机的房间，每条会话第一次要动手时都现开一台，房间里收到的是「正在准备云虚拟机」；虚拟机不休眠，会话闲置后推送、释放，下次要用再开一台。
-
-## 四、可见性：默认是沙箱，整台机器由机主给
-
-选定机器之后还有第二个问题：这一轮能看见那台机器上的多少东西。
-
-| 档 | 意思 | 在哪里能跑 |
-|---|---|---|
-| `isolated` | 每条会话的执行器在自己的沙箱里，只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目和机器主人自己的文件（自托管设备上主人用户目录里装的工具也在其中）；云机器上连得上公网，连不上内网、机器本身和别的沙箱，内存、CPU、进程数有上限，自托管设备上和机器共用网络、不设上限 | 云机器；Linux 自托管设备（要有 bubblewrap 和非特权用户命名空间） |
-| `host` | 看得见整台机器，能操作上面的服务、进得去其他房间的目录 | 自托管设备，机主为某个房间选的 |
-
-档记在房间和机器的绑定上（`device_topic.visibility`），按房间、不按机器：同一台设备上有的房间在沙箱里，有的看得见整台机器。没人选时是 `isolated`（`device/supply.py` 的 `default_visibility`），每个绑定点都问这一句。`host` 只有机主本人以人的身份登录时能给（`PUT /topics/{id}/compute-profile` 的 `visibility`），会话凭据给不了——那是沙箱里的房间自己把自己放出来；改回 `isolated` 谁都可以。房间换到另一台机器，在那台上从 `isolated` 开始。档变了，执行器在下一次工具调用时重装（`launch.can_prepare` 比对它跑在不在沙箱里）。
-
-沙箱出现之前就在自托管设备上跑过的房间保持整台机器：点名过机器的房间当时就绑成了 `host`；「系统挑一台」的房间没有绑定，由迁移 `d72d0f566149` 绑成 `host`，绑在它最近一条会话租着的那台自托管设备上（下一条会话回到的就是那台）。用过几台的房间只绑那一台，回到别的那几台算一次新的选择，从 `isolated` 开始；最近一次落在云机器上、或者房间选的已经是云的，不绑。从没在自托管设备上跑过的房间，按默认进沙箱。
-
-macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`）：规则跟着命令行传进去，不落在房间能改的文件里。它没有 pid 命名空间，所以信号只能发给同一个沙箱里的进程，Unix socket 只能连房间自己的目录，LaunchServices 和剪贴板也不给用，这几样都会替沙箱在外面办事。停房间时，房间的进程一起结束，用 `setsid` 脱离、被 launchd 收养的也在内：认它们靠的是每个进程甩不掉的 Seatbelt 规则——在沙箱里、能写这个房间的目录、不能写装着各房间目录的那一层（`environment_runner.end_seatbelt`，系统的 `sandbox_check`）。Windows 没有沙箱（`device/supply.py` 的 `sandbox_unavailable`，按连接器 `hello` 报的 `<系统>-<架构>`）：那里 `isolated` 的房间开工时拿到一句话，说清楚可以怎么办（装 WSL，把 WSL 接成一台设备，或者请机主给整台机器），**不会退成整机去跑**。Linux 上缺 bubblewrap 或不许建用户命名空间时，安装程序在动房间之前就拒绝，同样带一句话。沙箱怎么搭见 `docs/remote-execution.md`。
-
-整台云虚拟机上的会话看得见整台机器（`host`）：虚拟机就是这条会话自己的，执行器不进沙箱，有 sudo 和 Docker（`session_work._sandboxed`），那台机器上没有别的会话、别的房间。沙箱的网络规则不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以虚拟机连得到哪里由云平台那一侧限制。MicroCloud 把新开的虚拟机和它所在的私网隔开：MicroCloud 的接口和控制台、私网里部署的服务器、Proxmox 的内网地址和别的虚拟机都连不上，公网、DNS、apt 照常，平台经 SSH 反向转发连接器的那条路也照常。Proxmox 的公网地址也连不上它的 8006 和 22 端口：直连由虚拟机的防火墙挡住，按域名经实验室路由器的那条路由路由器的规则挡住。这一档默认不开（`MICROCLOUD_VM_OFFERING_ID` 为 0），由部署配置打开。
+`vm` 规格的虚拟机就是这条会话自己的，执行器不再套沙箱，有 sudo 和 Docker（`session_work._sandboxed`），那台机器上没有别的会话。沙箱的网络规则不在那里，虚拟机里有 root 的人可以改掉机器内的任何规则，所以虚拟机连得到哪里由云平台那一侧限制。MicroCloud 把新开的虚拟机和它所在的私网隔开：MicroCloud 的接口和控制台、私网里部署的服务器、Proxmox 的内网地址和别的虚拟机都连不上，公网、DNS、apt 照常，平台经 SSH 反向转发连接器的那条路也照常。Proxmox 的公网地址也连不上它的 8006 和 22 端口：直连由虚拟机的防火墙挡住，按域名经实验室路由器的那条路由路由器的规则挡住。这一档默认不开（`MICROCLOUD_VM_OFFERING_ID` 为 0），由部署配置打开。
 
 ## 五、能从这些机器上拿回来什么
 

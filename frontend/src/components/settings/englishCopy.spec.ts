@@ -82,7 +82,7 @@ vi.mock('vue-router', async () => ({
 
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
 import ArchiveProjectDialog from '@/components/ArchiveProjectDialog.vue'
-import ComputeChoiceForm from '@/components/ComputeChoiceForm.vue'
+import EnvironmentPicker from '@/components/EnvironmentPicker.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import i18n, { setLocale } from '@/i18n'
 import { displayNameError, handleError, typeLabel } from '@/lib/projectAgents'
@@ -185,15 +185,19 @@ describe('English settings copy', () => {
     expectNoChinese()
   })
 
-  it('the work computer form, on the cloud sandbox', async () => {
-    render(ComputeChoiceForm, {
+  it('the environment picker, on a standard sandbox', async () => {
+    render(EnvironmentPicker, {
       props: {
-        cloudAvailable: true,
-        devices: [{ device_id: 'd1', name: 'Lab box', online: true }] as never,
+        current: { kind: 'sandbox', spec: 'standard' },
+        specs: [
+          { spec: 'standard', label: 'Standard' },
+          { spec: 'vm', label: 'Virtual machine' },
+        ],
+        devices: [{ device_id: 'd1', name: 'Lab box', online: true, owned: true }],
       },
       ...mountOpts(),
     })
-    await screen.findByText(/Each session works in a cloud environment of its own/)
+    await screen.findByText(/Sees only its own work directory/)
     expectNoChinese()
   })
 

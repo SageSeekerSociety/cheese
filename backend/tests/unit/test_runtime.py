@@ -18,7 +18,6 @@ from app.domain.agent.realtime.subscriber_queue import SubscriberOverflow
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.turn.store.events import persist_room_event
 from app.domain.block.models import Block
-from app.domain.identity.actor import Actor
 from app.domain.policy.gate import OverTier
 from app.domain.topic.models import Topic
 from tests.support.hang import HANG_S
@@ -309,7 +308,6 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
         ],
         db_factory,
     )
-    actor = Actor("owner", 1, "token")
 
     runner.submit(
         chat,
@@ -317,14 +315,12 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
         author="owner",
         content="保留这条消息",
         addressed=addressed_to_agent("cheese-seat"),
-        provision_actor=actor,
     )
     async with asyncio.timeout(HANG_S):
         while not chat.ran or runner.active_work_count():
             await asyncio.sleep(0.01)
 
     assert runner.recent_work()[0]["status"] == "waiting"
-    assert chat.kwargs["provision_actor"] is actor
     # A cloud wait is terminal: no second turn is spun up behind it.
     assert len(runner.recent_work()) == 1
 

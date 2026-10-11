@@ -69,7 +69,6 @@ from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, addre
 from app.domain.delivery.agent import dispatch_pending, run_attempt
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.delivery.models import Delivery
-from app.domain.identity.actor import Actor
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import names_a_person
 from app.domain.topic_membership.services import addressable_seat
@@ -377,7 +376,6 @@ class AgentWorkRunner:
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         turn_id: uuid.UUID | None = None,
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
@@ -429,7 +427,6 @@ class AgentWorkRunner:
             nudge_event=nudge_event,
             nudge_meta=nudge_meta,
             continuation_id=continuation_id or turn_id,
-            provision_actor=provision_actor,
             delivery_id=delivery_id,
             recipient_instance_id=recipient_instance_id,
         )
@@ -460,7 +457,6 @@ class AgentWorkRunner:
         content: str,
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
-        provision_actor: Actor | None = None,
         client_id: str | None = None,
         quoted_context: dict | None = None,
     ) -> uuid.UUID:
@@ -471,7 +467,6 @@ class AgentWorkRunner:
             content=content,
             reply_to=reply_to,
             attachments=attachments,
-            provision_actor=provision_actor,
             client_id=client_id,
             quoted_context=quoted_context,
         )
@@ -1325,7 +1320,6 @@ class AgentWorkRunner:
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         # 已经准备好的帧流（`converse_prepared` 是现在唯一的来源）。None → 这里
         # 自己跑一轮 converse。
         frames: AsyncIterator[subscriber_queue.Frame] | None = None,
@@ -1418,7 +1412,6 @@ class AgentWorkRunner:
                 nudge_event=nudge_event,
                 nudge_meta=nudge_meta,
                 continuation_id=continuation_id or turn_id,
-                provision_actor=provision_actor,
                 **({"delivery_id": delivery_id} if delivery_id is not None else {}),
                 **(
                     {"recipient_instance_id": recipient_instance_id}

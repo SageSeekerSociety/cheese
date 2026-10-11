@@ -42,14 +42,22 @@ const { navigating } = trackNavigations(router)
 
 // The route is the single source of truth for "what am I looking at" — the
 // store only mirrors it so background refreshes know which badge not to light.
+const ids = computed(() => routeIds(route.params))
 watch(
-  () => [routeIds(route.params).topicId, route.params.peer, props.projectId] as const,
-  ([topicId, peer, projectId]) => {
+  () => [ids.value.topicId, ids.value.taskId, route.params.peer, props.projectId] as const,
+  ([topicId, taskId, peer, projectId]) => {
     store.activeTopicId = typeof topicId === 'string' ? topicId : null
     store.activeDmPeer = typeof peer === 'string' ? peer : null
-    // 正待着的这个房间记在这个项目名下：下次从 rail 点回来，直接落回它。带上
-    // projectId 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
-    if (typeof topicId === 'string' && projectId) store.rememberTopic(projectId, topicId)
+    // 正待着的这个地方记在这个项目名下：下次从 rail 点回来，直接落回它。在任务页
+    // 上记的是那件任务（房间也一起记，任务页画不出来时退回它）。带上 projectId
+    // 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
+    if (typeof topicId === 'string' && projectId) {
+      store.rememberPlace(projectId, {
+        kind: typeof taskId === 'string' ? 'task' : 'channel',
+        id: typeof taskId === 'string' ? taskId : topicId,
+        room: topicId,
+      })
+    }
   },
   { immediate: true }
 )

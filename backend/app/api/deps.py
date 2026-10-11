@@ -19,7 +19,6 @@ from app.domain.agent import live_notices as live_notices
 # Registers the listeners that tell a project's pages what changed in it.
 from app.domain.agent import project_feed as project_feed
 from app.domain.agent.chat import ChatService
-from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool, build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
@@ -134,12 +133,7 @@ def get_compute_pool() -> ComputePool:
     harness: the chat service's, and the ones a runner's ring wakes. Every
     seat's attach checks the work runner's ``owns_sessions`` flag inside its
     seat lock first (FB-56)."""
-    cloud = CloudChannel(
-        configured=bool(
-            settings.microcloud_base_url and settings.microcloud_tenant_secret
-        ),
-    )
-    pool = build_compute_pool(cloud_channel=cloud, host=get_session_host())
+    pool = build_compute_pool(host=get_session_host())
     runner = get_work_runner()
     for runtime in pool._runtimes():
         runtime.bind_owns_sessions(lambda: runner)

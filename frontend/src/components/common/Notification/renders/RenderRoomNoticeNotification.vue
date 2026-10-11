@@ -20,14 +20,19 @@ import { renderNoticeMessage } from '@/lib/noticeText'
  *
  * 标题就是房间里那一行：`message` 是它的键和参数，按读者当前的语言渲染，和房间里
  * 那一行走同一份目录；没有键的旧通知显示存下的原文。通知和房间对同一件事只有一种
- * 说法。副标题只回答「在哪个房间」。
+ * 说法。副标题一般只回答「在哪个房间」。
+ *
+ * 卡一有决定，服务端把结局并进 `outcome`（`ledger.settle_card`）：那一句不再等谁
+ * 动手了，副标题改说结局，和芝士提问答完之后一样（`RenderCheeseQuestionNotification`）。
+ * 标题留着房间当时那一行 —— 那是记录，不是现在的话。
  */
 const props = defineProps<NotificationRenderProps>()
-const { t } = useI18n()
+const { t, te } = useI18n()
 
 const projectId = computed(() => getStringMetadata(props.notification, 'projectId'))
 const topicId = computed(() => getStringMetadata(props.notification, 'topicId'))
 const topicTitle = computed(() => getRoomTitle(props.notification))
+const outcome = computed(() => getStringMetadata(props.notification, 'outcome'))
 
 const title = computed(
   () =>
@@ -35,9 +40,23 @@ const title = computed(
     t('notifications.ROOM_NOTICE.untitled')
 )
 
-const body = computed(() =>
-  topicTitle.value ? t('notifications.ROOM_NOTICE.body', { topicTitle: topicTitle.value }) : ''
+// 结局词认不出来时说「办结」：`outcome` 是服务端的词，这一版前端还不认识它时，
+// 也不能把英文原样端到人眼前。
+const outcomeWord = computed(() =>
+  te(`notifications.ROOM_NOTICE.outcome.${outcome.value}`)
+    ? t(`notifications.ROOM_NOTICE.outcome.${outcome.value}`)
+    : t('notifications.ROOM_NOTICE.settledUnknown')
 )
+
+const body = computed(() => {
+  if (!topicTitle.value) return ''
+  return outcome.value
+    ? t('notifications.ROOM_NOTICE.settled', {
+        topicTitle: topicTitle.value,
+        outcome: outcomeWord.value,
+      })
+    : t('notifications.ROOM_NOTICE.body', { topicTitle: topicTitle.value })
+})
 
 const routerLink = computed(() => {
   if (!projectId.value || !topicId.value) return undefined

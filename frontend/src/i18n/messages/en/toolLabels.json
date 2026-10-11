@@ -88,7 +88,7 @@
   "cheeseFeedbackClaim": "Claim a feedback report",
   "cheeseFeedbackRelease": "Release a claimed feedback report",
   "cheeseRunRecords": "Read run records",
-  "cheeseMachine": "Request a device",
+  "cheeseEnvironment": "Change environment",
   "cheeseWaitMachine": "Wait for the environment",
   "cheeseNote": "Leave a note",
   "cheeseRoutineDraft": "Draft a routine",

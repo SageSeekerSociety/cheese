@@ -527,6 +527,14 @@ def periodic_jobs(
             settings.chat_progress_check_interval_s,
             chat.remind_silent_turns,
         ),
+        # 同一件事的另一半：一轮可以一直在说话，清单却还是开工那一版，而清单是看得
+        # 见「做到哪了」的唯一地方。两样共用这一个间隔——问的都是「这一轮里看得见的
+        # 东西是不是停在原地」。
+        PeriodicRunner(
+            "checklist reminder",
+            settings.chat_progress_check_interval_s,
+            chat.remind_stale_checklists,
+        ),
         # 闸门孤儿卡扫底: the same blind spot one layer down — a gate task can die
         # under a process that keeps running, and then the card waits forever
         # (see review/gate_sweep.py's module docstring).

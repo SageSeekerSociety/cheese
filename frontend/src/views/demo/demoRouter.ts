@@ -24,7 +24,7 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
   component: blank,
 }))
 
-/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表，以及登录页、空间任务列表、个人主页、空间设置目录那七栏、项目总览里那两项产物的去向），它们各要一条真名字。 */
+/** 目录中按 name 指路的链接都要有对应路由；路径与正式路由一致，才能画出正确的 href。 */
 const catalogTargets = [
   { path: '/account/signin', name: 'SignIn', component: blank },
   { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
@@ -49,8 +49,12 @@ const catalogTargets = [
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
-  { path: '/spaces', name: 'HomeSpaces', component: blank },
+  { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
+  { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
   { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
+  { path: '/spaces', name: 'HomeSpaces', component: blank },
 ]
 
 export function demoRouter() {

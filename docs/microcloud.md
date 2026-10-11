@@ -28,7 +28,7 @@ user-facing route lists hosts. The admin dashboard counts them.
 | `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that has no sandbox on it is kept before it is released. |
 | `CLOUD_POOL_MAX_HOSTS` | 10 | The platform's cap on hosts, protecting the cluster: ten hosts' disks written full fit in the cluster's shared thin pool. A session that finds the pool full and every host full is told capacity is tight and to try later. |
 | `CLOUD_SANDBOX_CREDITS_PER_HOUR` | none | Credits a running sandbox costs per hour. Unset, no cloud sandbox starts. |
-| `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a whole cloud VM, from creation to release, by its size as `<cores>c<GiB>g` (`4c8g`). A size not listed cannot be created. |
+| `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a VM sandbox, from creation to release, by its size as `<cores>c<GiB>g` (`4c8g`). A size not listed cannot be created. |
 
 Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (4 cores, 16 GiB,
 40 GB; clamped into the offering). A host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at
@@ -77,27 +77,27 @@ another host of the pool is online. With none online, the sweep takes the outage
 platform's own (a restart, a cut link) and gives up on nothing. Each session that worked on
 the host is placed in a new sandbox on its next tool call; that call's result tells the agent,
 once, that it is in a new sandbox, and the room hears 「环境不再响应，已换成新的……」. Only the `error` report counts toward the
-three failures. Whole cloud VMs are not given up this way.
+three failures. VM sandboxes are not given up this way.
 
-### Whole cloud VMs
+### VM sandboxes
 
-A room can choose a whole cloud VM instead of a sandbox (`ComputeChoice.whole_machine`):
-each of its sessions gets a virtual machine of its own, for work a sandbox cannot do —
+A session's environment can be a sandbox of spec `vm` (`agent.environment`): the session
+gets a virtual machine of its own, for work a bubblewrap sandbox cannot do —
 Docker, KVM, kernel modules, root. It is a host row too (`CloudHost.whole_machine`), created
 under the same platform customer and account from `MICROCLOUD_VM_OFFERING_ID`, enrolled the
 same way, and counted against `CLOUD_POOL_MAX_HOSTS`. It is never taken from the warm pool,
 no other session is placed on it, and the session's executor runs on it without a sandbox.
-The room hears 「正在准备云虚拟机」 and 「云虚拟机已就绪」; the session sees the environment,
+The room hears 「正在准备虚拟机沙箱」 and 「虚拟机沙箱已就绪」; the session sees the environment,
 never the machine.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `MICROCLOUD_VM_OFFERING_ID` | 0 | The offering VMs are created from. 0: the deployment does not offer whole cloud VMs, and the choice is refused. |
+| `MICROCLOUD_VM_OFFERING_ID` | 0 | The offering VMs are created from. 0: the deployment does not offer VM sandboxes, and the spec is not offered. |
 | `CLOUD_VM_CORES` / `_MEMORY_MB` / `_DISK_GB` | 4 / 8192 / 40 | The one VM size, clamped into the offering. Recorded on the row with the project the VM was created for. |
 | `CLOUD_VM_IDLE_RELEASE_S` | 1800 | A VM is pushed and released once its session has been idle this long, by the measure a sandbox is destroyed by (no turn in its conversation, no tool call, no background command still running). |
 
 The pool sweep releases it as soon as no home is
-left on it, with no idle hold: when its room switches away after pushing, when the room's
+left on it, with no idle hold: when its session switches away after pushing, when the room's
 cleanup removed its directory, or when its session was idle (`machine/cloud_vm.py`, run by
 the sandbox sweep). The idle release runs the same push as a switch first; a VM whose push
 fails or cannot run is kept and asked again ten minutes later. A session that leaves

@@ -924,7 +924,7 @@ def stub_compute(channel: StubChannel | None = None) -> ComputePool:
     """A pool holding one screen, for the many tests that build a ChatService
     by hand. Pass the channel when the test asserts against it."""
     screen = channel or StubChannel()
-    return ComputePool([screen.runtime], screen.name)
+    return ComputePool([screen.runtime])
 
 
 @pytest.fixture
@@ -1415,7 +1415,7 @@ def client(
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([stub_hooks.runtime], stub_hooks.name),
+        compute=ComputePool([stub_hooks.runtime]),
     )
 
     def override_get_chat_service() -> ChatService:
@@ -2495,7 +2495,7 @@ async def python_client(
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([stub_hooks.runtime], stub_hooks.name),
+        compute=ComputePool([stub_hooks.runtime]),
     )
 
     def override_get_chat_service() -> ChatService:

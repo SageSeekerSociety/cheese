@@ -16,7 +16,8 @@
 //
 // The one cross-tab wire is `open-file`: a <&path> chip in the doc (or in the
 // chat, via `openFile`) opens that file where it lives — its own tab in the
-// free zone when it is a room file the preview can draw, the 改动 tab otherwise.
+// free zone when it is a room file the preview can draw, a read-only tab of the
+// project's code when no task worktree holds it, the 改动 tab otherwise.
 //
 // 页签分两段。固定区（概览 / 现场 / 改动 / 预览 / 定时与触发）不能关，位置记忆来自这里。自由区是
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
@@ -66,6 +67,9 @@ const props = withDefaults(
     taskId?: string | null
     // 任务页上，改动只读（不是负责人，或任务已关）。
     taskReadOnly?: boolean
+    // 这件任务有没有自己的分支。没有的（还没有电脑打开过它）没有工作区，「改动」那一格
+    // 打不开它，文件就是项目现在的样子。
+    taskHasBranch?: boolean
     submitQuestion?: SubmitPreviewQuestion
     // Bumped by the parent on AI activity (turn-done / a platform resource the
     // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
@@ -113,6 +117,7 @@ const props = withDefaults(
   {
     taskId: null,
     taskReadOnly: false,
+    taskHasBranch: true,
     submitQuestion: undefined,
     working: false,
     agentControl: null,
@@ -660,7 +665,9 @@ async function openFile(path: string) {
     return
   }
   // 频道里没有人改项目的文件，提到的一份文件就是项目现在的样子：在自由区开一格只读的。
-  if (!props.taskId) {
+  // 还没有自己分支的任务（没有电脑打开过它）也一样：它没有工作区，「改动」那一格只能
+  // 说打不开这件任务。
+  if (!props.taskId || !props.taskHasBranch) {
     const lines = at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null
     placeFile(want, undefined, { lines })
     setFiles(openFiles.value.map((f) => (f.path === want ? { ...f, project: { lines } } : f)))
@@ -874,7 +881,8 @@ defineExpose({
             @mention-click="emit('mention-click', $event)"
           />
           <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
-             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
+             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。规则交回的结果文件点开
+             在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoutinePanelHost
             v-if="mounted.has('routines')"
             v-show="active === 'routines'"
@@ -882,6 +890,7 @@ defineExpose({
             :topic-id="topicId"
             :project-id="projectId"
             :refresh-tick="refreshTick"
+            @open-file="openFile"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
             <PanelDocHost
@@ -941,18 +950,13 @@ defineExpose({
 }
 .tabpane-chat {
   display: flex;
-  /* tabbody 是一条 flex 行，这一格必须占满它——按内容收缩的话，输入框只有半屏宽。 */
-  flex: 1 1 auto;
   width: 100%;
-  min-width: 0;
   min-height: 0;
   height: 100%;
 }
 .tabpane-slot {
   display: flex;
-  flex: 1 1 auto;
   width: 100%;
-  min-width: 0;
   min-height: 0;
 }
 .tabpane-in {
@@ -983,6 +987,11 @@ defineExpose({
   min-height: 0;
   /* Panel tab switches cross-fade this block only (lib/viewTransition.ts). */
   view-transition-name: wp-tabbody;
+}
+/* 每一格都占满这条 flex 行：按内容收缩的一格会让 Monaco 量到窄宽度后定死，面板右边空一条。 */
+.tabbody > * {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {
