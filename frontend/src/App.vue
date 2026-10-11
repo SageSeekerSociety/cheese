@@ -256,6 +256,15 @@
     </template>
     <CommandPalette />
     <DeviceConnect />
+    <!-- 「第一次」提示：芝士第一次在支线里回复、第一次建任务、任务页第一次出现「开始」、
+         第一次有交付等人审阅时，各圈一次。挂在最外层，任务页上也出现。 -->
+    <GuideBubble
+      v-if="firstTimeTip"
+      :target="firstTimeTip.target"
+      :title="t(`welcome.tour.${firstTimeTip.key}.title`, { agent: t('work.room.defaultAgentName') })"
+      :text="t(`welcome.tour.${firstTimeTip.key}.text`, { agent: t('work.room.defaultAgentName') })"
+      @dismiss="guideTour.dismissTip(firstTimeTip.key)"
+    />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
   </my-app>
@@ -280,11 +289,13 @@ import { pendingSudo } from '@/utils/sudo'
 
 import { provideAttachmentSource } from '@/composables/useAttachmentSource'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
+import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { providePageChrome } from '@/composables/usePageChrome'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
+import { FIRST_TIME_TIPS, useProjectTour } from '@/composables/useProjectTour'
 import { providePublicVisitor } from '@/composables/usePublicVisitor'
 import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
@@ -313,6 +324,7 @@ import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
+import GuideBubble from '@/components/common/GuideBubble.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
@@ -674,6 +686,20 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   if (isTypingTarget(event.target) || currentRoute.meta.publicLanding || currentRoute.path.startsWith('/admin')) return
   event.preventDefault()
   appShortcutSheetOpen.value = true
+})
+// 「第一次」提示挑哪一条：导览走完之后、这个人还没亲手采纳过交付时，页面上出现了哪个
+// 还没看过的目标就指哪个，一次一条（顺序见 FIRST_TIME_TIPS）。
+const guideTour = useProjectTour()
+const guideRevision = useGuideAnchorRevision()
+const firstTimeTip = computed(() => {
+  void guideRevision.value
+  if (guideTour.learned.value !== false || !guideTour.tourDone.value) return null
+  for (const tip of FIRST_TIME_TIPS) {
+    if (guideTour.tipSeen(tip.key)) continue
+    const target = tip.anchors.map(guideAnchor).find(Boolean)
+    if (target) return { key: tip.key, target }
+  }
+  return null
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm

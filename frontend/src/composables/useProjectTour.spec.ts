@@ -2,7 +2,7 @@
 // 提示各出现一次。
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { __resetProjectTourForTests, replayTour, useProjectTour } from './useProjectTour'
+import { __resetProjectTourForTests, noteLearned, replayTour, useProjectTour } from './useProjectTour'
 
 beforeEach(() => {
   localStorage.clear()
@@ -37,6 +37,13 @@ describe('界面导览', () => {
     expect(tour.tourDone.value).toBe(false)
     expect(tour.replaying.value).toBe(true)
     expect(tour.stop.value).toBe(0)
+  })
+
+  it('knows nothing about the person until the start steps say', () => {
+    const tour = useProjectTour()
+    expect(tour.learned.value).toBeNull()
+    noteLearned(false)
+    expect(tour.learned.value).toBe(false)
   })
 
   it('shows each first-time tip once', () => {

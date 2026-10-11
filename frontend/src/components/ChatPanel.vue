@@ -15,7 +15,7 @@ import { computed, ref, watch } from 'vue'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { guideAnchor, useGuideAnchorRevision } from '../composables/useGuideAnchors'
-import { FIRST_TIME_TIPS, TOUR_STOPS, useProjectTour } from '../composables/useProjectTour'
+import { noteLearned, TOUR_STOPS, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
@@ -312,8 +312,7 @@ const startSteps = useStartSteps(
 )
 // 界面导览：还没亲手采纳过交付的人（或从帮助菜单重新打开的）第一次进项目本体这一
 // 栏时，一站一站圈出频道、输入框、「交给芝士」、总览、资料库。只走这一页上找得到目标
-// 的那几站（手机上没有侧栏）。走完之后，任务第一次挂上、交付第一次等人审阅时，各指
-// 一次。
+// 的那几站（手机上没有侧栏）。
 const tour = useProjectTour()
 const anchorRevision = useGuideAnchorRevision()
 const guiding = computed(() => !!startSteps.value && !startSteps.value.learned)
@@ -332,15 +331,8 @@ const tourTarget = computed(() => {
   void anchorRevision.value
   return tourStop.value ? guideAnchor(tourStop.value.anchor) : null
 })
-const firstTimeTip = computed(() => {
-  void anchorRevision.value
-  if (!onProjectLine.value || !guiding.value || !tour.tourDone.value) return null
-  return FIRST_TIME_TIPS.find((s) => !tour.tipSeen(s.key) && guideAnchor(s.anchor)) ?? null
-})
-const tipTarget = computed(() => {
-  void anchorRevision.value
-  return firstTimeTip.value ? guideAnchor(firstTimeTip.value.anchor) : null
-})
+// 「第一次」提示画在应用最外层（App.vue），任务页上也要出现；它要知道这个人会不会了。
+watch(startSteps, (steps) => steps && noteLearned(steps.learned), { immediate: true })
 const retryIndex = computed(() => (canRetryAt(rows.value.length - 1) ? rows.value.length - 1 : -1))
 const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 
@@ -527,13 +519,6 @@ useComposerShortcut({
         @next="tour.next(tourStops.length)"
         @back="tour.back()"
         @skip="tour.skip()"
-      />
-      <GuideBubble
-        v-else-if="firstTimeTip"
-        :target="tipTarget"
-        :title="t(`welcome.tour.${firstTimeTip.key}.title`, { agent: agentName })"
-        :text="t(`welcome.tour.${firstTimeTip.key}.text`, { agent: agentName })"
-        @dismiss="tour.dismissTip(firstTimeTip.key)"
       />
 
       <!-- 输入框那一块。「谁在忙」在它上面单占一格，不压在对话上：时间线底部让出这一

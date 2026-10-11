@@ -19,6 +19,8 @@ import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformN
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
+
 import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { noticeLine } from '../../lib/noticeLine'
@@ -554,6 +556,7 @@ const rowLabels = computed(() =>
             >
               <ThreadLine
                 v-if="m.thread"
+                v-guide-anchor="'reply-thread'"
                 :summary="m.thread ?? null"
                 :replying="replyingFor?.(m) ?? null"
                 :status="threadStatusFor?.(m) ?? null"
@@ -567,6 +570,7 @@ const rowLabels = computed(() =>
                 <TaskCard
                   v-for="task in under(m.id)"
                   :key="task.id"
+                  v-guide-anchor="'task-card'"
                   :task="task"
                   :owner-name="ownerName(task)"
                   :in-list="!!m.thread"

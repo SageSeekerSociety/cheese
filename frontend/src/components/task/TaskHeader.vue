@@ -11,6 +11,8 @@ import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -320,6 +322,7 @@ async function confirmHandOver() {
 
       <BaseButton
         v-if="task && isOwner && isOpen && !task.started_at"
+        v-guide-anchor="'task-start'"
         kind="primary"
         size="sm"
         :loading="starting"

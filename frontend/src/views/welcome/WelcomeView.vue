@@ -14,6 +14,7 @@ import { toast } from 'vuetify-sonner'
 
 import { finishOnboarding, setTopicComputeChoice, uploadAttachment } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BrandLockup from '@/components/common/BrandLockup.vue'
 import { t } from '@/i18n'
 import { saveComposerDraft } from '@/lib/composerDrafts'
 import { desktopBridge, startConnecting } from '@/lib/desktop'
@@ -39,6 +40,36 @@ const TASKS = {
 } as const
 type TaskGroup = keyof typeof TASKS
 const ROLES: WorkRole[] = ['student', 'teacher', 'office', 'research', 'maker', 'other']
+const ROLE_ICONS: Record<WorkRole, string> = {
+  student: 'mdi-school-outline',
+  teacher: 'mdi-human-male-board',
+  office: 'mdi-briefcase-outline',
+  research: 'mdi-flask-outline',
+  maker: 'mdi-rocket-launch-outline',
+  other: 'mdi-dots-horizontal',
+}
+// 每件事一个图标：只是帮人一眼扫过四张卡，不承载意思。
+const TASK_ICONS: Record<string, string> = {
+  report: 'mdi-file-document-edit-outline',
+  project: 'mdi-application-brackets-outline',
+  review: 'mdi-notebook-outline',
+  group: 'mdi-account-group-outline',
+  assignment: 'mdi-clipboard-text-outline',
+  slides: 'mdi-presentation',
+  feedback: 'mdi-comment-check-outline',
+  course: 'mdi-folder-multiple-outline',
+  doc: 'mdi-file-document-edit-outline',
+  table: 'mdi-table',
+  tool: 'mdi-application-brackets-outline',
+  plan: 'mdi-format-list-checks',
+  survey: 'mdi-book-search-outline',
+  data: 'mdi-chart-box-outline',
+  section: 'mdi-text-box-edit-outline',
+  reproduce: 'mdi-code-braces',
+  tidy: 'mdi-file-document-edit-outline',
+  research: 'mdi-book-search-outline',
+  build: 'mdi-application-brackets-outline',
+}
 
 // 再走一遍的人已经回答过称呼，从身份开始。
 const step = ref(again ? 2 : 1)
@@ -175,14 +206,18 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
 
 <template>
   <div class="welcome">
-    <div class="welcome__card">
+    <main class="welcome__main">
+      <BrandLockup class="welcome__brand" />
       <div class="welcome__form">
-        <div class="welcome__progress" :aria-label="`${step} / ${LAST}`">
-          <i v-for="n in LAST" :key="n" :class="{ on: n <= step }" />
+        <div class="welcome__steps">
+          <div class="welcome__bar" aria-hidden="true">
+            <i v-for="n in LAST" :key="n" :class="{ on: n <= step }" />
+          </div>
+          <span class="t-meta">{{ t('welcome.stepOf', { n: step, total: LAST }) }}</span>
         </div>
 
         <template v-if="step === 1">
-          <p class="t-body c-muted">{{ t('welcome.intro') }}</p>
+          <p class="welcome__intro">{{ t('welcome.intro') }}</p>
           <h1 class="t-page-title">{{ t('welcome.name.q') }}</h1>
           <v-text-field
             v-model="nickname"
@@ -206,8 +241,11 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
               :aria-pressed="role === r"
               @click="pickRole(r)"
             >
-              <span class="t-title">{{ t(`welcome.role.${r}`) }}</span>
-              <span v-if="r !== 'other'" class="t-body c-faint">{{ t(`welcome.role.${r}Hint`) }}</span>
+              <span class="welcome__icon"><v-icon :icon="ROLE_ICONS[r]" size="20" /></span>
+              <span class="welcome__label">
+                <span class="t-title">{{ t(`welcome.role.${r}`) }}</span>
+                <span v-if="r !== 'other'" class="welcome__hint">{{ t(`welcome.role.${r}Hint`) }}</span>
+              </span>
             </button>
           </div>
           <v-text-field
@@ -232,8 +270,11 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
               :aria-pressed="taskKey === key && !own.trim()"
               @click="pickTask(key)"
             >
-              <span class="t-title">{{ taskText(key, 'label') }}</span>
-              <span class="t-body c-faint">{{ taskText(key, 'hint') }}</span>
+              <span class="welcome__icon"><v-icon :icon="TASK_ICONS[key]" size="20" /></span>
+              <span class="welcome__label">
+                <span class="t-title">{{ taskText(key, 'label') }}</span>
+                <span class="welcome__hint">{{ taskText(key, 'hint') }}</span>
+              </span>
             </button>
           </div>
           <v-text-field
@@ -259,10 +300,8 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
             @dragover.prevent
             @drop.prevent="addFiles($event.dataTransfer?.files ?? null)"
           >
+            <v-icon icon="mdi-paperclip" size="16" />
             <span>{{ t('welcome.task.files') }}</span>
-            <span v-if="files.length" class="welcome__chips">
-              <span v-for="f in files" :key="f.name" class="chip-neutral">{{ f.name }}</span>
-            </span>
           </button>
           <p class="welcome__why">{{ t('welcome.task.filesNote') }}</p>
         </template>
@@ -272,12 +311,18 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
           <p class="welcome__why">{{ t('welcome.who.why') }}</p>
           <div class="welcome__options">
             <button type="button" class="welcome__option" :aria-pressed="solo" @click="solo = true">
-              <span class="t-title">{{ t('welcome.who.solo') }}</span>
-              <span class="t-body c-faint">{{ t('welcome.who.soloHint') }}</span>
+              <span class="welcome__icon"><v-icon icon="mdi-account-outline" size="20" /></span>
+              <span class="welcome__label">
+                <span class="t-title">{{ t('welcome.who.solo') }}</span>
+                <span class="welcome__hint">{{ t('welcome.who.soloHint') }}</span>
+              </span>
             </button>
             <button type="button" class="welcome__option" :aria-pressed="!solo" @click="solo = false">
-              <span class="t-title">{{ t('welcome.who.team') }}</span>
-              <span class="t-body c-faint">{{ t('welcome.who.teamHint') }}</span>
+              <span class="welcome__icon"><v-icon icon="mdi-account-multiple-outline" size="20" /></span>
+              <span class="welcome__label">
+                <span class="t-title">{{ t('welcome.who.team') }}</span>
+                <span class="welcome__hint">{{ t('welcome.who.teamHint') }}</span>
+              </span>
             </button>
           </div>
           <v-text-field
@@ -294,15 +339,18 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
         <template v-else>
           <h1 class="t-page-title">{{ t('welcome.where.q') }}</h1>
           <p class="welcome__why">{{ t('welcome.where.why') }}</p>
-          <div class="welcome__options">
+          <div class="welcome__options welcome__options--stack">
             <button
               type="button"
               class="welcome__option"
               :aria-pressed="!onThisComputer"
               @click="onThisComputer = false"
             >
-              <span class="t-title">{{ t('welcome.where.cloud') }}</span>
-              <span class="t-body c-faint">{{ t('welcome.where.cloudHint') }}</span>
+              <span class="welcome__icon"><v-icon icon="mdi-cloud-outline" size="20" /></span>
+              <span class="welcome__label">
+                <span class="t-title">{{ t('welcome.where.cloud') }}</span>
+                <span class="welcome__hint">{{ t('welcome.where.cloudHint') }}</span>
+              </span>
             </button>
             <button
               v-if="desktop"
@@ -311,8 +359,11 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
               :aria-pressed="onThisComputer"
               @click="onThisComputer = true"
             >
-              <span class="t-title">{{ t('welcome.where.device') }}</span>
-              <span class="t-body c-faint">{{ t('welcome.where.deviceHint') }}</span>
+              <span class="welcome__icon"><v-icon icon="mdi-laptop" size="20" /></span>
+              <span class="welcome__label">
+                <span class="t-title">{{ t('welcome.where.device') }}</span>
+                <span class="welcome__hint">{{ t('welcome.where.deviceHint') }}</span>
+              </span>
             </button>
           </div>
           <p v-if="!desktop" class="welcome__why">
@@ -344,38 +395,52 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
           </span>
         </div>
       </div>
+    </main>
 
-      <aside class="welcome__preview" :aria-label="t('welcome.preview.title')">
-        <p class="t-eyebrow">{{ t('welcome.preview.title') }}</p>
-        <div class="welcome__project">
-          <p class="t-title">{{ step >= 3 ? projectName : fallbackName }}</p>
-          <dl>
-            <template v-if="intent">
-              <dt>{{ t('welcome.preview.brief') }}</dt>
-              <dd>{{ intent }}</dd>
-            </template>
-            <template v-if="files.length">
-              <dt>{{ t('welcome.preview.files') }}</dt>
-              <dd>{{ files.map((f) => f.name).join(t('welcome.preview.listSep')) }}</dd>
-            </template>
-            <dt>{{ t('welcome.preview.members') }}</dt>
-            <dd>
-              {{ displayName }} · {{ t('work.room.defaultAgentName') }}
-              <template v-for="name in invitees" :key="name"> · {{ t('welcome.preview.invited', { name }) }}</template>
-            </dd>
-            <template v-if="aboutLine">
-              <dt>{{ t('welcome.preview.about') }}</dt>
-              <dd>{{ t('welcome.preview.aboutLine', { name: displayName, about: aboutLine }) }}</dd>
-            </template>
-            <template v-if="step >= LAST">
-              <dt>{{ t('welcome.preview.where') }}</dt>
-              <dd>{{ onThisComputer ? t('welcome.preview.device') : t('welcome.preview.cloud') }}</dd>
-            </template>
-          </dl>
+    <!-- 右边是一个缩小的知是窗口：项目格子、项目名、侧栏那几行，下面是这个项目已经
+         知道的事。回答一项，就多一行。 -->
+    <aside class="welcome__preview" :aria-label="t('welcome.preview.title')">
+      <p class="t-eyebrow">{{ t('welcome.preview.title') }}</p>
+      <div class="welcome__window">
+        <div class="welcome__rail">
+          <span class="welcome__tile">{{ (step >= 3 ? projectName : fallbackName).slice(0, 1) }}</span>
         </div>
-        <p class="welcome__why">{{ t('welcome.preview.hint') }}</p>
-      </aside>
-    </div>
+        <div class="welcome__side">
+          <p class="t-title welcome__pname">{{ step >= 3 ? projectName : fallbackName }}</p>
+          <p class="welcome__nav">
+            <v-icon icon="mdi-view-dashboard-outline" size="14" />{{ t('navigation.project.overview') }}
+          </p>
+          <p class="welcome__nav">
+            <v-icon icon="mdi-folder-outline" size="14" />{{ t('navigation.project.library') }}
+          </p>
+          <p class="welcome__nav on"><span class="welcome__hash">#</span>{{ t('navigation.project.general') }}</p>
+        </div>
+        <dl class="welcome__facts">
+          <template v-if="intent">
+            <dt>{{ t('welcome.preview.brief') }}</dt>
+            <dd>{{ intent }}</dd>
+          </template>
+          <template v-if="files.length">
+            <dt>{{ t('welcome.preview.files') }}</dt>
+            <dd>{{ files.map((f) => f.name).join(t('welcome.preview.listSep')) }}</dd>
+          </template>
+          <dt>{{ t('welcome.preview.members') }}</dt>
+          <dd>
+            {{ displayName }} · {{ t('work.room.defaultAgentName') }}
+            <template v-for="name in invitees" :key="name"> · {{ t('welcome.preview.invited', { name }) }}</template>
+          </dd>
+          <template v-if="aboutLine">
+            <dt>{{ t('welcome.preview.about') }}</dt>
+            <dd>{{ t('welcome.preview.aboutLine', { name: displayName, about: aboutLine }) }}</dd>
+          </template>
+          <template v-if="step >= LAST">
+            <dt>{{ t('welcome.preview.where') }}</dt>
+            <dd>{{ onThisComputer ? t('welcome.preview.device') : t('welcome.preview.cloud') }}</dd>
+          </template>
+        </dl>
+      </div>
+      <p class="welcome__why">{{ t('welcome.preview.hint') }}</p>
+    </aside>
   </div>
 </template>
 
@@ -383,58 +448,79 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
 .welcome {
   min-height: 100%;
   display: grid;
-  place-items: center;
-  padding: 32px 16px;
-  background: var(--canvas);
-}
-.welcome__card {
-  width: min(960px, 100%);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 42%);
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
 }
-.welcome__form {
-  padding: 28px 32px;
+.welcome__main {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  padding: 28px 48px;
   min-width: 0;
 }
-.welcome__progress {
+.welcome__brand {
+  height: 28px;
+}
+.welcome__form {
+  flex: 1;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 40px 0 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16px;
+}
+/* Vuetify 的输入框默认 flex: 1，在这一列里会被拉成一大块。 */
+.welcome__form > :deep(.v-input) {
+  flex: none;
+}
+.welcome__steps {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.welcome__bar {
   display: flex;
   gap: 4px;
 }
-.welcome__progress i {
-  width: 28px;
+.welcome__bar i {
+  width: 32px;
   height: 4px;
   border-radius: var(--radius-pill);
   background: var(--line-2);
 }
-.welcome__progress i.on {
+.welcome__bar i.on {
   background: var(--ink);
 }
-.welcome__why {
-  color: var(--faint);
+.welcome__intro {
   margin: 0;
+  color: var(--muted);
+}
+.welcome__why {
+  margin: 0;
+  color: var(--faint);
 }
 .welcome__options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
+}
+.welcome__options--stack {
+  grid-template-columns: minmax(0, 1fr);
 }
 .welcome__option {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: flex-start;
+  gap: 12px;
   text-align: left;
-  padding: 10px 12px;
+  padding: 14px;
   border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--surface);
   cursor: pointer;
+  transition:
+    border-color var(--dur-quick) var(--ease-out),
+    background-color var(--dur-quick) var(--ease-out);
 }
 .welcome__option:hover {
   background: var(--fill);
@@ -443,30 +529,51 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
   border-color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--ink);
 }
-.welcome__drop {
-  width: 100%;
-  background: var(--surface);
+.welcome__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+  color: var(--muted);
+}
+.welcome__option[aria-pressed='true'] .welcome__icon {
+  background: var(--ink);
+  color: var(--surface);
+}
+.welcome__label {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
+  min-width: 0;
+}
+.welcome__hint {
+  color: var(--faint);
+  font-size: 13px;
+}
+.welcome__drop {
+  display: flex;
   align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
   padding: 14px;
   border: 1px dashed var(--line-2);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   color: var(--faint);
   cursor: pointer;
 }
-.welcome__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.welcome__drop:hover {
+  background: var(--fill);
 }
 .welcome__failure {
   color: var(--danger);
   margin: 0;
 }
 .welcome__foot {
-  margin-top: auto;
   padding-top: 8px;
   display: flex;
   align-items: center;
@@ -479,44 +586,111 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
 .welcome__preview {
   background: var(--canvas);
   border-left: 1px solid var(--line);
-  padding: 24px 20px;
+  padding: 32px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  justify-content: center;
+  gap: 12px;
 }
-.welcome__project {
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  padding: 12px 14px;
-}
-.welcome__project dl {
-  margin: 8px 0 0;
+.welcome__window {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 4px 10px;
+  grid-template-columns: 44px 150px minmax(0, 1fr);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+  min-height: 260px;
 }
-.welcome__project dt {
+.welcome__rail {
+  background: var(--canvas);
+  border-right: 1px solid var(--line);
+  padding: 12px 0;
+  display: flex;
+  justify-content: center;
+}
+.welcome__tile {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--ink);
+  color: var(--surface);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 13px;
+}
+.welcome__side {
+  border-right: 1px solid var(--line);
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.welcome__pname {
+  margin: 0 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.welcome__nav {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 13px;
+}
+.welcome__nav.on {
+  background: var(--fill-2);
+  color: var(--ink);
+  font-weight: 600;
+}
+.welcome__hash {
+  width: 14px;
+  text-align: center;
   color: var(--faint);
 }
-.welcome__project dd {
+.welcome__facts {
+  margin: 0;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
+  gap: 6px 10px;
+  font-size: 13px;
+}
+.welcome__facts dt {
+  color: var(--faint);
+}
+.welcome__facts dd {
   margin: 0;
   color: var(--text);
   overflow-wrap: anywhere;
 }
-@media (max-width: 760px) {
-  .welcome__card {
+@media (max-width: 900px) {
+  .welcome {
     grid-template-columns: minmax(0, 1fr);
   }
   .welcome__preview {
     border-left: 0;
     border-top: 1px solid var(--line);
+    padding: 20px 16px;
   }
-  .welcome__form {
+  .welcome__main {
     padding: 20px 16px;
   }
   .welcome__options {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .welcome__window {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+  .welcome__side {
+    display: none;
   }
 }
 </style>

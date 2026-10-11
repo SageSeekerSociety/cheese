@@ -18,10 +18,15 @@ export const TOUR_STOPS: TourStop[] = [
   { anchor: 'page-project-library', key: 'library' },
 ]
 
-/** 第一次才出现的提示：控件出现在页面上、又没看过，就指它一次。 */
-export const FIRST_TIME_TIPS: TourStop[] = [
-  { anchor: 'accept-card', key: 'accept' },
-  { anchor: 'task-row', key: 'task' },
+/**
+ * 第一次才出现的提示：控件出现在页面上、又没看过，就指它一次。按这个顺序挑，一次一条。
+ * 几个目标的取第一个在页面上的（任务卡在对话里，任务行在侧栏里）。
+ */
+export const FIRST_TIME_TIPS: { anchors: string[]; key: string }[] = [
+  { anchors: ['accept-card'], key: 'accept' },
+  { anchors: ['task-start'], key: 'taskStart' },
+  { anchors: ['reply-thread'], key: 'reply' },
+  { anchors: ['task-card', 'task-row'], key: 'task' },
 ]
 
 const SEEN_PREFIX = 'cheese.tour.seen:'
@@ -46,6 +51,16 @@ const seen = ref<Record<string, boolean>>({})
 const stop = ref(0)
 /** 从帮助菜单重新打开的：不看这个人会不会了，照样走一遍。 */
 const replaying = ref(false)
+/**
+ * 这个人亲手采纳过交付没有（上手三步的 `learned`，项目「综合」那一栏问来时写进来）。
+ * 没问到之前是 null：那时谁也不带，免得老手一进来就被圈一下。
+ */
+const learned = ref<boolean | null>(null)
+
+/** 上手三步问回来时，记下这个人会不会了。 */
+export function noteLearned(value: boolean) {
+  learned.value = value
+}
 
 function isSeen(key: string): boolean {
   if (!(key in seen.value)) seen.value = { ...seen.value, [key]: readSeen(key) }
@@ -68,6 +83,7 @@ export function __resetProjectTourForTests() {
   seen.value = {}
   stop.value = 0
   replaying.value = false
+  learned.value = null
 }
 
 export function useProjectTour() {
@@ -76,6 +92,7 @@ export function useProjectTour() {
     stop,
     tourDone,
     replaying,
+    learned,
     /** 下一站；`total` 是这一页上找得到目标的站数，走完就记下看过了。 */
     next(total: number) {
       if (stop.value + 1 < total) stop.value += 1

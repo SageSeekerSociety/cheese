@@ -34,7 +34,7 @@ describe('上手三步', () => {
     await view.rerender({ projectId: 'p1', steps: { ...none, asked: true } })
     expect(
       view
-        .getByText(/它会先回复你计划/)
+        .getByText(/支线里回复计划/)
         .closest('li')
         ?.getAttribute('aria-current')
     ).toBe('step')

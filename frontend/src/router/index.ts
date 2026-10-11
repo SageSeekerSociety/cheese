@@ -110,7 +110,8 @@ const routes: RouteRecordRaw[] = [
     name: 'welcome',
     path: '/welcome',
     component: () => import('@/views/welcome/WelcomeView.vue'),
-    meta: { titleKey: 'welcome.title', isFullPage: true, hideTabs: true },
+    // 整屏：引导期间不露项目栏和顶栏，人只看这一件事。
+    meta: { titleKey: 'welcome.title', isFullPage: true, hideTabs: true, hideAppBar: true },
     props: (to) => ({ again: to.query.again === '1' }),
     beforeEnter: async (to) => {
       const { default: AccountService } = await import('@/services/account')
