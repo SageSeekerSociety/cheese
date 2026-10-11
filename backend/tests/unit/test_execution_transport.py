@@ -1327,17 +1327,18 @@ def leased_session(executor, tmp_path, monkeypatch):
     monkeypatch.setenv("CHEESE_TOKEN", "session-token")
     monkeypatch.setattr(release, "mount_state", lambda _path: release.MOUNT_LIVE)
 
-    def launch():
+    def launch(resume=None, workspace=str(work)):
         return central.prepare(
             tmp_path / "session",
             {
                 "kind": "deferred",
-                "workspace": str(work),
+                "workspace": workspace,
                 "lease_path": "/lease",
                 "setup_env": {},
                 "mcp_servers": [],
             },
             claude=claude_binary(),
+            extra_args=["--resume", resume] if resume else [],
         )
 
     yield platform, work, launch
@@ -1354,14 +1355,14 @@ def test_a_session_whose_machine_is_leased_starts_on_it(leased_session):
     before = release.project_dir(config, "/unavailable-project") / "s.jsonl"
     before.parent.mkdir(parents=True)
     before.write_text("{}\n")
-    started = launch()
+    started = launch(resume="s")
     target = json.loads(Path(started["execution"]).read_text())
     assert started["workspace"] == str(work)
     assert (target["kind"], target["generation"]) == ("device", platform.generation)
     # Where the build keeps a session started at the machine's path, which is
     # where the resumed one goes on writing.
     assert (release.project_dir(config, str(work)) / "s.jsonl").read_text() == "{}\n"
-    assert not before.parent.exists()
+    assert not before.exists()
     assert "execution_token" not in target
     assert Path(target["token_file"]).read_text() == "execution-only"
     assert Path(target["central_config"]) == config
@@ -1406,14 +1407,72 @@ def test_a_session_back_on_its_machine_keeps_what_it_wrote_at_the_placeholder(
     (placeholder / "s/subagents/agent-second.jsonl").write_text("second\n")
     (placeholder / "s/tool-results/result.txt").write_text("result\n")
 
-    started = launch()
+    started = launch(resume="s")
 
     assert started["workspace"] == str(work)
     assert (machine / "s.jsonl").read_text() == "conversation\n"
     assert (machine / "s/subagents/agent-first.jsonl").read_text() == "first\n"
     assert (machine / "s/subagents/agent-second.jsonl").read_text() == "second\n"
     assert (machine / "s/tool-results/result.txt").read_text() == "result\n"
-    assert not placeholder.exists()
+    assert not (placeholder / "s").exists()
+
+
+def test_a_conversation_resumed_before_its_machine_finds_what_it_wrote_on_one(
+    leased_session,
+):
+    """A conversation that last ran on its machine, relaunched while that
+    machine is out of reach, starts at the placeholder: the build looks for it
+    there, so its transcript is there, whole, when it resumes."""
+    _, work, launch = leased_session
+    config = work.parent / "session" / "config"
+    machine = release.project_dir(config, str(work))
+    (machine / "s/subagents").mkdir(parents=True)
+    (machine / "s.jsonl").write_text("conversation\n")
+    (machine / "s/subagents/agent-first.jsonl").write_text("first\n")
+
+    launch(resume="s", workspace="/unavailable-project")
+
+    placeholder = release.project_dir(config, "/unavailable-project")
+    assert (placeholder / "s.jsonl").read_text() == "conversation\n"
+    assert (placeholder / "s/subagents/agent-first.jsonl").read_text() == "first\n"
+
+
+def test_relaunching_one_conversation_leaves_the_others_where_they_are(
+    leased_session,
+):
+    """Every conversation of a session shares its config dir. Moving onto the
+    machine for one of them must not carry off another that is still running
+    at the placeholder, which would then resume nowhere."""
+    _, work, launch = leased_session
+    config = work.parent / "session" / "config"
+    placeholder = release.project_dir(config, "/unavailable-project")
+    placeholder.mkdir(parents=True)
+    (placeholder / "s.jsonl").write_text("this one\n")
+    (placeholder / "other.jsonl").write_text("still running here\n")
+
+    launch(resume="s")
+
+    assert (release.project_dir(config, str(work)) / "s.jsonl").exists()
+    assert (placeholder / "other.jsonl").read_text() == "still running here\n"
+
+
+def test_a_transcript_left_in_pieces_resumes_with_all_of_them(leased_session):
+    """A conversation whose file was moved while it ran starts a new one where
+    it was: resumed, it has everything it wrote, in the order it wrote it."""
+    _, work, launch = leased_session
+    config = work.parent / "session" / "config"
+    placeholder = release.project_dir(config, "/unavailable-project")
+    machine = release.project_dir(config, str(work))
+    machine.mkdir(parents=True)
+    placeholder.mkdir(parents=True)
+    (machine / "s.jsonl").write_text("earlier\n")
+    (placeholder / "s.jsonl").write_text("later\n")
+    os.utime(machine / "s.jsonl", (1, 1))
+
+    launch(resume="s")
+
+    assert (machine / "s.jsonl").read_text() == "earlier\nlater\n"
+    assert not (placeholder / "s.jsonl").exists()
 
 
 def test_a_session_never_starts_at_the_machines_path_without_the_machine(

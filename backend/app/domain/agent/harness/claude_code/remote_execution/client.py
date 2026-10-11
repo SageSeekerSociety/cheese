@@ -55,7 +55,7 @@ if __package__:
     )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
         allow_native_tools,
-        carry_transcripts,
+        carry_conversation,
         forget_touched_skills,
         hook_module,
         link_forwarded_user_context,
@@ -94,7 +94,7 @@ else:
     from context_service import serve
     from release import (
         allow_native_tools,
-        carry_transcripts,
+        carry_conversation,
         forget_touched_skills,
         hook_module,
         link_forwarded_user_context,
@@ -318,8 +318,7 @@ def prepare(
         seen = placeholder if unavailable else info["workspace"]
         if not unavailable:
             workspace = Path(info["workspace"])
-    if seen != placeholder:
-        carry_transcripts(config, placeholder, seen)
+    carry_conversation(config, extra_args, seen)
     target = dict(
         target,
         workspace=info["workspace"],
