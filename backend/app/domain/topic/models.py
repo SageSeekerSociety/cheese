@@ -29,6 +29,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -115,12 +116,12 @@ class Topic(UuidPk, Timestamps, Base):
     )
     # A room keeps its script revision when project settings change.
     environment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # The compute choice (`ComputeChoice`) every new agent session in this room
-    # starts on. NULL = the project default. Written in full the first time the
-    # room runs, so a later session gets what the first one got. It is a default
-    # and not a placement: where a conversation actually runs is its own
-    # session's business (`agent_sessions.execution_request` / `.work_lease`).
-    compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The execution environment (`agent.environment`) a new agent here gets.
+    # NULL = the project's default. It moves nobody: each agent's own is in
+    # `agent_environments`.
+    default_environment: Mapped[dict | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
     # participants' cross-project personal memory (spec §8.4).

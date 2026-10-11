@@ -27,7 +27,6 @@ from sqlalchemy import select, update
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
-from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
@@ -179,7 +178,7 @@ def cloud(client, monkeypatch, tmp_path):
             seats = []
             for room_id in rooms:
                 topic = await db.get(Topic, room_id)
-                topic.compute_config = standard_choice("cloud").model_dump()
+                topic.default_environment = {"kind": "sandbox", "spec": "standard"}
                 agent = await IdentityService(db).ensure_room_agent_user(room_id)
                 row = await AgentSessionService(db).ensure(
                     room_id, "cheese", harness="claude-code"
@@ -188,7 +187,7 @@ def cloud(client, monkeypatch, tmp_path):
                 row.runtime_location = {
                     "device_id": "center",
                     "resource_id": resource,
-                    "channel": "cloud",
+                    "channel": "device",
                 }
                 token = bind_resource_token(
                     mint_scoped_token(

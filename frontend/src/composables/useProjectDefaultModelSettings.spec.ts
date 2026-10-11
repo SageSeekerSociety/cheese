@@ -26,8 +26,15 @@ function state(overrides: Partial<ProjectDefaultModel> = {}): ProjectDefaultMode
     deployment_default: 'sonnet',
     can_manage: true,
     choices: [
-      { id: 'sonnet', label: 'Claude Sonnet 5' },
-      { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash' },
+      { id: 'sonnet', label: 'Claude Sonnet 5', description: '', default: false, allowed: true, requires_plan: null },
+      {
+        id: 'deepseek-flash',
+        label: 'DeepSeek V4.1 Flash',
+        description: '',
+        default: false,
+        allowed: true,
+        requires_plan: null,
+      },
     ],
     ...overrides,
   }

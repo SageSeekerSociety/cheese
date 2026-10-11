@@ -4,7 +4,7 @@
 // 在哪台电脑上做，负责人在这里增减协作者），以及「开始」和 ⋯（重命名归负责人和协作者，
 // 转交、关闭只归负责人）。
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
-import type { ComputeChoice, TopicComputeProfile } from '@/types/compute'
+import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -15,11 +15,11 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
-import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import { t } from '@/i18n'
 import { taskPhraseLabel } from '@/lib/board'
-import { choiceName } from '@/lib/computeConfig'
+import { environmentName } from '@/lib/environment'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
@@ -31,16 +31,8 @@ const props = defineProps<{
   people: TopicMemberRow[]
   /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
   agents: TopicMemberRow[]
-  machine: TopicComputeProfile | null
+  machine: TopicEnvironment | null
   machineError: boolean
-  /** 换做它的电脑：一次保存还在路上。 */
-  machineSaving: boolean
-  /** 换电脑被后端拒了的原话（不是提议）。 */
-  machinePickError: string
-  /** 换电脑变成了一条提议：等人点头，房间没变。 */
-  machineProposal: string
-  /** 换电脑的成功回执：真的存成一次就涨一版。 */
-  machineSavedVersion: number
   starting: boolean
   startError: string | null
   actionError: string | null
@@ -53,8 +45,9 @@ const props = defineProps<{
   setCollaborators: (handles: string[]) => Promise<boolean>
   setAgent: (handle: string | null) => Promise<boolean>
   loadMachine: () => Promise<void>
-  /** 选了哪台电脑（或给不给整台机器）：页面那一层接住去保存。 */
-  selectMachine: (choice: ComputeChoice, visibility?: 'host' | 'isolated') => void
+  /** 换这个任务里一条会话的环境；换「新会话默认」。 */
+  setMachine: (sessionId: string, env: Environment) => Promise<{ proposal?: { content: string } | null }>
+  setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
 }>()
@@ -133,6 +126,15 @@ async function pickAgent(handle: string | null) {
     swappingAgent.value = false
   }
 }
+
+// 这个任务的会话各有各的环境，各改各的；「新会话默认」只管以后开工的。
+function saveSession(session: SessionEnvironment) {
+  return (env: Environment) => props.setMachine(session.session_id, env)
+}
+function saveDefault(env: Environment) {
+  return props.setMachineDefault(env)
+}
+const sessionName = (session: SessionEnvironment) => props.memberNames[session.seat_handle] || session.seat_handle
 
 const detailsOpen = ref(false)
 watch(detailsOpen, (open) => {
@@ -306,23 +308,61 @@ async function confirmHandOver() {
             </div>
             <div class="task-details__row" data-testid="task-machine">
               <dt>{{ t('work.task.machine') }}</dt>
-              <dd v-if="machine" class="task-details__pair">
-                <span>{{ choiceName(machine.choice) }}</span>
-                <span v-if="machine.follows_room" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
-                <TopicComputePicker
-                  v-if="isOwner && isOpen"
-                  :profile="machine"
-                  :saving="machineSaving"
-                  :error="machinePickError"
-                  :proposal="machineProposal"
-                  :saved-version="machineSavedVersion"
-                  @select="selectMachine"
-                />
+              <dd v-if="machine" class="task-details__envs">
+                <div
+                  v-for="session in machine.sessions"
+                  :key="session.session_id"
+                  class="task-details__pair"
+                  :data-testid="`session-env-${session.session_id}`"
+                >
+                  <span>{{
+                    t('compute.env.sessionLine', {
+                      name: sessionName(session),
+                      env: session.environment
+                        ? environmentName(session.environment, machine.devices, machine.specs)
+                        : t('compute.env.notStarted'),
+                    })
+                  }}</span>
+                  <EnvironmentMenu
+                    v-if="isOwner && isOpen"
+                    :heading="t('compute.env.sessionHeading', { name: sessionName(session) })"
+                    :hint="t('compute.env.sessionHint')"
+                    :current="session.environment ?? machine.default"
+                    :devices="machine.devices"
+                    :specs="machine.specs"
+                    :save="saveSession(session)"
+                    @changed="loadMachine"
+                  />
+                </div>
+                <div class="task-details__pair" data-testid="task-env-default">
+                  <span>{{
+                    t('compute.env.defaultHere', {
+                      name: environmentName(
+                        machine.default ?? { kind: 'sandbox', spec: 'standard' },
+                        machine.devices,
+                        machine.specs
+                      ),
+                    })
+                  }}</span>
+                  <span v-if="machine.default_from === 'room'" class="task-details__tag">{{
+                    t('work.task.followsRoom')
+                  }}</span>
+                  <EnvironmentMenu
+                    v-if="isOwner && isOpen"
+                    :heading="t('compute.env.defaultHeading')"
+                    :hint="t('compute.env.defaultHint')"
+                    :current="machine.default"
+                    :devices="machine.devices"
+                    :specs="machine.specs"
+                    :save="saveDefault"
+                    @changed="loadMachine"
+                  />
+                </div>
               </dd>
               <dd v-else-if="machineError">
-                {{ t('work.roomMachine.loadFailed') }}
+                {{ t('compute.env.loadFailed') }}
                 <button type="button" class="task-details__retry" @click="loadMachine">
-                  {{ t('work.roomMachine.retry') }}
+                  {{ t('global.loadError.retry') }}
                 </button>
               </dd>
               <dd v-else><v-progress-circular indeterminate size="14" width="2" /></dd>
@@ -581,6 +621,11 @@ async function confirmHandOver() {
   min-width: 0;
   margin: 0;
   color: var(--text);
+}
+.task-details__envs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .task-details__pair {
   display: flex;

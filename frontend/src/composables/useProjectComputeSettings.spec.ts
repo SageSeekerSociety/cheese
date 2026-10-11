@@ -1,5 +1,5 @@
 // 「工作电脑」那一块的数据与动作：读一次、存一次（存成后广播、把表单收起来）。
-import type { ComputeChoice, ProjectComputeConfigs } from '@/types/compute'
+import type { Environment, ProjectComputeConfigs } from '@/types/compute'
 
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { cleanup, render } from '@testing-library/vue'
@@ -19,17 +19,16 @@ vi.mock('@/api', async (importOriginal) => {
 
 import { useProjectComputeSettings } from './useProjectComputeSettings'
 
-const cloud: ComputeChoice = { name: null, profile: 'cloud', device_id: null }
-const lab: ComputeChoice = { name: '实验室工作站', profile: 'device', device_id: 'lab' }
+const cloud: Environment = { kind: 'sandbox', spec: 'standard' }
+const lab: Environment = { kind: 'self_hosted', device_id: 'lab' }
 
 function configs(overrides: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
   return {
     default: cloud,
     can_manage: true,
-    devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],
-    cloud_available: true,
-    cloud_vm_available: false,
-    distribution: { cloud: 0, cloud_vm: 0, devices: [] },
+    devices: [{ device_id: 'lab', name: '实验室工作站', online: true, owned: true }],
+    specs: [{ spec: 'standard', label: '标准' }],
+    distribution: { sandboxes: [], devices: [] },
     ...overrides,
   }
 }

@@ -1,4 +1,4 @@
-"""Switching a session's work computer checkpoints its work first, once.
+"""Switching a session's execution environment checkpoints its work first, once.
 
 The checkpoint (`cheese sync --all`) runs on the machine being left, and the
 switch happens whether or not it went through: a machine that is away, a push
@@ -95,16 +95,16 @@ async def _room(client, *, on_cloud=False, in_task=False):
         )
         generation = str(uuid.uuid4())
         if on_cloud:
-            choice = {"name": "Cloud", "profile": "cloud"}
+            environment = {"kind": "sandbox", "spec": "standard"}
         else:
-            choice = {"name": "Old", "profile": "device", "device_id": old_device}
-        session.execution_request = {
-            "generation": generation,
-            "choice": choice,
-            "authorized_by": None,
-        }
+            environment = {"kind": "self_hosted", "device_id": old_device}
+        await AgentSessionService(db).set_environment(
+            conversation_id, agent.username, environment, chosen_by=None
+        )
+        session.execution_request = {"generation": generation}
         session.work_lease = {
             "kind": "device",
+            **({"platform": True} if on_cloud else {}),
             "session_id": str(session.id),
             "generation": generation,
             "resource_id": str(uuid.uuid4()),
@@ -121,7 +121,6 @@ async def _room(client, *, on_cloud=False, in_task=False):
             "resource_id": resource,
             "channel": "device",
         }
-        topic.compute_config = choice
         agent_token = bind_resource_token(
             mint_scoped_token(
                 project_id=str(project_id),
@@ -147,7 +146,8 @@ async def _room(client, *, on_cloud=False, in_task=False):
             person=person,
             agent={"X-Cheese-Token": agent_token},
             lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
-            path=f"/topics/{topic_id}/compute-profile",
+            agent_handle=agent.username,
+            path=f"/topics/{conversation_id}/sessions/{session.id}/environment",
         )
 
 
@@ -169,7 +169,7 @@ def _machines(monkeypatch, *, online=True, reconnecting=False, push=PUSHED):
 
 def _to_new(room, **extra):
     return {
-        "choice": {"name": "New", "profile": "device", "device_id": room.new_device},
+        "environment": {"kind": "self_hosted", "device_id": room.new_device},
         **extra,
     }
 
@@ -177,6 +177,19 @@ def _to_new(room, **extra):
 async def _session(client, room):
     async with client.test_factory() as db:
         return await AgentSessionService(db).by_id(room.session_id)
+
+
+async def _owner_id(client) -> int:
+    async with client.test_factory() as db:
+        return (await db.scalar(select(User).where(User.username == "alice"))).id
+
+
+async def _environment(client, room) -> dict:
+    async with client.test_factory() as db:
+        chosen = await AgentSessionService(db).environment(
+            room.conversation_id, room.agent_handle
+        )
+        return chosen.environment
 
 
 async def test_a_switch_pushes_on_the_old_machine_before_it_happens(
@@ -192,7 +205,7 @@ async def test_a_switch_pushes_on_the_old_machine_before_it_happens(
     assert target["device_id"] == room.old_device
     assert method == "control" and params["subtype"] == "checkpoint"
     session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert (await _environment(client, room))["device_id"] == room.new_device
     assert session.work_lease is None
     # A self-hosted machine keeps the session's directory for the room's cleanup.
     assert session.execution_request["retained_leases"] == [room.lease]
@@ -240,7 +253,7 @@ async def test_a_failed_checkpoint_does_not_hold_the_switch(client, monkeypatch,
     assert switched.status_code == 200, switched.text
     remote.assert_awaited()
     session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert (await _environment(client, room))["device_id"] == room.new_device
     assert session.work_lease is None
     assert session.execution_request["retained_leases"] == [room.lease]
 
@@ -248,22 +261,19 @@ async def test_a_failed_checkpoint_does_not_hold_the_switch(client, monkeypatch,
 async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
     client, monkeypatch
 ):
-    """Nothing is refused over work that could not be pushed, so the room's
-    agent switches on its own (`cheese_machine`) and never has to find a
-    person to do it."""
+    """Nothing is refused over work that could not be pushed, so the agent
+    switches on its own (`cheese_environment`) and never has to find a person
+    to do it."""
     room = await _room(client)
     remote = _machines(monkeypatch, online=False)
+    owner = await _owner_id(client)
+    sandbox = {"kind": "sandbox", "spec": f"devices_of:{owner}"}
 
-    switched = client.put(
-        f"/topics/{room.topic_id}/compute-profile",
-        headers=room.agent,
-        json={"profile": "device", "device_id": room.new_device},
-    )
+    switched = client.put(room.path, headers=room.agent, json={"environment": sandbox})
 
     assert switched.status_code == 200, switched.text
     remote.assert_not_awaited()
-    session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert await _environment(client, room) == sandbox
 
 
 @pytest.mark.parametrize("reachable", [True, False])
@@ -376,8 +386,7 @@ async def test_an_idle_sessions_executor_is_started_to_push_before_a_switch(
     assert claims is not None
     assert claims["session"] == str(room.session_id)
     assert claims["t"] == str(room.topic_id)
-    session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert (await _environment(client, room))["device_id"] == room.new_device
 
 
 async def test_a_tasks_executor_started_to_push_is_told_it_works_the_task(
@@ -407,8 +416,7 @@ async def test_a_machine_that_cannot_start_the_executor_does_not_hold_the_switch
     switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
     assert switched.status_code == 200, switched.text
-    session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert (await _environment(client, room))["device_id"] == room.new_device
 
 
 class _PushingMachine(_IdleMachine):
@@ -465,8 +473,7 @@ async def test_an_executor_started_for_a_checkpoint_pushes_with_its_own_credenti
     [(_, method, _)] = [call for call in machine.calls if call[1] == "control"]
     assert method == "control"
     assert machine.answered == 200
-    session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert (await _environment(client, room))["device_id"] == room.new_device
 
 
 async def test_an_executor_started_to_push_is_installed_with_the_rooms_environment(

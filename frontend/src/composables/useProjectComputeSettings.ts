@@ -12,7 +12,7 @@
 //
 // `enabled`：设置页一次只画一栏，这一栏没被打开过就不读（原来那一件只有被画出来才会
 // 挂上、才会取数）。
-import type { ComputeChoice, ProjectComputeConfigs } from '@/types/compute'
+import type { Environment, ProjectComputeConfigs } from '@/types/compute'
 
 import { onMounted, ref, watch } from 'vue'
 
@@ -51,7 +51,7 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
     }
   }
 
-  async function save(choice: ComputeChoice) {
+  async function save(choice: Environment) {
     if (!state.value?.can_manage || busy.value) return
     const current = generation
     busy.value = true

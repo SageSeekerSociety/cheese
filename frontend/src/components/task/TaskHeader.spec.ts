@@ -1,13 +1,13 @@
 /** 任务页头：只有负责人能开始、能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
-import type { TopicComputeProfile } from '@/types/compute'
+import type { TopicEnvironment } from '@/types/compute'
 
 import { nextTick } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let me = 'alice'
@@ -41,19 +41,23 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
   } as RoomTask
 }
 
-const LAPTOP = { name: '王宁的笔记本', profile: 'device', device_id: 'd1', whole_machine: false }
-const MACHINE = {
-  choice: LAPTOP,
-  project_default: LAPTOP,
-  current: 'device',
-  device_id: 'd1',
-  devices: [{ device_id: 'd1', name: '王宁的笔记本', online: true, owned: true, sandbox_unavailable: null }],
-  sessions: [],
-  profiles: [],
-  cloud_vm_available: false,
-  visibility: { options: [], effective: null, machine_access: false },
-  follows_room: true,
-} as unknown as TopicComputeProfile
+const LAPTOP = { kind: 'self_hosted', device_id: 'd1' } as const
+const MACHINE: TopicEnvironment = {
+  default: LAPTOP,
+  default_from: 'room',
+  devices: [{ device_id: 'd1', name: '王宁的笔记本', online: true, owned: true }],
+  sessions: [
+    {
+      session_id: 's1',
+      agent_handle: 'cheese-01',
+      seat_handle: 'cheese-01',
+      environment: LAPTOP,
+      status: 'ready',
+      online: true,
+    },
+  ],
+  specs: [{ spec: 'standard', label: '标准' }],
+}
 
 const PEOPLE = ['alice', 'bob', 'carol'].map((member_handle) => ({ member_handle, agent: false }))
 
@@ -74,7 +78,6 @@ const PICKED = [
 function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, startError: string | null = null) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
-  const selectMachine = vi.fn()
   const setCollaborators = vi.fn(async () => true)
   const setAgent = vi.fn(async () => true)
   const rename = vi.fn(async () => true)
@@ -89,10 +92,6 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
       agents,
       machine: MACHINE,
       machineError: false,
-      machineSaving: false,
-      machinePickError: '',
-      machineProposal: '',
-      machineSavedVersion: 0,
       starting: false,
       startError,
       actionError: null,
@@ -104,11 +103,12 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
       setCollaborators,
       setAgent,
       loadMachine,
-      selectMachine,
+      setMachine: vi.fn(async () => ({})),
+      setMachineDefault: vi.fn(async () => ({})),
     },
     global: { plugins: [vuetify] },
   })
-  return { ...view, start, loadMachine, selectMachine, setCollaborators, setAgent, rename, reopen }
+  return { ...view, start, loadMachine, setCollaborators, setAgent, rename, reopen }
 }
 
 function stubViewport() {
@@ -193,23 +193,16 @@ describe('任务页头', () => {
     expect(start).toHaveBeenCalledWith('bob')
   })
 
-  it('负责人在任务信息里看得到工作电脑，也能更换', async () => {
+  it('负责人在任务信息里看得到每条会话的环境，也能更换', async () => {
     const { container, loadMachine } = mount()
     await openDetails(container)
     expect(loadMachine).toHaveBeenCalled()
-    expect(document.querySelector('[data-testid="task-machine"] button')).not.toBeNull()
+    const row = document.querySelector('[data-testid="session-env-s1"]')!
+    expect(row.textContent).toContain('小苔：王宁的笔记本')
+    expect(row.querySelector('button')).not.toBeNull()
   })
 
-  it('换做它的电脑：选择往上发给页面那一层去保存', async () => {
-    const { container, selectMachine } = mount()
-    await openDetails(container)
-    // 机器那一格里那颗「改」是 TopicComputePicker 的入口，这里只接线、不自己发请求。
-    await fireEvent.click(document.querySelector('[data-testid="task-machine"] button')!)
-    await fireEvent.click(await screen.findByRole('button', { name: /^王宁的笔记本/ }))
-    expect(selectMachine).toHaveBeenCalledWith(LAPTOP, undefined)
-  })
-
-  it('不是负责人：看得到任务在哪台电脑上做，不能更换', async () => {
+  it('不是负责人：看得到任务在哪个环境里做，不能更换', async () => {
     me = 'bob'
     const { container } = mount()
     await openDetails(container)

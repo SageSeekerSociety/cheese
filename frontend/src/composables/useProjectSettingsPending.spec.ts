@@ -1,4 +1,5 @@
 import { defineComponent, h, nextTick, ref } from 'vue'
+import { toast } from 'vuetify-sonner'
 import { cleanup, render } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
@@ -9,6 +10,7 @@ import { useProjectMcpSettings } from './useProjectMcpSettings'
 import { useProjectTaskNamingSettings } from './useProjectTaskNamingSettings'
 
 import * as api from '@/api'
+import { goAuthorize } from '@/lib/desktopApp'
 import {
   computeState,
   defaultModelState,
@@ -20,6 +22,7 @@ import {
 } from '@/views/demo/catalogSettingsDataFixtures'
 
 vi.mock('@/api')
+vi.mock('@/lib/desktopApp', () => ({ goAuthorize: vi.fn(() => true) }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 function deferred<T>() {
@@ -77,21 +80,21 @@ it.each(['success', 'failure'])('ignores an old computer save %s after leave/ree
   vi.mocked(api.saveProjectComputeConfigs).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
   const view = host((enabled) => useProjectComputeSettings(() => 'p', { enabled }))
   await flush()
-  const first = view.state.save({ name: 'old', profile: 'cloud', device_id: null })
+  const first = view.state.save({ kind: 'sandbox', spec: 'old' })
   await view.leave()
   // An old partial response must not resurrect state while the component is absent.
-  if (outcome === 'success') old.resolve({ default: { name: 'old', profile: 'cloud', device_id: null } })
+  if (outcome === 'success') old.resolve({ default: { kind: 'sandbox', spec: 'old' } })
   else old.reject(new Error('old failure'))
   await first
   expect(view.state.state.value).toBeNull()
   expect(view.state.error.value).toBe('')
   await view.enter()
-  expect(view.state.state.value?.distribution.cloud).toBe(3)
-  const second = view.state.save({ name: 'new', profile: 'cloud', device_id: null })
+  expect(view.state.state.value?.distribution.sandboxes[0].agents).toBe(3)
+  const second = view.state.save({ kind: 'sandbox', spec: 'new' })
   expect(view.state.busy.value).toBe(true)
-  fresh.resolve({ default: { name: 'new', profile: 'cloud', device_id: null } })
+  fresh.resolve({ default: { kind: 'sandbox', spec: 'new' } })
   await second
-  expect(view.state.state.value?.default.name).toBe('new')
+  expect(view.state.state.value?.default).toEqual({ kind: 'sandbox', spec: 'new' })
 })
 
 it.each(['success', 'failure'])('keeps a new model save busy when the old save returns %s', async (outcome) => {
@@ -186,6 +189,140 @@ it('does not clear a new MCP secret or release its busy state when an old save r
   fresh.resolve()
   await second
   expect(view.state.values.SEARCH_KEY).toBe('')
+  expect(view.state.busy.value).toBe('')
+})
+
+it.each(['success', 'failure'])('isolates environment save receipts across projects after old %s', async (outcome) => {
+  const project = ref('a')
+  const old = deferred<Awaited<ReturnType<typeof api.saveProjectEnvironment>>>()
+  const fresh = deferred<Awaited<ReturnType<typeof api.saveProjectEnvironment>>>()
+  vi.mocked(api.saveProjectEnvironment).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
+  const view = host((enabled) => useProjectEnvironmentSettings(() => project.value, { enabled, diagnoseRoom: vi.fn() }))
+  await flush()
+  const first = view.state.save({ setup_script: 'A', startup_script: '', variables: [] })
+  project.value = 'b'
+  await flush()
+  expect(view.state.saving.value).toBe(false)
+  expect(view.state.saved.value).toBe(false)
+  const second = view.state.save({ setup_script: 'B', startup_script: '', variables: [] })
+  expect(api.saveProjectEnvironment).toHaveBeenLastCalledWith('b', {
+    setup_script: 'B',
+    startup_script: '',
+    variables: {},
+  })
+  if (outcome === 'success') old.resolve({ ...envInfo().config, setup_script: 'A' })
+  else old.reject(new Error('A failed'))
+  await first
+  expect(view.state.info.value?.config.setup_script).toBe(envInfo().config.setup_script)
+  expect(view.state.saving.value).toBe(true)
+  expect(view.state.saved.value).toBe(false)
+  expect(view.state.saveError.value).toBe('')
+  fresh.resolve({ ...envInfo().config, setup_script: 'B' })
+  await second
+  expect(view.state.info.value?.config.setup_script).toBe('B')
+  expect(view.state.saved.value).toBe(true)
+})
+
+it.each(['success', 'failure'])(
+  'isolates environment apply completion across projects after old %s',
+  async (outcome) => {
+    const project = ref('a')
+    const old = deferred<Awaited<ReturnType<typeof api.applyRoomEnvironment>>>()
+    const fresh = deferred<Awaited<ReturnType<typeof api.applyRoomEnvironment>>>()
+    vi.mocked(api.applyRoomEnvironment).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
+    const view = host((enabled) =>
+      useProjectEnvironmentSettings(() => project.value, { enabled, diagnoseRoom: vi.fn() })
+    )
+    await flush()
+    const first = view.state.apply(true)
+    project.value = 'b'
+    await flush()
+    expect(view.state.applying.value).toBe(false)
+    const second = view.state.apply(true)
+    expect(api.applyRoomEnvironment).toHaveBeenLastCalledWith('b', 'r-general', true)
+    vi.mocked(api.getRoomEnvironment).mockClear()
+    if (outcome === 'success') old.resolve({})
+    else old.reject(new Error('A failed'))
+    await first
+    expect(view.state.applying.value).toBe(true)
+    expect(api.getRoomEnvironment).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(toast.error).not.toHaveBeenCalled()
+    fresh.resolve({})
+    await second
+    expect(view.state.applying.value).toBe(false)
+    expect(api.getRoomEnvironment).toHaveBeenCalledWith('b', 'r-general')
+    expect(toast.success).toHaveBeenCalledTimes(1)
+  }
+)
+
+it('does not apply an adopted script to another project when its save finishes late', async () => {
+  const project = ref('a')
+  const old = deferred<Awaited<ReturnType<typeof api.saveProjectEnvironment>>>()
+  vi.mocked(api.saveProjectEnvironment).mockReturnValueOnce(old.promise)
+  const view = host((enabled) => useProjectEnvironmentSettings(() => project.value, { enabled, diagnoseRoom: vi.fn() }))
+  await flush()
+  const first = view.state.adopt({ setup_script: 'A', startup_script: '', variables: [] })
+  project.value = 'b'
+  await flush()
+  old.resolve({ ...envInfo().config, setup_script: 'A' })
+  await first
+  expect(api.applyRoomEnvironment).not.toHaveBeenCalled()
+  expect(view.state.saved.value).toBe(false)
+})
+
+it.each(['success', 'failure'])(
+  'preserves the new project MCP draft and busy state after old save %s',
+  async (outcome) => {
+    const project = ref('a')
+    const old = deferred<void>()
+    const fresh = deferred<void>()
+    vi.mocked(api.setMcpSecret).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
+    const view = host((enabled) => useProjectMcpSettings(() => project.value, { enabled }))
+    await flush()
+    view.state.setValue('SEARCH_KEY', 'project-a-secret')
+    const first = view.state.save('SEARCH_KEY')
+    project.value = 'b'
+    await flush()
+    expect(view.state.values.SEARCH_KEY).toBeUndefined()
+    expect(view.state.busy.value).toBe('')
+    view.state.setValue('SEARCH_KEY', 'project-b-secret')
+    const second = view.state.save('SEARCH_KEY')
+    expect(api.setMcpSecret).toHaveBeenLastCalledWith('b', 'SEARCH_KEY', 'project-b-secret')
+    if (outcome === 'success') old.resolve()
+    else old.reject(new Error('A failed'))
+    await first
+    expect(view.state.values.SEARCH_KEY).toBe('project-b-secret')
+    expect(view.state.busy.value).toBe('SEARCH_KEY')
+    expect(api.getMcpServers).toHaveBeenCalledTimes(2)
+    expect(toast.error).not.toHaveBeenCalled()
+    fresh.resolve()
+    await second
+    expect(view.state.values.SEARCH_KEY).toBe('')
+    expect(view.state.busy.value).toBe('')
+  }
+)
+
+it('does not open an old project authorization after switching projects', async () => {
+  const project = ref('a')
+  const old = deferred<Awaited<ReturnType<typeof api.connectMcpServer>>>()
+  const fresh = deferred<Awaited<ReturnType<typeof api.connectMcpServer>>>()
+  vi.mocked(api.connectMcpServer).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
+  vi.mocked(goAuthorize).mockReturnValue(true)
+  const view = host((enabled) => useProjectMcpSettings(() => project.value, { enabled }))
+  await flush()
+  const server = mcpList().servers[0]
+  const first = view.state.connect(server)
+  project.value = 'b'
+  await flush()
+  const second = view.state.connect(server)
+  old.resolve({ authorization_url: 'https://example.test/a' })
+  await first
+  expect(goAuthorize).not.toHaveBeenCalled()
+  expect(view.state.busy.value).toBe(server.name)
+  fresh.resolve({ authorization_url: 'https://example.test/b' })
+  await second
+  expect(goAuthorize).toHaveBeenCalledExactlyOnceWith('https://example.test/b')
   expect(view.state.busy.value).toBe('')
 })
 

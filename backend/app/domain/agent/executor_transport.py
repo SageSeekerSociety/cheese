@@ -136,13 +136,13 @@ def _link_interrupted(response) -> bool:
 # starts: the platform says nothing else until the machine is ready or the wait
 # gives up, and a call silent that long reads as a dead shell or a lost machine.
 MACHINE_PREPARING = (
-    "工作电脑正在准备，这次操作会在它就绪后执行（最多等 {minutes} 分钟）。"
+    "执行环境正在准备，这次操作会在它就绪后执行（最多等 {minutes} 分钟）。"
 )
 
 
 # What the wait gives up with when the last answer it had was a timed-out
 # request rather than the platform's own word on the machine.
-MACHINE_STILL_PREPARING = "工作电脑仍在准备，对话和平台工具仍可用"
+MACHINE_STILL_PREPARING = "执行环境仍在准备，对话和平台工具仍可用"
 
 
 class MachineOutOfReach(RuntimeError):

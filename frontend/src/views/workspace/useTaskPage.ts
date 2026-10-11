@@ -1,20 +1,18 @@
 // 任务页要的那份任务：它本身、负责人能做的几件事（开始、转交、关闭）、做它的电脑，
 // 以及「与开始时相比」。对话不在这里：任务的对话就是房间那一栏，换了一段会话来读。
 import type { RoomTask, TopicMemberRow } from '@/cx_types'
-import type { TopicComputeProfile } from '@/types/compute'
+import type { Environment, TopicEnvironment } from '@/types/compute'
 
 import { computed, ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
-import { useTopicComputeChoice } from '@/composables/useTopicComputeChoice'
-
-import { ApiError } from '@/api'
+import { ApiError, setEnvironmentDefault, setSessionEnvironment } from '@/api'
 import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { patchQuery, queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
-import { computeProfileQuery, roomTaskQuery } from '@/query/room'
+import { environmentQuery, roomTaskQuery } from '@/query/room'
 
 export interface TaskComparison {
   before: string
@@ -60,7 +58,6 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
 
   /** 换到另一件任务：上一件的报错、比较、电脑都不带过来。 */
   function reset() {
-    resetMachineChoice()
     machineWanted.value = false
     comparing.value = false
     comparison.value = null
@@ -170,35 +167,31 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     }
   }
 
-  // ---- 做它的电脑：负责人那一格点开时才读（和房间名册里那一行同一份）----
+  // ---- 它的会话在哪个环境里：负责人那一格点开时才读（和房间名册同一份）----
   const machineWanted = ref(false)
   const machineRead = useQuery(
     computed(() => {
       const id = task.value?.id ?? ''
-      return { ...computeProfileQuery(id), enabled: !!id && machineWanted.value }
+      return { ...environmentQuery(id), enabled: !!id && machineWanted.value }
     }),
     queryClient
   )
-  const machine = computed<TopicComputeProfile | null>(() =>
-    machineWanted.value ? machineRead.data.value ?? null : null
-  )
+  const machine = computed<TopicEnvironment | null>(() => (machineWanted.value ? machineRead.data.value ?? null : null))
   const machineError = computed(() => machineWanted.value && machineRead.isError.value)
+  // 它的会话各换各的环境；「新会话默认」只管以后开工的。
+  function setMachine(sessionId: string, env: Environment) {
+    if (!task.value) return Promise.resolve({})
+    return setSessionEnvironment(task.value.id, sessionId, env)
+  }
+  function setMachineDefault(env: Environment) {
+    if (!task.value) return Promise.resolve({})
+    return setEnvironmentDefault(task.value.id, env)
+  }
   async function loadMachine() {
     if (!task.value) return
     if (!machineWanted.value) machineWanted.value = true
     else await machineRead.refetch()
   }
-  // 换做它的电脑：组件（页头 → TopicComputePicker）只往上发 `select`，保存落在这一层，
-  // 存成了把这份 profile 重取一次（换到哪台、谁跟着搬，只有读回来才准），变成提议或
-  // 失败由它把回话递回去。
-  const {
-    saving: machineSaving,
-    error: machinePickError,
-    proposal: machineProposal,
-    savedVersion: machineSavedVersion,
-    select: selectMachine,
-    reset: resetMachineChoice,
-  } = useTopicComputeChoice(() => task.value?.id ?? '', { onChanged: () => void loadMachine() })
 
   // ---- 与开始时相比 ----
   const comparing = ref(false)
@@ -245,11 +238,8 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     machine,
     machineError,
     loadMachine,
-    machineSaving,
-    machinePickError,
-    machineProposal,
-    machineSavedVersion,
-    selectMachine,
+    setMachine,
+    setMachineDefault,
     comparing,
     comparison,
     compareError,

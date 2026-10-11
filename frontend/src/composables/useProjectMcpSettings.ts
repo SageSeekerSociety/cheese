@@ -177,7 +177,13 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
     }
   })
   watch(projectId, () => {
-    if (enabled()) void load()
+    if (!enabled()) return
+    actionGeneration++
+    for (const name of Object.keys(values)) delete values[name]
+    list.value = null
+    error.value = ''
+    busy.value = ''
+    void load()
   })
 
   return { list, error, busy, values, load, connect, disconnect, save, clear, setValue, consumeCallback }

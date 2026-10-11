@@ -1,7 +1,7 @@
 """A project manager lists the agent sessions on one self-hosted device and
-switches some of them elsewhere (#1900 step 6): each switch is the room's own
-(push first, per-session refusal), and a session whose room is mid-turn is
-left alone with the reason 「正在运行任务，稍后再换」.
+switches some of them elsewhere (#1900 step 6): each switch moves that one
+session (push first), and a session whose room is mid-turn is left alone with
+the reason 「正在运行任务，稍后再换」.
 """
 
 import uuid
@@ -84,11 +84,13 @@ async def _project_on_a_device(client):
                 topic_id, f"agent-{title[:3].lower()}", harness="claude-code"
             )
             generation = str(uuid.uuid4())
-            session.execution_request = {
-                "generation": generation,
-                "choice": {"name": "Old", "profile": "device", "device_id": old},
-                "authorized_by": None,
-            }
+            session.execution_request = {"generation": generation}
+            await AgentSessionService(db).set_environment(
+                topic_id,
+                session.agent_handle,
+                {"kind": "self_hosted", "device_id": old},
+                chosen_by=None,
+            )
             session.work_lease = {
                 "kind": "device",
                 "session_id": str(session.id),
@@ -180,13 +182,13 @@ async def test_a_bulk_switch_moves_an_idle_session_and_skips_one_mid_turn(
     p = await _project_on_a_device(client)
     remote = _pushes(monkeypatch)
     to_new = {
-        "choice": {"name": "New", "profile": "device", "device_id": p.new},
+        "environment": {"kind": "self_hosted", "device_id": p.new},
         "if_idle": True,
     }
 
     def switch(title):
         return client.put(
-            f"/topics/{p.rooms[title]}/compute-profile",
+            f"/topics/{p.rooms[title]}/sessions/{p.sessions[title]}/environment",
             headers=p.alice,
             json=to_new,
         )
@@ -201,11 +203,13 @@ async def test_a_bulk_switch_moves_an_idle_session_and_skips_one_mid_turn(
     pushes = [c for c in remote.await_args_list if c.args[1] == "control"]
     assert len(pushes) == 1
     async with client.test_factory() as db:
-        moved = await AgentSessionService(db).by_id(p.sessions["Idle"])
-        kept = await AgentSessionService(db).by_id(p.sessions["Busy"])
-    assert moved.execution_request["choice"]["device_id"] == p.new
-    assert kept.execution_request["choice"]["device_id"] == p.old
-    assert kept.work_lease["device_id"] == p.old
+        sessions = AgentSessionService(db)
+        moved = await sessions.environment(p.rooms["Idle"], "agent-idl")
+        kept = await sessions.environment(p.rooms["Busy"], "agent-bus")
+        busy = await sessions.by_id(p.sessions["Busy"])
+    assert moved.environment["device_id"] == p.new
+    assert kept.environment["device_id"] == p.old
+    assert busy.work_lease["device_id"] == p.old
     listed = client.get(
         f"/projects/{p.project_id}/devices/{p.old}/sessions", headers=p.alice
     ).json()["data"]["sessions"]
@@ -217,9 +221,9 @@ async def test_without_if_idle_the_roster_switch_is_unchanged(client, monkeypatc
     _pushes(monkeypatch)
 
     switched = client.put(
-        f"/topics/{p.rooms['Busy']}/compute-profile",
+        f"/topics/{p.rooms['Busy']}/sessions/{p.sessions['Busy']}/environment",
         headers=p.alice,
-        json={"choice": {"name": "New", "profile": "device", "device_id": p.new}},
+        json={"environment": {"kind": "self_hosted", "device_id": p.new}},
     )
 
     assert switched.status_code == 200, switched.text

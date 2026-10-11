@@ -28,15 +28,16 @@ import { COMPUTE_DEVICES } from './catalogFixtures'
 /** 工作电脑现状：默认云端，两台自有设备，分布里各有几段对话在跑。 */
 export function computeState(over: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
   return {
-    default: { name: null, profile: 'cloud', device_id: null },
+    default: { kind: 'sandbox', spec: 'standard' },
     can_manage: true,
     devices: COMPUTE_DEVICES,
-    cloud_available: true,
-    cloud_vm_available: false,
+    specs: [
+      { spec: 'standard', label: '标准' },
+      { spec: 'vm', label: '虚拟机' },
+    ],
     distribution: {
-      cloud: 3,
-      cloud_vm: 0,
-      devices: [{ device_id: 'lab', name: '实验室工作站', agents: 2, machine_access: true }],
+      sandboxes: [{ spec: 'standard', label: '标准', agents: 3 }],
+      devices: [{ device_id: 'lab', name: '实验室工作站', agents: 2 }],
     },
     ...over,
   }

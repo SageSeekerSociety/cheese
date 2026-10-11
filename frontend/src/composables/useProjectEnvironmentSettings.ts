@@ -222,7 +222,10 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
     }
   })
   watch(projectId, () => {
-    if (enabled()) void load()
+    if (!enabled()) return
+    resetSave()
+    resetApply()
+    void load()
   })
   watch(selectedRoom, () => {
     diagnosisGeneration += 1

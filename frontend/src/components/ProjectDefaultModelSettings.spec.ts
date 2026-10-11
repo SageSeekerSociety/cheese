@@ -18,8 +18,15 @@ import ProjectDefaultModelSettings from './ProjectDefaultModelSettings.vue'
 const UI = { plugins: [createVuetify({ components, directives })] }
 
 const choices = [
-  { id: 'sonnet', label: 'Claude Sonnet 5' },
-  { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash' },
+  { id: 'sonnet', label: 'Claude Sonnet 5', description: '', default: false, allowed: true, requires_plan: null },
+  {
+    id: 'deepseek-flash',
+    label: 'DeepSeek V4.1 Flash',
+    description: '',
+    default: false,
+    allowed: true,
+    requires_plan: null,
+  },
 ]
 
 function state(overrides: Partial<ProjectDefaultModel> = {}): ProjectDefaultModel {
@@ -91,8 +98,22 @@ it('names the plan a model needs and does not let it be chosen', async () => {
     state({
       deployment_default: 'deepseek-flash',
       choices: [
-        { id: 'sonnet', label: 'Claude Sonnet 5', allowed: false, requires_plan: 'Reserve' },
-        { id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash', allowed: true, requires_plan: null },
+        {
+          id: 'sonnet',
+          label: 'Claude Sonnet 5',
+          description: '',
+          default: false,
+          allowed: false,
+          requires_plan: 'Reserve',
+        },
+        {
+          id: 'deepseek-flash',
+          label: 'DeepSeek V4.1 Flash',
+          description: '',
+          default: false,
+          allowed: true,
+          requires_plan: null,
+        },
       ],
     })
   )

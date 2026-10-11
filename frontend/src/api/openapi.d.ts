@@ -5011,9 +5011,9 @@ export interface paths {
         };
         /**
          * List Pools
-         * @description The full catalog: every AI pool and compute pool on offer, each with its
-         *     tier, price, and whether it's available to select. Powers the 市场 browse
-         *     view; a project selects from these in its settings.
+         * @description The full catalog: every AI pool and sandbox spec on offer, each with
+         *     its tier, price, and whether it's available to select. Powers the 市场
+         *     browse view; a project selects from these in its settings.
          */
         get: operations["list_pools_market_pools_get"];
         put?: never;
@@ -5033,12 +5033,11 @@ export interface paths {
         };
         /**
          * List Nodes
-         * @description 节点看板: the compute pools this deployment can run a turn on, with
-         *     liveness and current load (in-flight turns).
+         * @description 节点看板: the sandbox specs this deployment can place an agent's
+         *     environment on, with liveness and current load (in-flight turns).
          *
          *     Built from the same catalogue the 市场 browses, so the board cannot show a
-         *     node the picker does not offer — it used to show exactly one, the platform's
-         *     own container host, which was the one pool the catalogue never listed.
+         *     node the picker does not offer.
          */
         get: operations["list_nodes_market_nodes_get"];
         put?: never;
@@ -6599,9 +6598,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Compute Configs */
+        /**
+         * Get Compute Configs
+         * @description The environment a new agent in this project gets, where its agents
+         *     are now, the sandbox specs it is offered and the people's computers it
+         *     has.
+         */
         get: operations["get_compute_configs_projects__project_id__compute_configs_get"];
-        /** Save Compute Configs */
+        /**
+         * Save Compute Configs
+         * @description What a new agent in this project gets. A manager's choice; nobody
+         *     already working moves.
+         */
         put: operations["save_compute_configs_projects__project_id__compute_configs_put"];
         post?: never;
         delete?: never;
@@ -6622,7 +6630,7 @@ export interface paths {
          * @description The project's agent sessions on one self-hosted device, for a project
          *     manager to switch some of them elsewhere (「现在的分布」 → 查看并更换).
          *
-         *     Each switch then goes through the room's own route, with its checks. A
+         *     Each switch then goes through the session's own route, with its checks. A
          *     session in a room the caller cannot open is counted in ``hidden`` and not
          *     listed, so its room's title stays in that room.
          */
@@ -10184,7 +10192,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/topics/{topic_id}/compute-profile": {
+    "/topics/{topic_id}/environment": {
         parameters: {
             query?: never;
             header?: never;
@@ -10192,24 +10200,57 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Topic Compute Profile
-         * @description A conversation's work computer — a room's, or a task's: the one choice
-         *     every session of that conversation works on. A session that has not
-         *     started answers the same choice, the machine it will get.
+         * Get Environment
+         * @description Each agent's environment in this conversation, the default a new agent
+         *     gets here and where it comes from, the sandbox specs this project is
+         *     offered, and the people's computers one may run on unisolated.
          */
-        get: operations["get_topic_compute_profile_topics__topic_id__compute_profile_get"];
+        get: operations["get_environment_topics__topic_id__environment_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/environment-default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
         /**
-         * Set Topic Compute Profile
-         * @description A conversation's work computer: a room's, or a task's.
-         *
-         *     Every session working on the choice moves with it, each after one
-         *     best-effort checkpoint (``machine/session_work.request_choice``): for the
-         *     room, its own sessions and those of tasks that follow it; for a task, the
-         *     task's. Only the task's owner, a project manager or the owner of a device
-         *     the task holds changes a task's, or the task's own session. A person's own
-         *     computer works only that person's tasks.
+         * Set Environment Default
+         * @description What a new agent in this conversation gets; None to take the room's
+         *     (for a task) or the project's. Nobody already here moves. A person's
+         *     choice: an agent changes only its own environment.
          */
-        put: operations["set_topic_compute_profile_topics__topic_id__compute_profile_put"];
+        put: operations["set_environment_default_topics__topic_id__environment_default_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/sessions/{session_id}/environment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Session Environment
+         * @description Give one agent here another environment. Only that agent moves, after
+         *     one best-effort checkpoint where it was. An agent may change its own,
+         *     never another's, and never to a machine without isolation.
+         */
+        put: operations["set_session_environment_topics__topic_id__sessions__session_id__environment_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -13240,37 +13281,12 @@ export interface components {
             /** Truncated */
             truncated?: boolean | null;
         };
-        /**
-         * ComputeChoice
-         * @description Which machine a room works on: a cloud sandbox, a whole cloud VM, or a
-         *     self-hosted device.
-         *
-         *     Cloud is either a sandbox on a platform host, or with ``whole_machine`` a
-         *     whole virtual machine for each session, for work a sandbox cannot do
-         *     (Docker, KVM, kernel modules, root). Neither has a spec to choose: every
-         *     sandbox gets the same fixed share of a host, and every VM the deployment's
-         *     one VM size. ``name`` is only ever a device's own name, a proper
-         *     noun that reads the same in every language. A choice the platform describes
-         *     — the cloud, and 「any online device」 — carries no name: it is identified
-         *     by its fields, and each reader's screen renders its own label for it. A
-         *     stored name would be one language's words shown to every member of the
-         *     project.
-         */
-        ComputeChoice: {
-            /** Name */
-            name?: string | null;
-            /**
-             * Profile
-             * @enum {string}
-             */
-            profile: "cloud" | "device";
-            /** Device Id */
-            device_id?: string | null;
-            /**
-             * Whole Machine
-             * @default false
-             */
-            whole_machine: boolean;
+        /** ComputeConfigsIn */
+        ComputeConfigsIn: {
+            /** Default */
+            default: {
+                [key: string]: unknown;
+            };
         };
         /**
          * ConclusionIn
@@ -13657,6 +13673,45 @@ export interface components {
             variables?: {
                 [key: string]: string;
             };
+        };
+        /** EnvironmentDefaultIn */
+        EnvironmentDefaultIn: {
+            /** Environment */
+            environment?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** EnvironmentDefaultOut */
+        EnvironmentDefaultOut: {
+            /** Default */
+            default: (components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"]) | null;
+        };
+        /** EnvironmentDefaultOutEnvelope */
+        EnvironmentDefaultOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["EnvironmentDefaultOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** EnvironmentDeviceOut */
+        EnvironmentDeviceOut: {
+            /** Device Id */
+            device_id: string;
+            /** Name */
+            name: string;
+            /** Online */
+            online: boolean;
+            /** Owned */
+            owned: boolean;
         };
         /** EventChoiceIn */
         EventChoiceIn: {
@@ -15478,10 +15533,6 @@ export interface components {
             /** Result */
             result?: string | null;
         };
-        /** ProjectComputeConfigs */
-        ProjectComputeConfigs: {
-            default: components["schemas"]["ComputeChoice"];
-        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Id */
@@ -15955,6 +16006,26 @@ export interface components {
             /** Agent Handle */
             agent_handle?: string | null;
         };
+        /** Sandbox */
+        Sandbox: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "sandbox";
+            /**
+             * Spec
+             * @default standard
+             */
+            spec: string;
+        };
+        /** SandboxSpecOut */
+        SandboxSpecOut: {
+            /** Spec */
+            spec: string;
+            /** Label */
+            label: string;
+        };
         /** SearchIn */
         SearchIn: {
             /** Query */
@@ -15993,12 +16064,72 @@ export interface components {
             /** End */
             end: number;
         };
+        /** SelfHosted */
+        SelfHosted: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "self_hosted";
+            /** Device Id */
+            device_id: string;
+        };
         /** SendEmailCodeRequest */
         SendEmailCodeRequest: {
             /** Email */
             email: string;
             /** Invitecode */
             inviteCode?: string | null;
+        };
+        /** SessionEnvironmentChangeOut */
+        SessionEnvironmentChangeOut: {
+            /** Environment */
+            environment: components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"];
+            /** Keeps Nothing */
+            keeps_nothing: boolean;
+        };
+        /** SessionEnvironmentChangeOutEnvelope */
+        SessionEnvironmentChangeOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["SessionEnvironmentChangeOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** SessionEnvironmentIn */
+        SessionEnvironmentIn: {
+            /** Environment */
+            environment: {
+                [key: string]: unknown;
+            };
+            /**
+             * If Idle
+             * @default false
+             */
+            if_idle: boolean;
+        };
+        /** SessionEnvironmentOut */
+        SessionEnvironmentOut: {
+            /** Session Id */
+            session_id: string;
+            /** Agent Handle */
+            agent_handle: string;
+            /** Seat Handle */
+            seat_handle: string;
+            /** Environment */
+            environment: (components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"]) | null;
+            /** Status */
+            status: string | null;
+            /** Online */
+            online: boolean;
         };
         /**
          * SheetCellQuoteIn
@@ -16425,6 +16556,40 @@ export interface components {
              * @default false
              */
             members_only: boolean;
+        };
+        /** TopicEnvironmentOut */
+        TopicEnvironmentOut: {
+            /** Default */
+            default: (components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"]) | null;
+            /**
+             * Default From
+             * @enum {string}
+             */
+            default_from: "task" | "room" | "project" | "deployment";
+            /** Effective Default */
+            effective_default: components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"];
+            /** Sessions */
+            sessions: components["schemas"]["SessionEnvironmentOut"][];
+            /** Devices */
+            devices: components["schemas"]["EnvironmentDeviceOut"][];
+            /** Specs */
+            specs: components["schemas"]["SandboxSpecOut"][];
+        };
+        /** TopicEnvironmentOutEnvelope */
+        TopicEnvironmentOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["TopicEnvironmentOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** TopicMemberCreate */
         TopicMemberCreate: {
@@ -30112,7 +30277,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProjectComputeConfigs"];
+                "application/json": components["schemas"]["ComputeConfigsIn"];
             };
         };
         responses: {
@@ -38706,7 +38871,7 @@ export interface operations {
             };
         };
     };
-    get_topic_compute_profile_topics__topic_id__compute_profile_get: {
+    get_environment_topics__topic_id__environment_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -38723,9 +38888,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["TopicEnvironmentOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -38739,7 +38902,7 @@ export interface operations {
             };
         };
     };
-    set_topic_compute_profile_topics__topic_id__compute_profile_put: {
+    set_environment_default_topics__topic_id__environment_default_put: {
         parameters: {
             query?: never;
             header?: never;
@@ -38750,9 +38913,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
+                "application/json": components["schemas"]["EnvironmentDefaultIn"];
             };
         };
         responses: {
@@ -38762,9 +38923,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["EnvironmentDefaultOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_session_environment_topics__topic_id__sessions__session_id__environment_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionEnvironmentIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEnvironmentChangeOutEnvelope"];
                 };
             };
             /** @description Validation Error */

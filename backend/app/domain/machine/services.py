@@ -38,7 +38,6 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.agent.compute_configs import ComputeChoice
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
@@ -163,13 +162,6 @@ class HostPool:
         return self._client.configured
 
     # --- who may run on cloud ------------------------------------------------
-
-    async def admit_choice(
-        self, project_id: uuid.UUID, actor: Actor, choice: ComputeChoice
-    ) -> None:
-        """Let a saved cloud choice stand only for someone on the project."""
-        if choice.profile == "cloud":
-            await self.require_use_authority(project_id, actor)
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
         """Being on the project authorizes running its sessions on cloud.

@@ -15,7 +15,6 @@ from app.domain.device.models import (
     DeviceRow,
     DeviceSandboxRow,
     DeviceTeamRow,
-    DeviceTopicRow,
     HostedDeviceRow,
 )
 from app.domain.device.repository import (
@@ -23,9 +22,8 @@ from app.domain.device.repository import (
     Device,
     HostHealth,
     SandboxCheck,
-    TopicDevice,
 )
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.project.models import Project
 
 
@@ -149,9 +147,6 @@ class SqlDeviceRepository:
         )
         await self._session.execute(
             delete(DeviceTeamRow).where(DeviceTeamRow.device_id == device_id)
-        )
-        await self._session.execute(
-            delete(DeviceTopicRow).where(DeviceTopicRow.device_id == device_id)
         )
         await self._session.execute(
             delete(DeviceRow).where(DeviceRow.device_id == device_id)
@@ -295,52 +290,6 @@ class SqlDeviceRepository:
                 )
             ).all()
         )
-
-    # -- topic→device pin (affinity, v4) -----------------------------------
-
-    async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None:
-        row = await self._session.get(DeviceTopicRow, topic_id)
-        if row is None:
-            return None
-        return TopicDevice(
-            topic_id=row.topic_id,
-            device_id=row.device_id,
-            visibility=row.visibility,
-        )
-
-    async def list_topic_bindings(self, device_id: str) -> list[TopicDevice]:
-        rows = (
-            await self._session.scalars(
-                select(DeviceTopicRow).where(DeviceTopicRow.device_id == device_id)
-            )
-        ).all()
-        return [
-            TopicDevice(
-                topic_id=row.topic_id,
-                device_id=row.device_id,
-                visibility=row.visibility,
-            )
-            for row in rows
-        ]
-
-    async def bind_topic_device(
-        self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
-    ) -> None:
-        # write-once: never overwrite an existing pin (affinity never drifts).
-        if await self._session.get(DeviceTopicRow, topic_id) is not None:
-            return
-        self._session.add(
-            DeviceTopicRow(
-                topic_id=topic_id, device_id=device_id, visibility=visibility
-            )
-        )
-        await self._session.flush()
-
-    async def release_topic_device(self, topic_id: uuid.UUID) -> None:
-        await self._session.execute(
-            delete(DeviceTopicRow).where(DeviceTopicRow.topic_id == topic_id)
-        )
-        await self._session.flush()
 
     # -- machine health (#186) ---------------------------------------------
 

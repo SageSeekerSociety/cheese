@@ -68,7 +68,6 @@ import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
-import { ROOM_COMPUTE_ENTRIES } from './catalogRoomCompute'
 import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
@@ -587,10 +586,6 @@ export const CATALOG: CatalogEntry[] = [
   ...REVIEW_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
-  // 房间在哪台工作电脑上跑（TopicComputePicker）和它落脚的页头（task/TaskHeader）：取数
-  // 下沉到 `composables/useTopicComputeChoice.ts` 之后升成的 A 级，数据就在
-  // `catalogRoomCompute.ts` 那一份里。
-  ...ROOM_COMPUTE_ENTRIES,
   // 几个路由页拆出来的画面那一组（设备审批、已归档的项目、打开预览 / 网站，以及项目里的
   // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。

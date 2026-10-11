@@ -88,14 +88,14 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
   {
     id: 'settings-compute',
     title: 'ProjectComputeSettings',
-    about: '项目设置里的工作电脑：只有「新 AI 队友默认用哪台」和「现在的分布」，没有常用配置。',
+    about: '项目设置里的执行环境：新 AI 队友的默认环境与已开工队友的分布；修改默认不搬已有会话。',
     file: 'src/components/ProjectComputeSettings.vue',
     component: ProjectComputeSettings,
     needs: UI,
     states: [
       {
-        name: '默认云端，分布里各有几段',
-        note: '默认那一行是云端环境；「当前分布」按云端沙箱、整台云虚拟机、每台设备分开数，未开始的一台都没有就说暂无运行中的 AI 队友。',
+        name: '默认标准沙箱，已有会话分布',
+        note: '默认环境是标准沙箱；分布按沙箱规格和每台设备计数，设备行保留会话入口。',
         props: {
           projectId: 'demo',
           deviceSessionsComponent: DeviceSessionsPreview,
