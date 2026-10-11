@@ -502,12 +502,20 @@ async def end_inputs_of_abandoned_work(session_factory, work_id) -> int:
 
     The fact behind it is ``reads.Abandoned``, read from the seat that watched
     the session go: same remedy as :func:`close_dead_turns`, for the work no
-    sweep reaches twice. The death ends the turn's interval where the room
-    heard it (``AgentTurnRepository.close_one``), and the orphan sweep reads
-    open intervals only — so an input left unfinished here holds its seat for
-    good unless this ends it. Only ``terminated_at`` / ``termination`` are
-    written, exactly as the sweep writes them: holds stay held and nothing is
-    consumed, so nothing inside these inputs is sent again.
+    sweep reaches twice. A session that dies at its work reports neither a
+    completion nor a terminal — the runner that would have written one is the
+    process that is gone — and the death ends the turn's interval where the room
+    heard it. ``open_turns`` reads open intervals only, so nothing left
+    unfinished here holds its seat for good unless this ends it, and an
+    unfinished input refuses every later message (``seat_has_unfinished_input``).
+
+    Only a death the runner itself reported reaches here; a session merely out
+    of reach stays "unknown" and its inputs stay held, because a machine still
+    being prepared looks exactly the same.
+
+    Only ``terminated_at`` / ``termination`` are written, exactly as the sweep
+    writes them: holds stay held and nothing is consumed, so nothing inside
+    these inputs is sent again.
     """
 
     async with session_factory() as session:
