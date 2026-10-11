@@ -488,6 +488,7 @@
       "summonOn": "{'@'}{name} is mentioned. Click to remove",
       "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)",
       "keysHint": "Enter to send, Shift+Enter for a new line, ⌘/Ctrl+Enter to send and hand to {name}. You can paste images",
+      "keysHintSend": "Enter to send, Shift+Enter for a new line. You can paste images",
       "pasteHint": "You can paste images",
       "placeholderDm": "Message {name}",
       "placeholder": "Type a message, or {'@'}{name} to hand it over",

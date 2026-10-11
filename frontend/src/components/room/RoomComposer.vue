@@ -228,6 +228,15 @@ function mentionsAgent(expanded: string): boolean {
 const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
+// ⌘/Ctrl+Enter「发送并交给它」只在需要交的房间里有：私聊和任务里每条本来就交给它，
+// 那里这个组合键就是发送，提示也不该说要交给谁。
+const handOff = computed(() => summonReady.value && !props.alwaysSummon)
+const keysTitle = computed(() => {
+  if (!enterSends.value) return t('work.room.composer.pasteHint')
+  return handOff.value
+    ? t('work.room.composer.keysHint', { name: props.agentName })
+    : t('work.room.composer.keysHintSend')
+})
 
 // 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
 // handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
@@ -318,7 +327,7 @@ function onComposerKey(e: KeyboardEvent) {
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
   // ⌘/Ctrl+Enter = 发送并交给芝士，正文里一个 @ 都不用打。判断排在 @-菜单前面：
   // 打到一半的 @ 不该把这个已经说清楚的「交给它」变成一次选人。
-  if ((e.metaKey || e.ctrlKey) && summonReady.value) {
+  if ((e.metaKey || e.ctrlKey) && handOff.value) {
     e.preventDefault()
     sendDraft({ summon: true })
     return
@@ -444,7 +453,7 @@ defineExpose({
         density="comfortable"
         class="composer-input"
         :placeholder="hint"
-        :title="enterSends ? t('work.room.composer.keysHint', { name: agentName }) : t('work.room.composer.pasteHint')"
+        :title="keysTitle"
         @keydown="onComposerKey"
         @paste="onPaste"
         @compositionstart="onCompositionStart"
