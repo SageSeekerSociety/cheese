@@ -25,6 +25,7 @@ import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
 
 import { AGENT_NAME } from './catalogFixtures'
 
+import GuideBubble from '@/components/common/GuideBubble.vue'
 import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
@@ -445,6 +446,36 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '第一步打勾，亮到「看芝士的计划」。',
         props: { projectId: 'demo', steps: { asked: true, answered: false, accepted: false, learned: false } },
         expect: '看芝士的计划',
+      },
+    ],
+  },
+  {
+    id: 'room-guide-bubble',
+    title: 'GuideBubble',
+    about:
+      '界面导览的一站：目标控件四周一圈高亮，旁边浮着一个小窗，写这里是什么、怎么用。导览里带上一步 / 下一步和第几站；「第一次」提示只有一颗「知道了」。',
+    file: 'src/components/common/GuideBubble.vue',
+    component: GuideBubble,
+    needs: ['vuetify'],
+    teleport: true,
+    states: [
+      {
+        name: '导览的一站',
+        note: '第 1 站，圈着左上角一个固定的框（预览站里没有真页面可指）：没有「上一步」。',
+        props: {
+          target: new DOMRect(16, 16, 160, 32),
+          title: '频道',
+          text: '项目里的对话按频道分开。',
+          step: 1,
+          total: 5,
+        },
+        expect: '1/5',
+      },
+      {
+        name: '「第一次」提示',
+        note: '不在导览里，只有一颗「知道了」。',
+        props: { target: new DOMRect(16, 16, 160, 32), title: '任务', text: '芝士把你交给它的事做成了任务。' },
+        expect: '芝士把你交给它的事做成了任务。',
       },
     ],
   },

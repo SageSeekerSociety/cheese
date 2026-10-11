@@ -6,6 +6,8 @@
 // 算好传进来，点了去哪儿由父级决定。
 import { computed } from 'vue'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
+
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -44,6 +46,7 @@ const entries = computed(() =>
     <v-list-item
       v-for="e in entries"
       :key="e.key"
+      v-guide-anchor="`page-${e.key}`"
       tabindex="0"
       rounded="lg"
       class="nav-row pinned-row"

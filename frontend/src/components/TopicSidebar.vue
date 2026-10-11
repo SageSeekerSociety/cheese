@@ -14,6 +14,7 @@ import type { VirtualListHandle } from './common/VirtualList.vue'
 
 import { computed, ref, watch } from 'vue'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useLongPress } from '@/composables/useLongPress'
 import { useTopicRail } from '@/composables/useTopicRail'
 import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
@@ -461,6 +462,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <!-- 频道的第一行：项目自带的「综合」，固定在最上面，和其他频道同一组。 -->
           <TopicRailRootRow
             v-if="!error"
+            v-guide-anchor="'sidebar-general'"
             :root-topic="rootTopic"
             :selected-topic-id="selectedTopicId"
             :page="page === true"
@@ -475,8 +477,9 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           >
             <template #root-tasks>
               <TopicRailTaskRow
-                v-for="task in rootTopic ? roomTasks?.[rootTopic.id] ?? [] : []"
+                v-for="(task, i) in rootTopic ? roomTasks?.[rootTopic.id] ?? [] : []"
                 :key="task.id"
+                v-guide-anchor="i === 0 ? 'task-row' : ''"
                 :task="task"
                 :selected="task.id === selectedTaskId"
                 :unread="unreadOf(task.id)"

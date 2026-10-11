@@ -14,6 +14,8 @@ import { computed, ref, watch } from 'vue'
 
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
+import { guideAnchor, useGuideAnchorRevision } from '../composables/useGuideAnchors'
+import { FIRST_TIME_TIPS, TOUR_STOPS, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
@@ -25,6 +27,7 @@ import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
 import ErrorBoundary from './common/ErrorBoundary.vue'
+import GuideBubble from './common/GuideBubble.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
@@ -307,6 +310,37 @@ const startSteps = useStartSteps(
   () => (onProjectLine.value ? props.topic?.project_id : null),
   () => rows.value.length
 )
+// 界面导览：还没亲手采纳过交付的人（或从帮助菜单重新打开的）第一次进项目本体这一
+// 栏时，一站一站圈出频道、输入框、「交给芝士」、总览、资料库。只走这一页上找得到目标
+// 的那几站（手机上没有侧栏）。走完之后，任务第一次挂上、交付第一次等人审阅时，各指
+// 一次。
+const tour = useProjectTour()
+const anchorRevision = useGuideAnchorRevision()
+const guiding = computed(() => !!startSteps.value && !startSteps.value.learned)
+const tourStops = computed(() => {
+  void anchorRevision.value
+  return TOUR_STOPS.filter((s) => guideAnchor(s.anchor))
+})
+const tourIndex = computed(() => Math.min(tour.stop.value, Math.max(tourStops.value.length - 1, 0)))
+const tourStop = computed(() =>
+  onProjectLine.value && !tour.tourDone.value && (guiding.value || tour.replaying.value)
+    ? tourStops.value[tourIndex.value] ?? null
+    : null
+)
+// 目标元素也跟着登记表走：同一个名字换了一个元素（重新挂载）时，圈要跟过去。
+const tourTarget = computed(() => {
+  void anchorRevision.value
+  return tourStop.value ? guideAnchor(tourStop.value.anchor) : null
+})
+const firstTimeTip = computed(() => {
+  void anchorRevision.value
+  if (!onProjectLine.value || !guiding.value || !tour.tourDone.value) return null
+  return FIRST_TIME_TIPS.find((s) => !tour.tipSeen(s.key) && guideAnchor(s.anchor)) ?? null
+})
+const tipTarget = computed(() => {
+  void anchorRevision.value
+  return firstTimeTip.value ? guideAnchor(firstTimeTip.value.anchor) : null
+})
 const retryIndex = computed(() => (canRetryAt(rows.value.length - 1) ? rows.value.length - 1 : -1))
 const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 
@@ -482,6 +516,26 @@ useComposerShortcut({
       <!-- 上手三步：只在项目本体那一栏，三步做完就不再出现。 -->
       <StartSteps v-if="onProjectLine && topic.project_id" :project-id="topic.project_id" :steps="startSteps" />
 
+      <!-- 界面导览和「第一次」提示：浮在目标控件旁边，一次只有一个。 -->
+      <GuideBubble
+        v-if="tourStop"
+        :target="tourTarget"
+        :title="t(`welcome.tour.${tourStop.key}.title`, { agent: agentName })"
+        :text="t(`welcome.tour.${tourStop.key}.text`, { agent: agentName })"
+        :step="tourIndex + 1"
+        :total="tourStops.length"
+        @next="tour.next(tourStops.length)"
+        @back="tour.back()"
+        @skip="tour.skip()"
+      />
+      <GuideBubble
+        v-else-if="firstTimeTip"
+        :target="tipTarget"
+        :title="t(`welcome.tour.${firstTimeTip.key}.title`, { agent: agentName })"
+        :text="t(`welcome.tour.${firstTimeTip.key}.text`, { agent: agentName })"
+        @dismiss="tour.dismissTip(firstTimeTip.key)"
+      />
+
       <!-- 输入框那一块。「谁在忙」在它上面单占一格，不压在对话上：时间线底部让出这一
            格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->
       <div class="composer-zone">
@@ -504,6 +558,7 @@ useComposerShortcut({
           v-else-if="showComposer"
           ref="composerRef"
           v-model="draft"
+          :guided="onProjectLine"
           :topic="topic"
           :mention-pool="mentionPool"
           :topic-list="topicList"

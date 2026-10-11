@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useDesktopApp } from '@/composables/useDesktopApp'
+import { replayTour } from '@/composables/useProjectTour'
 
 import { PLATFORM_LANDING } from '@/lib/adminSections'
 import { inDesktopApp, openInBrowser } from '@/lib/desktopApp'
@@ -58,6 +59,8 @@ const items = computed(() => {
     { key: 'mine', to: '/feedback/mine', label: t('navigation.feedback.mine') },
     // 新手引导随时能再走一遍：回答预填上次的，走完建一个新项目。
     { key: 'guide', to: '/welcome?again=1', label: t('navigation.feedback.guide') },
+    // 界面导览：在项目频道里重新圈一遍频道、输入框、「交给芝士」、总览、资料库。
+    { key: 'tour', click: replayTour, label: t('navigation.feedback.tour') },
   ]
   if (store.isAdmin) {
     all.push({ key: 'admin', to: '/admin/feedback', label: t('navigation.feedback.admin') })

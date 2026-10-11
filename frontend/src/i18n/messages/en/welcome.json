@@ -215,5 +215,41 @@
     "answeredHint": "It replies with a plan first and starts once you confirm. You can leave while it works; you will be notified when it is done.",
     "accepted": "Accept its first delivery",
     "acceptedHint": "When it is done it hands the work to you to review. Accept it to add it to the project and the library, or send it back with a reason."
+  },
+  "tour": {
+    "aria": "Interface tour",
+    "next": "Next",
+    "back": "Back",
+    "done": "Done",
+    "skip": "Skip the tour",
+    "gotIt": "Got it",
+    "channels": {
+      "title": "Channels",
+      "text": "Conversations in a project are split into channels. The general channel has everyone in the project; open another channel from Browse channels to keep a separate topic apart."
+    },
+    "composer": {
+      "title": "Message box",
+      "text": "Type here. Pressing Enter sends the message to project members only; {agent} does not pick it up."
+    },
+    "summon": {
+      "title": "Hand off to {agent}",
+      "text": "To have {agent} work on something, turn this on (or start with {'@'}{agent}) before sending. It replies with a plan first and starts once you confirm."
+    },
+    "overview": {
+      "title": "Overview",
+      "text": "Where the project stands: who is working on which task, recent progress, and what has been made. Tasks {agent} creates show up here."
+    },
+    "library": {
+      "title": "Library",
+      "text": "Files and results live here. Once a delivery is accepted, its files appear in the library."
+    },
+    "task": {
+      "title": "Tasks",
+      "text": "{agent} turned what you asked into a task, listed under the channel. Open it to follow progress and changes; accept the delivery there."
+    },
+    "accept": {
+      "title": "Waiting for your review",
+      "text": "{agent} has delivered. Look at the result: accept it to add it to the project, or send it back with a reason and it will revise."
+    }
   }
 }

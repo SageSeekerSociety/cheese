@@ -29,7 +29,8 @@
     "center": "Feedback center",
     "mine": "My feedback",
     "admin": "Admin console",
-    "guide": "New-user guide"
+    "guide": "New-user guide",
+    "tour": "Interface tour"
   },
   "admin": {
     "queue": "Feedback",

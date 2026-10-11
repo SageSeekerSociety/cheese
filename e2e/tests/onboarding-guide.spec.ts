@@ -55,6 +55,10 @@ test("a new account is guided into its first project", async ({ page }) => {
   await expect(page).toHaveURL(/\/projects\/.+\/channels\//, { timeout: 30_000 });
   await expect(page.getByRole("textbox").last()).toHaveValue(/先给我看提纲/);
   await expect(page.getByText("交给芝士第一件事")).toBeVisible();
+  // The interface tour starts on its own and can be skipped.
+  await expect(page.getByText("1/5")).toBeVisible();
+  await page.getByRole("button", { name: "跳过导览" }).click();
+  await expect(page.getByText("1/5")).toBeHidden();
   expect((await projects()).map((p) => p.name)).toEqual(["课程报告"]);
 
   // Coming back goes to the project, not to the guide again.
