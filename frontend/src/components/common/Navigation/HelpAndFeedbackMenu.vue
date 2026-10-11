@@ -56,6 +56,8 @@ const items = computed(() => {
       : { key: 'docs', href: DOCS, label: t('navigation.feedback.docs') },
     { key: 'center', to: '/feedback', label: t('navigation.feedback.center') },
     { key: 'mine', to: '/feedback/mine', label: t('navigation.feedback.mine') },
+    // 新手引导随时能再走一遍：回答预填上次的，走完建一个新项目。
+    { key: 'guide', to: '/welcome?again=1', label: t('navigation.feedback.guide') },
   ]
   if (store.isAdmin) {
     all.push({ key: 'admin', to: '/admin/feedback', label: t('navigation.feedback.admin') })

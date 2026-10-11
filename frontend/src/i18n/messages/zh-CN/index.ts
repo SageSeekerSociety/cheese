@@ -32,6 +32,7 @@ import toolLabels from './toolLabels.json'
 import topic from './topic.json'
 import usage from './usage.json'
 import users from './users.json'
+import welcome from './welcome.json'
 import work from './work.json'
 
 export default {
@@ -53,6 +54,7 @@ export default {
   questions,
   usage,
   users,
+  welcome,
   spaces,
   tasks,
   teams,

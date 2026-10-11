@@ -32,6 +32,7 @@ import toolLabels from './toolLabels.json'
 import topic from './topic.json'
 import usage from './usage.json'
 import users from './users.json'
+import welcome from './welcome.json'
 import work from './work.json'
 
 // Every zh-CN key has an English value here; `frontend/src/i18n/catalog.spec.ts`
@@ -55,6 +56,7 @@ export default {
   questions,
   usage,
   users,
+  welcome,
   tasks,
   teams,
   spaces,

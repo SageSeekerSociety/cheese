@@ -50,6 +50,10 @@ class ProjectOut(BaseModel):
     ai_mode: AiMode
     intent: str = ""
     root_topic_id: uuid.UUID | None
+    #: An AI teammate has said something in the project's 综合. Until then the
+    #: page opens the project on 综合, where the starter cards are, instead of
+    #: its overview. Filled by the route, like ``shell``.
+    agent_spoke_in_general: bool = False
     created_at: datetime
     #: Set while the owner has the project archived; the client shows the
     #: archived state instead of the workspace.
@@ -60,6 +64,20 @@ class ProjectOut(BaseModel):
     #: browser without a frontend release. None only on a payload built without
     #: a session; every route fills it.
     shell: ShellOut | None = None
+
+
+class StartStepsOut(BaseModel):
+    """上手三步 for the caller (`GET /projects/{id}/start-steps`)."""
+
+    #: They handed 芝士 something in this project.
+    asked: bool
+    #: An AI teammate replied where they asked.
+    answered: bool
+    #: A delivery was accepted into the project.
+    accepted: bool
+    #: They have accepted a delivery themselves in some project: past the first
+    #: steps, so the panel is not shown to them.
+    learned: bool
 
 
 class ForgeAttributionUpdate(BaseModel):

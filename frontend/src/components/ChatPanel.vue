@@ -14,6 +14,7 @@ import { computed, ref, watch } from 'vue'
 
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
+import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
@@ -28,6 +29,7 @@ import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
+import StartSteps from './room/StartSteps.vue'
 
 import { t } from '@/i18n'
 
@@ -110,6 +112,10 @@ const props = withDefaults(
 const emit = defineEmits<ChatPanelEmit>()
 
 // 频道的主线：消息可以有支线。私聊、任务、支线里都没有。
+// 项目本体自己的那一栏：不是支线、不是任务页里的对话栏，房间也没归档。
+const onProjectLine = computed(
+  () => !props.conversationId && props.topic?.kind === 'root' && props.topic.status !== 'archived'
+)
 const mainLine = computed(() => !!props.topic && !props.noUpgrade && !props.conversationId)
 // 已归档的频道只能看：不再开新的支线。
 const threadable = computed(() => mainLine.value && props.topic?.status !== 'archived')
@@ -296,6 +302,11 @@ const timelineRefs = { scrollRef, contentRef }
 
 // Per-row questions the view asks. The panel hands over data; these are read
 // off it once for the one row that needs them, not once per render.
+// 上手三步做到哪了：只在项目本体那一栏问，房间里每来一条消息再问一次。
+const startSteps = useStartSteps(
+  () => (onProjectLine.value ? props.topic?.project_id : null),
+  () => rows.value.length
+)
 const retryIndex = computed(() => (canRetryAt(rows.value.length - 1) ? rows.value.length - 1 : -1))
 const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 
@@ -467,6 +478,9 @@ useComposerShortcut({
       <!-- 贴在输入框上方的那一条（验收卡）。它不随对话滚：等人做的决定要一直看得见，
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
+
+      <!-- 上手三步：只在项目本体那一栏，三步做完就不再出现。 -->
+      <StartSteps v-if="onProjectLine && topic.project_id" :project-id="topic.project_id" :steps="startSteps" />
 
       <!-- 输入框那一块。「谁在忙」在它上面单占一格，不压在对话上：时间线底部让出这一
            格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->

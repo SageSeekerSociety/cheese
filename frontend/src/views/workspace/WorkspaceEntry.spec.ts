@@ -87,6 +87,22 @@ describe('桌面端: 第一屏听壳的', () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
   })
 
+  // 芝士还没在「综合」里开过口：项目才刚开始，总览是空的，起手卡在「综合」里。
+  it('芝士还没在「综合」里开过口的项目先进「综合」', async () => {
+    store.projects = [{ ...project('p1'), root_topic_id: 'general', agent_spoke_in_general: false }]
+    mount()
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith({ name: 'workspace-topic', params: { projectId: 'p1', topicId: 'general' } })
+    )
+    expect(replace).not.toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } })
+  })
+
+  it('开过口之后照常落在项目总览上', async () => {
+    store.projects = [{ ...project('p1'), root_topic_id: 'general', agent_spoke_in_general: true }]
+    mount()
+    await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
+  })
+
   it('声明了别的壳就落在别处', async () => {
     store.projects = [project('p1', OTHER)]
     mount()

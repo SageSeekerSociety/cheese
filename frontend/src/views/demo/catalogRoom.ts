@@ -29,6 +29,7 @@ import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
+import StartSteps from '@/components/room/StartSteps.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
 
@@ -421,6 +422,29 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '一张图会走到缩略图那一支，但图源从外壳注入的 `AttachmentSource` 来：目录站不注入，取不到字节就画一个裂图记号 —— 这一格看的正是「读不到」的样子。',
         props: { topicId: 'demo', attachment: CHIP_IMAGE },
         expectSelector: '.im-thumb__failed',
+      },
+    ],
+  },
+  {
+    id: 'room-start-steps',
+    title: 'StartSteps',
+    about:
+      '项目「综合」输入框上方的「上手三步」：交给芝士、看计划、采纳交付。打勾全按服务端的事实，三步做完或这个人亲手采纳过交付就不再出现。',
+    file: 'src/components/room/StartSteps.vue',
+    component: StartSteps,
+    needs: ['vuetify'],
+    states: [
+      {
+        name: '刚建好项目',
+        note: '一步都没做：第一步亮着，下面一句说怎么做——直接回车芝士不会接。',
+        props: { projectId: 'demo', steps: { asked: false, answered: false, accepted: false, learned: false } },
+        expect: '交给芝士第一件事',
+      },
+      {
+        name: '交给芝士之后',
+        note: '第一步打勾，亮到「看芝士的计划」。',
+        props: { projectId: 'demo', steps: { asked: true, answered: false, accepted: false, learned: false } },
+        expect: '看芝士的计划',
       },
     ],
   },

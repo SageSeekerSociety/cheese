@@ -19,7 +19,7 @@ from app.api.place import (
     live_rooms_seen,
     rooms_seen,
 )
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -42,12 +42,14 @@ from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import (
     awaiting_an_answer,
+    rooms_an_agent_spoke_in,
     weeklies_for_project,
 )
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
+from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
 from app.domain.project.models import Project
 from app.domain.project.protection import (
@@ -66,6 +68,7 @@ from app.domain.project.schemas import (
     ForgeAttributionUpdate,
     ProjectCreate,
     ProjectOut,
+    StartStepsOut,
 )
 from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
@@ -94,7 +97,9 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
-def _shelled(project: Project, shell: Shell, team: TeamLabel | None) -> dict:
+def _shelled(
+    project: Project, shell: Shell, team: TeamLabel | None, *, agent_spoke: bool
+) -> dict:
     """One project's wire payload: the 壳 it runs under, its team's handle and name.
 
     Neither is a column on `Project`, so neither can come from `model_validate`:
@@ -111,6 +116,7 @@ def _shelled(project: Project, shell: Shell, team: TeamLabel | None) -> dict:
                 "shell": ShellOut.of(shell),
                 "team_handle": team.handle if team else None,
                 "team_name": team.name if team else None,
+                "agent_spoke_in_general": agent_spoke,
             }
         )
         .model_dump(mode="json")
@@ -123,8 +129,16 @@ async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict
     teams = await team_service(db).labels_of(
         {p.team_id for p in projects if p.team_id is not None}
     )
+    spoke = await rooms_an_agent_spoke_in(
+        db, (p.root_topic_id for p in projects if p.root_topic_id is not None)
+    )
     return [
-        _shelled(p, shells[p.id], teams.get(p.team_id) if p.team_id else None)
+        _shelled(
+            p,
+            shells[p.id],
+            teams.get(p.team_id) if p.team_id else None,
+            agent_spoke=p.root_topic_id in spoke,
+        )
         for p in projects
     ]
 
@@ -590,6 +604,21 @@ async def project_progress(
     )
     rows = [h.as_dict() for h in happened]
     return ok(page(rows, len(rows)))
+
+
+@router.get("/{project_id}/start-steps", **typed_response(StartStepsOut))
+async def project_start_steps(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """上手三步 for the caller in this project (`app/domain/onboarding/start.py`):
+    handed 芝士 something, got a reply, had a delivery accepted."""
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await ProjectService(db).get_or_404(project_id)
+    steps = await start_steps(db, project_id, actor.handle)
+    return ok(StartStepsOut.model_validate(steps, from_attributes=True).model_dump())
 
 
 @router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])

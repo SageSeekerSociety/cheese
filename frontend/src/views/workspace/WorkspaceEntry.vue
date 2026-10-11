@@ -42,6 +42,7 @@ const legacyTopic = computed(() => (route.query.topic ? String(route.query.topic
 // 还是没有这个项目（不是我的项目、或者清单压根加载失败）就按 default 跳——今天
 // 的行为，不能因为壳层让谁卡在这一屏。
 const shell = computed(() => shellFor(store.projects, props.projectId))
+const project = computed(() => store.projects.find((p) => p.id === props.projectId))
 const shellSettled = computed(() => shell.value !== null || store.projects.length > 0 || store.projectsSettled)
 
 watch(
@@ -61,6 +62,13 @@ watch(
     //
     // 不等话题列表到货：目的地和列表无关，等只会换来一屏转圈。
     if (!settled) return
+    // 芝士还没在「综合」里开过口：项目才刚开始，总览上什么都没有，要做的事从「综合」
+    // 里的起手卡上挑。所以先进「综合」，开过口之后照常落在壳指定的第一屏。
+    const room = project.value?.root_topic_id
+    if (room && project.value?.agent_spoke_in_general === false) {
+      openTopic(room)
+      return
+    }
     const home = (shell.value ?? DEFAULT_SHELL).home
     if (!home) return
     void router.replace({ name: home, params: { projectId: props.projectId } })

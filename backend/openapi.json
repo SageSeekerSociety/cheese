@@ -21800,6 +21800,50 @@
         }
       }
     },
+    "/projects/{project_id}/start-steps": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Project Start Steps",
+        "description": "上手三步 for the caller in this project (`app/domain/onboarding/start.py`):\nhanded 芝士 something, got a reply, had a delivery accepted.",
+        "operationId": "project_start_steps_projects__project_id__start_steps_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartStepsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/memory": {
       "post": {
         "tags": [
@@ -47870,81 +47914,6 @@
         }
       }
     },
-    "/users/me/first-project": {
-      "post": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "Give the signed-in user their first project, once per account",
-        "operationId": "make_my_first_project_users_me_first_project_post",
-        "parameters": [
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FirstProjectIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FirstProjectOutEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/users/{userId}/identity": {
       "get": {
         "tags": [
@@ -48528,6 +48497,81 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Set My Language Users Me Language Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/me/onboarding": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Finish the new-user guide: save the answers and make the project",
+        "operationId": "finish_onboarding_users_me_onboarding_post",
+        "parameters": [
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingOutEnvelope"
                 }
               }
             }
@@ -55551,78 +55595,6 @@
         ],
         "title": "FetchIn"
       },
-      "FirstProjectIn": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "FirstProjectIn"
-      },
-      "FirstProjectOut": {
-        "properties": {
-          "project_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Project Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "project_id"
-        ],
-        "title": "FirstProjectOut"
-      },
-      "FirstProjectOutEnvelope": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "default": 200
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "$ref": "#/components/schemas/FirstProjectOut"
-          },
-          "warnings": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Warnings"
-          }
-        },
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "title": "FirstProjectOutEnvelope"
-      },
       "ForceMergeDecision": {
         "properties": {
           "reason": {
@@ -57240,6 +57212,160 @@
         ],
         "title": "OfficeComparisonOut",
         "description": "一份 Office 文件和它该对着读的那一版比（`documents.compare`）。"
+      },
+      "OnboardingIn": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "project_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project Name"
+          },
+          "intent": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Intent",
+            "default": ""
+          },
+          "nickname": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nickname"
+          },
+          "work_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "student",
+                  "teacher",
+                  "office",
+                  "research",
+                  "maker",
+                  "other"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Role"
+          },
+          "organization": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organization"
+          },
+          "invitees": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Invitees"
+          },
+          "solo": {
+            "type": "boolean",
+            "title": "Solo",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_name"
+        ],
+        "title": "OnboardingIn"
+      },
+      "OnboardingOut": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "root_topic_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Topic Id"
+          },
+          "not_invited": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Not Invited"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "root_topic_id",
+          "not_invited"
+        ],
+        "title": "OnboardingOut"
+      },
+      "OnboardingOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OnboardingOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "OnboardingOutEnvelope"
       },
       "OwnAgentsUpdate": {
         "properties": {
@@ -60617,6 +60743,71 @@
           "slug"
         ],
         "title": "SlugIn"
+      },
+      "StartStepsOut": {
+        "properties": {
+          "asked": {
+            "type": "boolean",
+            "title": "Asked"
+          },
+          "answered": {
+            "type": "boolean",
+            "title": "Answered"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "learned": {
+            "type": "boolean",
+            "title": "Learned"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asked",
+          "answered",
+          "accepted",
+          "learned"
+        ],
+        "title": "StartStepsOut",
+        "description": "上手三步 for the caller (`GET /projects/{id}/start-steps`)."
+      },
+      "StartStepsOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StartStepsOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "StartStepsOutEnvelope"
       },
       "StoreIn": {
         "properties": {

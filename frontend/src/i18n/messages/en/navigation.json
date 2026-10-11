@@ -28,7 +28,8 @@
     "unread": "Help and feedback, unread updates",
     "center": "Feedback center",
     "mine": "My feedback",
-    "admin": "Admin console"
+    "admin": "Admin console",
+    "guide": "New-user guide"
   },
   "admin": {
     "queue": "Feedback",

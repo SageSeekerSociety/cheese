@@ -6079,6 +6079,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/start-steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Start Steps
+         * @description 上手三步 for the caller in this project (`app/domain/onboarding/start.py`):
+         *     handed 芝士 something, got a reply, had a delivery accepted.
+         */
+        get: operations["project_start_steps_projects__project_id__start_steps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/memory": {
         parameters: {
             query?: never;
@@ -11921,23 +11942,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/users/me/first-project": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Give the signed-in user their first project, once per account */
-        post: operations["make_my_first_project_users_me_first_project_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/users/{userId}/identity": {
         parameters: {
             query?: never;
@@ -12000,6 +12004,23 @@ export interface paths {
         /** Save the UI language the signed-in user picked */
         put: operations["set_my_language_users_me_language_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/me/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish the new-user guide: save the answers and make the project */
+        post: operations["finish_onboarding_users_me_onboarding_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -14343,32 +14364,6 @@ export interface components {
             /** Project */
             project?: string | null;
         };
-        /** FirstProjectIn */
-        FirstProjectIn: {
-            /** Name */
-            name: string;
-        };
-        /** FirstProjectOut */
-        FirstProjectOut: {
-            /** Project Id */
-            project_id: string | null;
-        };
-        /** FirstProjectOutEnvelope */
-        FirstProjectOutEnvelope: {
-            /**
-             * Code
-             * @default 200
-             */
-            code: number;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data: components["schemas"]["FirstProjectOut"];
-            /** Warnings */
-            warnings?: string[] | null;
-        };
         /**
          * ForceMergeDecision
          * @description 人工放行。No `decided_by`, same reason as 作废: this is an authorization
@@ -14985,6 +14980,62 @@ export interface components {
             against: string;
             /** Base */
             base: string | null;
+        };
+        /** OnboardingIn */
+        OnboardingIn: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Project Name */
+            project_name: string;
+            /**
+             * Intent
+             * @default
+             */
+            intent: string;
+            /** Nickname */
+            nickname?: string | null;
+            /** Work Role */
+            work_role?: ("student" | "teacher" | "office" | "research" | "maker" | "other") | null;
+            /** Organization */
+            organization?: string | null;
+            /** Invitees */
+            invitees?: string[];
+            /**
+             * Solo
+             * @default true
+             */
+            solo: boolean;
+        };
+        /** OnboardingOut */
+        OnboardingOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Root Topic Id */
+            root_topic_id: string | null;
+            /** Not Invited */
+            not_invited: string[];
+        };
+        /** OnboardingOutEnvelope */
+        OnboardingOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["OnboardingOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** OwnAgentsUpdate */
         OwnAgentsUpdate: {
@@ -16134,6 +16185,36 @@ export interface components {
         SlugIn: {
             /** Slug */
             slug: string;
+        };
+        /**
+         * StartStepsOut
+         * @description 上手三步 for the caller (`GET /projects/{id}/start-steps`).
+         */
+        StartStepsOut: {
+            /** Asked */
+            asked: boolean;
+            /** Answered */
+            answered: boolean;
+            /** Accepted */
+            accepted: boolean;
+            /** Learned */
+            learned: boolean;
+        };
+        /** StartStepsOutEnvelope */
+        StartStepsOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["StartStepsOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** StoreIn */
         StoreIn: {
@@ -28996,6 +29077,37 @@ export interface operations {
             };
         };
     };
+    project_start_steps_projects__project_id__start_steps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartStepsOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     add_memory_projects__project_id__memory_post: {
         parameters: {
             query?: never;
@@ -41775,42 +41887,6 @@ export interface operations {
             };
         };
     };
-    make_my_first_project_users_me_first_project_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-User-Id"?: number | null;
-                Authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FirstProjectIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FirstProjectOutEnvelope"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_user_identity_users__userId__identity_get: {
         parameters: {
             query?: {
@@ -42038,6 +42114,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_onboarding_users_me_onboarding_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-User-Id"?: number | null;
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardingIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingOutEnvelope"];
                 };
             };
             /** @description Validation Error */
