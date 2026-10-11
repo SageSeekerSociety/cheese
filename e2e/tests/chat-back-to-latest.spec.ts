@@ -96,3 +96,74 @@ for (const viewport of [
     await expect(pill).toBeHidden();
   });
 }
+
+// Enter on a message takes the keyboard into its actions, the toolbar first.
+// The toolbar floats above the row's top edge, so on a row flush with the top
+// of the list it starts outside the visible area; wherever the focus lands it
+// has to be scrolled into view. Same fixture: it needs a list long enough to
+// put a message at the very top.
+for (const arrival of ["already at the top", "arrow key"] as const) {
+  test(`Enter on a message at the top of the list shows the focused action (${arrival})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.route("**/__chat-back-to-latest__", (route) =>
+      route.fulfill({ contentType: "text/html", body: fixture }),
+    );
+    await page.goto("/__chat-back-to-latest__", { waitUntil: "commit" });
+    await expect(page.locator('[data-mid="m59"]')).toBeVisible({
+      timeout: 30_000,
+    });
+    // m40 is a one-line question; m41 the long reply under it.
+    const target = page.locator('[data-mid="m40"]');
+    const pinned = arrival === "arrow key" ? "m41" : "m40";
+    // Rows render (and change height) as they come on screen: settle until the
+    // row stays flush with the top of the list.
+    await expect
+      .poll(() =>
+        page.evaluate((id) => {
+          const row = document.querySelector<HTMLElement>(
+            `[data-mid="${id}"]`,
+          )!;
+          const scroll = row.closest<HTMLElement>(".messages")!;
+          const gap =
+            row.getBoundingClientRect().top -
+            scroll.getBoundingClientRect().top;
+          scroll.scrollTop += gap;
+          return Math.round(gap);
+        }, pinned),
+      )
+      .toBe(0);
+
+    if (arrival === "arrow key") {
+      await page.locator(`[data-mid="${pinned}"]`).focus();
+      await page.keyboard.press("ArrowUp");
+    } else {
+      await target.focus();
+    }
+    await expect(target).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    const placed = page.locator(".hover-bar :focus");
+    await expect(placed).toHaveAccessibleName("添加表情");
+    // The focus ring is drawn outside the button; it has to show whole too.
+    const box = await page.evaluate(() => {
+      const el = document.activeElement!;
+      const style = getComputedStyle(el);
+      const ring =
+        parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset);
+      const rect = el.getBoundingClientRect();
+      const list = document
+        .querySelector('[data-testid="chat-scroll"]')!
+        .getBoundingClientRect();
+      return {
+        top: rect.top - ring,
+        bottom: rect.bottom + ring,
+        listTop: list.top,
+        listBottom: list.bottom,
+      };
+    });
+    expect(box.top).toBeGreaterThanOrEqual(box.listTop);
+    expect(box.bottom).toBeLessThanOrEqual(box.listBottom);
+  });
+}
