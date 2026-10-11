@@ -1,138 +1,123 @@
-"""Where each agent session works, read for the pages that show it: a room's
-or a task's sessions with their machines, a project's spread over machines,
-and the sessions on one device.
+"""Where each agent works, read for the pages that show it: a conversation's
+agents with their environments, a project's spread over environments, and the
+sessions on one person's device.
 
-Read-only. What changes a session's machine is ``session_work``.
+Read-only. What changes an agent's environment is
+``session_work.switch_environment``.
 """
 
 from sqlalchemy import select
 
+from app.domain.agent.environment import SelfHosted, spec_of, stored
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import AgentSession
-from app.domain.conversation.services import of_rooms, room_column
-from app.domain.device.supply import Visibility
+from app.domain.agent_session.models import AgentEnvironment, AgentSession
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.conversation.services import of_room, of_rooms, room_column
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.session_work import _agent_name, _visibility_of, presentation
+from app.domain.machine.session_work import _agent_name, _session_author, presentation
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic, TopicStatus
 
 
-async def session_machines(db, topic, task_id=None) -> list[dict]:
-    """Each agent session of the room's own conversation (or of one of its
-    tasks), with what it works on.
-
-    A choice is every one of its sessions' choice. On a self-hosted device each
-    row answers that **one** machine — the lease's when the session holds one,
-    else the one the choice will lease; on the cloud each session has its own
-    sandbox, on a platform host it does not name. ``choice`` is None only for a
-    session that has not started working.
-    """
-    devices = sql_device_service(db)
+async def conversation_sessions(db, project, place) -> list[dict]:
+    """Each agent with a session in this conversation (a room's own, or a
+    task's), with the seat it acts under, its environment (None until it first
+    needs one) and the machine it holds. One entry per agent, its most recent
+    session: a change of harness opens another session for the same agent."""
     rows = await db.scalars(
         select(AgentSession)
-        .where(AgentSession.conversation_id == (task_id or topic.id))
-        .order_by(AgentSession.agent_handle, AgentSession.created_at)
+        .where(AgentSession.conversation_id == place.conversation_id)
+        .order_by(AgentSession.agent_handle, AgentSession.updated_at.desc())
     )
-    out = []
+    chosen = await AgentSessionService(db).environments_in(place.conversation_id)
+    out, seen = [], set()
     for row in rows:
-        choice = (row.execution_request or {}).get("choice")
-        visibility = None
-        if row.work_lease:
-            visibility = await _visibility_of(
-                db, devices, topic.id, row.work_lease.get("device_id")
-            )
-        elif choice and choice.get("profile") == "device":
-            visibility = await _visibility_of(
-                db, devices, topic.id, choice.get("device_id")
-            )
+        if row.agent_handle in seen:
+            continue
+        seen.add(row.agent_handle)
+        shown = presentation(row)
+        lease = shown["lease"] or {}
+        environment = chosen.get(row.agent_handle)
         out.append(
             {
-                **presentation(row),
-                "machine_access": visibility is Visibility.host,
-                "visibility": visibility,
+                "session_id": shown["id"],
+                "agent_handle": row.agent_handle,
+                "seat_handle": await _session_author(db, project, row.agent_handle),
+                "environment": environment.environment if environment else None,
+                "status": lease.get("status"),
+                "online": bool(lease.get("online")),
             }
         )
     return out
 
 
 async def _placed_sessions(db, project_id):
-    """Each agent session in the project's open rooms that has a machine, with
-    its room and the device it is on (None for Cloud, and for a device the
-    platform picks when the session leases).
-
-    A session that has not started working has no machine and is left out:
-    the project default decides where it goes.
-    """
-
+    """Each agent in the project's open rooms that has an environment, with
+    its room, its session and that environment."""
     rows = await db.execute(
-        select(AgentSession, Topic)
-        .select_from(AgentSession)
+        select(AgentEnvironment, AgentSession, Topic)
+        .select_from(AgentEnvironment)
+        .join(
+            AgentSession,
+            (AgentSession.conversation_id == AgentEnvironment.conversation_id)
+            & (AgentSession.agent_handle == AgentEnvironment.agent_handle),
+        )
         .join(Topic, Topic.id == room_column(AgentSession.conversation_id))
         .where(Topic.project_id == project_id, Topic.status != TopicStatus.archived)
+        .order_by(AgentSession.updated_at.desc())
     )
-    placed = []
-    for row, topic in rows:
-        choice = (row.execution_request or {}).get("choice")
-        if not choice:
+    placed, seen = [], set()
+    for chosen, row, topic in rows:
+        key = (row.conversation_id, row.agent_handle)
+        if key in seen:
             continue
-        device_id = None
-        if choice.get("profile") != "cloud":
-            device_id = (row.work_lease or {}).get("device_id") or choice.get(
-                "device_id"
-            )
-        placed.append((row, topic, choice, device_id))
+        seen.add(key)
+        environment = stored(chosen.environment)
+        if environment is not None:
+            placed.append((row, topic, environment))
     return placed
 
 
 async def project_distribution(db, project_id) -> dict:
-    """Where the project's agents that have started work are, right now.
-
-    Counted per agent session in the project's open rooms: how many are in
-    cloud sandboxes, how many on whole cloud VMs, and how many on each
-    self-hosted device, with whether an agent there can see the whole machine.
-    """
-    cloud = cloud_vm = 0
-    on_devices: dict[str | None, dict] = {}
+    """Where the project's agents that have an environment are: how many in
+    sandboxes of each spec, and how many on each person's machine they run on
+    unisolated."""
+    specs: dict[str, int] = {}
+    on_devices: dict[str, int] = {}
+    for _row, _topic, environment in await _placed_sessions(db, project_id):
+        if isinstance(environment, SelfHosted):
+            on_devices[environment.device_id] = (
+                on_devices.get(environment.device_id, 0) + 1
+            )
+        else:
+            specs[environment.spec] = specs.get(environment.spec, 0) + 1
     devices = sql_device_service(db)
-    for _row, topic, choice, device_id in await _placed_sessions(db, project_id):
-        if choice.get("profile") == "cloud":
-            if choice.get("whole_machine"):
-                cloud_vm += 1
-            else:
-                cloud += 1
-            continue
-        entry = on_devices.setdefault(
-            device_id,
-            # Only a device's own name is shown; a label stored on "any online
-            # device" is one language's words and is not handed out.
+    listed = []
+    for device_id, agents in on_devices.items():
+        device = await devices.get_device(device_id)
+        listed.append(
             {
                 "device_id": device_id,
-                "name": choice.get("name") if device_id else None,
-                "agents": 0,
-                "machine_access": False,
-            },
+                "name": device.name if device is not None else None,
+                "agents": agents,
+            }
         )
-        entry["agents"] += 1
-        # The machine is open to its agents when any room there was given it
-        # whole: access is chosen per room, not per machine.
-        visibility = await _visibility_of(db, devices, topic.id, device_id)
-        entry["machine_access"] |= visibility is Visibility.host
-    listed = []
-    for entry in on_devices.values():
-        if entry["device_id"] is not None:
-            device = await devices.get_device(entry["device_id"])
-            if device is not None:
-                entry["name"] = device.name
-        listed.append(entry)
     listed.sort(key=lambda entry: (-entry["agents"], entry["name"] or ""))
-    return {"cloud": cloud, "cloud_vm": cloud_vm, "devices": listed}
+    return {
+        "sandboxes": [
+            {"spec": spec, "agents": agents}
+            for spec, agents in sorted(specs.items(), key=lambda kv: -kv[1])
+            if spec_of(spec) is not None
+        ],
+        "devices": listed,
+    }
 
 
 async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
-    """The project's agent sessions on one device, the ones its distribution
-    counts there, as ``(room, session presentation)`` pairs, most recently
-    active first.
+    """The project's agents on one person's device — run there unisolated, or
+    in a sandbox it holds — as ``(room, session presentation)`` pairs, most
+    recently active first.
 
     ``working`` is whether the room has a turn running. Turns are recorded per
     room, not per session, so a session whose room is mid-turn counts as
@@ -140,9 +125,10 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
     """
 
     placed = [
-        (row, topic)
-        for row, topic, _choice, on in await _placed_sessions(db, project_id)
-        if on == device_id
+        (row, topic, environment)
+        for row, topic, environment in await _placed_sessions(db, project_id)
+        if (row.work_lease or {}).get("device_id") == device_id
+        or (isinstance(environment, SelfHosted) and environment.device_id == device_id)
     ]
     if not placed:
         return []
@@ -151,7 +137,7 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
         await db.scalars(
             select(room_column(AgentTurn.conversation_id)).where(
                 of_rooms(
-                    AgentTurn.conversation_id, {topic.id for _row, topic in placed}
+                    AgentTurn.conversation_id, {topic.id for _row, topic, _e in placed}
                 ),
                 AgentTurn.stopped_at.is_(None),
             )
@@ -159,8 +145,9 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
     )
 
     out = []
-    for row, topic in sorted(placed, key=lambda pair: pair[0].updated_at, reverse=True):
-        # A task's session is moved by changing the task's work computer.
+    for row, topic, environment in sorted(
+        placed, key=lambda entry: entry[0].updated_at, reverse=True
+    ):
         task = (
             await db.get(Task, row.conversation_id)
             if row.conversation_id != topic.id
@@ -177,7 +164,7 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
                     "topic_title": topic.title,
                     "agent_handle": row.agent_handle,
                     **await _agent_name(db, project, topic, row.agent_handle),
-                    "choice": (row.execution_request or {}).get("choice"),
+                    "environment": environment.model_dump(),
                     "last_active": row.updated_at.isoformat(),
                     "working": topic.id in busy,
                 },
@@ -195,3 +182,22 @@ async def devices_held_by(db, conversation_id) -> set[str]:
         )
     )
     return {lease["device_id"] for lease in leases if (lease or {}).get("device_id")}
+
+
+async def leases_on_peoples_devices(db, room_id) -> list[dict]:
+    """The leases the room's sessions (its tasks' included) hold on people's
+    own computers, most recently placed first. A sandbox on the platform's
+    machines is the platform's to report (``CloudHostRepository.room_homes``)."""
+    leases = await db.scalars(
+        select(AgentSession.work_lease)
+        .where(
+            of_room(AgentSession.conversation_id, room_id),
+            AgentSession.work_lease.is_not(None),
+        )
+        .order_by(AgentSession.placed_at.desc().nulls_last())
+    )
+    return [
+        lease
+        for lease in leases
+        if lease and lease.get("device_id") and not lease.get("platform")
+    ]

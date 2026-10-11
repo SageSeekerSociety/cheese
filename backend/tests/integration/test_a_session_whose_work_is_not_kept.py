@@ -23,7 +23,7 @@ from sqlalchemy import select
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
@@ -112,6 +112,8 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
     return {
         "conversation": conversation,
         "room": room["id"],
+        "owner": owner.id,
+        "session": session_id,
         "device": device.device_id,
         "resource": resource,
         # What a turn of this session presents to the executor route.
@@ -269,49 +271,35 @@ async def test_a_started_task_gets_the_token_that_pushes(client, monkeypatch):
     assert data["read_only"] is False
 
 
-async def _move(client, monkeypatch, held: dict, visibility: Visibility | None) -> dict:
-    """The session moves its conversation onto the project's machine, which the
-    room was given with ``visibility`` (None: not given yet, so the default)."""
-    if visibility is not None:
-        async with client.test_factory() as db:
-            await sql_device_service(db).bind_topic_device(
-                uuid.UUID(held["room"]), held["device"], visibility
-            )
-            await db.commit()
+async def _move(client, monkeypatch, held: dict) -> dict:
+    """The session moves itself into a sandbox on its owner's computers."""
     monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
     response = client.put(
-        f"/topics/{held['conversation']}/compute-profile",
+        f"/topics/{held['conversation']}/sessions/{held['session']}/environment",
         headers={"X-Cheese-Token": held["turn"]},
-        json={"profile": "device", "device_id": held["device"]},
+        json={
+            "environment": {"kind": "sandbox", "spec": f"devices_of:{held['owner']}"}
+        },
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]
 
 
 @pytest.mark.parametrize("place", ["thread", "unstarted"])
-async def test_moving_onto_a_whole_machine_it_is_told_it_will_only_read(
+async def test_a_session_that_keeps_nothing_is_told_so_when_it_moves(
     client, monkeypatch, place
 ):
-    """Moving does not let it keep its work, and on a person's whole machine it
-    may only read: the answer to the move says so, rather than the next command
-    it runs there being refused and sending it to look for another machine."""
+    """Moving does not let it keep its work: the answer to the move says so,
+    rather than its first push being refused and sending it to look for an
+    environment that would take it."""
     held = await _session(client, place)
-    moved = await _move(client, monkeypatch, held, Visibility.host)
-    assert moved["keeps_nothing"] == {"reads_only": True}
-
-
-@pytest.mark.parametrize("place", ["thread", "unstarted"])
-async def test_moving_into_a_sandbox_of_its_own_it_is_told_it_runs_but_keeps_nothing(
-    client, monkeypatch, place
-):
-    held = await _session(client, place)
-    moved = await _move(client, monkeypatch, held, None)
-    assert moved["keeps_nothing"] == {"reads_only": False}
+    moved = await _move(client, monkeypatch, held)
+    assert moved["keeps_nothing"] is True
 
 
 async def test_a_started_task_that_moves_is_not_told_it_keeps_nothing(
     client, monkeypatch
 ):
     held = await _session(client, "started")
-    moved = await _move(client, monkeypatch, held, Visibility.host)
-    assert moved["keeps_nothing"] is None
+    moved = await _move(client, monkeypatch, held)
+    assert moved["keeps_nothing"] is False

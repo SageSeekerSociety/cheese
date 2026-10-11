@@ -146,6 +146,13 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: 「芝士提议修改技能」, 「芝士起草了」 and 「交给芝士的工作」 stay on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        # The room-wide machine choice (#2320): old room lines and proposals
+        # still name it.
+        "computeAnyDevice",
+        "computeCloud",
+        "computeCloudVm",
+        "computeDevice",
+        "policyResourceMachine",
         "actorCheese",
         "askAnswerUndelivered",
         "askAnswerUndeliveredDetail",

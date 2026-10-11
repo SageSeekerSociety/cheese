@@ -44,7 +44,7 @@ const nodes: MarketNodes = {
     {
       id: 'n1',
       label: 'Node One',
-      kind: 'cloud',
+      kind: 'standard',
       online: true,
       current: true,
       detail: 'ok',
@@ -52,7 +52,7 @@ const nodes: MarketNodes = {
     },
   ],
   active_turns_total: 3,
-  current_provider: 'cloud',
+  current_provider: 'standard',
 }
 
 const plugins = () => [createVuetify({ components, directives }), i18n]

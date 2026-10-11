@@ -609,6 +609,8 @@ void openPlace()
         :set-collaborators="taskPage.setCollaborators"
         :set-agent="taskPage.setAgent"
         :load-machine="taskPage.loadMachine"
+        :set-machine="taskPage.setMachine"
+        :set-machine-default="taskPage.setMachineDefault"
         :panel-open="panelOpen"
         @open-room="backToRoom"
         @toggle-panel="togglePanel"

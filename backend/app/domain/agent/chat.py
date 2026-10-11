@@ -189,7 +189,6 @@ from app.domain.delivery.receipts import (
     complete_work_inputs,
     terminate_work_inputs,
 )
-from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
     names_a_person,
     recipient_seat,
@@ -494,7 +493,6 @@ class ChatService(SessionRecovery):
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
@@ -641,7 +639,6 @@ class ChatService(SessionRecovery):
                 user_block_id=user_block_id,
                 is_resume=is_resume,
                 continuation_id=continuation_id,
-                provision_actor=provision_actor,
                 platform_turn=platform_turn,
                 delivery_id=delivery_id,
                 recipient_instance_id=recipient_instance_id,
@@ -657,7 +654,6 @@ class ChatService(SessionRecovery):
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         recipient_handle: str | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
@@ -675,7 +671,6 @@ class ChatService(SessionRecovery):
                 author=author,
                 user_block_id=user_block_id,
                 continuation_id=continuation_id,
-                provision_actor=provision_actor,
                 recipient_instance_id=recipient_instance_id,
             ):
                 yield frame

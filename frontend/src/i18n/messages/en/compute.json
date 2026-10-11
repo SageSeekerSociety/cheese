@@ -1,12 +1,30 @@
 {
-  "choice": {
-    "device": "Own device",
-    "deviceOnFirstRun": "An online device, picked on the first run",
-    "sandbox": "An environment of its own for each session · prepared on the first run",
-    "vm": "A virtual machine of its own for each session, with Docker and sudo · prepared on first run",
-    "cloud": "Cloud environment",
-    "cloudVm": "Whole cloud VM",
-    "anyDevice": "Own device · Picked automatically"
+  "env": {
+    "sandbox": "Sandbox",
+    "sandboxHint": "Sees only its own work directory and the project's package cache, not other sessions",
+    "sandboxOf": "Sandbox · {spec}",
+    "selfHosted": "Use my computer",
+    "selfHostedHint": "For when it must be a particular computer: runs directly on it, without isolation, and can see and operate the whole computer",
+    "noDeviceOfMine": "You have not enrolled a computer of your own",
+    "whichDevice": "Which computer",
+    "ownerOnly": "Only the computer's owner can choose it",
+    "removedDevice": "Removed computer",
+    "online": "Online",
+    "offline": "Offline",
+    "edit": "Edit",
+    "cancel": "Cancel",
+    "submit": "Use this environment",
+    "sessionHeading": "{name}'s environment",
+    "sessionHint": "Changes only this AI teammate; the others are not affected. It first pushes its changes to its branch, and changes either way; the changes as of each turn's end are kept in a snapshot.",
+    "sessionLine": "{name}: {env}",
+    "notStarted": "Not started yet; it will use the default for new sessions",
+    "defaultHeading": "Default for new sessions",
+    "defaultHint": "Only affects AI teammates that start from now on; those already running keep their own environment.",
+    "defaultHere": "New sessions use: {name}",
+    "projectDefault": "Project default",
+    "loadFailed": "Could not load environments",
+    "saveFailed": "Could not change the environment",
+    "specHeading": "Spec"
   },
   "usage": {
     "unknown": "Unknown",

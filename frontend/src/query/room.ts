@@ -2,12 +2,12 @@
 // 任务房间里那个任务。房间头部、右侧面板、对话栏、@ 候选读的是同一份。
 import type { Block, ListPayload, PreviewInfo, RoomTask, TodoItem, TopicMemberRow, TopicProgress } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
-import type { TopicComputeProfile } from '@/types/compute'
+import type { TopicEnvironment } from '@/types/compute'
 import type { ThreadRow } from '@/types/threads'
 
 import { queryOptions } from '@tanstack/vue-query'
 
-import { getPreview, getProgress, getTask, getTopicComputeProfile, listRoomTasks, listTopicMembers } from '@/api'
+import { getPreview, getProgress, getTask, getTopicEnvironment, listRoomTasks, listTopicMembers } from '@/api'
 import { listPins } from '@/api/pins'
 import { listThreads } from '@/api/threads'
 import { queryClient, refreshQueries } from '@/query/client'
@@ -23,11 +23,11 @@ export function roomMembersQuery(roomId: string) {
   })
 }
 
-/** 这个房间在哪台电脑上做、每个会话在哪台机器上。 */
-export function computeProfileQuery(roomId: string) {
+/** 这段对话新会话默认的环境，和每条会话各自在哪个环境里。 */
+export function environmentQuery(roomId: string) {
   return queryOptions({
-    queryKey: keys.roomComputeProfile(roomId),
-    queryFn: (): Promise<TopicComputeProfile> => getTopicComputeProfile(roomId),
+    queryKey: keys.roomEnvironment(roomId),
+    queryFn: (): Promise<TopicEnvironment> => getTopicEnvironment(roomId),
   })
 }
 

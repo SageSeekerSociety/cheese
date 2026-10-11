@@ -29,9 +29,9 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.conversation.services import of_room
-from app.domain.device.wiring import sql_device_service
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import CloudHostRepository
+from app.domain.machine.session_reports import leases_on_peoples_devices
 from app.domain.membership.roster import roster
 from app.domain.membership.services import MemberService
 from app.domain.project.environment import EnvironmentConfig, project_environment
@@ -181,8 +181,12 @@ async def get_room_environment(
 ) -> dict:
     await access(db, project_id, user)
     topic = await room(db, project_id, topic_id, viewer=user)
-    binding = await sql_device_service(db).topic_binding(topic_id)
-    if binding is None:
+    # The room's sessions each have an environment of their own: one on a
+    # person's computer reports that computer's environment, and the room's
+    # sandboxes on the platform's machines are reported together.
+    leases = await leases_on_peoples_devices(db, topic_id)
+    lease = leases[0] if leases else None
+    if lease is None:
         hosts = [
             host
             for _home, host in await CloudHostRepository(db).room_homes(
@@ -199,11 +203,11 @@ async def get_room_environment(
         else:
             # A sandbox on its way IS preparation, whatever stage it's at.
             state = {"state": "pending"}
-    elif not device_hub.is_online(binding.device_id):
+    elif not device_hub.is_online(lease["device_id"]):
         state = {"state": "offline"}
     else:
         state = await environment_status(
-            device_hub, binding.device_id, project_id, topic.resource_id or topic_id
+            device_hub, lease["device_id"], project_id, uuid.UUID(lease["resource_id"])
         )
     busy = await db.scalar(
         select(AgentTurn.id)
@@ -238,16 +242,18 @@ async def reset_idle_room(db: AsyncSession, topic_id: uuid.UUID, project_id: uui
     """
     topic = await room(db, project_id, topic_id)
     await require_idle(db, topic)
-    binding = await sql_device_service(db).topic_binding(topic_id)
-    resource_id = topic.resource_id or topic_id
+    leases = await leases_on_peoples_devices(db, topic_id)
     await db.commit()
-    if binding is None:
-        return
-    if not device_hub.is_online(binding.device_id):
+    if any(not device_hub.is_online(lease["device_id"]) for lease in leases):
         raise ValidationError(say("machineOfflineCannotConfirmStop"))
-    await environment_status(
-        device_hub, binding.device_id, project_id, resource_id, action="reset"
-    )
+    for lease in leases:
+        await environment_status(
+            device_hub,
+            lease["device_id"],
+            project_id,
+            uuid.UUID(lease["resource_id"]),
+            action="reset",
+        )
     # Closing each screen also releases its runtime subscription.
     for screen in device_hub.screens_for_topic(topic_id):
         await device_hub.close_screen(screen.device_id, screen.sid)

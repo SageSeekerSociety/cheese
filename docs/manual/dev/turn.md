@@ -92,15 +92,15 @@ steps:
 
 ## 同一话题里的几个 AI 队友 {#seats}
 
-一个话题可以同时请几个 AI 队友。它们**用房间的同一条算力选择、各有各的会话、可以同时跑**。
+一个话题可以同时请几个 AI 队友。它们**各有各的执行环境、各有各的会话、可以同时跑**。
 
 ```demo-steps
 title: 两个队友在同一个话题里并行
-note: 机器只有一份，会话和串行都按座位分开
+note: 执行环境、会话和串行都按座位分开
 embed: seats
 steps:
-  - label: 一个话题一个容器
-    desc: 房间的算力选择就是房间里每条会话的选择。选自有设备时所有队友落在同一台机器上、每位一份工作目录；选云端时每位队友一个沙箱。换机器是整个房间一起搬。
+  - label: 每位队友一个执行环境
+    desc: 每位队友在这个话题里有自己的执行环境：某种规格的沙箱，或者一台人自己接入的电脑。房间只存新队友的默认值；换环境只换这一位。
     link: /dev/turn#seats-machine
   - label: 会话按座位分开
     desc: 座位是（话题, 队友）。每位队友续跑自己的会话，运行时和算力池也按座位记，一位开会话不会停掉另一位的。
@@ -111,7 +111,7 @@ steps:
   - label: 没点名的消息归谁
     desc: 每个在跑的轮次都看得见，但只有被点名唤起的轮次或房间默认队友的轮次认领它。
     link: /dev/turn#seats-claim
-  - label: 共用一台机器时怎么不打架
+  - label: 几位队友在同一台机器上时怎么不打架
     desc: 每位队友一份工作目录，改动落在各自任务卡的分支上；装依赖、跑大测试先占房间的重资源锁。
     link: /dev/turn#seats-share
   - label: 在界面上分开看
@@ -119,13 +119,13 @@ steps:
     link: /dev/turn#seats-ui
 ```
 
-### 一个话题一个容器 {#seats-machine}
+### 每位队友一个执行环境 {#seats-machine}
 
-房间只有一条算力选择（`compute_configs.room_choice`），房间自己的会话和没有自己选择的任务的会话要手时都从它解析（`machine/session_work._attempt`）；任务第一次要手时把它抄成自己的一份（`fix_task_choice`），之后各走各的，见[任务](/dev/tasks)。会话行上的 `execution_request.choice` 只是它的副本。选的是「系统挑一台」时，第一条要手的会话挑，后来的会话跟着房间里已经站着的那台（`_roommates_device`），不会一人一台。选的是云端时，每条会话的沙箱由平台的云主机池安排在任意一台有空位的宿主机上，同一房间的会话不一定在同一台（见 `docs/microcloud.md`）。工作目录是队友的：每条会话在它那台机器上按自己这一代（`execution_request.generation`，落在租约的 `resource_id` 上）开一份工作目录和执行器状态（`device_home_dir`），几位队友互不看见对方没推送的改动。
+执行环境按 `(对话, 队友)` 记在 `agent_environments` 上（`agent.environment`），不跟会话行，所以换骨架开出的新会话行还是同一个环境。它是两种之一：某种规格的沙箱（`{"kind": "sandbox", "spec": ...}`），或者一台人自己接入的电脑、不进沙箱（`{"kind": "self_hosted", "device_id": ...}`）。规格之间是平级的：`standard` 和 `vm` 是平台的机器，`devices_of:<用户 id>` 是那个人接入这个项目的电脑。沙箱从不点名机器，放在哪台由规格定（`machine/environments.py` 的 `device_for_spec`，平台的规格交给 `HostPool.place`）；不进沙箱只有那台电脑的主人本人能选，AI 队友不能。
 
-改房间的机器（`PUT /topics/{id}/compute-profile`，人从成员名册改，或芝士用 `cheese_machine` 改）就是整个房间搬：`request_choice` 让房间自己的每条会话（以及还没有自己选择的任务的会话）在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`），推没推上去、那台连不连得上都照常搬，全部搬完才写房间那一项、再移钉子；已有自己选择的任务不跟着搬。用任务的 id 改的是那个任务的选择，只搬它自己的会话，也不动房间的钉子。推不上去丢的只是上一轮 Stop checkpoint 之后的改动，那一轮的快照在平台上。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。人和芝士换机的规则一样。离开云端沙箱的会话把它在宿主机上的位置还给池子（已经归档进存储的那份归档留给房间清理）；离开整台云虚拟机时那台虚拟机随即删掉。没有按会话单独换机器的接口。
+一位队友第一次要手时（`machine/session_work._attempt`），平台按 任务的默认 → 房间的默认（`topics.default_environment`）→ 项目的默认 → 标准沙箱 取一份写成它自己的（`environments.environment_of`），之后默认再改也不动它。工作目录是队友的：每条会话在它那台机器上按自己这一代（`execution_request.generation`，落在租约的 `resource_id` 上）开一份工作目录和执行器状态（`device_home_dir`），几位队友互不看见对方没推送的改动。
 
-这条规则在 2026-09-28 取代了原来的结论 60（「手是 agent 的，不是房间的」）。
+换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_environment` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`），推没推上去、那台连不连得上都照常换。推不上去丢的只是上一轮 Stop checkpoint 之后的改动，那一轮的快照在平台上。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
 
 ### 会话按座位分开 {#seats-session}
 
@@ -158,7 +158,7 @@ AI 发起的点名有熔断：同一话题一小时最多叫起 `AGENT_MENTIONS_
 
 芝士在一轮里 `chat_send` 发的话，归到发言者自己在跑的那一轮上（`publish-chat-message` 按作者归因），沉默提醒也按这一轮算。
 
-### 共用一台机器时怎么不打架 {#seats-share}
+### 几位队友在同一台机器上时怎么不打架 {#seats-share}
 
 几位队友的工作目录是分开的，同一份文件不会被两位同时改。共用的是这台机器的算力、端口和同一个远端仓库，靠两条约定：
 

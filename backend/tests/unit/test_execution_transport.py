@@ -1718,7 +1718,7 @@ class PreparingPlatform:
         self.thread.join()
 
 
-NOTICE = "工作电脑正在准备，这次操作会在它就绪后执行（最多等 11 分钟）。"
+NOTICE = "执行环境正在准备，这次操作会在它就绪后执行（最多等 11 分钟）。"
 
 
 @pytest.mark.anyio
