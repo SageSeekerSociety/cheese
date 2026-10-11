@@ -294,7 +294,7 @@ def facts_for_card(card: CardSignals | CardRow | None) -> CardFacts | None:
     手上是 `review` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多
     查一行。这一层只读 `status` / `note_code` / `merge_state` / `decided_by` /
     `auto_merge_armed_by` 五个属性（`CardSignals` / `CardRow`），两种形状都长得出来，
-    所以折出来的 `CardFacts` 一模一样（`tests/unit/test_presentation.py` 钉住了这件事）。
+    所以折出来的 `CardFacts` 一模一样（`tests/unit/test_presentation.py` 钉住了）。
     `merge_state` 的形状也不假设：不是 `dict`（`None`、或者镜像还没写过）就当空镜像
     读，所以 `Mapping` 也收。
     """
