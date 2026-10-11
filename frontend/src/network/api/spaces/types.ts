@@ -1,18 +1,8 @@
 import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
-export type SpaceApplication = {
-  id: number
-  avatarId?: number | null
-  name: string
-  intro: string
-  reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED'
-  description: string
-  owner: string | null
-  reviewReason: string | null
-  reviewedBy: string | null
-  reviewedAt: string | null
-  createdAt: string
-}
+// 申请那一屏拆出来的半张画面只认 props、不连网络层，不能从这儿取类型。类型挪到
+// 领域类型 `@/types/spaces.ts`，这里原样转出去，对外的 import 路径不变。
+export type { SpaceApplication } from '@/types'
 
 export type PostSpaceRequestData = {
   name: string
