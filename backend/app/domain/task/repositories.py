@@ -481,6 +481,52 @@ class TaskRepository:
         await self._session.flush()
         return task
 
+    async def replace_topic_relations(
+        self, *, task_id: int, topic_ids: Sequence[int]
+    ) -> None:
+        """覆盖一道题的话题关联：先软删除现有的，再插入这批。
+
+        与 ``PATCH /tasks/{id}`` 的 topics 字段同一语义（整份替换，不做校验）。
+        原来这段 SQL 直接写在路由里 —— 「谁可以写这道题的话题、写成什么样」是这一域
+        自己的规矩，路由带着 session 自己拼 select/insert 就绕过了 service 这一层。
+        """
+        now = datetime.now(UTC)
+        stmt: Select[tuple[TaskTagRelation]] = select(TaskTagRelation).where(
+            TaskTagRelation.task_id == task_id,
+            TaskTagRelation.deleted_at.is_(None),
+        )
+        existing = (await self._session.execute(stmt)).scalars().all()
+        for rel in existing:
+            rel.deleted_at = now
+        for topic_id in topic_ids:
+            self._session.add(
+                TaskTagRelation(
+                    task_id=task_id,
+                    tag_id=topic_id,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+        await self._session.flush()
+
+    async def add_topic_relations(
+        self, *, task_id: int, topic_ids: Sequence[int]
+    ) -> None:
+        """给一道新题挂上话题关联行（不做删除，建题时本就没有旧关系）。"""
+        now = datetime.now(UTC)
+        for topic_id in topic_ids:
+            self._session.add(
+                TaskTagRelation(
+                    task_id=task_id,
+                    tag_id=topic_id,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+        await self._session.flush()
+
 
 class TaskMembershipRepository:
     def __init__(self, session: AsyncSession) -> None:
