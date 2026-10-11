@@ -125,6 +125,40 @@ def test_an_ai_draft_runs_nothing_until_a_person_confirms_it(client):
     assert confirmed.json()["data"]["next_run_at"] is not None
 
 
+def _draft_line(client, room: str, routine_id: str) -> dict:
+    blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
+    [line] = [
+        b
+        for b in blocks["data"]
+        if (b.get("meta") or {}).get("event_type") == "routine_proposed"
+        and b["meta"].get("routine_id") == routine_id
+    ]
+    return line
+
+
+def test_the_rooms_line_about_a_draft_says_how_a_person_decided(client):
+    room = _room(client, _project(client))
+    kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
+    line = _draft_line(client, room, kept["id"])
+    assert line["meta"]["who"] == "human", (
+        "a draft waiting on a person said 芝士 had it"
+    )
+
+    client.post(f"/routines/{kept['id']}/confirm", headers=PERSON)
+    line = _draft_line(client, room, kept["id"])
+    assert "已确认" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+    assert not line["meta"]["who"]
+
+    dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
+    assert (
+        client.delete(f"/routines/{dropped['id']}", headers=PERSON).status_code == 200
+    )
+    line = _draft_line(client, room, dropped["id"])
+    assert "已删除" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+
+
 def test_a_due_moment_wakes_the_teammate_once(client):
     room = _room(client, _project(client))
     routine = _weekly(client, room, headers=PERSON).json()["data"]

@@ -300,3 +300,49 @@ def test_a_proposal_cannot_absorb_someones_private_memory(client):
         json=_proposal(absorbs=[f"private/{OWNER}/style.md"]),
     )
     assert refused.status_code == 422, "a project method absorbed a personal memory"
+
+
+def _proposal_lines(client, room: str, skill_id: str) -> list[dict]:
+    """The room's line about this proposal, as the room reads it."""
+    blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
+    return [
+        b
+        for b in blocks["data"]
+        if (b.get("meta") or {}).get("event_type") == "skill_proposed"
+        and b["meta"].get("skill_id") == skill_id
+    ]
+
+
+def test_the_rooms_line_about_a_proposal_says_how_a_person_decided(client):
+    project = _project(client)
+    room = _room(client, project)
+    saved = client.post(f"/topics/{room}/skills", json=_proposal()).json()["data"]
+    [line] = _proposal_lines(client, room, saved["id"])
+    assert line["meta"]["who"] == "human", (
+        "a proposal waiting on a person said 芝士 had it"
+    )
+    assert line["meta"].get("state") != "over"
+
+    client.post(f"/skills/{saved['id']}/confirm", headers=PERSON)
+    [line] = _proposal_lines(client, room, saved["id"])
+    assert "已保存" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+    assert not line["meta"]["who"], "a saved proposal still says someone is handling it"
+
+    declined = client.post(f"/topics/{room}/skills", json=_proposal("grading")).json()[
+        "data"
+    ]
+    client.post(f"/skills/{declined['id']}/decline", headers=PERSON)
+    [line] = _proposal_lines(client, room, declined["id"])
+    assert "没有保存" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+
+
+def test_deleting_a_pending_proposal_settles_its_line(client):
+    project = _project(client)
+    room = _room(client, project)
+    skill = client.post(f"/topics/{room}/skills", json=_proposal()).json()["data"]
+    assert client.delete(f"/skills/{skill['id']}", headers=PERSON).status_code == 200
+    [line] = _proposal_lines(client, room, skill["id"])
+    assert "没有保存" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"

@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.core.live_frames import show_once_committed
-from app.core.sentences import notice_message
+from app.core.sentences import notice_message, with_keys
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
     SEVERITY_INFO,
@@ -166,6 +166,48 @@ def _show_once_committed(session: AsyncSession, block: Block) -> None:
         "block": BlockOut.model_validate(block).model_dump(mode="json"),
     }
     show_once_committed(session, block.conversation_id, frame)
+
+
+async def settle_proposal(
+    session: AsyncSession,
+    room_id: uuid.UUID,
+    *,
+    event_type: str,
+    key: str,
+    value: uuid.UUID,
+    content: str,
+) -> None:
+    """一条「芝士提议了什么、等人确认」的行，在人定下来以后改成定下来的样子。
+
+    那一行写着「等人处理」和一颗「去确认」；人保存了、拒了或删了之后它还那样写，
+    读的人就会以为那件事还在等。所以同一行原地改：`content` 说结果，`who` 清空
+    （没人在管了），`state` 记成 `over`，前端据此不再画「去确认」。开着这个房间的
+    页面在提交之后收到改过的这一行。
+    """
+    rows = await session.scalars(
+        select(Block).where(
+            Block.conversation_id == room_id,
+            Block.kind == BlockKind.event,
+            Block.meta["event_type"].as_string() == event_type,
+            Block.meta[key].as_string() == str(value),
+        )
+    )
+    for block in rows:
+        if (block.meta or {}).get("state") == "over":
+            continue
+        block.content = content
+        block.meta = with_keys(
+            {**(block.meta or {}), "who": "", "state": "over"}, content=content
+        )
+        await session.flush()
+        show_once_committed(
+            session,
+            block.conversation_id,
+            {
+                "type": "block_updated",
+                "block": BlockOut.model_validate(block).model_dump(mode="json"),
+            },
+        )
 
 
 def _asked_where(place: Place) -> dict[str, str]:
