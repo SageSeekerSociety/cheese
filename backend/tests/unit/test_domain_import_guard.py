@@ -270,8 +270,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.topic_members", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
-        ("app.api.routes.topics", "app.domain.review.repositories"),
-        ("app.api.routes.topics", "app.domain.topic.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
         # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读
         # 和写那一条选择，外加一条会话对那台机器的租约）。它摸的 repository 只有

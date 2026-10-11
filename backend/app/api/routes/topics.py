@@ -52,7 +52,10 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
 from app.domain.review.models import AcceptCard
-from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.services import AcceptService
+from app.domain.review.services.service import (
+    AcceptCardRepository as AcceptCardRepository,
+)
 from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
@@ -63,13 +66,7 @@ from app.domain.room_task.services import (
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, thread_opening, threads_of_rooms
-from app.domain.topic.models import RoomCleanup, Topic
-from app.domain.topic.repositories import (
-    SortOrder,
-    TopicProgressRepository,
-    TopicRepository,
-    TopicSortField,
-)
+from app.domain.topic.models import Topic
 from app.domain.topic.schemas import (
     CheckResultIn,
     LockIn,
@@ -78,7 +75,12 @@ from app.domain.topic.schemas import (
     TopicCreate,
     TopicOut,
 )
-from app.domain.topic.services import TopicRelevance, TopicService
+from app.domain.topic.services import (
+    SortOrder,
+    TopicRelevance,
+    TopicService,
+    TopicSortField,
+)
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
@@ -191,7 +193,7 @@ async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[Accep
     if not room_ids:
         return []
     # 结算过的也带上最近一周的：「退回了还没重递」要靠它看出来（`_stuck_on_checks`）。
-    return await AcceptCardRepository(db).list_recent_for_places(
+    return await AcceptService(db).list_recent_for_places(
         room_ids,
         open_statuses=archive.OPEN_CARD_STATUSES,
         settled_since=datetime.now(UTC) - REPLY_LOOKBACK,
@@ -401,7 +403,7 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
     projects = await ProjectRepository(db).list_visible_to(
         handle=who.handle, user_id=who.user_id
     )
-    topics = await TopicRepository(db).names_in_projects(
+    topics = await TopicService(db).names_in_projects(
         [p.id for p in projects], viewer=who.handle
     )
     return ok(
@@ -869,9 +871,10 @@ async def topic_status(
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    filed, _ = await AcceptService(db).list_for_topic(place.room_id)
     cards = [
         card
-        for card in await AcceptCardRepository(db).list_for_topic(place.room_id)
+        for card in filed
         if place.task is None or card.task_id == place.task.id
     ]
     credits = await UsageService(db).project_credits(place.project_id)
@@ -1042,7 +1045,7 @@ async def write_topic_progress(
     if plans_the_turn:
         work = runner.live_work_for_topic(place.conversation_id)
         turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-        await TopicProgressRepository(db).save(
+        await TopicService(db).save_progress(
             place.conversation_id, items, turn_id=turn_id
         )
         await db.commit()
@@ -1303,9 +1306,7 @@ async def cleanup_status(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id, enforce=True
     )
-    operation = (
-        await db.get(RoomCleanup, topic.cleanup_id) if topic.cleanup_id else None
-    )
+    operation = await TopicService(db).cleanup_operation(topic)
     if operation is None:
         return ok({"state": "not_scheduled"})
     return ok(
