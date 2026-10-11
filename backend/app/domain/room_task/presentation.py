@@ -39,7 +39,9 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Protocol
+from typing import Any, Protocol
+
+from sqlalchemy.orm import Mapped
 
 from app.core.errors import ValidationError
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
@@ -49,31 +51,27 @@ from app.domain.room_task.binding import catalog_id, resolve
 # 只给 block / review 开了窄读出口；项目 rail 的 Task 暂交给 task_liveness、
 # facts_for_task 和 TaskOut.model_validate。本模块的 card_model 也读取 Task 的绑定
 # 属性，计算卡面的模型名；facts_for_task 和 card_model 都只读属性、不顺着行查库。
-# 等 room_task 有自己的窄读输出，再替换这份 ORM 边界。
+# 等 room_task 有自己的窄读输出，再替换这份 ORM 边界。房间那一行 (`Topic`) 不按类
+# 标进签名 —— 只看它被读到的几位 (`TopicSignals`)，和卡一样是结构契约。
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.topic.models import Topic, TopicStatus
-
-if TYPE_CHECKING:
-    # 本领域内的消费者手上是 `AcceptCard` 那一行，它是这一层唯一需要按名字说出来的
-    # 形状 —— 只在 `CardSignals` 的并集里出现，所以放在 TYPE_CHECKING 下：这一层是
-    # 纯的，导入它只为签名，运行时一行都不碰。
-    from app.domain.review.models import AcceptCard
+from app.domain.topic.models import TopicStatus
 
 
 class CardSignals(Protocol):
-    """一张卡能被折成 `CardFacts` 的五个信号 —— 折卡的人只读这五个，不多不少。
+    """一张卡能被折成 `CardFacts` 的五个信号 —— **窄读出口交出来的纯值**那一份契约。
 
-    这是一份**结构**契约，不是某一种形状：`AcceptCard` 那一行满足它，别的领域从窄
-    读出口交出来的纯值也满足它，两边都不必把自己交出来给这一层当类型。刻意这么写
-    而不是把对方那个类标进签名 —— 标注一个类型就是 `room_task` 指向那个领域的一条
-    边，而这一层与 `review` 之间已经有两条类型边（`review.models`、
+    消费者递给这一层的卡有两个来源：领域内的人手上是 `AcceptCard` 那一行（ORM 行），
+    HTTP 路由手上是 `review` 窄读出口交出来的纯值（`review.queries.RailCard`）。两者
+    长得不一样 —— ORM 行的属性是 SQLAlchemy `Mapped` 描述符，纯值的属性是普通标量 ——
+    所以在 pyright 那里是**两份**契约：这里是纯值那一份，那一行走 `CardRow`。两边都
+    不必把对方那个类交出来给这一层当类型：标注一个类型就是 `room_task` 指向那个领域
+    的一条边，而这一层与 `review` 之间已经有两条类型边（`review.models`、
     `review.notes`，都冻结在 `.importlinter` 里）。C3 要的是无环：再加一条，环就回
-    来了，而「加一条豁免让它绿」不是解法，是把那条规矩让掉。契约式写法下，对方换
-    成什么形状都行，只要这五个读得出来。
+    来了，而「加一条豁免让它绿」不是解法，是把那条规矩让掉。契约式写法下，对方换成
+    什么形状都行，只要这五个读得出来。
 
     声明成 property 而不是普通属性是有意的：pyright 对只读属性按**协变**比对，所以
-    `AcceptStatus`（`str` 的子类）能满足 `status: str`，`RailCard` 的 `dict` 也能满足
-    `Mapping[str, object]`；写成可变属性就必须一模一样，两边都过不去。
+    `RailCard` 的 `dict` 能满足 `Mapping[str, object]`；写成可变属性就必须一模一样。
 
     五个正好是 `facts_for_card` 读的那五个。多一个字段，这里就多一条「对方必须记得
     改」的绳子；少一个，那一格就折不出来。
@@ -93,6 +91,41 @@ class CardSignals(Protocol):
 
     @property
     def auto_merge_armed_by(self) -> str | None: ...
+
+
+class CardRow(Protocol):
+    """`AcceptCard` 那一行的形状 —— **ORM 行**那一份契约，按模型的原样声明 `Mapped`。
+
+    pyright 拿调用方那行来比协议的**类成员**时，属性是 `Mapped` 描述符，普通的
+    `status: str` 接不住它（`Mapped[str]` 不可赋给 `str`），所以要照模型写成
+    `Mapped[...]`：读一个实例上的属性仍旧得到它裹着的那个值。同 `TeamView`
+    （`domain/team/protocol.py`）、`SpaceRow`（`routes/spaces.py`）的写法。
+
+    `status` 收成 `Mapped[Any]`：这一层只把它 `str()` 成词，而 `AcceptStatus` 这个
+    枚举的名字在 `review.models` 里 —— 标进签名就是又一条 `room_task -> review.models`
+    的边。`Mapped[Any]` 既接得住 `Mapped[AcceptStatus]`，也读得出值，够用。
+    """
+
+    status: Mapped[Any]
+    note_code: Mapped[NoteCode | None]
+    merge_state: Mapped[dict | None]
+    decided_by: Mapped[str | None]
+    auto_merge_armed_by: Mapped[str | None]
+
+
+class TopicSignals(Protocol):
+    """一个房间**行**能被折成 `RoomFacts` 的几位 —— `facts_for_room` 只读这三位。
+
+    `facts_for_room` 的两个调用方手上都是 ORM 那一行（`Topic`），所以和 `CardRow`
+    一样按模型的原样声明 `Mapped[...]`，pyright 才比得过。`status` 同样收成
+    `Mapped[Any]`：`TopicStatus` 的名字在 `topic.models` 里，而这一层只读它做词比较
+    （`room_presentation` 里 `facts.status == TopicStatus.archived`），不必把那一列
+    的枚举类型拖进来。
+    """
+
+    id: Mapped[uuid.UUID]
+    status: Mapped[Any]
+    accepted_at: Mapped[datetime | None]
 
 
 class Column(enum.StrEnum):
@@ -254,14 +287,14 @@ class RoomFacts:
     awaiting_answer: bool = False
 
 
-def facts_for_card(card: "AcceptCard | CardSignals | None") -> CardFacts | None:
+def facts_for_card(card: CardSignals | CardRow | None) -> CardFacts | None:
     """这张卡要读的几位，折成纯值。`None` 是「这条活上没有卡」，不是一张空卡。
 
     收两种形状是因为卡有两处来源：领域内的人手上是 `AcceptCard` 那一行，HTTP 路由
     手上是 `review` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多
     查一行。这一层只读 `status` / `note_code` / `merge_state` / `decided_by` /
-    `auto_merge_armed_by` 五个属性（`CardSignals`），两种形状都长得出来，所以折出来
-    的 `CardFacts` 一模一样（`tests/unit/test_presentation.py` 钉住了这件事）。
+    `auto_merge_armed_by` 五个属性（`CardSignals` / `CardRow`），两种形状都长得出来，
+    所以折出来的 `CardFacts` 一模一样（`tests/unit/test_presentation.py` 钉住了这件事）。
     `merge_state` 的形状也不假设：不是 `dict`（`None`、或者镜像还没写过）就当空镜像
     读，所以 `Mapping` 也收。
     """
@@ -281,7 +314,7 @@ def facts_for_card(card: "AcceptCard | CardSignals | None") -> CardFacts | None:
 
 def facts_for_task(
     task: Task,
-    card: "AcceptCard | CardSignals | None" = None,
+    card: CardSignals | CardRow | None = None,
     *,
     running: bool = False,
     awaiting_answer: bool = False,
@@ -300,9 +333,9 @@ def facts_for_task(
 
 
 def facts_for_room(
-    topic: Topic,
+    topic: TopicSignals,
     running_ids: set[uuid.UUID],
-    card: "AcceptCard | None" = None,
+    card: CardSignals | CardRow | None = None,
     *,
     awaiting_answer: bool = False,
 ) -> RoomFacts:
@@ -436,7 +469,7 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     return None
 
 
-def card_waits_on_reviewer(card: "AcceptCard") -> bool:
+def card_waits_on_reviewer(card: CardSignals | CardRow) -> bool:
     """这张卡此刻是不是真的在等验收人动手 —— 看板「待审阅」那一格。
 
     只是 `pending` 不够：CI 挂了、合并冲突、平台在换基、合并态还没看过，这些时候
@@ -449,7 +482,7 @@ def card_waits_on_reviewer(card: "AcceptCard") -> bool:
     )
 
 
-def card_needs_agent_fix(card: "AcceptCard") -> bool:
+def card_needs_agent_fix(card: CardSignals | CardRow) -> bool:
     """这张卡是不是停在「检查红了 / 冲突了 / 被退回，要 AI 去修」上。
 
     侧栏红灯的「检查报错没人处理」问它：卡还停在这里，这件事就还没了；检查重跑
@@ -458,7 +491,7 @@ def card_needs_agent_fix(card: "AcceptCard") -> bool:
     return agent_fix_kind(card) is not None
 
 
-def agent_fix_kind(card: "AcceptCard") -> str | None:
+def agent_fix_kind(card: CardSignals | CardRow) -> str | None:
     """卡停在哪一种「要 AI 去修」上：`rejected`（被退回）、`gate`（闸门红 / 没跑
     成）、`conflict`（合并冲突）、`check`（检查没过）；不是这几种就 None。
 
