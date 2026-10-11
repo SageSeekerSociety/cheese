@@ -14,10 +14,11 @@ export const SECTIONS = [
     ['工作电脑', ['use-your-computer']],
   ]],
   ['features', '功能说明', 'layers', [
-    ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks', 'routines']],
+    ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks', 'inbox', 'routines']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
     ['教学', ['challenges', 'spaces']],
     ['资源', ['environment', 'devices', 'quota', 'feedback']],
+    ['账号', ['account']],
   ]],
   ['faq', '常见问题', 'info', [['排障', ['troubleshooting']]]],
 ]
