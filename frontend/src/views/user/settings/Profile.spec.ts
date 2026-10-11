@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Profile from './Profile.vue'
 
+import { createAvatar } from '@/api/avatars'
+import { ApiError } from '@/api/http'
 import { setLocale } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
 import { UserApi } from '@/network/api/users'
@@ -19,8 +21,9 @@ const DEFAULT_AVATAR = 1
 const CHOSEN_AVATAR = 30
 
 vi.mock('@/network/api/users', () => ({ UserApi: { updateUserInfo: vi.fn() } }))
+vi.mock('@/api/avatars', () => ({ createAvatar: vi.fn() }))
 vi.mock('@/network/api/avatars', () => ({
-  AvatarsApi: { createAvatar: vi.fn(), getDefaultAvatarId: vi.fn() },
+  AvatarsApi: { getDefaultAvatarId: vi.fn() },
 }))
 vi.mock('@/services/account', async () => {
   const { reactive } = await import('vue')
@@ -136,7 +139,7 @@ describe('nickname and bio', () => {
 
 describe('avatar', () => {
   it('takes a chosen image at once, without saving an unfinished nickname', async () => {
-    vi.mocked(AvatarsApi.createAvatar).mockResolvedValue({ data: { avatarId: 42 } } as never)
+    vi.mocked(createAvatar).mockResolvedValue({ avatarId: 42 })
     const view = await renderPage()
     await fireEvent.update(nicknameField(view), '还没打完')
 
@@ -147,11 +150,11 @@ describe('avatar', () => {
   })
 
   it.each([
-    ['the upload', () => vi.mocked(AvatarsApi.createAvatar).mockRejectedValue(new Error('offline'))],
+    ['the upload', () => vi.mocked(createAvatar).mockRejectedValue(new Error('offline'))],
     [
       'the profile update',
       () => {
-        vi.mocked(AvatarsApi.createAvatar).mockResolvedValue({ data: { avatarId: 42 } } as never)
+        vi.mocked(createAvatar).mockResolvedValue({ avatarId: 42 })
         vi.mocked(UserApi.updateUserInfo).mockRejectedValue(new Error('offline'))
       },
     ],
@@ -166,6 +169,28 @@ describe('avatar', () => {
     expect(AccountService.user).toMatchObject({ avatarId: CHOSEN_AVATAR })
   })
 
+  it('shows an upload refusal, keeps the avatar and can upload again', async () => {
+    signIn(CHOSEN_AVATAR)
+    vi.mocked(createAvatar)
+      .mockRejectedValueOnce(new ApiError(422, 'Image was rejected', 'InvalidFile'))
+      .mockResolvedValueOnce({ avatarId: 42 })
+    const view = await renderPage()
+
+    await chooseImage(view, png())
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Image was rejected'))
+    expect(UserApi.updateUserInfo).not.toHaveBeenCalled()
+    expect(AccountService.user).toMatchObject({ avatarId: CHOSEN_AVATAR })
+    await waitFor(() =>
+      expect((view.getByRole('button', { name: 'Change avatar' }) as HTMLButtonElement).disabled).toBe(false)
+    )
+
+    await chooseImage(view, png())
+
+    await waitFor(() => expect(UserApi.updateUserInfo).toHaveBeenCalledWith(7, { avatarId: 42 }))
+    await waitFor(() => expect(AccountService.user).toMatchObject({ avatarId: 42 }))
+  })
+
   it.each([
     ['a file that is not a supported image', new File(['<svg/>'], 'me.svg', { type: 'image/svg+xml' })],
     ['an image over 2 MB', png(2 * 1024 * 1024 + 1)],
@@ -174,7 +199,7 @@ describe('avatar', () => {
 
     await chooseImage(view, file)
 
-    expect(AvatarsApi.createAvatar).not.toHaveBeenCalled()
+    expect(createAvatar).not.toHaveBeenCalled()
     expect(UserApi.updateUserInfo).not.toHaveBeenCalled()
     expect(AccountService.user).toMatchObject({ avatarId: DEFAULT_AVATAR })
   })

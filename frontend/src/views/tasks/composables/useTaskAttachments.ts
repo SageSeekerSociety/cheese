@@ -1,9 +1,9 @@
-import type { TaskAttachmentData } from '@/network/api/tasks/types'
+import type { TaskAttachmentData } from '@/types/taskAttachments'
 
 import { ref } from 'vue'
 
 import { downloadFile, taskAttachmentRawUrl } from '@/api'
-import { TasksApi } from '@/network/api/tasks'
+import { listTaskAttachments } from '@/api/taskAttachments'
 
 /**
  * 一道题的材料清单。
@@ -24,7 +24,7 @@ export function useTaskAttachments() {
       return
     }
     try {
-      const { data } = await TasksApi.listAttachments(taskId)
+      const data = await listTaskAttachments(taskId)
       attachments.value = data.attachments ?? []
       canDownload.value = data.canDownload ?? false
     } catch {
