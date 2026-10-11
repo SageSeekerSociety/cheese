@@ -7,6 +7,9 @@
  */
 import type { SpaceAnnouncement } from '@/types/spaces'
 import type { Row } from '@/views/spaces/detail/MembersView.vue'
+import type { TemplateDraft } from '@/views/spaces/detail/templateDraft'
+
+import { blankTemplate } from '@/views/spaces/detail/templateDraft'
 
 // ---- 成员（MembersView）----------------------------------------------------
 
@@ -39,4 +42,11 @@ export function announcement(over: Partial<SpaceAnnouncement> = {}): SpaceAnnoun
     author: { id: 1, username: 'cheese', nickname: '芝士', avatarId: null },
     ...over,
   }
+}
+
+// ---- 题目模板表单（TemplateFormView）--------------------------------------
+
+/** 一份模板草稿：`templateDraft.ts` 的 `TemplateDraft`。底子是新建时的空白草稿。 */
+export function templateDraft(over: Partial<TemplateDraft> = {}): TemplateDraft {
+  return { ...blankTemplate(), name: '个人题模板', ...over }
 }

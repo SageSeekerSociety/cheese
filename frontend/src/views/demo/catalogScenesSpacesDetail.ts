@@ -6,16 +6,20 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { announcement, memberRow } from './catalogScenesSpacesDetailFixtures'
+import { announcement, memberRow, templateDraft } from './catalogScenesSpacesDetailFixtures'
 
 import AnnouncementsView from '@/views/spaces/detail/AnnouncementsView.vue'
 import MembersView from '@/views/spaces/detail/MembersView.vue'
+import TemplateFormView from '@/views/spaces/detail/TemplateFormView.vue'
 
 /** 画面本来要装 Vuetify 和一套语言包。 */
 const UI: CatalogNeed[] = ['vuetify', 'i18n']
 
 /** 成员页的画面里「邀请去哪」交给路由解析，所以场景里也把路由装上，落点是空白的通配页。 */
 const UI_TR: CatalogNeed[] = [...UI, 'router']
+
+/** 模板表单回列表那一条（`SpacesDetailSettingsTemplates`）：画面只把它透给 NavLink。 */
+const LIST_ROUTE = { name: 'SpacesDetailSettingsTemplates', params: { spaceId: 8 } }
 
 export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
   {
@@ -95,6 +99,36 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
         note: '名单没读出来：错误替换整个列表区，不落进「暂无成员」—— 那会让失败看着像本来就没人。',
         props: { failed: true, errorDetail: '加载成员失败' },
         expect: '加载成员失败',
+      },
+    ],
+  },
+  {
+    id: 'template-form-view',
+    title: 'TemplateFormView',
+    about:
+      '「题目模板」下一级那张整页表单的画面：左上角回模板列表，下面几摞字段（名称/描述/题目标题、题目默认设置、题目描述编辑器）绑在一份草稿上。认路、读模板、真保存都在容器 `TemplateForm.vue` 里；画面只收 `initial` 草稿、发 `submit`。',
+    file: 'src/views/spaces/detail/TemplateFormView.vue',
+    component: TemplateFormView,
+    // 回列表那一条走 `NavLink`，没装路由就退化成点不动的字（`NavLink.vue` 文件头那
+    // 一句）；表单里那颗带 `to` 的 `BaseButton` 同理。所以这里不装路由 —— 装上一套
+    // 不认识这条去处的路由反而会在解析时抛「No match for」。
+    needs: UI,
+    args: { initial: templateDraft(), isEditing: false, listRoute: LIST_ROUTE },
+    states: [
+      {
+        name: '新建一张模板',
+        note: '空表单：标题是「创建题目模板」，各字段空着，底下取消 / 保存两颗。',
+        props: { initial: templateDraft({ name: '', description: '', title: '' }), isEditing: false },
+        expect: '创建题目模板',
+      },
+      {
+        name: '改一张已有的模板',
+        note: '带值进来：标题变成「编辑题目模板」，名称那一格摆着读回来的名字。',
+        props: {
+          initial: templateDraft({ name: '团队题模板', submitterType: 'TEAM', rank: 2 }),
+          isEditing: true,
+        },
+        expect: '编辑题目模板',
       },
     ],
   },
