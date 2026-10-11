@@ -141,9 +141,15 @@ model_list:
       api_base: os.environ/RUC_DEEPSEEK_API_BASE
       api_key: os.environ/RUC_DEEPSEEK_API_KEY_1
       order: 1
-      # Used internally without a price of its own. The official rates are the
-      # estimate, so the budget brake behaves the same on either backend.
-      input_cost_per_token: 0.0000003
+      # Used internally without a price of its own: the price only drives the
+      # budget brake, and a conversation should spend the same here as on
+      # DeepSeek's API. The official miss rate does not do that. DeepSeek's API
+      # answers about 94% of agent input from its cache; RUC's per-node caches
+      # answered under 1% of it (2026-10-09 to 10-11), so every input token was
+      # billed as a miss, about 15 times what the same work cost there. Input
+      # is priced at DeepSeek's blended rate instead:
+      # 0.06 × $0.30/M + 0.94 × $0.006/M ≈ $0.0236/M.
+      input_cost_per_token: 0.0000000236
       output_cost_per_token: 0.0000012
       cache_read_input_token_cost: 0.000000006
     # Each row merges its own copy: LiteLLM writes the deployment id into
