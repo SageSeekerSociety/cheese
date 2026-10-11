@@ -98,7 +98,7 @@ describe('project settings', () => {
     }
   })
 
-  it('shows the hosted repository without offering a GitHub repository connection', async () => {
+  it('shows the hosted repository without offering a GitHub connection or a link to the forge', async () => {
     vi.mocked(api.getForgeConnection).mockResolvedValue({
       kind: 'forgejo',
       connected: true,
@@ -109,9 +109,8 @@ describe('project settings', () => {
     try {
       expect(wrapper.element.querySelector('[data-testid="forge-repository"]')?.textContent).toContain('由平台托管')
       expect(wrapper.element.querySelector('[data-testid="github-repository"]')).toBeNull()
-      expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')?.getAttribute('href')).toBe(
-        'https://forge.example/project/code'
-      )
+      // Nobody has an account on the platform's forge: a link there lands on a sign-in page.
+      expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')).toBeNull()
       expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')?.textContent).toContain('当前已开启')
       expect(api.setForgeAttribution).not.toHaveBeenCalled()
     } finally {
