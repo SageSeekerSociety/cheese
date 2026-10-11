@@ -20,6 +20,7 @@ import {
   ARTIFACT_VERSIONS_WITHOUT_FILE,
   teamProfile,
 } from './catalogSharedFixtures'
+import { VIEW_ACCOUNT_ENTRIES } from './catalogViewAccount'
 
 import ArtifactVersionList from '@/views/artifact/ArtifactVersionList.vue'
 import SpaceReviewNoticeView from '@/views/spaces/detail/SpaceReviewNoticeView.vue'
@@ -32,6 +33,8 @@ const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 const join = async () => {}
 
 export const VIEW_ENTRIES: CatalogEntry[] = [
+  // 账号那一组整页（登录进门到设置密码的每一屏）单放一册，展开进来。
+  ...VIEW_ACCOUNT_ENTRIES,
   {
     id: 'artifact-version-list',
     title: 'ArtifactVersionList',

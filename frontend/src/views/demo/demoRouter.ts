@@ -24,8 +24,11 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
   component: blank,
 }))
 
-/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表），它们各要一条真名字。 */
+/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表，以及登录页、空间任务列表、个人主页），它们各要一条真名字。 */
 const catalogTargets = [
+  { path: '/account/signin', name: 'SignIn', component: blank },
+  { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
+  { path: '/users/:handle', name: 'UserPage', component: blank },
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
