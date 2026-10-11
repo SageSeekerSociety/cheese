@@ -346,3 +346,37 @@ def test_deleting_a_pending_proposal_settles_its_line(client):
     [line] = _proposal_lines(client, room, skill["id"])
     assert "没有保存" in line["content"], line["content"]
     assert line["meta"]["state"] == "over"
+
+
+def test_a_teammates_edit_reaches_the_room_it_was_corrected_in(client):
+    project = _project(client)
+    written = client.post(
+        f"/projects/{project}/skills", json=METHOD, headers=PERSON
+    ).json()["data"]
+    room = _room(client, project, "组会")
+
+    edited = client.patch(
+        f"/skills/{written['id']}?topic={room}",
+        json={"body": "1. 先写结论\n2. 再列数字", "reason": "用户说结论放最前面"},
+    )
+    assert edited.status_code == 200, edited.text
+
+    listed = client.get(f"/projects/{project}/skills", headers=PERSON).json()["data"]
+    [skill] = listed["data"]
+    assert skill["state"] == "draft"
+    assert skill["source_topic_id"] == room, "the edit's card is not in the room"
+    [line] = _proposal_lines(client, room, written["id"])
+    assert "提议修改技能「项目周报」" in line["content"], line["content"]
+    assert line["meta"]["who"] == "human"
+
+    # A second correction in the same room updates the same card.
+    client.patch(
+        f"/skills/{written['id']}?topic={room}",
+        json={"body": "1. 先写结论\n2. 数字标来源", "reason": "还要标来源"},
+    )
+    assert len(_proposal_lines(client, room, written["id"])) == 1
+
+    client.post(f"/skills/{written['id']}/decline", headers=PERSON)
+    [line] = _proposal_lines(client, room, written["id"])
+    assert "修改没有保存" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"

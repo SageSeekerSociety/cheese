@@ -12,6 +12,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -205,6 +206,62 @@ async def proposals_in_room(
     ]
 
 
+def _post_line(
+    db: AsyncSession,
+    row: ProjectSkill,
+    room_id: uuid.UUID,
+    line: str,
+    detail: str,
+    *,
+    edit: bool = False,
+) -> None:
+    """The room's line about a teammate's proposal: what it is, and a way to
+    the card a person saves it from."""
+    db.add(
+        Block(
+            id=uuid.uuid4(),
+            project_id=row.project_id,
+            conversation_id=room_id,
+            author="system",
+            author_type=AuthorType.platform,
+            kind=BlockKind.event,
+            content=line,
+            # Added as a row, not through `BlockRepository.add`, so the line's
+            # key is recorded here.
+            meta=with_keys(
+                {
+                    **notice(
+                        EVENT_SKILL_PROPOSED,
+                        severity=SEVERITY_INFO,
+                        # It waits on a person saving or declining it.
+                        who=WHO_HUMAN,
+                        detail=detail,
+                        detail_label=say("labelSkillToConfirm"),
+                    ),
+                    "skill_id": str(row.id),
+                    **({"edit": True} if edit else {}),
+                },
+                content=line,
+            ),
+        )
+    )
+
+
+async def _has_open_line(
+    db: AsyncSession, room_id: uuid.UUID, skill_id: uuid.UUID
+) -> bool:
+    """Whether the room already has a line about this skill nobody decided on."""
+    rows = await db.scalars(
+        select(Block.meta).where(
+            Block.conversation_id == room_id,
+            Block.kind == BlockKind.event,
+            Block.meta["event_type"].as_string() == EVENT_SKILL_PROPOSED,
+            Block.meta["skill_id"].as_string() == str(skill_id),
+        )
+    )
+    return any((meta or {}).get("state") != "over" for meta in rows)
+
+
 @router.post("/topics/{topic_id}/skills")
 async def create_skill(
     topic_id: uuid.UUID, body: SkillIn, db: DbSession, resolver: ActorResolverDep
@@ -232,37 +289,12 @@ async def create_skill(
         proposal=proposal,
     )
     if by_agent:
-        line = say("skillProposed", title=row.title)
-        db.add(
-            Block(
-                id=uuid.uuid4(),
-                project_id=place.project_id,
-                conversation_id=place.room_id,
-                author="system",
-                author_type=AuthorType.platform,
-                kind=BlockKind.event,
-                content=line,
-                # Added as a row, not through `BlockRepository.add`, so the
-                # line's key is recorded here.
-                meta=with_keys(
-                    {
-                        **notice(
-                            EVENT_SKILL_PROPOSED,
-                            severity=SEVERITY_INFO,
-                            # It waits on a person saving or declining it.
-                            who=WHO_HUMAN,
-                            detail=say(
-                                "skillProposedDetail",
-                                description=row.description,
-                                body=row.body,
-                            ),
-                            detail_label=say("labelSkillToConfirm"),
-                        ),
-                        "skill_id": str(row.id),
-                    },
-                    content=line,
-                ),
-            )
+        _post_line(
+            db,
+            row,
+            place.room_id,
+            say("skillProposed", title=row.title),
+            say("skillProposedDetail", description=row.description, body=row.body),
         )
     await db.commit()
     await service.publish(place.project_id)
@@ -359,8 +391,10 @@ async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
         event_type=EVENT_SKILL_PROPOSED,
         key="skill_id",
         value=row.id,
-        content=say(
-            "skillProposalSaved" if saved else "skillProposalNotSaved",
+        content=lambda meta: say(
+            ("skillEditSaved" if saved else "skillEditNotSaved")
+            if meta.get("edit")
+            else ("skillProposalSaved" if saved else "skillProposalNotSaved"),
             title=row.title,
         ),
     )
@@ -423,6 +457,27 @@ async def update_skill(
         changes=body.model_dump(exclude_unset=True, exclude={"reason"}),
         proposal={"reason": body.reason.strip()} if by_agent else None,
     )
+    if by_agent and topic is not None:
+        # The card goes where the teammate was corrected: the person who just
+        # corrected it decides there, as with a new skill.
+        room_id = (await TopicService(db).place_or_404(topic)).room_id
+        row.source_topic_id = room_id
+        if not await _has_open_line(db, room_id, row.id):
+            edit = row.shipped_revision > 0
+            _post_line(
+                db,
+                row,
+                room_id,
+                say("skillEditProposed" if edit else "skillProposed", title=row.title),
+                say(
+                    "skillEditProposedDetail", reason=body.reason.strip(), body=row.body
+                )
+                if edit
+                else say(
+                    "skillProposedDetail", description=row.description, body=row.body
+                ),
+                edit=edit,
+            )
     if pending and not by_agent:
         # A person's own edit is what gets saved; the teammate's wording is not.
         await _settled(db, row, saved=False)
