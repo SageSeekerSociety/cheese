@@ -30,8 +30,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
-from app.domain.machine.models import MachineStatus
-from app.domain.machine.repositories import CloudHostRepository
+from app.domain.machine.services import HostPool, host_failed
 from app.domain.membership.roster import roster
 from app.domain.membership.services import MemberService
 from app.domain.project.environment import EnvironmentConfig, project_environment
@@ -183,17 +182,14 @@ async def get_room_environment(
     topic = await room(db, project_id, topic_id, viewer=user)
     binding = await sql_device_service(db).topic_binding(topic_id)
     if binding is None:
-        hosts = [
-            host
-            for _home, host in await CloudHostRepository(db).room_homes(
-                topic_id, str(topic.resource_id or topic.id)
-            )
-        ]
+        hosts = await HostPool(db).room_hosts(
+            topic_id, str(topic.resource_id or topic.id)
+        )
         if not hosts:
             # No sandbox is placed until a session requests execution. A chat
             # message alone is not a pending placement.
             state = {"state": "unbound"}
-        elif any(host.status == MachineStatus.error for host in hosts):
+        elif any(host_failed(host) for host in hosts):
             log = say("envSandboxFailed")
             state = {"state": "failed", "log": log, **notice_keys(log=log)}
         else:
