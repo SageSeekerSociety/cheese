@@ -873,9 +873,7 @@ async def topic_status(
     await _actor_in_place(resolver, place)
     filed, _ = await AcceptService(db).list_for_topic(place.room_id)
     cards = [
-        card
-        for card in filed
-        if place.task is None or card.task_id == place.task.id
+        card for card in filed if place.task is None or card.task_id == place.task.id
     ]
     credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
