@@ -137,16 +137,15 @@ def _c1_violation() -> dict[str, str]:
     return {"app/core/jobs.py": "from app.api.deps import get_db\n"}
 
 
-#: The two-node cycle the seed below plants. `_REAL_C3_EDGE` is a cut of it (the
-#: checker needs it, so it is never stale); `_BOGUS_C3_PAIR` names modules that
-#: exist but do not import (so the checker calls exactly that entry unused).
-_REAL_C3_EDGE = "app.domain.bar.services -> app.domain.alpha.services"
+#: The two-node cycle the seed below plants. `_REAL_C3_EDGE` is a cut of it that
+#: the checker needs (so it is never stale) but that a recompute does *not*
+#: name — a recompute names the opposite edge. That is the point: a baseline
+#: refreshed from the recompute would swap one live edge for the other, so the
+#: tests below can tell a stale-only drop apart from writing the recomputed cut.
+#: `_BOGUS_C3_PAIR` names modules that exist but do not import, so the checker
+#: calls exactly that entry unused.
+_REAL_C3_EDGE = "app.domain.alpha.services -> app.domain.bar.services"
 _BOGUS_C3_PAIR = "app.domain.alpha.services -> app.domain.bar.models"
-
-
-def _c3_seed() -> dict[str, str]:
-    """The seed tree with a real C3 cycle, so a frozen cut is required."""
-    return {**_cycle_files(), "app/domain/bar/models.py": "class Bar:\n    ...\n"}
 
 
 def _c3_config(bogus: bool) -> str:
@@ -213,20 +212,23 @@ def test_a_wrong_subtitle_is_refused():
         bb.parse(text)
 
 
-def test_an_ignore_imports_above_the_marker_is_refused(tmp_path):
+@pytest.mark.parametrize("spelling", ["ignore_imports", "Ignore_Imports"])
+def test_an_ignore_imports_above_the_marker_is_refused(tmp_path, spelling):
     # The generated block is rebuilt on a rewrite; options above the marker are
     # kept verbatim. An `ignore_imports` there would keep silencing a real C1
     # violation while never being counted — and with the generated block empty it
     # would not even leave a stale warning, so the refresh would cry "unchanged".
     # Give the run something that *would* change, so the only thing stopping a
     # write is this guard, and require the file back untouched and a refusal.
+    # The spelling varies because configparser lower-cases option names, so the
+    # guard must see the option whatever case it is written in.
     def smuggle(lines: list[str]) -> list[str]:
         marker = next(
             i for i, line in enumerate(lines) if line.strip() == bb.MARKER.strip()
         )
         return [
             *lines[:marker],
-            "ignore_imports =",
+            f"{spelling} =",
             "    app.core.jobs -> app.api.deps",
             *lines[marker:],
         ]
@@ -309,14 +311,48 @@ def test_a_wildcard_entry_is_refused():
         bb.parse(text)
 
 
-def test_an_unrecognised_ignore_imports_is_refused():
+@pytest.mark.parametrize("spelling", ["ignore_imports", "Ignore_Imports"])
+def test_an_unrecognised_ignore_imports_is_refused(spelling):
+    # A section with no generated block (a structural contract) may not smuggle
+    # in an `ignore_imports` either — the same guard, whatever the case.
     text = _edit_section(
         _empty_config(),
         "turn-layers",
-        lambda lines: [*lines, "ignore_imports =", "    app.api -> app.domain"],
+        lambda lines: [*lines, f"{spelling} =", "    app.api -> app.domain"],
     )
     with pytest.raises(bb.ConfigShapeError):
         bb.parse(text)
+
+
+@pytest.mark.parametrize("spelling", ["ignore_imports", "Ignore_Imports"])
+def test_an_unknown_contract_with_ignore_imports_is_refused(spelling):
+    # A contract this script does not know may not carry exemptions at all: it
+    # would run and silence imports while the refresh never counts them.
+    text = (
+        _empty_config()
+        + "\n[importlinter:contract:custom-thing]\n"
+        + f"{spelling} =\n"
+        + "    app.api -> app.domain\n"
+    )
+    with pytest.raises(bb.ConfigShapeError, match="not one of the contracts"):
+        bb.parse(text)
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("ignore_imports =", True),
+        ("Ignore_Imports =", True),
+        ("  ignore_IMPORTS = app.a -> app.b", True),
+        ("# ignore_imports are listed below", False),
+        ("    app.core.jobs -> app.api.deps", False),
+        ("name = ignore_imports", False),
+    ],
+)
+def test_the_ignore_imports_key_is_matched_case_insensitively(line, expected):
+    # Only the option key counts, and only up to the first `=`: a comment or a
+    # value that merely mentions the word is not the option.
+    assert bb._is_ignore_imports(line) is expected
 
 
 def test_a_block_on_a_structural_contract_is_refused():
@@ -417,19 +453,29 @@ def test_a_new_c3_violation_is_never_frozen(tmp_path):
 
 def test_the_c3_stale_pair_is_stale_to_the_real_checker(tmp_path, monkeypatch):
     # The premise of the three tests below: the checker really calls the bogus
-    # pair unused while the cut is still needed. If this ever stopped holding,
-    # those tests would silently stop exercising the drop.
-    config = _plant(tmp_path, _c3_config(bogus=True), _c3_seed())
+    # pair unused while the cut is still needed, and a recompute names the
+    # *other* cut of the same cycle. If either stopped holding, those tests
+    # would silently stop exercising the drop or stop telling it apart from a
+    # recompute.
+    config = _plant(tmp_path, _c3_config(bogus=True), _cycle_files())
     monkeypatch.chdir(tmp_path)
     code, stale = bb.check_tree(config)
     assert code == bb.OK, "the pair plus the cut is not a passing baseline"
     assert stale[CYCLE] == [_BOGUS_C3_PAIR]
 
+    recomputed = bb.recompute(_c3_config(bogus=True))[CYCLE]
+    assert _REAL_C3_EDGE not in recomputed, (
+        "the seed's recompute names the frozen cut, so these tests could not "
+        "tell a stale-only drop apart from writing the recomputed cut"
+    )
+
 
 def test_a_stale_c3_entry_is_dropped_and_the_cut_kept(tmp_path):
     # The one path where C3 shrinks: `--update` drops the checker's stale entry
-    # and keeps the real cycle-breaker, which a recompute might not have named.
-    config = _plant(tmp_path, _c3_config(bogus=True), _c3_seed())
+    # and keeps the frozen cycle-breaker. A recompute names the *other* cut, so
+    # a refresh that wrote the recompute would replace the kept edge — which is
+    # exactly what this pins down.
+    config = _plant(tmp_path, _c3_config(bogus=True), _cycle_files())
 
     updated = _run(tmp_path, "--update")
     assert updated.returncode == bb.OK, updated.stdout + updated.stderr
@@ -445,7 +491,7 @@ def test_a_stale_c3_entry_is_dropped_and_the_cut_kept(tmp_path):
 
 
 def test_c3_dry_run_reports_the_drop_and_writes_nothing(tmp_path):
-    config = _plant(tmp_path, _c3_config(bogus=True), _c3_seed())
+    config = _plant(tmp_path, _c3_config(bogus=True), _cycle_files())
     before = config.read_text()
 
     result = _run(tmp_path, "--update", "--dry-run")
