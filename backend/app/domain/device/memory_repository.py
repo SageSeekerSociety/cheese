@@ -13,9 +13,8 @@ from app.domain.device.repository import (
     Device,
     HostHealth,
     SandboxCheck,
-    TopicDevice,
 )
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 
 
 class InMemoryDeviceRepository:
@@ -23,7 +22,6 @@ class InMemoryDeviceRepository:
         self._codes: dict[str, AuthCode] = {}
         self._devices: dict[str, Device] = {}
         self._hosted_device_ids: set[str] = set()
-        self._topic_device: dict[uuid.UUID, TopicDevice] = {}
         self._health: dict[str, HostHealth] = {}
         self._sandbox: dict[str, SandboxCheck] = {}
 
@@ -120,28 +118,6 @@ class InMemoryDeviceRepository:
     async def list_team_ids(self, device_id: str) -> list[int]:
         device = self._devices.get(device_id)
         return list(device.team_ids) if device is not None else []
-
-    async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None:
-        return self._topic_device.get(topic_id)
-
-    async def list_topic_bindings(self, device_id: str) -> list[TopicDevice]:
-        return [
-            binding
-            for binding in self._topic_device.values()
-            if binding.device_id == device_id
-        ]
-
-    async def bind_topic_device(
-        self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
-    ) -> None:
-        # write-once: never overwrite an existing pin (affinity never drifts).
-        self._topic_device.setdefault(
-            topic_id,
-            TopicDevice(topic_id=topic_id, device_id=device_id, visibility=visibility),
-        )
-
-    async def release_topic_device(self, topic_id: uuid.UUID) -> None:
-        self._topic_device.pop(topic_id, None)
 
     # -- machine health (#186) ---------------------------------------------
 

@@ -814,7 +814,7 @@ export interface Notification {
 
 // A pool listing in the 市场 catalog / a project's settings selector.
 export interface PoolListing {
-  kind: 'ai' | 'compute' | 'visibility'
+  kind: 'ai' | 'compute'
   id: string
   label: string
   tier: string
@@ -836,8 +836,8 @@ export interface MarketPools {
 export interface MarketNode {
   id: string
   label: string
-  // Which compute pool this node IS — the same id the 市场 catalogue lists.
-  kind: 'device' | 'cloud'
+  // Which sandbox spec this node IS — the same id the 市场 catalogue lists.
+  kind: 'standard' | 'vm' | 'devices_of'
   online: boolean
   // Whether an unconfigured topic lands on this node.
   current: boolean

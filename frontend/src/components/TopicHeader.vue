@@ -116,10 +116,6 @@ watch(
   }
 )
 
-// 有 AI 队友能访问整台机器。工作电脑写在成员名册里，这件事不能跟着收进名册：它是
-// 权限，不是设置，要一直看得见。名册读到了就告诉这里。
-const machineNotice = ref<string | null>(null)
-
 // 手机上话题列表没有行尾那颗 ⋯，改名、归档原本只有长按那一行才找得到。⋯ 面板里
 // 放的是同一份（topicActions），只是这里重命名另起一页。
 const nav = useNavigation()
@@ -201,9 +197,6 @@ useCommands(roomCommands)
         <span class="topic-header__meta">
           <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
           <span v-if="isWorkTopic && state" class="pr-state" :class="state.cls">{{ state.label }}</span>
-          <span v-if="machineNotice !== null" class="topic-header__machine" :title="machineNotice || undefined">
-            <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
-          </span>
           <span v-if="!connected" class="topic-header__disconnected" role="status">{{
             t('work.room.header.disconnected')
           }}</span>
@@ -220,7 +213,6 @@ useCommands(roomCommands)
         :project-id="topic.project_id"
         :project-members="members"
         :me="me"
-        @machine-access="machineNotice = $event"
         @manager="managerName = $event"
       />
 
@@ -417,14 +409,6 @@ useCommands(roomCommands)
   color: var(--warn-ink);
   font-size: 12px;
   flex: 0 0 auto;
-}
-.topic-header__machine {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
-  color: var(--warn-ink);
-  font-size: 12px;
 }
 /* 状态标 — semantic for 进行中, muted otherwise. Same three faces as the chat
    header still shows for 私聊 / 本体; the labels come from lib/topicState.ts. */

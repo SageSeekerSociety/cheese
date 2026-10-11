@@ -1,4 +1,4 @@
-"""A room is never held by a work computer it cannot use.
+"""A session is never held by a machine it cannot use.
 
 Two ways a room used to be stuck for good: its machine's install stopped
 half-way (the machine went offline, or the request was abandoned) and every
@@ -17,10 +17,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.domain.agent import execution
-from app.domain.topic.models import Topic
+from app.domain.agent_session.services import AgentSessionService
 from tests.integration.test_switch_pushes_first import (
     PUSHED,
+    _environment,
     _machines,
+    _owner_id,
     _room,
     _session,
     _to_new,
@@ -30,8 +32,6 @@ pytestmark = pytest.mark.anyio
 
 
 async def _lease_is(client, room, **changes):
-    from app.domain.agent_session.services import AgentSessionService
-
     async with client.test_factory() as db:
         session = await AgentSessionService(db).by_id(room.session_id)
         session.work_lease = {**session.work_lease, **changes}
@@ -62,15 +62,12 @@ async def test_an_install_that_stopped_does_not_hold_the_room(client, monkeypatc
 
     # Its agent switches by itself: nothing is refused over work that could
     # not be pushed, and an install that stopped is no allocation in progress.
-    agent = client.put(
-        room.path,
-        headers=room.agent,
-        json={"profile": "device", "device_id": room.new_device},
-    )
+    sandbox = {"kind": "sandbox", "spec": f"devices_of:{await _owner_id(client)}"}
+    agent = client.put(room.path, headers=room.agent, json={"environment": sandbox})
 
     assert agent.status_code == 200, agent.text
     session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert await _environment(client, room) == sandbox
     assert session.work_lease is None
     assert session.execution_request["retained_leases"] == [lease]
     remote.assert_not_awaited()
@@ -85,12 +82,11 @@ async def test_a_machine_waiting_on_its_environment_pushes_and_switches(
     )
     remote = _machines(monkeypatch)
 
-    switched = client.put(room.path, headers=room.agent, json=_to_new(room))
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
     assert switched.status_code == 200, switched.text
     assert remote.await_args.args[2]["subtype"] == "checkpoint"
-    session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert (await _environment(client, room))["device_id"] == room.new_device
 
 
 async def test_an_install_in_progress_still_holds_the_switch(client, monkeypatch):
@@ -122,16 +118,12 @@ async def test_anyone_may_leave_a_machine_its_owner_unbound(client, monkeypatch,
     assert unbound.status_code == 200, unbound.text
     remote = _machines(monkeypatch, push=PUSHED)
 
-    switched = client.put(
-        room.path,
-        headers=room.agent,
-        json={"profile": "device", "device_id": room.new_device},
-    )
+    switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
     assert switched.status_code == 200, switched.text
     remote.assert_not_awaited()
     session = await _session(client, room)
-    assert session.execution_request["choice"]["device_id"] == room.new_device
+    assert (await _environment(client, room))["device_id"] == room.new_device
     # Nothing can reach that machine again, so nothing waits on it for cleanup.
     assert session.execution_request["retained_leases"] == []
 
@@ -175,17 +167,21 @@ async def test_a_room_whose_named_machine_was_unbound_says_so(client, monkeypatc
 
     assert answer.status_code == 200, answer.text
     said = answer.json()["data"]["unavailable"]
-    assert "解绑" in said and "重新选择" in said
+    assert "解绑" in said and "重新选" in said
     hub.exec.assert_not_awaited()
 
 
-async def test_an_automatic_room_leaves_an_unbound_machine_for_an_online_one(
+async def test_a_sandbox_leaves_an_unbound_machine_for_an_online_one(
     client, monkeypatch
 ):
     room = await _room(client)
     async with client.test_factory() as db:
-        topic = await db.get(Topic, room.topic_id)
-        topic.compute_config = {"name": "自有设备 · 自动选择", "profile": "device"}
+        await AgentSessionService(db).set_environment(
+            room.conversation_id,
+            room.agent_handle,
+            {"kind": "sandbox", "spec": f"devices_of:{await _owner_id(client)}"},
+            chosen_by=None,
+        )
         await db.commit()
     assert (
         client.delete(

@@ -388,12 +388,12 @@ def test_pruning_a_skill_removes_the_links_in_it_and_nothing_they_name(tmp_path)
 
 
 @sandboxed
-def test_a_room_given_full_machine_access_after_running_isolated_runs_outside_it(
+def test_a_session_moved_from_a_sandbox_to_its_owners_machine_runs_outside_it(
     owner, rooms, capsys
 ):
-    """The owner gives an isolated room the whole machine: its next install
-    replaces the sandboxed executor with one over the machine, and nothing
-    out here goes on treating the room as sandboxed."""
+    """The machine's owner moves a session from a sandbox to run directly on
+    the machine: its next install replaces the sandboxed executor with one over
+    the machine, and nothing out here goes on treating it as sandboxed."""
     room = rooms()
     assert environment_runner.sandbox_process(room.home) is not None
     assert room.bash(f'ls "{owner}/.cheese/sandboxes" 2>/dev/null || echo hidden') == (

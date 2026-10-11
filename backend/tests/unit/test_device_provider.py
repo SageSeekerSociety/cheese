@@ -27,7 +27,7 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     device_store_dir,
 )
-from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S, ScreenSetupError
 from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
@@ -1106,21 +1106,6 @@ async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error
     assert "没有应答" in text and "最近一帧是 3 秒前" in text, text
     assert "TimeoutError" not in text, "the exception class is not a reason"
     assert not hub.opened, "no screen is opened on a machine that did not answer"
-
-
-async def test_no_online_device_is_a_clean_error():
-    async def resolver(_project_id, _topic_id):
-        return None  # nothing online / bound
-
-    channel = DeviceChannel(hub=FakeHub(), device_resolver=resolver)
-    with pytest.raises(ScreenSetupError):
-        await channel.precheck(
-            SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code"),
-            needs_place=True,
-        )
-
-
-# --- where a room lives on the machine ---------------------------------------
 
 
 def test_rooms_never_share_a_home_but_always_share_their_project_store():
