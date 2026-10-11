@@ -140,7 +140,7 @@ const activityTotal = computed(() => {
 })
 
 // ---- 项目 ----
-function roleLabel(role: ProfileProjectRole | 'agent'): string {
+function roleLabel(role: ProfileProjectRole): string {
   if (role === 'agent') return t('users.profile.role.agent')
   return role === 'owner' ? t('users.profile.role.owner') : t('users.profile.role.team')
 }
