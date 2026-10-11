@@ -61,8 +61,48 @@
 - 注释与代码不一致使引入 bug 概率约 1.5 倍；Linux 内核 v6.18-rc1 查出 869 处指向已消失函数的陈旧注释。
 - 「文件必须有描述」的检查（`jsdoc/require-file-overview`、ruff `D100`）只判断存在、不判断正确。
 
-## 5. 未核实 / 待实测
+## 5. 六路 workflow 的补充（w1hax2kog，7 个 agent，453k token）
+
+这一轮把上面几节的判断压得更实，并推翻了我原先「描述值得做」的推荐。
+
+**三条路的名分**
+
+- **每目录一份手写说明 = 事实标准**：agents.md（自述 6 万+ 项目，2026 起由 Linux Foundation 下的 AAIF 托管，规范repo 约 24.9k★）。Codex 原生按目录读：root→cwd 逐层、每目录最多一个、近者覆盖远者、上限 32 KiB（`learn.chatgpt.com/docs/agent-configuration/agents-md`）。真实大仓量级：airflow 14、vscode 8、openai/codex 2、rust 2——**无一做到每文件**。
+- **每文件/目录 schema 描述 + 生成索引 = 孤例或已死**：Agentic-Insights/codebase-context-spec（CCS）是最完整的 RFC 实现，已归档（最后推送 2025-04-08）；它自己的 `.context/index.md` 停在 2024-12-08，而仓库继续提交到 2024-12-15——**自证过期**；它想做的「LLM 生成描述」在 issue #16 只说「以后会加」，从未交付。aoci-spec/aoci-code（1,470★，单人）是唯一还活的同类，反而明文**禁止 AST/符号抽取/正则/模板生成**，要求语义模型手写。sno-ai/mda（680★）有 YAML frontmatter schema（description/doc-id/version/requires…，JSON Schema 2020-12 校验）。
+- **生成索引的工具几乎不写自然语言描述**：repomix（28.8k★）、aider repo map、code2prompt（7.7k★）、files-to-prompt、gitingest（15.9k★）——全是文件树 + 符号/签名 + token 数；code2prompt 自述「This map is not a dependency graph or semantic text search」。
+- **采纳度差约 4000 倍**（`gh api search/code`，2026-10-11）：`.context/index.md` 242 vs AGENTS.md 1,058,816 / CLAUDE.md 872,448 / llms.txt 180,224。
+
+**官方明确不要做**
+
+- Anthropic best-practices 的 ✅Include/❌Exclude 表：**「File-by-file descriptions of the codebase」在 ❌ 栏**，同栏还有「Anything Claude can figure out by reading code」。我复核过原文（`bp.md` 第 183 行）。
+- 官方推荐按目录分层的说明文件（monorepo/large-codebases 页），单文件目标 <200 行；索引用 glob/grep 即取，理由原文「bypassing the issues of stale indexing and complex syntax trees」；规模大就搬到 Skills/Plugins/MCP。反过来也警告按目录分层「随代码库增长难以治理，约定会漂移、文件会过时、根文件没人负责」。
+
+**实测：端到端那一半基本是负的**
+
+- **2602.11988**《Evaluating AGENTS.md: Are Repository-Level Context Files Helpful for Coding Agents?》——**这是直接测 AGENTS.md 的那篇**。结论：上下文文件一般不提升成功率，推理成本平均涨 **20% 以上**，跨模型/跨 agent/LLM 生成与人工提交都成立。**单独点名「仓库概述」（repository overviews）——正是给 agent 描述目录/文件——不有用**；有用的只有「非标准的编码约定」。
+- 2607.27250（预注册消融）：正确率效应界定在 ≤10–15pp，失败点在实现技能。
+- 2607.09691：UML 骨架 vs 删掉，解决率无差（N=70，p=0.75）；摘要答行为问题 4/45 vs 源码 27/45。
+- 2607.25431：静态 repo map 56 vs 按需探索 66 vs 按需候选+首读退役 79（200 题）。
+- 2608.13568：LSP 语义检索不比 grep 省 token，多花 6%–118%，且免费给 agent 也不用（使用率 0–6%）。
+- 定位侧的正面证据都不转化成功率：SemNav 68.33%→82.67% Hit@10、2607.11046 最高 +40% Hit@5、RepoGraph（2410.14684）、LocAgent 92.7%（2503.09089）。
+
+**运维成本（具体事故表）**
+
+- codeindex-sync（低星新项目，但有具体失败模式）：一次 rebase 触发几十个 hook→几十个索引进程抢 GPU；每个 agent 各自 checkout、重复建索引、路径一小时后就不存在；worker 中途死掉永久漏一个仓库；部分写入被记成功留下 claimed-but-empty 条目。因此内建 `verify --repair`。
+- 近年成批停更/归档：Mintlify Writer（2026-06 弃用并停托管版）、bloop（9,483★，2024-12-04 archived）、refact archived、RepoAgent（v0.2.0 停在 2024-12-23）、facebookresearch/DocAgent（2025-04-23 最后推送）。
+- 活得好的「由代码生成」路线是 aider repo map：不存人工描述、tree-sitter 从符号生成、每次按需重算、**不存在过期**；代价是只有符号和签名、没有语义。
+
+**越深越没人读（Augment 博客，中等可信度）**
+
+- AGENTS.md 100% 被发现、被引用文件 90%+ 会话被读、目录 README 80%+，但**嵌套 README 仅约 40%、孤儿文档 <10%**。
+- 有案例：一份记录旧架构（REST+polling）的 AGENTS.md 让 agent 做出「能用但架构错」的轮询方案，作者结论是「换一份更好的 AGENTS.md 不解决问题」。
+
+**没查到的**：「把 schema 描述写进每个源码文件头、专门给 AI 读」的主流先例——**空白**；「目录级描述懒展开」的工具——**没有任何工具字面这么做**；权威的目录级描述 schema 模板——没有；加描述 vs 不加的第三方 A/B——没有（所有 token 节省宣称都无第三方复现）。
+
+## 6. 未核实 / 待实测
 
 - codex harness 对说明文件的取法未核（本仓库代码未覆盖）。
 - 本仓 6706 文件、2828 py + 1450 ts/tsx 是否已到「结构索引失灵」区间，需实跑。
-- acodex、Cursor 等第三方 harness 的嵌套加载行为，本轮未逐一实测。
+- Cursor 等第三方 harness 的嵌套加载行为，本轮未逐一实测。
+- 2606–2610 那批 arXiv 论文只能从页面读到，本环境无法独立复现，也未找到第三方复核。
+- codegraph 的基准（省 88% 调用、62% token、44% 成本）是自评，量级（73,707★）异常，未证实。
