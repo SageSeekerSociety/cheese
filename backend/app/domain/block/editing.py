@@ -7,10 +7,12 @@ either; an agent's `todo_write` edits its checklist message through this same
 function.
 
 An edit does what sending the new text would have done, through the same
-code: the text is rewritten as it would have been stored, and whoever it newly
-@s is notified. The room sees the edit as a `block_updated` frame carrying the
-whole block, whose `meta.edited_at` it renders as 「已编辑」. An agent that
-already read the message is told it changed, the way a message reaches it.
+code: the text is rewritten as it would have been stored, whoever it newly
+@s is notified, and a teammate it newly names gets a turn of its own — the
+same delivery, on the same ledger, that a message naming it records (I13). The
+room sees the edit as a `block_updated` frame carrying the whole block, whose
+`meta.edited_at` it renders as 「已编辑」. An agent that already read the message
+is told it changed, the way a message reaches it.
 """
 
 import uuid
@@ -60,6 +62,12 @@ _EffectSent = TypeVar("_EffectSent", bound=EditedText, contravariant=True)
 
 
 class MentionEffects(Protocol[_EffectSent]):
+    """What an edit does about the names in its new text, before it commits.
+
+    Answers whether it started a teammate's turn: the caller lets the ledger out
+    once the edit is committed and shown, the way sending does.
+    """
+
     async def __call__(
         self,
         session: AsyncSession,
@@ -69,7 +77,7 @@ class MentionEffects(Protocol[_EffectSent]):
         /,
         *,
         before: str,
-    ) -> None: ...
+    ) -> bool: ...
 
 
 async def edit_message[Sent: EditedText](
@@ -103,8 +111,9 @@ async def edit_message[Sent: EditedText](
     before = block.content
     already_read = consumed_turn(block) is not None
     await blocks.replace_content(block, sent.text, checklist=checklist)
+    summoned = False
     if sent.roster is not None:
-        await notify_mentions(
+        summoned = await notify_mentions(
             session,
             sent,
             block,
@@ -134,7 +143,10 @@ async def edit_message[Sent: EditedText](
         await chat.notify_running_turn(
             block.conversation_id, _said(notice), blocks=[notice.id]
         )
-    if relayed:
+    # What somebody else now has to run: a card's line relayed to its task, and
+    # a teammate the new text named. Both wait in the ledger, and both are
+    # picked up here — after the commit, so whoever wakes reads the new text.
+    if relayed or summoned:
         await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return payload
 

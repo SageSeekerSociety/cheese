@@ -62,6 +62,13 @@ export function listProjectLibrary(projectId: string, query: LibraryQuery = {}):
   return request<LibraryPage>(`/projects/${encodeURIComponent(projectId)}/library?${libraryParams(query)}`)
 }
 
+/** 挑一份资料用的那一页：只要文件，不要文件夹——`@` 到的是一份东西，不是一个目录。
+ *  一次取几份由调用方定（`limit`）：菜单摆得下的比一屏少，取多了也是白取。 */
+export async function searchLibraryFiles(projectId: string, q: string, limit: number): Promise<LibraryFile[]> {
+  const page = await listProjectLibrary(projectId, { flat: true, q, limit })
+  return page.data.filter((row): row is LibraryFile => row.type === 'file')
+}
+
 /** 地址上点名的那一份：它不一定在已经取回来的那几页里。 */
 export function getLibraryFile(projectId: string, path: string): Promise<LibraryFile> {
   return request<LibraryFile>(

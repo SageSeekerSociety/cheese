@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../lib/libraryApi', async () => {
   const actual = await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')
-  return { ...actual, listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }) }
+  return { ...actual, searchLibraryFiles: vi.fn().mockResolvedValue([]) }
 })
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -35,7 +35,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import { listProjectLibrary } from '../../lib/libraryApi'
+import { searchLibraryFiles } from '../../lib/libraryApi'
 
 import RoomComposer from './RoomComposer.vue'
 
@@ -147,17 +147,12 @@ async function flush() {
 beforeEach(() => {
   // These assertions read the Chinese copy.
   setLocale('zh-CN')
-  vi.mocked(listProjectLibrary)
-    .mockReset()
-    .mockResolvedValue({ data: [], total: 0 } as never)
+  vi.mocked(searchLibraryFiles).mockReset().mockResolvedValue([])
 })
 
 describe('@ 候选：资料库是往里走一层', () => {
   it('没打字时资料库是一行入口，写着自己有几份文件', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({
-      data: [file('docs/plan.md'), file('img/shot.png')],
-      total: 2,
-    } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md'), file('img/shot.png')] as never)
     const { container, box } = mount()
 
     await fireEvent.update(box(), '@')
@@ -172,10 +167,11 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('点进资料库，文件按「文件 / 图片」分组', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({
-      data: [file('img/shot.png'), file('docs/plan.md'), file('img/photo.jpg')],
-      total: 3,
-    } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([
+      file('img/shot.png'),
+      file('docs/plan.md'),
+      file('img/photo.jpg'),
+    ] as never)
     const { container, box } = mount()
 
     await fireEvent.update(box(), '@')
@@ -189,7 +185,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('挑一份文件是把它附上，不是把它 @ 进正文', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, onAddLibraryFile, draft } = mount()
 
     await fireEvent.update(box(), '@')
@@ -205,10 +201,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('打了字就直接搜文件，人、话题、文件一起找', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({
-      data: [file('docs/plan.md'), file('docs/notes.md')],
-      total: 2,
-    } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md'), file('docs/notes.md')] as never)
     const { container, box } = mount()
 
     await fireEvent.update(box(), '@not')
@@ -220,7 +213,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('在资料库里按 Esc 是退回一级，@ 还留在正文里', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, draft } = mount()
 
     await fireEvent.update(box(), '@')
@@ -240,7 +233,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('资料库读不出来时菜单照样开，只是没有文件那一行', async () => {
-    vi.mocked(listProjectLibrary).mockRejectedValue(new Error('offline'))
+    vi.mocked(searchLibraryFiles).mockRejectedValue(new Error('offline'))
     const { container, box } = mount()
 
     await fireEvent.update(box(), '@')
@@ -253,7 +246,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('AI 队友排在最前，资料库那一行夹在它和群播之间', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box } = mount()
 
     await fireEvent.update(box(), '@')
@@ -286,7 +279,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   }
 
   it('资料库的头上有一颗「返回上一级」，点它回到一级，@ 还留在正文里', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, draft, getByRole } = mount()
 
     await fireEvent.update(box(), '@')
@@ -303,7 +296,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('@ 后面什么都没打时按退格，是退回一级，不是删掉 @', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, draft } = mount()
 
     await fireEvent.update(box(), '@')
@@ -318,7 +311,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('在资料库里打了字再按退格，删的是字，人还在这一层', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box } = mount()
 
     await fireEvent.update(box(), '@')
@@ -333,7 +326,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   })
 
   it('在资料库里按 ← 也是退回一级', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [file('docs/plan.md')], total: 1 } as never)
+    vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, draft } = mount()
 
     await fireEvent.update(box(), '@')
