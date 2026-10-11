@@ -259,9 +259,7 @@ class SessionService:
             .values(sudo_until=now + SUDO_WINDOW)
         )
 
-    async def started_at(
-        self, user_id: int, session_id: uuid.UUID
-    ) -> datetime | None:
+    async def started_at(self, user_id: int, session_id: uuid.UUID) -> datetime | None:
         """When the sign-in ``session_id`` began, if it is ``user_id``'s and not
         revoked; None otherwise.
 
