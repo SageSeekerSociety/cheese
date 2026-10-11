@@ -23,14 +23,13 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 import uuid
 from collections.abc import Iterable
 
-from sqlalchemy import Uuid, exists, func, literal, select, union_all
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.indexed_rows import SHOWN_ROWS
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.identity.handles import agent_handle_column
 
 
 async def message_reply_target(
@@ -157,28 +156,3 @@ async def reaction_summaries_for_blocks(
     same session so their effects and these summaries commit together.
     """
     return await BlockRepository(db).reactions_for_blocks(block_ids)
-
-
-async def rooms_an_agent_spoke_in(
-    session: AsyncSession, room_ids: Iterable[uuid.UUID]
-) -> set[uuid.UUID]:
-    """Which of these rooms an AI teammate has said something in on the main line:
-    a message or an attachment, the same test the room's starter cards retire on
-    (`useChatComposer.startersRetired`).
-
-    One index probe per room, so a busy room costs no more than an empty one.
-    """
-    probes = [
-        select(literal(room_id, Uuid)).where(
-            exists().where(
-                Block.conversation_id == room_id,
-                Block.kind.in_((BlockKind.message, BlockKind.attachment)),
-                Block.author_type == AuthorType.participant,
-                agent_handle_column(Block.author),
-            )
-        )
-        for room_id in set(room_ids)
-    ]
-    if not probes:
-        return set()
-    return set(await session.scalars(union_all(*probes)))

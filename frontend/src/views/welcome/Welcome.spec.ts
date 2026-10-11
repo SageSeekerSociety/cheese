@@ -13,7 +13,6 @@ const uploadAttachment = vi.fn()
 vi.mock('@/api', () => ({
   finishOnboarding: (a: unknown) => finishOnboarding(a),
   uploadAttachment: (...a: unknown[]) => uploadAttachment(...a),
-  setTopicComputeChoice: vi.fn(),
 }))
 const saveComposerDraft = vi.fn()
 vi.mock('@/lib/composerDrafts', () => ({ saveComposerDraft: (...a: unknown[]) => saveComposerDraft(...a) }))
@@ -38,10 +37,10 @@ const account = vi.hoisted(() => ({
 }))
 vi.mock('@/services/account', () => ({ default: account }))
 
-import WelcomeView from './WelcomeView.vue'
+import Welcome from './Welcome.vue'
 
 function mount(again = false) {
-  return render(WelcomeView, {
+  return render(Welcome, {
     props: { again },
     global: {
       plugins: [createVuetify({ components, directives }), i18n],
@@ -54,7 +53,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
   account.user = { id: 1, username: 'lin', nickname: '林小满', onboarded_at: null, work_role: null, organization: null }
-  finishOnboarding.mockResolvedValue({ project_id: 'p1', root_topic_id: 'general', not_invited: [] })
+  finishOnboarding.mockResolvedValue({ project_id: 'p1', root_topic_id: 'general', not_invited: [], on_device: false })
 })
 
 async function next(view: ReturnType<typeof mount>) {

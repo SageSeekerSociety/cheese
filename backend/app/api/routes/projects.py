@@ -42,7 +42,6 @@ from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import (
     awaiting_an_answer,
-    rooms_an_agent_spoke_in,
     weeklies_for_project,
 )
 from app.domain.conversation.services import rooms_of_inner
@@ -97,9 +96,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
-def _shelled(
-    project: Project, shell: Shell, team: TeamLabel | None, *, agent_spoke: bool
-) -> dict:
+def _shelled(project: Project, shell: Shell, team: TeamLabel | None) -> dict:
     """One project's wire payload: the 壳 it runs under, its team's handle and name.
 
     Neither is a column on `Project`, so neither can come from `model_validate`:
@@ -116,7 +113,6 @@ def _shelled(
                 "shell": ShellOut.of(shell),
                 "team_handle": team.handle if team else None,
                 "team_name": team.name if team else None,
-                "agent_spoke_in_general": agent_spoke,
             }
         )
         .model_dump(mode="json")
@@ -129,16 +125,8 @@ async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict
     teams = await team_service(db).labels_of(
         {p.team_id for p in projects if p.team_id is not None}
     )
-    spoke = await rooms_an_agent_spoke_in(
-        db, (p.root_topic_id for p in projects if p.root_topic_id is not None)
-    )
     return [
-        _shelled(
-            p,
-            shells[p.id],
-            teams.get(p.team_id) if p.team_id else None,
-            agent_spoke=p.root_topic_id in spoke,
-        )
+        _shelled(p, shells[p.id], teams.get(p.team_id) if p.team_id else None)
         for p in projects
     ]
 

@@ -48,12 +48,10 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.environments import check_allowed
 from app.domain.membership.services import InvitationService
 from app.domain.project.protection import BRANCH_PROTECTION_KEY
-from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.user.about import WorkRole, record_guide_answers
-from app.domain.user.repositories import UserProfileRepository
-from app.domain.user.services import UserProfileService, lookup_account
+from app.domain.user.services import lookup_account
 
 # The signed-in user answers for themselves and makes their own project:
 # `require_auth_user` is the whole check.
@@ -98,25 +96,22 @@ async def finish_onboarding(
     user = await record_guide_answers(
         session,
         auth_user.user_id,
+        nickname=payload.nickname,
         work_role=payload.work_role,
         organization=payload.organization,
     )
     if user is None:
-        raise NotFoundError("User not found")
-    if payload.nickname and payload.nickname.strip():
-        await UserProfileService(UserProfileRepository(session)).update_profile(
-            user_id=user.id, nickname=payload.nickname
-        )
+        raise NotFoundError()
 
-    project = await ProjectService(session).create(
+    projects = ProjectService(session)
+    project = await projects.create(
         name=payload.project_name,
         owner_handle=user.username,
         intent=payload.intent,
         project_id=payload.project_id,
     )
     if payload.solo:
-        repo = ProjectRepository(session)
-        await repo.lock_settings(project)
+        await projects.lock_settings(project)
         settings = {**(project.settings or {})}
         rules = settings.get(BRANCH_PROTECTION_KEY)
         settings[BRANCH_PROTECTION_KEY] = {

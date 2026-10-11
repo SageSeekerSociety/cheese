@@ -50,10 +50,6 @@ class ProjectOut(BaseModel):
     ai_mode: AiMode
     intent: str = ""
     root_topic_id: uuid.UUID | None
-    #: An AI teammate has said something in the project's 综合. Until then the
-    #: page opens the project on 综合, where the starter cards are, instead of
-    #: its overview. Filled by the route, like ``shell``.
-    agent_spoke_in_general: bool = False
     created_at: datetime
     #: Set while the owner has the project archived; the client shows the
     #: archived state instead of the workspace.

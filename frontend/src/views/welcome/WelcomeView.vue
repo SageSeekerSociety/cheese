@@ -1,34 +1,52 @@
 <script setup lang="ts">
-// 新手引导：一个项目都没有、也没走过引导的人登录后落在这里（router/home.ts
-// `landingForMember`），帮助菜单「新手引导」带 `?again=1` 再走一遍。
+// 新手引导的画面（页面是同目录的 Welcome.vue）。
 //
 // 五问：怎么称呼、主要用知是做什么、想先做成什么、和谁一起、芝士在哪干活。每个
-// 回答都有去处，右边的「你的项目」随回答长出来；点「建好项目」才真的建
-// （`POST /users/me/onboarding`），然后进它的「综合」，第一句请求已经写在输入框里，
-// 新手引导的浮窗接着带（composables/useProjectTour.ts）。
-import type { OnboardingAnswers, WorkRole } from '@/api'
-
+// 回答都有去处，右边的「你的项目」随回答长出来；点「建好项目」才把回答交出去
+// （`finish`）。建项目、进「综合」由页面做（Welcome.vue），这里只画五问。
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
-import { finishOnboarding, uploadAttachment } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BrandLockup from '@/components/common/BrandLockup.vue'
 import { t } from '@/i18n'
-import { saveComposerDraft } from '@/lib/composerDrafts'
-import { desktopBridge, startConnecting } from '@/lib/desktop'
-import { inDesktopApp } from '@/lib/desktopApp'
-import { refreshProjects } from '@/query/projects'
-import AccountService from '@/services/account'
+
+export type WorkRole = 'student' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
+
+/** 「建好项目」交出去的东西：建项目要的回答，加上建好以后要做的事。 */
+export interface WelcomeFinish {
+  answers: {
+    project_id: string
+    project_name: string
+    intent: string
+    nickname: string
+    work_role?: WorkRole | null
+    organization?: string
+    invitees: string[]
+    solo: boolean
+  }
+  /** 跳过了引导：只建一个以名字命名的项目，不写请求、不记身份。 */
+  skipAll: boolean
+  /** 写进「综合」输入框的第一句（带 @芝士），和要附上的文件。 */
+  draft: string
+  files: File[]
+  /** 桌面端选了「用这台电脑」。 */
+  onThisComputer: boolean
+}
 
 const props = defineProps<{
   /** 从帮助菜单再走一遍：从身份开始，回答预填上次的。 */
   again?: boolean
+  /** 账号上已有的：预填称呼、身份和单位，名字也用来给项目起默认名。 */
+  me: { username: string; nickname?: string | null; work_role?: string | null; organization?: string | null } | null
+  /** 在桌面端里：多一项「用这台电脑」。 */
+  desktop: boolean
+  busy: boolean
+  /** 上一次没建成的原因；空串表示没有。 */
+  failure: string
 }>()
-const router = useRouter()
+const emit = defineEmits<{ finish: [WelcomeFinish] }>()
 const again = props.again
-const me = AccountService.user
+const me = props.me
 
 // 每种身份四件事（文案在 welcome.tasks.<组>.<键>）；没对上的身份用通用的一组。
 const TASKS = {
@@ -83,10 +101,7 @@ const files = ref<File[]>([])
 const picker = ref<HTMLInputElement | null>(null)
 const solo = ref(true)
 const inviteText = ref('')
-const desktop = inDesktopApp()
 const onThisComputer = ref(false)
-const busy = ref(false)
-const failure = ref('')
 // 每走一遍引导选一次：重试补完同一个项目，不会建出第二个。
 const projectId = crypto.randomUUID()
 
@@ -125,10 +140,8 @@ function addFiles(list: FileList | null) {
   if (list) files.value = [...files.value, ...Array.from(list)]
 }
 
-async function finish(skipAll = false) {
-  busy.value = true
-  failure.value = ''
-  const answers: OnboardingAnswers = skipAll
+function finish(skipAll = false) {
+  const answers: WelcomeFinish['answers'] = skipAll
     ? {
         project_id: projectId,
         project_name: fallbackName.value,
@@ -147,57 +160,15 @@ async function finish(skipAll = false) {
         invitees: invitees.value,
         solo: solo.value,
       }
-  try {
-    const wantsDevice = !skipAll && desktop && onThisComputer.value
-    const done = await finishOnboarding({ ...answers, device_id: wantsDevice ? await thisComputer() : null })
-    if (wantsDevice && !done.on_device) toast.warning(t('welcome.deviceFailed'))
-    rememberOnAccount(skipAll)
-    const room = done.root_topic_id
-    if (room) {
-      const atts = []
-      for (const file of files.value) atts.push(await uploadAttachment(room, file))
-      // 输入框里那句和起手卡写进去的一样带 @：直接回车只发给成员，芝士不会接。
-      const draft = request.value ? `@${t('work.room.defaultAgentName')} ${request.value}` : ''
-      if (!skipAll && (draft || atts.length)) saveComposerDraft(room, { draft, reply: null, atts })
-    }
-    if (done.not_invited.length)
-      toast.warning(t('welcome.notInvited', { names: done.not_invited.join(t('welcome.preview.listSep')) }))
-    await refreshProjects()
-    await router.replace(
-      room
-        ? { name: 'workspace-topic', params: { projectId: done.project_id, topicId: room } }
-        : { name: 'workspace-project', params: { projectId: done.project_id } }
-    )
-  } catch (e) {
-    failure.value = t('welcome.failed', { reason: e instanceof Error ? e.message : String(e) })
-  } finally {
-    busy.value = false
-  }
-}
-
-// 账号上记下这次的回答：登录态里那份用户记录也要跟着变，否则同一个标签页回到首页
-// 时还以为没走过引导。
-function rememberOnAccount(skipAll: boolean) {
-  const user = AccountService.user
-  if (!user) return
-  AccountService.user = {
-    ...user,
-    onboarded_at: user.onboarded_at ?? new Date().toISOString(),
-    nickname: nickname.value.trim() || user.nickname,
-    ...(skipAll ? {} : { work_role: role.value, organization: organization.value.trim() || null }),
-  }
-  localStorage.setItem('user', JSON.stringify(AccountService.user))
-}
-
-// 桌面端选了「用这台电脑」：先接上这台电脑，建项目时把它带上，服务端把它加进项目、
-// 让「综合」里的芝士在它上面的隔离环境里干活。接不上就留在云端，说一声，不拦着人进项目。
-async function thisComputer(): Promise<string | null> {
-  try {
-    await startConnecting({ quiet: true })
-    return (await desktopBridge()?.thisDevice()) ?? null
-  } catch {
-    return null
-  }
+  // 输入框里那句和起手卡写进去的一样带 @：直接回车只发给成员，芝士不会接。
+  const draft = !skipAll && request.value ? `@${t('work.room.defaultAgentName')} ${request.value}` : ''
+  emit('finish', {
+    answers,
+    skipAll,
+    draft,
+    files: skipAll ? [] : files.value,
+    onThisComputer: !skipAll && props.desktop && onThisComputer.value,
+  })
 }
 
 const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
