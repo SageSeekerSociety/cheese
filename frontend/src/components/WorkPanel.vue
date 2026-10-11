@@ -479,6 +479,12 @@ function markChangesSeen() {
 // of a room that never dispatched anything.
 // 只取开着的活本身，不带对话：这里只是为了数一数有几条开着。和频道概览读同一份，
 // 切回房间时上次那个数先在。
+//
+// 这一份属于**房间**，不属于画在它里面的任务：任务页的「概览」是这件任务的实况文档，
+// 频道里有几件活开着和它没关系。`enabled` 只挡住取数，挡不住上面那份缓存——那一格和
+// 频道概览共用同一个 key，从频道点进任务页时它还在手上，数出来就是频道那个数（页签
+// 上因此挂着一个点进去什么都没有的角标）。所以任务页上直接答 0，从源头断掉：`threads`
+// 是 `signalFor` 和 `tabTitle` 共用的唯一出处，`pollThreads` 也早就按 taskId 提前返回。
 const openTasksRead = useQuery(
   computed(() => {
     const roomId = props.topic?.id ?? ''
@@ -487,7 +493,7 @@ const openTasksRead = useQuery(
   queryClient
 )
 const threads = computed<{ open: number }>(() => ({
-  open: (openTasksRead.data.value?.data ?? []).filter((r) => r.status === 'open').length,
+  open: props.taskId ? 0 : (openTasksRead.data.value?.data ?? []).filter((r) => r.status === 'open').length,
 }))
 
 function pollThreads() {
