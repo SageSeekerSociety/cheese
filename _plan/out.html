@@ -435,10 +435,10 @@ code:not(pre code) {
   <header class="masthead">
     <p class="eyebrow">技术方案 · 2026-10-11</p>
     <h1 class="title">说明文件收口</h1>
-    <p class="subtitle">把散落的 agent 说明统一成 AGENTS.md；文件级描述换成「机器生成」而不是手写 schema；索引只从结构生成、按需展开一层。</p>
+    <p class="subtitle">统一到 AGENTS.md；给文件夹和文件加 description；索引由代码生成，只展开当前一级，更深按需。</p>
   </header>
 
-  <p class="lede">最要紧的一件事不是新做法：根目录叫 <code>CLAUDE.md</code>、两个子目录叫 <code>AGENTS.md</code>，混着写的结果是那两份子目录说明<strong>目前没有任何 agent 读得到</strong>。至于「每个文件手写一段 schema 描述」，外部调研把它否了一半——各语言没有统一的文件级 schema 标准，而「逐文件强制注释」这条线已经被 Go 和 ESLint 官方先后放弃，理由是产出填充、且描述会静默过期。可行的是：结构索引零人工生成，需要用途说明时由模型从代码生成。</p>
+  <p class="lede">结论先说：这些做法在 AI 时代已经有官方文档和论文背书，而且背书落在<strong>「找对文件」</strong>上，不落在「写对代码」上。已经出问题的是命名混乱——根目录叫 CLAUDE.md、两个子目录叫 AGENTS.md，混着写的结果是那两份子目录说明<strong>现在没有任何 agent 读得到</strong>。另外两件是新增做法，值不值得做由「agent 能不能更快找到正确的文件」来判，不由「有没有现成的语言规范」来判。手搓的成本不高，这轮不用等标准背书。</p>
 
   <nav class="toc">
     <a href="#context">背景</a>
@@ -452,8 +452,8 @@ code:not(pre code) {
 
   <section class="section" id="context">
     <h2>背景</h2>
-    <p>仓库里关于「agent 该怎么在这儿干活」的说明文件有三份：根目录 <code>CLAUDE.md</code>（81 行，写的是没有工具能自动拦住的原则），<code>backend/AGENTS.md</code>（49 行），<code>frontend/AGENTS.md</code>（206 行）。另有 <code>.claude/rules/</code> 下 6 份按路径触发的规则，合计约 780 行。</p>
-    <p>名字混着用不是风格问题，是功能问题。Claude Code 的默认设置叫 <code>claude-md-or-agents-md</code>：从工作目录往上数，只要存在一个 <code>CLAUDE.md</code>（或 <code>.claude/CLAUDE.md</code>、<code>CLAUDE.local.md</code>），所有 <code>AGENTS.md</code> 一律不读，包括子目录里的。根上有 <code>CLAUDE.md</code>，所以那 255 行现在是死文件。</p>
+    <p>仓库里关于「agent 该怎么在这儿干活」的说明文件有三份：根目录 <code>CLAUDE.md</code>（81 行，写的是没有工具能自动拦住的原则），<code>backend/AGENTS.md</code>（49 行），<code>frontend/AGENTS.md</code>（206 行）。另有 <code>.claude/rules/</code> 下 6 份按路径触发的规则。</p>
+    <p>名字混着用不是风格问题，是功能问题。Claude Code 的默认设置叫 <code>claude-md-or-agents-md</code>：从工作目录往上数，只要存在一个 <code>CLAUDE.md</code>（或 <code>.claude/CLAUDE.md</code>、<code>CLAUDE.local.md</code>），所有 <code>AGENTS.md</code> 一律不读，包括子目录里的。根上有 <code>CLAUDE.md</code>，所以那 255 行现在是死文件——这一点在官方 memory 文档里写得很直白。</p>
     <p>平台这边还有一层：芝士的会话由三个 harness 之一驱动，三者对说明文件的取法各不相同。这一层决定了改名到底修好谁。</p>
     <div class="table-outer"><div class="table-wrap">
       <table>
@@ -474,58 +474,57 @@ code:not(pre code) {
 
   <section class="section" id="outside">
     <h2>别人怎么做</h2>
-    <p>六路外部调研（外部方案、加载机制实测、注释工具链、标准清单、反面实证、学术与结构工具）扫下来，设想里的三块各有各的成熟度。</p>
+    <p>这一节只收 AI 时代的材料——官方 agent 文档、直接的仓库先例、和 2026 年的实测论文。上一轮拿 JSDoc、Sphinx、golint 那一套来判，问的是人类文档规范，答的不是这个问题，整段作废。</p>
 
-    <h3>文件头写描述、脚本生成索引——机制老，但 schema 和手写这两环站不住</h3>
-    <p>「人写注释、工具聚成索引、只给一级、按需展开」不是新东西：TypeDoc、Sphinx、pdoc、Doxygen 都在这条路上，最贴近的是 Doxygen 的 <code>\file</code> + <code>\brief</code>——brief 文本官方说明就是「used in lists and at the start of the documentation page」。各语言也都有文件/模块级描述的一等公民机制：</p>
-    <div class="table-outer"><div class="table-wrap">
-      <table>
-        <thead><tr><th>语言</th><th>机制</th><th>硬到什么程度</th></tr></thead>
-        <tbody>
-          <tr><td>Rust</td><td><code>//!</code></td><td>语言参考里有正式语法定义，最硬</td></tr>
-          <tr><td>Python</td><td>模块 docstring（PEP 257）</td><td>官方 PEP，但明文自称 conventions, not laws or syntax</td></tr>
-          <tr><td>JavaScript</td><td>JSDoc <code>@fileoverview</code></td><td>官方标签，只有一句描述，无结构化字段</td></tr>
-          <tr><td>TypeScript</td><td>TSDoc <code>@packageDocumentation</code></td><td>正式规范，且必须放进口 <code>.d.ts</code> 文件</td></tr>
-          <tr><td>Go / Java</td><td>package comment / <code>package-info.java</code></td><td>官方，但是「包」级不是「文件」级</td></tr>
-        </tbody>
-      </table>
-    </div></div>
-    <p class="scroll-hint">左右滑动看全部列</p>
-    <p>关键结论是<strong>统一的 schema 不存在</strong>：JSDoc 与 TSDoc 同属 JS/TS 一脉却用不同标签名，跨语言更无一致字段。唯一稳定的只有「一段自由文本」。所以「schema 化 description」等于自造一套约定，再用 linter 强制——而「逐文件强制注释」这条线，Go 的 golint（2021 弃用）和 ESLint 的 <code>require-jsdoc</code>（v9 移除）官方都放弃了，理由一致：不能按项目关掉、产出无信息量的填充。</p>
-    <p>更硬的问题是描述会<strong>静默过期</strong>。注释与代码不一致的改动，引入 bug 的概率约为一致改动的 1.5 倍；Linux 内核 v6.18-rc1 上自动查出 869 处引用已消失函数的陈旧注释。而现有检查（<code>jsdoc/require-file-overview</code>、ruff <code>D100</code>）只判断描述<strong>存在</strong>，不判断<strong>正确</strong>——一段过期多年的 <code>@fileoverview</code> 照过全部检查。</p>
+    <h3>官方就是这么推荐的</h3>
+    <p>Anthropic 给大仓库/单仓多包写了一份专页（<code>code.claude.com/docs/en/monorepo</code>），推荐的做法正是这件事：按目录分层放说明文件，从根启动时只在启动读根文件，子目录的文件「按需加载」——具体是 Claude 用 Read 打开该目录下的文件时才带上那一层。它同时给了几件配套：<code>claudeMdExcludes</code> 排掉不碰的包、<code>Read</code> 拒绝规则挡住生成物和 vendored 代码、用代码智能插件（语言服务器）跳定义找引用而不是满仓扫、以及把约定继续按目录切成 skills。换句话说，「就近一级可见、更深按需」不是我们独有，官方文档就是这么教的。</p>
+    <p>配套的细节在 memory 文档里：子目录的 <code>AGENTS.md</code> 同样按需加载，触发条件是「用 Read 打开该目录下的文件」，且只认 Read/Edit/Write（Bash 的 <code>cat</code>/<code>grep</code> 不算）；该目录自己若有一份 <code>CLAUDE.md</code>，那一层的 <code>AGENTS.md</code> 会被压掉。这条路还有个版本门槛：直接读 <code>AGENTS.md</code> 要 Claude Code ≥ 2.1.277。</p>
 
-    <h3>逐级 AGENTS.md 按需加载——规范有，实现不稳</h3>
-    <p>agents.md 规范写着「离被编辑文件最近的那份优先」，OpenAI 主仓有 88 份 AGENTS.md。但加载时机是各家自己实现的，实测都在翻车：Claude Code 子目录的加载只认 Read/Edit/Write 三个工具，用 <code>cat</code>/<code>grep</code> 或 Grep 工具读文件<strong>不触发</strong>（issue 93403，仍开着），auto 模式下会静默漏加载；Cursor 反向出过把整仓嵌套文件当 Always 规则全量加载、撑爆上下文的问题。所以它适合当「人和团队的约定」，不适合当「按需解析」的唯一实现载体。</p>
+    <h3>真的有人整仓迁过</h3>
+    <p>最大的先例是 vercel/next.js，分两步：2026-01-05 的 #88105 把 <code>CLAUDE.md</code> 改名成 <code>AGENTS.md</code> 并留一个软链，2026-09-22 的 #99043 直接改用 AGENTS.md。一次性的仓库也不少：apache/airflow 有 14 份 <code>AGENTS.md</code>、grafana/grafana 13 份、microsoft/vscode 8 份（vscode 的根文件正文只有一句指针）。两个坑要避开：<strong>路径上任何位置残留一份 <code>CLAUDE.local.md</code>，AGENTS.md 会被静默忽略、无警告</strong>（issue #96117，5/5 复现，仍 open）；<strong>改名别用软链</strong>——git 在有 <code>core.symlinks=false</code> 的机器（Windows）会把软链检出成「内容是目标路径」的纯文本，加载即乱码。要兼容读不了 AGENTS.md 的旧版本，官方给的办法是在 <code>CLAUDE.md</code> 里放一行 <code>@AGENTS.md</code> 导入。</p>
 
-    <h3>纯结构索引——零人工，推荐做主干</h3>
-    <p>不要求任何注释，索引完全从语法结构生成：ctags 出符号表、tree-sitter 抽 AST、SCIP 做跨文件符号关系，aider 的 repo map 用引用关系跑 PageRank、裁到 token 预算（默认 1024）。零人工、可脚本化、没有注释腐烂问题，而且天然支持「只给一级、按需深挖」。代价是它<strong>只会指路，不会讲用途</strong>：产出全是「文件在哪、有哪些符号、谁引用谁」，没有一个结构工具给出「这个文件是干什么的」。大仓上还会失灵——aider 的 issue #2405 里，80 万行的 monorepo 中纯引用频率被高频 import 淹掉，连直接 import 的文件都挤不进图。</p>
-
-    <h3>要用途说明，就让模型生成回填</h3>
-    <p>想让索引带上「这个模块是干什么的」，可行路线是结构工具切单元、LLM 逐单元生成、再聚合到文件级（arXiv 2501.07857 有完整流水线）。它解决的是「谁写」和「腐烂」：生成时点与代码同步，不靠人记得改。要注意验收不能拿 BLEU/ROUGE 这类 n-gram 重叠当数，它们和人的判断相关性差。</p>
+    <h3>效果如何——分两半，得说实话</h3>
+    <p>实测把「写说明文件」这件事拆成了两半，结论不一样：</p>
+    <div class="callout-stack">
+      <div class="callout callout--warn">
+        <p><strong>说明文件本身，对「做对」没有可测效果。</strong>一篇双 agent 消融（arXiv 2607.27250，Claude Code + Codex，3 个真实仓库 17 个任务 288 次运行）发现：换上下文注入策略，两个 agent 的正确定变化都被夹在 ≤10–15 个百分点内，等于没动。它的解释是 agent 输在实现能力——功能设计、方案选择、接线——不是缺一份说明文件能给的仓库知识。</p>
+      </div>
+      <div class="callout callout--ok">
+        <p><strong>但「文件/实体的描述」，对「找对文件」有实测效果。</strong>arXiv 2607.11046 把「角色感知摘要」和「文件路径」比，摘要高出最多 40% Hit@5，占用却小 10.4–20.9 倍，是各项里性价比最好的。arXiv 2609.31176 的 Semantic Cards（每个实体一句源信息的角色说明）把 File Hit@10 从 68.33% 拉到 82.67%，工作上下文少 48.2%，下游解决率 44.00%→52.33%。arXiv 2606.30963 端到端确认：文件级定位是一个稳定的修复杠杆，定位从 44.7% 提升到 49.1%（模型定位）、52.4%（金标定位）。结构索引也有同样方向的证据：arXiv 2606.22417 在固定 harness 里加一个结构索引，定位大涨、解决率统计显著上升、且不额外花钱，每解决一个任务的成本更低。</p>
+      </div>
+    </div>
+    <p>把两半合起来，正确的说法不是「写了描述 agent 就更聪明」，而是<strong>描述是给 agent 指路用的，不是替 agent 读代码用的</strong>。arXiv 2607.09691 把这一点钉死了：把文件剩下部分渲染成 UML 骨架和签名，跟直接删掉它，解决的 issue 数量一样多（N=70，p=0.75）——摘要替代不了代码。描述回答「改哪个文件」，代码回答「这里怎么改」。</p>
+    <p>一条要记住的成本教训：token 少不等于花得少。arXiv 2607.12161 里，最大压缩配置把工具输出 token 砍掉 38.4%，账单反而贵 6.8%（token 削减和成本削减的相关只有 r=0.15）。别把这套东西的卖点写成「省 token」。</p>
   </section>
 
   <section class="section" id="approach">
     <h2>方案</h2>
-    <p>整体走仓库已经用过很多遍的路子：<strong>只对新改动生效，存量冻结</strong>。<code>check-file-sizes.py</code>、<code>catalog-ratchet.py</code>、<code>scene-ratchet.py</code> 都是这个形状——一次全量迁移在这个仓库里从来不划算，也没人做过。</p>
+    <p>整体走仓库已经用过很多遍的路子：新做法只对新改动生效，存量冻结。<code>check-file-sizes.py</code>、<code>catalog-ratchet.py</code>、<code>scene-ratchet.py</code> 都是这个形状。</p>
 
     <h3>一、命名收口到 AGENTS.md</h3>
-    <p>根目录 <code>CLAUDE.md</code> 改成 <code>AGENTS.md</code>，子目录两份已经是这个名。改完 Claude Code 会在启动时读根文件，并在用 Read 打开子目录里的文件时带进那一层的 AGENTS.md。</p>
-    <p>但只改名是半个修复。必须一起动的还有四处：</p>
+    <p>根目录 <code>CLAUDE.md</code> 改成 <code>AGENTS.md</code>，子目录两份已经是这个名。改完 Claude Code 会在启动时读根文件，并在用 Read 打开子目录里的文件时带进那一层的 AGENTS.md——正好是「就近一级、更深按需」，不用自己造机制。</p>
+    <p>预期收益要说准：这一步的价值是<strong>让那 255 行重新可达、让两个 harness 说法一致</strong>，不是提升 agent 合格率——按上面的消融，说明文件对正确率没有可测影响。它是修 bug，不是提性能。</p>
+    <p>只改名是半个修复。必须一起动的还有四处：</p>
     <ul>
       <li><code>pi/repository.py</code> 的嵌套清单（第 82 行）加上 <code>AGENTS.md</code>，否则 pi 那边照旧看不见那两份。</li>
       <li><code>check-claude-md-review.py</code> 的 <code>GUARDED = "CLAUDE.md"</code>。它保证这份文件只有人批准才能合；改名会让这道护栏静默失效。</li>
       <li><code>check-repo-rules.sh</code> 第 312 行盯住根 <code>CLAUDE.md</code> 的那条规则（不许出现平台 CLI 用法）。</li>
       <li>三处把旧名字写死的引用：<code>claude-review.yml</code> 第 52 行让自动 reviewer 照着 CLAUDE.md 走；<code>ratchet-snapshot.py</code> 第 585 行把 <code>CLAUDE.md</code> 登记成 palette 那条 ratchet 的判据文件；<code>check-repo-rules.sh</code> 的规则与报错文案（第 312、333 行）。</li>
     </ul>
-    <p>注意承接面比想的小：子目录 AGENTS.md 只在 Read 那个目录的文件时进来，<code>cat</code>/<code>grep</code> 不算。所以不能把它当「按需解析」的唯一手段，下面那条索引命令是要一起有的。</p>
+    <p>再补一道防呆：把 Project instructions 钉成 <code>claude-md-and-agents-md</code>，避开某个人的 <code>CLAUDE.local.md</code> 把整套机制关掉。这个值只在 user 设置、<code>--settings</code> 和管理设置里生效，写进项目设置无效，所以进每个人的 user 配置或平台的启动参数。</p>
 
-    <h3>二、文件级描述：不手写、不自造 schema</h3>
-    <p>原设想是「每个文件手写一段 schema 注释」，调研否掉了它的两半。schema 各语言没有统一标准，等于自造一套再用 linter 强制，而这条线被两个官方放弃过；手写还躲不过静默过期，检查只验存在不验正确。</p>
-    <p>所以分两步，都不手写：先<strong>不做</strong>意图字段，索引只指路（结构索引本来就不带用途）；如果实测下来 agent 找不到目标文件、非要点用途说明，再走「LLM 从代码生成一句、回填」——生成时点和代码同步，不靠人。两条路都不引入「人写描述然后烂掉」这一环。</p>
+    <h3>二、文件夹和文件的 description</h3>
+    <p>做。判据换成「对找文件有没有用」之后，这一段是有实测支持的（见上节 2607.11046 / 2609.31176）。要定的只是形状：</p>
+    <ul>
+      <li><strong>形状</strong>：文件头一段 schema 化的注释，<code>description</code> 必填（一句「这个文件负责什么角色」），其余字段可选。文件夹用同构的一段说明，和「就近一级」对齐。</li>
+      <li><strong>谁写</strong>：由代码生成或模型回填，不靠人长期手写。实测里起作用的正是「角色感知摘要」和「源信息卡片」，两者都是生成出来的；手写这一环会静默腐烂（上一轮的证据：注释与代码不一致使引入 bug 的概率约 1.5 倍，Linux 内核单版查出 869 处指向已消失函数的陈旧注释）。所以描述的产出要么由脚本从代码生成，要么在 CI 里校（描述提到的符号、导出、路径还在不在）。</li>
+      <li><strong>边界</strong>：描述只负责指路，不承担「讲清这个文件怎么改」。别为了让描述更全而把它写成代码的复述——2607.09691 说这没有回报，而且会过期。</li>
+    </ul>
 
-    <h3>三、索引：按需生成，只给一级</h3>
-    <p>建议不落盘，按需生成：加一条命令，打印当前目录下一级的文件和子目录，每个带一句描述（先只有名字和符号，之后可选加 LLM 生成的一句），并提示「要看更深就跑它带子目录名」。根 <code>AGENTS.md</code> 里写一行怎么用。</p>
-    <p>检查进仓库的索引有两个躲不掉的问题：每动一个文件就要重新生成（PR 噪音加 CI 负担），或者它会过期。按需生成两个都没有。结构抽取用成熟的现成件（ctags / tree-sitter），不自造。这样「就近一级、更深按需」落在生成器的输出格式上，不落在文件布局上——比按目录切一堆索引文件好维护。</p>
+    <h3>三、索引</h3>
+    <p>按需生成，不落盘：一条命令打印当前目录下一级的文件和子目录，每个带一句 description，并提示「要看更深就跑它带子目录名」。根 <code>AGENTS.md</code> 里写一行怎么用。机制上正好接上官方那套按需加载——一级由命令给，更深的交给 Claude 的 Read 触发。</p>
+    <p>不落盘是因为检查进仓库的索引躲不掉两个问题：每动一个文件就要重新生成（PR 噪音加 CI 负担），或者它会过期。按需生成两个都没有。「就近一级、更深按需」落在生成器的输出格式上，不落在文件布局上——比按目录切一堆索引文件好维护。</p>
+    <p>成本上有一处要先定：前后端都有文件贴着行数上限，而后端 1500 行、前端 <code>src/</code> 1000 行、<code>src/api/</code> 400 行这些上限<strong>把注释算进行数</strong>。测得贴到 90% 上限的有 31 个文件（后端 14、前端 src 16、src/api 1 个已豁免的生成文件），给它们加描述头会挂 CI。三条出路：抬上限、给描述头开例外、或这些文件等它们自己缩下去。</p>
   </section>
 
   <section class="section" id="phases">
@@ -536,16 +535,16 @@ code:not(pre code) {
         <p class="phase__note">改名 + pi 清单 + 两道护栏 + 三处引用文字，一个 PR 做完。判据：改名前后的会话里，子目录 AGENTS.md 由不加载变成加载。</p>
       </li>
       <li class="phase">
-        <div class="phase__head"><h3 class="phase__name">结构索引命令</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
-        <p class="phase__note">实现按需生成的一级视图，抽取走现成的 ctags/tree-sitter，根 AGENTS.md 写明用法。先只给名字和符号，不带用途。</p>
+        <div class="phase__head"><h3 class="phase__name">定描述的形状</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">字段、位置、生成还是回填。同时定行数上限那 31 个文件怎么办。</p>
       </li>
       <li class="phase">
-        <div class="phase__head"><h3 class="phase__name">量：索引够不够用</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
-        <p class="phase__note">在几个域上实测 agent 定位目标文件的命中率和 token 消耗。够用就停在这里；不够再进下一步。</p>
+        <div class="phase__head"><h3 class="phase__name">索引命令</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">实现按需生成的一级视图，抽取走现成的 ctags/tree-sitter，根 AGENTS.md 写明用法。</p>
       </li>
       <li class="phase">
-        <div class="phase__head"><h3 class="phase__name">（条件）意图描述</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
-        <p class="phase__note">只有在量下来证明需要时，才加 LLM 生成的用途一句。没有这一步的实测结论就不做这一步。</p>
+        <div class="phase__head"><h3 class="phase__name">在一个域上试</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">先补一个域的描述，量 agent 定位目标文件的命中率和 token 消耗，再决定推不推、推多快。</p>
       </li>
     </ol>
   </section>
@@ -558,7 +557,8 @@ code:not(pre code) {
       <li>pi：给 <code>test_pi_repository.py</code> 加一个临时仓库，断言嵌套 AGENTS.md 被读到——今天这个断言会失败，这正是要修的东西。</li>
       <li>护栏：拿一个只改 AGENTS.md 的测试 PR 跑 <code>check-claude-md-review.py</code>，它必须报「需要人批准」。</li>
       <li>索引命令：在 <code>backend/app/domain</code> 下跑一次，输出行数与该目录下一级条目数对得上。</li>
-      <li>若做意图描述：验收看人能不能认，不看 BLEU/ROUGE——那些和人的判断相关性差。</li>
+      <li>描述不过期：改一个域的描述提到的符号名，CI 的校验要能报出来。</li>
+      <li>有效性：按实测的口径量<strong>定位</strong>（目标文件进没进 top-k）和 <strong>$/solved</strong>，不量 token 数——2607.12161 证明 token 少不代表花得少。</li>
     </ul>
   </section>
 
@@ -566,10 +566,13 @@ code:not(pre code) {
     <h2>风险</h2>
     <div class="callout-stack">
       <div class="callout callout--warn">
-        <p><strong>嵌套 AGENTS.md 的加载面比想的窄。</strong>只在 Read 子目录文件时触发，<code>cat</code>/<code>grep</code> 不算，auto 模式还会静默漏。对策就是别把它当唯一手段，配上那条索引命令。</p>
+        <p><strong>别把说明文件当提性能的手段。</strong>消融显示它对正确率没有可测影响（2607.27250）。这一步的正当收益是可达性和一致性，别对外承诺「agent 会做得更好」。</p>
       </div>
       <div class="callout callout--warn">
-        <p><strong><code>CLAUDE.local.md</code> 会静默关掉整套机制。</strong>默认设置下它算数，一个人在自己机器上建了这个文件，AGENTS.md 就全不读了。对策：把项目设置钉成 <code>claude-md-and-agents-md</code>——但这个值只在 user 设置、<code>--settings</code> 和管理设置里生效，写进项目设置无效，所以得进每个人的 user 配置或平台的启动参数。</p>
+        <p><strong>嵌套 AGENTS.md 的加载面比想的窄。</strong>只在用 Read 打开子目录文件时触发，用户 @-mention 不算，<code>cat</code>/<code>grep</code> 也不算，auto 模式还会静默漏。所以别把它当「按需解析」的唯一手段，配上那条索引命令。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>描述会静默过期。</strong>一段写对了的描述半年后指向一个不存在的符号，agent 会照着错的地图走，而且看不出来。对策是让它可机检（描述里的符号/路径能对上代码），不是靠人记得改。</p>
       </div>
       <div class="callout callout--warn">
         <p><strong>读 AGENTS.md 有版本门槛。</strong>要 Claude Code ≥ 2.1.277；Amazon Bedrock 或关掉遥测的会话读不到，只能靠 <code>CLAUDE.md</code> 里 <code>@AGENTS.md</code> 导入。改名之前先确认团队的版本。</p>
@@ -585,12 +588,12 @@ code:not(pre code) {
     <dl class="facts">
       <div class="fact"><dt>负责人</dt><dd>未定</dd></div>
       <div class="fact"><dt>时间</dt><dd>未定</dd></div>
-      <div class="fact"><dt>待定夺</dt><dd>命名收口做不做；索引按需生成还是落盘；意图描述这一步留不留。</dd></div>
+      <div class="fact"><dt>待定夺</dt><dd>描述写在哪里、由谁生成；行数上限那 31 个文件怎么处理；索引按需生成是否就用这条命令。</dd></div>
     </dl>
   </section>
 
   <footer class="footnote">
-    <p>仓库现状数字取自 2026-10-11 的 <code>main</code>（6706 个受版本控制的文件，988 个后端 app 模块，1394 个前端 ts/tsx）。Claude Code 的行为依据官方 memory 文档（<code>code.claude.com/docs/en/memory</code>，读数需 ≥ 2.1.277）；harness 行为依据本仓库代码。外部结论来自 6 路调研，出处见 <code>_survey/external.md</code>。</p>
+    <p>仓库现状数字取自 2026-10-11 的 <code>main</code>（6706 个受版本控制的文件，988 个后端 app 模块，1394 个前端 ts/tsx）。Claude Code 的行为依据官方 memory 与 monorepo 文档（<code>code.claude.com/docs/en/memory</code>、<code>/monorepo</code>，直接读 <code>AGENTS.md</code> 需 ≥ 2.1.277）；harness 行为依据本仓库代码。外部与论文结论的原始材料见 <code>_survey/</code>。</p>
   </footer>
 
 </main>
