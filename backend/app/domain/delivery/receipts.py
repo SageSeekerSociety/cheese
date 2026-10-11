@@ -14,10 +14,43 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.errors import ValidationError
 from app.domain.block.input_effects import apply_input_echo, consume_input_blocks
 from app.domain.block.models import Block
+from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_holds import unread_input_with_over_work
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
+from app.domain.notification.models import NotificationType
 from app.domain.thread.services import thread_opening
+
+#: payload key carrying the message a person's `@` named this seat in.
+_SUMMON_BLOCK = "blockId"
+
+
+async def _mention_summon_block(session, identity, delivery) -> uuid.UUID | None:
+    """The message this delivery's recipient was named in, when it may be
+    marked read by them; None for every delivery that is not a person's mention.
+
+    Only a person's mention: an agent's `@` is at most advisory (I13) and a
+    system wake names no one. The read receipt goes to the seat the delivery is
+    for — ``identity.recipient_handle``, the receiver that has to agree — so a
+    room woken by one `@` over two teammates shows one 👀 per teammate rather
+    than one for the whole room.
+    """
+    if delivery is None or delivery.type != NotificationType.MENTION.value:
+        return None
+    payload = delivery.payload or {}
+    if payload.get("eventType") != "person_mention":
+        return None
+    raw = payload.get(_SUMMON_BLOCK)
+    if not raw:
+        return None
+    try:
+        block_id = uuid.UUID(str(raw))
+    except ValueError:
+        return None
+    # The platform owns this mark; the message must be there for it to land on.
+    if await BlockRepository(session).get(block_id) is None:
+        return None
+    return block_id
 
 
 def _same_receiver(row: NativeInput, identity: InputIdentity) -> bool:
@@ -484,16 +517,25 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         uuid.UUID(block)
         for block in (row.held_block_ids + row.block_ids + row.seen_block_ids)
     }
+    # A teammate woken by a mention reads the message that named it, so it owes
+    # that message the same read receipt a summoned seat owes its own. The
+    # message is on the delivery, and this is where the delivery is settled.
+    summon = await _mention_summon_block(session, identity, delivery)
+    if summon is not None:
+        affected.add(summon)
     await _lock_blocks(session, identity, affected)
     if row.seen_by is not None and row.seen_by != identity.recipient_handle:
         raise ValidationError("Input cannot mark blocks as read by another receiver")
     row.echoed_at = row.echoed_at or stamp
     row.execution_work_id = execution_work
+    seen_ids = [uuid.UUID(block) for block in row.seen_block_ids]
+    if summon is not None:
+        seen_ids.append(summon)
     await apply_input_echo(
         session,
         consumed_ids=[uuid.UUID(block) for block in row.block_ids],
         work_id=execution_work,
-        seen_ids=[uuid.UUID(block) for block in row.seen_block_ids],
+        seen_ids=seen_ids,
         seen_by=row.seen_by or row.recipient_handle,
     )
     if delivery is not None:
