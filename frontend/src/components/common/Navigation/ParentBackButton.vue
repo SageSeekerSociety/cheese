@@ -98,6 +98,64 @@ const label = computed(() =>
   target.value?.label ? t('shell.back.to', { label: target.value.label }) : t('shell.back.up')
 )
 
+/**
+ * 最外层那一页：桌面上是待办，手机上是首页。两端各是顶端（侧栏、底栏）的落点，
+ * 不再是谁的下一层——它自己不画 ←，别的页面绕不出圈时也退到它这儿。
+ *
+ * 和 `atProjectRoot` 一样，两端的答案不是同一条路由，这不是漂移：桌面上侧栏第一格
+ * 就是待办，手机上是首页。
+ */
+const homeRoot = computed(() =>
+  mdAndUp.value ? { name: 'inbox', label: t('navigation.inbox') } : { name: 'HomeHub', label: t('navigation.home') }
+)
+
+/** 站在最外层那一页上。它是根，往上没有落脚的地方。 */
+const atHomeRoot = computed(() => nav?.route?.name === homeRoot.value.name)
+
+const toHomeRoot = computed(() => {
+  try {
+    return nav?.router.resolve({ name: homeRoot.value.name, params: {} }).path ?? null
+  } catch {
+    return null
+  }
+})
+
+/** 浏览器记的上一条地址，解析成路由。 */
+const behind = computed(() => {
+  void nav?.route
+  const back = nav?.historyState?.back
+  if (typeof back !== 'string') return null
+  try {
+    return nav.router.resolve(back)
+  } catch {
+    return null
+  }
+})
+
+/**
+ * 身后那一页正把这里当它的上一层吗？
+ *
+ * 两边互相指着对方就成了一个死圈：它声明着「上一层是这一页」，这一页的 ← 又退到
+ * 它，点多少次都弹回原地。首页 ↔ 团队页（团队页声明 `backTo: 'HomeHub'`）、项目根
+ * ↔ 频道页（频道页声明 `backTo: 'workspace-project'`）都是这么绕起来的。认出这一对
+ * 就不吃这条历史。
+ */
+const behindPointsHere = computed(() => {
+  const route = nav?.route
+  const from = behind.value
+  const parent = from?.meta?.backTo
+  if (!route || !from || typeof parent !== 'string') return false
+  try {
+    // 按**它自己**的地址去解它声明的父级：声明的多半是个带参的路由名（
+    // `workspace-project` 要知道是哪个项目），站在这边解会把这一页的参数填进去，
+    // 解出来的就不是它那颗 ← 真会去的地方了。`to` 那一处站在自己这一页，正好该用
+    // 默认的当前路由。
+    return nav?.router.resolve({ name: parent, params: {} }, from).path === route.path
+  } catch {
+    return false
+  }
+})
+
 // 页面接管了这一下（topBarBack.ts）：手机上话题里的非对话页签，← 先回到对话。
 const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
 </script>
@@ -129,10 +187,24 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
     :aria-label="label"
     :title="label"
   />
-  <!-- 这一页没声明上一层（首页、反馈中心、各设置页签……），但身后确实有应用内来路，
-       按浏览器的语义退一格，好过什么都不画。 -->
+  <!-- 身后那一页正把这里当它的上一层（见 `behindPointsHere`）：再吃这条历史就是两颗
+       箭头互指，点多少次都在两页之间弹。不吃它，改回最外层那一页——那里是终点，
+       它有进无出，圈就断在这里。 -->
   <BaseButton
-    v-else-if="cameFrom"
+    v-else-if="behindPointsHere && toHomeRoot && !atHomeRoot"
+    :to="toHomeRoot"
+    :active="false"
+    icon="mdi-arrow-left"
+    kind="ghost"
+    :size="mdAndUp ? 'sm' : 'lg'"
+    :aria-label="t('shell.back.to', { label: homeRoot.label })"
+    :title="t('shell.back.to', { label: homeRoot.label })"
+  />
+  <!-- 这一页没声明上一层（首页、反馈中心、各设置页签……），但身后确实有应用内来路，
+       按浏览器的语义退一格，好过什么都不画。最外层那一页不画：它就是根，没有可退
+       的上一层，退一格只会在别的页面之间来回弹。 -->
+  <BaseButton
+    v-else-if="cameFrom && !atHomeRoot"
     icon="mdi-arrow-left"
     kind="ghost"
     :size="mdAndUp ? 'sm' : 'lg'"

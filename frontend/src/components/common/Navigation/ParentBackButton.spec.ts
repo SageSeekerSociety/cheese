@@ -65,6 +65,17 @@ function makeRouter() {
   })
 }
 
+// 真浏览器历史：`state.back` 只在这上面才有，成环的那几对要它才复现得出来。
+function webRouter() {
+  return createRouter({
+    history: createWebHistory(),
+    routes: [
+      ...legacyProjectRedirects,
+      ...[HomeRoutes, SpacesRoutes, TeamsRoutes, UserRoutes, workspaceRoutes].map(withoutViews),
+    ],
+  })
+}
+
 async function mount(router: ReturnType<typeof makeRouter>) {
   await router.isReady()
   return render(ParentBackButton, {
@@ -256,16 +267,6 @@ describe('页面接管 ←', () => {
 // 页面一律按声明走：从话题 A 跳到话题 B，← 回话题列表而不是回 A——A 和 B 是并列的
 // 两层，不是上下级。只有声明不出父级的页面（下一组用例）才回退到「来路」。
 describe('声明了父级时，← 走层级而不是来路', () => {
-  function webRouter() {
-    return createRouter({
-      history: createWebHistory(),
-      routes: [
-        ...legacyProjectRedirects,
-        ...[HomeRoutes, SpacesRoutes, TeamsRoutes, UserRoutes, workspaceRoutes].map(withoutViews),
-      ],
-    })
-  }
-
   afterEach(() => vi.restoreAllMocks())
 
   it.each([
@@ -291,6 +292,8 @@ describe('声明了父级时，← 走层级而不是来路', () => {
 
   // 项目看板在桌面上就是项目的根，根没有可声明的父级；这一组用例里也没有小队数据，
   // 于是层级给不出答案——这时才回退到「从哪来的」，按浏览器的语义退一格。
+  // 小队页不把项目看板当自己的上一层（它声明的是首页），身后这一页不指着这里，
+  // 所以这不是互指的那一对，这条历史照吃。
   it('层级给不出答案时，退回浏览器的一步', async () => {
     const router = webRouter()
     await router.push('/teams/12')
@@ -300,5 +303,95 @@ describe('声明了父级时，← 走层级而不是来路', () => {
     expect(queryByRole('link', { name: /^返回/ })).toBeNull()
     await fireEvent.click(getByRole('button', { name: '返回' }))
     expect(go).toHaveBeenCalledWith(-1)
+  })
+})
+
+// 两个页面互相指着对方就是一个走不出去的死圈：身后的那一页声明着「我的上一层是
+// 这一页」，这一页的 ← 又退到它，点多少次都在两页之间弹。首页 ↔ 团队页、项目根 ↔
+// 频道页都是这么绕起来的。切断的办法不是丢掉「来路」这条语义，而是认出这一对之后
+// 不吃它，改去最外层那一页——那里有进无出，圈就断在那里。
+describe('两颗箭头互指时，退到最外层那一页', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function teamIs(team: number | null) {
+    seedProjects([
+      {
+        id: 'project-a',
+        name: 'A',
+        created_at: '',
+        team_id: team,
+        team_handle: team === null ? null : `crew-${team}`,
+        owner_handle: 'linxia',
+      },
+    ])
+    seedProject('project-a', { topics: [], members: [], unread: {}, privateUnread: {}, notifyLevels: {} })
+    useWorkspaceStore().openProject('project-a')
+  }
+
+  // 团队页声明着 `backTo: 'HomeHub'`，首页身后又正是这个团队页。
+  it('首页 ↔ 团队页：首页不吃这条历史，改回待办', async () => {
+    const router = webRouter()
+    await router.push('/teams/crew-12')
+    await router.push('/home')
+    const { getByRole, queryByRole } = await mount(router)
+    expect(queryByRole('button', { name: '返回' })).toBeNull()
+    expect(getByRole('link', { name: '返回待办' }).getAttribute('href')).toBe('/inbox')
+  })
+
+  // 频道页声明着 `backTo: 'workspace-project'`，而桌面上的项目根正是它。手机上的项目
+  // 根就是频道列表本身，那一层是真的上一层，照旧按声明走（见上一组用例）。
+  it('项目根 ↔ 频道页：根上改回待办，不是原地打转', async () => {
+    teamIs(12)
+    const router = webRouter()
+    await router.push('/projects/project-a/channels/7')
+    await router.push('/projects/project-a')
+    const { getByRole, queryByRole } = await mount(router)
+    expect(queryByRole('button', { name: '返回' })).toBeNull()
+    expect(getByRole('link', { name: '返回待办' }).getAttribute('href')).toBe('/inbox')
+  })
+
+  // 项目总览不走这条路：它身后的团队页虽然不是它的上一层，总览自己声明的上一层
+  // （项目根）在桌面上又会被弹回自己——所以它退到项目所属的团队页，是上面那组
+  // 「没有来路时，退到项目所属的小队」管的那件事。整条链子有没有环见最后一条用例。
+
+  // 最外层那一页没有上一层，就不画 ←：退一格只会在别的页面之间来回弹。
+  it('待办自己不画 ←', async () => {
+    const router = webRouter()
+    await router.push('/home')
+    await router.push('/inbox')
+    const { queryByRole } = await mount(router)
+    expect(queryByRole('link', { name: /^返回/ })).toBeNull()
+    expect(queryByRole('button', { name: /^返回/ })).toBeNull()
+  })
+
+  // 手机上的最外层是首页，桌面上才是待办：侧栏和底栏的落点不是同一页。
+  it('手机上从团队页回首页，首页也不画 ←', async () => {
+    widthIs(PHONE)
+    const router = webRouter()
+    await router.push('/teams/12')
+    await router.push('/home')
+    const { queryByRole } = await mount(router)
+    expect(queryByRole('link', { name: /^返回/ })).toBeNull()
+    expect(queryByRole('button', { name: /^返回/ })).toBeNull()
+  })
+
+  // 报告里的走法本身：一层层点进项目，再一路点 ←，停得住、且不再是回头路。
+  it('一路点 ← 会停在最外层，不在两页之间弹', async () => {
+    teamIs(12)
+    const router = webRouter()
+    await router.push('/inbox')
+    await router.push('/projects/project-a/overview')
+    const { container } = await mount(router)
+    const visited = [router.currentRoute.value.path]
+    for (let i = 0; i < 6; i++) {
+      const el = container.querySelector<HTMLElement>('[aria-label^="返回"]')
+      if (!el) break
+      const before = router.currentRoute.value.path
+      await fireEvent.click(el)
+      await waitFor(() => expect(router.currentRoute.value.path).not.toBe(before))
+      visited.push(router.currentRoute.value.path)
+    }
+    expect(visited).toEqual(['/projects/project-a/overview', '/teams/crew-12', '/home', '/inbox'])
+    expect(container.querySelector('[aria-label^="返回"]')).toBeNull()
   })
 })
