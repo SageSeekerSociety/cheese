@@ -380,3 +380,24 @@ def test_a_teammates_edit_reaches_the_room_it_was_corrected_in(client):
     [line] = _proposal_lines(client, room, written["id"])
     assert "修改没有保存" in line["content"], line["content"]
     assert line["meta"]["state"] == "over"
+
+
+def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):
+    project = _project(client)
+    room = _room(client, project)
+    existing = client.post(
+        f"/topics/{room}/skills", json=METHOD, headers=PERSON
+    ).json()["data"]
+    # What a teammate reads at the end of each skill, and so what it writes.
+    related = f"最接近的是 {existing['id']}，它只管周报，这份管组会纪要"
+    drafted = client.post(
+        f"/topics/{room}/skills",
+        json=_proposal("meeting-notes", title="组会纪要", related=related),
+    )
+    assert drafted.status_code == 200, drafted.text
+
+    listed = client.get(f"/projects/{project}/skills", headers=PERSON).json()["data"]
+    [card] = [s for s in listed["data"] if s["name"] == "meeting-notes"]
+    shown = card["proposal"]["related"]
+    assert existing["id"] not in shown, shown
+    assert "「项目周报」" in shown, shown

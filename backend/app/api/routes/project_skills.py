@@ -6,6 +6,7 @@ because what is confirmed is what every later session in the project follows.
 
 import base64
 import binascii
+import re
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -102,6 +103,31 @@ async def _absorbed(
         title = titles.get(name) or parse_memory_file(row.content).description or name
         out.append({"path": path, "title": title})
     return out
+
+
+_SKILL_ID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+
+
+def _by_title(text: str, skills: list[ProjectSkill]) -> str:
+    """``text`` with each of the project's skill ids it names replaced by that
+    skill's title.
+
+    A teammate knows the project's skills by the id at the end of each one
+    (it is what it passes to `cheese_skill_update`), so the closest skill it
+    names on a proposal card arrives as an id; the person deciding reads
+    titles.
+    """
+    titles = {str(skill.id): skill.title for skill in skills}
+    return _SKILL_ID.sub(
+        lambda m: (
+            f"「{titles[m.group(0).lower()]}」"
+            if m.group(0).lower() in titles
+            else m.group(0)
+        ),
+        text,
+    )
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -276,7 +302,10 @@ async def create_skill(
         proposal = {
             "taught": [t.strip() for t in body.taught if t.strip()],
             "accepted": body.accepted.strip(),
-            "related": body.related.strip(),
+            "related": _by_title(
+                body.related.strip(),
+                await service.list(place.project_id),
+            ),
             "absorbs": await _absorbed(db, place.project_id, body.absorbs),
         }
     row = await service.create(

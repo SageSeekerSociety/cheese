@@ -949,7 +949,9 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "用户为这类事教过你的地方，一处一条，尽量用原话",
                 },
                 "accepted": _text("这一次怎么算做成了：用户怎么接受的结果"),
-                "related": _text("最接近的已有技能和为什么不并进去；没有就写「没有」"),
+                "related": _text(
+                    "最接近的已有技能（写它的名称）和为什么不并进去；没有就写「没有」"
+                ),
                 "absorbs": {
                     "type": "array",
                     "items": {"type": "string"},
