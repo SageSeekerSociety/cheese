@@ -556,6 +556,9 @@ class AcceptService:
             self, card=card, topic=topic, content=content, meta=meta, also=also
         )
 
+    async def _settle_the_card(self, card: AcceptCard, outcome: str) -> None:
+        return await notices._settle_the_card(self, card=card, outcome=outcome)
+
     async def _notify_ready(self, card: AcceptCard, topic: Topic) -> None:
         return await notices._notify_ready(self, card=card, topic=topic)
 

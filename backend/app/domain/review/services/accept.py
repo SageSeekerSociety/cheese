@@ -150,6 +150,8 @@ async def _accept_discussion(
     await self._repo.add_approval(card.id, decided_by)
     now = datetime.now(UTC)
     card.status = AcceptStatus.accepted
+    # 卡上再没有等人动手的事：收件箱里说着「等你」的那几句一起收掉。
+    await self._settle_the_card(card, "accepted")
     card.decided_by = decided_by
     card.decided_at = now
     notes.clear(card)
@@ -465,6 +467,9 @@ async def _void_closed_pr_card(
         "平台自动作废了这次审阅。要继续交付，重新提交审阅。"
     )
     card.status = AcceptStatus.revoked
+    # 先结掉等人动手的那几句，再说这次结局：下面这一句正是「结局」，不带卡号，
+    # 不会被自己刚说的话收进「已读」。
+    await self._settle_the_card(card, "voided")
     notes.record(card, notes.NoteCode.voided, archive.prefix_note(card.note, headline))
     card.decided_at = card.decided_at or datetime.now(UTC)
     await self._session.flush()
@@ -510,6 +515,8 @@ async def _finish_pr_accept(
     """
     now = datetime.now(UTC)
     card.status = AcceptStatus.accepted
+    # 卡上再没有等人动手的事：收件箱里说着「等你」的那几句一起收掉。
+    await self._settle_the_card(card, "accepted")
     by = card.decided_by
     how = say("prMergedExternally") if merged_externally else say("prMerged")
     settled = f"PR #{card.pr_number} {how}：{card.pr_url}"

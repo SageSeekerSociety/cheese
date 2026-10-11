@@ -131,6 +131,14 @@
   },
   "ROOM_NOTICE": {
     "body": "In \"{topicTitle}\"",
+    "settled": "In \"{topicTitle}\" — {outcome}",
+    "outcome": {
+      "accepted": "accepted",
+      "rejected": "returned",
+      "voided": "voided",
+      "archived": "closed with the room"
+    },
+    "settledUnknown": "settled",
     "untitled": "A notice from the platform"
   },
   "CHEESE_QUESTION": {
