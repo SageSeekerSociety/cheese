@@ -18,6 +18,7 @@ commands and turns each command's report into a verdict nobody can fake:
 """
 
 import json
+import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -116,33 +117,95 @@ def test_plan(root, changed, scope, tmp, conservative=False):
     if scope.get("backend"):
         selected, reason, targets = select_backend(root, changed, conservative)
         output = tmp / "pytest.xml"
+        nodes = tmp / "pytest-nodes.json"
+        # The audit plugin sits beside the runner; pytest imports it by module
+        # name, so its directory goes on PYTHONPATH for this one run only.
+        scripts = str(root / ".github" / "scripts")
+        pythonpath = os.pathsep.join(
+            [scripts] + ([os.environ["PYTHONPATH"]] if os.environ.get("PYTHONPATH") else []))
         env = {"TEST_PG_BASE": "postgresql://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
-               "DATABASE_URL": "postgresql+asyncpg://cheese:cheese@127.0.0.1:1/cheese_ci_fast"}
+               "DATABASE_URL": "postgresql+asyncpg://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
+               "PYTHONPATH": pythonpath, "CI_FAST_NODES": str(nodes)}
         plan.append({"id": "backend-pure", "cwd": root / "backend", "env": env,
                      "command": ["uv", "run", "--no-sync", "pytest", *selected, "-m", "pure", "-q",
-                                 "--ignore=tests/forgejo", "-k", "not kotlin", "--junitxml", str(output)],
-                     "evidence": {"kind": "junit", "path": str(output), "files": selected,
-                                  "required": targets, "selection": reason}})
+                                 "--ignore=tests/forgejo", "-k", "not kotlin",
+                                 "-p", "ci_fast_pytest_plugin", "--junitxml", str(output)],
+                     "evidence": {"kind": "junit", "path": str(output), "nodes": str(nodes),
+                                  "files": selected, "required": targets, "selection": reason}})
     return plan, omissions
 
 
 def _case_file(case):
-    """The repository-relative file a pytest JUnit testcase came from."""
+    """The file-or-class a JUnit testcase names, for matching a required path.
+
+    pytest 9 writes no ``file`` attribute: ``classname`` is the dotted module
+    path, with the class appended for a class-based test
+    (``tests.unit.test_x.TestC``). An explicit ``file`` wins when a runner
+    provides one; otherwise keep the classname so its module prefix can still
+    be matched against a required ``.py`` path.
+    """
     if case.get("file"):
         return case.get("file")
-    classname = case.get("classname")  # e.g. tests.unit.test_x
-    return classname.replace(".", "/") + ".py" if classname else ""
+    return case.get("classname") or ""
 
 
-def _runs(files, required):
-    """required file paths that produced no testcase at all."""
-    return [r for r in required if not any(f == r or f.endswith("/" + r) for f in files)]
+def _covers(name, required):
+    """Whether a testcase file/classname is evidence that ``required`` ran."""
+    if not name:
+        return False
+    if name == required or name.endswith("/" + required):
+        return True
+    module = (required[:-3] if required.endswith(".py") else required).replace("/", ".")
+    return name == module or name.startswith(module + ".")
+
+
+def _runs(cases, required):
+    """required file paths that produced no matching testcase at all."""
+    names = [_case_file(case) for case in cases]
+    return [r for r in required if not any(_covers(name, r) for name in names)]
+
+
+def _audit(evidence, details):
+    """Verify the pure nodes the run selected actually ran.
+
+    The sidecar records the selection the run itself made — its selected pure
+    nodes, the nodes ``-m``/``-k`` removed with their layer, and every outcome —
+    so this checks what a JUnit report alone cannot: that no pure node was
+    hidden by a filter, and that every selected pure node executed. An excluded
+    ``integration``/``contract`` node is the layer working as designed (recorded
+    as not_run, owned by full CI), not treated as missing coverage; a required
+    file with no pure node at all is the same, but a change whose modules have
+    no pure consumer at all is unknown.
+    """
+    data = json.loads(Path(evidence["nodes"]).read_text())
+    selected_pure = {item["node"] for item in data.get("selected", []) if item.get("layer") == "pure"}
+    hidden = sorted(item["node"] for item in data.get("deselected", []) if item.get("layer") == "pure")
+    executed = data.get("executed", [])
+    ran = {e["node"] for e in executed if e.get("when") == "call" and e.get("outcome") == "passed"}
+    failures = sum(e.get("outcome") in ("failed", "error") for e in executed)
+    unrun = sorted(selected_pure - ran)
+    pure_files = {node.split("::", 1)[0] for node in selected_pure}
+    required = evidence.get("required", [])
+    uncovered = [r for r in required if r not in pure_files]
+    details.update(selected_pure=len(selected_pure), executed=len(ran),
+                   hidden=hidden, unrun=unrun, not_run_pure=uncovered)
+    if failures:
+        return "fail", "the pure run contains errors/failures"
+    if hidden:
+        return "unknown", f"-m/-k deselected pure tests (hidden={hidden})"
+    if unrun:
+        return "unknown", f"pure tests selected but not executed (unrun={unrun})"
+    if not selected_pure:
+        return "unknown", "the pure selection is empty"
+    if required and not any(r in pure_files for r in required):
+        return "unknown", "no pure test reaches the changed modules"
+    return "pass", ""
 
 
 def validate_evidence(evidence):
     """Judge one report file alone. Types are decided by the exit code, in resolve()."""
     kind = evidence["kind"]
-    details = {k: v for k, v in evidence.items() if k != "path"}
+    details = {k: v for k, v in evidence.items() if k not in ("path", "nodes")}
     try:
         if kind == "vitest":
             data = json.loads(Path(evidence["path"]).read_text())
@@ -158,12 +221,22 @@ def validate_evidence(evidence):
             skipped = sum(case.find("skipped") is not None for case in cases)
             errors = sum(case.find("error") is not None or case.find("failure") is not None for case in cases)
             passed = len(cases) - skipped - errors
-            missing = _runs({_case_file(case) for case in cases}, evidence.get("required", []))
+            missing = _runs(cases, evidence.get("required", []))
     except (OSError, ValueError, KeyError, TypeError, ET.ParseError) as exc:
         return {"result": "unknown", "reason": f"unreadable {kind} report: {exc}", "evidence": details}
     details.update(passed=passed, skipped=skipped, errors=errors, missing=missing)
     if errors:
         return {"result": "fail", "reason": "test report contains errors/failures", "evidence": details}
+    if evidence.get("nodes"):
+        # The run left its own account of the selection; trust that over the
+        # report file, which cannot show what a filter removed.
+        try:
+            outcome, reason = _audit(evidence, details)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return {"result": "unknown", "reason": f"unreadable node audit: {exc}", "evidence": details}
+        if outcome != "pass":
+            return {"result": outcome, "reason": reason, "evidence": details}
+        return {"result": "pass", "evidence": details}
     if not passed or skipped or missing:
         return {"result": "unknown",
                 "reason": f"empty/skipped/uncovered tests (missing={missing})", "evidence": details}

@@ -203,6 +203,14 @@ def run(args, report, finish, started):
         scope["backend"] = scope["frontend"] = True
         report["unknown_paths"] = unknown
     scope["guards"] = True
+    # A frontend catalog edit under src/i18n/messages/** is read back by the
+    # backend's refusal/sentences tree guards, but the shared CI path map names
+    # only three catalogs, so any other one leaves backend scope off. Widen it
+    # for this tier only, so those guards still run here; the shared map (and
+    # what Required CI runs) is left untouched.
+    if any(p.startswith("frontend/src/i18n/messages/") for p in changed):
+        report["i18n_backend_guard"] = not scope.get("backend")
+        scope["backend"] = True
     report["scope"] = scope
     print(f"ci:fast: tier={args.tier} base={base_sha or 'NONE'} head={head[:12]} scope={[s for s, v in scope.items() if v]}")
     if args.tier != "static":

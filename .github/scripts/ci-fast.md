@@ -33,12 +33,25 @@ run that still exhausts 900s is reported **unknown**, never trimmed to green.
   run on every invocation. Changes include committed, staged, unstaged,
   untracked, deleted and both sides of a rename.
 - Backend test selection is a pure static reverse-import graph over the AST
-  (never file-name tokens), plus the always-on tree/i18n guard files. A green
-  run must show the selected consumer files actually executed in the JUnit
-  report; running only the guards never proves a changed module has coverage.
-  Unresolvable dynamic imports (`import_module(name)`, `__import__(expr)`)
-  widen conservatively; a giant strongly-connected group may select many tests,
-  in which case the run is honest about the size and may end unknown.
+  (never file-name tokens), plus the always-on tree/i18n guard files. The
+  pytest run loads a small audit plugin (`-p ci_fast_pytest_plugin`) that
+  records, in the same run, which nodes survived `-m`/`-k` (with their
+  fixture-derived layer), which were deselected, and which executed. A green
+  run must show every selected `pure` node executed and none hidden by a
+  filter; a required consumer file's tests are matched by classname module
+  prefix (pytest writes no `file` attribute). Running only the guards never
+  proves a changed module has coverage; a change whose modules have no `pure`
+  consumer at all is unknown. Excluded `integration`/`contract` nodes are the
+  tier working as designed — recorded not-run and owned by full CI — not a
+  silent gap. Unresolvable dynamic imports (`import_module(name)`,
+  `__import__(expr)`) widen conservatively; a giant strongly-connected group may
+  select many tests, in which case the run is honest about the size and may end
+  unknown.
+- A frontend catalog edit under `frontend/src/i18n/messages/**` is read back by
+  the backend refusal/sentences tree guards, but the shared CI path map names
+  only `roomNotice`/`apiError`/`global`. This tier widens backend scope locally
+  for any such edit so those guards still run here; the shared map — and what
+  Required CI runs — is left untouched.
 - Frontend Vitest uses `related` only when a changed source root seeds the
   graph. A config edit, a deleted path, an unknown path, or no merge base falls
   back to the full Vitest run, which must be shown to have executed both i18n

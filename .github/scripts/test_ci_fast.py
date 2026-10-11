@@ -484,19 +484,28 @@ if "--project" in args:
         self.assertEqual(self.report()["title"]["source"], "actual PR title")
         self.assertEqual(self.report()["title"]["value"], "feat: actual PR title")
 
-    def backend_tools(self):
-        # A stub `uv` that stands in for pytest: it writes the JUnit report
-        # proving the changed unit test executed. Everything else in the quick
-        # tier is real (pre-commit runs the fixture's stub hooks from PATH).
-        tools = self.tmp / "btools"
-        tools.mkdir()
+    def backend_tools(self, covered="tests/unit/test_probe.py", folder=None):
+        # A stub `uv` that stands in for pytest. It writes both the JUnit report
+        # (classname only, as pytest 9 does — no file attribute) and the in-run
+        # node audit that the -p plugin would produce, for the given covered
+        # file. Everything else in the quick tier is real (pre-commit runs the
+        # fixture's stub hooks from PATH).
+        tools = folder or (self.tmp / "btools")
+        tools.mkdir(parents=True, exist_ok=True)
         body = f'''#!{sys.executable}
-import pathlib, sys
+import json, os, pathlib, sys
 args = sys.argv[1:]
+covered = {covered!r}
+module = covered[:-3].replace("/", ".")
+node = covered + "::test_it"  # pytest nodeids carry the path, not the module
 if "--junitxml" in args:
     pathlib.Path(args[args.index("--junitxml") + 1]).write_text(
-        '<testsuites><testsuite><testcase file="tests/unit/test_probe.py" '
-        'classname="tests.unit.test_probe"/></testsuite></testsuites>')
+        '<testsuites><testsuite><testcase classname="' + module + '" name="test_it"/>'
+        '</testsuite></testsuites>')
+if os.environ.get("CI_FAST_NODES"):
+    json.dump({{"selected": [{{"node": node, "layer": "pure"}}], "deselected": [],
+               "executed": [{{"node": node, "when": "call", "outcome": "passed"}}]}},
+              open(os.environ["CI_FAST_NODES"], "w"))
 sys.exit(0)
 '''
         target = tools / "uv"
@@ -506,7 +515,9 @@ sys.exit(0)
 
     def test_quick_backend_black_box(self):
         # End to end through main(): the plan selects the changed unit test,
-        # the report must show it executed, and the run is green.
+        # the report must show it executed, and the run is green. The report
+        # carries only a classname (pytest 9), so this also proves the
+        # required-file match works without a file attribute.
         self.write_hooks()
         self.make_base_and_head("backend/tests/unit/test_probe.py")
         proc = self.run_ci_fast("--tier", "quick", "--title", "feat: run backend pure", env_extra=self.backend_tools())
@@ -516,30 +527,44 @@ sys.exit(0)
         self.assertIn("tests/unit/test_probe.py", row["evidence"]["required"])
         self.assertIn("-m", row["command"])
         self.assertIn("pure", row["command"])
+        self.assertIn("ci_fast_pytest_plugin", row["command"])
 
     def test_quick_backend_missing_target_is_unknown(self):
         # A green report that omits the file depending on the changed module
         # proves nothing about the change: the run must be unknown, not green.
         self.write_hooks()
         self.make_base_and_head("backend/tests/unit/test_probe.py")
-        tools = self.tmp / "btools"
-        tools.mkdir()
-        body = f'''#!{sys.executable}
-import pathlib, sys
-args = sys.argv[1:]
-if "--junitxml" in args:
-    pathlib.Path(args[args.index("--junitxml") + 1]).write_text(
-        '<testsuites><testsuite><testcase file="tests/unit/test_something_else.py"/></testsuite></testsuites>')
-sys.exit(0)
-'''
-        target = tools / "uv"
-        target.write_text(body)
-        target.chmod(0o755)
         proc = self.run_ci_fast("--tier", "quick", "--title", "feat: miss coverage",
-                                env_extra={"PATH": str(tools) + os.pathsep + self.env["PATH"],
-                                           "CI_FAST_PRECOMMIT": "uvx pre-commit"})
+                                env_extra=self.backend_tools(covered="tests/unit/test_something_else.py"))
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertEqual(self.report()["status"], "unknown")
+
+    def test_i18n_message_change_runs_backend_guards_locally(self):
+        # A frontend catalog edit under src/i18n/messages/** is read back by the
+        # backend refusal/sentences guards, but the shared CI path map names only
+        # three catalogs. This tier must widen backend scope locally (leaving the
+        # shared map alone) so those guards still run here.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/i18n/messages/zh/newCatalog.json")
+        env = self.quick_tools()
+        self.backend_tools(folder=self.tmp / "tools")  # add the pytest stub beside pnpm/node
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: widen i18n scope", env_extra=env)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        report = self.report()
+        self.assertTrue(report["i18n_backend_guard"])
+        self.assertTrue(report["scope"]["backend"])
+        self.assertTrue(any(r["id"] == "backend-pure" for r in report["ran"]))
+
+    def test_shared_i18n_catalog_needs_no_local_widening(self):
+        # roomNotice.json already sets backend scope in the shared map, so the
+        # local guard must not claim it did anything.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice.json")
+        env = self.quick_tools()
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: shared catalog", env_extra=env)
+        report = self.report()
+        self.assertFalse(report["i18n_backend_guard"])
+        self.assertTrue(report["scope"]["backend"])
 
     def test_actual_pr_title_ignores_tool_preamble(self):
         # The credential wrapper can print a notice before the title; the
@@ -658,6 +683,101 @@ class SelectionEvidenceTest(unittest.TestCase):
         verdict = validate_evidence(missing)
         self.assertEqual(verdict["result"], "unknown")
         self.assertEqual(verdict["evidence"]["missing"], ["tests/unit/test_never_ran.py"])
+
+    def test_junit_classname_matches_required_file_by_module_prefix(self):
+        # pytest 9 writes no `file` attribute and appends the class to
+        # `classname` (tests.unit.test_x.TestC). The required `.py` path must
+        # still match — a passing class-based file is coverage, not a miss.
+        from ci_fast_checks import _covers
+        self.assertTrue(_covers("tests.unit.test_x", "tests/unit/test_x.py"))
+        self.assertTrue(_covers("tests.unit.test_x.TestC", "tests/unit/test_x.py"))
+        self.assertTrue(_covers("tests/unit/test_x.py", "tests/unit/test_x.py"))
+        self.assertTrue(_covers("repo/tests/unit/test_x.py", "tests/unit/test_x.py"))
+        self.assertFalse(_covers("tests.unit.test_x_extra", "tests/unit/test_x.py"))
+        self.assertFalse(_covers("tests.unit.test_y", "tests/unit/test_x.py"))
+
+    def test_junit_class_based_report_greens_required_file(self):
+        from ci_fast_checks import validate_evidence
+        xml = self.root / "avatars.xml"
+        xml.write_text('<testsuites><testsuite>'
+                       '<testcase classname="tests.unit.test_avatars_service.TestAvatarToDto" name="test_a"/>'
+                       '<testcase classname="tests.unit.test_avatars_service.TestAvatarToDto" name="test_b"/>'
+                       '</testsuite></testsuites>')
+        evidence = {"kind": "junit", "path": str(xml),
+                    "required": ["tests/unit/test_avatars_service.py"]}
+        self.assertEqual(validate_evidence(evidence)["result"], "pass")
+
+    def node_audit(self, selected=(), deselected=(), executed=()):
+        path = self.root / "nodes.json"
+        path.write_text(json.dumps({
+            "selected": [{"node": n, "layer": l} for n, l in selected],
+            "deselected": [{"node": n, "layer": l} for n, l in deselected],
+            "executed": [{"node": n, "when": w, "outcome": o} for n, w, o in executed]}))
+        return str(path)
+
+    def audit_evidence(self, nodes, required=None):
+        xml = self.root / "empty.xml"
+        xml.write_text("<testsuites><testsuite/></testsuites>")
+        evidence = {"kind": "junit", "path": str(xml), "nodes": nodes}
+        if required is not None:
+            evidence["required"] = required
+        return evidence
+
+    def test_pure_audit_requires_every_selected_pure_node_to_execute(self):
+        # The JUnit report alone cannot show what a filter removed; the in-run
+        # audit must. A selected pure node that never ran, or a pure node a -k
+        # hid, is unknown — never green.
+        from ci_fast_checks import validate_evidence
+        ok = self.audit_evidence(self.node_audit(
+            selected=[("tests/unit/test_x.py::test_a", "pure")],
+            executed=[("tests/unit/test_x.py::test_a", "call", "passed")]))
+        self.assertEqual(validate_evidence(ok)["result"], "pass")
+        unrun = self.audit_evidence(self.node_audit(
+            selected=[("tests/unit/test_x.py::test_a", "pure"), ("tests/unit/test_x.py::test_b", "pure")],
+            executed=[("tests/unit/test_x.py::test_a", "call", "passed")]))
+        verdict = validate_evidence(unrun)
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertEqual(verdict["evidence"]["unrun"], ["tests/unit/test_x.py::test_b"])
+        hidden = self.audit_evidence(self.node_audit(
+            deselected=[("tests/unit/test_x.py::test_a", "pure")]))
+        self.assertEqual(validate_evidence(hidden)["result"], "unknown")
+
+    def test_pure_audit_excludes_integration_without_going_unknown(self):
+        # The pure layer is defined to exclude Postgres tests; that deselection
+        # is the tier working, so it must not force a permanent unknown.
+        from ci_fast_checks import validate_evidence
+        evidence = self.audit_evidence(self.node_audit(
+            selected=[("tests/unit/test_x.py::test_a", "pure")],
+            deselected=[("tests/integration/test_db.py::test_it", "integration")],
+            executed=[("tests/unit/test_x.py::test_a", "call", "passed")]))
+        self.assertEqual(validate_evidence(evidence)["result"], "pass")
+
+    def test_pure_audit_integration_only_target_is_not_run_not_unknown(self):
+        # A target the static graph widened to, whose tests are all integration,
+        # is not this layer's job: it is recorded not_run, not required. A change
+        # whose modules have no pure consumer at all is the unknown case.
+        from ci_fast_checks import validate_evidence
+        both = self.audit_evidence(self.node_audit(
+            selected=[("tests/unit/test_consumer.py::test_c", "pure")],
+            deselected=[("tests/unit/test_wide.py::test_w", "integration")],
+            executed=[("tests/unit/test_consumer.py::test_c", "call", "passed")]),
+            required=["tests/unit/test_consumer.py", "tests/unit/test_wide.py"])
+        verdict = validate_evidence(both)
+        self.assertEqual(verdict["result"], "pass")
+        self.assertEqual(verdict["evidence"]["not_run_pure"], ["tests/unit/test_wide.py"])
+        none = self.audit_evidence(self.node_audit(
+            selected=[("tests/unit/test_guards.py::test_g", "pure")],
+            deselected=[("tests/unit/test_target.py::test_it", "integration")],
+            executed=[("tests/unit/test_guards.py::test_g", "call", "passed")]),
+            required=["tests/unit/test_target.py"])
+        self.assertEqual(validate_evidence(none)["result"], "unknown")
+
+    def test_pure_audit_reports_failures(self):
+        from ci_fast_checks import validate_evidence
+        evidence = self.audit_evidence(self.node_audit(
+            selected=[("tests/unit/test_x.py::test_a", "pure")],
+            executed=[("tests/unit/test_x.py::test_a", "call", "failed")]))
+        self.assertEqual(validate_evidence(evidence)["result"], "fail")
 
     def test_full_frontend_run_requires_both_i18n_specs(self):
         # The full Vitest run must be shown to have executed the guards, not
