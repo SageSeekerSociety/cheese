@@ -5,7 +5,7 @@ Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device_auth_code``
 (short-lived device-flow codes), ``device_project`` (device↔project assignments),
 ``device_team`` (device↔team bindings — compute belongs to the team, v4) and
-``device_topic`` (a topic's pinned device — affinity, v4) and ``device_health``
+``device_health``
 (a machine's rolling failure streak / quarantine — #186) and
 ``device_claude_login`` (whether its owner's own Claude Code is logged in for
 the platform — #2991) and ``device_sandbox`` (whether it can give a session a

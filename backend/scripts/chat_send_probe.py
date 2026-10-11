@@ -92,7 +92,7 @@ async def inspect() -> int:
     topics = await _rows(
         """
         select t.id, t.title, t.project_id, t.session_id,
-               t.compute_config ->> 'profile' as compute_profile,
+               t.default_environment::text as default_environment,
                t.created_at, p.name as project_name
           from topics t join projects p on p.id = t.project_id
          order by t.created_at desc
@@ -103,7 +103,7 @@ async def inspect() -> int:
         has_session = "yes" if t["session_id"] else "no"
         _say(
             f"  {t['id']} [{t['project_name']}] {t['title']!r}"
-            f" profile={t['compute_profile']} session={has_session}"
+            f" default={t['default_environment']} session={has_session}"
             f" {t['created_at']}"
         )
 
