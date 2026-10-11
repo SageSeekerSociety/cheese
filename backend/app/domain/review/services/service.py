@@ -456,7 +456,7 @@ class AcceptService:
 
     async def _mark_task_merged(
         self, card: AcceptCard, *, delivered_head: str | None = None
-    ) -> None:
+    ) -> bool:
         return await polling._mark_task_merged(
             self, card=card, delivered_head=delivered_head
         )
