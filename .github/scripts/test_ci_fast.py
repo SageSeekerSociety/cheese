@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 SCRIPT = Path(__file__).with_name("ci-fast.py")
@@ -194,18 +195,19 @@ class CiFastTest(unittest.TestCase):
         self.assertIn("file-size", skipped)
         self.assertIn("migration-fork", skipped)
 
-    # --- SKIP must not green a run: pre-commit returns 0 for a skipped hook
-    # --- WITHOUT running it; that is recorded as skipped, never as pass
-    def test_skip_env_is_not_a_pass(self):
+    # --- a stray SKIP in the caller's shell must NOT silently skip a nested
+    # --- check: the runner scrubs verdict-altering variables, so the hook
+    # --- really runs and the verdict reflects the hook, not the caller's env
+    def test_outer_skip_env_does_not_skip_nested_check(self):
         self.write_hooks()
         self.make_base_and_head("backend/app/x.py")
         proc = self.run_ci_fast(env_extra={"SKIP": "ruff"})
-        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
-        self.assertIn("跳过", proc.stdout)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertNotIn("跳过", proc.stdout)
         results = {r["id"]: r["result"] for r in self.report()["ran"]}
-        self.assertEqual(results.get("ruff"), "skipped")
-        self.assertNotIn("ruff", self.ran_hooks())  # the stub never executed
-        self.assertEqual(self.report()["status"], "unknown")
+        self.assertEqual(results.get("ruff"), "pass")
+        self.assertIn("ruff", self.ran_hooks())  # the stub really executed
+        self.assertEqual(self.report()["status"], "pass")
 
     # --- no matching files is legitimately not_applicable: reported as such,
     # --- never counted as an execution; the other hooks really ran, so the
@@ -227,17 +229,17 @@ class CiFastTest(unittest.TestCase):
         self.assertIn("scene-ratchet", not_run)
         self.assertIn("无相关文件", not_run["scene-ratchet"])
 
-    # --- a color-forced SKIP must still be caught: the invocation pins
-    # --- --color never (beats PRE_COMMIT_COLOR=always) and ANSI is stripped
-    def test_colored_skip_is_not_a_pass(self):
+    # --- same for the color override: PRE_COMMIT_COLOR is scrubbed too, so a
+    # --- forced-colour caller cannot flip the verdict; the hook really runs
+    def test_colored_override_does_not_change_verdict(self):
         self.write_hooks()
         self.make_base_and_head("backend/app/x.py")
-        proc = self.run_ci_fast(env_extra={"PRE_COMMIT_COLOR": "always", "SKIP": "ruff"})
-        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        proc = self.run_ci_fast(env_extra={"PRE_COMMIT_COLOR": "always"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         results = {r["id"]: r["result"] for r in self.report()["ran"]}
-        self.assertEqual(results.get("ruff"), "skipped")
-        self.assertNotIn("ruff", self.ran_hooks())  # the stub never executed
-        self.assertEqual(self.report()["status"], "unknown")
+        self.assertEqual(results.get("ruff"), "pass")
+        self.assertIn("ruff", self.ran_hooks())
+        self.assertEqual(self.report()["status"], "pass")
 
     # --- same for the no-files case under forced color: still not_applicable
     def test_colored_no_files_is_not_applicable(self):
@@ -471,6 +473,73 @@ if "--project" in args:
         proc = self.run_ci_fast("--tier", "quick", env_extra={"PATH": str(self.tmp / "tools") + os.pathsep + self.env["PATH"]})
         self.assertEqual(proc.returncode, 2, proc.stdout)
 
+    def test_quick_uses_actual_pr_title_when_no_proposal(self):
+        # No --title: the title is read from gh. A real, conforming PR title
+        # must green the run and the report must record its source.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.report()["title"]["source"], "actual PR title")
+        self.assertEqual(self.report()["title"]["value"], "feat: actual PR title")
+
+    def backend_tools(self):
+        # A stub `uv` that stands in for pytest: it writes the JUnit report
+        # proving the changed unit test executed. Everything else in the quick
+        # tier is real (pre-commit runs the fixture's stub hooks from PATH).
+        tools = self.tmp / "btools"
+        tools.mkdir()
+        body = f'''#!{sys.executable}
+import pathlib, sys
+args = sys.argv[1:]
+if "--junitxml" in args:
+    pathlib.Path(args[args.index("--junitxml") + 1]).write_text(
+        '<testsuites><testsuite><testcase file="tests/unit/test_probe.py" '
+        'classname="tests.unit.test_probe"/></testsuite></testsuites>')
+sys.exit(0)
+'''
+        target = tools / "uv"
+        target.write_text(body)
+        target.chmod(0o755)
+        return {"PATH": str(tools) + os.pathsep + self.env["PATH"], "CI_FAST_PRECOMMIT": "uvx pre-commit"}
+
+    def test_quick_backend_black_box(self):
+        # End to end through main(): the plan selects the changed unit test,
+        # the report must show it executed, and the run is green.
+        self.write_hooks()
+        self.make_base_and_head("backend/tests/unit/test_probe.py")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: run backend pure", env_extra=self.backend_tools())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        row = next(r for r in self.report()["ran"] if r["id"] == "backend-pure")
+        self.assertEqual(row["result"], "pass")
+        self.assertIn("tests/unit/test_probe.py", row["evidence"]["required"])
+        self.assertIn("-m", row["command"])
+        self.assertIn("pure", row["command"])
+
+    def test_quick_backend_missing_target_is_unknown(self):
+        # A green report that omits the file depending on the changed module
+        # proves nothing about the change: the run must be unknown, not green.
+        self.write_hooks()
+        self.make_base_and_head("backend/tests/unit/test_probe.py")
+        tools = self.tmp / "btools"
+        tools.mkdir()
+        body = f'''#!{sys.executable}
+import pathlib, sys
+args = sys.argv[1:]
+if "--junitxml" in args:
+    pathlib.Path(args[args.index("--junitxml") + 1]).write_text(
+        '<testsuites><testsuite><testcase file="tests/unit/test_something_else.py"/></testsuite></testsuites>')
+sys.exit(0)
+'''
+        target = tools / "uv"
+        target.write_text(body)
+        target.chmod(0o755)
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: miss coverage",
+                                env_extra={"PATH": str(tools) + os.pathsep + self.env["PATH"],
+                                           "CI_FAST_PRECOMMIT": "uvx pre-commit"})
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertEqual(self.report()["status"], "unknown")
+
     def test_quick_invalid_title_fails(self):
         self.write_hooks()
         self.make_base_and_head("frontend/src/probe.ts")
@@ -504,16 +573,20 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.put("backend/app/adapter.py", "from .invoice import VALUE\n")
         self.put("backend/tests/unit/test_unrelated_name.py", "def test_it():\n    from app.adapter import VALUE\n")
         self.put("backend/tests/unit/test_invoice_named_but_unrelated.py", "def test_it(): pass\n")
-        paths, reason = select_backend(self.root, ["backend/app/invoice.py"])
+        paths, reason, targets = select_backend(self.root, ["backend/app/invoice.py"])
         self.assertIn("tests/unit/test_unrelated_name.py", paths)
         self.assertNotIn("tests/unit/test_invoice_named_but_unrelated.py", paths)
         self.assertIn("tests/unit/test_sentences.py", paths)
         self.assertIn("transitive", reason)
+        # the pinpointed consumer is reported as a required target (proves the
+        # changed module has coverage), not just as one file among the guards
+        self.assertIn("tests/unit/test_unrelated_name.py", targets)
+        self.assertNotIn("tests/unit/test_sentences.py", targets)
 
     def test_backend_deleted_module_keeps_consumers(self):
         from ci_fast_backend import select_backend
         self.put("backend/tests/unit/test_any_name.py", "from app.gone import value\n")
-        paths, _ = select_backend(self.root, ["backend/app/gone.py"])
+        paths, _, _ = select_backend(self.root, ["backend/app/gone.py"])
         self.assertIn("tests/unit/test_any_name.py", paths)
 
     def test_backend_unknown_module_and_meta_widen(self):
@@ -521,16 +594,17 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.put("backend/tests/unit/test_a.py", "def test_it(): pass\n")
         self.put("backend/tests/unit/test_b.py", "def test_it(): pass\n")
         for changed in (["backend/app/new.py"], ["backend/tests/conftest.py"], ["backend/pyproject.toml"]):
-            paths, reason = select_backend(self.root, changed)
+            paths, reason, targets = select_backend(self.root, changed)
             self.assertIn("tests/unit/test_a.py", paths)
             self.assertIn("tests/unit/test_b.py", paths)
             self.assertIn("fallback", reason)
+            self.assertEqual(targets, [], "a whole-selection fallback pinpoints nothing")
 
     def test_backend_literal_module_import_is_selected(self):
         from ci_fast_backend import select_backend
         self.put("backend/app/special.py", "VALUE = 1\n")
         self.put("backend/tests/unit/test_indirect.py", 'import importlib\nx = importlib.import_module("app.special")\n')
-        paths, _ = select_backend(self.root, ["backend/app/special.py"])
+        paths, _, _ = select_backend(self.root, ["backend/app/special.py"])
         self.assertIn("tests/unit/test_indirect.py", paths)
 
     def test_frontend_delete_forces_full_and_temp_project_inherits(self):
@@ -558,6 +632,74 @@ class SelectionEvidenceTest(unittest.TestCase):
         xml.write_text('<testsuites><testsuite><testcase/></testsuite></testsuites>')
         self.assertEqual(validate_evidence(evidence)["evidence"]["passed"], 1)
 
+    def test_junit_required_target_must_actually_execute(self):
+        # A green suite is not enough: the file that depends on the changed
+        # module must appear in the report, or the change has no coverage.
+        from ci_fast_checks import validate_evidence
+        xml = self.root / "results.xml"
+        evidence = {"kind": "junit", "path": str(xml)}
+        xml.write_text('<testsuites><testsuite>'
+                       '<testcase file="tests/unit/test_executed.py" classname="tests.unit.test_executed"/>'
+                       '</testsuite></testsuites>')
+        covered = {**evidence, "required": ["tests/unit/test_executed.py"]}
+        self.assertEqual(validate_evidence(covered)["result"], "pass")
+        missing = {**evidence, "required": ["tests/unit/test_never_ran.py"]}
+        verdict = validate_evidence(missing)
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertEqual(verdict["evidence"]["missing"], ["tests/unit/test_never_ran.py"])
+
+    def test_full_frontend_run_requires_both_i18n_specs(self):
+        # The full Vitest run must be shown to have executed the guards, not
+        # merely to have matched them.
+        from ci_fast_checks import validate_evidence
+        path = self.root / "vitest.json"
+        evidence = {"kind": "vitest", "path": str(path),
+                    "required_files": ["src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts"]}
+        path.write_text(json.dumps({"numPassedTests": 1, "numFailedTests": 0, "numPendingTests": 0,
+                                    "testResults": [{"name": "/repo/frontend/src/i18n/catalog.spec.ts"}]}))
+        self.assertEqual(validate_evidence(evidence)["result"], "unknown")
+        path.write_text(json.dumps({"numPassedTests": 2, "numFailedTests": 0, "numPendingTests": 0,
+                                    "testResults": [{"name": "/repo/frontend/src/i18n/catalog.spec.ts"},
+                                                    {"name": "/repo/frontend/src/i18n/english.spec.ts"}]}))
+        self.assertEqual(validate_evidence(evidence)["result"], "pass")
+
+    def test_frontend_scope_widens_to_full_on_config_delete_or_unknown(self):
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/keep.ts", "export const x = 1\n")
+        for changed, conservative in (
+            (["frontend/src/keep.ts"], True),                                   # no merge base / unknown
+            (["frontend/src/gone.ts"], False),                                  # deleted root
+            (["frontend/package.json", "frontend/src/keep.ts"], False),         # config edit
+            ([".github/workflows/ci-fast.yml", "frontend/src/keep.ts"], False),  # .github edit
+        ):
+            plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root, conservative)
+            unit = next(p for p in plan if p["id"] == "frontend-unit")
+            self.assertEqual(unit["evidence"]["mode"], "full", changed)
+
+    def test_frontend_meta_and_ambient_force_full_typecheck(self):
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/new.vue", "<template><p>x</p></template>")
+        self.put("frontend/tsconfig.app.json", "{}")
+        plan, _ = test_plan(self.root, ["frontend/tsconfig.app.json", "frontend/src/new.vue"],
+                            {"frontend": True}, self.root)
+        self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+        self.assertFalse(any(p["id"] == "frontend-typecheck-changed" for p in plan))
+
+    def test_narrow_type_project_bridges_node_modules_and_paths(self):
+        # The temp project must resolve the real tsconfig's types/paths, or
+        # vue-tsc exits 2 (cannot judge) without checking anything.
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/new.vue", "<template><p>x</p></template>")
+        plan, _ = test_plan(self.root, ["frontend/src/new.vue"], {"frontend": True}, self.root)
+        types = next(p for p in plan if p["id"] == "frontend-typecheck-changed")
+        config_path = Path(types["command"][3])
+        config = json.loads(config_path.read_text())
+        self.assertTrue((config_path.parent / "node_modules").is_symlink())
+        self.assertEqual(config["compilerOptions"]["baseUrl"], str(self.root / "frontend"))
+        self.assertEqual(config["compilerOptions"]["paths"], {"@/*": ["src/*"]})
+        self.assertEqual(config["references"], [])
+        self.assertEqual(config["files"], [str(self.root / "frontend/src/new.vue")])
+
 
 class BoundedProcessTest(unittest.TestCase):
     def test_timeout_reaps_created_group(self):
@@ -579,6 +721,24 @@ class BoundedProcessTest(unittest.TestCase):
         result = execute([sys.executable, "-c", "import time; x=bytearray(32*1024*1024); time.sleep(5)"], "/tmp", 2, memory_mib=24)
         self.assertEqual(result["result"], "memory")
         self.assertGreaterEqual(result["peak_rss_mib"], 24)
+
+    def test_cleanup_reaps_children_of_a_finished_wrapper(self):
+        # The wrapper exits 0 but leaves a long-lived child behind; the runner
+        # must kill the whole group so the child does not linger after "pass".
+        from ci_fast_process import execute
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "child.pid"
+            code = ("import subprocess, sys, time; "
+                    "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)']); "
+                    f"open({str(pid_file)!r}, 'w').write(str(p.pid)); sys.exit(0)")
+            result = execute([sys.executable, "-c", code], tmp, 5)
+            self.assertEqual(result["result"], "pass", result)
+            child = int(pid_file.read_text())
+            for _ in range(40):
+                if not Path(f"/proc/{child}").exists():
+                    break
+                time.sleep(0.05)
+            self.assertFalse(Path(f"/proc/{child}").exists(), "leftover child was not reaped")
 
 
 if __name__ == "__main__":

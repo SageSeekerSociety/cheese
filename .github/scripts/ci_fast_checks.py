@@ -4,18 +4,20 @@ Test selection is deliberately honest about its edges. The scope comes from the
 Required CI path map; this module turns "frontend" / "backend" into concrete
 commands and turns each command's report into a verdict nobody can fake:
 
-  * A green test suite needs a readable report that shows the selected tests
-    actually ran. An empty selection, a skipped test, a missing report or a
-    process that died by signal is unknown (exit 2), never a pass.
+  * A green suite needs a readable report that shows the selected tests actually
+    ran. An empty selection, a skipped test, a missing report, a selected file
+    with no executed case, or a process that died by signal is unknown (exit 2),
+    never a pass. Running only the always-on guards never proves a changed
+    module has coverage — its consumer files must appear in the report.
   * The report decides pass/fail for suites; the exit code only widens it to
-    unknown (pytest 2/3/4/5, Vitest with --no-passWithNoTests on an empty graph).
+    unknown (pytest 2/3/4/5, Vitest --no-passWithNoTests on an empty graph).
   * Frontend scope with no changed source root, a deleted/config/.github edit or
     an unknown path falls back to the full Vitest run; the related graph is only
-    trusted when it has real roots to seed it.
+    trusted when it has real roots to seed it, and the full run must show both
+    i18n guard specs actually executed.
 """
 
 import json
-import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -30,6 +32,31 @@ FRONTEND_META = {
 }
 VITEST_FLAGS = ["--maxWorkers=1", "--no-file-parallelism", "--no-passWithNoTests", "--no-allowOnly"]
 TSC_CANNOT_JUDGE = 2
+
+
+def _narrow_config(root, tmp, ts_files):
+    """A project that type-checks only the changed files, inheriting the real one.
+
+    ``types: [...]`` and ``paths`` in frontend/tsconfig.json resolve relative to
+    the config that declares them. In a temp dir that means the compiler cannot
+    find ``vitest/globals`` / ``vue/jsx`` / ``vuetify`` (no node_modules) and
+    ``@/*`` paths point nowhere, so vue-tsc exits 2 without judging anything.
+    Bridge node_modules with a symlink and pin the absolute baseUrl/paths.
+    """
+    config = tmp / "tsconfig.json"
+    (tmp / "node_modules").symlink_to(root / "frontend" / "node_modules")
+    config.write_text(json.dumps({
+        "extends": str(root / "frontend/tsconfig.json"),
+        "files": [str(root / p) for p in ts_files],
+        "include": [str(root / "frontend/env.d.ts"), str(root / "frontend/src/**/*.d.ts")],
+        "exclude": [], "references": [],
+        "compilerOptions": {
+            "noEmit": True,
+            "baseUrl": str(root / "frontend"),
+            "paths": {"@/*": ["src/*"]},
+        },
+    }))
+    return config
 
 
 def test_plan(root, changed, scope, tmp, conservative=False):
@@ -78,13 +105,7 @@ def test_plan(root, changed, scope, tmp, conservative=False):
             plan.append({"id": "frontend-typecheck-full", "command": ["pnpm", "run", "typecheck"],
                          "cwd": root / "frontend", "evidence": {"kind": "types", "mode": "full-config-fallback"}})
         elif ts_files:
-            config = tmp / "tsconfig.json"
-            config.write_text(json.dumps({
-                "extends": str(root / "frontend/tsconfig.json"),
-                "files": [str(root / p) for p in ts_files],
-                "include": [str(root / "frontend/env.d.ts"), str(root / "frontend/src/**/*.d.ts")],
-                "exclude": [], "references": [], "compilerOptions": {"noEmit": True},
-            }))
+            config = _narrow_config(root, tmp, ts_files)
             plan.append({"id": "frontend-typecheck-changed", "cwd": root / "frontend",
                          "command": ["node", "scripts/tsc-ratchet.mjs", "--project", str(config), "--json"],
                          "evidence": {"kind": "types", "files": ts_files,
@@ -93,24 +114,35 @@ def test_plan(root, changed, scope, tmp, conservative=False):
             omissions.append({"id": "frontend-typecheck-changed",
                               "reason": "no changed TS/Vue files; types not applicable"})
     if scope.get("backend"):
-        selected, reason = select_backend(root, changed, conservative)
+        selected, reason, targets = select_backend(root, changed, conservative)
         output = tmp / "pytest.xml"
-        env = {**os.environ,
-               "TEST_PG_BASE": "postgresql://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
+        env = {"TEST_PG_BASE": "postgresql://cheese:cheese@127.0.0.1:1/cheese_ci_fast",
                "DATABASE_URL": "postgresql+asyncpg://cheese:cheese@127.0.0.1:1/cheese_ci_fast"}
         plan.append({"id": "backend-pure", "cwd": root / "backend", "env": env,
                      "command": ["uv", "run", "--no-sync", "pytest", *selected, "-m", "pure", "-q",
                                  "--ignore=tests/forgejo", "-k", "not kotlin", "--junitxml", str(output)],
-                     "evidence": {"kind": "junit", "path": str(output), "files": selected, "selection": reason}})
+                     "evidence": {"kind": "junit", "path": str(output), "files": selected,
+                                  "required": targets, "selection": reason}})
     return plan, omissions
 
 
+def _case_file(case):
+    """The repository-relative file a pytest JUnit testcase came from."""
+    if case.get("file"):
+        return case.get("file")
+    classname = case.get("classname")  # e.g. tests.unit.test_x
+    return classname.replace(".", "/") + ".py" if classname else ""
+
+
+def _runs(files, required):
+    """required file paths that produced no testcase at all."""
+    return [r for r in required if not any(f == r or f.endswith("/" + r) for f in files)]
+
+
 def validate_evidence(evidence):
-    """Judge one report file on its own. Types are decided by exit code, not here."""
+    """Judge one report file alone. Types are decided by the exit code, in resolve()."""
     kind = evidence["kind"]
     details = {k: v for k, v in evidence.items() if k != "path"}
-    if kind == "types":
-        return {"result": "pass", "evidence": details}
     try:
         if kind == "vitest":
             data = json.loads(Path(evidence["path"]).read_text())
@@ -118,21 +150,23 @@ def validate_evidence(evidence):
             skipped = int(data.get("numPendingTests", 0)) + int(data.get("numTodoTests", 0))
             errors = int(data.get("numFailedTests", 0))
             files = {row["name"] for row in data.get("testResults", [])}
-            missing = [p for p in evidence.get("required_files", []) if not any(f.endswith("/" + p) for f in files)]
+            missing = [p for p in evidence.get("required_files", [])
+                       if not any(f.endswith("/" + p) for f in files)]
         else:
             xml = ET.parse(evidence["path"]).getroot()
             cases = list(xml.iter("testcase"))
             skipped = sum(case.find("skipped") is not None for case in cases)
             errors = sum(case.find("error") is not None or case.find("failure") is not None for case in cases)
             passed = len(cases) - skipped - errors
-            missing = []
+            missing = _runs({_case_file(case) for case in cases}, evidence.get("required", []))
     except (OSError, ValueError, KeyError, TypeError, ET.ParseError) as exc:
         return {"result": "unknown", "reason": f"unreadable {kind} report: {exc}", "evidence": details}
     details.update(passed=passed, skipped=skipped, errors=errors, missing=missing)
     if errors:
         return {"result": "fail", "reason": "test report contains errors/failures", "evidence": details}
     if not passed or skipped or missing:
-        return {"result": "unknown", "reason": f"empty/skipped/incomplete tests (missing={missing})", "evidence": details}
+        return {"result": "unknown",
+                "reason": f"empty/skipped/uncovered tests (missing={missing})", "evidence": details}
     return {"result": "pass", "evidence": details}
 
 

@@ -1,8 +1,13 @@
 """Bound local checks on Linux; sample RSS of only the group we create.
 
 This is not an address-space limit. RSS sampling can miss short peaks, and
-children that deliberately create another session are outside this group.
-The work machine's per-process cap remains the hard limit.
+children that deliberately create another session are outside this group. The
+work machine's per-process cap remains the hard limit.
+
+A check gets its own process group, a bounded wall clock, a readable output
+tail, and an environment scrubbed of the variables that would change its
+verdict: pre-commit's own SKIP/colour overrides and stray git/pytest
+redirection. PATH/HOME are kept — they are how the checks find their runtimes.
 """
 
 import os
@@ -12,17 +17,35 @@ import subprocess
 import tempfile
 import time
 
+# Vars that alter what a check does rather than where its tools live. A test
+# harness (or a shell one forgot to clean) must not be able to turn a real
+# check green through them.
+SCRUB = (
+    "SKIP", "PRE_COMMIT_COLOR",
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG", "GIT_CONFIG_GLOBAL",
+    "PYTEST_ADDOPTS", "NODE_OPTIONS",
+)
+
+
+def environment(extra=None):
+    """The caller's environment, minus the verdict-altering variables."""
+    env = {k: v for k, v in os.environ.items() if k not in SCRUB}
+    env.update(extra or {})
+    return env
+
 
 def group_rss(pgid, timeout):
-    proc = subprocess.run(
-        ["ps", "-eo", "pgid=,rss="], capture_output=True, text=True, timeout=timeout
-    )
-    if proc.returncode:
-        raise OSError("ps could not measure the check's process group")
-    return sum(
-        int(fields[1]) for line in proc.stdout.splitlines()
-        if len(fields := line.split()) == 2 and fields[0] == str(pgid)
-    ) / 1024
+    for argv in (["ps", "-eo", "pgid=,rss="], ["ps", "-o", "pgid=,rss="]):
+        try:
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode == 0:
+            return sum(
+                int(fields[1]) for line in proc.stdout.splitlines()
+                if len(fields := line.split()) == 2 and fields[0] == str(pgid)
+            ) / 1024
+    raise OSError("ps could not measure the check's process group")
 
 
 def stop_group(proc):
@@ -44,7 +67,7 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
     with tempfile.TemporaryFile() as output:
         try:
             proc = subprocess.Popen(
-                command, cwd=cwd, env=env, stdout=output, stderr=output,
+                command, cwd=cwd, env=environment(env), stdout=output, stderr=output,
                 start_new_session=True,
             )
         except OSError as exc:
@@ -60,9 +83,6 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
                 if rss >= memory_mib:
                     result["result"] = "memory"
                     break
-                if time.monotonic() - start >= timeout:
-                    result["result"] = "timeout"
-                    break
                 if proc.poll() is not None:
                     result["returncode"] = proc.returncode
                     # Shell wrappers may translate SIGKILL/SIGTERM to 137/143.
@@ -71,7 +91,7 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
                         "pass" if proc.returncode == 0 else "fail"
                     )
                     break
-                time.sleep(min(0.1, max(0, timeout - (time.monotonic() - start))))
+                time.sleep(min(0.1, max(0, remaining)))
         except subprocess.TimeoutExpired:
             result["result"] = "timeout"
         except OSError as exc:

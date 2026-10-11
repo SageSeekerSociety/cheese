@@ -9,6 +9,18 @@ way, so without it a change to a route would never reach the tests that build
 the app through main. A large selection that runs out of budget is reported
 unknown, never trimmed.
 
+``select_backend`` returns three things:
+
+* ``selected`` — every unit-test file to hand pytest (the targeted consumers,
+  the always-on tree guards, plus every unit test when the graph cannot be
+  trusted);
+* ``reason`` — why, for the report;
+* ``targets`` — the consumer files that specifically depend on a changed
+  module. A green run must show those actually executed; running only the
+  always-on guards does not prove the changed module has coverage. When the
+  whole selection is a conservative fallback, ``targets`` is empty because no
+  module was pinpointed.
+
 Unmapped source changes, configuration edits and non-Python backend inputs widen
 to all unit modules (pytest still applies the real fixture-derived ``pure``
 marker, so nothing outside the layer runs on a machine with no database).
@@ -126,16 +138,18 @@ def select_backend(root, changed, conservative=False):
             if dynamic:
                 dynamic_consumers.add(module)
     except (OSError, SyntaxError, UnicodeError) as exc:
-        return all_tests, f"full pure fallback: cannot parse dependency graph ({type(exc).__name__})"
+        return all_tests, f"full pure fallback: cannot parse dependency graph ({type(exc).__name__})", []
     # A module whose import list is not fully known may consume anything; treat
     # it as a consumer of every module so nothing that reaches it is missed.
     for consumer in dynamic_consumers:
         for dependency in modules:
             reverse[dependency].add(consumer)
     if conservative or any(p in META or p.endswith("/conftest.py") or p.startswith(".github/") for p in changed):
-        return all_tests, "full pure fallback: configuration/unknown path/no merge base"
-    selected = set()
+        return all_tests, "full pure fallback: configuration/unknown path/no merge base", []
+    targets = set()
     for changed_module in changed_modules:
+        if changed_module in tests:  # a changed unit test proves itself
+            targets.add(_rel(tests[changed_module], backend))
         seen = {changed_module}
         queue = deque([changed_module])
         while queue:
@@ -145,12 +159,12 @@ def select_backend(root, changed, conservative=False):
                     queue.append(consumer)
         affected = seen & tests.keys()
         if not affected and not changed_module.startswith("tests."):
-            return all_tests, f"full pure fallback: no static consumers for {changed_module}"
-        selected.update(affected)
+            return all_tests, f"full pure fallback: no static consumers for {changed_module}", []
+        targets.update(_rel(tests[m], backend) for m in affected)
     relevant = [p for p in changed if p.startswith("backend/") and p not in META]
     if any(not p.endswith(".py") for p in relevant):
-        return all_tests, "full pure fallback: non-Python backend input"
+        return all_tests, "full pure fallback: non-Python backend input", []
     # Guards also run for frontend catalog inputs selected by the CI path map.
-    selected_paths = {_rel(tests[m], backend) for m in selected}
-    selected_paths.update(f"{UNIT_PREFIX}{name}" for name in TREE_GUARDS)
-    return sorted(selected_paths), "reverse transitive Python imports plus tree/i18n guards"
+    selected = set(targets)
+    selected.update(f"{UNIT_PREFIX}{name}" for name in TREE_GUARDS)
+    return sorted(selected), "reverse transitive Python imports plus tree/i18n guards", sorted(targets)
