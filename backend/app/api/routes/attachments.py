@@ -23,6 +23,7 @@
 把现状钉住了，换判据的人必须显式改掉那条测试。
 """
 
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
@@ -34,8 +35,6 @@ from app.core.config import settings
 from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntityError
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
-from app.domain.attachment.models import Attachment, AttachmentType
-from app.domain.attachment.repositories import AttachmentRepository
 from app.domain.attachment.services import AttachmentService
 from app.domain.task.attachment_service import TaskAttachmentService
 
@@ -52,9 +51,7 @@ TYPE_MIME_PREFIXES = {
 
 
 async def get_attachment_service(db=Depends(get_db)) -> AttachmentService:
-    repo = AttachmentRepository(session=db)
-    storage = get_storage_backend()
-    return AttachmentService(repo=repo, storage=storage)
+    return AttachmentService.from_session(session=db, storage=get_storage_backend())
 
 
 async def get_task_attachment_service(db=Depends(get_db)) -> TaskAttachmentService:
@@ -64,7 +61,7 @@ async def get_task_attachment_service(db=Depends(get_db)) -> TaskAttachmentServi
 
 async def _ensure_may_read(
     *,
-    attachment: Attachment,
+    attachment: Any,
     user_id: int,
     service: AttachmentService,
     task_attachments: TaskAttachmentService,
@@ -84,7 +81,7 @@ async def _ensure_may_read(
             "Only the publisher, a board manager or a participant "
             "can download this attachment"
         )
-    if attachment.type == AttachmentType.IMAGE.value:
+    if service.is_image(attachment):
         return
     raise ForbiddenError("Only the uploader can read this attachment")
 
