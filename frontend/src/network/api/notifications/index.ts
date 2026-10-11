@@ -52,7 +52,7 @@ export namespace NotificationsApi {
       data,
     })
 
-  // 全部标记为已读
+  // 全部标为已读
   export const markAllAsRead = () =>
     NewApiInstance.request<MarkAllAsReadResponse>({
       url: '/notifications/status',

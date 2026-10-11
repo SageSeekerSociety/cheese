@@ -32,14 +32,14 @@ export const QUEUE_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-queue-header',
     title: 'AdminQueueHeader',
-    about: '队列页头右边那排工具：未读徽标、「标记为已读」、刷新，和列表/表格的切换器。',
+    about: '队列页头右边那排工具：未读徽标、「标为已读」、刷新，和列表/表格的切换器。',
     file: 'src/components/admin/queue/AdminQueueHeader.vue',
     component: AdminQueueHeader,
     needs: UI,
     states: [
       {
         name: '有未读',
-        note: '未读数大于 0 才画徽标和那颗「标记为已读」；这个数是页面给的（store 那份 counts），页头不自己去问。',
+        note: '未读数大于 0 才画徽标和那颗「标为已读」；这个数是页面给的（store 那份 counts），页头不自己去问。',
         props: queueHeaderProps({ unread: 12 }),
         expect: '12 未读',
       },

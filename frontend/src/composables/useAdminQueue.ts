@@ -432,7 +432,7 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     if (last) void store.setStatus(last.id, last.from)
   }
 
-  /** `M` 键和页头那个「标记为已读」按钮走的是**手动**这一条：每次真发请求。
+  /** `M` 键和页头那个「标为已读」按钮走的是**手动**这一条：每次真发请求。
    *
    *  以前这里调的是 `markReadOnce(current.id)`（页面自己用的那个「同一条只推一次」的
    *  版本），后果是打开一条停留超过 800ms 之后再按 `M`，那一按被去重集合早退成静默
