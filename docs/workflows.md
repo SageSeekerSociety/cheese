@@ -157,7 +157,7 @@ task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 
 **机器上没有 `task` 时**：本次核查覆盖的平台云执行机样本（cheese-de808b-27）未预装 task，422 作者当时所在执行机同样没有；可按 README 第 13 行的脚本装到 `~/.local/bin`（样本机上实测可装）。Taskfile 只是薄封装，不装 task 时用下面的等价入口——前提是机器上有 python3 和 uv/uvx（pre-commit 由 uvx 解析），装前端依赖还需要 pnpm：
 
 ```bash
-python3 .github/scripts/ci-fast.py --tier quick {{.CLI_ARGS}}  # ≡ task ci:fast（quick 档）
+python3 .github/scripts/ci-fast.py --tier quick                # ≡ task ci:fast（quick 档）
 python3 .github/scripts/ci-fast.py --tier quick --types        # ≡ task ci:fast -- --types
 (cd backend && uv sync)                          # ≡ task be:deps:sync（备 backend/.venv）
 (cd frontend && pnpm install --frozen-lockfile)  # ≡ task fe:install（备 node_modules）
@@ -170,4 +170,4 @@ python3 .github/scripts/ci-fast.py --tier quick --types        # ≡ task ci:fas
 - **边界**：quick/extended 只到 pure 测试 + 窄类型/前端 related；contract / integration / build / e2e / 完整前端消费方类型不在这一层（摘要会列出未跑项和定向建议）。`extended` 不扩大选中范围，只放宽预算，超预算仍是 unknown。前端 related 只在有改动源码根时可信，配置/删文件/未知路径/无 base 一律回退全量 Vitest。详细用法见 `.github/scripts/ci-fast.md`。
 - **pre-push hook**：opt-in，片段在 `ci-fast.py` 文件头注释里，不默认安装；也别用 `--no-verify` 绕过——被跳过的 hook 一律按未执行处理，整体不会是绿。外层 shell 里的 `SKIP` / `PRE_COMMIT_COLOR` 等会改判定的变量在起子进程前被清掉，不会把某个嵌套检查悄悄跳过。
 
-设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释；行为层快检不在 v1 范围。
+设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释。
