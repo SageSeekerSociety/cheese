@@ -22,6 +22,7 @@ vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
   getPreview: vi.fn().mockResolvedValue(null),
+  listFeedbackProposals: vi.fn().mockResolvedValue([]),
 }))
 // 地址换短名要问后端；这里没有后端，换不成就照原地址打开。
 vi.mock('@/api/addresses', () => ({
@@ -33,7 +34,7 @@ vi.mock('@/views/workspace/ProjectShell.vue', pageCode)
 vi.mock('@/views/workspace/ProjectSidebar.vue', pageCode)
 vi.mock('@/views/workspace/TopicView.vue', pageCode)
 
-import { getPreview, listBlocks } from '@/api'
+import { getPreview, listBlocks, listFeedbackProposals } from '@/api'
 import { setCachedWindow } from '@/query/blocks'
 import router from '@/router'
 
@@ -76,6 +77,15 @@ describe('opening a topic', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(listBlocks).not.toHaveBeenCalled()
   })
+
+  // 整页刷新、直接打开链接时，订阅要等页面挂上才连：提议卡要是等快照，就比消息晚一个来回。
+  // （这个文件里的页面代码一直没下完，每一次导航都还是从冷打开出发。）
+  it('on a cold open, asks for the proposal cards together with the messages', async () => {
+    const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b08'
+    void router.push(`/projects/${PROJECT}/channels/${topic}`)
+    await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(topic, expect.anything()), { timeout: 20_000 })
+    expect(listFeedbackProposals).toHaveBeenCalledWith(topic)
+  }, 30_000)
 
   // 任务页读的是任务自己那段对话：消息按任务的 id 取，不是它所在的频道。
   it('fetches the newest messages of the task itself while the page code is still loading', async () => {
