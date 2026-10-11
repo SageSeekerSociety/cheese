@@ -61,7 +61,7 @@
           <!-- button，不是 div：头像打开的菜单里有设置和退出登录，只用键盘的人也得够得着。 -->
           <button
             type="button"
-            class="mb-3 rail-avatar"
+            class="mb-4 rail-avatar"
             :aria-label="userMenu.nickname.value"
             v-bind="props"
             @pointerenter="rememberAvatar"
@@ -260,8 +260,8 @@ useEventListener(
   }
 
   // 底下那段（头像）是 overflow: hidden（Vuetify 的），上边正好贴着头像：头像的
-  // :focus-visible 框伸出去的那 4px 会被切平。上边留 4px 给它，头像的下外边距相应
-  // 少 4px（mb-3 而不是 mb-4），头像还在原来的位置。
+  // :focus-visible 框伸出去的那 4px 会被切平。上边留 4px 给它。这一段贴着栏底排，
+  // 多出的 4px 往上长，头像还在原来的位置（下外边距别跟着减，减了头像就往下挪）。
   .v-navigation-drawer__append {
     padding-top: 4px;
   }
