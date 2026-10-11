@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ColumnElement, and_, func, not_, select, true
+from sqlalchemy import ColumnElement, String, and_, cast, func, not_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
@@ -21,7 +21,11 @@ from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
 from app.domain.conversation.services import of_rooms, room_column
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.identity.handles import (
+    AGENT_HANDLE_PREFIX,
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
 from app.domain.membership.roster import roster
 from app.domain.memory.models import MemoryEntry, parse_user_scope_id
 from app.domain.memory.store import about_person
@@ -239,11 +243,12 @@ class DashboardService:
     ) -> "tuple[User | None, list[Project]]":
         """The person, and their projects as ``viewer`` may see them.
 
-        Every project they are in — owned, through a team, or as an external
-        member. Their own page lists them all; anyone else's lists a project
-        only when the viewer may read it too. Everything a personal page counts
-        (projects, activity, topics) is counted inside this one set, so no
-        number on it reaches into a project the viewer cannot open."""
+        Every project they are in — owned, through a team, as an external
+        member, or, for an AI teammate, the project it is the agent of. Their
+        own page lists them all; anyone else's lists a project only when the
+        viewer may read it too. Everything a personal page counts (projects,
+        activity, topics) is counted inside this one set, so no number on it
+        reaches into a project the viewer cannot open."""
         # deferred-import: tests replace this name on app.domain.user.repositories
         from app.domain.user.repositories import UserRepository
 
@@ -251,6 +256,11 @@ class DashboardService:
         theirs = await self._projects.list_visible_to(
             handle=handle, user_id=user.id if user else None
         )
+        listed = {project.id for project in theirs}
+        seated = await self._agent_of(handle)
+        theirs += (
+            await self._projects.get_by_ids([p for p in seated if p not in listed])
+        ).values()
         if viewer == handle:
             return user, theirs
         return user, [
@@ -258,6 +268,26 @@ class DashboardService:
             for project in theirs
             if await may_read_project(self._s, project_id=project.id, handle=viewer)
         ]
+
+    async def _agent_of(self, handle: str) -> set[uuid.UUID]:
+        """The projects whose AI teammate acts under ``handle``: an agent's
+        handle is derived from its instance (``agent_instance_handle``), and the
+        instance belongs to one project. Empty for a person. Without it a
+        teammate's page counted no project at all, so a year of its work read 0
+        beside the 本周 count the member page takes from the same blocks."""
+        hexed = handle.removeprefix(AGENT_HANDLE_PREFIX)
+        if hexed == handle or not hexed:
+            return set()
+        instances = await self._s.scalars(
+            select(AgentInstance).where(
+                func.replace(cast(AgentInstance.id, String), "-", "").like(f"{hexed}%")
+            )
+        )
+        return {
+            instance.project_id
+            for instance in instances
+            if agent_instance_handle(instance.id) == handle
+        }
 
     async def user_profile(self, handle: str, *, viewer: str) -> dict:
         """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
@@ -290,6 +320,7 @@ class DashboardService:
         )
         is_self = viewer == handle
         ids = [project.id for project in visible]
+        seated = await self._agent_of(handle)
 
         teams = []
         if user is not None:
@@ -368,9 +399,11 @@ class DashboardService:
                     "project_id": str(project.id),
                     "name": project.name,
                     # Same precedence as the roster: owner, then team, then
-                    # external.
+                    # external; an AI teammate is the project's agent.
                     "source": (
-                        "owner"
+                        "agent"
+                        if project.id in seated
+                        else "owner"
                         if project.owner_handle == handle
                         else "team"
                         if project.team_id in team_ids

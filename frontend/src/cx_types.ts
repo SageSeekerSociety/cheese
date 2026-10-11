@@ -535,8 +535,8 @@ export interface MemberSummary {
 
 // ---- 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2, §8.4) ----
 
-/** How the person is in a project: its owner, through its team, or invited alone. */
-export type ProfileProjectRole = 'owner' | 'team' | 'external'
+/** How the person is in a project: its owner, through its team, invited alone, or as its AI teammate. */
+export type ProfileProjectRole = 'owner' | 'team' | 'external' | 'agent'
 
 // One project the person is in, as the viewer may see it.
 export interface ProfileProject {
