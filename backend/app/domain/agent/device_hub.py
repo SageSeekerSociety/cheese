@@ -84,6 +84,11 @@ PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 HEARTBEAT_S = 15.0
 LINK_SILENCE_S = 3 * HEARTBEAT_S
 
+# How often a machine that stays connected is asked again whether its connector
+# is the published one (`DeviceHub._check_build`): as often as the published
+# answer can change (`connector_build.PUBLISHED_TTL_S`).
+BUILD_CHECK_S = connector_build.PUBLISHED_TTL_S
+
 
 class DeviceTransport(Protocol):
     """A live device control channel. Satisfied by a ``fastapi.WebSocket`` adapter
@@ -110,10 +115,17 @@ class HubDevice:
     build: str = ""
     target: str = ""
     executor: bool = False
-    # Whether this CONNECTION has already been told to update itself. Reset on
-    # every attach, so a machine whose self-update failed is told again the next
-    # time it dials in rather than once and never again.
-    update_pushed: bool = False
+    # The published build this CONNECTION has been told to update to ("" when
+    # it has not been told). Reset on every attach, so a machine whose
+    # self-update failed is told again the next time it dials in rather than
+    # once and never again; and a build published later is a new one to tell
+    # it about, so a machine that stays connected is not left on the build it
+    # dialled in with. Never twice for the same build on one connection.
+    update_pushed: str = ""
+    # When this connection last asked whether its build is still the published
+    # one (loop time), and the check under way, if any (`_check_build`).
+    build_checked_at: float = 0.0
+    build_check: asyncio.Task[None] | None = None
     # Last time the device sent any frame (hello/heartbeat/…).
     last_seen: float = 0.0
     # When this machine's last link dropped (loop time); None while it is linked
@@ -257,7 +269,7 @@ class DeviceHub:
         device.executor = False
         if name:
             device.name = name
-        device.update_pushed = False
+        device.update_pushed = ""
         await device.send(device_link.welcome())
 
     async def detach_device(self, device_id: str, transport: DeviceTransport) -> None:
@@ -753,7 +765,8 @@ class DeviceHub:
             device.announced.set()
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
-            await self._update_if_stale(device, msg)
+            device.build_checked_at = device.last_seen
+            await self._update_if_stale(device)
             return
         if msg.t == "session.error":
             # The device could not start (or attach) this screen. There is no
@@ -769,6 +782,7 @@ class DeviceHub:
             return
         if msg.t == "heartbeat":
             device.heartbeats = True
+            self._check_build(device)
             return
         if msg.t == "session.ready":
             return
@@ -857,9 +871,25 @@ class DeviceHub:
             raise KeyError(f"no screen {sid!r} on device {device_id!r}")
         return screen
 
-    async def _update_if_stale(
-        self, device: HubDevice, msg: device_link.LinkMsg
-    ) -> None:
+    def _check_build(self, device: HubDevice) -> None:
+        """Ask again, on a connection that stays up, whether the machine's build
+        is still the published one: a release publishes a new connector while
+        machines stay connected, and `hello` alone told only the ones that
+        happened to dial in afterwards. A Cloud machine stayed on the build it
+        connected with for a day, and every room on it was refused what the
+        newer build would have given it.
+
+        At most once per ``BUILD_CHECK_S``, and off the link's read loop: the
+        origin can take seconds to answer, and the frames behind this heartbeat
+        are the machine's terminals and calls."""
+        if device.build_check is not None and not device.build_check.done():
+            return
+        if device.last_seen - device.build_checked_at < BUILD_CHECK_S:
+            return
+        device.build_checked_at = device.last_seen
+        device.build_check = asyncio.create_task(self._update_if_stale(device))
+
+    async def _update_if_stale(self, device: HubDevice) -> None:
         """Tell a machine whose connector is not the one we serve to replace it.
 
         Nothing else closes the gap between what the server sends and what the
@@ -879,28 +909,40 @@ class DeviceHub:
         machine's self-update downloads (`connector_build.published_digest`),
         not this process's own copy, which lags it between owner releases.
         """
-        if device.update_pushed:
-            return
-        if msg.build or msg.target:
-            if not (msg.build and msg.target):
+        generation = device.connection_generation
+        build, target = device.build, device.target
+        if build or target:
+            if not (build and target):
                 return
-            published = await connector_build.published_digest(msg.target)
-            if published is None or published == msg.build:
+            published = await connector_build.published_digest(target)
+            if published is None or published == build:
                 return
-        elif not await asyncio.to_thread(connector_build.has_any_build):
+        elif await asyncio.to_thread(connector_build.has_any_build):
             # It says nothing about itself, so it predates saying anything and
             # is old by construction — but only tell it to fetch a build if we
             # have one to give it.
+            published = "<any>"
+        else:
             return
-        device.update_pushed = True
+        # The answer is about the connection that asked; one that replaced it
+        # meanwhile says hello and is asked for itself.
+        if device.update_pushed == published or (
+            device.connection_generation != generation
+        ):
+            return
+        device.update_pushed = published
         logger.warning(
             "device %s runs connector build %s for %s, not the published one — "
             "pushing self-update",
             device.device_id,
-            msg.build or "<unreported>",
-            msg.target or "<unreported>",
+            build or "<unreported>",
+            target or "<unreported>",
         )
-        await device.send(device_link.update())
+        try:
+            await device.send(device_link.update())
+        except DeviceOffline:
+            # The link went while we asked; the machine is told when it is back.
+            pass
 
     # Overridable seam for logging/metrics; a no-op by default.
     def _on_version_skew(self, device_id: str, proto: int | None) -> None:
