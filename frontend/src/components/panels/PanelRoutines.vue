@@ -63,6 +63,8 @@ const emit = defineEmits<{
   (e: 'edit', routine: Routine): void
   (e: 'delete', routine: Routine): void
   (e: 'toggle-runs', routine: Routine): void
+  /** 点了某次执行交回的一份结果文件：打开它。 */
+  (e: 'open-file', path: string): void
   /** 表单开着 / 关上。 */
   (e: 'form-open-change', open: boolean): void
   /** 表单存下去。 */
@@ -106,6 +108,7 @@ const emit = defineEmits<{
         @edit="(r) => emit('edit', r)"
         @delete="(r) => emit('delete', r)"
         @toggle-runs="(r) => emit('toggle-runs', r)"
+        @open-file="(path) => emit('open-file', path)"
         @navigate="(t) => emit('navigate', t)"
       />
     </div>

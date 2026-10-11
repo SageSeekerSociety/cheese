@@ -534,7 +534,7 @@ const rowLabels = computed(() =>
               @pin="emit('pin', $event)"
               @unpin="emit('unpin', $event)"
             />
-            <!-- 例行任务的一次执行：哪条规则、跑得怎么样，去看这次执行的支线。 -->
+            <!-- 例行任务的一次执行：哪条规则、跑得怎么样、结果文件在哪，去看这次执行的支线。 -->
             <RoutineRunLine
               v-if="!notice && m.routine_run"
               class="tl-thread"
@@ -542,6 +542,7 @@ const rowLabels = computed(() =>
               :run="m.routine_run"
               :threaded="!!threadable && !!m.thread"
               @open="emit('open-thread', m)"
+              @open-file="emitOpenFile"
             />
             <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
                带插槽的行每次重画都会跟着重画。 -->

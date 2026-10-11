@@ -36,6 +36,7 @@
     "missed": "未能执行",
     "missedBecause": "未能执行：{reason}",
     "took": "运行用时 {minutes} 分钟",
+    "files": "结果文件",
     "open": "查看这次运行"
   },
   "run": {
