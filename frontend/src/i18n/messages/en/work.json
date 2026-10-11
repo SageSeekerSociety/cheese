@@ -416,7 +416,7 @@
       "goConfirm": "Review and confirm",
       "who": {
         "platform": "Handled by the platform",
-        "cheese": "Cheese is on it",
+        "cheese": "AI teammate is on it",
         "human": "Needs a person"
       },
       "quote": "“{text}”",
@@ -679,7 +679,7 @@
       "count": "No revisions | 1 revision | {count} revisions",
       "acceptAll": "Accept all",
       "rejectAll": "Reject all",
-      "libraryReadOnly": "The original in the library stays unchanged. To change this document, ask Cheese to make a new one from it",
+      "libraryReadOnly": "The original in the library stays unchanged. To change this document, ask the AI teammate to make a new one from it",
       "readOnlyNote": "This version is read-only, so revisions cannot be handled.",
       "where": "Paragraph {paragraph} · {author}",
       "anonymous": "Unnamed",
@@ -715,7 +715,7 @@
       "source": {
         "baseline": "Original",
         "upload": "Upload",
-        "ai": "Edited by Cheese",
+        "ai": "Edited by an AI teammate",
         "editor": "Saved from the online editor",
         "restore": "Restore",
         "scheduled": "Scheduled task"
@@ -1046,7 +1046,7 @@
       "notSentReason": "Not sent: {reason}",
       "confirmSend": "Confirm and send",
       "discard": "Discard",
-      "hint": "The email above is exactly what gets sent. Cheese can't send it for you.",
+      "hint": "The email above is exactly what gets sent. {name} can't send it for you.",
       "waiting": "Sent only once {owner} confirms",
       "discardFailed": "Couldn't discard"
     },

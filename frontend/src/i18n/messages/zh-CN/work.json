@@ -416,7 +416,7 @@
       "goConfirm": "去确认",
       "who": {
         "platform": "平台已处理",
-        "cheese": "芝士处理中",
+        "cheese": "AI 队友处理中",
         "human": "等人处理"
       },
       "quote": "「{text}」",
@@ -679,7 +679,7 @@
       "count": "修订 {count} 处",
       "acceptAll": "全部接受",
       "rejectAll": "全部拒绝",
-      "libraryReadOnly": "资料库里的原件不改。要改这份文档，让芝士基于它做一份新的",
+      "libraryReadOnly": "资料库里的原件不改。要改这份文档，让 AI 队友基于它做一份新的",
       "readOnlyNote": "这个版本只读，不能处理修订。",
       "where": "第 {paragraph} 段 · {author}",
       "anonymous": "未署名",
@@ -715,7 +715,7 @@
       "source": {
         "baseline": "最初的样子",
         "upload": "上传",
-        "ai": "芝士修改",
+        "ai": "AI 队友修改",
         "editor": "在线编辑保存",
         "restore": "恢复",
         "scheduled": "定时任务"
@@ -1046,7 +1046,7 @@
       "notSentReason": "没有发出去：{reason}",
       "confirmSend": "确认发送",
       "discard": "放弃",
-      "hint": "发出去的就是上面这封；芝士不能替你发。",
+      "hint": "发出去的就是上面这封；{name}不能替你发。",
       "waiting": "等 {owner} 确认后才会发送",
       "discardFailed": "没有放弃成功"
     },
@@ -1693,7 +1693,7 @@
     "taskNaming": {
       "intro": "手动改过名的任务不会再被自动改名",
       "autoTitle": "智能命名",
-      "autoDetail": "没起名的任务在第一条消息后自动起名，首次运行结束后再校准一次。之后只在任务方向明显变化时改名。芝士提议的任务沿用提议时的标题，同样只在方向变化时改名",
+      "autoDetail": "没起名的任务在第一条消息后自动起名，首次运行结束后再校准一次。之后只在任务方向明显变化时改名。AI 队友提议的任务沿用提议时的标题，同样只在方向变化时改名",
       "manualTitle": "手动命名",
       "manualDetail": "不自动起名，新任务保持「新任务」，直到有人改名",
       "label": "任务命名",
