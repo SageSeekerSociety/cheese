@@ -647,6 +647,53 @@ async def test_a_connector_is_left_alone_when_the_origin_cannot_say(origin, tmp_
     assert t.sent == [{"t": "welcome", "v": 1}]
 
 
+async def _updates_told(t: FakeDeviceTransport) -> int:
+    """How many times the machine has been told to update, once the hub has
+    finished asking."""
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+    return sum(1 for m in t.sent if m["t"] == "update")
+
+
+async def test_a_connected_machine_is_told_about_a_build_published_after_it_dialled_in(
+    origin, monkeypatch
+):
+    """A release publishes a new connector while machines stay connected. One
+    that was current when it said hello is told to update once the newer build
+    is out, without waiting to reconnect, and once per build rather than on
+    every heartbeat."""
+    from app.domain.agent import device_hub
+
+    monkeypatch.setattr(device_hub, "BUILD_CHECK_S", 0.0)
+    monkeypatch.setattr(connector_build, "PUBLISHED_TTL_S", 0.0)
+    origin["linux-amd64"] = b"build one"
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.on_device_message(
+        "dev1",
+        {
+            "t": "hello",
+            "v": 1,
+            "build": hashlib.sha256(b"build one").hexdigest(),
+            "target": "linux-amd64",
+        },
+    )
+    await hub.on_device_message("dev1", {"t": "heartbeat"})
+    assert await _updates_told(t) == 0
+
+    origin["linux-amd64"] = b"build two"
+    await hub.on_device_message("dev1", {"t": "heartbeat"})
+    assert await _updates_told(t) == 1
+
+    await hub.on_device_message("dev1", {"t": "heartbeat"})
+    assert await _updates_told(t) == 1
+
+    origin["linux-amd64"] = b"build three"
+    await hub.on_device_message("dev1", {"t": "heartbeat"})
+    assert await _updates_told(t) == 2
+
+
 class DyingTransport(FakeDeviceTransport):
     """A socket whose peer vanishes mid-life: writes start failing, but the
     receive loop hears nothing, so nobody calls ``detach_device``."""
