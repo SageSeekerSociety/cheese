@@ -288,17 +288,19 @@ const emit = defineEmits<{
 .rail-header--team {
   padding-block: 6px;
 }
+/* 这一列吃掉侧栏剩下的宽度（原来是 `margin-inline-end: auto`，只把右边那颗搜索推到
+   末尾）。它不涨的话就没宽度可分：名字那行只跟内容一样宽，而名字里那一整个全名都是
+   「内容」，盒子于是永远停在内容宽度上——名字被自己的盒子卡住，侧栏拖到 480px 也只
+   能露四五个字，拖窄一点就成了「修…」。给它 `flex: 1 1 auto` 之后名字用得上侧栏的
+   宽度，长了照样略号收尾。 */
 .rail-header__ident {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   min-width: 0;
-  margin-inline-end: auto;
+  flex: 1 1 auto;
 }
-/* The column does not stretch the button, so it is as wide as its content —
-   and a no-wrap name's content is the whole name, however short the column.
-   Capped at the column, the name ellipsises instead of running under ⌄ and
-   the search button. */
+/* 名字那行靠内容宽，但最多顶到这一列：再长就略号收尾，不会钻到 ⌄ 和搜索底下。 */
 .rail-header__ident .rail-header__home {
   max-width: 100%;
 }
