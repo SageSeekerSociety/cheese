@@ -322,7 +322,7 @@ async def create_skill(
             db,
             row,
             place.room_id,
-            say("skillProposed", title=row.title),
+            say("skillProposedBy", who=f"<@{by}>", title=row.title),
             say("skillProposedDetail", description=row.description, body=row.body),
         )
     await db.commit()
@@ -421,9 +421,10 @@ async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
         key="skill_id",
         value=row.id,
         content=lambda meta: say(
-            ("skillEditSaved" if saved else "skillEditNotSaved")
+            ("skillEditSavedBy" if saved else "skillEditNotSavedBy")
             if meta.get("edit")
-            else ("skillProposalSaved" if saved else "skillProposalNotSaved"),
+            else ("skillProposalSavedBy" if saved else "skillProposalNotSavedBy"),
+            who=f"<@{row.proposed_by}>",
             title=row.title,
         ),
     )
@@ -497,7 +498,11 @@ async def update_skill(
                 db,
                 row,
                 room_id,
-                say("skillEditProposed" if edit else "skillProposed", title=row.title),
+                say(
+                    "skillEditProposedBy" if edit else "skillProposedBy",
+                    who=f"<@{row.proposed_by}>",
+                    title=row.title,
+                ),
                 say(
                     "skillEditProposedDetail", reason=body.reason.strip(), body=row.body
                 )
