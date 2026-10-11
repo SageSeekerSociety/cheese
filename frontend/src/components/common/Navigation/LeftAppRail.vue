@@ -259,11 +259,12 @@ useEventListener(
     }
   }
 
-  // 底下那段（头像）是 overflow: hidden（Vuetify 的），上边正好贴着头像：头像的
-  // :focus-visible 框伸出去的那 4px 会被切平。上边留 4px 给它。这一段贴着栏底排，
-  // 多出的 4px 往上长，头像还在原来的位置（下外边距别跟着减，减了头像就往下挪）。
+  // 底下那段（头像）Vuetify 给的是 overflow: hidden，上边正好贴着头像：头像的
+  // :focus-visible 框伸出去的那 4px 会被切平。让它画出去，不给它留位置：留位置就得
+  // 加高这一段，上面的项目列表跟着矮 4px，滚到底时最后几格整体上移。这一段里只有
+  // 头像，没有要靠裁剪才不露出来的东西。
   .v-navigation-drawer__append {
-    padding-top: 4px;
+    overflow: visible;
   }
 
   // 首页那一格的未读点和件数角标往右上角外探 2px / 4px。这一段和下面的项目
