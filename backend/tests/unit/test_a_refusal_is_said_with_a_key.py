@@ -359,7 +359,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/gateway_usage.py": 2,
     "app/domain/agent/github_app.py": 5,
     "app/domain/agent/harness/claude_code/legacy.py": 6,
-    "app/domain/agent/harness/claude_code/remote_execution/bootstrap.py": 18,
+    "app/domain/agent/harness/claude_code/remote_execution/bootstrap.py": 12,
     "app/domain/agent/harness/claude_code/remote_execution/client.py": 17,
     "app/domain/agent/harness/claude_code/remote_execution/context_service.py": 1,
     "app/domain/agent/harness/claude_code/remote_execution/forwarded_fs.py": 2,

@@ -11,6 +11,7 @@ import sys
 import uuid
 
 from app.domain.agent.harness.claude_code import executor_launch
+from app.domain.device import sandbox
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
@@ -34,7 +35,9 @@ async def test_a_machine_that_said_it_cannot_isolate_is_not_picked():
     online = {refusing, able}.__contains__
     assert (await service.first_healthy_device(project, online)).device_id == refusing
 
-    await service.record_sandbox_check(refusing, isolates=False, reason="no userns")
+    await service.record_sandbox_check(
+        refusing, isolates=False, reason='{"key": "sandboxAppArmor", "params": {}}'
+    )
 
     assert (await service.first_healthy_device(project, online)).device_id == able
 
@@ -43,7 +46,9 @@ async def test_with_only_such_machines_nothing_is_picked():
     service = DeviceService(InMemoryDeviceRepository())
     project = uuid.uuid4()
     only = await _enrol(service, project, "old box")
-    await service.record_sandbox_check(only, isolates=False, reason="no userns")
+    await service.record_sandbox_check(
+        only, isolates=False, reason='{"key": "sandboxAppArmor", "params": {}}'
+    )
 
     assert await service.first_healthy_device(project, {only}.__contains__) is None
 
@@ -52,7 +57,9 @@ async def test_a_machine_that_can_again_is_picked_again():
     service = DeviceService(InMemoryDeviceRepository())
     project = uuid.uuid4()
     box = await _enrol(service, project, "box")
-    await service.record_sandbox_check(box, isolates=False, reason="no userns")
+    await service.record_sandbox_check(
+        box, isolates=False, reason='{"key": "sandboxAppArmor", "params": {}}'
+    )
     await service.record_sandbox_check(box, isolates=True, reason=None)
 
     assert (await service.first_healthy_device(project, {box}.__contains__)) is not None
@@ -72,4 +79,27 @@ def test_the_check_a_machine_runs_answers_in_one_line():
 
     answer = json.loads(done.stdout.strip().splitlines()[-1])
     assert isinstance(answer["isolates"], bool)
-    assert answer["isolates"] or answer["reason"]
+    assert answer["isolates"] or answer["said"]["key"].startswith("sandbox")
+
+
+async def test_an_owner_reads_the_sentence_a_machine_said_and_nothing_else():
+    """A reason that is not a sentence (English written before reasons were
+    keyed, or by the release still serving during a deploy) reads as none,
+    rather than as text the page cannot render."""
+    service = DeviceService(InMemoryDeviceRepository())
+    box = await _enrol(service, uuid.uuid4(), "box")
+
+    await service.record_sandbox_check(
+        box,
+        isolates=False,
+        reason=sandbox.kept({"key": "sandboxAppArmor", "params": {}}),
+    )
+    assert sandbox.status(await service.sandbox_check(box))["reason"] == {
+        "key": "sandboxAppArmor",
+        "params": {},
+    }
+
+    await service.record_sandbox_check(
+        box, isolates=False, reason="bubblewrap is missing"
+    )
+    assert sandbox.status(await service.sandbox_check(box))["reason"] is None

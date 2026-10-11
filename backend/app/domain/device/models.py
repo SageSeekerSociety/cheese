@@ -223,8 +223,8 @@ class DeviceSandboxRow(Base):
     """Whether a machine a person enrolled can give a session a sandbox, as it
     last answered: asked when it connects and when its owner asks again
     (`device.sandbox`). The machine runs the very check its install runs, so
-    the answer is the install's own; ``reason`` is what it said when it cannot,
-    worded for its owner.
+    the answer is the install's own; ``reason`` is the sentence it said when it
+    cannot, for its owner, as ``{"key", "params"}`` JSON (`device.sandbox`).
     """
 
     __tablename__ = "device_sandbox"

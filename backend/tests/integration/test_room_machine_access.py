@@ -223,12 +223,12 @@ def test_access_is_chosen_for_a_named_machine_and_only_as_one_of_two(
     assert say(message) in response.json()["message"]
 
 
-def _answered(client, device_id: str, isolates: bool, reason: str | None = None):
+def _answered(client, device_id: str, isolates: bool, said: dict | None = None):
     """The machine answers the check it is asked as it connects."""
     from app.domain.agent.harness.claude_code import executor_launch
     from app.domain.device import sandbox
 
-    answer = {"isolates": isolates, **({"reason": reason} if reason else {})}
+    answer = {"isolates": isolates, **({"said": said} if said else {})}
     hub = SimpleNamespace(
         exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(answer)})
     )
@@ -256,7 +256,7 @@ def test_the_picker_says_whose_machine_it_is_and_which_cannot_isolate(
     windows = _machine(client, pid, "desktop")
     _answered(client, linux, True)
     _answered(client, mac, True)
-    _answered(client, windows, False, "Windows machines do not have one.")
+    _answered(client, windows, False, {"key": "sandboxNoneOnWindows", "params": {}})
 
     def listed(headers) -> dict:
         devices = _profile(client, tid, headers)["devices"]
@@ -327,7 +327,7 @@ def test_a_machine_that_said_it_cannot_isolate_is_refused_before_any_install(
     can do, nothing is installed there, and the conversation goes on."""
     pid, tid = _room(client)
     pc = _machine(client, pid, "desktop")
-    _answered(client, pc, False, "Windows machines do not have one.")
+    _answered(client, pc, False, {"key": "sandboxNoneOnWindows", "params": {}})
     assert _choose(client, tid, pc, session_auth_headers(OWNER)).status_code == 200
     hub = _hub("windows-amd64")
     monkeypatch.setattr(work_lease, "device_hub", hub)
@@ -343,7 +343,7 @@ def test_a_machine_that_said_it_cannot_isolate_is_refused_before_any_install(
     told = answer.json()["data"]["unavailable"]
     assert "desktop" in told
     assert OWNER in told
-    assert "Windows machines" not in told
+    assert "WSL" not in told
     hub.exec.assert_not_awaited()
 
 
@@ -439,10 +439,13 @@ def test_a_machine_that_cannot_isolate_the_room_is_heard_out(client, monkeypatch
     assert _choose(client, tid, machine, session_auth_headers(OWNER)).status_code == 200
     from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 
-    said = "This room runs in an isolated environment, which needs bubblewrap."
+    said = {"key": "sandboxNotPlaced", "params": {}}
 
     async def refuse(_device, _argv, **_kwargs):
-        return {"exit": bootstrap.SANDBOX_UNAVAILABLE_EXIT, "stderr": said + "\n"}
+        return {
+            "exit": bootstrap.SANDBOX_UNAVAILABLE_EXIT,
+            "stderr": json.dumps(said) + "\n",
+        }
 
     monkeypatch.setattr(work_lease, "device_hub", _hub("linux-amd64", refuse))
     session_id, token = asyncio.run(_session_on(client, tid, machine))
@@ -457,7 +460,7 @@ def test_a_machine_that_cannot_isolate_the_room_is_heard_out(client, monkeypatch
     told = answer.json()["data"]["unavailable"]
     assert "workstation" in told
     assert OWNER in told
-    assert said not in told
+    assert "sandboxNotPlaced" not in told
     listed = _profile(client, tid, session_auth_headers(MEMBER))["devices"]
     (it,) = [device for device in listed if device["device_id"] == machine]
     assert it["sandbox_unavailable"]["key"] == "sandboxUnavailable"

@@ -60,12 +60,17 @@ def process_servers(config):
 
 
 class SandboxUnavailable(RuntimeError):
-    """This machine cannot give the room the isolated environment it runs in,
-    and the message says what would let it."""
+    """This machine cannot give the room the isolated environment it runs in.
+    `key` names the sentence its owner is shown, in their language, about what
+    would let it (the frontend's `apiError` catalog); `params` fill it."""
+
+    def __init__(self, key, **params):
+        super().__init__(key)
+        self.said = {"key": key, "params": params}
 
 
 # How the install exits when it refuses a room for `SandboxUnavailable`, with
-# the message alone on stderr: the backend tells the room that, not a trace.
+# its sentence alone on stderr, as JSON: the backend keeps it for the owner.
 SANDBOX_UNAVAILABLE_EXIT = 78
 
 
@@ -612,23 +617,12 @@ def sudo(command, failure):
     return result.stdout
 
 
-# What an install is told when this machine's system has no isolated
-# environment for a room. The machine says the same when asked as it connects
-# (`device.sandbox`), and the backend refuses such a room before it gets here.
-# A system gains an environment by leaving this table in the same change that
-# teaches `sandbox_tools` and `sandbox_argv` to build it.
-NO_SANDBOX = {
-    "win32": (
-        "This room runs in an isolated environment, which Windows machines do "
-        "not have. Install WSL, enroll the WSL environment as a machine and "
-        "choose it for this room, or have the machine's owner give this room "
-        "full machine access."
-    ),
-}
-FULL_ACCESS_INSTEAD = (
-    "Or have the machine's owner give this room full machine access, which "
-    "runs it without isolation."
-)
+# The sentence for a system with no isolated environment for a room. The
+# machine says the same when asked as it connects (`device.sandbox`), and the
+# backend refuses such a room before it gets here. A system gains an
+# environment by leaving this table in the same change that teaches
+# `sandbox_tools` and `sandbox_argv` to build it.
+NO_SANDBOX = {"win32": "sandboxNoneOnWindows"}
 
 
 def sandbox_tools(release, platform_machine):
@@ -648,13 +642,8 @@ def sandbox_tools(release, platform_machine):
     if sys.platform == "darwin":
         return seatbelt()
     if not sys.platform.startswith("linux"):
-        raise SandboxUnavailable(
-            NO_SANDBOX.get(
-                sys.platform,
-                "This room runs in an isolated environment, which this "
-                "machine's system does not have. " + FULL_ACCESS_INSTEAD,
-            )
-        )
+        key = NO_SANDBOX.get(sys.platform, "sandboxNoneOnSystem")
+        raise SandboxUnavailable(key, system=sys.platform)
     if not platform_machine:
         return enrolled_bubblewrap()
     missing = [
@@ -695,11 +684,7 @@ def seatbelt():
     """Where `sandbox-exec` is: every macOS has it, so a Mac that lacks it is
     one the room is refused on, not one it runs over whole."""
     if not os.access(SANDBOX_EXEC, os.X_OK):
-        raise SandboxUnavailable(
-            "This room runs in an isolated environment, which on macOS needs "
-            "/usr/bin/sandbox-exec, and this Mac does not have it. "
-            + FULL_ACCESS_INSTEAD
-        )
+        raise SandboxUnavailable("sandboxNoSeatbelt")
     return SANDBOX_EXEC
 
 
@@ -707,11 +692,7 @@ def placed_bubblewrap():
     """The bwrap cheesehost places when it starts (`cli/internal/devenv`)."""
     found = Path.home() / PLATFORM_DIR / "runtime/bubblewrap/bwrap"
     if not os.access(found, os.X_OK):
-        raise SandboxUnavailable(
-            "This room runs in an isolated environment, made with the bubblewrap "
-            "cheesehost places on this machine when it starts, and it is not "
-            "there. Restart cheesehost and try again. " + FULL_ACCESS_INSTEAD
-        )
+        raise SandboxUnavailable("sandboxNotPlaced")
     return str(found)
 
 
@@ -728,19 +709,13 @@ def enrolled_bubblewrap():
     )
     if probe.returncode:
         raise SandboxUnavailable(
-            "This room runs in an isolated environment, and bubblewrap cannot "
-            "make one on this machine ("
-            + probe.stderr.strip()[-300:]
-            + "). "
-            + user_namespaces_advice()
-            + " "
-            + FULL_ACCESS_INSTEAD
+            user_namespaces_advice(), detail=probe.stderr.strip()[-300:]
         )
     return found
 
 
 def user_namespaces_advice():
-    """What to change on this machine for bubblewrap to make a sandbox, which
+    """Which change this machine needs for bubblewrap to make a sandbox, which
     it does in a user namespace of its own, as the user and not as root."""
 
     def setting(path):
@@ -749,26 +724,14 @@ def user_namespaces_advice():
         except OSError:
             return None
 
-    keep = (
-        " (put the same line in a file under /etc/sysctl.d/ to keep it after a reboot)"
-    )
+    # Ubuntu from 23.10: only a program a profile names (`cheesehost sandbox allow`).
     if setting("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") == "1":
-        return (
-            "AppArmor here allows a user namespace only to a program a profile "
-            "names, as Ubuntu does from 23.10 on. Name cheesehost's bubblewrap "
-            "once, as root: sudo ~/.local/bin/cheesehost sandbox allow"
-        )
+        return "sandboxAppArmor"
     if setting("/proc/sys/kernel/unprivileged_userns_clone") == "0":
-        return (
-            "Unprivileged user namespaces are turned off here. Turn them on "
-            "with: sudo sysctl -w kernel.unprivileged_userns_clone=1" + keep + "."
-        )
+        return "sandboxUsernsCloneOff"
     if setting("/proc/sys/user/max_user_namespaces") == "0":
-        return (
-            "User namespaces are turned off here. Turn them on with: sudo "
-            "sysctl -w user.max_user_namespaces=15000" + keep + "."
-        )
-    return "It needs unprivileged user namespaces, which this machine does not allow."
+        return "sandboxUserNamespacesOff"
+    return "sandboxNoUserNamespaces"
 
 
 def record_sandbox(owner, home, release):
@@ -1317,7 +1280,7 @@ def configure(payload):
     except UpgradeDeferred as deferred:
         print(json.dumps(deferred.info))
     except SandboxUnavailable as refused:
-        print(refused, file=sys.stderr)
+        print(json.dumps(refused.said), file=sys.stderr)
         raise SystemExit(SANDBOX_UNAVAILABLE_EXIT) from None
 
 

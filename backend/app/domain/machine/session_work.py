@@ -44,6 +44,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
 from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.device import sandbox as device_sandbox
 from app.domain.device.supply import (
     Supply,
     Visibility,
@@ -1279,7 +1280,7 @@ async def _install(
                 # what it can do meanwhile.
                 devices = sql_device_service(db)
                 await devices.record_sandbox_check(
-                    device_id, isolates=False, reason=str(exc)
+                    device_id, isolates=False, reason=device_sandbox.kept(exc.said)
                 )
                 await db.commit()
                 device = await devices.get_device(device_id)
