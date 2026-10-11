@@ -3,7 +3,7 @@
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Protocol
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,7 +49,6 @@ from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.forge import follow_github_rename
-from app.domain.project.models import Project
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
     GITHUB_UNBOUND,
@@ -90,10 +89,28 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
-def _shelled(project: Project, shell: Shell, team: TeamLabel | None) -> dict:
+class ProjectRow(Protocol):
+    """What these routes read off a project row.
+
+    Structural, not the ORM class: a route has no business importing
+    ``app.domain.project.models`` (C2 in ``.importlinter``), and every row it is
+    handed comes back from ``ProjectService`` on the same domain. Together with
+    ``ProjectOut.model_validate`` (which itself reads attributes, never the
+    class) this is all the shape the annotations here need.
+    """
+
+    id: uuid.UUID
+    name: str
+    slug: str
+    owner_handle: str | None
+    team_id: int | None
+    external_task_id: int | None
+
+
+def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
     """One project's wire payload: the 壳 it runs under, its team's handle and name.
 
-    Neither is a column on `Project`, so neither can come from `model_validate`:
+    Neither is a column on a project row, so neither can come from `model_validate`:
     the 壳 is resolved from the project's own settings, its 赛题 and that 赛题's
     项目集, and the handle is what links to the team go by. Every route that
     returns a project goes through `_project_payloads`, or the frontend would
@@ -113,7 +130,7 @@ def _shelled(project: Project, shell: Shell, team: TeamLabel | None) -> dict:
     )
 
 
-async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict]:
+async def _project_payloads(db: DbSession, projects: list[ProjectRow]) -> list[dict]:
     """Every project's payload, without a query per project."""
     shells = await effective_shells(db, projects)
     teams = await team_service(db).labels_of(
@@ -125,7 +142,7 @@ async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict
     ]
 
 
-async def _project_payload(db: DbSession, project: Project) -> dict:
+async def _project_payload(db: DbSession, project: ProjectRow) -> dict:
     return (await _project_payloads(db, [project]))[0]
 
 
@@ -925,7 +942,9 @@ async def set_project_owner(
     return ok(await _project_payload(db, project))
 
 
-async def _project_is_personal_to_its_owner(db: AsyncSession, project: Project) -> bool:
+async def _project_is_personal_to_its_owner(
+    db: AsyncSession, project: ProjectRow
+) -> bool:
     """Whether the project sits in its own owner's personal team.
 
     Then its team is a one-person team that exists only to hold this person's
