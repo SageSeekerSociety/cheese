@@ -22,6 +22,7 @@ import {
   DASH_USAGE,
 } from './catalogDashboardFixtures'
 
+import { t } from '@/i18n'
 import AdminStatsPageView from '@/views/admin/AdminStatsPageView.vue'
 
 /** 画法要 Vuetify、文案要语言包；各屏里的 KPI 卡、对话链接还要一条 route。 */
@@ -50,8 +51,9 @@ export const VIEW_ADMIN_STATS_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-stats-page-view',
     title: 'AdminStatsPageView',
-    about:
-      '后台统计页：同一只壳（页头 + 窗口切换器），按这一类画哪一屏 —— 平台、性能、交付管线、用量、产品、反馈趋势、集成状态。整块读失败时页头留着、正文换成读失败。',
+    get about() {
+      return t('catalog.adminStatsPageView.about')
+    },
     file: 'src/views/admin/AdminStatsPageView.vue',
     component: AdminStatsPageView,
     needs: UI_T_R,
@@ -59,49 +61,81 @@ export const VIEW_ADMIN_STATS_ENTRIES: CatalogEntry[] = [
     args: { ...base, kind: 'platform', platform: DASH_PLATFORM },
     states: [
       {
-        name: '平台那一屏',
-        note: '默认这一类：账号存量与新增、机器台账、健康三格。机器那几行是**存量不是在线数**，这句话写在屏幕上。',
+        get name() {
+          return t('catalog.adminStatsPageView.s1.name')
+        },
+        get note() {
+          return t('catalog.adminStatsPageView.s1.note')
+        },
         props: {},
         expect: '账号总数',
       },
       {
-        name: '交付管线那一屏',
-        note: '换一个 kind 换一屏：五张卡、活四站导轨、「等你处理 / 卡住了」和失败码。四站是不同时刻的通过量，不是漏斗。',
+        get name() {
+          return t('catalog.adminStatsPageView.s2.name')
+        },
+        get note() {
+          return t('catalog.adminStatsPageView.s2.note')
+        },
         props: { kind: 'pipeline', platform: null, pipeline: DASH_PIPELINE },
         expect: '卡住的卡',
       },
       {
-        name: '用量那一屏',
-        note: '窗口内的 token 与调用、最花的项目、成本，额度燃尽那几个名单。「未定价的 token」单独算，不混进总额装成免费。',
+        get name() {
+          return t('catalog.adminStatsPageView.s3.name')
+        },
+        get note() {
+          return t('catalog.adminStatsPageView.s3.note')
+        },
         props: { kind: 'usage', platform: null, usage: DASH_USAGE },
         expect: '额度燃尽',
       },
       {
-        name: '产品那一屏',
-        note: '北极星、递卡走到哪。两条算不出来的带**理由**画（没有数据源），不画一个假的 0。',
+        get name() {
+          return t('catalog.adminStatsPageView.s4.name')
+        },
+        get note() {
+          return t('catalog.adminStatsPageView.s4.note')
+        },
         props: { kind: 'product', platform: null, product: DASH_PRODUCT },
         expect: '递卡走到了哪',
       },
       {
-        name: '反馈趋势那一屏',
-        note: '四栏计数、状态分布、三条线，和右边「需处理」那十行 —— 那一块走的是另一条请求，列表没到货时只有它是骨架。',
+        get name() {
+          return t('catalog.adminStatsPageView.s5.name')
+        },
+        get note() {
+          return t('catalog.adminStatsPageView.s5.note')
+        },
         props: { kind: 'feedback', platform: null, feedback: DASH_FEEDBACK, pending: DASH_PENDING },
         expect: '待分诊',
       },
       {
-        name: '性能那一屏',
-        note: '唯一读进程内存的一屏：这一刻的接口耗时、此刻最慢那条、路由表。「此刻最慢」直接给结论，不让人自己在表里找。',
+        get name() {
+          return t('catalog.adminStatsPageView.s6.name')
+        },
+        get note() {
+          return t('catalog.adminStatsPageView.s6.note')
+        },
         props: { kind: 'performance', platform: null, performance: DASH_PERFORMANCE },
         expect: '此刻最慢',
       },
       {
-        name: '首次加载',
-        note: '这一类还没到货：页头留着（它是这一页的名字，不是数据），正文各块画自己的骨架。',
+        get name() {
+          return t('catalog.adminStatsPageView.s7.name')
+        },
+        get note() {
+          return t('catalog.adminStatsPageView.s7.note')
+        },
         props: { platform: null, loading: true },
       },
       {
-        name: '整块读失败',
-        note: '这一类什么都没拿到、且有一句服务端原话：正文整块换成读失败 —— 页头还在，原话照抄，重试是唯一主操作。',
+        get name() {
+          return t('catalog.adminStatsPageView.s8.name')
+        },
+        get note() {
+          return t('catalog.adminStatsPageView.s8.note')
+        },
         props: {
           platform: null,
           failed: true,
