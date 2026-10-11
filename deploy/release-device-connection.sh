@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
-# Explicit release path for the stable device WebSocket owner. Ordinary app
-# deploys never call this script because replacing this service disconnects links.
+# Release path for the stable device WebSocket owner. Replacing this service
+# disconnects links, so an app deploy calls it only when its migrations would
+# drop schema the owner's image still maps (deploy-docker.sh,
+# `hold_owners_behind_schema`); otherwise it is dispatched on its own.
+#
+# The optional step splits the release around that deploy's migrations:
+#   all       drain, then recreate (the default)
+#   drain     drain and leave the owner draining, so it takes no new calls
+#   recreate  recreate an owner a `drain` left draining
+#   resume    let an owner a `drain` left draining take calls again
 set -euo pipefail
 
 if [ -f "$HOME/ops/deploy.env" ]; then
   set -a; . "$HOME/ops/deploy.env"; set +a
 fi
 
-SHA="${1:?usage: release-device-connection.sh <image-sha> [compose-file]}"
+SHA="${1:?usage: release-device-connection.sh <image-sha> [compose-file] [all|drain|recreate|resume]}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE="${2:-$HERE/compose/docker-compose.base.yml}"
+STEP="${3:-all}"
+case "$STEP" in
+  all|drain|recreate|resume) ;;
+  *) echo "unknown release step: $STEP" >&2; exit 1 ;;
+esac
 PROJECT="${PROJECT:-cheese}"
 export IMAGE_TAG="$SHA"
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
@@ -57,50 +70,67 @@ resume_owner() {
 }
 trap resume_owner EXIT
 
-if [ "${DEPLOY_APP_IMAGE_SOURCE:-registry}" = registry ]; then
-  docker compose "${compose_args[@]}" -p "$PROJECT" pull device-connection
-else
-  docker image inspect "$DEVICE_CONNECTION_IMAGE" >/dev/null
+if [ "$STEP" = resume ]; then
+  owner_post /internal/device-connection/release-resume >/dev/null
+  exit
 fi
-drain_attempts=180
-drain_interval=0.25
-# The first drain request stops the owner taking new calls; each one it turns
-# away carries the draining header and its caller sends it again once the new
-# container answers (`device_hub_rpc`, `executor_transport`). The drain then
-# waits up to 45 s for the calls already in flight to finish — the reads a
-# runner holds until it has news do not count; one cut short is read again.
-# A call still running after that (a long command) fails the release, which
-# resumes the owner, unless interrupting was asked for.
-#
-# What interrupting costs is the in-flight executor call, and no more. Device
-# links dial out and reconnect on their own, the tmux sessions on the device
-# outlive the connector process, and `adopt_screen` re-binds each screen the cli
-# re-announces — that path exists precisely because this process restarts.
-interrupt="${DEVICE_CONNECTION_INTERRUPT:-0}"
-for attempt in $(seq 1 "$drain_attempts"); do
-  status="$(owner_status /internal/device-connection/release-drain)" || {
-    echo "device connection owner drain request failed" >&2
-    exit 1
-  }
-  # The owner stops taking new calls on the first drain request, busy or not;
-  # from here on an exit before the recreate has to resume it.
-  case "$status" in 200|409) drained=true ;; esac
-  case "$status" in
-    200) break ;;
-    409)
-      if [ "$interrupt" = 1 ]; then
-        echo "device connection owner is busy; interrupting its in-flight calls as asked" >&2
-        break
-      fi
-      if [ "$attempt" -eq "$drain_attempts" ]; then
-        echo "device connection owner remained busy; release stopped" >&2
-        exit 1
-      fi
-      sleep "$drain_interval"
-      ;;
-    *) echo "device connection owner drain returned HTTP $status" >&2; exit 1 ;;
-  esac
-done
+
+if [ "$STEP" != recreate ]; then
+  if [ "${DEPLOY_APP_IMAGE_SOURCE:-registry}" = registry ]; then
+    docker compose "${compose_args[@]}" -p "$PROJECT" pull device-connection
+  else
+    docker image inspect "$DEVICE_CONNECTION_IMAGE" >/dev/null
+  fi
+  drain_attempts=180
+  drain_interval=0.25
+  # The first drain request stops the owner taking new calls; each one it turns
+  # away carries the draining header and its caller sends it again once the new
+  # container answers (`device_hub_rpc`, `executor_transport`). The drain then
+  # waits up to 45 s for the calls already in flight to finish — the reads a
+  # runner holds until it has news do not count; one cut short is read again.
+  # A call still running after that (a long command) fails the release, which
+  # resumes the owner, unless interrupting was asked for.
+  #
+  # What interrupting costs is the in-flight executor call, and no more. Device
+  # links dial out and reconnect on their own, the tmux sessions on the device
+  # outlive the connector process, and `adopt_screen` re-binds each screen the cli
+  # re-announces — that path exists precisely because this process restarts.
+  # `late` waits the whole drain first and interrupts only what is still running.
+  interrupt="${DEVICE_CONNECTION_INTERRUPT:-0}"
+  for attempt in $(seq 1 "$drain_attempts"); do
+    status="$(owner_status /internal/device-connection/release-drain)" || {
+      echo "device connection owner drain request failed" >&2
+      exit 1
+    }
+    # The owner stops taking new calls on the first drain request, busy or not;
+    # from here on an exit before the recreate has to resume it.
+    case "$status" in 200|409) drained=true ;; esac
+    case "$status" in
+      200) break ;;
+      409)
+        if [ "$interrupt" = 1 ]; then
+          echo "device connection owner is busy; interrupting its in-flight calls as asked" >&2
+          break
+        fi
+        if [ "$attempt" -eq "$drain_attempts" ]; then
+          if [ "$interrupt" = late ]; then
+            echo "device connection owner is still busy after the drain; interrupting its in-flight calls" >&2
+            break
+          fi
+          echo "device connection owner remained busy; release stopped" >&2
+          exit 1
+        fi
+        sleep "$drain_interval"
+        ;;
+      *) echo "device connection owner drain returned HTTP $status" >&2; exit 1 ;;
+    esac
+  done
+  if [ "$STEP" = drain ]; then
+    # Left draining on purpose: the caller recreates it, or resumes it.
+    drained=false
+    exit 0
+  fi
+fi
 docker compose "${compose_args[@]}" -p "$PROJECT" up -d --no-deps --force-recreate device-connection
 
 for _ in $(seq 1 30); do

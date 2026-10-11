@@ -110,9 +110,9 @@ test_deploy_keeps_connection_owner_running() {
     "$ROOT/deploy/deploy-docker.sh" testsha \
       "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null
 
-  if grep -F 'up -d --no-deps device-connection' "$docker_log" >/dev/null; then
+  if grep -E 'up -d --no-deps (--force-recreate )?device-connection|release-drain' "$docker_log" >/dev/null; then
     rm -rf "$run_dir"
-    fail "business deploy recreated the running device connection owner"
+    fail "business deploy drained or recreated a device connection owner that maps the release's schema"
   fi
   grep -F 'up -d backend frontend' "$docker_log" >/dev/null || {
     rm -rf "$run_dir"
@@ -120,6 +120,58 @@ test_deploy_keeps_connection_owner_running() {
   }
   rm -rf "$run_dir"
   echo "PASS: business deploy leaves the device connection owner running"
+}
+
+# line_of <pattern> <file>: the first line matching, or nothing.
+line_of() {
+  { grep -n -F -- "$1" "$2" || true; } | head -n 1 | cut -d: -f1
+}
+
+# The owners outlive app releases, so a release whose migrations drop what an
+# owner's image still maps would leave that owner failing every query that
+# loads it. Such an owner is drained before the migrations and recreated on
+# the release after them; one that maps nothing extra is left alone (above).
+test_deploy_releases_owners_behind_the_schema() {
+  local run_dir docker_log drained migrated device_back preview_back
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config" \
+    DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed with owners behind the schema"; }
+  drained="$(line_of 'device-connection/release-drain' "$docker_log")"
+  migrated="$(line_of 'alembic upgrade head' "$docker_log")"
+  device_back="$(line_of 'up -d --no-deps --force-recreate device-connection' "$docker_log")"
+  preview_back="$(line_of 'up -d --no-deps --force-recreate preview-connection' "$docker_log")"
+  [ -n "$drained" ] && [ -n "$migrated" ] && [ "$drained" -lt "$migrated" ] \
+    || { rm -rf "$run_dir"; fail "the device owner was not drained before the migrations"; }
+  [ -n "$device_back" ] && [ "$device_back" -gt "$migrated" ] \
+    || { rm -rf "$run_dir"; fail "the device owner was not recreated after the migrations"; }
+  [ -n "$preview_back" ] && [ "$preview_back" -gt "$migrated" ] \
+    || { rm -rf "$run_dir"; fail "the preview owner was not recreated after the migrations"; }
+  grep -q -- '--force-recreate backend' "$docker_log" \
+    || { rm -rf "$run_dir"; fail "the deploy did not roll the app tier"; }
+  rm -rf "$run_dir"
+  echo "PASS: owners that map schema the release dropped are released across its migrations"
+}
+
+test_failed_migration_resumes_the_drained_owner() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  if rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config" \
+    APP_TIER_DOCKER_FAIL_MATCH='alembic upgrade head' \
+    DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1; then
+    rm -rf "$run_dir"
+    fail "deploy succeeded although its migrations failed"
+  fi
+  grep -F 'device-connection/release-resume' "$docker_log" >/dev/null \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "the owner drained for failed migrations was left draining"; }
+  ! grep -E 'force-recreate (device|preview)-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an owner was moved onto a release whose migrations failed"; }
+  rm -rf "$run_dir"
+  echo "PASS: a failed migration lets the drained owner take calls again"
 }
 
 test_deploy_applies_journal_retention() {
@@ -242,6 +294,20 @@ EOF
     || { rm -rf "$run_dir"; fail "interrupting release did not recreate a busy owner"; }
   [ "$(cat "$run_dir/drain-interrupt-count")" = 1 ] \
     || { rm -rf "$run_dir"; fail "interrupting release polled a busy drain more than once"; }
+
+  # `late` (what a deploy uses when its migrations would break the owner) waits
+  # the whole drain, then interrupts what still runs instead of giving up.
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" \
+    APP_TIER_CURL_DRAIN_STATUSES=409 APP_TIER_CURL_DRAIN_COUNT_FILE="$run_dir/drain-late-count" \
+    DEVICE_CONNECTION_INTERRUPT=late HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1 \
+    || { rm -rf "$run_dir"; fail "a late-interrupting release gave up on a busy owner"; }
+  [ "$(cat "$run_dir/drain-late-count")" = 180 ] \
+    || { rm -rf "$run_dir"; fail "a late-interrupting release did not wait the whole drain"; }
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "a late-interrupting release did not recreate a busy owner"; }
 
   # Waiving the wait is not waiving the error handling: a drain that answers
   # something other than 200/409 still stops the release.
@@ -1280,7 +1346,7 @@ test_deploy_keeps_preview_owner_running() {
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner >"$run_dir/deploy.log" 2>&1 \
     || { cat "$run_dir/deploy.log"; fail "business deploy failed with a running preview owner"; }
-  ! grep -q 'up -d --no-deps preview-connection' "$docker_log" \
+  ! grep -qE 'up -d --no-deps (--force-recreate )?preview-connection' "$docker_log" \
     || { rm -rf "$run_dir"; fail "business deploy recreated the running preview owner"; }
   grep -F 'leaving preview connection owner' "$run_dir/deploy.log" >/dev/null \
     || { rm -rf "$run_dir"; fail "business deploy did not leave the preview owner alone"; }
@@ -1803,6 +1869,8 @@ case "$CASE" in
   preview-owner-files) test_deploy_fails_when_preview_owner_cannot_see_its_files ;;
   preview-kill-switch-owner) test_kill_switch_stops_the_running_owner ;;
   preview-owner-release) test_release_preview_connection_requires_interrupt ;;
+  owners-behind-schema) test_deploy_releases_owners_behind_the_schema ;;
+  owners-behind-schema-failed-migration) test_failed_migration_resumes_the_drained_owner ;;
   all)
     test_missing_forge_fails_health_check
     test_forge_migration_release
@@ -1856,6 +1924,8 @@ case "$CASE" in
     test_deploy_fails_when_preview_owner_cannot_see_its_files
     test_kill_switch_stops_the_running_owner
     test_release_preview_connection_requires_interrupt
+    test_deploy_releases_owners_behind_the_schema
+    test_failed_migration_resumes_the_drained_owner
     ;;
   *) fail "unknown case: $CASE" ;;
 esac
