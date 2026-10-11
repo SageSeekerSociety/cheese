@@ -274,17 +274,22 @@ describe('回到输入框的快捷键', () => {
   })
 
   // 搜索面板、对话框开着时焦点在它里面：拉到背后的输入框，浮层还开着、Esc 也关不掉它。
-  it('焦点在一个开着的浮层里时不动', async () => {
+  // 两种都要认：Vuetify 的浮层（菜单、对话框），和自己画的对话框（搜索面板就是一个
+  // role="dialog"，不带 Vuetify 的类）。
+  it.each([
+    ['一个 Vuetify 浮层', (layer: HTMLElement) => (layer.className = 'v-overlay v-overlay--active')],
+    ['搜索面板那样自己画的对话框', (layer: HTMLElement) => layer.setAttribute('role', 'dialog')],
+  ])('焦点在%s里时不动', async (_kind, shape) => {
     await mount()
-    const overlay = document.createElement('div')
-    overlay.className = 'v-overlay v-overlay--active'
+    const layer = document.createElement('div')
+    shape(layer)
     const input = document.createElement('input')
-    overlay.append(input)
-    document.body.append(overlay)
+    layer.append(input)
+    document.body.append(layer)
     input.focus()
     press('C', { code: 'KeyC', altKey: true, shiftKey: true })
     await flush()
     expect(active()).toBe(input)
-    overlay.remove()
+    layer.remove()
   })
 })

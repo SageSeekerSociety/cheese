@@ -21,13 +21,19 @@ interface Seat {
 
 const seats: Seat[] = []
 
-/** 按下去该去哪一栏。被 keep-alive 收起来的那一栏不在文档里，不算。焦点在一个开着的
- *  浮层（搜索面板、对话框、菜单）里时哪一栏都不去：把焦点拉到它背后的输入框，浮层还
- *  开着、Esc 也关不掉它了。 */
+/** 焦点所在的那一层浮起来的东西：Vuetify 的浮层（菜单、对话框），或者自己画的对话框
+ *  （搜索面板是 `role="dialog"`，不是 Vuetify 浮层）。 */
+const LAYER = '.v-overlay--active, [role="dialog"], [aria-modal="true"]'
+
+/** 按下去该去哪一栏。被 keep-alive 收起来的那一栏不在文档里，不算。焦点在一层浮起来的
+ *  东西里、而那一层里没有输入框时，哪一栏都不去：把焦点拉到它背后的输入框，它还开着、
+ *  Esc 也关不掉它了。输入框本身就在那一层里（比如手机上开在弹层里的支线）就照常去。 */
 function seatToFocus(): Seat | undefined {
   const active = document.activeElement
-  if (active?.closest('.v-overlay--active')) return undefined
-  const live = seats.filter((seat) => seat.open() && seat.root.value?.isConnected)
+  const layer = active?.closest(LAYER)
+  const live = seats.filter(
+    (seat) => seat.open() && seat.root.value?.isConnected && (!layer || layer.contains(seat.root.value))
+  )
   return live.find((seat) => active && seat.root.value?.contains(active)) ?? live[0]
 }
 
