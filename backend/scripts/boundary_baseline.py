@@ -167,6 +167,16 @@ def split_block(body: list[str], subhead: str) -> tuple[list[str], list[str]]:
         return kept, []
 
     kept = list(body[:index])
+    if any(_is_ignore_imports(line) for line in kept):
+        # An `ignore_imports` above the marker stays through a rewrite (only the
+        # generated block is rebuilt), so it would keep silencing imports without
+        # being counted — and when the generated block is empty it would not even
+        # leave a stale warning to notice. Refuse rather than pass it through.
+        raise ConfigShapeError(
+            "an `ignore_imports` block sits above the generated block; it would "
+            "keep silencing imports without being counted, so it is not touched "
+            "and nothing is written"
+        )
     tail = [line for line in body[index:] if line.strip()]
     if tail[:2] != [MARKER, subhead]:
         raise ConfigShapeError(
@@ -537,9 +547,15 @@ def main() -> int:
         print(f"unchanged: {config_path.name} still matches the tree")
         return OK
 
-    if not args.update or args.dry_run:
-        detail = "pass --update to write" if not args.update else "dry run"
-        print(f"{config_path.name} would be rewritten, nothing written ({detail})")
+    if args.dry_run:
+        print(f"{config_path.name} would be rewritten, nothing written (dry run)")
+        return OK
+
+    if not args.update:
+        print(
+            f"{config_path.name} would be rewritten, nothing written "
+            "(pass --update to write)"
+        )
         return OK
 
     original = text

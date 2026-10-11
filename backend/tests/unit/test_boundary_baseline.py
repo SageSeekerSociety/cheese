@@ -137,6 +137,31 @@ def _c1_violation() -> dict[str, str]:
     return {"app/core/jobs.py": "from app.api.deps import get_db\n"}
 
 
+#: The two-node cycle the seed below plants. `_REAL_C3_EDGE` is a cut of it (the
+#: checker needs it, so it is never stale); `_BOGUS_C3_PAIR` names modules that
+#: exist but do not import (so the checker calls exactly that entry unused).
+_REAL_C3_EDGE = "app.domain.bar.services -> app.domain.alpha.services"
+_BOGUS_C3_PAIR = "app.domain.alpha.services -> app.domain.bar.models"
+
+
+def _c3_seed() -> dict[str, str]:
+    """The seed tree with a real C3 cycle, so a frozen cut is required."""
+    return {**_cycle_files(), "app/domain/bar/models.py": "class Bar:\n    ...\n"}
+
+
+def _c3_config(bogus: bool) -> str:
+    """The declarations with the C3 block holding the cut, plus a stale pair."""
+    entries = [_REAL_C3_EDGE, _BOGUS_C3_PAIR] if bogus else [_REAL_C3_EDGE]
+    return bb.write_baselines(
+        _empty_config(),
+        {
+            "api-domain-core": [],
+            "routes-touch-no-models": [],
+            "domains-acyclic": entries,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Every one of the seven contracts must be declared, or the refresh is refused.
 # ---------------------------------------------------------------------------
@@ -186,6 +211,63 @@ def test_a_wrong_subtitle_is_refused():
     text = _empty_config().replace(bb.C3_SUBHEAD, bb.SUBHEAD)
     with pytest.raises(bb.ConfigShapeError, match="not the shape this script writes"):
         bb.parse(text)
+
+
+def test_an_ignore_imports_above_the_marker_is_refused(tmp_path):
+    # The generated block is rebuilt on a rewrite; options above the marker are
+    # kept verbatim. An `ignore_imports` there would keep silencing a real C1
+    # violation while never being counted — and with the generated block empty it
+    # would not even leave a stale warning, so the refresh would cry "unchanged".
+    # Give the run something that *would* change, so the only thing stopping a
+    # write is this guard, and require the file back untouched and a refusal.
+    def smuggle(lines: list[str]) -> list[str]:
+        marker = next(
+            i for i, line in enumerate(lines) if line.strip() == bb.MARKER.strip()
+        )
+        return [
+            *lines[:marker],
+            "ignore_imports =",
+            "    app.core.jobs -> app.api.deps",
+            *lines[marker:],
+        ]
+
+    config = _plant(
+        tmp_path,
+        _edit_section(_empty_config(), "api-domain-core", smuggle),
+        _c1_violation(),
+    )
+    before = config.read_text()
+
+    with pytest.raises(bb.ConfigShapeError, match="above the generated block"):
+        bb.parse(before)
+
+    result = _run(tmp_path)
+    assert result.returncode == bb.CANNOT_JUDGE, result.stdout + result.stderr
+    assert config.read_text() == before
+
+
+def test_dry_run_without_update_reports_the_dry_run_first(tmp_path):
+    # `--dry-run` on its own used to fall through the "--update is missing"
+    # message, hiding that nothing was going to be written either way. The dry
+    # run is the more specific reason, so it must be the one reported. A stale
+    # entry gives the run something to drop, so it reaches the write decision
+    # instead of being turned back earlier for a new violation.
+    config_text = bb.write_baselines(
+        _empty_config(),
+        {
+            "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
+            "routes-touch-no-models": [],
+            "domains-acyclic": [],
+        },
+    )
+    config = _plant(tmp_path, config_text)
+    before = config.read_text()
+
+    result = _run(tmp_path, "--dry-run")
+    assert result.returncode == bb.OK, result.stdout + result.stderr
+    assert "dry run" in result.stdout
+    assert "pass --update" not in result.stdout
+    assert config.read_text() == before
 
 
 def test_out_of_order_entries_are_refused():
@@ -331,6 +413,46 @@ def test_a_new_c3_violation_is_never_frozen(tmp_path):
     assert config.read_text() == before
     entries = bb.read_entries(config.read_text())[CYCLE]
     assert entries == [], "a recomputed C3 cut was written"
+
+
+def test_the_c3_stale_pair_is_stale_to_the_real_checker(tmp_path, monkeypatch):
+    # The premise of the three tests below: the checker really calls the bogus
+    # pair unused while the cut is still needed. If this ever stopped holding,
+    # those tests would silently stop exercising the drop.
+    config = _plant(tmp_path, _c3_config(bogus=True), _c3_seed())
+    monkeypatch.chdir(tmp_path)
+    code, stale = bb.check_tree(config)
+    assert code == bb.OK, "the pair plus the cut is not a passing baseline"
+    assert stale[CYCLE] == [_BOGUS_C3_PAIR]
+
+
+def test_a_stale_c3_entry_is_dropped_and_the_cut_kept(tmp_path):
+    # The one path where C3 shrinks: `--update` drops the checker's stale entry
+    # and keeps the real cycle-breaker, which a recompute might not have named.
+    config = _plant(tmp_path, _c3_config(bogus=True), _c3_seed())
+
+    updated = _run(tmp_path, "--update")
+    assert updated.returncode == bb.OK, updated.stdout + updated.stderr
+    entries = bb.read_entries(config.read_text())[CYCLE]
+    assert _BOGUS_C3_PAIR not in entries, "the stale C3 entry was not dropped"
+    assert _REAL_C3_EDGE in entries, "a live C3 edge was dropped with the stale one"
+    assert entries == [_REAL_C3_EDGE]
+
+    again = _run(tmp_path, "--update")
+    assert again.returncode == bb.OK, again.stdout + again.stderr
+    assert "unchanged" in again.stdout
+    assert bb.read_entries(config.read_text())[CYCLE] == [_REAL_C3_EDGE]
+
+
+def test_c3_dry_run_reports_the_drop_and_writes_nothing(tmp_path):
+    config = _plant(tmp_path, _c3_config(bogus=True), _c3_seed())
+    before = config.read_text()
+
+    result = _run(tmp_path, "--update", "--dry-run")
+    assert result.returncode == bb.OK, result.stdout + result.stderr
+    assert "dry run" in result.stdout
+    assert _BOGUS_C3_PAIR in result.stdout
+    assert config.read_text() == before
 
 
 def test_a_refresh_that_would_not_converge_rolls_back(tmp_path):
