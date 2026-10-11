@@ -24,6 +24,7 @@ import { t } from '@/i18n'
 export interface UseProjectComputeSettingsOptions {
   /** 这一栏此刻在不在屏幕上：第一次为真才读。不给就是挂上即读。 */
   enabled?: () => boolean
+  revealGate?: { hold: () => () => void }
 }
 
 export function useProjectComputeSettings(projectId: () => string, options: UseProjectComputeSettingsOptions = {}) {
@@ -34,15 +35,19 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
   const editing = ref(false)
   // 第一次取数有没有落定：显示闸靠它开，见 useRevealGate。
   const settled = ref(false)
+  let generation = 0
 
   async function load() {
+    settled.value = false
+    const current = ++generation
     error.value = ''
     try {
-      state.value = await getProjectComputeConfigs(projectId())
+      const result = await getProjectComputeConfigs(projectId())
+      if (current === generation) state.value = result
     } catch (e) {
-      error.value = e instanceof Error ? e.message : t('work.projectMachine.loadFailed')
+      if (current === generation) error.value = e instanceof Error ? e.message : t('work.projectMachine.loadFailed')
     } finally {
-      settled.value = true
+      if (current === generation) settled.value = true
     }
   }
 
@@ -68,12 +73,20 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
   }
 
   // 首次取数期间占住设置页的显示闸；这一栏没被打开过就不占。
-  holdRevealUntil(() => settled.value || !enabled())
+  holdRevealUntil(() => settled.value, enabled, options.revealGate)
   onMounted(() => {
     if (enabled()) void load()
   })
   watch(enabled, (on) => {
     if (on) void load()
+    else {
+      generation++
+      busy.value = false
+      settled.value = false
+      editing.value = false
+      state.value = null
+      error.value = ''
+    }
   })
   watch(projectId, () => {
     if (enabled()) void load()

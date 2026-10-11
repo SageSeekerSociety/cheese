@@ -33,6 +33,7 @@ export interface EnvironmentConfigDraft {
 export interface EnvironmentSettingsOptions {
   /** 这一栏此刻在不在屏幕上：第一次为真才读、才起表；离开时停表。不给就是挂上即读。 */
   enabled?: () => boolean
+  revealGate?: { hold: () => () => void }
   /** 「从一条环境准备失败点过来」带的频道：先看那个频道。 */
   room?: () => string | undefined
   /** 「让芝士看看」：问一次这个频道最近那次失败。 */
@@ -56,6 +57,7 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
     saved,
     error: saveError,
     run: runSave,
+    reset: resetSave,
   } = useSaveState({
     feedback: 'inline',
     messages: {
@@ -82,6 +84,7 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
   }
 
   async function load() {
+    settled.value = false
     const current = ++generation
     error.value = ''
     info.value = null
@@ -96,7 +99,7 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
       if (current === generation)
         error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.loadFailed')
     } finally {
-      settled.value = true
+      if (current === generation) settled.value = true
     }
   }
 
@@ -184,13 +187,24 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
   }
 
   // 首次取数期间占住设置页的显示闸；这一栏没被打开过就不占。
-  holdRevealUntil(() => settled.value || !enabled())
+  holdRevealUntil(() => settled.value, enabled, options.revealGate)
   onMounted(() => {
     if (enabled()) void load()
   })
   watch(enabled, (on) => {
     if (on) void load()
-    else stopPolling()
+    else {
+      generation++
+      stopPolling()
+      settled.value = false
+      info.value = null
+      selectedRoom.value = null
+      status.value = null
+      diagnosis.value = null
+      diagnosing.value = false
+      error.value = ''
+      resetSave()
+    }
   })
   watch(projectId, () => {
     if (enabled()) void load()

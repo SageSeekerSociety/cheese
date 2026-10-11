@@ -211,7 +211,7 @@ const section = computed(() => {
 })
 
 // 设置页的显示闸：各块首次取数期间占住，全部到齐一起出现（见 useRevealGate）。
-// 必须在线下面那五个 composable 之前 provide —— 它们各自 holdRevealUntil 时要 inject 到它。
+// 同一 setup 的 composable 显式接收 gate；provide 留给子组件。
 const gate = provideRevealGate()
 const { revealed } = gate
 
@@ -220,20 +220,25 @@ const { revealed } = gate
 // 「这一刻是不是这一栏」：设置页一次只画一栏，没被打开过的那几栏不读，环境那一栏不起
 // 轮询的表（原来那五件只有被画出来才会挂上、才会取数）。
 const taskNaming = useProjectTaskNamingSettings(() => props.projectId, {
+  revealGate: gate,
   enabled: () => section.value === 'task-naming',
 })
 const compute = useProjectComputeSettings(() => props.projectId, {
+  revealGate: gate,
   enabled: () => section.value === 'environment',
 })
 const defaultModel = useProjectDefaultModelSettings(() => props.projectId, {
+  revealGate: gate,
   enabled: () => section.value === 'agents',
 })
 const environment = useProjectEnvironmentSettings(() => props.projectId, {
+  revealGate: gate,
   enabled: () => section.value === 'environment',
   room: () => (typeof query.room === 'string' ? query.room : undefined),
   diagnoseRoom: (roomId) => diagnoseRoomEnvironment(props.projectId, roomId),
 })
 const mcp = useProjectMcpSettings(() => props.projectId, {
+  revealGate: gate,
   enabled: () => section.value === 'mcp',
 })
 
@@ -358,22 +363,12 @@ function close() {
                 :error="compute.error.value"
                 :busy="compute.busy.value"
                 :editing="compute.editing.value"
+                :project-id="projectId"
+                :device-sessions-component="DeviceSessionsSwitch"
+                @changed="compute.load"
                 @toggle="compute.toggleEditing"
                 @save="compute.save"
-              >
-                <!-- 「现在的分布」里每台设备后面那颗「查看并更换…」：由这一页填入，
-                     位置和交互和以前一样（它自己去取数，属于另一条线）。 -->
-                <template #device-sessions="{ device, devices, cloudAvailable, projectDefault }">
-                  <DeviceSessionsSwitch
-                    :project-id="projectId"
-                    :device="device"
-                    :devices="devices"
-                    :cloud-available="cloudAvailable"
-                    :project-default="projectDefault"
-                    @changed="compute.load"
-                  />
-                </template>
-              </ProjectComputeSettings>
+              />
             </div>
           </section>
           <ProjectEnvironmentSettings

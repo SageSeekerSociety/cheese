@@ -13,7 +13,7 @@ import { computed, getCurrentInstance, inject, onBeforeUnmount, provide, ref, wa
 
 type Release = () => void
 
-interface RevealGate {
+export interface RevealGate {
   hold: () => Release
 }
 
@@ -51,13 +51,34 @@ export function holdRevealGate(): Release {
   return release
 }
 
-/** 在 setup 里调用：占住所在页面的闸，直到 `settled()` 为真（这一页要的数据第一次到了，或者没取到）。 */
-export function holdRevealUntil(settled: () => boolean): void {
-  if (settled()) return
-  const release = holdRevealGate()
-  const stop = watch(settled, (done) => {
-    if (!done) return
-    release()
+/**
+ * 在 setup 里调用：活动的一栏在首次取数期间占住显示闸。
+ * `active` 允许同一页在切栏时重新占闸；隐藏的栏不参与。
+ */
+export function holdRevealUntil(
+  settled: () => boolean,
+  active: () => boolean = () => true,
+  providedGate?: RevealGate
+): void {
+  if (!getCurrentInstance()) return
+  // 同一 setup 提供的闸不能由 inject 读到，页面接线时显式传入。
+  const gate = providedGate ?? inject(GATE, null)
+  if (!gate) return
+
+  let release: Release | undefined
+  const reconcile = () => {
+    if (active() && !settled()) {
+      release ??= gate.hold()
+      return
+    }
+    release?.()
+    release = undefined
+  }
+  reconcile()
+  const stop = watch([settled, active], reconcile)
+  onBeforeUnmount(() => {
     stop()
+    release?.()
+    release = undefined
   })
 }

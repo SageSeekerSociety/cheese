@@ -5,9 +5,9 @@
 // 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：取数与发请求在
 // `composables/useProjectComputeSettings.ts` 里，由设置页接线。
 //
-// 「现在的分布」里每台设备后面那颗「查看并更换…」（`DeviceSessionsSwitch`）不由这里
-// 画：它自己去取数、属于另一条线。这一件在设备那一行留一个 `device-sessions` 作用域
-// 插槽，由设置页把它填进来 —— 位置和交互和以前一样。
+// 设备会话入口由设置页传组件对象，放在原来的设备行；这里只转发 changed，
+// 不取数，也不依赖入口的具体实现。
+import type { Component } from 'vue'
 import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
 
 import { t } from '../i18n'
@@ -19,6 +19,8 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
 
 defineProps<{
+  projectId: string
+  deviceSessionsComponent?: Component
   /** 读到的算力现状；还没读到是 null。 */
   state: ProjectComputeConfigs | null
   /** 上一句没说完的话：读失败或保存失败。 */
@@ -32,6 +34,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'toggle'): void
   (e: 'save', choice: ComputeChoice): void
+  (e: 'changed'): void
 }>()
 
 // English says 1 agent / 2 agents; the count's own key carries the plural.
@@ -95,13 +98,15 @@ const agents = (count: number) => t('work.projectMachine.agents', { count })
                 agents: agents(device.agents),
               })
             }}<template v-if="device.machine_access"> · {{ t('work.roomMachine.wholeMachine') }}</template>
-            <slot
-              v-if="state.can_manage && device.device_id"
-              name="device-sessions"
+            <component
+              :is="deviceSessionsComponent"
+              v-if="deviceSessionsComponent && state.can_manage && device.device_id"
+              :project-id="projectId"
               :device="{ device_id: device.device_id, name: deviceName(device.name, device.device_id) }"
               :devices="state.devices"
               :cloud-available="state.cloud_available"
               :project-default="state.default"
+              @changed="emit('changed')"
             />
           </li>
         </ul>

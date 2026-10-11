@@ -2,11 +2,10 @@
 //
 // 这一件只吃 props、只往上发事件（A 级）：取数与发请求在
 // `composables/useProjectComputeSettings.ts`（那里另有一份行为测试），
-// 「查看并更换…」那颗按钮由设置页经 `device-sessions` 作用域插槽填进来 —— 这里用一个
-// 替身插槽验它出现的位置。
+// 设备会话入口由设置页传组件对象，这里用替身验位置和 changed 转发。
 import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
 
-import { h } from 'vue'
+import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -41,9 +40,30 @@ function configs(overrides: Partial<ProjectComputeConfigs> = {}): ProjectCompute
 
 function mount(state: ProjectComputeConfigs | null, props: { error?: string; busy?: boolean; editing?: boolean } = {}) {
   return render(ProjectComputeSettings, {
-    props: { state, error: '', busy: false, editing: false, ...props },
-    // 替身插槽：真身 DeviceSessionsSwitch 是另一条线的组件，这里只验插槽出现的位置。
-    slots: { 'device-sessions': () => h('button', { type: 'button' }, '查看并更换…') },
+    props: {
+      projectId: 'p1',
+      deviceSessionsComponent: defineComponent({
+        props: ['projectId', 'device', 'devices', 'cloudAvailable', 'projectDefault'],
+        emits: ['changed'],
+        setup(switchProps, { emit }) {
+          return () =>
+            h(
+              'button',
+              {
+                type: 'button',
+                onClick: () => emit('changed'),
+                'data-switch-props': JSON.stringify(switchProps),
+              },
+              '查看并更换…'
+            )
+        },
+      }),
+      state,
+      error: '',
+      busy: false,
+      editing: false,
+      ...props,
+    },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
@@ -216,8 +236,8 @@ describe('project work computer settings', () => {
     expect(view.queryByRole('button', { name: '查看并更换…' })).toBeNull()
   })
 
-  it('fills the device-sessions slot only on a named device, for a manager', async () => {
-    await mount(
+  it('offers device sessions only on a named device, for a manager', async () => {
+    const view = mount(
       configs({
         distribution: {
           cloud: 1,
@@ -232,8 +252,16 @@ describe('project work computer settings', () => {
     )
 
     const rows = await waitFor(() => within(screen.getByTestId('project-distribution')).getAllByRole('listitem'))
-    expect(within(rows[1]).getByRole('button', { name: '查看并更换…' })).toBeTruthy()
+    const switchButton = within(rows[1]).getByRole('button', { name: '查看并更换…' })
+    expect(switchButton).toBeTruthy()
+    expect(JSON.parse(switchButton.getAttribute('data-switch-props')!)).toMatchObject({
+      projectId: 'p1',
+      device: { device_id: 'lab', name: '实验室工作站' },
+    })
     expect(within(rows[0]).queryByRole('button', { name: '查看并更换…' })).toBeNull()
     expect(within(rows[2]).queryByRole('button', { name: '查看并更换…' })).toBeNull()
+
+    await fireEvent.click(switchButton)
+    expect(view.emitted('changed')).toEqual([[]])
   })
 })

@@ -27,6 +27,7 @@ import { t } from '@/i18n'
 export interface UseProjectDefaultModelSettingsOptions {
   /** 这一栏此刻在不在屏幕上：第一次为真才读。不给就是挂上即读。 */
   enabled?: () => boolean
+  revealGate?: { hold: () => () => void }
 }
 
 export function useProjectDefaultModelSettings(
@@ -38,6 +39,7 @@ export function useProjectDefaultModelSettings(
   const loadError = ref('')
   // 第一次取数有没有落定：显示闸靠它开，见 useRevealGate。
   const settled = ref(false)
+  let generation = 0
 
   // 保存结果就地回执（§3.11）：下拉旁边那一行，不再只靠按钮转圈。
   const {
@@ -45,19 +47,25 @@ export function useProjectDefaultModelSettings(
     saved,
     error: saveError,
     run,
+    reset,
   } = useSaveState({
     feedback: 'inline',
     messages: { failed: t('work.projectSettings.defaultModelBlock.saveFailed') },
   })
 
   async function load() {
+    settled.value = false
+    const current = ++generation
     loadError.value = ''
+    reset()
     try {
-      state.value = await getProjectDefaultModel(projectId())
+      const result = await getProjectDefaultModel(projectId())
+      if (current === generation) state.value = result
     } catch (e) {
-      loadError.value = e instanceof Error ? e.message : t('work.projectSettings.defaultModelBlock.loadFailed')
+      if (current === generation)
+        loadError.value = e instanceof Error ? e.message : t('work.projectSettings.defaultModelBlock.loadFailed')
     } finally {
-      settled.value = true
+      if (current === generation) settled.value = true
     }
   }
 
@@ -69,12 +77,19 @@ export function useProjectDefaultModelSettings(
   }
 
   // 首次取数期间占住设置页的显示闸；这一栏没被打开过就不占。
-  holdRevealUntil(() => settled.value || !enabled())
+  holdRevealUntil(() => settled.value, enabled, options.revealGate)
   onMounted(() => {
     if (enabled()) void load()
   })
   watch(enabled, (on) => {
     if (on) void load()
+    else {
+      generation++
+      settled.value = false
+      state.value = null
+      loadError.value = ''
+      reset()
+    }
   })
   watch(projectId, () => {
     if (enabled()) void load()
