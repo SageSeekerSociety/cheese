@@ -872,5 +872,109 @@ class BoundedProcessTest(unittest.TestCase):
             self.assertFalse(Path(f"/proc/{child}").exists(), "leftover child was not reaped")
 
 
+class PytestPluginTest(unittest.TestCase):
+    """Drive the real audit plugin, not a hand-written sidecar.
+
+    The black-box tests stand a stub `uv` in for pytest, so the plugin itself
+    never runs there. This loads the real module and calls its own hooks with
+    fake item/report objects, then judges the sidecar it wrote through
+    validate_evidence — the recording functions are half the honesty claim, so
+    they get their own tests. Stdlib only: the plugin tolerates a missing pytest
+    (the CI lane has only python/uv), so no pytest is needed here either.
+    """
+
+    class Item:
+        def __init__(self, node, layer):
+            self.nodeid = node
+            self._layer = layer
+
+        def get_closest_marker(self, name):
+            return object() if name == self._layer else None
+
+    class Report:
+        def __init__(self, node, when, outcome):
+            self.nodeid = node
+            self.when = when
+            self.outcome = outcome
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        import ci_fast_pytest_plugin as plugin
+        self.plugin = plugin
+        self.sidecar = self.root / "nodes.json"
+        plugin._OUT = str(self.sidecar)
+        plugin._STATE = {"selected": [], "deselected": [], "executed": []}
+
+    def drive(self, selected=(), deselected=(), reports=()):
+        self.plugin.pytest_collection_modifyitems(None, None, [self.Item(n, l) for n, l in selected])
+        self.plugin.pytest_deselected([self.Item(n, l) for n, l in deselected])
+        for node, when, outcome in reports:
+            self.plugin.pytest_runtest_logreport(self.Report(node, when, outcome))
+        self.plugin.pytest_sessionfinish(None, 0)
+        return json.loads(self.sidecar.read_text())
+
+    def evidence(self, sidecar_data, required=None):
+        # a JUnit file as pytest 9 writes it: classname only, class appended
+        xml = self.root / "r.xml"
+        cases = "".join(
+            f'<testcase classname="{e["node"].split("::")[0][:-3].replace("/", ".")}" name="x"/>'
+            for e in sidecar_data["executed"])
+        xml.write_text(f"<testsuites><testsuite>{cases}</testsuite></testsuites>")
+        evidence = {"kind": "junit", "path": str(xml), "nodes": str(self.sidecar)}
+        if required is not None:
+            evidence["required"] = required
+        return evidence
+
+    def test_records_layers_and_greens_a_class_based_pure_run(self):
+        from ci_fast_checks import validate_evidence
+        data = self.drive(
+            selected=[("tests/unit/test_x.py::TestC::test_a", "pure")],
+            reports=[("tests/unit/test_x.py::TestC::test_a", "call", "passed")])
+        self.assertEqual(data["selected"], [{"node": "tests/unit/test_x.py::TestC::test_a", "layer": "pure"}])
+        self.assertEqual(data["deselected"], [])
+        self.assertEqual(data["executed"],
+                         [{"node": "tests/unit/test_x.py::TestC::test_a", "when": "call", "outcome": "passed"}])
+        self.assertEqual(validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))["result"], "pass")
+
+    def test_integration_deselection_is_recorded_not_hidden(self):
+        from ci_fast_checks import validate_evidence
+        data = self.drive(
+            selected=[("tests/unit/test_x.py::test_a", "pure")],
+            deselected=[("tests/integration/test_db.py::test_it", "integration")],
+            reports=[("tests/unit/test_x.py::test_a", "call", "passed")])
+        self.assertEqual(data["deselected"],
+                         [{"node": "tests/integration/test_db.py::test_it", "layer": "integration"}])
+        self.assertEqual(validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))["result"], "pass")
+
+    def test_hidden_pure_node_is_unknown(self):
+        from ci_fast_checks import validate_evidence
+        data = self.drive(deselected=[("tests/unit/test_x.py::test_a", "pure")])
+        self.assertEqual(data["deselected"], [{"node": "tests/unit/test_x.py::test_a", "layer": "pure"}])
+        verdict = validate_evidence(self.evidence(data))
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertEqual(verdict["evidence"]["hidden"], ["tests/unit/test_x.py::test_a"])
+
+    def test_skipped_pure_node_is_unknown(self):
+        from ci_fast_checks import validate_evidence
+        data = self.drive(
+            selected=[("tests/unit/test_x.py::test_a", "pure")],
+            reports=[("tests/unit/test_x.py::test_a", "setup", "skipped")])
+        self.assertEqual(data["executed"],
+                         [{"node": "tests/unit/test_x.py::test_a", "when": "setup", "outcome": "skipped"}])
+        verdict = validate_evidence(self.evidence(data, ["tests/unit/test_x.py"]))
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertEqual(verdict["evidence"]["unrun"], ["tests/unit/test_x.py::test_a"])
+
+    def test_teardown_failure_fails(self):
+        from ci_fast_checks import validate_evidence
+        data = self.drive(
+            selected=[("tests/unit/test_x.py::test_a", "pure")],
+            reports=[("tests/unit/test_x.py::test_a", "call", "passed"),
+                     ("tests/unit/test_x.py::test_a", "teardown", "failed")])
+        self.assertEqual(validate_evidence(self.evidence(data))["result"], "fail")
+
+
 if __name__ == "__main__":
     unittest.main()

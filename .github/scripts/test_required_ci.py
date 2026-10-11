@@ -193,6 +193,7 @@ class RequiredCITest(unittest.TestCase):
         # and the task entry that wires it.
         for path in (
             ".github/scripts/ci-fast.py",
+            ".github/scripts/ci_fast_pytest_plugin.py",
             ".github/scripts/test_ci_fast.py",
             ".github/scripts/required-ci.py",
             ".github/scripts/required-ci-paths.json",
