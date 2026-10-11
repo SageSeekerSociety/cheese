@@ -159,6 +159,24 @@ describe('AdminLineChart', () => {
     expect(again.container.querySelector('.alc__endlabel')!.textContent?.trim()).toBe('29')
   })
 
+  it('窄画布上相邻的日期字不叠在一起，两端仍在', async () => {
+    // 390px 宽的统计页：7 天窗口跨进两位数日期，「10/10」和「10/11」曾经画在同一处。
+    // 主系列恒值，没有末点直标，最后一天的刻度自己出现。
+    const week = {
+      xLabels: ['10/5', '10/6', '10/7', '10/8', '10/9', '10/10', '10/11'],
+      series: [{ name: '用量', values: [3, 3, 3, 3, 3, 3, 3], style: 'solid' as const }],
+    }
+    const { container } = mountChart(week)
+    FakeResizeObserver.instances[0]!.trigger(280)
+    await nextTick()
+
+    const shown = week.xLabels.filter((label) => tickCount(container, label) > 0)
+    expect(shown[0]).toBe('10/5')
+    expect(shown[shown.length - 1]).toBe('10/11')
+    expect(shown).not.toContain('10/10')
+    expect(shown.length).toBeLessThan(week.xLabels.length)
+  })
+
   it('主系列恒值（含全 0）时不画末点直标', () => {
     // 零流量周标一个「0」像在说「没有数据」，压着底的那条线本身就是答案 —— 恒值线
     // 同理，直标只在「走到哪」有信息量时出现。
