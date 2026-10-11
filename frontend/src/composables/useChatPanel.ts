@@ -736,6 +736,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rows,
     reactionPickerFor,
     editingId: composer.editingId,
+    // 首屏的行还在分批挂（useRowBatch）时，顶上那几条还没挂上，不是真的到了顶。
+    loadOlder: () => void (rowBatch.pending.value || paging.loadOlder()),
   })
   const { sheet, sheetBlock, touchOnly, timeShownId, bar, barBlock, onTimelinePointer, hideBar } = rowActions
 

@@ -1011,7 +1011,8 @@
       "yesterday": "昨天",
       "topicFallback": "频道",
       "timelineLabel": "对话记录",
-      "liveNew": "{name}：{text}"
+      "liveNew": "{name}：{text}",
+      "messageLabel": "{name}，{time}：{text}"
     },
     "header": {
       "disconnected": "未连接",

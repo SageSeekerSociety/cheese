@@ -1011,7 +1011,8 @@
       "yesterday": "Yesterday",
       "topicFallback": "Channel",
       "timelineLabel": "Conversation",
-      "liveNew": "{name}: {text}"
+      "liveNew": "{name}: {text}",
+      "messageLabel": "{name}, {time}: {text}"
     },
     "header": {
       "disconnected": "Disconnected",

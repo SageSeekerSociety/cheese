@@ -13,6 +13,8 @@ import { useEventListener, useResizeObserver } from '@vueuse/core'
 
 import { useLongPress } from '../../../composables/useLongPress'
 
+import { useTimelineKeys } from './useTimelineKeys'
+
 type Timeline = ReturnType<typeof useTimeline>
 
 export interface ChatRowActionsDeps {
@@ -24,6 +26,8 @@ export interface ChatRowActionsDeps {
   reactionPickerFor: Ref<string | null>
   /** The row being edited inline: its own long-press sheet is suppressed. */
   editingId: Ref<string | null>
+  /** Pull one older page in (the arrow key went past the oldest loaded message). */
+  loadOlder: () => void
 }
 
 /** 悬停条比它那一行的顶边高多少（RoomHoverBar 的 `top`），和行的上内边距。 */
@@ -31,7 +35,7 @@ const BAR_LIFT = 24
 const ROW_PAD = 4
 
 export function useChatRowActions(deps: ChatRowActionsDeps) {
-  const { timeline, scrollRef, contentRef, rows, reactionPickerFor, editingId } = deps
+  const { timeline, scrollRef, contentRef, rows, reactionPickerFor, editingId, loadOlder } = deps
 
   // ---- 触屏：长按一条消息打开它的操作面板（见 room/RoomMessageSheet）。 ----
   // 按输入方式判断，不按视口宽度：带触摸屏的笔记本两样都对，有鼠标就有悬停条。
@@ -161,50 +165,19 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
   }
 
   // ---- 键盘：一条消息的动作条 --------------------------------------------
-  // 消息行自己可聚焦（RoomMessage 给行加了 tabindex）。焦点落在一条上就把全列唯一
-  // 的这条动作条亮在它上面，和指针悬停一样；Tab 走到行上时把焦点送进条里——条是绝对
-  // 定位挂在时间线顶上的，原生 Tab 从行里出去够不到它——从条的两端再交回这一条消息：
-  // Shift+Tab 回到行本身，Tab 接着往这一条的正文、再往下一条走。只认带操作的行——
-  // 还没落库的那条自带重试和编辑，没有动作条。
+  // 焦点被键盘带到一条消息上（↑↓ 换到这一条、Tab 进到这一列），就把全列唯一的这条
+  // 动作条亮在它上面，和指针悬停一样。怎么进到条里、怎么出来，见 useTimelineKeys。
+  // 只认带操作的行——还没落库的那条自带重试和编辑，没有动作条。
   const ACTION_ROW = '[data-mid][data-actions]'
-  const TABBABLE =
-    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
   /** Esc 是在谁的条上按下的：焦点还停在同一条消息上时不重新亮出来。 */
   let dismissedFor: string | null = null
-  /** 上一下是键盘还是指针。行可聚焦之后，点一条消息也会把它聚焦——那是悬停条的旧
-   *  活儿（指针悬停本来就亮着），不该再算成「键盘走到这一条」，否则点完把鼠标移开，
-   *  条还留在原地。 */
+  /** 上一下是键盘还是指针。行可聚焦，点一条消息也会把它聚焦——那是悬停条的旧活儿
+   *  （指针悬停本来就亮着），不该再算成「键盘走到这一条」，否则点完把鼠标移开，条
+   *  还留在原地。 */
   let keyboardFocus = false
   const modalityTarget = typeof window === 'undefined' ? undefined : window
   useEventListener(modalityTarget, 'keydown', () => (keyboardFocus = true))
   useEventListener(modalityTarget, 'pointerdown', () => (keyboardFocus = false))
-  /** 焦点是被键盘从某一行送进条里的（不是指针点进去的）：只有这时才接管条两端的 Tab。 */
-  let keyboardInBar = false
-
-  const barEl = () => contentRef.value?.querySelector<HTMLElement>('.hover-bar') ?? null
-  const rowEl = (id: string | null) =>
-    id ? scrollRef.value?.querySelector<HTMLElement>(`[data-mid="${id}"]`) ?? null : null
-
-  /** 条里此刻真的看得见的按钮：容器变窄时宽栏整排藏起来、只剩「更多」，隐藏的按钮
-   *  浏览器既跳不上去也停不住。量不到（无布局的环境）就退回整份名单。 */
-  function shownInBar(bar: HTMLElement): HTMLElement[] {
-    const list = [...bar.querySelectorAll<HTMLElement>(TABBABLE)]
-    const shown = list.filter((el) => el === document.activeElement || (el.getClientRects?.().length ?? 0) > 0)
-    return shown.length ? shown : list
-  }
-  /** 行里的第一颗：正文里的链接、回复引用这些。没有就是 null。 */
-  function firstInRow(row: HTMLElement | null): HTMLElement | null {
-    return row ? row.querySelector<HTMLElement>(TABBABLE) : null
-  }
-  /** 这一条之后的下一条带操作的消息。 */
-  function nextActionRow(row: HTMLElement | null): HTMLElement | null {
-    const content = contentRef.value
-    if (!content) return null
-    const rows = [...content.querySelectorAll<HTMLElement>(ACTION_ROW)]
-    if (!row) return rows[0] ?? null
-    const i = rows.indexOf(row)
-    return i >= 0 ? rows[i + 1] ?? null : null
-  }
 
   function onRowFocus(e: FocusEvent) {
     if (touchOnly.value || !keyboardFocus) return
@@ -214,7 +187,6 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     const id = row?.dataset.mid
     if (!row || !id) {
       dismissedFor = null
-      keyboardInBar = false
       return
     }
     if (dismissedFor === id) return
@@ -227,58 +199,16 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     // 焦点还在这一栏里（行与行之间、走进条上）：不收起。
     if (content && to && content.contains(to)) return
     dismissedFor = null
-    keyboardInBar = false
     if (reactionPickerFor.value) return
     bar.shown = false
   }
-  // Esc 收起动作条。行还有焦点时人没有走远；焦点已经在条里就先把它交回给这条消息，
-  // 别把人留在一个藏起来的按钮上。
+  // Esc 收起动作条，人留在原来那一条消息上（焦点从条里回到这一条，见 useTimelineKeys）。
   function onRowEscape(e: KeyboardEvent) {
     if (e.key !== 'Escape' || reactionPickerFor.value) return
     const inBar = !!document.activeElement?.closest('.hover-bar')
     if (!inBar && !bar.shown) return
     dismissedFor = bar.id
     bar.shown = false
-    // 焦点是键盘送进条里的才交回给这条消息；指针点开的菜单自己会把焦点还给
-    // 那颗按钮（见 room/RoomHoverBar 的焦点恢复），不抢。
-    const fromKeyboard = keyboardInBar
-    keyboardInBar = false
-    if (inBar && fromKeyboard && bar.id) rowEl(bar.id)?.focus({ preventScroll: true })
-  }
-  // Tab 在时间线里自己排：焦点停在一条消息的行上，送进这条消息的动作条；走到了条的
-  // 头尾，再交回这一条消息。中间几颗按钮照旧交给浏览器，不动。
-  function onRowKeydown(e: KeyboardEvent) {
-    if (e.key !== 'Tab') return
-    const active = document.activeElement as HTMLElement | null
-    if (!active) return
-    const barNode = barEl()
-    if (!e.shiftKey) {
-      const row = active.closest<HTMLElement>(ACTION_ROW)
-      if (row && active === row && barNode && bar.id === row.dataset.mid && bar.shown) {
-        const first = shownInBar(barNode)[0]
-        if (first) {
-          e.preventDefault()
-          keyboardInBar = true
-          first.focus({ preventScroll: true })
-          return
-        }
-      }
-    }
-    if (!keyboardInBar || !barNode || !barNode.contains(active)) return
-    const row = rowEl(bar.id)
-    if (e.shiftKey) {
-      if (active !== shownInBar(barNode)[0] || !row) return
-      e.preventDefault()
-      keyboardInBar = false
-      row.focus({ preventScroll: true })
-      return
-    }
-    if (active !== shownInBar(barNode).at(-1)) return
-    const next = (row && firstInRow(row)) ?? nextActionRow(row)
-    if (!next) return
-    e.preventDefault()
-    keyboardInBar = false
-    next.focus({ preventScroll: true })
   }
 
   // 右键一条消息：弹它的 ⋯，和桌面上别处的行一样。正在选字、或者右键在链接、输入框上
@@ -297,10 +227,12 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
   }
   useEventListener(scrollRef, 'contextmenu', onRowContextMenu)
 
+  // 键盘在消息之间走：整列一个 Tab 停靠点，↑↓ 换一条，Enter 进到一条的按钮里。
+  useTimelineKeys({ scrollRef, contentRef, bar, showBarAt, touchOnly, reactionPickerFor, loadOlder })
+
   useEventListener(scrollRef, 'focusin', onRowFocus)
   useEventListener(scrollRef, 'focusout', onRowBlur)
   useEventListener(scrollRef, 'keydown', onRowEscape)
-  useEventListener(scrollRef, 'keydown', onRowKeydown)
 
   return {
     sheet,

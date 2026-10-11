@@ -8,16 +8,15 @@
 //
 // 写成指令挂在 `role="tablist"` 那个元素上：各处页签的模板和点击逻辑不用改，只要多一个
 // `v-roving-tabs`。选中哪一格仍由各自的 `aria-selected` 说了算，指令只读它。
+// roving 本身（谁是 0、方向键到哪一格）在 roving.ts，对话时间线用的是同一份。
 import type { Directive } from 'vue'
+
+import { rovingStep, setRoving } from './roving'
 
 function tabsOf(list: HTMLElement): HTMLElement[] {
   return Array.from(list.querySelectorAll<HTMLElement>('[role="tab"]')).filter(
     (tab) => tab.closest('[role="tablist"]') === list && !tab.hasAttribute('disabled')
   )
-}
-
-function setRoving(tabs: HTMLElement[], current: HTMLElement | undefined): void {
-  for (const tab of tabs) tab.tabIndex = tab === current ? 0 : -1
 }
 
 /** 焦点不在这一组里时，Tab 序列里那一格回到选中的那一格。 */
@@ -38,24 +37,8 @@ function onKeydown(event: KeyboardEvent): void {
   const tabs = tabsOf(list)
   const from = tabs.indexOf(document.activeElement as HTMLElement)
   if (from < 0 || event.altKey || event.ctrlKey || event.metaKey) return
-  const n = tabs.length
-  let to: number
-  switch (event.key) {
-    case 'ArrowRight':
-      to = (from + 1) % n
-      break
-    case 'ArrowLeft':
-      to = (from - 1 + n) % n
-      break
-    case 'Home':
-      to = 0
-      break
-    case 'End':
-      to = n - 1
-      break
-    default:
-      return
-  }
+  const to = rovingStep(event.key, from, tabs.length, 'horizontal', true)
+  if (to === null) return
   event.preventDefault()
   setRoving(tabs, tabs[to])
   tabs[to].focus()
