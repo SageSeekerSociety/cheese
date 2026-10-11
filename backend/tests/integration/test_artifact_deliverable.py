@@ -448,7 +448,10 @@ def test_a_path_that_is_not_there_files_no_card_and_claims_nothing(client):
     project_id = _project(client)
     room_id = _room(client, project_id)
 
-    filed = _hand_over(client, room_id, deliver="out/没有这个.pdf")
+    # The task's copy is on its machine; the declared path is not in it.
+    filed = _hand_over(
+        client, room_id, files={"out/报告.pdf": "x\n"}, deliver="out/没有这个.pdf"
+    )
     assert filed.status_code >= 400
 
     assert client.get(f"/projects/{project_id}/artifacts").json()["data"]["data"] == []

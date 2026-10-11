@@ -78,9 +78,16 @@ def _landed_head(task: Task) -> str | None:
 
 
 #: The operations that ask for a task's whole working copy rather than one
-#: file in it. The machine answers ``not_found`` for them when the task's
-#: directory is missing; only a file operation's ``not_found`` means a file is.
+#: file in it. Their ``not_found`` can only mean the task's directory is
+#: missing, which is all an executor installed before ``not_found`` carried
+#: ``missing`` can say: it answers a file operation the same way whether the
+#: directory or the file is gone, and that answer stays "not on the machine".
 _WHOLE_COPY = ("tree", "diff")
+
+
+class _NoWorkingCopy(NotFoundError):
+    """No machine holds the task's working copy and its branch is pushed: one
+    file is read from the branch, and nothing can be written to it."""
 
 
 class ProjectFiles:
@@ -148,13 +155,15 @@ class ProjectFiles:
         """The task's files and changes while no machine holds them: what a new
         working copy would start from, its branch. A task that has pushed
         nothing yet has no files and no changes of its own."""
-        if operation not in _WHOLE_COPY:
-            raise NotFoundError(say("taskFileNotOnMachine"))
         if not await self._pushed(task):
+            if operation not in _WHOLE_COPY:
+                raise NotFoundError(say("taskFileNotOnMachine"))
             return {"tree": {"files": []}, "diff": {"diff": ""}}[operation]
         if operation == "tree":
             return {"files": (await self.files("committed"))[0]}
-        return {"diff": await self.diff("committed")}
+        if operation == "diff":
+            return {"diff": await self.diff("committed")}
+        raise _NoWorkingCopy(say("taskFileNotOnMachine"))
 
     async def live(self, operation: str, **params):
         task = await self.task()
@@ -188,7 +197,9 @@ class ProjectFiles:
                 say("taskMachineFailed", error=str(exc))
             ) from exc
         if result.get("error") == "not_found":
-            return await self._without_working_copy(task, operation)
+            if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
+                return await self._without_working_copy(task, operation)
+            raise NotFoundError(say("taskFileNotOnMachine"))
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
         return result
@@ -523,25 +534,31 @@ class ProjectFiles:
         path = clean_path(path)
         source = await self.source(source)
         if source == "live":
-            first = await self.live("read", path=path, size=2 * 1024 * 1024)
-            chunks = [base64.b64decode(first["data"])]
-            offset = len(chunks[0])
-            while offset < first["bytes"]:
-                part = await self.live(
-                    "read",
-                    path=path,
-                    offset=offset,
-                    size=2 * 1024 * 1024,
-                    version=first["version"],
-                )
-                chunk = base64.b64decode(part["data"])
-                if not chunk:
-                    raise ConflictError(say("fileChangedWhileReading"))
-                chunks.append(chunk)
-                offset += len(chunk)
-            return b"".join(chunks), source
+            try:
+                return await self._live_bytes(path), source
+            except _NoWorkingCopy:
+                source = "committed"
         head = await self.revision()
         return await self._blob(await self._entry(path, head)), source
+
+    async def _live_bytes(self, path: str) -> bytes:
+        first = await self.live("read", path=path, size=2 * 1024 * 1024)
+        chunks = [base64.b64decode(first["data"])]
+        offset = len(chunks[0])
+        while offset < first["bytes"]:
+            part = await self.live(
+                "read",
+                path=path,
+                offset=offset,
+                size=2 * 1024 * 1024,
+                version=first["version"],
+            )
+            chunk = base64.b64decode(part["data"])
+            if not chunk:
+                raise ConflictError(say("fileChangedWhileReading"))
+            chunks.append(chunk)
+            offset += len(chunk)
+        return b"".join(chunks)
 
     async def raw_at(self, path: str, revision: str) -> bytes | None:
         """The file as one commit has it; None when that commit has no such file."""
@@ -562,8 +579,13 @@ class ProjectFiles:
     async def text(self, path: str, source: str):
         path = clean_path(path)
         source = await self.source(source)
+        read = None
         if source == "live":
-            read = await self.live("read", path=path, size=MAX_TEXT_BYTES)
+            try:
+                read = await self.live("read", path=path, size=MAX_TEXT_BYTES)
+            except _NoWorkingCopy:
+                source = "committed"
+        if read is not None:
             size, version = read["bytes"], read["version"]
             data = base64.b64decode(read["data"])
         else:
