@@ -740,6 +740,7 @@ void openPlace()
             :topic="selectedTopic"
             :task-id="taskId ?? null"
             :task-read-only="!!taskId && (!taskOwner || !taskOpen)"
+            :task-has-branch="currentTask?.branch_name !== null"
             :activity-tick="activityTick"
             :working="working"
             :agent-control="agentControl"
