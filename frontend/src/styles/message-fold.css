@@ -1,0 +1,46 @@
+/* 长正文收起：一段高度、下切边一条渐隐、底下居中一颗展开/收起。渐隐贴在下切边，
+   收起来时读到的是「下面还有」，不是「到这儿就没了」。
+   频道里的消息行（RoomMessage）和支线顶部那条初始消息（ThreadPane）共用这一份，
+   逻辑在 composables/useMessageFold.ts。 */
+
+.fold {
+  position: relative;
+}
+
+.fold-clamped {
+  overflow: hidden;
+}
+
+.fold-fade {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 56px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--surface));
+}
+
+.fold-toggle {
+  display: flex;
+  width: fit-content;
+  padding: 3px 10px;
+  margin: 6px auto 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  align-items: center;
+  gap: 3px;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    border-color var(--dur-quick) var(--ease-standard);
+}
+
+.fold-toggle:hover {
+  border-color: var(--faint);
+  background: var(--fill);
+}

@@ -16,6 +16,8 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { useMessageFold } from '@/composables/useMessageFold'
+
 import { ApiError } from '@/api'
 import { getThread } from '@/api/threads'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -93,6 +95,21 @@ watch(
 )
 
 const root = computed<Block | null>(() => thread.value?.root ?? null)
+// 挂着的那条消息长了也收起来：顶栏这一段一长，下面支线自己的回复就被推下去了。判据、
+// 量高和那颗「展开 / 收起」都是频道消息行用的同一份（composables/useMessageFold）。
+// 它是已经落库的消息，一直可以收。
+const rootFoldEl = ref<HTMLElement | null>(null)
+const {
+  foldable: rootFoldable,
+  expanded: rootExpanded,
+  clamped: rootClamped,
+  foldPx: rootFoldPx,
+  toggle: toggleRootFold,
+} = useMessageFold(
+  rootFoldEl,
+  computed(() => true),
+  computed(() => root.value?.content)
+)
 // 从这条支线挂着的那条消息拆出去的任务，和频道主线上那条消息下面的卡是同一份：只读
 // 这一条带着的（`blocks=`），不读整个频道的。
 // 卡片是装饰：读不到就照旧画上一份。任务变了（频道推来的帧）这一份跟着重读
@@ -184,14 +201,33 @@ function toTask() {
             <span class="thread-root__name">{{ nameOf(root.author) }}</span>
             <span class="t-meta thread-root__time">{{ rootTime }}</span>
           </div>
-          <MarkdownView
-            v-if="isAgentBlock(root)"
-            class="thread-root__text"
-            :source="root.content"
-            as="chat"
-            :names="refs"
-          />
-          <div v-else class="thread-root__text thread-root__text--plain" v-html="renderPlain(root.content, refs)" />
+          <div
+            ref="rootFoldEl"
+            class="fold"
+            :class="{ 'fold-clamped': rootClamped }"
+            :style="rootClamped ? { maxHeight: `${rootFoldPx}px` } : undefined"
+          >
+            <MarkdownView
+              v-if="isAgentBlock(root)"
+              class="thread-root__text"
+              :source="root.content"
+              as="chat"
+              :names="refs"
+            />
+            <div v-else class="thread-root__text thread-root__text--plain" v-html="renderPlain(root.content, refs)" />
+            <div v-if="rootClamped" class="fold-fade" aria-hidden="true" />
+          </div>
+          <button
+            v-if="rootFoldable"
+            type="button"
+            class="fold-toggle"
+            :aria-expanded="rootExpanded"
+            data-testid="thread-root-fold"
+            @click="toggleRootFold"
+          >
+            <v-icon size="16">{{ rootExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+            {{ rootExpanded ? t('work.room.message.showLess') : t('work.room.message.showMore') }}
+          </button>
         </div>
       </article>
       <div v-if="tasks.length" v-show="!processTurn" class="thread-pane__tasks">
@@ -259,6 +295,8 @@ function toTask() {
     </template>
   </section>
 </template>
+
+<style scoped src="@/styles/message-fold.css"></style>
 
 <style scoped>
 .thread-pane {

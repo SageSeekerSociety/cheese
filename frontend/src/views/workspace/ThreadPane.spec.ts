@@ -101,6 +101,55 @@ describe('支线', () => {
     expect(emitted()['open-task']).toEqual([['task10']])
   })
 
+  it('页头这条初始消息高过一段阅读高度就收起，点开能展开', async () => {
+    // 判据是渲染后的高度（lib/chatFold），不是字数。happy-dom 没有布局，量不到真实
+    // 的 scrollHeight，这里把它替成 600px（高过 20 行 × 24px 行高的预算），让正文层
+    // 长得像一条长消息。行高由替身自己的 inline style 给出——happy-dom 的
+    // getComputedStyle 读不出样式表里的行高，只认 inline 的。
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('thread-root__text') ? 600 : 0
+      },
+    })
+    try {
+      getThread.mockResolvedValue({
+        id: 'th1',
+        room_id: 'r1',
+        root_block_id: 'b1',
+        reply_count: 2,
+        // 队友署名（cheese-<hex>）走 MarkdownView 那一支；替身自己带 inline 行高，
+        // happy-dom 的 getComputedStyle 读不出样式表里的行高。
+        root: root({ author_type: 'participant', author: 'cheese-1', content: '很长的一段回复' }),
+      })
+      const { container, findByTestId } = render(ThreadPane as Component, {
+        props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
+        global: {
+          plugins: [vuetify],
+          stubs: {
+            ChatPanel: true,
+            MarkdownView: {
+              props: ['source'],
+              template: '<div class="thread-root__text" style="line-height: 24px">{{ source }}</div>',
+            },
+          },
+        },
+      })
+      // 量高排在下一帧的批次里（lib/foldMeasure）。
+      const toggle = await findByTestId('thread-root-fold')
+      await waitFor(() => expect(container.querySelector('.fold-clamped')).not.toBeNull())
+      expect(toggle.textContent).toContain('展开')
+
+      await fireEvent.click(toggle)
+      await waitFor(() => expect(container.querySelector('.fold-clamped')).toBeNull())
+      expect((await findByTestId('thread-root-fold')).textContent).toContain('收起')
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', original)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight
+    }
+  })
+
   it('反馈卡接在支线的对话后面', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     const { container } = render(ThreadPane as Component, {
