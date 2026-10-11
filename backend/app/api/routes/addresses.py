@@ -44,7 +44,6 @@ from app.domain.project.address import (
     thing_by_number,
 )
 from app.domain.project.services import ProjectService
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/addresses", tags=["addresses"])
@@ -174,7 +173,7 @@ async def resolve_refs(
     readable: set[uuid.UUID] = set()
     for project_id, room_ids in by_project.items():
         actor = await resolver.resolve(project_id=project_id, read_only=True)
-        rooms = await TopicRepository(db).get_many(room_ids)
+        rooms = await TopicService(db).get_many(room_ids)
         readable |= await resolver.readable_topic_ids(
             actor, project_id=project_id, topics=rooms
         )
