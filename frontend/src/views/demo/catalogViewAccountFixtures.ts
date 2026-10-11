@@ -5,10 +5,20 @@
  * 层，预览站碰不得。所以这里把容器算好的那几件按产品里的形状写死：一次第三方登录带回来
  * 的身份、当前生效的协议版本、进入方式的清单 —— 和 `catalogSharedFixtures.ts` 同一个
  * 理由：条目只吃 props，数据只有这一处。
+ *
+ * 这几件的类型从承载它们的页面组件 `$props` 里取，不从旧的网络层取：demo 源文件引用
+ * `src/network` 会把 `legacy-network` 的账记上新的一笔。契约本就写在组件上，这里只是
+ * 顺着它拿。
  */
-import type { AcceptedDocuments } from '@/network/api/legal/types'
-import type { OAuthState } from '@/network/api/users/types'
+import type OAuthCompleteView from '@/views/account/OAuthCompleteView.vue'
 import type { SignInWay } from '@/views/account/SignInView.vue'
+
+type OAuthCompleteProps = InstanceType<typeof OAuthCompleteView>['$props']
+
+/** 一次第三方登录带回来的身份。 */
+type OAuthState = NonNullable<OAuthCompleteProps['oauthState']>
+/** 后端当前的协议版本（`document key → 版本号`）。 */
+type AcceptedDocuments = NonNullable<OAuthCompleteProps['consentDocuments']>
 
 /** 一次第三方登录带回来的身份：提供方、这个人、它建议填进表单的名字。 */
 export const OAUTH_STATE: OAuthState = {
