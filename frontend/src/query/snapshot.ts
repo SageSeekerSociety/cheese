@@ -119,6 +119,11 @@ export function settleRoom(conversation: string, room: string, snapshot: RoomSna
  * 读（推送说变了、重试）照常问服务器。
  */
 export async function fromSnapshot<T>(queryKey: readonly unknown[], read: () => Promise<T>): Promise<T> {
+  const head = early.get(hashKey(queryKey))
+  if (head) {
+    early.delete(hashKey(queryKey))
+    if (Date.now() - head.at < EARLY_MS) return head.read as Promise<T>
+  }
   const expected = waiting.get(hashKey(queryKey))
   const piece = expected ? await expected.promise : undefined
   return piece !== undefined ? (piece as T) : read()
@@ -128,6 +133,25 @@ export async function fromSnapshot<T>(queryKey: readonly unknown[], read: () => 
 export function forgetRoomSnapshots(): void {
   for (const entry of waiting.values()) entry.resolve(undefined)
   waiting.clear()
+  early.clear()
+}
+
+/** 先发出去的读多久之内还算数：再晚接手，它说的就是打开页面那一刻的事了。 */
+const EARLY_MS = 15_000
+const early = new Map<string, { at: number; read: Promise<unknown> }>()
+
+/**
+ * 冷打开（整页刷新、直接打开链接）时这一块先去问：订阅要等房间页挂上才连，快照赶不上，
+ * 等它就要比消息晚一个来回。读回来就记成 `lastSeen`，挂上来的第一次 `fromSnapshot`
+ * 直接接着这一次，不另发。
+ */
+export function readEarly<T>(queryKey: readonly unknown[], read: () => Promise<T>): void {
+  const pending = read().then((value) => {
+    seen(queryKey, value)
+    return value
+  })
+  pending.catch(() => {})
+  early.set(hashKey(queryKey), { at: Date.now(), read: pending })
 }
 
 /**

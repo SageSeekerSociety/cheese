@@ -24,7 +24,7 @@ const { queryClient } = await import('@/query/client')
 const { keys } = await import('@/query/keys')
 const { openRoomTasksQuery, pinsQuery, roomMembersQuery, roomTaskQuery, roomTasksQuery } = await import('@/query/room')
 const { RECENT_DONE } = await import('@/lib/channelTasks')
-const { expectRoom, fromSnapshot, settleRoom } = await import('@/query/snapshot')
+const { expectRoom, fromSnapshot, readEarly, settleRoom } = await import('@/query/snapshot')
 
 const member = (handle: string) => ({ topic_id: 'room', member_handle: handle, role: 'member' })
 
@@ -129,5 +129,22 @@ describe('进一个任务', () => {
     expect(await related).toEqual({ origin: null, materials: [] })
     expect(queryClient.getQueryData<{ data: unknown[] }>(keys.roomMembers('room'))?.data).toHaveLength(1)
     expect(api.getTask).not.toHaveBeenCalled()
+  })
+})
+
+describe('冷打开', () => {
+  it('先发出去的那一次读，页面挂上来的读直接接着它，不再问', async () => {
+    const later = vi.fn().mockResolvedValue(['later'])
+    readEarly(keys.roomFeedbackProposals('cold'), async () => ['early'])
+
+    expect(await fromSnapshot(keys.roomFeedbackProposals('cold'), later)).toEqual(['early'])
+    expect(later).not.toHaveBeenCalled()
+  })
+
+  it('接手过一次之后，再读（推送说变了）照常问服务器', async () => {
+    readEarly(keys.roomFeedbackProposals('cold2'), async () => ['early'])
+    await fromSnapshot(keys.roomFeedbackProposals('cold2'), async () => [])
+
+    expect(await fromSnapshot(keys.roomFeedbackProposals('cold2'), async () => ['fresh'])).toEqual(['fresh'])
   })
 })
