@@ -21,6 +21,8 @@ import {
   teamProfile,
 } from './catalogSharedFixtures'
 import { VIEW_ACCOUNT_ENTRIES } from './catalogViewAccount'
+import { VIEW_ADMIN_ENTRIES } from './catalogViewAdmin'
+import { VIEW_ADMIN_STATS_ENTRIES } from './catalogViewAdminStats'
 
 import ArtifactVersionList from '@/views/artifact/ArtifactVersionList.vue'
 import SpaceReviewNoticeView from '@/views/spaces/detail/SpaceReviewNoticeView.vue'
@@ -35,6 +37,9 @@ const join = async () => {}
 export const VIEW_ENTRIES: CatalogEntry[] = [
   // 账号那一组整页（登录进门到设置密码的每一屏）单放一册，展开进来。
   ...VIEW_ACCOUNT_ENTRIES,
+  // 后台那一组整页（方案与额度、棘轮、运行记录、协议、统计）各单放一册，展开进来。
+  ...VIEW_ADMIN_ENTRIES,
+  ...VIEW_ADMIN_STATS_ENTRIES,
   {
     id: 'artifact-version-list',
     title: 'ArtifactVersionList',
