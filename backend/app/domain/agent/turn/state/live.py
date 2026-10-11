@@ -55,6 +55,12 @@ class HookWorkState:
     # then left alone for the remaining two hours and fifty minutes. The room
     # showing nothing for that long is the complaint this reminder exists for.
     last_progress_reminder_at: datetime | None = None
+    # Same shape, other thing: when this turn was last called on to bring its own
+    # checklist up to date. 一轮可以一直在说话、清单却停在开工那一版，而清单是看
+    # 的人唯一能看见「做到哪了」的地方——`silence_reminder` 数不着它。这里是已提醒
+    # 的时刻，不是清单本身的时刻：清单自己的时刻在 `TopicProgress.updated_at`，
+    # 那才是它会因为一次写入而变新的地方。
+    last_checklist_reminder_at: datetime | None = None
     #: 这一轮每次工具调用落在哪个现场块上，按 harness 自己的调用 id。结果回来时要
     #: 写上输出、挂了要标红的就是那一块。只在内存里、只活这一轮：重启丢掉的只是几
     #: 截输出和几个红点，不是记录。
