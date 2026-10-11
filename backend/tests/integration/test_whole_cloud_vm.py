@@ -35,8 +35,8 @@ from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
-    CloudHostHome,
     MachineStatus,
+    SandboxHome,
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import ComputeMeterSweeper
@@ -270,8 +270,8 @@ def _idle_for(case, seat, delta: timedelta):
     async def go():
         async with case.client.test_request_factory() as db:
             await db.execute(
-                update(CloudHostHome)
-                .where(CloudHostHome.session_id == seat.session)
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
                 .values(active_at=datetime.now(UTC) - delta)
             )
             await db.commit()

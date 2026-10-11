@@ -151,7 +151,7 @@ class AgentSessionService:
         room's current ``generation``, and whether its cloud sandbox has been
         destroyed since (``LOST_KEY``).
 
-        Each session works in a home of its own (``CloudHostHome``), so a
+        Each session works in a home of its own (``SandboxHome``), so a
         task's files are in its own session's home and in no other session's
         of the same room. None while no session of it has taken a machine:
         nothing holds a working copy of it yet."""

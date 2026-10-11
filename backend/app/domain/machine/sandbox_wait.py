@@ -7,8 +7,8 @@ from app.domain.machine.models import (
     GONE,
     MAX_ENROLL_ATTEMPTS,
     CloudHost,
-    CloudHostHome,
     MachineStatus,
+    SandboxHome,
 )
 
 # What a tool waiting on its cloud sandbox is told.
@@ -33,7 +33,7 @@ async def _home_removed(db, session_id) -> bool:
     """The sandbox being destroyed is gone, so the next attempt places the
     session in a new one."""
     stopped = await db.scalar(
-        select(CloudHostHome.stopped_at).where(CloudHostHome.session_id == session_id)
+        select(SandboxHome.stopped_at).where(SandboxHome.session_id == session_id)
     )
     return stopped is None
 

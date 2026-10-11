@@ -34,7 +34,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
-from app.domain.machine.models import CloudHost, CloudHostHome, MachineStatus
+from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.topic import retire
 from app.domain.topic.models import Topic
@@ -298,8 +298,9 @@ async def test_a_cloud_sandbox_left_gives_its_home_back_either_way(
         db.add(host)
         await db.flush()
         db.add(
-            CloudHostHome(
+            SandboxHome(
                 host_id=host.id,
+                spec="standard",
                 project_id=room.project_id,
                 topic_id=room.topic_id,
                 room_resource_id=room.lease["room_resource_id"],
@@ -316,9 +317,7 @@ async def test_a_cloud_sandbox_left_gives_its_home_back_either_way(
     assert switched.status_code == 200, switched.text
     async with client.test_factory() as db:
         homes = list(
-            await db.scalars(
-                select(CloudHostHome).where(CloudHostHome.host_id == host_id)
-            )
+            await db.scalars(select(SandboxHome).where(SandboxHome.host_id == host_id))
         )
         host = await db.get(CloudHost, host_id)
         session = await AgentSessionService(db).by_id(room.session_id)

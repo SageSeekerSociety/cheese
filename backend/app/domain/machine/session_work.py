@@ -821,6 +821,20 @@ async def _attempt(
             await db.commit()
             return {"unavailable": str(say("specDevicesUnavailable"))}
     work_resource = (lease or {}).get("resource_id") or generation
+    if selected is not None and isinstance(environment, Sandbox):
+        try:
+            await HostPool(db, hub=hub).keep_on_device(
+                session_id,
+                topic=topic,
+                device_id=selected.device_id,
+                spec=environment.spec,
+                resource_id=work_resource,
+            )
+        except SandboxRemoving:
+            # Its idle sandbox is being destroyed: the next attempt, once it is
+            # gone, places the session in a new one.
+            await db.commit()
+            return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
     cloud_host = None
     if selected is None and not cloud_provisionable(settings):
         await db.commit()
