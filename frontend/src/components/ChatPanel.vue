@@ -38,6 +38,8 @@ const props = withDefaults(
     // 这一栏里每条消息都是说给芝士听的：1:1 私聊那种只有它一个对话方的地方。
     // 别处叫它靠 @ 它（和 @ 人同一套），见 sendDraft。
     alwaysSummon?: boolean
+    /** 和 AI 队友私聊时为 false：⌘/Ctrl+Enter 不「交给」谁，就是发送。 */
+    handOff?: boolean
     // Render the composer at the bottom of THIS column. Every caller wants it —
     // 工作台 used to span its own copy across the chat and the work panel, which
     // read as addressing the whole topic while 99% of what it sent was a chat
@@ -83,6 +85,7 @@ const props = withDefaults(
   }>(),
   {
     alwaysSummon: false,
+    handOff: true,
     showComposer: false,
     prHeader: false,
     hideHeader: false,
@@ -483,6 +486,7 @@ defineExpose({ send, linkDown, submitQuestion })
           :agent-seat="agentSeat"
           :agent-name="agentName"
           :always-summon="alwaysSummon"
+          :hand-off="handOff"
           :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
           :atts="pendingAtts"
           :atts-uploading="attsUploading"

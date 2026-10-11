@@ -50,6 +50,8 @@ const props = defineProps<{
   agentName: string
   /** 和芝士私聊：每条都是说给它听的，没有「交给它」这颗按钮。 */
   alwaysSummon: boolean
+  /** 和 AI 队友私聊时为 false：只有它一位，⌘/Ctrl+Enter 没有可交的人，就是发送。 */
+  handOff?: boolean
   /** 输入框那一行提示语。 */
   hint: string
   /** 已经传上去、等着跟下一条一起发出去的附件。 */
@@ -228,9 +230,9 @@ function mentionsAgent(expanded: string): boolean {
 const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
-// ⌘/Ctrl+Enter「发送并交给它」只在需要交的房间里有：私聊和任务里每条本来就交给它，
-// 那里这个组合键就是发送，提示也不该说要交给谁。
-const handOff = computed(() => summonReady.value && !props.alwaysSummon)
+// ⌘/Ctrl+Enter「发送并交给它」：和 AI 队友私聊时没有可交的人，这个组合键就是发送，
+// 提示也不说交给谁。任务里照旧有：那里的 @ 选的是这件事交给哪一位。
+const handOff = computed(() => summonReady.value && props.handOff !== false)
 const keysTitle = computed(() => {
   if (!enterSends.value) return t('work.room.composer.pasteHint')
   return handOff.value

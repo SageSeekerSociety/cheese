@@ -80,6 +80,7 @@ interface Options {
   attsUploading?: boolean
   replyLabel?: string | null
   alwaysSummon?: boolean
+  handOff?: boolean
   pool?: MentionPoolEntry[]
 }
 
@@ -109,6 +110,7 @@ function mount(opts: Options = {}) {
         agentSeat: CHEESE_SEAT,
         agentName: CHEESE_SEAT.label,
         alwaysSummon: opts.alwaysSummon ?? false,
+        handOff: opts.handOff,
         hint: '说点什么',
         atts: opts.atts ?? [],
         attsUploading: opts.attsUploading ?? false,
@@ -747,8 +749,8 @@ describe('⌘/Ctrl+Enter 和输入框的按键提示', () => {
     expect(onSend.mock.calls[0][0].content).toContain('@')
   })
 
-  it('私聊里每条本来就交给它：提示不说交给谁，⌘+Enter 就是发送，正文不加 @', async () => {
-    const { box, onSend } = mount({ draft: '看一下', alwaysSummon: true })
+  it('和 AI 队友私聊：提示不说交给谁，⌘+Enter 就是发送，正文不加 @', async () => {
+    const { box, onSend } = mount({ draft: '看一下', alwaysSummon: true, handOff: false })
     expect(box().getAttribute('title')).toBe('Enter 发送，Shift+Enter 换行，可直接粘贴图片')
 
     focusIn(box())
