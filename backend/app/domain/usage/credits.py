@@ -33,6 +33,19 @@ def credits_event(reason: object) -> str:
     return CREDITS_EXHAUSTED_EVENT
 
 
+# How a refusal for spent credits reads by the time it ends a turn: the
+# metering proxy prefixes every one with this (deploy/metering-proxy/
+# billing_addon.py), and LiteLLM words its own `max_budget` brake the second
+# way when a caller reaches the gateway directly.
+_CREDIT_REFUSALS = ("cheese project budget:", "Budget has been exceeded")
+
+
+def refused_for_credits(text: str | None) -> bool:
+    """Whether a turn's failure is the credits refusing it, whichever brake
+    did: waiting or retrying cannot help, only more credits can."""
+    return bool(text) and any(marker in text for marker in _CREDIT_REFUSALS)
+
+
 CREDITS_EXHAUSTED_META = notice(
     EVENT_TURN_FAILED,
     severity=SEVERITY_ERROR,

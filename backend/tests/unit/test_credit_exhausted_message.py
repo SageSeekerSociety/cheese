@@ -161,6 +161,60 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
     assert not any("Invalid API key" in line for line in lines)
 
 
+class _BudgetBrakeScreen(StubChannel):
+    """A turn admission let through that the gateway's budget brake stopped
+    part-way: the metering proxy answers the call with its spent-credits
+    refusal, and the build ends the turn on it."""
+
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
+        del reply
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, "cheese project budget: 额度已用完。", error="rate_limit")
+        self.record(
+            topic_id,
+            type="result",
+            subtype="success",
+            is_error=True,
+            result="cheese project budget: 额度已用完。",
+            terminal_reason="api_error",
+            api_error_status=429,
+        )
+
+
+@pytest.mark.anyio
+async def test_a_turn_the_budget_brake_stopped_says_the_credits_ran_out(
+    db_factory, tmp_path
+):
+    """The first turn to hit a spent budget is stopped by the gateway, not by
+    admission, so nothing stamped it. The room must still say the credits ran
+    out, not 「本轮未完成」 with the proxy's raw words and a retry that can only
+    fail again."""
+    topic_id = await a_topic(db_factory)
+    chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
+        session_factory=db_factory,
+        compute=stub_compute(_BudgetBrakeScreen()),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    await _run_refused_turn(chat, topic_id, uuid.uuid4())
+
+    async with db_factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    notices = [b for b in blocks if b.author_type == AuthorType.platform]
+    assert any(b.content.startswith(CREDITS_EXHAUSTED_EVENT) for b in notices)
+    assert not any("cheese project budget" in (b.content or "") for b in notices)
+    assert not any((b.meta or {}).get("retryable") for b in notices)
+
+
 @pytest.mark.anyio
 async def test_an_unstamped_stop_failure_keeps_todays_notice(db_factory, tmp_path):
     """No admission ever stamped this turn — a failed turn for some OTHER
