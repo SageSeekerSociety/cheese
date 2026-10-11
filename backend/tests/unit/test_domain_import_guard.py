@@ -214,7 +214,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.avatars", "app.domain.avatars.repositories"),
         ("app.api.routes.awaiting", "app.domain.block.repositories"),
         ("app.api.routes.awaiting", "app.domain.project.repositories"),
-        ("app.api.routes.awaiting", "app.domain.review.repositories"),
         ("app.api.routes.awaiting", "app.domain.room_task.repositories"),
         ("app.api.routes.awaiting", "app.domain.topic.repositories"),
         ("app.api.routes.blocks", "app.domain.block.repositories"),
