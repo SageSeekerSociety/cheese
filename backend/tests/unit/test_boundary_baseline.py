@@ -212,23 +212,29 @@ def test_a_wrong_subtitle_is_refused():
         bb.parse(text)
 
 
-@pytest.mark.parametrize("spelling", ["ignore_imports", "Ignore_Imports"])
-def test_an_ignore_imports_above_the_marker_is_refused(tmp_path, spelling):
+#: How the guard must see the option however it is spelled: configparser
+#: lower-cases the name and delimits it with either `=` or `:` (its defaults,
+#: and the reader import-linter uses).
+_OPTION_SPELLINGS = ["ignore_imports", "Ignore_Imports"]
+_OPTION_DELIMITERS = ["=", ":"]
+
+
+@pytest.mark.parametrize("delimiter", _OPTION_DELIMITERS)
+@pytest.mark.parametrize("spelling", _OPTION_SPELLINGS)
+def test_an_ignore_imports_above_the_marker_is_refused(tmp_path, spelling, delimiter):
     # The generated block is rebuilt on a rewrite; options above the marker are
     # kept verbatim. An `ignore_imports` there would keep silencing a real C1
     # violation while never being counted — and with the generated block empty it
     # would not even leave a stale warning, so the refresh would cry "unchanged".
     # Give the run something that *would* change, so the only thing stopping a
     # write is this guard, and require the file back untouched and a refusal.
-    # The spelling varies because configparser lower-cases option names, so the
-    # guard must see the option whatever case it is written in.
     def smuggle(lines: list[str]) -> list[str]:
         marker = next(
             i for i, line in enumerate(lines) if line.strip() == bb.MARKER.strip()
         )
         return [
             *lines[:marker],
-            f"{spelling} =",
+            f"{spelling} {delimiter}",
             "    app.core.jobs -> app.api.deps",
             *lines[marker:],
         ]
@@ -244,6 +250,36 @@ def test_an_ignore_imports_above_the_marker_is_refused(tmp_path, spelling):
         bb.parse(before)
 
     result = _run(tmp_path)
+    assert result.returncode == bb.CANNOT_JUDGE, result.stdout + result.stderr
+    assert config.read_text() == before
+
+
+def test_an_inline_colon_ignore_imports_before_the_marker_is_refused(tmp_path):
+    # The exact shape from the review: a colon-delimited option written on one
+    # line, above the marker, silencing a real C1 violation. import-linter reads
+    # it (configparser takes `:` as a delimiter) but the generated block is
+    # empty, so nothing else would notice — the refresh used to say "unchanged".
+    def smuggle(lines: list[str]) -> list[str]:
+        marker = next(
+            i for i, line in enumerate(lines) if line.strip() == bb.MARKER.strip()
+        )
+        return [
+            *lines[:marker],
+            "ignore_imports: app.core.jobs -> app.api.deps",
+            *lines[marker:],
+        ]
+
+    config = _plant(
+        tmp_path,
+        _edit_section(_empty_config(), "api-domain-core", smuggle),
+        _c1_violation(),
+    )
+    before = config.read_text()
+
+    with pytest.raises(bb.ConfigShapeError, match="above the generated block"):
+        bb.parse(before)
+
+    result = _run(tmp_path, "--update")
     assert result.returncode == bb.CANNOT_JUDGE, result.stdout + result.stderr
     assert config.read_text() == before
 
@@ -311,27 +347,30 @@ def test_a_wildcard_entry_is_refused():
         bb.parse(text)
 
 
-@pytest.mark.parametrize("spelling", ["ignore_imports", "Ignore_Imports"])
-def test_an_unrecognised_ignore_imports_is_refused(spelling):
+@pytest.mark.parametrize("delimiter", _OPTION_DELIMITERS)
+@pytest.mark.parametrize("spelling", _OPTION_SPELLINGS)
+def test_an_unrecognised_ignore_imports_is_refused(spelling, delimiter):
     # A section with no generated block (a structural contract) may not smuggle
-    # in an `ignore_imports` either — the same guard, whatever the case.
+    # in an `ignore_imports` either — the same guard, whatever the spelling or
+    # the delimiter.
     text = _edit_section(
         _empty_config(),
         "turn-layers",
-        lambda lines: [*lines, f"{spelling} =", "    app.api -> app.domain"],
+        lambda lines: [*lines, f"{spelling} {delimiter}", "    app.api -> app.domain"],
     )
     with pytest.raises(bb.ConfigShapeError):
         bb.parse(text)
 
 
-@pytest.mark.parametrize("spelling", ["ignore_imports", "Ignore_Imports"])
-def test_an_unknown_contract_with_ignore_imports_is_refused(spelling):
+@pytest.mark.parametrize("delimiter", _OPTION_DELIMITERS)
+@pytest.mark.parametrize("spelling", _OPTION_SPELLINGS)
+def test_an_unknown_contract_with_ignore_imports_is_refused(spelling, delimiter):
     # A contract this script does not know may not carry exemptions at all: it
     # would run and silence imports while the refresh never counts them.
     text = (
         _empty_config()
         + "\n[importlinter:contract:custom-thing]\n"
-        + f"{spelling} =\n"
+        + f"{spelling} {delimiter}\n"
         + "    app.api -> app.domain\n"
     )
     with pytest.raises(bb.ConfigShapeError, match="not one of the contracts"):
@@ -343,15 +382,25 @@ def test_an_unknown_contract_with_ignore_imports_is_refused(spelling):
     [
         ("ignore_imports =", True),
         ("Ignore_Imports =", True),
+        ("ignore_imports: app.core.jobs -> app.api.deps", True),
+        ("Ignore_Imports: app.core.jobs -> app.api.deps", True),
         ("  ignore_IMPORTS = app.a -> app.b", True),
+        # A bare key is not a valid option, but it is the option token, and
+        # refusing is the safe direction.
+        ("ignore_imports", True),
         ("# ignore_imports are listed below", False),
+        ("; ignore_imports are listed below", False),
         ("    app.core.jobs -> app.api.deps", False),
         ("name = ignore_imports", False),
+        ("name: ignore_imports", False),
+        ("unmatched_ignore_imports_alerting = warn", False),
+        ("unmatched_ignore_imports_alerting: warn", False),
     ],
 )
 def test_the_ignore_imports_key_is_matched_case_insensitively(line, expected):
-    # Only the option key counts, and only up to the first `=`: a comment or a
-    # value that merely mentions the word is not the option.
+    # Only the option key counts, read to the earliest of configparser's two
+    # delimiters: a comment, a value, or an option whose name merely contains
+    # the word is not the option.
     assert bb._is_ignore_imports(line) is expected
 
 

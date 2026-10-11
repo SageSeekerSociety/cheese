@@ -125,12 +125,13 @@ def sections(text: str) -> tuple[str, list[tuple[str, str | None, list[str]]]]:
 def _is_ignore_imports(line: str) -> bool:
     """Whether `line` sets the `ignore_imports` option.
 
-    Only the key matters, and it is compared case-insensitively: configparser
-    lower-cases option names, so `Ignore_Imports =` is the same option and would
-    otherwise slip past the guard. Splitting on the first `=` keeps a comment or
-    a value that merely mentions the word from looking like the option.
+    Only the key matters, and it is read the way configparser reads it — the
+    reader import-linter itself uses, with its defaults. So the key is whatever
+    sits before the earliest of its delimiters, `=` or `:`, stripped and
+    lower-cased: `Ignore_Imports =` and `ignore_imports:` are both the same
+    option, and a comment or a value that merely mentions the word is not.
     """
-    key = line.lstrip().split("=", 1)[0].strip().lower()
+    key = re.split(r"[=:]", line, maxsplit=1)[0].strip().lower()
     return key == "ignore_imports"
 
 
