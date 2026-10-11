@@ -201,8 +201,6 @@ ignore_imports =
     app.api.routes.projects_agents -> app.domain.agent_instance.models
     app.api.routes.remote_mcp -> app.domain.project.models
     app.api.routes.routines -> app.domain.routine.models
-    app.api.routes.tasks._common -> app.domain.task.models
-    app.api.routes.tasks.lifecycle -> app.domain.task.models
     app.api.routes.tasks.publish_pdf -> app.domain.task.models
     app.api.routes.topics -> app.domain.block.models
     app.api.routes.topics -> app.domain.review.models
