@@ -38,9 +38,13 @@ const attachments: Plugin = {
 // 发出去的消息走 POST（`postChatMessage`），这里把每一次的请求体记下来。
 const sent = vi.hoisted(() => [] as { payload: string }[])
 
+// 打 `@` 时输入区的候选里也列资料库里的文件（`useRoomMentionPicker`）。这一层不
+// 自己取数，宿主（`RoomComposer`）把取数那一步注进来，所以这里替的是**注进来的那
+// 一个**：替 `listProjectLibrary` 拦不住它（`searchLibraryFiles` 调的是同一个模块
+// 里那个函数，替身只换得掉出口）。
 vi.mock('../../lib/libraryApi', async () => ({
   ...(await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')),
-  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+  searchLibraryFiles: vi.fn().mockResolvedValue([]),
 }))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')

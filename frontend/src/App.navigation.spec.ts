@@ -23,7 +23,6 @@ vi.mock('@/api', async (original) => ({
   listProjects: vi.fn(async () => ({ data: [] })),
   listProjectAgents: vi.fn(async () => ({ data: [] })),
 }))
-vi.mock('@/components/TopicComputePicker.vue', () => ({ default: { template: '<span />' } }))
 vi.mock('@/components/TopicMembers.vue', () => ({ default: { template: '<span />' } }))
 vi.mock('@/components/common/VersionBadge.vue', () => ({ default: { template: '<span />' } }))
 

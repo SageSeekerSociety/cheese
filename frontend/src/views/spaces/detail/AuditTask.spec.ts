@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn().mockResolvedValue({ data: { tasks: [], page: { page_start: null, page_size: 20, has_more: false } } }),
+  list: vi.fn().mockResolvedValue({ data: { tasks: [], page: { hasMore: false, nextStart: null } } }),
   update: vi.fn().mockResolvedValue({ data: {} }),
 }))
 /** 驳回时那个「填原因」对话框：用例里决定人填了什么。 */
@@ -79,7 +79,7 @@ describe('审核题目', () => {
             submissionSchema: params?.querySubmissionSchema ? [{ prompt: '提交文件', type: 'FILE' }] : [],
           },
         ],
-        page: { page_start: null, page_size: 20, has_more: false },
+        page: { hasMore: false, nextStart: null },
       },
     }))
 
@@ -119,7 +119,7 @@ describe('审核题目', () => {
             submissionSchema: [],
           },
         ],
-        page: { page_start: null, page_size: 20, has_more: false },
+        page: { hasMore: false, nextStart: null },
       },
     })
     const pinia = createPinia()

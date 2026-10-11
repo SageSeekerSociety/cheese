@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import uuid
+from typing import Any
 from urllib.parse import quote
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -76,11 +77,17 @@ def _landed_head(task: Task) -> str | None:
     return None
 
 
-#: What a task's live listing and comparison are while its machine holds no
-#: working copy of it yet, as for a task just made: no files, no changes. The
-#: machine answers ``not_found`` for the missing directory; only a file
-#: operation's ``not_found`` means a file is missing.
-_NO_WORKTREE_YET = {"tree": {"files": []}, "diff": {"diff": ""}}
+#: The operations that ask for a task's whole working copy rather than one
+#: file in it. Their ``not_found`` can only mean the task's directory is
+#: missing, which is all an executor installed before ``not_found`` carried
+#: ``missing`` can say: it answers a file operation the same way whether the
+#: directory or the file is gone, and that answer stays "not on the machine".
+_WHOLE_COPY = ("tree", "diff")
+
+
+class _NoWorkingCopy(NotFoundError):
+    """No machine holds the task's working copy and its branch is pushed: one
+    file is read from the branch, and nothing can be written to it."""
 
 
 class ProjectFiles:
@@ -117,30 +124,56 @@ class ProjectFiles:
 
     async def source(self, requested: str):
         task = await self.task()
-        return (
-            "live"
-            if requested == "live" and task and task.status == TaskStatus.open
-            else "committed"
+        if requested != "live" or task is None or task.status != TaskStatus.open:
+            return "committed"
+        if await self._working_copy(task) is None and await self._pushed(task):
+            # No machine holds a working copy of it, and the next one starts
+            # from the branch (`cheese worktree`): its files are the committed
+            # ones, and they are read, not edited, until a machine has them.
+            return "committed"
+        return "live"
+
+    async def _working_copy(self, task: Task):
+        room = await self.session.get(Topic, task.room_id)
+        if room is None:
+            return None
+        return await AgentSessionService(self.session).working_copy(
+            task.id, str(room.resource_id or room.id)
         )
+
+    async def _pushed(self, task: Task) -> bool:
+        """Whether the task has a version on the forge to start a copy from."""
+        return bool(
+            _landed_head(task)
+            or (
+                task.branch_name
+                and await self._head(self.project_id, self.session, task.branch_name)
+            )
+        )
+
+    async def _without_working_copy(self, task: Task, operation: str) -> dict[str, Any]:
+        """The task's files and changes while no machine holds them: what a new
+        working copy would start from, its branch. A task that has pushed
+        nothing yet has no files and no changes of its own."""
+        if not await self._pushed(task):
+            if operation not in _WHOLE_COPY:
+                raise NotFoundError(say("taskFileNotOnMachine"))
+            return {"tree": {"files": []}, "diff": {"diff": ""}}[operation]
+        if operation == "tree":
+            return {"files": (await self.files("committed"))[0]}
+        if operation == "diff":
+            return {"diff": await self.diff("committed")}
+        raise _NoWorkingCopy(say("taskFileNotOnMachine"))
 
     async def live(self, operation: str, **params):
         task = await self.task()
         if task is None:
             raise ValidationError(say("taskRequired"))
-        room = await self.session.get(Topic, task.room_id)
-        found = (
-            await AgentSessionService(self.session).working_copy(
-                task.id, str(room.resource_id or room.id)
-            )
-            if room is not None
-            else None
-        )
+        found = await self._working_copy(task)
         if found is None:
             # No session of this task has taken a machine yet, so no machine
             # holds a working copy of it: the same as a machine without one.
-            if operation in _NO_WORKTREE_YET:
-                return _NO_WORKTREE_YET[operation]
-            raise NotFoundError(say("taskFileNotOnMachine"))
+            return await self._without_working_copy(task, operation)
         target, lost = found
         if lost:
             # Its cloud sandbox was destroyed with its home (idle, or given up
@@ -164,8 +197,8 @@ class ProjectFiles:
                 say("taskMachineFailed", error=str(exc))
             ) from exc
         if result.get("error") == "not_found":
-            if operation in _NO_WORKTREE_YET:
-                return _NO_WORKTREE_YET[operation]
+            if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
+                return await self._without_working_copy(task, operation)
             raise NotFoundError(say("taskFileNotOnMachine"))
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
@@ -501,25 +534,31 @@ class ProjectFiles:
         path = clean_path(path)
         source = await self.source(source)
         if source == "live":
-            first = await self.live("read", path=path, size=2 * 1024 * 1024)
-            chunks = [base64.b64decode(first["data"])]
-            offset = len(chunks[0])
-            while offset < first["bytes"]:
-                part = await self.live(
-                    "read",
-                    path=path,
-                    offset=offset,
-                    size=2 * 1024 * 1024,
-                    version=first["version"],
-                )
-                chunk = base64.b64decode(part["data"])
-                if not chunk:
-                    raise ConflictError(say("fileChangedWhileReading"))
-                chunks.append(chunk)
-                offset += len(chunk)
-            return b"".join(chunks), source
+            try:
+                return await self._live_bytes(path), source
+            except _NoWorkingCopy:
+                source = "committed"
         head = await self.revision()
         return await self._blob(await self._entry(path, head)), source
+
+    async def _live_bytes(self, path: str) -> bytes:
+        first = await self.live("read", path=path, size=2 * 1024 * 1024)
+        chunks = [base64.b64decode(first["data"])]
+        offset = len(chunks[0])
+        while offset < first["bytes"]:
+            part = await self.live(
+                "read",
+                path=path,
+                offset=offset,
+                size=2 * 1024 * 1024,
+                version=first["version"],
+            )
+            chunk = base64.b64decode(part["data"])
+            if not chunk:
+                raise ConflictError(say("fileChangedWhileReading"))
+            chunks.append(chunk)
+            offset += len(chunk)
+        return b"".join(chunks)
 
     async def raw_at(self, path: str, revision: str) -> bytes | None:
         """The file as one commit has it; None when that commit has no such file."""
@@ -540,8 +579,13 @@ class ProjectFiles:
     async def text(self, path: str, source: str):
         path = clean_path(path)
         source = await self.source(source)
+        read = None
         if source == "live":
-            read = await self.live("read", path=path, size=MAX_TEXT_BYTES)
+            try:
+                read = await self.live("read", path=path, size=MAX_TEXT_BYTES)
+            except _NoWorkingCopy:
+                source = "committed"
+        if read is not None:
             size, version = read["bytes"], read["version"]
             data = base64.b64decode(read["data"])
         else:

@@ -247,6 +247,22 @@ export function openRoomFileEditor(topicId: string, path: string): Promise<RoomF
   return request(`/topics/${encodeURIComponent(topicId)}/files/editor?path=${encodeURIComponent(path)}`)
 }
 
+// ---- 这个房间自己的文件 ----
+
+/** 房间文件区里的一份文件：路径、大小、最后一次改动的时间。 */
+export interface RoomFile {
+  path: string
+  bytes: number
+  /** ISO 时刻，照 `relTime` 吃的样子给。 */
+  modified_at: string
+}
+
+/** 这个房间的文件区：它自己的东西都在这一处——贴进来的截图、芝士交付的文档、定时
+ *  任务交回的结果。最近改的在最前；`truncated` 为真时说清单不是全部。 */
+export function listRoomFiles(topicId: string): Promise<{ data: RoomFile[]; total: number; truncated: boolean }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/files`)
+}
+
 export function listDocumentTemplates(topicId: string): Promise<{ data: DocumentTemplate[]; total: number }> {
   return request(`/topics/${encodeURIComponent(topicId)}/files/templates`)
 }

@@ -5,8 +5,8 @@
 // 与触发」页问的是同一句话，只是范围是整个项目，所以两边画的是同一串（`RoutineBoard`，
 // 经 `panels/PanelRoutines.vue`）、填的是同一张表（`RoutineFormDialog`）、取数走的是
 // 同一个组合式函数（`composables/useRoutineList.ts`，`topicId` 一给就只看这一个房间）。
-// 这一只负责把那两边接起来：范围是这一个房间、新建的房间是定死的、结果的去处就在
-// 原地（不画「去房间」的链接）。
+// 这一只负责把那两边接起来：范围是这一个房间、新建的房间是定死的、结果文件就在这个
+// 房间的文件区里（不画「去房间」的链接 —— 那一格就在这个房间里，点一份就当场打开它）。
 //
 // 名册和路由也接在这里（人名的显示名、点了去哪），画的那一半只收结果——panels/ 下的
 // 每个 SFC 都是场景棘轮里的「场景」，新场景必须第一天就是 A 档，所以取数一滴都不能
@@ -31,6 +31,11 @@ const props = withDefaults(
   }>(),
   { refreshTick: 0 }
 )
+
+const emit = defineEmits<{
+  /** 点了某次执行交回的一份结果文件：工作面板把它开成一格。 */
+  (e: 'open-file', path: string): void
+}>()
 
 // 路由走 useNavigation()、pinia 从 app 上拿（和 composables/useUserRef 同一个理由）：
 // 这一只也可能在没装路由、没装 store 的树里被孤立渲染（单测），那里照样画，只是人名
@@ -101,6 +106,7 @@ const {
     @edit="startEdit"
     @delete="remove"
     @toggle-runs="(r) => toggleRuns(r)"
+    @open-file="(path) => emit('open-file', path)"
     @form-open-change="(open) => (open ? (formOpen = true) : closeForm())"
     @submit="submit"
     @navigate="go"

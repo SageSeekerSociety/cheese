@@ -39,6 +39,7 @@ vi.mock('@/network/api/spaces', () => ({
       data: { categories: [{ id: 7, name: '第 1 章', displayOrder: 0, archivedAt: null }] },
     }),
     getMyPublishedTasks: (...a: unknown[]) => myPublished(...a),
+    listAnnouncements: async () => ({ data: { current: [], expired: [], notifyCount: null } }),
   },
 }))
 

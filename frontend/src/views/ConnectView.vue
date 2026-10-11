@@ -6,6 +6,9 @@
 // on it is decided per session/project later. Approval also deliberately does NOT
 // ask which project the machine serves: a machine belongs to *you*, and which
 // project uses its compute is decided later (device page / when a session picks it).
+//
+// 容器：读地址里的 code、预填 cli 提上来的名字、调后端批准。画面在
+// `ConnectViewView.vue`，只收 props、只发 `approve`。
 import type { DeviceApproval } from '../cx_types'
 
 import { computed, onMounted, ref } from 'vue'
@@ -14,7 +17,7 @@ import { useRoute } from 'vue-router'
 import { authToken, connectDevice, deviceProposedName } from '../api'
 import { t } from '../i18n'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import ConnectViewView from './ConnectViewView.vue'
 
 const route = useRoute()
 const code = computed(() => String(route.query.code ?? ''))
@@ -22,7 +25,6 @@ const code = computed(() => String(route.query.code ?? ''))
 // human landed here from the cli link without a live session, send them to log
 // in; the router brings them straight back here afterwards.
 const loggedIn = computed(() => !!authToken())
-const loginLink = { name: 'SignIn' }
 
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -43,7 +45,7 @@ onMounted(async () => {
   }
 })
 
-async function approve() {
+async function approve(name: string) {
   if (!code.value) {
     error.value = t('project.connect.missingCode')
     return
@@ -51,7 +53,7 @@ async function approve() {
   loading.value = true
   error.value = null
   try {
-    approved.value = await connectDevice(code.value, deviceName.value.trim() || undefined)
+    approved.value = await connectDevice(code.value, name.trim() || undefined)
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('project.connect.failed')
   } finally {
@@ -61,88 +63,13 @@ async function approve() {
 </script>
 
 <template>
-  <div class="connect-page fill-height overflow-y-auto">
-    <v-container class="py-8" style="max-width: 560px">
-      <div class="mb-6">
-        <!-- 手机上页名写在顶栏里，这里不再写一遍。 -->
-        <template v-if="$vuetify.display.mdAndUp">
-          <div class="t-eyebrow mb-1">{{ t('project.connect.eyebrow') }}</div>
-          <h1 class="t-page-title">{{ t('project.connect.title') }}</h1>
-        </template>
-        <div class="t-body c-muted mt-1">
-          {{ t('project.connect.intro') }}
-        </div>
-      </div>
-
-      <v-alert v-if="!code" type="warning" density="comfortable" class="mb-4">
-        <i18n-t keypath="project.connect.noCode" tag="span">
-          <template #command><code>cheesehost link connect</code></template>
-        </i18n-t>
-      </v-alert>
-
-      <v-alert v-else-if="!loggedIn" type="info" density="comfortable" class="mb-4">
-        {{ t('project.connect.signInFirst') }}
-        <template #append>
-          <BaseButton kind="primary" size="sm" :to="loginLink">{{ t('project.connect.signIn') }}</BaseButton>
-        </template>
-      </v-alert>
-
-      <v-card v-else-if="!approved" class="pa-4">
-        <div class="t-caption c-muted mb-1">{{ t('project.connect.code') }}</div>
-        <div class="device-code mb-4">{{ code || '—' }}</div>
-
-        <v-text-field
-          v-model="deviceName"
-          autocomplete="off"
-          :label="t('project.connect.nameLabel')"
-          :placeholder="t('project.connect.namePlaceholder')"
-          variant="outlined"
-          density="comfortable"
-          hide-details
-          class="mb-3"
-          :disabled="loading"
-          @keyup.enter="approve"
-        />
-
-        <v-alert v-if="error" type="error" density="compact" class="mb-3">
-          {{ error }}
-        </v-alert>
-
-        <BaseButton kind="primary" :loading="loading" :disabled="!code" block @click="approve">
-          {{ t('project.connect.approve') }}
-        </BaseButton>
-      </v-card>
-
-      <v-card v-else class="pa-5 text-center">
-        <v-icon size="40" color="success" class="mb-2"> mdi-check-circle-outline </v-icon>
-        <h2 class="t-title mb-1">{{ t('project.connect.done') }}</h2>
-        <div class="t-body c-muted mb-3">
-          <i18n-t keypath="project.connect.bound" tag="span">
-            <template #name
-              ><strong>{{ approved.device_name }}</strong></template
-            >
-          </i18n-t>
-        </div>
-        <div class="t-caption c-muted mb-4">
-          <i18n-t keypath="project.connect.finishing" tag="span">
-            <template #command><code>cheesehost link connect</code></template>
-          </i18n-t>
-        </div>
-        <BaseButton kind="secondary" :to="{ name: 'UserSettingsDevices' }">{{
-          t('project.connect.viewDevices')
-        }}</BaseButton>
-      </v-card>
-    </v-container>
-  </div>
+  <ConnectViewView
+    :code="code"
+    :logged-in="loggedIn"
+    :loading="loading"
+    :error="error"
+    :approved="approved"
+    :proposed-name="deviceName"
+    @approve="approve"
+  />
 </template>
-
-<style scoped>
-.device-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  word-break: break-all;
-  background: var(--fill);
-  padding: 8px 10px;
-  border-radius: 6px;
-}
-</style>

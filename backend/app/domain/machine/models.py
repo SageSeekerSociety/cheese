@@ -4,9 +4,10 @@ A host belongs to the platform, never to a project, room or session: any
 session that runs on cloud is placed on any host with a free slot, whichever
 project it is from. MicroCloud owns the machine itself; cheese remembers the
 provider ids it needs to talk about it again, and which session homes are on
-it (``CloudHostHome``). Everything authoritative — status, IP — is kept in line
-with MicroCloud by the pool sweep (``HostPool.refresh_due``), and reads report
-what it last learned.
+it (``SandboxHome``, which also holds the homes on people's computers).
+Everything authoritative — status, IP — is kept in line with MicroCloud by
+the pool sweep (``HostPool.refresh_due``), and reads report what it last
+learned.
 
 A session that asks for a whole machine gets a host of its own instead
 (``CloudHost.whole_machine``): a whole cloud VM, its one home that session's.
@@ -19,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -238,39 +240,75 @@ class CloudHost(UuidPk, Timestamps, Base):
     )
 
 
-class CloudHostHome(UuidPk, Timestamps, Base):
-    """One session's home: its sandbox's directory on a host.
+class SandboxHome(UuidPk, Timestamps, Base):
+    """One session's home: its sandbox's directory on a machine, one of the
+    platform's hosts (``host_id``) or a person's computer (``device_id``).
 
     Written when the session is placed, before anything is on the disk, so a
-    session waiting for its host keeps its place. It holds one of the host's
-    slots for as long as it exists.
+    session waiting for its host keeps its place. On a host it holds one of
+    the host's slots for as long as it exists.
 
-    Deleted once its sandbox is destroyed as idle (``lifecycle``), when the
-    session moved on, when its host is given up, or when its room's cleanup
-    has removed the directory.
+    Every sandbox has the same lifecycle, whoever's machine it is on: it is
+    destroyed once idle for its spec's idle time (``lifecycle``). The row is
+    deleted then, when its host is given up, or when its room's cleanup has
+    removed the directory. A session that moves on gives a host's home back at
+    once; a home on a person's computer is left to the same idle sweep.
     """
 
-    __tablename__ = "cloud_host_homes"
+    __tablename__ = "sandbox_homes"
     __table_args__ = (
         Index(
-            "uq_cloud_host_homes_current_session",
+            "uq_sandbox_homes_current_session",
             "session_id",
             unique=True,
             postgresql_where=text("session_id IS NOT NULL"),
         ),
+        CheckConstraint(
+            "(host_id IS NULL) <> (device_id IS NULL)",
+            name="ck_sandbox_homes_one_machine",
+        ),
     )
 
-    host_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("cloud_hosts.id", ondelete="CASCADE"), index=True
+    host_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "cloud_hosts.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_homes_host_id_cloud_hosts",
+        ),
+        index=True,
+        nullable=True,
     )
+    # A person's computer the home is on; a host's machine is the host's.
+    device_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "device.device_id",
+            ondelete="CASCADE",
+            name="fk_sandbox_homes_device_id_device",
+        ),
+        index=True,
+        nullable=True,
+    )
+    # The spec of the sandbox (``agent.environment``): how long it is kept idle.
+    spec: Mapped[str] = mapped_column(String(80))
     project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE")
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_homes_project_id_projects",
+        ),
+        index=True,
     )
     # The room the home was made for. A room that has since become a task keeps
     # its id as that task's conversation, and its cleanup still finds the home
     # here, so this names a conversation rather than a channel.
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_homes_topic_id_conversations",
+        ),
+        index=True,
     )
     # The room generation the home belongs to (``topic.resource_id``): a room's
     # cleanup removes the homes of the generation it was opened for.

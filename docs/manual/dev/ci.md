@@ -97,7 +97,7 @@ scenarios:
 ## PR 上的两个机器人 {#bots}
 
 - `claude-review.yml`：在 PR 里写 `@claude` 可以让它评审或回答问题。每个 PR 自动评审一次的触发器 2026-08-09 起停用了（它在所有 PR 上失败，而失败的检查会卡住采纳）；要恢复，把 `pull_request:` 加回 `on:`，`auto-review` job 原样可用。
-- `claude-md-review.yml`：改了 `CLAUDE.md` 的 PR 需要人批准。`CLAUDE.md` 每一轮都会整份加载，一行错的指令会被每个 agent 执行，所以这是全仓库唯一一个需要人批准的文件。
+- `claude-md-review.yml`：改了 `AGENTS.md` 的 PR 需要人批准。`AGENTS.md` 每一轮都会整份加载，一行错的指令会被每个 agent 执行，所以这是全仓库唯一一个需要人批准的文件。
 
 ## 定时巡检 {#scheduled}
 

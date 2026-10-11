@@ -8,6 +8,7 @@ depends on this task's own machine only.
 """
 
 import asyncio
+import re
 import subprocess
 import uuid
 
@@ -20,9 +21,11 @@ from app.domain.agent.harness.claude_code.remote_execution.runtime import Execut
 from app.domain.agent_session.models import LOST_KEY
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_task
 from tests.integration.test_file_panel_safety import _mkproject, _owner
+from tests.machine_work import machine_commits
 
 GONE = "lstat /home/cheese/.cheese/home/p/r/.cheese/executor: no such file"
 
@@ -41,7 +44,11 @@ def machines(client, monkeypatch, tmp_path):
             raise DeviceCallError(GONE)
         if target["device_id"] == "failing":
             raise DeviceCallError("git: index.lock exists")
-        return executor.task_fs(params)
+        answer = executor.task_fs(params)
+        if target["device_id"] == "old":
+            # An executor installed before `not_found` said what is missing.
+            answer.pop("missing", None)
+        return answer
 
     monkeypatch.setattr(execution, "call", call)
     return tmp_path / "working", asked
@@ -86,14 +93,36 @@ def _seat(client, task, *, device: str | None, lost=False, generation=None):
     asyncio.run(place())
 
 
-def _channel_with_released_older_task(client):
+def _channel_with_released_older_task(client, *, commit=True):
     """A channel whose earlier task's sandbox was released, and a new task."""
     pid = _mkproject(client)
     room = _room(client, pid)
     older = delivery_task(client, room)
     _seat(client, older, device="gone", lost=True)
-    task = delivery_task(client, room, new=True)
+    task = delivery_task(client, room, new=True, commit=commit)
     return pid, room, task
+
+
+def _published(client, task):
+    """The task's pushed branch has its pull request, as every pushed task gets."""
+
+    async def publish():
+        async with client.test_factory() as session:
+            row = await session.get(Task, task.id)
+            row.pr_number = int(task.id.hex[:6], 16)
+            await session.commit()
+
+    asyncio.run(publish())
+
+
+def _badge(client, pid, task) -> list[str]:
+    return client.get(
+        f"/projects/{pid}/topics/{task.id}/work-summary", headers=_owner(client)
+    ).json()["data"]["changed_files"]
+
+
+def _diffed(text: str) -> list[str]:
+    return sorted(re.findall(r"^diff --git a/(\S+) b/", text, re.M))
 
 
 def _live(client, pid, room, task, what):
@@ -110,7 +139,7 @@ def test_a_task_with_no_machine_of_its_own_yet_has_no_changes(client, machines, 
     # Its session may already be placed, before its first tool call has taken
     # a sandbox; the older task's released sandbox is not its.
     _, asked = machines
-    pid, room, task = _channel_with_released_older_task(client)
+    pid, room, task = _channel_with_released_older_task(client, commit=False)
     if seated:
         _seat(client, task, device=None)
 
@@ -122,6 +151,175 @@ def test_a_task_with_no_machine_of_its_own_yet_has_no_changes(client, machines, 
     assert diff.status_code == 200, diff.text
     assert diff.json()["data"]["diff"] == ""
     assert asked == []
+
+
+@pytest.mark.parametrize("seated", [False, True])
+def test_pushed_work_shows_while_no_machine_holds_the_task(client, machines, seated):
+    # The 改动 badge counts the branch's changes against its base. With no
+    # working copy on any machine, the tab's list, its diff and a file a chip
+    # opens are those same changes, not an empty working copy.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    if seated:
+        _seat(client, task, device=None)
+
+    badge = _badge(client, pid, task)
+    diff = _live(client, pid, room, task, "diff")
+    listing = _live(client, pid, room, task, "files")
+    read = client.get(
+        f"/projects/{pid}/file",
+        params={
+            "source": "live",
+            "path": "backend/usage/models.py",
+            "topic": str(room),
+            "task": str(task.id),
+        },
+        headers=_owner(client),
+    )
+
+    assert badge == ["backend/usage/models.py", f"deliveries/{task.id}.txt"]
+    assert diff.status_code == 200, diff.text
+    assert _diffed(diff.json()["data"]["diff"]) == badge
+    assert listing.status_code == 200, listing.text
+    assert set(badge) <= {f["path"] for f in listing.json()["data"]["data"]}
+    assert listing.json()["data"]["source"] == "committed"
+    assert read.status_code == 200, read.text
+    assert read.json()["data"]["content"] == "POOL = 1\n"
+    assert read.json()["data"]["editable"] is False
+    assert asked == []
+
+
+def test_pushed_work_shows_while_its_machine_has_no_copy_of_it(client, machines):
+    # Its session holds a machine whose home has no directory for the task,
+    # as a fresh sandbox does before `cheese worktree` runs in it.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    _published(client, task)
+    _seat(client, task, device="working")
+
+    badge = _badge(client, pid, task)
+    diff = _live(client, pid, room, task, "diff")
+    listing = _live(client, pid, room, task, "files")
+
+    assert badge == [f"deliveries/{task.id}.txt"]
+    assert _diffed(diff.json()["data"]["diff"]) == badge
+    assert set(badge) <= {f["path"] for f in listing.json()["data"]["data"]}
+    assert asked == ["working", "working"]
+
+
+def _read(client, pid, room, task, path):
+    return client.get(
+        f"/projects/{pid}/file",
+        params={
+            "source": "live",
+            "path": path,
+            "topic": str(room),
+            "task": str(task.id),
+        },
+        headers=_owner(client),
+    )
+
+
+def test_a_file_reads_from_the_branch_while_its_machine_has_no_copy_of_it(
+    client, machines
+):
+    # The machine answers, but its home has no directory for the task yet: one
+    # file of the pushed branch reads like the listing and the diff do.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="working")
+
+    read = _read(client, pid, room, task, "backend/usage/models.py")
+    raw = client.get(
+        f"/projects/{pid}/file/raw",
+        params={
+            "source": "live",
+            "path": "backend/usage/models.py",
+            "topic": str(room),
+            "task": str(task.id),
+        },
+        headers=_owner(client),
+    )
+    absent = _read(client, pid, room, task, "backend/usage/missing.py")
+
+    assert read.status_code == 200, read.text
+    assert read.json()["data"]["content"] == "POOL = 1\n"
+    assert read.json()["data"]["source"] == "committed"
+    assert read.json()["data"]["editable"] is False
+    assert raw.status_code == 200, raw.text
+    assert raw.content == b"POOL = 1\n"
+    assert raw.headers["X-Cheese-File-Source"] == "committed"
+    assert absent.status_code == 404, absent.text
+    assert "working" in asked
+
+
+def test_a_task_with_no_copy_on_its_machine_takes_no_writes(client, machines):
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="working")
+
+    saved = client.put(
+        f"/projects/{pid}/file",
+        params={"topic": str(room), "task": str(task.id)},
+        json={
+            "path": "backend/usage/models.py",
+            "content": "POOL = 2\n",
+            "version": "0" * 16,
+            "base": "POOL = 1\n",
+        },
+        headers=_owner(client),
+    )
+
+    assert saved.status_code == 404, saved.text
+    assert saved.json()["error"]["message"] == "环境里还没有这个任务文件"
+
+
+def test_a_file_missing_from_a_present_copy_is_not_read_from_the_branch(
+    client, machines
+):
+    # The copy is on the machine and the file is not in it (deleted there, say):
+    # the branch's version of it is not the task's file.
+    home, _ = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="working")
+    worktree = home / ".cheese/tasks" / str(task.id)
+    worktree.mkdir(parents=True)
+    subprocess.run(["git", "init", str(worktree)], check=True, capture_output=True)
+
+    read = _read(client, pid, room, task, "backend/usage/models.py")
+
+    assert read.status_code == 404, read.text
+    assert read.json()["error"]["message"] == "环境里还没有这个任务文件"
+
+
+def test_an_older_executor_without_a_copy_still_says_the_file_is_not_there(
+    client, machines
+):
+    # Its `not_found` cannot tell a missing directory from a missing file, so a
+    # file stays "not on the machine"; the listing still comes from the branch.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="old")
+
+    read = _read(client, pid, room, task, "backend/usage/models.py")
+    listing = _live(client, pid, room, task, "files")
+
+    assert read.status_code == 404, read.text
+    assert read.json()["error"]["message"] == "环境里还没有这个任务文件"
+    assert listing.status_code == 200, listing.text
+    assert "backend/usage/models.py" in {
+        f["path"] for f in listing.json()["data"]["data"]
+    }
+    assert asked == ["old", "old"]
 
 
 def test_a_task_reads_its_own_machine_not_the_newest_in_the_channel(client, machines):
@@ -175,5 +373,5 @@ def test_a_machine_of_an_earlier_room_generation_is_not_read(client, machines):
     listing = _live(client, pid, room, task, "files")
 
     assert listing.status_code == 200, listing.text
-    assert listing.json()["data"]["data"] == []
+    assert listing.json()["data"]["source"] == "committed"
     assert asked == []

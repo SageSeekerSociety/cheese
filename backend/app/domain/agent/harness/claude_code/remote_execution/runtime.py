@@ -1248,7 +1248,7 @@ class Executor:
         root = (home / ".cheese" / "tasks" / task_id).resolve()
         root.relative_to(home)
         if not root.is_dir():
-            return {"error": "not_found"}
+            return {"error": "not_found", "missing": "worktree"}
         operation = params["operation"]
         if operation == "diff":
 
@@ -1324,7 +1324,7 @@ class Executor:
         path = (root / relative).resolve()
         path.relative_to(root)
         if not path.is_file():
-            return {"error": "not_found"}
+            return {"error": "not_found", "missing": "file"}
         if operation == "read":
             offset = params.get("offset", 0)
             count = params.get("size", 1024 * 1024)

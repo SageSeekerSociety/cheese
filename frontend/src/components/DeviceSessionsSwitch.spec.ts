@@ -1,6 +1,5 @@
-// 「现在的分布」里一台自有设备上的 agent：选一些，换到另一台工作电脑。换的是它所在
-// 的整个房间（一个话题一个容器），走名册那条更换（先尽力推送一次，推没推上去都换）；正在干活的跳过并说明原因。
-import type { ComputeChoice } from '../types/compute'
+// 「现在的分布」里一台自有设备上的 agent：选一些，换到别的环境。每条会话各换各的，
+// 走名册那条更换（先尽力推送一次，推没推上去都换）；正在干活的跳过并说明原因。
 import type { DeviceSession } from '../types/deviceSessions'
 
 import { createVuetify } from 'vuetify'
@@ -11,7 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   listDeviceSessions: vi.fn(),
-  setTopicComputeChoice: vi.fn(),
+  setSessionEnvironment: vi.fn(),
   ApiError: class extends Error {
     constructor(
       readonly status: number,
@@ -28,12 +27,6 @@ import i18n, { setLocale } from '../i18n'
 
 import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
-const cloud: ComputeChoice = {
-  name: null,
-  profile: 'cloud',
-  device_id: null,
-}
-const leaving: ComputeChoice = { ...cloud, name: '旧工作站', profile: 'device', device_id: 'old' }
 function row(id: string, room: string, working = false): DeviceSession {
   return {
     id,
@@ -41,7 +34,7 @@ function row(id: string, room: string, working = false): DeviceSession {
     topic_title: room,
     agent_handle: `agent-${id}`,
     agent_name: `助手${id}`,
-    choice: leaving,
+    environment: { kind: 'self_hosted', device_id: 'old' },
     last_active: new Date().toISOString(),
     working,
   }
@@ -53,11 +46,14 @@ async function open() {
       projectId: 'p1',
       device: { device_id: 'old', name: '旧工作站' },
       devices: [
-        { device_id: 'old', name: '旧工作站', online: true },
-        { device_id: 'spare', name: '备用机', online: false },
+        { device_id: 'old', name: '旧工作站', online: true, owned: true },
+        { device_id: 'spare', name: '备用机', online: false, owned: true },
+        { device_id: 'lab', name: '实验室', online: true, owned: false },
       ],
-      cloudAvailable: true,
-      projectDefault: cloud,
+      specs: [
+        { spec: 'standard', label: '标准' },
+        { spec: 'vm', label: '虚拟机' },
+      ],
     },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
@@ -117,19 +113,20 @@ it('switches the selected agents one by one and says what happened to each', asy
   expect(dialog().getByText('另有 2 个 agent 在你打不开的频道里')).toBeTruthy()
   expect(dialog().getByRole('button', { name: '推送并更换' }).hasAttribute('disabled')).toBe(true)
 
-  api.setTopicComputeChoice.mockImplementation(async (topic: string) => {
-    if (topic === 'room-b') throw new ApiError(409, '正在运行任务，稍后再换', 'SessionWorking')
-    return { choice: {}, proposal: null }
+  api.setSessionEnvironment.mockImplementation(async (_topic: string, session: string) => {
+    if (session === 'b') throw new ApiError(409, '正在运行任务，稍后再换', 'SessionWorking')
+    return {}
   })
   // Vuetify's checkbox reads the input event, as a person's click produces it.
   await fireEvent.input(dialog().getByLabelText('全选'), { target: { checked: true } })
   await fireEvent.click(dialog().getByRole('button', { name: '推送并更换' }))
 
-  await waitFor(() => expect(api.setTopicComputeChoice).toHaveBeenCalledTimes(3))
-  expect(api.setTopicComputeChoice.mock.calls.map((call) => [call[0], call[1].profile, call[2]])).toEqual([
-    ['room-a', 'cloud', { ifIdle: true }],
-    ['room-b', 'cloud', { ifIdle: true }],
-    ['room-c', 'cloud', { ifIdle: true }],
+  await waitFor(() => expect(api.setSessionEnvironment).toHaveBeenCalledTimes(3))
+  const auto = { kind: 'sandbox', spec: 'standard' }
+  expect(api.setSessionEnvironment.mock.calls).toEqual([
+    ['room-a', 'a', auto, { ifIdle: true }],
+    ['room-b', 'b', auto, { ifIdle: true }],
+    ['room-c', 'c', auto, { ifIdle: true }],
   ])
   expect(await dialog().findAllByText('已更换')).toHaveLength(2)
   expect(dialog().getByText('正在运行任务，稍后再换').getAttribute('role')).toBe('alert')
@@ -140,30 +137,33 @@ it('switches the selected agents one by one and says what happened to each', asy
   await waitFor(() => expect(emitted().changed).toHaveLength(1))
 })
 
-it('offers every other work computer but the one being left', async () => {
+it('offers each sandbox spec and my other computers, not the one being left or anyone else’s', async () => {
   api.listDeviceSessions.mockResolvedValue({ sessions: [row('a', '定价')], hidden: 0 })
   await open()
   await dialog().findByText('定价')
 
   await fireEvent.mouseDown(screen.getByLabelText('换到'))
 
-  expect(await screen.findByRole('option', { name: '云端环境' })).toBeTruthy()
+  expect(await screen.findByRole('option', { name: '沙箱 · 标准' })).toBeTruthy()
+  expect(screen.getByRole('option', { name: '沙箱 · 虚拟机' })).toBeTruthy()
   expect(screen.getByRole('option', { name: '备用机 · 不可用' })).toBeTruthy()
+  expect(screen.queryByRole('option', { name: /实验室/ })).toBeNull()
   expect(screen.queryByRole('option', { name: /旧工作站/ })).toBeNull()
 })
 
-it('switches a room once and moves every teammate listed in it', async () => {
-  // 一个话题一个容器：同一个房间的两个队友在这台设备上是两行，换的却是同一个房间。
+it('switches only the sessions picked, even when a teammate in the same room is on this machine too', async () => {
+  // 每条会话各有各的环境：同一个房间的两个队友在这台设备上是两行，只勾一行就只换那一条。
   const second = { ...row('b', '定价'), topic_id: 'room-a' }
   api.listDeviceSessions.mockResolvedValue({ sessions: [row('a', '定价'), second], hidden: 0 })
-  api.setTopicComputeChoice.mockResolvedValue({ choice: {}, proposal: null })
+  api.setSessionEnvironment.mockResolvedValue({})
   await open()
   await dialog().findAllByText('定价')
 
-  await fireEvent.input(dialog().getByLabelText('全选'), { target: { checked: true } })
+  const boxes = dialog().getAllByLabelText('定价')
+  await fireEvent.input(boxes[0], { target: { checked: true } })
   await fireEvent.click(dialog().getByRole('button', { name: '推送并更换' }))
 
-  expect(await dialog().findAllByText('已更换')).toHaveLength(2)
-  expect(api.setTopicComputeChoice).toHaveBeenCalledTimes(1)
-  expect(api.setTopicComputeChoice.mock.calls[0][0]).toBe('room-a')
+  expect(await dialog().findAllByText('已更换')).toHaveLength(1)
+  expect(api.setSessionEnvironment).toHaveBeenCalledTimes(1)
+  expect(api.setSessionEnvironment.mock.calls[0].slice(0, 2)).toEqual(['room-a', 'a'])
 })

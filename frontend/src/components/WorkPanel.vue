@@ -881,7 +881,8 @@ defineExpose({
             @mention-click="emit('mention-click', $event)"
           />
           <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
-             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
+             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。规则交回的结果文件点开
+             在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoutinePanelHost
             v-if="mounted.has('routines')"
             v-show="active === 'routines'"
@@ -889,6 +890,7 @@ defineExpose({
             :topic-id="topicId"
             :project-id="projectId"
             :refresh-tick="refreshTick"
+            @open-file="openFile"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
             <PanelDocHost
@@ -948,18 +950,13 @@ defineExpose({
 }
 .tabpane-chat {
   display: flex;
-  /* tabbody 是一条 flex 行，这一格必须占满它——按内容收缩的话，输入框只有半屏宽。 */
-  flex: 1 1 auto;
   width: 100%;
-  min-width: 0;
   min-height: 0;
   height: 100%;
 }
 .tabpane-slot {
   display: flex;
-  flex: 1 1 auto;
   width: 100%;
-  min-width: 0;
   min-height: 0;
 }
 .tabpane-in {
@@ -990,6 +987,11 @@ defineExpose({
   min-height: 0;
   /* Panel tab switches cross-fade this block only (lib/viewTransition.ts). */
   view-transition-name: wp-tabbody;
+}
+/* 每一格都占满这条 flex 行：按内容收缩的一格会让 Monaco 量到窄宽度后定死，面板右边空一条。 */
+.tabbody > * {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {

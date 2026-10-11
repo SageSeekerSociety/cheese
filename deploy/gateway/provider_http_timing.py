@@ -1,9 +1,15 @@
-"""Measure upstream HTTP boundaries without logging request contents."""
+"""Measure upstream HTTP boundaries without logging request contents.
+
+Each record names the deployment, model group, Claude Code session and attempt it
+belongs to, and a refused call names the upstream limit that refused it, so a
+fallover can be traced to the key and the limit behind it from the log alone.
+"""
 
 import functools
 import asyncio
 import json
 import logging
+import re
 import time
 import socket
 import ssl
@@ -16,6 +22,54 @@ logger = logging.getLogger("cheese.provider_http_timing")
 logger.setLevel(logging.INFO)
 logger.propagate = False
 logger.addHandler(logging.StreamHandler())
+
+
+# What a LiteLLM upstream (RUC's endpoint is one) says when it refuses a key: the
+# limit that refused it and how much of that limit was left. Read out as fields so
+# the message itself, which names the key, is never logged.
+_KEY_LIMIT = re.compile(
+    r"Limit type: (\w+)\. Current limit: (\d+), Remaining: (\d+)"
+)
+_NO_DEPLOYMENT = "No deployments available"
+# Claude Code's session ids are UUIDs; anything else is left out of the log.
+_SESSION = re.compile(r"[A-Za-z0-9-]{8,128}")
+
+
+def refusal_fields(message):
+    """Which limit an upstream's 429 names, without its text."""
+    if not isinstance(message, str):
+        return {}
+    match = _KEY_LIMIT.search(message)
+    if match:
+        return {
+            "limit_type": match.group(1),
+            "limit": int(match.group(2)),
+            "remaining": int(match.group(3)),
+        }
+    if _NO_DEPLOYMENT in message:
+        return {"limit_type": "upstream_no_deployment"}
+    return {}
+
+
+def call_fields(logging_obj):
+    """Which deployment, model group and conversation an upstream call belongs
+    to, and which attempt of the request it is."""
+    params = getattr(logging_obj, "litellm_params", None) or {}
+    metadata = {
+        **(params.get("litellm_metadata") or {}),
+        **(params.get("metadata") or {}),
+    }
+    session = metadata.get("session_id")
+    fields = {
+        "deployment": (params.get("model_info") or {}).get("id"),
+        "model_group": metadata.get("model_group"),
+        "attempted_retries": metadata.get("attempted_retries"),
+        "attempted_fallbacks": metadata.get("attempted_fallbacks"),
+        "session": session
+        if isinstance(session, str) and _SESSION.fullmatch(session)
+        else None,
+    }
+    return {key: value for key, value in fields.items() if value is not None}
 
 
 def failure_fields(error=None, response=None):
@@ -38,6 +92,7 @@ def failure_fields(error=None, response=None):
         response = getattr(error, "response", None)
     if response is not None and response.status_code >= 400:
         code = None
+        refusal = {}
         if response.is_stream_consumed:
             try:
                 if len(response.content) <= 65536:
@@ -46,6 +101,8 @@ def failure_fields(error=None, response=None):
                     candidate = detail.get("code") if isinstance(detail, dict) else None
                     if str(candidate) in {"1113", "insufficient_quota"}:
                         code = str(candidate)
+                    if response.status_code == 429 and isinstance(detail, dict):
+                        refusal = refusal_fields(detail.get("message"))
             except (ValueError, httpx.ResponseNotRead):
                 pass
         status = response.status_code
@@ -58,7 +115,12 @@ def failure_fields(error=None, response=None):
             if status == 429
             else "http_error"
         )
-        return {"category": category, "status": status, "provider_code": code}
+        return {
+            "category": category,
+            "status": status,
+            "provider_code": code,
+            **refusal,
+        }
     for kind, category in (
         (httpx.ConnectError, "connection"),
         ((httpx.ReadError, httpx.RemoteProtocolError), "stream_transport"),
@@ -70,13 +132,16 @@ def failure_fields(error=None, response=None):
 
 
 class RequestTiming:
-    def __init__(self, call_id):
+    def __init__(self, call_id, call=None):
         self.call_id = call_id
+        # Repeated on the start and the end record, so either alone says which
+        # deployment and attempt it describes.
+        self.call = call or {}
         self.started = time.monotonic()
         self.finished = False
         self.consumer_hold = 0.0
         self.consumer_since = None
-        self.emit("request_start")
+        self.emit("request_start", **self.call)
 
     def emit(self, phase, **fields):
         logger.info(
@@ -99,7 +164,11 @@ class RequestTiming:
             if self.consumer_since is not None:
                 held += time.monotonic() - self.consumer_since
             self.emit(
-                "request_end", outcome=outcome, consumer_hold_ms=held * 1000, **fields
+                "request_end",
+                outcome=outcome,
+                consumer_hold_ms=held * 1000,
+                **self.call,
+                **fields,
             )
 
 
@@ -145,7 +214,7 @@ def trace_post(post):
         logging_obj = kwargs.get("logging_obj")
         if logging_obj is None:
             return await post(self, *args, **kwargs)
-        timing = RequestTiming(logging_obj.litellm_call_id)
+        timing = RequestTiming(logging_obj.litellm_call_id, call_fields(logging_obj))
         try:
             response = await post(self, *args, **kwargs)
         except BaseException as error:

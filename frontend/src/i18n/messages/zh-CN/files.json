@@ -3,6 +3,13 @@
     "uploadFailed": "上传失败（HTTP {status}）",
     "readFailed": "无法读取这份资料（HTTP {status}）"
   },
+  "room": {
+    "readOnly": "只读",
+    "empty": "暂无文件",
+    "loading": "读取文件",
+    "loadError": "无法读取文件",
+    "truncated": "文件太多，这里只列出最近改动的 {n} 份"
+  },
   "preview": {
     "cannotShow": "无法显示这个文件",
     "generateFailed": "无法生成预览（HTTP {status}）"

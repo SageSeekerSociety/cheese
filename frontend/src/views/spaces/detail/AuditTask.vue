@@ -1,44 +1,26 @@
 <template>
-  <PageHeader :title="t('spaces.detail.auditTasks.title')" show-on-mobile />
-  <div class="audit">
-    <!-- A failed read leaves `tasks` empty, so the list would say "nothing to review" — the same shape as a queue that really is empty. Replace it instead. -->
-    <BaseLoadError
-      v-if="failed"
-      :title="t('spaces.detail.auditTasks.loadFailed')"
-      :error="loadFailureReason(error)"
-      :forbidden="isForbidden(error)"
-      @retry="refresh"
-    />
-    <infinite-scroll
-      v-else
-      :loading="loadingMore"
-      :has-more="hasMore"
-      :initial-loading="refreshing"
-      :is-empty="tasks.length === 0"
-      :shown="tasks.length"
-      :total="total"
-      @load-more="loadMore"
-    >
-      <template #empty>
-        <BaseEmptyState size="inline" class="audit__empty" :title="t('spaces.detail.auditTasks.noTasks')" />
-      </template>
-      <AuditTaskRow
-        v-for="task in tasks"
-        :key="task.id"
-        :task="task"
-        :open="expandedTaskId === task.id"
-        @toggle="toggleExpand(task.id)"
-        @approve="approveTask(task.id)"
-        @reject="rejectTask(task.id)"
-      />
-    </infinite-scroll>
-  </div>
+  <AuditTaskView
+    :tasks="tasks"
+    :failed="failed"
+    :error-reason="errorReason"
+    :forbidden="forbidden"
+    :loading-more="loadingMore"
+    :has-more="hasMore"
+    :refreshing="refreshing"
+    :total="total"
+    @retry="refresh"
+    @load-more="loadMore"
+    @approve="approveTask"
+    @reject="rejectTask"
+  />
 </template>
 
 <script setup lang="ts">
+// 待审核题目这一页的容器：按空间翻页读、通过/驳回、驳回原因那个对话框。画面在
+// `AuditTaskView.vue`（场景规则见 docs/manual/dev/scenes.md）。
 import type { Task } from '@/types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
@@ -47,12 +29,8 @@ import { createEmptyResult, usePaging } from '@/utils/paging'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import AuditTaskRow from './AuditTaskRow.vue'
+import AuditTaskView from './AuditTaskView.vue'
 
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
-import PageHeader from '@/components/common/PageHeader.vue'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { TasksApi } from '@/network/api/tasks'
 import { CancelError, useDialog } from '@/plugins/dialog'
@@ -61,8 +39,6 @@ import { useSpaceStore } from '@/stores/space'
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
 const { currentSpaceId } = storeToRefs(spaceStore)
-
-const expandedTaskId = ref<number | null>(null)
 
 const { t } = useI18n()
 const dialogs = useDialog()
@@ -98,10 +74,8 @@ const {
 // 读失败时 `tasks` 是空的，光看 `is-empty` 分不出「读失败」和「一条都没有」。
 // 只有在**没有东西可显示**时才替换列表：翻页失败时上面那些条目还在。
 const failed = computed(() => error.value !== null && tasks.value.length === 0)
-
-const toggleExpand = (taskId: number) => {
-  expandedTaskId.value = expandedTaskId.value === taskId ? null : taskId
-}
+const errorReason = computed(() => loadFailureReason(error.value))
+const forbidden = computed(() => isForbidden(error.value))
 
 const approveTask = async (taskId: number) => {
   try {
@@ -155,16 +129,3 @@ watch(
   { immediate: true }
 )
 </script>
-
-<style scoped>
-.audit {
-  /* 宽屏下封顶居中（和项目里的页面一样），不再左贴、右边空一条。 */
-  max-width: 960px;
-  margin-inline: auto;
-  padding: 8px 16px 48px;
-}
-
-.audit__empty {
-  padding: 32px 8px;
-}
-</style>

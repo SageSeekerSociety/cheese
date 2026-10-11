@@ -32,6 +32,7 @@ import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import TaskHeader from '@/components/task/TaskHeader.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
@@ -148,7 +149,76 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
   }
 }
 
+/** 任务页页头那一格：一件还没开始的任务，一位 AI 队友，它的会话在标准沙箱里。 */
+const TASK_HEADER_PROPS = {
+  room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
+  task: {
+    id: 'demo-task',
+    project_id: 'demo',
+    room_id: 'demo-room',
+    title: '登录页加「记住我」',
+    title_source: 'human',
+    status: 'open',
+    owner_handle: 'alice',
+    started_at: null,
+    created_at: '2026-10-05T00:00:00Z',
+    updated_at: '2026-10-05T00:00:00Z',
+    presentation: { column: 'not_started', phrase: 'discussing' },
+  },
+  memberNames: { 'cheese-topica': AGENT_NAME },
+  agentName: AGENT_NAME,
+  people: [{ member_handle: 'alice', agent: false }],
+  agents: [{ member_handle: 'cheese-topica', agent: true }],
+  machine: {
+    default: { kind: 'sandbox', spec: 'standard' },
+    default_from: 'room',
+    devices: [],
+    specs: [{ spec: 'standard', label: '标准' }],
+    sessions: [
+      {
+        session_id: 'demo-session',
+        agent_handle: 'cheese-topica',
+        seat_handle: 'cheese-topica',
+        environment: { kind: 'sandbox', spec: 'standard' },
+        status: 'ready',
+        online: true,
+      },
+    ],
+  },
+  machineError: false,
+  starting: false,
+  startError: null,
+  actionError: null,
+  start: async () => {},
+  close: async () => true,
+  reopen: async () => true,
+  handOver: async () => true,
+  rename: async () => true,
+  setCollaborators: async () => true,
+  setAgent: async () => true,
+  loadMachine: async () => {},
+  setMachine: async () => ({}),
+  setMachineDefault: async () => ({}),
+}
+
 const TASK_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'task-header',
+    title: 'TaskHeader',
+    about:
+      '任务页的页头：「# 频道 / 任务名」和此刻的状态，右边是负责人、协作者和「开始」；点开任务信息能看到每条会话的环境。',
+    file: 'src/components/task/TaskHeader.vue',
+    component: TaskHeader,
+    needs: UI_T,
+    states: [
+      {
+        name: '还没开始',
+        note: '一件刚建好的任务：标题在左，状态写着在讨论；数据都从 props 来，开始、改环境这些动作交给上面。',
+        props: TASK_HEADER_PROPS,
+        expect: '登录页加「记住我」',
+      },
+    ],
+  },
   {
     id: 'room-task-card',
     title: 'TaskCard',

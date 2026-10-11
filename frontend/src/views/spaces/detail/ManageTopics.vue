@@ -1,41 +1,21 @@
 <template>
-  <!-- 画在「分类」那一块下面，隔开一段。 -->
-  <SettingsToolbar :title="t('spaces.settings.sections.topics')" class="mt-8">
-    <BaseButton kind="primary" prepend-icon="mdi-plus" @click="addTopicsDialog = true">
-      {{ t('spaces.detail.manageTopics.addTopics') }}
-    </BaseButton>
-  </SettingsToolbar>
-
-  <AdaptiveDialog
-    v-model="addTopicsDialog"
-    :title="t('spaces.detail.manageTopics.addTopics')"
-    :primary-label="t('spaces.detail.manageTopics.add')"
-    size="lg"
-    @primary="confirmAddTopics"
-  >
-    <topic-selector v-model="selectedTopics" always-adding />
-  </AdaptiveDialog>
-
-  <div class="settings-card">
-    <v-list v-if="classificationTopics.length > 0" class="settings-list" bg-color="transparent">
-      <v-list-item v-for="(topic, index) in classificationTopics" :key="index" :title="topic.name">
-        <template #append>
-          <BaseButton
-            kind="ghost"
-            icon="mdi-delete-outline"
-            size="sm"
-            :aria-label="t('spaces.detail.manageTopics.delete')"
-            @click="deleteClassificationTopic(topic.id)"
-          />
-        </template>
-      </v-list-item>
-    </v-list>
-
-    <BaseEmptyState v-else size="inline" class="settings-empty" :title="t('spaces.detail.manageTopics.noTopics')" />
-  </div>
+  <ManageTopicsView
+    v-model:selected-topics="selectedTopics"
+    v-model:add-topics-dialog="addTopicsDialog"
+    :classification-topics="classificationTopics"
+    :search-topics="searchTopics"
+    :create-topic="createTopic"
+    @delete="deleteClassificationTopic"
+    @confirm-add="confirmAddTopics"
+  />
 </template>
 
 <script setup lang="ts">
+// 分类话题这一页的容器：读 store 里的分类话题、新增/删除，话题选择器要的搜索与新建
+// 从 `useSpaceData` 取（网络层只在那一层）。画面在 `ManageTopicsView.vue`（场景规则见
+// docs/manual/dev/scenes.md）。
+import type { Topic } from '@/types'
+
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
@@ -43,17 +23,13 @@ import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import TopicSelector from '@/components/common/TopicSelector.vue'
-import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
+import ManageTopicsView from './ManageTopicsView.vue'
+
 import { useSpaceStore } from '@/stores/space'
-import { Topic } from '@/types'
 
 const spaceStore = useSpaceStore()
 const { classificationTopics } = storeToRefs(spaceStore)
-const { deleteClassificationTopic, addClassificationTopics } = useSpaceData()
+const { deleteClassificationTopic, addClassificationTopics, searchTopics, createTopic } = useSpaceData()
 const { t } = useI18n()
 
 const selectedTopics = ref<Topic[]>([])
@@ -70,5 +46,3 @@ const confirmAddTopics = async () => {
   }
 }
 </script>
-
-<style scoped src="@/styles/settings-card.css"></style>

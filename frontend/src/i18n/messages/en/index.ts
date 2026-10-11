@@ -2,6 +2,7 @@ import account from './account.json'
 import admin from './admin.json'
 import apiError from './apiError.json'
 import ask from './ask.json'
+import catalog from './catalog.json'
 import compute from './compute.json'
 import credits from './credits.json'
 import design from './design.json'
@@ -74,4 +75,5 @@ export default {
   shell,
   slides,
   topic,
+  catalog,
 }

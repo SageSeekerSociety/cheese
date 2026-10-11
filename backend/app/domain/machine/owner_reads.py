@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
-from app.domain.machine.models import CloudHost, CloudHostHome
+from app.domain.machine.models import CloudHost, SandboxHome
 
 
 async def active_cloud_host(session: AsyncSession, device_id: str) -> bool:
@@ -45,9 +45,9 @@ async def sandbox_destroyed(
         return False
     return (
         await session.scalar(
-            select(CloudHostHome.id).where(
-                CloudHostHome.host_id == host_id,
-                CloudHostHome.resource_id == resource_id,
+            select(SandboxHome.id).where(
+                SandboxHome.host_id == host_id,
+                SandboxHome.resource_id == resource_id,
             )
         )
         is None

@@ -62,29 +62,6 @@
     "confirm": "Push and change",
     "unavailable": "{name} · Unavailable"
   },
-  "roomMachine": {
-    "taskHeading": "This task's environment",
-    "taskHint": "Changing it first pushes this task's changes to its branch, and changes either way; the changes as of each turn's end are kept in a snapshot.",
-    "edit": "Edit",
-    "heading": "This channel's environment",
-    "hint": "All AI teammates in the channel share this environment. Changing it first pushes each teammate's changes to its branch, and changes either way; the changes as of each turn's end are kept in a snapshot.",
-    "more": "Other configurations and devices",
-    "projectDefault": "Project default",
-    "wholeMachine": "Can access the whole computer",
-    "wholeMachineNotice": "Lets it see the whole computer: it can operate this computer's services and other channels",
-    "online": "Online",
-    "offline": "Offline",
-    "removed": "Removed from the team",
-    "loadFailed": "Could not load environments",
-    "saveFailed": "Could not choose the environment",
-    "retry": "Retry",
-    "here": "This channel runs on: {name}",
-    "accessHeading": "What this channel sees of {name}",
-    "isolated": "Isolated environment",
-    "isolatedHint": "Its own work directory and the project's package cache. Not the owner's files, the tools installed in their home folder, or other channels.",
-    "host": "Full computer access",
-    "hostOwnerOnly": "Only the computer's owner can turn this on"
-  },
   "deviceInUse": {
     "line": "In use: {project} · {room} · {agent}",
     "attached": "Only for {projects}"
@@ -107,8 +84,7 @@
     "collapse": "Collapse",
     "hint": "Only affects agents that have not started; agents already working keep their own environment",
     "distribution": "Where agents are now",
-    "onCloud": "Cloud environment · {agents}",
-    "onCloudVm": "Whole cloud VM · {agents}",
+    "onPlatform": "{env} · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "1 agent | {count} agents",
     "noneStarted": "No agents have started",
@@ -321,6 +297,7 @@
       "exitFocus": "Exit focus mode",
       "newTask": "New task",
       "newTaskFailed": "Couldn’t create the task. Try again later",
+      "files": "Files",
       "rename": "Rename",
       "copyLink": "Copy link",
       "markRead": "Mark as read",
@@ -1971,18 +1948,6 @@
       "hint": "Links to this project use this short name: lowercase letters, digits and hyphens. After a rename, old links still open this project, and no other project can take the old name"
     }
   },
-  "computeChoice": {
-    "cloud": "Cloud environment",
-    "cloudVm": "Whole cloud VM",
-    "deviceOnline": "{name} · Online",
-    "deviceOffline": "{name} · Offline",
-    "environment": "Environment",
-    "none": "No environments available",
-    "cloudHint": "Each session works in a cloud environment of its own, prepared on the first run",
-    "cloudVmHint": "Each session gets a virtual machine of its own, with sudo, Docker, KVM and kernel modules. Preparing one takes a few minutes; once the session is idle, its changes are pushed to their branches and the VM is released",
-    "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
-    "submit": "Use this configuration"
-  },
   "projectTransfer": {
     "lookupFailed": "No account found",
     "loadFailed": "Couldn't load members",
@@ -2097,7 +2062,7 @@
     "online": "Online",
     "offline": "Offline",
     "device": "Own device",
-    "cloud": "Cloud environment",
+    "cloud": "From the platform",
     "current": "Used when nothing is chosen"
   },
   "push": {

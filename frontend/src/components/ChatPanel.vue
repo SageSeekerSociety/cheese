@@ -406,6 +406,8 @@ useComposerShortcut({
           :typing="typingRows"
           :editing-id="editingId"
           :edit-saving="editSaving"
+          :mention-pool="mentionPool"
+          :topic-list="topicList"
           :scroll-ref="timelineRefs.scrollRef"
           :content-ref="timelineRefs.contentRef"
           :is-agent-block="isAgentBlock"

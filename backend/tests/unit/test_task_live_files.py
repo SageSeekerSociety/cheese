@@ -87,6 +87,23 @@ def live(tmp_path):
     return root, call
 
 
+def test_a_machine_says_whether_the_copy_or_the_file_is_missing(live, tmp_path):
+    root, call = live
+    executor = object.__new__(Executor)
+    executor.env = {"HOME": str(tmp_path)}
+    elsewhere = str(uuid.uuid4())
+
+    for operation in ("read", "write", "tree", "diff"):
+        assert executor.task_fs(
+            {"task_id": elsewhere, "operation": operation, "path": "a.md"}
+        ) == {"error": "not_found", "missing": "worktree"}
+    for operation in ("read", "write"):
+        assert call(operation, path="a.md") == {
+            "error": "not_found",
+            "missing": "file",
+        }
+
+
 def test_live_read_and_conditional_save_preserve_concurrent_agent_edit(live):
     root, call = live
     (root / "report.md").write_text("draft")
@@ -206,6 +223,8 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
         room_id=uuid.uuid4(),
         status=forge_files.TaskStatus.open,
         base_branch="main",
+        branch_name="task/new",
+        closing_since=None,
     )
     room = SimpleNamespace(id=task.room_id, resource_id=None)
     session = SimpleNamespace(get=AsyncMock(return_value=room))
@@ -216,6 +235,8 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
+    # Nothing pushed yet: the forge has no branch for it.
+    monkeypatch.setattr(forge_files, "branch_head", AsyncMock(return_value=None))
     # The machine itself, whose home holds no directory for this task.
     executor = object.__new__(Executor)
     executor.env = {"HOME": str(tmp_path)}

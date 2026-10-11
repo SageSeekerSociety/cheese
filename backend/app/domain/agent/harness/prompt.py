@@ -200,6 +200,8 @@ TODO_WRITE = (
     "一次，把它标成 completed、把下一项标成 in_progress。每次都传完整的清单。做完时"
     "再写一次，所有项标 completed，用 result 写一句落下了什么。有人提了新的请求，就带"
     " new=true 另起一条。简单的问答不用写。"
+    "别只在开工和收尾两头写：每做完一步就写这一次。中间不出声，看清单的人就一直看到"
+    "开工那一版，直到全部打完勾。"
     "清单只说做到哪了，要说的话照样用 `chat_send` 发。"
     "派分身去做时，分身也照这样改这同一份清单。同时派出几个分身时，它们会互相覆盖："
     "在每个分身的 prompt 里写明不要写清单，由你在它们各自交回时更新。"
@@ -793,6 +795,26 @@ def silence_reminder(minutes: int, language: str | None = None) -> str:
         "room that shows nothing cannot be told apart from one that is stuck. If "
         "your plan has changed, also update it with todo_write. Ignore this only "
         "if the turn is already finished.",
+    )
+
+
+def stale_checklist_reminder(minutes: int, language: str | None = None) -> str:
+    """一轮自己写的步骤清单已经有 `minutes` 分钟没动过。
+
+    它和 `silence_reminder` 分开，是因为两件事能分开停：一轮可以一直在说话
+    （chat_send），清单却还是开工时那一版——2026-10-11 报上来的正是这一种，一轮里
+    五步干完，看的人从「○ ○ ○ ○ ○」直接看到「✓ ✓ ✓ ✓ ✓」。清单是房间里唯一的
+    「做到哪了」，而哪一步算做完只有写它的人知道，所以平台能做的是问，不是替它写。
+    """
+    return _in_the_readers_language(
+        language,
+        f"你的步骤清单已经 {minutes} 分钟没动过了，而看的人只能从它知道你做到哪了。"
+        "现在就用 todo_write 再写一次：做完的标成 completed，正在做的那一项标成 "
+        "in_progress。这一轮已经结束的话才不用理会。",
+        f"Your step checklist has not moved for {minutes} minutes, and it is the "
+        "only place a reader can see how far you have got. Call todo_write now: "
+        "mark the steps that are done completed and the one you are on "
+        "in_progress. Ignore this only if the turn is already finished.",
     )
 
 

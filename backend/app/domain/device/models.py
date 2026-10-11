@@ -5,7 +5,7 @@ Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device_auth_code``
 (short-lived device-flow codes), ``device_project`` (device↔project assignments),
 ``device_team`` (device↔team bindings — compute belongs to the team, v4) and
-``device_topic`` (a topic's pinned device — affinity, v4) and ``device_health``
+``device_health``
 (a machine's rolling failure streak / quarantine — #186) and
 ``device_claude_login`` (whether its owner's own Claude Code is logged in for
 the platform — #2991) and ``device_sandbox`` (whether it can give a session a
@@ -31,7 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 
 
 class DeviceRow(Base):
@@ -63,8 +63,7 @@ class DeviceRow(Base):
         DateTime(timezone=True), nullable=True
     )
 
-    # Supply is the stored lifecycle fact. Access is not a property of the machine:
-    # it is chosen per topic binding (``TopicDeviceRow.visibility``).
+    # Supply is the stored lifecycle fact: who brought the machine in.
     supply: Mapped[Supply] = mapped_column(
         Enum(Supply, native_enum=False, length=16),
         default=Supply.self_hosted,
@@ -129,35 +128,6 @@ class DeviceTeamRow(Timestamps, Base):
         ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
     )
     team_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
-
-
-class DeviceTopicRow(Base):
-    """A topic→device pin (execution-architecture v4 §affinity). The device a topic's
-    turns run on, frozen when a machine is named or when the first automatic turn
-    selects one: the topic's work tree lives on that one machine, so every later
-    turn MUST return to it — never drift to another online device (which would
-    silently start from an empty tree). Where a CONVERSATION lives is not said
-    here and never was this row's to say: ``agent_sessions`` records it, one row
-    per agent, and a room's two teammates can sit on two machines.
-    ``visibility`` is this topic's access boundary on that machine, not a machine-wide
-    grant. 1:1 — ``topic_id`` is the primary key.
-    ``project_id`` /
-    ``topics.id`` are stored as bare Uuids (no cross-table FK, matching
-    ``device_project.project_id``); the device FK cascades so a removed device drops
-    its pins."""
-
-    __tablename__ = "device_topic"
-
-    topic_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    visibility: Mapped[Visibility] = mapped_column(
-        Enum(Visibility, native_enum=False, length=16),
-        default=Visibility.isolated,
-        server_default=Visibility.isolated.value,
-        nullable=False,
-    )
 
 
 class DeviceHealthRow(Base):

@@ -1,13 +1,13 @@
 <script setup lang="ts">
+// 「运行环境」那一块：在哪运行、怎么准备、还能跑多久，一页说完。
+//
+// 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：取数、保存、状态轮询、
+// 「让芝士看看」/重试/采用都在 `composables/useProjectEnvironmentSettings.ts` 里，由设置页
+// 接线。编辑草稿（那两段脚本与环境变量那几行）留在这一层，整份报上去。
 import type { EnvironmentDiagnosis } from '@/types/environment'
 import type { EnvironmentStatus, ProjectEnvironmentInfo } from '../cx_types'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-
-import { holdRevealGate } from '@/composables/useRevealGate'
-import { useSaveState } from '@/composables/useSaveState'
-
-import { applyRoomEnvironment, getProjectEnvironment, getRoomEnvironment, saveProjectEnvironment } from '../api'
+import { computed, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SaveStatus from '@/components/base/SaveStatus.vue'
@@ -15,164 +15,91 @@ import EnvironmentFailureCard from '@/components/environment/EnvironmentFailureC
 import i18n, { t } from '@/i18n'
 import { responseText } from '@/lib/noticeText'
 
+/** 报给设置页的那一份配置：两段脚本，和环境变量那几行（查重在那一层做）。 */
+interface ConfigDraft {
+  setup_script: string
+  startup_script: string
+  variables: { key: string; value: string }[]
+}
+
 const props = defineProps<{
-  projectId: string
-  /** 从一条「环境准备失败」点过来的：先看那个频道。 */
-  room?: string
+  /** 读到的环境配置；还没读到是 null。 */
+  info: ProjectEnvironmentInfo | null
+  /** 选中那个频道最近一次准备的现状；还没读到是 null。 */
+  status: EnvironmentStatus | null
+  /** 现在看的是哪个频道。 */
+  selectedRoom: string | null
+  /** 上一句没说完的话：读失败、状态读失败或诊断失败。 */
+  error: string
+  /** 脚本与环境变量一次保存在路上。 */
+  saving: boolean
+  /** 刚保存成功（那一行回执还亮着）。 */
+  saved: boolean
+  /** 保存失败：那一句原话。 */
+  saveError: string
+  /** 一次「应用」在路上。 */
+  applying: boolean
+  /** 芝士对这次失败的回答；还没问是 null。 */
+  diagnosis: EnvironmentDiagnosis | null
+  /** 「让芝士看看」还在等它回答。 */
+  diagnosing: boolean
   /** 项目给 AI 队友起的名字。 */
   agentName: string
-  /** 「让芝士看看」：问一次这个频道最近那次失败，由页面去问。 */
-  diagnoseRoom: (roomId: string) => Promise<EnvironmentDiagnosis>
 }>()
-const info = ref<ProjectEnvironmentInfo | null>(null)
+
+const emit = defineEmits<{
+  (e: 'reload'): void
+  (e: 'select-room', room: string | null): void
+  (e: 'refresh-status'): void
+  (e: 'save', draft: ConfigDraft): void
+  (e: 'apply', latest: boolean): void
+  (e: 'diagnose'): void
+  (e: 'retry'): void
+  (e: 'adopt', draft: ConfigDraft): void
+  (e: 'dismiss'): void
+}>()
+
+// 本地编辑态：那两段脚本和环境变量那几行。`info` 一换（首次取到、或换项目）就归位。
 const setup = ref('')
 const startup = ref('')
 const variables = ref<{ key: string; value: string }[]>([])
-const selectedRoom = ref<string | null>(null)
-const status = ref<EnvironmentStatus | null>(null)
-const error = ref('')
-// 保存脚本与环境变量：一直留在屏幕上的设置区块，结果就地回执（§3.11）。
-const {
-  saving,
-  saved,
-  error: saveError,
-  run: runSave,
-} = useSaveState({
-  feedback: 'inline',
-  messages: {
-    saved: t('work.projectSettings.environment.saved'),
-    failed: t('work.projectSettings.environment.saveFailed'),
+
+watch(
+  () => props.info,
+  (info) => {
+    if (!info) return
+    setup.value = info.config.setup_script
+    startup.value = info.config.startup_script
+    variables.value = Object.entries(info.config.variables).map(([key, value]) => ({ key, value }))
   },
-})
-// 应用（部署一个版本）是一次性动作：结果跟这一次点击走，用 toast 说一声。
-const { saving: applying, run: runApply } = useSaveState({
-  feedback: 'toast',
-  messages: {
-    saved: t('work.projectSettings.environment.applyScheduled'),
-    failed: t('work.projectSettings.environment.applyFailed'),
-  },
-})
-let timer: ReturnType<typeof setTimeout> | undefined
-let disposed = false
-let generation = 0
+  { immediate: true }
+)
+
 const stateLabel = (state: EnvironmentStatus['state']) => t(`work.projectSettings.environment.state.${state}`)
 
-async function load() {
-  const current = ++generation
-  error.value = ''
-  info.value = null
-  selectedRoom.value = null
-  try {
-    const result = await getProjectEnvironment(props.projectId)
-    if (disposed || current !== generation) return
-    info.value = result
-    setup.value = result.config.setup_script
-    startup.value = result.config.startup_script
-    variables.value = Object.entries(result.config.variables).map(([key, value]) => ({ key, value }))
-    const asked = result.rooms.find((r) => r.id === props.room)
-    selectedRoom.value = (asked ?? result.rooms.find((r) => r.failure) ?? result.rooms[0])?.id ?? null
-  } catch (e) {
-    if (current === generation)
-      error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.loadFailed')
+const failing = computed(() => props.info?.rooms.find((r) => r.id === props.selectedRoom && r.failure) ?? null)
+
+/** 把这一层手上那份配置整份报上去（脚本两段 + 环境变量那几行）。 */
+function draft(): ConfigDraft {
+  return {
+    setup_script: setup.value,
+    startup_script: startup.value,
+    variables: variables.value.map((row) => ({ ...row })),
   }
 }
 
-async function refreshStatus() {
-  clearTimeout(timer)
-  const room = selectedRoom.value
-  const current = generation
-  if (!room || disposed) return
-  try {
-    const result = await getRoomEnvironment(props.projectId, room)
-    if (disposed || current !== generation || room !== selectedRoom.value) return
-    status.value = result
-  } catch (e) {
-    if (current === generation && room === selectedRoom.value)
-      error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.statusFailed')
-  } finally {
-    if (!disposed && current === generation && room === selectedRoom.value) timer = setTimeout(refreshStatus, 5000)
-  }
+function save() {
+  emit('save', draft())
 }
 
-async function save() {
-  await runSave(async () => {
-    const values: Record<string, string> = Object.create(null)
-    for (const row of variables.value) {
-      if (!row.key || Object.hasOwn(values, row.key)) throw new Error(t('work.projectSettings.environment.varInvalid'))
-      values[row.key] = row.value
-    }
-    const config = await saveProjectEnvironment(props.projectId, {
-      setup_script: setup.value,
-      startup_script: startup.value,
-      variables: values,
-    })
-    if (info.value) info.value.config = config
-  })
-}
-
-async function apply(latest: boolean) {
-  const room = selectedRoom.value
-  if (!room) return
-  await runApply(async () => {
-    await applyRoomEnvironment(props.projectId, room, latest)
-    await refreshStatus()
-  })
-}
-
-// ---- 这个频道最近一次失败：让芝士看看、重试、采用它的改法 ----
-const failing = computed(() => info.value?.rooms.find((r) => r.id === selectedRoom.value && r.failure) ?? null)
-const diagnosis = ref<EnvironmentDiagnosis | null>(null)
-const diagnosing = ref(false)
-watch(selectedRoom, () => (diagnosis.value = null))
-
-async function diagnose() {
-  const room = selectedRoom.value
-  if (!room) return
-  diagnosing.value = true
-  error.value = ''
-  try {
-    const answer = await props.diagnoseRoom(room)
-    if (room === selectedRoom.value) diagnosis.value = answer
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.failure.diagnoseFailed')
-  } finally {
-    diagnosing.value = false
-  }
-}
-
-/** 重试：按保存的那一版重新准备，在等的那几段对话接着处理。 */
-async function retry() {
-  await apply(true)
-  await load()
-}
-
-/** 采用芝士的改法：写进脚本，保存，再重试。 */
-async function adopt() {
-  const answer = diagnosis.value
+/** 采用芝士的改法：写进本地脚本，整份报上去（先保存，成了再重试，那一层接）。 */
+function adopt() {
+  const answer = props.diagnosis
   if (!answer) return
   if (answer.setup_script !== null) setup.value = answer.setup_script
   if (answer.startup_script !== null) startup.value = answer.startup_script
-  await save()
-  if (saveError.value) return
-  diagnosis.value = null
-  await retry()
+  emit('adopt', draft())
 }
-
-// 首次取数期间占住设置页的显示闸，见 useRevealGate。
-const releaseGate = holdRevealGate()
-watch(
-  () => props.projectId,
-  () => load().finally(releaseGate),
-  { immediate: true }
-)
-watch(selectedRoom, () => {
-  status.value = null
-  void refreshStatus()
-})
-onBeforeUnmount(() => {
-  disposed = true
-  clearTimeout(timer)
-})
 </script>
 
 <template>
@@ -184,7 +111,7 @@ onBeforeUnmount(() => {
     <div class="page-section-body">
       <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
       <v-progress-linear v-if="!info && !error" indeterminate />
-      <BaseButton v-if="!info && error" kind="secondary" @click="load">{{
+      <BaseButton v-if="!info && error" kind="secondary" @click="emit('reload')">{{
         t('work.projectSettings.environment.reload')
       }}</BaseButton>
       <template v-if="info">
@@ -197,10 +124,10 @@ onBeforeUnmount(() => {
           :diagnosis="diagnosis"
           :diagnosing="diagnosing"
           :retrying="applying || saving"
-          @diagnose="diagnose"
-          @retry="retry"
+          @diagnose="emit('diagnose')"
+          @retry="emit('retry')"
           @adopt="adopt"
-          @dismiss="diagnosis = null"
+          @dismiss="emit('dismiss')"
         />
         <p class="t-body c-muted mb-3">
           {{ t('work.projectSettings.environment.intro') }}
@@ -284,7 +211,7 @@ onBeforeUnmount(() => {
         </details>
         <template v-if="info.rooms.length">
           <v-select
-            v-model="selectedRoom"
+            :model-value="selectedRoom"
             autocomplete="off"
             :items="info.rooms"
             item-title="title"
@@ -292,6 +219,7 @@ onBeforeUnmount(() => {
             :label="t('work.projectSettings.environment.roomSelect')"
             variant="outlined"
             density="compact"
+            @update:model-value="(room) => emit('select-room', room)"
           >
             <!-- 房间名是人起的，不跟着界面语言变。 -->
             <template #selection="{ item }">
@@ -339,7 +267,7 @@ onBeforeUnmount(() => {
             <p>{{ t('work.projectSettings.environment.logNote') }}</p>
           </details>
           <div class="d-flex flex-wrap ga-2 mb-3">
-            <BaseButton kind="secondary" @click="refreshStatus">{{
+            <BaseButton kind="secondary" @click="emit('refresh-status')">{{
               t('work.projectSettings.environment.refreshStatus')
             }}</BaseButton>
             <BaseButton
@@ -347,14 +275,14 @@ onBeforeUnmount(() => {
               kind="primary"
               :loading="applying"
               :disabled="saving || status?.busy || status?.state === 'preparing'"
-              @click="apply(true)"
+              @click="emit('apply', true)"
               >{{ t('work.projectSettings.environment.applyNext') }}</BaseButton
             >
             <BaseButton
               v-if="info.can_edit && status?.state === 'failed'"
               kind="secondary"
               :disabled="applying || status?.busy"
-              @click="apply(false)"
+              @click="emit('apply', false)"
               >{{ t('work.projectSettings.environment.retryNext') }}</BaseButton
             >
           </div>

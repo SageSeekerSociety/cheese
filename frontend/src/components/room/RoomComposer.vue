@@ -29,6 +29,7 @@ import {
   mentionsAgent as containsAgentMention,
   withAgentMention as addAgentMention,
 } from '../../lib/composerMentions'
+import { searchLibraryFiles } from '../../lib/libraryApi'
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
@@ -180,6 +181,9 @@ const picker = useRoomMentionPicker({
   topicList: () => props.topicList,
   focus: () => composerInput.value?.focus?.(),
   onAddLibraryFile: (path) => emit('add-library-file', path),
+  // 资料库那一级的数据从这里进去：这个件本来就够得着接口层（它还要发、还要传，
+  // 见 `lib/attachments.ts`），composable 本身够不着，也不该够着。
+  listLibrary: searchLibraryFiles,
   // ↑/↓ 换完之后把那一项滚进视野。菜单自己有高度上限、自己滚，所以这件事问它。
   scrollActiveIntoView: () => mentionMenu.value?.scrollActiveIntoView(),
 })
