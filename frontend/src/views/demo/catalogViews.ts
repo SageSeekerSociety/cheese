@@ -20,6 +20,7 @@ import {
   ARTIFACT_VERSIONS_WITHOUT_FILE,
   teamProfile,
 } from './catalogSharedFixtures'
+import { VIEW_SPACE_TASKS_ENTRIES } from './catalogSpaceTasks'
 import { VIEW_ACCOUNT_ENTRIES } from './catalogViewAccount'
 import { VIEW_ADMIN_ENTRIES } from './catalogViewAdmin'
 import { VIEW_ADMIN_STATS_ENTRIES } from './catalogViewAdminStats'
@@ -40,6 +41,9 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
   // 后台那一组整页（方案与额度、棘轮、运行记录、协议、统计）各单放一册，展开进来。
   ...VIEW_ADMIN_ENTRIES,
   ...VIEW_ADMIN_STATS_ENTRIES,
+  // 空间与题目那一组整页（空间设置四栏、发题页、被拒进门，和题目详情下三个页签）也在
+  // 自己那一册里，展开进来。
+  ...VIEW_SPACE_TASKS_ENTRIES,
   {
     id: 'artifact-version-list',
     title: 'ArtifactVersionList',
