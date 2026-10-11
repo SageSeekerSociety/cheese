@@ -94,6 +94,14 @@ describe('管理端反馈详情', () => {
     expect(emitted().triage?.[0]).toEqual(['in_progress'])
   })
 
+  // 读屏念的是框上的名字：标签在框外，它得被认成这个框的名字，不能是空的或「打开」。
+  it('指派给和优先级两个下拉框都叫它们自己的名字', async () => {
+    const { findByRole } = mountDetail({ item: ROW, loading: false, error: null, triageOpen: true })
+
+    expect(await findByRole('combobox', { name: '优先级' })).toBeTruthy()
+    expect(await findByRole('combobox', { name: /指派给/ })).toBeTruthy()
+  })
+
   it('还在拉的时候画骨架，不画「加载失败」', () => {
     const { container, queryByText } = mountDetail({
       item: null,

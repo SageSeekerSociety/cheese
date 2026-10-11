@@ -51,9 +51,8 @@ describe('shortcut sheet', () => {
     const { view } = mount()
     await fireEvent.click(view.getByRole('button', { name: 'Shortcuts' }))
 
-    const region = await screen.findByLabelText('Keyboard shortcuts')
-    expect(region.tabIndex).toBe(0)
-    expect(region.closest('.v-overlay__content')).not.toBeNull()
+    const sheet = await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })
+    expect(sheet.querySelector('[tabindex="0"]')).not.toBeNull()
   })
 
   it('gives focus back to what opened it when it closes', async () => {
@@ -61,7 +60,7 @@ describe('shortcut sheet', () => {
     const opener = view.getByRole('button', { name: 'Shortcuts' })
     opener.focus()
     await fireEvent.click(opener)
-    await screen.findByLabelText('Keyboard shortcuts')
+    await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })
     ;(document.activeElement as HTMLElement | null)?.blur()
 
     open.value = false

@@ -42,13 +42,14 @@ watch(
     :model-value="props.modelValue"
     :max-width="DIALOG_WIDTH.md"
     transition="sheet-fade"
+    aria-labelledby="ssheet-title"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <v-card class="ssheet" rounded="lg" flat>
-      <h2 class="ssheet__title">{{ title }}</h2>
+      <h2 id="ssheet-title" class="ssheet__title">{{ title }}</h2>
       <!-- 能聚焦：表长了要靠方向键滚，而且对话框里得有一个能拿到焦点的地方，VDialog 才
            把 Tab 圈在里面；否则 Tab 一下就跑到被遮住的页面上，Esc 也就关不掉它了。 -->
-      <div class="ssheet__body" tabindex="0" :aria-label="title">
+      <div class="ssheet__body" tabindex="0">
         <section v-for="group in groups" :key="group.scope" class="ssheet__group">
           <h3 class="ssheet__scope t-eyebrow-read">{{ group.scope }}</h3>
           <div class="ssheet__rows">
