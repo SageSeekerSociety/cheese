@@ -36,7 +36,7 @@ const source: PaletteSource = {
                   name: 'workspace-dm',
                   params: {
                     projectId: ctx.projectId!,
-                    peer: member.agent ? agentDmKey(member.user_handle) : member.user_handle,
+                    peer: member.agent ? agentDmKey(member.instance_handle ?? member.user_handle) : member.user_handle,
                   },
                 },
               },

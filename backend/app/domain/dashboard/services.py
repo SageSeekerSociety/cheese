@@ -210,7 +210,17 @@ class DashboardService:
         )
         return {
             "handle": user_handle,
-            "source": member.source if member else None,
+            # An AI teammate is one whichever way it was seated; a seat row would
+            # otherwise read it as a team or external member.
+            "source": (
+                "agent"
+                if member and member.agent
+                else member.source
+                if member
+                else None
+            ),
+            # The handle its 私聊 opens by (``AgentInstanceService.for_handle``).
+            "instance_handle": member.instance_handle if member else None,
             "topics_started": started,
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
