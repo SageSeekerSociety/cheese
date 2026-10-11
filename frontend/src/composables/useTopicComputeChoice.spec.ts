@@ -111,4 +111,20 @@ describe('useTopicComputeChoice', () => {
     release({ choice: lab, proposal: null })
     await first
   })
+
+  it('clears task-specific feedback and ignores a late response after reset', async () => {
+    let release!: (value: unknown) => void
+    setTopicComputeChoice.mockImplementation(() => new Promise((r) => (release = r)))
+    const onChanged = vi.fn()
+    const state = host(() => 'task-a', onChanged)
+    const first = state.select(lab)
+    state.reset()
+    expect(state.saving.value).toBe(false)
+    expect(state.error.value).toBe('')
+    expect(state.proposal.value).toBe('')
+    release({ choice: lab, proposal: null })
+    await first
+    expect(state.savedVersion.value).toBe(0)
+    expect(onChanged).not.toHaveBeenCalled()
+  })
 })

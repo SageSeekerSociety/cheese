@@ -6,9 +6,10 @@ import type { TopicComputeProfile } from '@/types/compute'
 import { computed, ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
+import { useTopicComputeChoice } from '@/composables/useTopicComputeChoice'
+
 import { ApiError } from '@/api'
 import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
-import { useTopicComputeChoice } from '@/composables/useTopicComputeChoice'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { patchQuery, queryClient } from '@/query/client'
@@ -59,6 +60,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
 
   /** 换到另一件任务：上一件的报错、比较、电脑都不带过来。 */
   function reset() {
+    resetMachineChoice()
     machineWanted.value = false
     comparing.value = false
     comparison.value = null
@@ -195,6 +197,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     proposal: machineProposal,
     savedVersion: machineSavedVersion,
     select: selectMachine,
+    reset: resetMachineChoice,
   } = useTopicComputeChoice(() => task.value?.id ?? '', { onChanged: () => void loadMachine() })
 
   // ---- 与开始时相比 ----

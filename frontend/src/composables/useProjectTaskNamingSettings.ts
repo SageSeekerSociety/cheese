@@ -53,15 +53,18 @@ export function useProjectTaskNamingSettings(
   }
 
   async function choose(mode: TaskNamingMode) {
-    if (!state.value?.can_manage || mode === state.value.mode) return
+    if (!state.value?.can_manage || busy.value || mode === state.value.mode) return
+    const current = generation
     busy.value = true
     error.value = ''
     try {
-      state.value = await setTaskNaming(projectId(), mode)
+      const result = await setTaskNaming(projectId(), mode)
+      if (current === generation) state.value = result
     } catch (e) {
-      error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.saveFailed')
+      if (current === generation)
+        error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.saveFailed')
     } finally {
-      busy.value = false
+      if (current === generation) busy.value = false
     }
   }
 

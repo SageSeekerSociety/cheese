@@ -36,14 +36,17 @@ export function useTopicComputeChoice(topicId: () => string, options: UseTopicCo
   const proposal = ref('')
   // 成功回执：每次真的存成（不是提议）就涨一版，组件据此收起菜单、清掉展开的表单。
   const savedVersion = ref(0)
+  let generation = 0
 
   async function select(choice: ComputeChoice, visibility?: 'host' | 'isolated') {
     if (saving.value) return
+    const current = ++generation
     saving.value = true
     error.value = ''
     proposal.value = ''
     try {
       const saved = await setTopicComputeChoice(topicId(), choice, visibility ? { visibility } : {})
+      if (current !== generation) return
       // 变提议时房间这一项没有变 —— 不说话就等于这次点击石沉大海。回执不发，让组件
       // 留着菜单，那句话就在他刚按下的那个控件上。
       if (saved.proposal) {
@@ -53,11 +56,19 @@ export function useTopicComputeChoice(topicId: () => string, options: UseTopicCo
       savedVersion.value += 1
       options.onChanged?.()
     } catch (e) {
-      error.value = e instanceof Error ? e.message : t('work.roomMachine.saveFailed')
+      if (current === generation) error.value = e instanceof Error ? e.message : t('work.roomMachine.saveFailed')
     } finally {
-      saving.value = false
+      if (current === generation) saving.value = false
     }
   }
 
-  return { saving, error, proposal, savedVersion, select }
+  function reset() {
+    generation += 1
+    saving.value = false
+    error.value = ''
+    proposal.value = ''
+    savedVersion.value = 0
+  }
+
+  return { saving, error, proposal, savedVersion, select, reset }
 }

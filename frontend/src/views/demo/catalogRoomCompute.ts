@@ -139,7 +139,8 @@ export const ROOM_COMPUTE_ENTRIES: CatalogEntry[] = [
   {
     id: 'room-compute-picker',
     title: 'TopicComputePicker',
-    about: '房间（或任务）在哪台工作电脑上跑：默认云端、一台自有设备、整台云虚拟机都在这里换；点名一台还能给不给整台机器。',
+    about:
+      '房间（或任务）在哪台工作电脑上跑：默认云端、一台自有设备、整台云虚拟机都在这里换；点名一台还能给不给整台机器。',
     file: 'src/components/TopicComputePicker.vue',
     component: TopicComputePicker,
     needs: UI_T,
@@ -186,7 +187,8 @@ export const ROOM_COMPUTE_ENTRIES: CatalogEntry[] = [
   {
     id: 'task-header',
     title: 'TaskHeader',
-    about: '任务页的页头：任务叫什么、此刻在哪一格、谁负责、谁在协作；负责人在这里开始、转交、关闭，也在这里换做它的电脑。',
+    about:
+      '任务页的页头：任务叫什么、此刻在哪一格、谁负责、谁在协作；负责人在这里开始、转交、关闭，也在这里换做它的电脑。',
     file: 'src/components/task/TaskHeader.vue',
     component: TaskHeader,
     needs: UI_T,

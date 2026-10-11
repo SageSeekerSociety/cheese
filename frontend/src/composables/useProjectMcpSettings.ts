@@ -43,6 +43,7 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
   // 第一次取数有没有落定：显示闸靠它开，见 useRevealGate。
   const settled = ref(false)
   let generation = 0
+  let actionGeneration = 0
 
   async function load() {
     settled.value = false
@@ -69,52 +70,59 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
   }
 
   async function connect(server: McpServer) {
+    const current = ++actionGeneration
     busy.value = server.name
     try {
       const { authorization_url } = await connectMcpServer(projectId(), server.name)
-      if (goAuthorize(authorization_url)) busy.value = ''
+      if (current === actionGeneration && goAuthorize(authorization_url)) busy.value = ''
     } catch (e) {
-      fail(e, t('work.mcp.connectFailed'))
-      busy.value = ''
+      if (current === actionGeneration) {
+        fail(e, t('work.mcp.connectFailed'))
+        busy.value = ''
+      }
     }
   }
 
   async function disconnect(server: McpServer) {
+    const current = ++actionGeneration
     busy.value = server.name
     try {
       await disconnectMcpServer(projectId(), server.name)
-      await load()
+      if (current === actionGeneration) await load()
     } catch (e) {
-      fail(e, t('work.mcp.disconnectFailed'))
+      if (current === actionGeneration) fail(e, t('work.mcp.disconnectFailed'))
     } finally {
-      busy.value = ''
+      if (current === actionGeneration) busy.value = ''
     }
   }
 
   async function save(name: string) {
     const value = values[name]?.trim()
     if (!value) return
+    const current = ++actionGeneration
     busy.value = name
     try {
       await setMcpSecret(projectId(), name, value)
+      if (current !== actionGeneration) return
       values[name] = ''
       await load()
     } catch (e) {
-      fail(e, t('work.mcp.saveFailed'))
+      if (current === actionGeneration) fail(e, t('work.mcp.saveFailed'))
     } finally {
-      busy.value = ''
+      if (current === actionGeneration) busy.value = ''
     }
   }
 
   async function clear(name: string) {
+    const current = ++actionGeneration
     busy.value = name
     try {
       await clearMcpSecret(projectId(), name)
-      await load()
+      if (current === actionGeneration) await load()
     } catch (e) {
-      fail(e, t('work.mcp.saveFailed'))
+      if (current === actionGeneration) fail(e, t('work.mcp.saveFailed'))
     } finally {
-      busy.value = ''
+      if (current === actionGeneration) busy.value = ''
     }
   }
 
@@ -160,6 +168,7 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
     if (on) enter()
     else {
       generation++
+      actionGeneration++
       settled.value = false
       for (const name of Object.keys(values)) delete values[name]
       list.value = null

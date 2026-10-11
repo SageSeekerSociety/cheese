@@ -245,10 +245,7 @@ describe('what the room sees of its machine', () => {
     await fireEvent.click(screen.getByRole('button', { name: '改' }))
     await fireEvent.click(screen.getByTestId('room-machine-isolated'))
     expect(emitted().select).toHaveLength(1)
-    expect(emitted().select[0]).toEqual([
-      { ...automatic, name: '办公室 Mac mini', device_id: 'office' },
-      'isolated',
-    ])
+    expect(emitted().select[0]).toEqual([{ ...automatic, name: '办公室 Mac mini', device_id: 'office' }, 'isolated'])
   })
   it('shows no access choice for a room on cloud', async () => {
     mountPicker(profile())
@@ -265,7 +262,10 @@ describe('cloud sandbox choice', () => {
     expect(screen.queryByLabelText(/CPU|内存|磁盘/)).toBeNull()
     await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
     expect(emitted().select).toHaveLength(1)
-    expect(emitted().select[0]).toEqual([{ name: null, profile: 'cloud', device_id: null, whole_machine: false }, undefined])
+    expect(emitted().select[0]).toEqual([
+      { name: null, profile: 'cloud', device_id: null, whole_machine: false },
+      undefined,
+    ])
   })
 })
 
@@ -284,7 +284,10 @@ describe('whole cloud VM choice', () => {
     expect(screen.getByText(/每个会话一台独立的云虚拟机，有 sudo，能跑 Docker/)).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: '使用此配置' }))
     expect(emitted().select).toHaveLength(1)
-    expect(emitted().select[0]).toEqual([{ name: null, profile: 'cloud', device_id: null, whole_machine: true }, undefined])
+    expect(emitted().select[0]).toEqual([
+      { name: null, profile: 'cloud', device_id: null, whole_machine: true },
+      undefined,
+    ])
   })
 
   it('is not offered where the deployment has none', async () => {

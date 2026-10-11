@@ -66,7 +66,11 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
     },
   })
   // 应用（部署一个版本）是一次性动作：结果跟这一次点击走，用 toast 说一声。
-  const { saving: applying, run: runApply } = useSaveState({
+  const {
+    saving: applying,
+    run: runApply,
+    reset: resetApply,
+  } = useSaveState({
     feedback: 'toast',
     messages: {
       saved: t('work.projectSettings.environment.applyScheduled'),
@@ -77,6 +81,7 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
   let timer: ReturnType<typeof setTimeout> | undefined
   let disposed = false
   let generation = 0
+  let diagnosisGeneration = 0
 
   function stopPolling() {
     clearTimeout(timer)
@@ -86,6 +91,7 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
   async function load() {
     settled.value = false
     const current = ++generation
+    diagnosisGeneration += 1
     error.value = ''
     info.value = null
     selectedRoom.value = null
@@ -122,8 +128,9 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
     }
   }
 
-  async function save(draft: EnvironmentConfigDraft) {
-    await runSave(async () => {
+  async function save(draft: EnvironmentConfigDraft): Promise<boolean> {
+    const current = generation
+    const result = await runSave(async () => {
       const values: Record<string, string> = Object.create(null)
       for (const row of draft.variables) {
         if (!row.key || Object.hasOwn(values, row.key))
@@ -135,44 +142,50 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
         startup_script: draft.startup_script,
         variables: values,
       })
-      if (info.value) info.value.config = config
+      if (current === generation && info.value) info.value.config = config
+      return config
     })
+    return result !== undefined
   }
 
   async function apply(latest: boolean) {
     const room = selectedRoom.value
+    const current = generation
     if (!room) return
     await runApply(async () => {
       await applyRoomEnvironment(projectId(), room, latest)
-      await refreshStatus()
+      if (current === generation) await refreshStatus()
     })
   }
 
   async function diagnose() {
     const room = selectedRoom.value
     if (!room) return
+    const current = ++diagnosisGeneration
     diagnosing.value = true
     error.value = ''
     try {
       const answer = await options.diagnoseRoom(room)
-      if (room === selectedRoom.value) diagnosis.value = answer
+      if (current === diagnosisGeneration) diagnosis.value = answer
     } catch (e) {
-      error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.failure.diagnoseFailed')
+      if (current === diagnosisGeneration)
+        error.value = e instanceof Error ? e.message : t('work.projectSettings.environment.failure.diagnoseFailed')
     } finally {
-      diagnosing.value = false
+      if (current === diagnosisGeneration) diagnosing.value = false
     }
   }
 
   /** 重试：按保存的那一版重新准备，在等的那几段对话接着处理。 */
   async function retry() {
+    const current = generation
     await apply(true)
-    await load()
+    if (current === generation) await load()
   }
 
   /** 采用芝士的改法：脚本已在组件里换好、连同环境变量一起报上来，写下去，再重试。 */
   async function adopt(draft: EnvironmentConfigDraft) {
-    await save(draft)
-    if (saveError.value) return
+    const current = generation
+    if (!(await save(draft)) || current !== generation) return
     diagnosis.value = null
     await retry()
   }
@@ -195,6 +208,7 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
     if (on) void load()
     else {
       generation++
+      diagnosisGeneration++
       stopPolling()
       settled.value = false
       info.value = null
@@ -204,18 +218,25 @@ export function useProjectEnvironmentSettings(projectId: () => string, options: 
       diagnosing.value = false
       error.value = ''
       resetSave()
+      resetApply()
     }
   })
   watch(projectId, () => {
     if (enabled()) void load()
   })
   watch(selectedRoom, () => {
+    diagnosisGeneration += 1
     status.value = null
     diagnosis.value = null
+    diagnosing.value = false
     void refreshStatus()
   })
   onBeforeUnmount(() => {
     disposed = true
+    generation += 1
+    diagnosisGeneration += 1
+    resetSave()
+    resetApply()
     stopPolling()
   })
 

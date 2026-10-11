@@ -15,7 +15,7 @@
  * 保存中 / 保存好了）都能单独摆在预览站里。
  *
  * 不登记 `ProjectSettingsView` 整页：它现在只剩接线（实例化那五个 composable、把
- * `#device-sessions` 作用域插槽填成 `DeviceSessionsSwitch`、按 `section` 门控取数），
+ * 把 `DeviceSessionsSwitch` 作为设备入口组件传入、按 `section` 门控取数），
  * 而且它在 `scene-baseline.json` 的 debt 里 —— 场景是路由页和 `components/panels/**`，
  * 整页不是给预览站单独画的。
  *
@@ -23,6 +23,8 @@
  * 这个值，运行时不构成循环。
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
+
+import { defineComponent, h } from 'vue'
 
 import {
   computeState,
@@ -46,6 +48,7 @@ import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vu
  *  全局注册，不装就解析不了、挂起来会警告。 */
 const UI: CatalogNeed[] = ['vuetify']
 const UI_I18N: CatalogNeed[] = ['vuetify', 'i18n']
+const DeviceSessionsPreview = defineComponent({ setup: () => () => h('span', '设备会话入口') })
 
 export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
   {
@@ -93,8 +96,15 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
       {
         name: '默认云端，分布里各有几段',
         note: '默认那一行是云端环境；「当前分布」按云端沙箱、整台云虚拟机、每台设备分开数，未开始的一台都没有就说暂无运行中的 AI 队友。',
-        props: { projectId: 'demo', state: computeState(), error: '', busy: false, editing: true },
-        expect: '当前分布',
+        props: {
+          projectId: 'demo',
+          deviceSessionsComponent: DeviceSessionsPreview,
+          state: computeState(),
+          error: '',
+          busy: false,
+          editing: true,
+        },
+        expect: '设备会话入口',
       },
       {
         name: '只读',

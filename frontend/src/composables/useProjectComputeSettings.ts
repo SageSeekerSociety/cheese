@@ -52,18 +52,20 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
   }
 
   async function save(choice: ComputeChoice) {
-    if (!state.value?.can_manage) return
+    if (!state.value?.can_manage || busy.value) return
+    const current = generation
     busy.value = true
     error.value = ''
     try {
       const result = await saveProjectComputeConfigs(projectId(), { default: choice })
-      state.value = { ...state.value, ...result }
       window.dispatchEvent(new Event('project-compute-updated'))
+      if (current !== generation || !state.value) return
+      state.value = { ...state.value, ...result }
       editing.value = false
     } catch (e) {
-      error.value = e instanceof Error ? e.message : t('work.projectMachine.saveFailed')
+      if (current === generation) error.value = e instanceof Error ? e.message : t('work.projectMachine.saveFailed')
     } finally {
-      busy.value = false
+      if (current === generation) busy.value = false
     }
   }
 
