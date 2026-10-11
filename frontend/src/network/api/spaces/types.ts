@@ -1,4 +1,4 @@
-import type { Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
+import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
 export type SpaceApplication = {
   id: number
@@ -374,47 +374,15 @@ export type SpaceLearningOutline = {
   missing: string[]
 }
 
-export type SpaceMyPublishedTaskCategory = {
-  id: number
-  name: string
-}
-
-export type SpaceMyPublishedTask = {
-  taskId: number
-  taskName: string
-  category: SpaceMyPublishedTaskCategory
-  approved: AnalyticsApproveType
-  visibilityStatus: SpaceTaskVisibilityStatus
-  isVisible: boolean
-  createdAt: number
-  publishedAt?: number | null
-  endedAt?: number | null
-  deadline?: number | null
-  /** 领取人数上限；`null` = 不限（真库用 0 表示不限，接口一律折成 null）。 */
-  participantLimit: number | null
-  participantCount: number
-  approvedParticipantCount: number
-  pendingParticipantApprovalCount: number
-  submittedParticipantCount: number
-  pendingReviewCount: number
-  successfulParticipantCount: number
-  failedParticipantCount: number
-  submissionConversionRate: number
-  successRate: number
-  latestSubmissionAt?: number | null
-}
-
-export type SpaceMyPublishedTasks = {
-  tasks: SpaceMyPublishedTask[]
-}
-
-export type AnalyticsApproveType = 'NONE' | 'APPROVED' | 'DISAPPROVED'
-export type SpaceTaskVisibilityStatus =
-  | 'PENDING_APPROVAL'
-  | 'REJECTED'
-  | 'APPROVED_HIDDEN'
-  | 'APPROVED_VISIBLE'
-  | 'ENDED'
+// 「我发布的题目」那几个类型挪到领域类型 `@/types/spaces.ts` 了：题目列表拆出来的那半张
+// 画面只认 props、不连网络层，不能从这儿取类型。这里原样转出去，对外的 import 路径不变。
+export type {
+  AnalyticsApproveType,
+  SpaceMyPublishedTask,
+  SpaceMyPublishedTaskCategory,
+  SpaceMyPublishedTasks,
+  SpaceTaskVisibilityStatus,
+} from '@/types'
 export type AnalyticsRealNameType = 'all' | 'with' | 'without'
 export type AnalyticsCompletionType =
   | 'NOT_SUBMITTED'
