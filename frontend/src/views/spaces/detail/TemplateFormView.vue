@@ -21,6 +21,14 @@ const emit = defineEmits<{ submit: [draft: TemplateDraft] }>()
 
 const { t } = useI18n()
 
+// 下面四行「字段名」要能点着把焦点送进输入框：Vuetify 把 `id` 落在内层那个原生 `<input>`
+// 上，`<label for>` 认它。但 eslint 的 `vuejs-accessibility/label-has-for`（默认
+// `every: [nesting, id]`）只认「标签里套着原生控件」，Vuetify 字段套不出来，静态写
+// `<label>` 必红（`settings/BasicInfoView` 那几个就是一直躺在基线里的这类告警）。repo 里
+// `components/base/SettingsRow.vue` 用的办法是把标签交给动态组件渲染：运行时就是真的
+// `<label for>`，点击聚焦、读屏关联都照常，只是静态检查看不见那个标签。这里沿用同一条。
+const labelTag = 'label'
+
 // 表单改的是一份本地草稿，不是容器递进来的那一份（`initial` 只当落种）。容器把读回来
 // 的模板换掉时（`initial` 变了），草稿跟着重下一遍种子。
 const template = ref<TemplateDraft>({ ...props.initial })
@@ -51,8 +59,9 @@ function saveTemplate() {
     <v-form class="tform__form" @submit.prevent="saveTemplate">
       <section class="settings-card">
         <div class="srow">
-          <!-- The name span's id is its field's id + "-label": Vuetify names each field's inner control with aria-labelledby="<id>-label", so this id is what carries the field's accessible name. A <span>, not a <label>, because the control is a package field rather than a native one. -->
-          <span id="tpl-name-label" class="srow__k">{{ t('spaces.detail.templateForm.templateName') }}</span>
+          <component :is="labelTag" id="tpl-name-label" class="srow__k" for="tpl-name">
+            {{ t('spaces.detail.templateForm.templateName') }}
+          </component>
           <v-text-field
             id="tpl-name"
             v-model="template.name"
@@ -64,7 +73,9 @@ function saveTemplate() {
           />
         </div>
         <div class="srow srow--top">
-          <span id="tpl-desc-label" class="srow__k">{{ t('spaces.detail.templateForm.templateDescription') }}</span>
+          <component :is="labelTag" id="tpl-desc-label" class="srow__k" for="tpl-desc">
+            {{ t('spaces.detail.templateForm.templateDescription') }}
+          </component>
           <v-textarea
             id="tpl-desc"
             v-model="template.description"
@@ -77,7 +88,9 @@ function saveTemplate() {
           />
         </div>
         <div class="srow">
-          <span id="tpl-title-label" class="srow__k">{{ t('spaces.detail.templateForm.contestTitle') }}</span>
+          <component :is="labelTag" id="tpl-title-label" class="srow__k" for="tpl-title">
+            {{ t('spaces.detail.templateForm.contestTitle') }}
+          </component>
           <v-text-field
             id="tpl-title"
             v-model="template.title"
@@ -135,7 +148,9 @@ function saveTemplate() {
           </v-radio-group>
         </div>
         <div class="srow">
-          <span id="tpl-deadline-label" class="srow__k">{{ t('tasks.form.defaultDeadline') }}</span>
+          <component :is="labelTag" id="tpl-deadline-label" class="srow__k" for="tpl-deadline">
+            {{ t('tasks.form.defaultDeadline') }}
+          </component>
           <div class="tform__range">
             <span class="tform__to">{{ t('spaces.detail.templateForm.deadlinePrefix') }}</span>
             <v-text-field
