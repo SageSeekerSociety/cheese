@@ -22,6 +22,13 @@ export const carryLoginRedirect: NavigationGuardWithThis<undefined> = (to, from)
   return { ...to, query: { ...to.query, redirect: from.fullPath } }
 }
 
+// 已经登录的人打开登录页（收藏的地址、浏览器后退、另一个标签页里登录过）：没有什么
+// 要他做的，直接送他去登录完本来要去的地方，`?redirect=` 或首页。`signedIn` 要等冷
+// 打开时的会话恢复完再答，否则一个令牌刚过期、正在换新的人会被当成没登录。
+export function leaveSignInWhenSignedIn(signedIn: () => Promise<boolean>): NavigationGuardWithThis<undefined> {
+  return async (to) => ((await signedIn()) ? postLoginTarget(to.query) : true)
+}
+
 // OAuth 登录离开本站再回来，URL 上的 redirect 带不过去，先存起来。
 const OAUTH_REDIRECT_KEY = 'oauth_redirect'
 
