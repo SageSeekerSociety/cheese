@@ -256,14 +256,24 @@
     </template>
     <CommandPalette />
     <DeviceConnect />
-    <!-- 「第一次」提示：芝士第一次在支线里回复、第一次建任务、任务页第一次出现「开始」、
-         第一次有交付等人审阅时，各圈一次。挂在最外层，任务页上也出现。 -->
+    <!-- 新手引导的后半程：一个浮窗一步步带着把第一件事做完（composables/useProjectTour.ts）。
+         挂在最外层：任务页、支线里也要接着带。 -->
     <GuideBubble
-      v-if="firstTimeTip"
-      :target="firstTimeTip.target"
-      :title="t(`welcome.tour.${firstTimeTip.key}.title`, { agent: t('work.room.defaultAgentName') })"
-      :text="t(`welcome.tour.${firstTimeTip.key}.text`, { agent: t('work.room.defaultAgentName') })"
-      @dismiss="guideTour.dismissTip(firstTimeTip.key)"
+      v-if="guideStep"
+      :target="guideStep.target"
+      :ring="!guideStep.area"
+      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: t('work.room.defaultAgentName') })"
+      :text="
+        t(`welcome.guide.${guideStep.key}.${guideStep.waiting ? 'textWaiting' : 'text'}`, {
+          agent: t('work.room.defaultAgentName'),
+        })
+      "
+      :step="guide.stop.value + 1"
+      :total="guide.total"
+      :can-next="!guideStep.action"
+      @next="guide.next()"
+      @back="guide.back()"
+      @skip="guide.skip()"
     />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
@@ -295,7 +305,7 @@ import { providePageChrome } from '@/composables/usePageChrome'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
-import { FIRST_TIME_TIPS, useProjectTour } from '@/composables/useProjectTour'
+import { useProjectTour } from '@/composables/useProjectTour'
 import { providePublicVisitor } from '@/composables/usePublicVisitor'
 import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
@@ -687,19 +697,27 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   event.preventDefault()
   appShortcutSheetOpen.value = true
 })
-// 「第一次」提示挑哪一条：导览走完之后、这个人还没亲手采纳过交付时，页面上出现了哪个
-// 还没看过的目标就指哪个，一次一条（顺序见 FIRST_TIME_TIPS）。
-const guideTour = useProjectTour()
+// 新手引导此刻在哪一步、指着什么。动作步做到了自己往下走（`settle`），所以页面上一
+// 出现新东西（登记表一变）、服务端的事实一变，就重新判一次。
+const guide = useProjectTour()
 const guideRevision = useGuideAnchorRevision()
-const firstTimeTip = computed(() => {
+const guideHas = (name: string) => !!guideAnchor(name)
+watch(
+  [guideRevision, guide.facts, guide.active],
+  () => {
+    if (guide.active.value && guide.facts.value) guide.settle({ facts: guide.facts.value, has: guideHas })
+  },
+  { immediate: true }
+)
+const guideStep = computed(() => {
   void guideRevision.value
-  if (guideTour.learned.value !== false || !guideTour.tourDone.value) return null
-  for (const tip of FIRST_TIME_TIPS) {
-    if (guideTour.tipSeen(tip.key)) continue
-    const target = tip.anchors.map(guideAnchor).find(Boolean)
-    if (target) return { key: tip.key, target }
-  }
-  return null
+  const step = guide.current.value
+  if (!guide.active.value || !step) return null
+  const target = step.anchors.map(guideAnchor).find(Boolean)
+  const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
+  const at = target ?? waitingAt
+  if (!at) return null
+  return { key: step.key, target: at, waiting: !target, area: !!step.area || !target, action: !!step.done }
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm

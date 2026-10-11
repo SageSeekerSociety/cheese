@@ -27,7 +27,8 @@
     "own": "Or write your own",
     "files": "Drop the files you will need here, or click to choose (optional)",
     "filesNote": "The files go to your AI teammate with your first task.",
-    "ownPlan": "Show me a plan first, and start once I confirm."
+    "ownPlan": "Show me a plan first, and start once I confirm.",
+    "ownPlaceholder": "For example: turn this term's lecture notes into a revision outline"
   },
   "tasks": {
     "student": {
@@ -177,8 +178,9 @@
     "cloudHint": "Nothing to set up. The first start takes a minute or two, and usage comes out of your credits.",
     "device": "Use this computer",
     "deviceHint": "It works in a separate folder and cannot see your other files.",
-    "webNote": "To have it work on your own computer, install the Cheese desktop app and switch in the project.",
-    "download": "Download the desktop app"
+    "webNote": "Install the Cheese desktop app first; then switch the project to this computer.",
+    "download": "Download the desktop app",
+    "deviceWeb": "Use your own computer"
   },
   "preview": {
     "title": "Your project",
@@ -205,17 +207,6 @@
   "failed": "The project was not created: {reason}",
   "notInvited": "These people could not be invited (no such account): {names}. You can invite them from the project's members page.",
   "deviceFailed": "This computer could not be connected, so your AI teammate works in the cloud for now. You can switch in the project.",
-  "steps": {
-    "title": "Three first steps",
-    "hide": "Hide",
-    "show": "Three first steps",
-    "asked": "Hand your AI teammate a first task",
-    "askedHint": "Click the hand-off button at the bottom right of the message box, or start with {'@'} and its name. Pressing Enter alone sends the message to project members only.",
-    "answered": "Read its plan",
-    "answeredHint": "It replies with a plan in a thread under your message. Confirm it there and it starts; you can leave while it works and will be notified when it is done.",
-    "accepted": "Accept its first delivery",
-    "acceptedHint": "When it is done it hands the work to you to review. Accept it to add it to the project and the library, or send it back with a reason."
-  },
   "tour": {
     "aria": "Interface tour",
     "next": "Next",
@@ -223,42 +214,54 @@
     "done": "Done",
     "skip": "Skip the tour",
     "gotIt": "Got it",
+    "auto": "Moves on once you do it"
+  },
+  "stepOf": "Step {n} of {total}",
+  "guide": {
     "channels": {
       "title": "Channels",
-      "text": "Conversations in a project are split into channels. The general channel has everyone in the project; open another channel from Browse channels to keep a separate topic apart."
+      "text": "Conversations in a project are split into channels. The general channel has everyone in the project; open another from Browse channels."
     },
     "composer": {
       "title": "Message box",
-      "text": "Type here. Pressing Enter sends the message to project members only; {agent} does not pick it up."
-    },
-    "summon": {
-      "title": "Hand off to {agent}",
-      "text": "To have {agent} work on something, turn this on (or start with {'@'}{agent}) before sending. It replies with a plan first and starts once you confirm."
+      "text": "The first task you picked is already written here. Pressing Enter sends to project members only; {agent} does not pick it up."
     },
     "overview": {
       "title": "Overview",
-      "text": "Where the project stands: who is working on which task, recent progress, and what has been made. Tasks {agent} creates show up here."
+      "text": "Where the project stands: who is on which task, recent progress, and what has been made."
     },
     "library": {
       "title": "Library",
-      "text": "Files and results live here. Once a delivery is accepted, its files appear in the library."
+      "text": "Files and results live here. Once a delivery is accepted, its files appear here."
     },
-    "task": {
-      "title": "Tasks",
-      "text": "{agent} turned this into a task. Open it to see the plan, progress and changes; you review the finished delivery there too."
-    },
-    "accept": {
-      "title": "Waiting for your review",
-      "text": "{agent} has delivered. Look at the result: accept it to add it to the project, or send it back with a reason and it will revise."
+    "send": {
+      "title": "Hand off to {agent}",
+      "text": "Now hand your first task to {agent}: finish the message and send it from here. Hand off to {agent} is already on."
     },
     "reply": {
-      "title": "{agent}'s reply is here",
-      "text": "{agent} answers each message you hand it in a thread under that message. Open it to read everything and reply there, for example to confirm the plan."
+      "title": "{agent}'s reply",
+      "text": "{agent} has replied, in a thread under your message. Open it.",
+      "textWaiting": "{agent} is working on it. The reply appears in a thread under your message; you can leave and will be notified."
     },
-    "taskStart": {
-      "title": "Start the task",
-      "text": "Click Start and choose a reviewer, and {agent} starts on the task. The reviewer looks at the result at the end and accepts it or sends it back."
+    "confirm": {
+      "title": "Confirm in the thread",
+      "text": "{agent} shows you a plan first. Reply in this thread (for example \"Looks good, go ahead\") and it starts; ask for changes the same way.",
+      "textWaiting": "Open the thread under your message to read {agent}'s plan."
+    },
+    "task": {
+      "title": "Task",
+      "text": "{agent} turned this into a task. Open it to follow progress and changes.",
+      "textWaiting": "Once it starts, {agent} turns this into a task listed under your message."
+    },
+    "taskPage": {
+      "title": "Task page",
+      "text": "Progress, changes and the delivery are all here. If the task has not started, click Start and choose a reviewer; when it is done {agent} hands the result to you to review.",
+      "textWaiting": "Open the task {agent} created; progress and the delivery are inside."
+    },
+    "accept": {
+      "title": "Accept",
+      "text": "{agent} has delivered. Look at the result: accept it to add it to the project, or send it back with a reason.",
+      "textWaiting": "When it is done, {agent} hands the result to you to review and the review card appears here. You can leave and will be notified."
     }
-  },
-  "stepOf": "Step {n} of {total}"
+  }
 }

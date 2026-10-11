@@ -67,7 +67,8 @@ class ProjectOut(BaseModel):
 
 
 class StartStepsOut(BaseModel):
-    """上手三步 for the caller (`GET /projects/{id}/start-steps`)."""
+    """What the new-user guide needs to know about the caller
+    (`GET /projects/{id}/start-steps`)."""
 
     #: They handed 芝士 something in this project.
     asked: bool

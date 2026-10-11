@@ -180,7 +180,7 @@ async function confirmHandOver() {
 
 <template>
   <Teleport :key="String(mdAndUp)" to="#app-bar-slot" :disabled="mdAndUp" defer>
-    <div class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
+    <div v-guide-anchor="'task-page'" class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
       <div class="task-header__text">
         <button v-if="mdAndUp" type="button" class="task-header__room t-title" @click="emit('open-room')">
           # {{ topicTitle(room) }}

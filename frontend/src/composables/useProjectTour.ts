@@ -1,114 +1,160 @@
-// 界面导览：新用户第一次进项目的「综合」时，一步一个高亮框，带上一步 / 下一步，把
-// 频道、输入框、「交给芝士」、总览、资料库挨个指一遍。导览之外还有两条「第一次」才
-// 出现的提示：频道下面第一次挂上任务时指那一行，第一次有交付等人审阅时指那张卡。
+// 新手引导的后半程：新用户进项目的「综合」之后，一个浮窗一步一步带着把第一件事做完。
 //
-// 看过没有记在这个浏览器里：这是一个人的选择，不是项目的数据。帮助菜单「界面导览」
-// 把它重新打开（`replayTour`）。亲手采纳过交付的人不再自动出现（ChatPanel 读
-// 上手三步的 `learned`）。
+// 前几步是介绍（频道、输入框、总览、资料库），点「下一步」往前。后面每一步要人真的
+// 做了才往下走：发出第一件事（服务端记下了一轮）、点开芝士回复的那条支线、打开它建的
+// 任务、采纳第一份交付（服务端记下了合并）。做没做到看两样：服务端的事实（上手的
+// `asked` / `accepted`，ChatPanel 问来后写进来）和页面上出现了什么（`v-guide-anchor`
+// 登记的控件：支线开着、任务页开着）。
+//
+// 该指的东西还没出现时（芝士还在回、任务还没建），浮窗指着一个等得到它的地方（对话
+// 区、任务页），说它会出现在哪、可以先离开。
+//
+// 走到哪、看完没有记在这个浏览器里。亲手采纳过交付的人不再自动出现；帮助菜单「界面
+// 导览」从头再走一遍（`replayTour`）。
 import { computed, ref } from 'vue'
 
-export type TourStop = { anchor: string; key: string }
+export type GuideFacts = { asked: boolean; answered: boolean; accepted: boolean; learned: boolean }
 
-/** 导览的五站，按这个顺序走。`key` 是文案 `welcome.tour.<key>`。 */
-export const TOUR_STOPS: TourStop[] = [
-  { anchor: 'sidebar-general', key: 'channels' },
-  { anchor: 'composer-input', key: 'composer' },
-  { anchor: 'composer-summon', key: 'summon' },
-  { anchor: 'page-workspace-overview', key: 'overview' },
-  { anchor: 'page-project-library', key: 'library' },
-]
-
-/**
- * 第一次才出现的提示：控件出现在页面上、又没看过，就指它一次。按这个顺序挑，一次一条。
- * 几个目标的取第一个在页面上的（任务卡在对话里，任务行在侧栏里）。
- */
-export const FIRST_TIME_TIPS: { anchors: string[]; key: string }[] = [
-  { anchors: ['accept-card'], key: 'accept' },
-  { anchors: ['task-start'], key: 'taskStart' },
-  { anchors: ['reply-thread'], key: 'reply' },
-  { anchors: ['task-card', 'task-row'], key: 'task' },
-]
-
-const SEEN_PREFIX = 'cheese.tour.seen:'
-
-function readSeen(key: string): boolean {
-  try {
-    return localStorage.getItem(SEEN_PREFIX + key) === '1'
-  } catch {
-    return false
-  }
-}
-function writeSeen(key: string, value: boolean) {
-  try {
-    if (value) localStorage.setItem(SEEN_PREFIX + key, '1')
-    else localStorage.removeItem(SEEN_PREFIX + key)
-  } catch {
-    // 存不下：这一次先收起来，下次进来还会出现。
-  }
+export interface GuideContext {
+  facts: GuideFacts
+  /** 这个名字的控件此刻登记在页面上没有。 */
+  has: (anchor: string) => boolean
 }
 
-const seen = ref<Record<string, boolean>>({})
-const stop = ref(0)
+export interface GuideStep {
+  /** 文案 `welcome.guide.<key>`；在等的时候用 `textWaiting`。 */
+  key: string
+  /** 要圈的控件，取第一个在页面上的。 */
+  anchors: string[]
+  /** 该圈的还没出现时，浮窗指着这里等（不画圈）。 */
+  waiting?: string[]
+  /** 目标是一大块区域（对话区、支线、任务页）：不画圈，只放浮窗。 */
+  area?: boolean
+  /** 有它就是动作步：做到了自己往下走，没有「下一步」。 */
+  done?: (c: GuideContext) => boolean
+}
+
+export const GUIDE_STEPS: GuideStep[] = [
+  { key: 'channels', anchors: ['sidebar-general'] },
+  { key: 'composer', anchors: ['composer-input'] },
+  { key: 'overview', anchors: ['page-workspace-overview'] },
+  { key: 'library', anchors: ['page-project-library'] },
+  { key: 'send', anchors: ['composer-send'], done: (c) => c.facts.asked },
+  {
+    key: 'reply',
+    anchors: ['reply-thread'],
+    waiting: ['timeline'],
+    done: (c) => c.has('thread-pane'),
+  },
+  { key: 'confirm', anchors: ['thread-pane'], waiting: ['reply-thread'], area: true },
+  {
+    key: 'task',
+    anchors: ['task-card', 'task-row'],
+    waiting: ['timeline', 'thread-pane'],
+    done: (c) => c.has('task-page'),
+  },
+  { key: 'taskPage', anchors: ['task-start', 'task-page'], waiting: ['task-card', 'task-row'] },
+  {
+    key: 'accept',
+    anchors: ['accept-card'],
+    waiting: ['task-page', 'timeline'],
+    done: (c) => c.facts.accepted,
+  },
+]
+
+/** 介绍那几步的目标只在项目的频道页上有；在那一页上找不到（手机上没有侧栏）就跳过。 */
+export const INTRO_PAGE_ANCHOR = 'composer-input'
+
+const KEY_STOP = 'cheese.tour.stop'
+const KEY_DONE = 'cheese.tour.done'
+
+function read(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+function write(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch {
+    // 存不下：这一次照样走，下次进来从头。
+  }
+}
+
+const stop = ref(Number(read(KEY_STOP) ?? 0) || 0)
+const done = ref(read(KEY_DONE) === '1')
 /** 从帮助菜单重新打开的：不看这个人会不会了，照样走一遍。 */
 const replaying = ref(false)
-/**
- * 这个人亲手采纳过交付没有（上手三步的 `learned`，项目「综合」那一栏问来时写进来）。
- * 没问到之前是 null：那时谁也不带，免得老手一进来就被圈一下。
- */
-const learned = ref<boolean | null>(null)
+/** 服务端的事实，ChatPanel 问来后写进来；没问到之前是 null，那时谁也不带。 */
+const facts = ref<GuideFacts | null>(null)
 
-/** 上手三步问回来时，记下这个人会不会了。 */
-export function noteLearned(value: boolean) {
-  learned.value = value
+function setStop(value: number) {
+  stop.value = value
+  write(KEY_STOP, String(value))
 }
-
-function isSeen(key: string): boolean {
-  if (!(key in seen.value)) seen.value = { ...seen.value, [key]: readSeen(key) }
-  return seen.value[key]
-}
-function markSeen(key: string, value = true) {
-  writeSeen(key, value)
-  seen.value = { ...seen.value, [key]: value }
-}
-
-/** 帮助菜单「界面导览」：从第一站重新走一遍。 */
-export function replayTour() {
-  stop.value = 0
-  replaying.value = true
-  markSeen('tour', false)
-}
-
-/** 给测试用。 */
-export function __resetProjectTourForTests() {
-  seen.value = {}
-  stop.value = 0
+function finish() {
+  done.value = true
   replaying.value = false
-  learned.value = null
+  write(KEY_DONE, '1')
+  write(KEY_STOP, null)
+}
+
+/** 上手的事实问回来时写进来。 */
+export function noteFacts(value: GuideFacts) {
+  facts.value = value
+}
+
+/** 帮助菜单「界面导览」：从第一步重新走一遍。 */
+export function replayTour() {
+  done.value = false
+  replaying.value = true
+  write(KEY_DONE, null)
+  setStop(0)
+}
+
+/** 给测试用：像重新打开页面那样，从这个浏览器存下的状态重新读一遍。 */
+export function __resetProjectTourForTests() {
+  stop.value = Number(read(KEY_STOP) ?? 0) || 0
+  done.value = read(KEY_DONE) === '1'
+  replaying.value = false
+  facts.value = null
 }
 
 export function useProjectTour() {
-  const tourDone = computed(() => isSeen('tour'))
+  /** 引导此刻该不该出现：没走完，而且这个人还不会（或者是他自己要重看）。 */
+  const active = computed(() => !done.value && (replaying.value || (facts.value !== null && !facts.value.learned)))
   return {
     stop,
-    tourDone,
+    done,
     replaying,
-    learned,
-    /** 下一站；`total` 是这一页上找得到目标的站数，走完就记下看过了。 */
-    next(total: number) {
-      if (stop.value + 1 < total) stop.value += 1
-      else {
-        markSeen('tour')
-        replaying.value = false
-      }
+    facts,
+    active,
+    total: GUIDE_STEPS.length,
+    current: computed(() => GUIDE_STEPS[stop.value] ?? null),
+    next() {
+      if (stop.value + 1 < GUIDE_STEPS.length) setStop(stop.value + 1)
+      else finish()
     },
     back() {
-      if (stop.value > 0) stop.value -= 1
+      if (stop.value > 0) setStop(stop.value - 1)
     },
-    skip() {
-      markSeen('tour')
-      replaying.value = false
+    skip: finish,
+    /**
+     * 动作步做到了就往下走；一连几步都已经做到（人先走到了前面）就一并跳过。
+     * 介绍步在频道页上找不到目标时也跳过。
+     */
+    settle(c: GuideContext) {
+      for (;;) {
+        const step = GUIDE_STEPS[stop.value]
+        if (!step) return finish()
+        const missingIntro = !step.done && !step.waiting && c.has(INTRO_PAGE_ANCHOR) && !step.anchors.some(c.has)
+        if (!(step.done?.(c) || missingIntro)) return
+        if (stop.value + 1 >= GUIDE_STEPS.length) return finish()
+        setStop(stop.value + 1)
+      }
     },
-    tipSeen: (key: string) => isSeen(`tip.${key}`),
-    dismissTip: (key: string) => markSeen(`tip.${key}`),
   }
 }

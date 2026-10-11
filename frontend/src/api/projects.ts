@@ -36,7 +36,7 @@ export function finishOnboarding(
   return request('/users/me/onboarding', { method: 'POST', body: JSON.stringify(answers) })
 }
 
-/** 上手三步：这个人在这个项目里交给过芝士没有、芝士回过没有、项目采纳过交付没有；
+/** 新手引导要的事实：这个人在这个项目里交给过芝士没有、芝士回过没有、项目采纳过交付没有；
  *  `learned` 是他在哪个项目里亲手采纳过交付——那样就不用再带了。 */
 export function getStartSteps(
   projectId: string

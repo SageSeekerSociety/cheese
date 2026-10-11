@@ -612,8 +612,9 @@ async def project_start_steps(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """上手三步 for the caller in this project (`app/domain/onboarding/start.py`):
-    handed 芝士 something, got a reply, had a delivery accepted."""
+    """What the new-user guide needs to know about the caller in this project
+    (`app/domain/onboarding/start.py`): handed 芝士 something, got a reply, had a
+    delivery accepted."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)

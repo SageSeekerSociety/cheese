@@ -1,8 +1,9 @@
-"""上手三步: what a person has already done in a project, from what the server
-recorded rather than what a page guessed.
+"""What a person has already done in a project, from what the server recorded
+rather than what a page guessed.
 
 The new-user guide (`frontend/src/views/welcome/`) ends in the project's 综合,
-where a panel walks them through three things until they are done:
+where a floating guide (`frontend/src/composables/useProjectTour.ts`) moves on
+from a step only once the person has really done it. It reads these facts:
 
 1. **asked** — they handed 芝士 something: a turn ran on a message of theirs.
    A message sent with plain Enter goes to the members only and runs nothing.
@@ -14,7 +15,7 @@ where a panel walks them through three things until they are done:
 
 And one fact about the person rather than the project: **learned** — they have
 accepted a delivery themselves somewhere. Someone who has is past the first
-steps, so the panel is not shown to them in any project.
+steps, so the guide does not start for them in any project.
 """
 
 import uuid

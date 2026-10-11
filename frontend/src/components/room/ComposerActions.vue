@@ -250,6 +250,7 @@ const summonText = computed(() => ({
            附件还在传时是例外：这一刻发出去会少带附件，所以要等，并在 title 里说清
            为什么按不动（灰着不解释，看起来像是它坏了）。 -->
     <BaseButton
+      v-guide-anchor="guided ? 'composer-send' : ''"
       class="composer-send"
       kind="primary"
       icon="mdi-send"

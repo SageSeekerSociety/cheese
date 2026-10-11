@@ -14,8 +14,8 @@ import { computed, ref, watch } from 'vue'
 
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
-import { guideAnchor, useGuideAnchorRevision } from '../composables/useGuideAnchors'
-import { noteLearned, TOUR_STOPS, useProjectTour } from '../composables/useProjectTour'
+import { vGuideAnchor } from '../composables/useGuideAnchors'
+import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
@@ -27,12 +27,10 @@ import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
 import ErrorBoundary from './common/ErrorBoundary.vue'
-import GuideBubble from './common/GuideBubble.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
-import StartSteps from './room/StartSteps.vue'
 
 import { t } from '@/i18n'
 
@@ -303,36 +301,16 @@ watch(loadingHistory, (loading, was) => {
 // inside a plain object keeps them intact: props are shallow, not deep.
 const timelineRefs = { scrollRef, contentRef }
 
-// Per-row questions the view asks. The panel hands over data; these are read
-// off it once for the one row that needs them, not once per render.
-// 上手三步做到哪了：只在项目本体那一栏问，房间里每来一条消息再问一次。
+// 新手引导要的事实（交给过芝士没有、采纳过没有……）：引导走完了就不再问。没开始时只在项目
+// 本体那一栏问（引导从那里开始）；开始以后哪一栏都问，任务页上的那几步也要知道人走到哪了。
+// 房间里每来一条消息再问一次。
+const guide = useProjectTour()
 const startSteps = useStartSteps(
-  () => (onProjectLine.value ? props.topic?.project_id : null),
+  () => (!guide.done.value && (onProjectLine.value || guide.active.value) ? props.topic?.project_id : null),
   () => rows.value.length
 )
-// 界面导览：还没亲手采纳过交付的人（或从帮助菜单重新打开的）第一次进项目本体这一
-// 栏时，一站一站圈出频道、输入框、「交给芝士」、总览、资料库。只走这一页上找得到目标
-// 的那几站（手机上没有侧栏）。
-const tour = useProjectTour()
-const anchorRevision = useGuideAnchorRevision()
-const guiding = computed(() => !!startSteps.value && !startSteps.value.learned)
-const tourStops = computed(() => {
-  void anchorRevision.value
-  return TOUR_STOPS.filter((s) => guideAnchor(s.anchor))
-})
-const tourIndex = computed(() => Math.min(tour.stop.value, Math.max(tourStops.value.length - 1, 0)))
-const tourStop = computed(() =>
-  onProjectLine.value && !tour.tourDone.value && (guiding.value || tour.replaying.value)
-    ? tourStops.value[tourIndex.value] ?? null
-    : null
-)
-// 目标元素也跟着登记表走：同一个名字换了一个元素（重新挂载）时，圈要跟过去。
-const tourTarget = computed(() => {
-  void anchorRevision.value
-  return tourStop.value ? guideAnchor(tourStop.value.anchor) : null
-})
-// 「第一次」提示画在应用最外层（App.vue），任务页上也要出现；它要知道这个人会不会了。
-watch(startSteps, (steps) => steps && noteLearned(steps.learned), { immediate: true })
+// 新手引导画在应用最外层（App.vue），任务页上也要出现；做到哪一步看这几条事实。
+watch(startSteps, (steps) => steps && noteFacts(steps), { immediate: true })
 const retryIndex = computed(() => (canRetryAt(rows.value.length - 1) ? rows.value.length - 1 : -1))
 const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 
@@ -387,6 +365,7 @@ useComposerShortcut({
            resetKey = topic id, so switching topics recovers on its own. -->
       <ErrorBoundary :reset-key="topic.id">
         <ChatTimeline
+          v-guide-anchor="onProjectLine ? 'timeline' : ''"
           :topic="topic"
           :ask-closed="askClosed"
           :no-upgrade="noUpgrade"
@@ -504,22 +483,6 @@ useComposerShortcut({
       <!-- 贴在输入框上方的那一条（验收卡）。它不随对话滚：等人做的决定要一直看得见，
            又不该每来一条消息就被推走、或者反过来把对话挤到只剩几行。 -->
       <slot name="above-composer" />
-
-      <!-- 上手三步：只在项目本体那一栏，三步做完就不再出现。 -->
-      <StartSteps v-if="onProjectLine && topic.project_id" :project-id="topic.project_id" :steps="startSteps" />
-
-      <!-- 界面导览和「第一次」提示：浮在目标控件旁边，一次只有一个。 -->
-      <GuideBubble
-        v-if="tourStop"
-        :target="tourTarget"
-        :title="t(`welcome.tour.${tourStop.key}.title`, { agent: agentName })"
-        :text="t(`welcome.tour.${tourStop.key}.text`, { agent: agentName })"
-        :step="tourIndex + 1"
-        :total="tourStops.length"
-        @next="tour.next(tourStops.length)"
-        @back="tour.back()"
-        @skip="tour.skip()"
-      />
 
       <!-- 输入框那一块。「谁在忙」在它上面单占一格，不压在对话上：时间线底部让出这一
            格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->

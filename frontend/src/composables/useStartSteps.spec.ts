@@ -1,4 +1,4 @@
-// 上手三步的事实问服务端；房间里来了新消息就再问一次，不在项目本体上就不问。
+// 新手引导的事实问服务端；房间里来了新消息就再问一次，不在项目本体上就不问。
 import { nextTick, ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 

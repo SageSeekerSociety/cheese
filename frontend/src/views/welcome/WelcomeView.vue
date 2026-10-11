@@ -5,7 +5,7 @@
 // 五问：怎么称呼、主要用知是做什么、想先做成什么、和谁一起、芝士在哪干活。每个
 // 回答都有去处，右边的「你的项目」随回答长出来；点「建好项目」才真的建
 // （`POST /users/me/onboarding`），然后进它的「综合」，第一句请求已经写在输入框里，
-// 「上手三步」接着带（components/room/StartSteps.vue）。
+// 新手引导的浮窗接着带（composables/useProjectTour.ts）。
 import type { OnboardingAnswers, WorkRole } from '@/api'
 
 import { computed, ref } from 'vue'
@@ -219,13 +219,7 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
         <template v-if="step === 1">
           <p class="welcome__intro">{{ t('welcome.intro') }}</p>
           <h1 class="t-page-title">{{ t('welcome.name.q') }}</h1>
-          <v-text-field
-            v-model="nickname"
-            autocomplete="nickname"
-            density="comfortable"
-            variant="outlined"
-            hide-details
-          />
+          <input v-model="nickname" class="welcome__input" autocomplete="nickname" :aria-label="t('welcome.name.q')" />
           <p class="welcome__why">{{ t('welcome.name.why') }}</p>
         </template>
 
@@ -248,14 +242,10 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
               </span>
             </button>
           </div>
-          <v-text-field
-            v-model="organization"
-            autocomplete="off"
-            :label="t('welcome.role.org')"
-            density="comfortable"
-            variant="outlined"
-            hide-details
-          />
+          <label class="welcome__field" for="welcome-org">
+            <span class="welcome__field-label">{{ t('welcome.role.org') }}</span>
+            <input id="welcome-org" v-model="organization" class="welcome__input" autocomplete="off" />
+          </label>
         </template>
 
         <template v-else-if="step === 3">
@@ -277,14 +267,16 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
               </span>
             </button>
           </div>
-          <v-text-field
-            v-model="own"
-            autocomplete="off"
-            :label="t('welcome.task.own')"
-            density="comfortable"
-            variant="outlined"
-            hide-details
-          />
+          <label class="welcome__field" for="welcome-own">
+            <span class="welcome__field-label">{{ t('welcome.task.own') }}</span>
+            <input
+              id="welcome-own"
+              v-model="own"
+              class="welcome__input"
+              autocomplete="off"
+              :placeholder="t('welcome.task.ownPlaceholder')"
+            />
+          </label>
           <input
             ref="picker"
             type="file"
@@ -325,15 +317,10 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
               </span>
             </button>
           </div>
-          <v-text-field
-            v-if="!solo"
-            v-model="inviteText"
-            autocomplete="off"
-            :label="t('welcome.who.invitees')"
-            density="comfortable"
-            variant="outlined"
-            hide-details
-          />
+          <label v-if="!solo" class="welcome__field" for="welcome-invitees">
+            <span class="welcome__field-label">{{ t('welcome.who.invitees') }}</span>
+            <input id="welcome-invitees" v-model="inviteText" class="welcome__input" autocomplete="off" />
+          </label>
         </template>
 
         <template v-else>
@@ -366,10 +353,17 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
               </span>
             </button>
           </div>
-          <p v-if="!desktop" class="welcome__why">
-            {{ t('welcome.where.webNote') }}
-            <router-link :to="{ name: 'Download' }">{{ t('welcome.where.download') }}</router-link>
-          </p>
+          <!-- 网页上不能把这台电脑接给芝士：给一张同样的卡，说要先装桌面端，按钮去下载页。 -->
+          <div v-if="!desktop" class="welcome__option welcome__option--static">
+            <span class="welcome__icon"><v-icon icon="mdi-laptop" size="20" /></span>
+            <span class="welcome__label">
+              <span class="t-title">{{ t('welcome.where.deviceWeb') }}</span>
+              <span class="welcome__hint">{{ t('welcome.where.webNote') }}</span>
+            </span>
+            <BaseButton kind="secondary" size="sm" :to="{ name: 'Download' }">{{
+              t('welcome.where.download')
+            }}</BaseButton>
+          </div>
         </template>
 
         <p v-if="failure" class="welcome__failure" role="alert">{{ failure }}</p>
@@ -470,9 +464,37 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
   justify-content: center;
   gap: 16px;
 }
-/* Vuetify 的输入框默认 flex: 1，在这一列里会被拉成一大块。 */
-.welcome__form > :deep(.v-input) {
-  flex: none;
+.welcome__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.welcome__field-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.welcome__input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+  transition: border-color var(--dur-quick) var(--ease-out);
+}
+.welcome__input::placeholder {
+  color: var(--faint);
+}
+.welcome__input:hover {
+  border-color: var(--muted);
+}
+.welcome__input:focus-visible {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
 }
 .welcome__steps {
   display: flex;
@@ -524,6 +546,16 @@ const canGoOn = computed(() => step.value !== 1 || !!nickname.value.trim())
 }
 .welcome__option:hover {
   background: var(--fill);
+}
+.welcome__option--static {
+  align-items: center;
+  cursor: default;
+}
+.welcome__option--static:hover {
+  background: var(--surface);
+}
+.welcome__option--static .welcome__label {
+  flex: 1;
 }
 .welcome__option[aria-pressed='true'] {
   border-color: var(--ink);

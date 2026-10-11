@@ -15,15 +15,22 @@ import { useEventListener } from '@vueuse/core'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{
-  /** 要圈的东西：页面上的一个元素，或者一个固定的框（视口坐标）。 */
-  target: HTMLElement | DOMRectReadOnly | null
-  title: string
-  text: string
-  /** 导览里的第几站（从 1 数）；不给就是一条单独的提示。 */
-  step?: number
-  total?: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** 要圈的东西：页面上的一个元素，或者一个固定的框（视口坐标）。 */
+    target: HTMLElement | DOMRectReadOnly | null
+    title: string
+    text: string
+    /** 导览里的第几站（从 1 数）；不给就是一条单独的提示。 */
+    step?: number
+    total?: number
+    /** 画不画那一圈高亮。指着一大块区域（对话区、任务页）时不画，只放小窗。 */
+    ring?: boolean
+    /** 这一站有没有「下一步」。要人去做的那几站没有：做到了自己往下走。 */
+    canNext?: boolean
+  }>(),
+  { ring: true, canNext: true, step: undefined, total: undefined }
+)
 const emit = defineEmits<{ back: []; next: []; skip: []; dismiss: [] }>()
 
 const RING_PAD = 6
@@ -176,7 +183,7 @@ const last = computed(() => !!props.total && props.step === props.total)
        祖先的 transform 换掉，留在原地的话小窗会跟着横着挪一下。 -->
   <Teleport to="body">
     <section v-if="box && ringStyle" :key="title" class="gb" :aria-label="t('welcome.tour.aria')">
-      <div class="gb__ring" :style="ringStyle" aria-hidden="true" />
+      <div v-if="ring" class="gb__ring" :style="ringStyle" aria-hidden="true" />
       <div
         v-if="bubbleStyle"
         :ref="holdBubble"
@@ -197,9 +204,10 @@ const last = computed(() => !!props.total && props.step === props.total)
               <button v-if="(step ?? 1) > 1" type="button" class="gb__quiet" @click="emit('back')">
                 {{ t('welcome.tour.back') }}
               </button>
-              <button type="button" class="gb__primary" @click="emit('next')">
+              <button v-if="canNext" type="button" class="gb__primary" @click="emit('next')">
                 {{ last ? t('welcome.tour.done') : t('welcome.tour.next') }}
               </button>
+              <span v-else class="gb__auto">{{ t('welcome.tour.auto') }}</span>
             </span>
           </template>
           <button v-else type="button" class="gb__primary gb__end" @click="emit('dismiss')">
@@ -284,6 +292,12 @@ const last = computed(() => !!props.total && props.step === props.total)
   background: var(--ink);
   color: var(--surface);
   font-weight: 600;
+}
+.gb__auto {
+  color: var(--faint);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  align-self: center;
 }
 .gb__end {
   margin-left: auto;

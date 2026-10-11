@@ -6088,8 +6088,9 @@ export interface paths {
         };
         /**
          * Project Start Steps
-         * @description 上手三步 for the caller in this project (`app/domain/onboarding/start.py`):
-         *     handed 芝士 something, got a reply, had a delivery accepted.
+         * @description What the new-user guide needs to know about the caller in this project
+         *     (`app/domain/onboarding/start.py`): handed 芝士 something, got a reply, had a
+         *     delivery accepted.
          */
         get: operations["project_start_steps_projects__project_id__start_steps_get"];
         put?: never;
@@ -16188,7 +16189,8 @@ export interface components {
         };
         /**
          * StartStepsOut
-         * @description 上手三步 for the caller (`GET /projects/{id}/start-steps`).
+         * @description What the new-user guide needs to know about the caller
+         *     (`GET /projects/{id}/start-steps`).
          */
         StartStepsOut: {
             /** Asked */

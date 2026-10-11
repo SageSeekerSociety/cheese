@@ -47,7 +47,7 @@ vi.mock('../../api', async () => {
   return {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    // 上手三步：这里的人已经会了，面板不出现。
+    // 新手引导：这里的人已经会了，引导不出现。
     getStartSteps: vi.fn().mockResolvedValue({ asked: true, answered: true, accepted: true, learned: true }),
     getForgeConnection: vi.fn().mockResolvedValue({
       kind: 'forgejo',

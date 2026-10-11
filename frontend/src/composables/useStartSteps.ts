@@ -1,5 +1,5 @@
-// 上手三步做到哪了：问服务端（`GET /projects/{id}/start-steps`），房间里来了新消息就
-// 再问一次。画在 components/room/StartSteps.vue 里，它只按这份结果画。
+// 新手引导做到哪了：问服务端（`GET /projects/{id}/start-steps`），房间里来了新消息就
+// 再问一次。引导（composables/useProjectTour.ts）按这份结果决定往不往下走。
 import type { Ref } from 'vue'
 
 import { ref, watch } from 'vue'
