@@ -2,11 +2,13 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Protocol
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
@@ -89,22 +91,19 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
+# The route reads project attributes returned by ProjectService. Keep the route
+# independent from the ORM class; the members are declared ``Mapped[...]``
+# exactly as the model declares them, because pyright matches a caller's model
+# against these *class* members — a plain ``int`` here would not accept
+# ``Mapped[int]``. Reading one off an instance still yields the wrapped value.
+# Same shape as ``SpaceRow`` in ``routes/spaces.py``.
 class ProjectRow(Protocol):
-    """What these routes read off a project row.
-
-    Structural, not the ORM class: a route has no business importing
-    ``app.domain.project.models`` (C2 in ``.importlinter``), and every row it is
-    handed comes back from ``ProjectService`` on the same domain. Together with
-    ``ProjectOut.model_validate`` (which itself reads attributes, never the
-    class) this is all the shape the annotations here need.
-    """
-
-    id: uuid.UUID
-    name: str
-    slug: str
-    owner_handle: str | None
-    team_id: int | None
-    external_task_id: int | None
+    id: Mapped[uuid.UUID]
+    name: Mapped[str]
+    slug: Mapped[str]
+    owner_handle: Mapped[str | None]
+    team_id: Mapped[int]
+    external_task_id: Mapped[int | None]
 
 
 def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
@@ -130,7 +129,9 @@ def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
     )
 
 
-async def _project_payloads(db: DbSession, projects: list[ProjectRow]) -> list[dict]:
+async def _project_payloads(
+    db: DbSession, projects: Sequence[ProjectRow]
+) -> list[dict]:
     """Every project's payload, without a query per project."""
     shells = await effective_shells(db, projects)
     teams = await team_service(db).labels_of(

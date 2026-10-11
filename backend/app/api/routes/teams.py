@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
@@ -162,7 +163,7 @@ def _team_handle(team: Team, users_map: dict) -> str | None:
 def _team_to_api_model(
     team: Team,
     *,
-    members: list[TeamUserRelation] | None = None,
+    members: Sequence[TeamUserRelation] | None = None,
     current_user_id: int | None = None,
     users_map: dict | None = None,
     profiles_map: dict | None = None,
@@ -305,7 +306,7 @@ def _member_to_api_model(
 
 
 async def _load_team_user_maps(
-    db, members: list[TeamUserRelation]
+    db, members: Sequence[TeamUserRelation]
 ) -> tuple[dict, dict, dict]:
     """Bulk-load User + UserProfile records, and the avatars they picked.
 

@@ -74,6 +74,7 @@ import uuid
 from typing import Protocol
 
 from fastapi import APIRouter
+from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
@@ -116,7 +117,15 @@ def _changes_an_advanced_setting(saved: dict, config: AgentConfiguration) -> boo
 
 
 class ProjectDefault(Protocol):
-    default_agent_instance_id: uuid.UUID | None
+    """What ``_holds_the_default`` reads off a project row.
+
+    ``Mapped``-shaped, not the unwrapped ``uuid.UUID | None``: pyright matches
+    the project model's own ``Mapped`` descriptor against this class member, so
+    a plain optional UUID here would not accept the model — see ``SpaceRow`` in
+    ``routes/spaces.py`` and ``TeamView`` in ``domain/team/protocol.py``.
+    """
+
+    default_agent_instance_id: Mapped[uuid.UUID | None]
 
 
 # --- A project's agents: its roster, and its default for new rooms -----------

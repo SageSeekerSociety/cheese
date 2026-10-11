@@ -4,6 +4,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Protocol
 
+from sqlalchemy.orm import Mapped
+
 
 class TeamVisibility(str, Enum):
     """Who can find a team without being in it.
@@ -39,38 +41,34 @@ class RecruitmentStatus(str, Enum):
 
 
 class TeamView(Protocol):
-    @property
-    def id(self) -> int: ...
-    @property
-    def name(self) -> str: ...
-    @property
-    def handle(self) -> str | None: ...
-    @property
-    def personal_owner_user_id(self) -> int | None: ...
-    @property
-    def intro(self) -> str: ...
-    @property
-    def description(self) -> str: ...
-    @property
-    def avatar_id(self) -> int: ...
-    @property
-    def visibility(self) -> str: ...
-    @property
-    def join_approval(self) -> bool: ...
-    @property
-    def join_token(self) -> str | None: ...
-    @property
-    def created_at(self) -> datetime | None: ...
-    @property
-    def updated_at(self) -> datetime | None: ...
+    """A team row as the route reads it, in the shape the ORM declares it.
+
+    The members are ``Mapped[...]``, not the unwrapped values: pyright compares a
+    caller's ``Team`` (whose attributes are ``Mapped`` descriptors) against this
+    protocol's *class* members, so a plain ``int`` here would not match. Reading
+    one off an instance still yields the value it wraps. Same shape as
+    ``SpaceRow`` in ``routes/spaces.py``.
+    """
+
+    id: Mapped[int]
+    name: Mapped[str]
+    handle: Mapped[str | None]
+    personal_owner_user_id: Mapped[int | None]
+    intro: Mapped[str]
+    description: Mapped[str]
+    avatar_id: Mapped[int]
+    visibility: Mapped[str]
+    join_approval: Mapped[bool]
+    join_token: Mapped[str | None]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
 
 
 class TeamMemberView(Protocol):
-    @property
-    def user_id(self) -> int: ...
-    @property
-    def role(self) -> int: ...
-    @property
-    def created_at(self) -> datetime | None: ...
-    @property
-    def updated_at(self) -> datetime | None: ...
+    """A ``team_user_relation`` row as the route reads it, ``Mapped``-shaped for
+    the same reason as ``TeamView`` above."""
+
+    user_id: Mapped[int]
+    role: Mapped[int]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
