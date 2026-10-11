@@ -170,8 +170,8 @@ it.each(['success', 'failure'])('ignores an old diagnosis %s after returning to 
 })
 
 it('does not clear a new MCP secret or release its busy state when an old save returns', async () => {
-  const old = deferred<void>()
-  const fresh = deferred<void>()
+  const old = deferred<Awaited<ReturnType<typeof api.setMcpSecret>>>()
+  const fresh = deferred<Awaited<ReturnType<typeof api.setMcpSecret>>>()
   vi.mocked(api.setMcpSecret).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
   const view = host((enabled) => useProjectMcpSettings(() => 'p', { enabled }))
   await flush()
@@ -181,12 +181,12 @@ it('does not clear a new MCP secret or release its busy state when an old save r
   await view.enter()
   view.state.setValue('SEARCH_KEY', 'new-unsaved')
   const second = view.state.save('SEARCH_KEY')
-  old.resolve()
+  old.resolve(null)
   await first
   expect(view.state.values.SEARCH_KEY).toBe('new-unsaved')
   expect(view.state.busy.value).toBe('SEARCH_KEY')
   expect(api.getMcpServers).toHaveBeenCalledTimes(2)
-  fresh.resolve()
+  fresh.resolve(null)
   await second
   expect(view.state.values.SEARCH_KEY).toBe('')
   expect(view.state.busy.value).toBe('')
@@ -241,14 +241,14 @@ it.each(['success', 'failure'])(
     const second = view.state.apply(true)
     expect(api.applyRoomEnvironment).toHaveBeenLastCalledWith('b', 'r-general', true)
     vi.mocked(api.getRoomEnvironment).mockClear()
-    if (outcome === 'success') old.resolve({})
+    if (outcome === 'success') old.resolve(envStatus())
     else old.reject(new Error('A failed'))
     await first
     expect(view.state.applying.value).toBe(true)
     expect(api.getRoomEnvironment).not.toHaveBeenCalled()
     expect(toast.success).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
-    fresh.resolve({})
+    fresh.resolve(envStatus())
     await second
     expect(view.state.applying.value).toBe(false)
     expect(api.getRoomEnvironment).toHaveBeenCalledWith('b', 'r-general')
@@ -275,8 +275,8 @@ it.each(['success', 'failure'])(
   'preserves the new project MCP draft and busy state after old save %s',
   async (outcome) => {
     const project = ref('a')
-    const old = deferred<void>()
-    const fresh = deferred<void>()
+    const old = deferred<Awaited<ReturnType<typeof api.setMcpSecret>>>()
+    const fresh = deferred<Awaited<ReturnType<typeof api.setMcpSecret>>>()
     vi.mocked(api.setMcpSecret).mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise)
     const view = host((enabled) => useProjectMcpSettings(() => project.value, { enabled }))
     await flush()
@@ -289,14 +289,14 @@ it.each(['success', 'failure'])(
     view.state.setValue('SEARCH_KEY', 'project-b-secret')
     const second = view.state.save('SEARCH_KEY')
     expect(api.setMcpSecret).toHaveBeenLastCalledWith('b', 'SEARCH_KEY', 'project-b-secret')
-    if (outcome === 'success') old.resolve()
+    if (outcome === 'success') old.resolve(null)
     else old.reject(new Error('A failed'))
     await first
     expect(view.state.values.SEARCH_KEY).toBe('project-b-secret')
     expect(view.state.busy.value).toBe('SEARCH_KEY')
     expect(api.getMcpServers).toHaveBeenCalledTimes(2)
     expect(toast.error).not.toHaveBeenCalled()
-    fresh.resolve()
+    fresh.resolve(null)
     await second
     expect(view.state.values.SEARCH_KEY).toBe('')
     expect(view.state.busy.value).toBe('')
