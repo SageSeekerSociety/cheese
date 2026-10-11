@@ -17,6 +17,7 @@ from typing import Protocol
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.live_frames import publish_live
 from app.domain.agent.reads import (
+    Abandoned,
     Completed,
     Reachable,
     Read,
@@ -35,7 +36,8 @@ from app.domain.delivery.input_identity import (
 # Where the room hears its sessions: one item at a time, each for the session
 # that produced it, in the order its sessions were read. What the session said
 # and did, when it started and stopped working, which inputs it took in, how
-# its work ended, whether the machine under it is reachable, and what it is in
+# its work ended — completed, terminated, or abandoned with nobody left to
+# report on it — whether the machine under it is reachable, and what it is in
 # the middle of writing all arrive here (``reads.Read``); the
 # room decides what each one means for it.
 RoomReader = Callable[[SessionRef, Read], Awaitable[None]]
@@ -64,6 +66,8 @@ class RoomBooks(Protocol):
     async def confirm_work_completion(self, completion: WorkCompletion) -> None: ...
 
     async def confirm_work_termination(self, termination: WorkTermination) -> None: ...
+
+    async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None: ...
 
     async def _set_hook_activity(
         self,
@@ -125,6 +129,8 @@ def reader(chat: RoomBooks) -> RoomReader:
                     event.yes,
                     event.reason,
                 )
+            elif isinstance(event, Abandoned):
+                await chat.confirm_work_abandoned(work)
             elif isinstance(event, AgentEvent):
                 await chat.hook_events.accept(
                     session.project_id,

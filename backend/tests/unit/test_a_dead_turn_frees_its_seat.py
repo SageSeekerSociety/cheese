@@ -17,8 +17,10 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import select, update
 
+from app.domain.agent import turn_inputs
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.conversation.models import Conversation
@@ -83,6 +85,54 @@ async def _rows(factory, topic_id):
                 select(NativeInput).where(NativeInput.conversation_id == topic_id)
             )
         )
+
+
+@pytest.mark.anyio
+async def test_a_work_abandoned_where_the_room_saw_it_frees_its_seat(db_factory):
+    """The room heard the runner report its process gone, and ended the turn's
+    interval in the same breath. That is what puts the work out of the orphan
+    sweep's reach — it reads open intervals only — so these inputs are ended
+    where the death was heard, or they hold the seat for good."""
+    topic = await a_topic(db_factory)
+    turn = await open_turn(
+        db_factory,
+        topic,
+        delivered=True,
+        age_s=3600,
+        resendable=False,
+        session_id=SESSION,
+    )
+    project, answer = await _inputs_into(db_factory, topic, turn)
+
+    # What the room does with a death it heard: the interval ends there.
+    async with db_factory() as session:
+        await AgentTurnRepository(session).close([turn], datetime.now(UTC))
+        await session.commit()
+
+    async with db_factory() as session:
+        assert await seat_has_unfinished_input(session, topic, SEAT)
+
+    # The sweep cannot collect it — the interval is closed, so the row is not
+    # one of the open ones it reads.
+    chat = _SweepChat(db_factory, live_screen=False, dead_sessions={SESSION})
+    assert await AgentWorkRunner(InProcessBroker()).sweep_orphans(chat) == 0
+    async with db_factory() as session:
+        assert await seat_has_unfinished_input(session, topic, SEAT)
+
+    ended = await turn_inputs.end_inputs_of_abandoned_work(db_factory, turn)
+    assert ended == 3
+
+    async with db_factory() as session:
+        assert not await seat_has_unfinished_input(session, topic, SEAT)
+        # Held as the sweep holds them: nothing says the answer was taken, so
+        # it is never sent a second time.
+        assert await held_blocks(
+            session, project_id=project, topic_id=topic, recipient_handle=SEAT
+        ) == {answer}
+    rows = await _rows(db_factory, topic)
+    assert len(rows) == 3
+    assert all(row.completed_at is None for row in rows)
+    assert all(row.termination == "orphaned" for row in rows)
 
 
 @pytest.mark.anyio

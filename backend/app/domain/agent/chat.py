@@ -1000,6 +1000,10 @@ class ChatService(SessionRecovery):
 
         await finish_work_termination(self, termination, terminate_work_inputs)
 
+    async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
+        """End the inputs of a work whose session died inside it. See turn_inputs."""
+        await turn_inputs.end_inputs_of_abandoned_work(self._sessions, work_id)
+
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""
         return self._compute.session_controls(topic_id)
