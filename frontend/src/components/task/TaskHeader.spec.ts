@@ -7,7 +7,7 @@ import { nextTick } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let me = 'alice'
@@ -74,6 +74,7 @@ const PICKED = [
 function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, startError: string | null = null) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
+  const selectMachine = vi.fn()
   const setCollaborators = vi.fn(async () => true)
   const setAgent = vi.fn(async () => true)
   const rename = vi.fn(async () => true)
@@ -88,6 +89,10 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
       agents,
       machine: MACHINE,
       machineError: false,
+      machineSaving: false,
+      machinePickError: '',
+      machineProposal: '',
+      machineSavedVersion: 0,
       starting: false,
       startError,
       actionError: null,
@@ -99,10 +104,11 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
       setCollaborators,
       setAgent,
       loadMachine,
+      selectMachine,
     },
     global: { plugins: [vuetify] },
   })
-  return { ...view, start, loadMachine, setCollaborators, setAgent, rename, reopen }
+  return { ...view, start, loadMachine, selectMachine, setCollaborators, setAgent, rename, reopen }
 }
 
 function stubViewport() {
@@ -192,6 +198,15 @@ describe('任务页头', () => {
     await openDetails(container)
     expect(loadMachine).toHaveBeenCalled()
     expect(document.querySelector('[data-testid="task-machine"] button')).not.toBeNull()
+  })
+
+  it('换做它的电脑：选择往上发给页面那一层去保存', async () => {
+    const { container, selectMachine } = mount()
+    await openDetails(container)
+    // 机器那一格里那颗「改」是 TopicComputePicker 的入口，这里只接线、不自己发请求。
+    await fireEvent.click(document.querySelector('[data-testid="task-machine"] button')!)
+    await fireEvent.click(await screen.findByRole('button', { name: /^王宁的笔记本/ }))
+    expect(selectMachine).toHaveBeenCalledWith(LAPTOP, undefined)
   })
 
   it('不是负责人：看得到任务在哪台电脑上做，不能更换', async () => {

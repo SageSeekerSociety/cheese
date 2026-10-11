@@ -4,7 +4,7 @@
 // 在哪台电脑上做，负责人在这里增减协作者），以及「开始」和 ⋯（重命名归负责人和协作者，
 // 转交、关闭只归负责人）。
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
-import type { TopicComputeProfile } from '@/types/compute'
+import type { ComputeChoice, TopicComputeProfile } from '@/types/compute'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -33,6 +33,14 @@ const props = defineProps<{
   agents: TopicMemberRow[]
   machine: TopicComputeProfile | null
   machineError: boolean
+  /** 换做它的电脑：一次保存还在路上。 */
+  machineSaving: boolean
+  /** 换电脑被后端拒了的原话（不是提议）。 */
+  machinePickError: string
+  /** 换电脑变成了一条提议：等人点头，房间没变。 */
+  machineProposal: string
+  /** 换电脑的成功回执：真的存成一次就涨一版。 */
+  machineSavedVersion: number
   starting: boolean
   startError: string | null
   actionError: string | null
@@ -45,6 +53,8 @@ const props = defineProps<{
   setCollaborators: (handles: string[]) => Promise<boolean>
   setAgent: (handle: string | null) => Promise<boolean>
   loadMachine: () => Promise<void>
+  /** 选了哪台电脑（或给不给整台机器）：页面那一层接住去保存。 */
+  selectMachine: (choice: ComputeChoice, visibility?: 'host' | 'isolated') => void
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
 }>()
@@ -301,9 +311,12 @@ async function confirmHandOver() {
                 <span v-if="machine.follows_room" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
                 <TopicComputePicker
                   v-if="isOwner && isOpen"
-                  :topic-id="task.id"
                   :profile="machine"
-                  @changed="loadMachine"
+                  :saving="machineSaving"
+                  :error="machinePickError"
+                  :proposal="machineProposal"
+                  :saved-version="machineSavedVersion"
+                  @select="selectMachine"
                 />
               </dd>
               <dd v-else-if="machineError">

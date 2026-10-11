@@ -8,6 +8,7 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { ApiError } from '@/api'
 import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
+import { useTopicComputeChoice } from '@/composables/useTopicComputeChoice'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { patchQuery, queryClient } from '@/query/client'
@@ -185,6 +186,16 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!machineWanted.value) machineWanted.value = true
     else await machineRead.refetch()
   }
+  // 换做它的电脑：组件（页头 → TopicComputePicker）只往上发 `select`，保存落在这一层，
+  // 存成了把这份 profile 重取一次（换到哪台、谁跟着搬，只有读回来才准），变成提议或
+  // 失败由它把回话递回去。
+  const {
+    saving: machineSaving,
+    error: machinePickError,
+    proposal: machineProposal,
+    savedVersion: machineSavedVersion,
+    select: selectMachine,
+  } = useTopicComputeChoice(() => task.value?.id ?? '', { onChanged: () => void loadMachine() })
 
   // ---- 与开始时相比 ----
   const comparing = ref(false)
@@ -231,6 +242,11 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     machine,
     machineError,
     loadMachine,
+    machineSaving,
+    machinePickError,
+    machineProposal,
+    machineSavedVersion,
+    selectMachine,
     comparing,
     comparison,
     compareError,

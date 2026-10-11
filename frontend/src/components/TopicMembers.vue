@@ -14,6 +14,7 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { addTopicMember, removeTopicMember } from '../api'
 import { useRowMenu } from '../composables/useRowMenu'
+import { useTopicComputeChoice } from '../composables/useTopicComputeChoice'
 import { t } from '../i18n'
 import { memberName, shownHandle } from '../lib/agentNames'
 import { choiceKey, choiceName } from '../lib/computeConfig'
@@ -98,6 +99,15 @@ function loadMachines() {
   if (!machinesWanted.value) machinesWanted.value = true
   else void queryClient.invalidateQueries({ queryKey: keys.roomComputeProfile(props.topicId) })
 }
+// 点了一条选择就交给这一层保存（组件只往上发 `select`）：存成了重取这份 profile ——
+// 换到哪台、谁跟着搬，只有读回来才准；变成提议或失败由它把回话递回组件。
+const {
+  saving: machineSaving,
+  error: machinePickError,
+  proposal: machineProposal,
+  savedVersion: machineSavedVersion,
+  select: selectMachine,
+} = useTopicComputeChoice(() => props.topicId, { onChanged: loadMachines })
 let cancelIdleLoad: (() => void) | null = null
 onMounted(() => {
   cancelIdleLoad = whenIdle(() => (machinesWanted.value = true))
@@ -317,7 +327,14 @@ async function onRemove(handle: string) {
         >
           <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
         </span>
-        <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
+        <TopicComputePicker
+          :profile="machines"
+          :saving="machineSaving"
+          :error="machinePickError"
+          :proposal="machineProposal"
+          :saved-version="machineSavedVersion"
+          @select="selectMachine"
+        />
       </div>
       <div v-else-if="machinesError" class="roster__hint">
         {{ t('work.roomMachine.loadFailed') }}

@@ -8,8 +8,13 @@ import { useQuery } from '@tanstack/vue-query'
 import { useBranchProtection } from '@/composables/useBranchProtection'
 import { useProjectAddress } from '@/composables/useProjectAddress'
 import { useProjectArchive } from '@/composables/useProjectArchive'
+import { useProjectComputeSettings } from '@/composables/useProjectComputeSettings'
+import { useProjectDefaultModelSettings } from '@/composables/useProjectDefaultModelSettings'
+import { useProjectEnvironmentSettings } from '@/composables/useProjectEnvironmentSettings'
 import { useProjectExport } from '@/composables/useProjectExport'
+import { useProjectMcpSettings } from '@/composables/useProjectMcpSettings'
 import { useProjectSettings } from '@/composables/useProjectSettings'
+import { useProjectTaskNamingSettings } from '@/composables/useProjectTaskNamingSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
 
 import { handOverChannel, listChannels, stepIntoChannel } from '@/api/channels'
@@ -17,6 +22,7 @@ import { diagnoseRoomEnvironment } from '@/api/environment'
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import DeviceSessionsSwitch from '@/components/DeviceSessionsSwitch.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
@@ -124,9 +130,6 @@ const { exporting, exportError, exportProject } = useProjectExport(
   () => projectName.value
 )
 
-const gate = provideRevealGate()
-const { revealed } = gate
-
 onMounted(() => {
   consumeGithubCallbackNotice()
   load()
@@ -207,6 +210,33 @@ const section = computed(() => {
   return mdAndUp.value || landing === 'repository' ? landing : null
 })
 
+// 设置页的显示闸：各块首次取数期间占住，全部到齐一起出现（见 useRevealGate）。
+// 必须在线下面那五个 composable 之前 provide —— 它们各自 holdRevealUntil 时要 inject 到它。
+const gate = provideRevealGate()
+const { revealed } = gate
+
+// 这五栏的数据与动作。组件只吃 props、只往上发事件；取数、保存、错误、busy / 显示闸、
+// 环境状态轮询与重试/采用、MCP 授权回跳都在各自那一个 composable 里。`enabled` 说的是
+// 「这一刻是不是这一栏」：设置页一次只画一栏，没被打开过的那几栏不读，环境那一栏不起
+// 轮询的表（原来那五件只有被画出来才会挂上、才会取数）。
+const taskNaming = useProjectTaskNamingSettings(() => props.projectId, {
+  enabled: () => section.value === 'task-naming',
+})
+const compute = useProjectComputeSettings(() => props.projectId, {
+  enabled: () => section.value === 'environment',
+})
+const defaultModel = useProjectDefaultModelSettings(() => props.projectId, {
+  enabled: () => section.value === 'agents',
+})
+const environment = useProjectEnvironmentSettings(() => props.projectId, {
+  enabled: () => section.value === 'environment',
+  room: () => (typeof query.room === 'string' ? query.room : undefined),
+  diagnoseRoom: (roomId) => diagnoseRoomEnvironment(props.projectId, roomId),
+})
+const mcp = useProjectMcpSettings(() => props.projectId, {
+  enabled: () => section.value === 'mcp',
+})
+
 const sectionLabel = computed(() => (section.value ? t(`work.projectSettings.sections.${section.value}`) : ''))
 
 function close() {
@@ -275,7 +305,14 @@ function close() {
               <span class="page-section-title">{{ t('work.projectSettings.defaultModel') }}</span>
             </div>
             <div class="page-section-body">
-              <ProjectDefaultModelSettings :project-id="projectId" />
+              <ProjectDefaultModelSettings
+                :state="defaultModel.state.value"
+                :load-error="defaultModel.loadError.value"
+                :saving="defaultModel.saving.value"
+                :saved="defaultModel.saved.value"
+                :save-error="defaultModel.saveError.value"
+                @save="defaultModel.save"
+              />
             </div>
           </section>
           <section class="page-section">
@@ -299,7 +336,12 @@ function close() {
           @open-channel="(id) => router.push({ name: 'workspace-topic', params: { projectId, topicId: id } })"
         />
         <section v-else-if="section === 'task-naming'" class="page-section">
-          <ProjectTaskNamingSettings :project-id="projectId" />
+          <ProjectTaskNamingSettings
+            :state="taskNaming.state.value"
+            :error="taskNaming.error.value"
+            :busy="taskNaming.busy.value"
+            @choose="taskNaming.choose"
+          />
         </section>
 
         <!-- 环境：在哪运行、怎么准备、还能跑多久，一页说完。环境出了问题跳到这里，
@@ -311,18 +353,50 @@ function close() {
               <span class="page-section-title">{{ t('work.projectSettings.defaultComputer') }}</span>
             </div>
             <div class="page-section-body">
-              <ProjectComputeSettings :project-id="projectId" />
+              <ProjectComputeSettings
+                :state="compute.state.value"
+                :error="compute.error.value"
+                :busy="compute.busy.value"
+                :editing="compute.editing.value"
+                @toggle="compute.toggleEditing"
+                @save="compute.save"
+              >
+                <!-- 「现在的分布」里每台设备后面那颗「查看并更换…」：由这一页填入，
+                     位置和交互和以前一样（它自己去取数，属于另一条线）。 -->
+                <template #device-sessions="{ device, devices, cloudAvailable, projectDefault }">
+                  <DeviceSessionsSwitch
+                    :project-id="projectId"
+                    :device="device"
+                    :devices="devices"
+                    :cloud-available="cloudAvailable"
+                    :project-default="projectDefault"
+                    @changed="compute.load"
+                  />
+                </template>
+              </ProjectComputeSettings>
             </div>
           </section>
           <ProjectEnvironmentSettings
-            :project-id="projectId"
-            :room="
-              typeof router.currentRoute.value.query.room === 'string'
-                ? router.currentRoute.value.query.room
-                : undefined
-            "
+            :info="environment.info.value"
+            :status="environment.status.value"
+            :selected-room="environment.selectedRoom.value"
+            :error="environment.error.value"
+            :saving="environment.saving.value"
+            :saved="environment.saved.value"
+            :save-error="environment.saveError.value"
+            :applying="environment.applying.value"
+            :diagnosis="environment.diagnosis.value"
+            :diagnosing="environment.diagnosing.value"
             :agent-name="workspace.agentName"
-            :diagnose-room="(roomId: string) => diagnoseRoomEnvironment(projectId, roomId)"
+            @reload="environment.load"
+            @select-room="environment.selectRoom"
+            @refresh-status="environment.refreshStatus"
+            @save="environment.save"
+            @apply="environment.apply"
+            @diagnose="environment.diagnose"
+            @retry="environment.retry"
+            @adopt="environment.adopt"
+            @dismiss="environment.dismissDiagnosis"
           />
           <CreditsPanel :project-id="projectId" />
         </template>
@@ -402,7 +476,18 @@ function close() {
           @save="address.save"
         />
 
-        <ProjectMcpSettings v-else-if="section === 'mcp'" :project-id="projectId" />
+        <ProjectMcpSettings
+          v-else-if="section === 'mcp'"
+          :list="mcp.list.value"
+          :error="mcp.error.value"
+          :busy="mcp.busy.value"
+          :values="mcp.values"
+          @connect="mcp.connect"
+          @disconnect="mcp.disconnect"
+          @save="mcp.save"
+          @clear="mcp.clear"
+          @update:value="({ name, value }) => mcp.setValue(name, value)"
+        />
 
         <!-- Exporting is for everyone who can read the project; the archive follows the
              caller's current room permissions (docs/project-export.md). -->

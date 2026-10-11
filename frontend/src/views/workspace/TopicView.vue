@@ -233,6 +233,10 @@ const {
   people: taskPeople,
   machine: taskMachine,
   machineError: taskMachineError,
+  machineSaving: taskMachineSaving,
+  machinePickError: taskMachinePickError,
+  machineProposal: taskMachineProposal,
+  machineSavedVersion: taskMachineSavedVersion,
   starting: taskStarting,
   startError: taskStartError,
   actionError: taskActionError,
@@ -597,6 +601,10 @@ void openPlace()
         :agents="roomAgents"
         :machine="taskMachine"
         :machine-error="taskMachineError"
+        :machine-saving="taskMachineSaving"
+        :machine-pick-error="taskMachinePickError"
+        :machine-proposal="taskMachineProposal"
+        :machine-saved-version="taskMachineSavedVersion"
         :starting="taskStarting"
         :start-error="taskStartError"
         :action-error="taskActionError"
@@ -609,6 +617,7 @@ void openPlace()
         :set-collaborators="taskPage.setCollaborators"
         :set-agent="taskPage.setAgent"
         :load-machine="taskPage.loadMachine"
+        :select-machine="taskPage.selectMachine"
         :panel-open="panelOpen"
         @open-room="backToRoom"
         @toggle-panel="togglePanel"

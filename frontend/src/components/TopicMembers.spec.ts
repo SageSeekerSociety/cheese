@@ -7,7 +7,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const machines = vi.hoisted(() => ({ get: vi.fn() }))
+const machines = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }))
 
 // 服务端那份房间名册。加人（POST …/members）往里加一行；别的请求照常走（被网络守卫拦下）。
 const ROOM = [
@@ -39,6 +39,9 @@ vi.mock('../api', async () => {
   return {
     ...actual,
     getTopicComputeProfile: (...args: unknown[]) => machines.get(...args),
+    // 换房间这一台：名册自己接住 `select`，发请求落在 useTopicComputeChoice 里（见
+    // 那一条的 spec），这里只给一个能回话的替身。
+    setTopicComputeChoice: (...args: unknown[]) => machines.set(...args),
     listTopicMembers: vi.fn(async () => ({ data: server.rows.map((row) => ({ ...row })), total: server.rows.length })),
   }
 })
@@ -144,6 +147,7 @@ beforeEach(() => {
   server.rows = ROOM.map((row) => ({ ...row }))
   document.body.innerHTML = ''
   machines.get.mockReset().mockResolvedValue(roomMachines())
+  machines.set.mockReset().mockResolvedValue({ choice: LAB, proposal: null })
 })
 
 describe('成员名册', () => {
@@ -337,6 +341,29 @@ describe('名册上这个话题的工作电脑', () => {
     const room = document.querySelector('[data-testid="future-machine"]')!
     expect(room.textContent).toContain('能访问整台电脑')
     expect(room.textContent).not.toContain('项目默认')
+  })
+
+  it('点了「改」里的另一台：名册接住这一选择，交给 useTopicComputeChoice 去保存', async () => {
+    machines.get.mockResolvedValue(
+      roomMachines({
+        project_default: { ...LAB, name: '实验室工作站', device_id: 'lab' },
+      })
+    )
+    await openRoster()
+    await fireEvent.click(
+      Array.from(document.querySelectorAll('[data-testid="future-machine"] button')).find(
+        (b) => b.textContent?.trim() === '改'
+      )!
+    )
+    await settle()
+    await fireEvent.click(
+      Array.from(document.querySelectorAll('.v-overlay button')).find((b) =>
+        b.textContent?.includes('实验室工作站')
+      ) as HTMLElement
+    )
+    await waitFor(() =>
+      expect(machines.set).toHaveBeenCalledWith('t1', { ...LAB, name: '实验室工作站', device_id: 'lab' }, {})
+    )
   })
 
   it('有队友能访问整台电脑时告诉页头，名册合着也看得见', async () => {

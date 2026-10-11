@@ -1,56 +1,41 @@
 <script setup lang="ts">
 // 项目只给默认：新 agent 开工时用哪台工作电脑。已经在干活的 agent 各有各的机器，
 // 改默认不搬它们；它们现在在哪，写在「现在的分布」里。
+//
+// 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：取数与发请求在
+// `composables/useProjectComputeSettings.ts` 里，由设置页接线。
+//
+// 「现在的分布」里每台设备后面那颗「查看并更换…」（`DeviceSessionsSwitch`）不由这里
+// 画：它自己去取数、属于另一条线。这一件在设备那一行留一个 `device-sessions` 作用域
+// 插槽，由设置页把它填进来 —— 位置和交互和以前一样。
 import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
 
-import { onMounted, ref, watch } from 'vue'
-
-import { holdRevealGate } from '@/composables/useRevealGate'
-
-import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
 import { t } from '../i18n'
 import { choiceDetail, choiceName, deviceName } from '../lib/computeConfig'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
-import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
 
-const props = defineProps<{ projectId: string }>()
-const state = ref<ProjectComputeConfigs | null>(null)
-const error = ref('')
-const busy = ref(false)
-const editing = ref(false)
+defineProps<{
+  /** 读到的算力现状；还没读到是 null。 */
+  state: ProjectComputeConfigs | null
+  /** 上一句没说完的话：读失败或保存失败。 */
+  error: string
+  /** 一次保存还在路上。 */
+  busy: boolean
+  /** 「更换」按下去切到的那一档：展开还是收起那份表单。 */
+  editing: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'toggle'): void
+  (e: 'save', choice: ComputeChoice): void
+}>()
+
 // English says 1 agent / 2 agents; the count's own key carries the plural.
 const agents = (count: number) => t('work.projectMachine.agents', { count })
-async function load() {
-  error.value = ''
-  try {
-    state.value = await getProjectComputeConfigs(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectMachine.loadFailed')
-  }
-}
-async function save(choice: ComputeChoice) {
-  if (!state.value?.can_manage) return
-  busy.value = true
-  error.value = ''
-  try {
-    const result = await saveProjectComputeConfigs(props.projectId, { default: choice })
-    state.value = { ...state.value, ...result }
-    window.dispatchEvent(new Event('project-compute-updated'))
-    editing.value = false
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectMachine.saveFailed')
-  } finally {
-    busy.value = false
-  }
-}
-// 首次取数期间占住设置页的显示闸，见 useRevealGate。
-const releaseGate = holdRevealGate()
-onMounted(() => load().finally(releaseGate))
-watch(() => props.projectId, load)
 </script>
 
 <template>
@@ -69,7 +54,7 @@ watch(() => props.projectId, load)
             size="sm"
             class="ml-auto"
             :disabled="busy"
-            @click="editing = !editing"
+            @click="emit('toggle')"
             >{{ editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change') }}</BaseButton
           >
         </div>
@@ -81,7 +66,7 @@ watch(() => props.projectId, load)
         :cloud-available="state.cloud_available"
         :cloud-vm-available="state.cloud_vm_available"
         :busy="busy"
-        @select="save"
+        @select="(choice) => emit('save', choice)"
       />
 
       <div class="distribution" data-testid="project-distribution">
@@ -110,14 +95,13 @@ watch(() => props.projectId, load)
                 agents: agents(device.agents),
               })
             }}<template v-if="device.machine_access"> · {{ t('work.roomMachine.wholeMachine') }}</template>
-            <DeviceSessionsSwitch
+            <slot
               v-if="state.can_manage && device.device_id"
-              :project-id="projectId"
+              name="device-sessions"
               :device="{ device_id: device.device_id, name: deviceName(device.name, device.device_id) }"
               :devices="state.devices"
               :cloud-available="state.cloud_available"
               :project-default="state.default"
-              @changed="load"
             />
           </li>
         </ul>

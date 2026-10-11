@@ -3,28 +3,47 @@
 // 60）：改它就是整个房间一起搬，房间里的每个 AI 队友都换过去。挂在成员名册里房间
 // 那一行上。给的是任务的 id 时改的是那个任务自己的那一项，只有它的会话搬；机器访问
 // 范围是房间的，任务这里不给改。
+//
+// 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：发请求落在
+// `composables/useTopicComputeChoice.ts` 里，由调用它的那一层接线，把 `saving` /
+// `error` / `proposal` / `savedVersion` 递下来、把 `select` 接住（组件不取数，
+// `.claude/rules/architecture.md`）。这里只剩本地要展开哪一张菜单、要不要展开那份
+// 表单 —— 以及收到成功回执（`savedVersion`）时把它们收起来。
 import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
-import { setTopicComputeChoice } from '../api'
 import { t } from '../i18n'
 import { choiceDetail, choiceKey, choiceName, compactChoices } from '../lib/computeConfig'
 import { renderNoticeMessage } from '../lib/noticeText'
 
 import ComputeChoiceForm from './ComputeChoiceForm.vue'
 
-const props = defineProps<{ topicId: string; profile: TopicComputeProfile }>()
-const emit = defineEmits<{ changed: [] }>()
-const saving = ref(false)
-const error = ref('')
-// 选择变成了一条提议：这次点击没有改掉任何东西，等人点头。不是错误，所以不走
-// `error` 那一行红字。
-const proposal = ref('')
+const props = defineProps<{
+  profile: TopicComputeProfile
+  /** 一次保存还在路上：每一行都灰着，再点也没有用。 */
+  saving: boolean
+  /** 上一次选择被后端拒了的原话（不是提议）。 */
+  error: string
+  /** 上一次选择变成了一条提议：等人点头，房间没变。不是错误。 */
+  proposal: string
+  /** 成功回执：真的存成一次就涨一版，据此收菜单、收起展开的表单。 */
+  savedVersion: number
+}>()
+const emit = defineEmits<{ select: [choice: ComputeChoice, visibility?: 'host' | 'isolated'] }>()
 // 任务的那一份带 `follows_room`，房间的没有。
 const isTask = computed(() => props.profile.follows_room != null)
 const menuOpen = ref(false)
 const more = ref(false)
+// 存成一次（不是提议）父层把回执涨一版：收菜单、收起展开的表单。变成提议和失败都不
+// 动它 —— 菜单留着，让那句话停在他刚按下的控件上，能再挑一次。
+watch(
+  () => props.savedVersion,
+  () => {
+    menuOpen.value = false
+    more.value = false
+  }
+)
 const choices = computed(() => compactChoices(props.profile.project_default, props.profile.choice))
 const cloudAvailable = computed(() => props.profile.profiles.some((p) => p.id === 'cloud' && p.available))
 function online(choice: ComputeChoice): string {
@@ -51,28 +70,11 @@ function setAccess(visibility: 'host' | 'isolated') {
   const choice: ComputeChoice = props.profile.choice.device_id
     ? props.profile.choice
     : { ...props.profile.choice, profile: 'device', name: device.name, device_id: device.device_id }
-  void pick(choice, visibility)
+  emit('select', choice, visibility)
 }
-async function pick(choice: ComputeChoice, visibility?: 'host' | 'isolated') {
-  saving.value = true
-  error.value = ''
-  proposal.value = ''
-  try {
-    const saved = await setTopicComputeChoice(props.topicId, choice, visibility ? { visibility } : {})
-    // 变提议时房间这一项没有变 —— 不说话就等于这次点击石沉大海。菜单留着不收，
-    // 那句话就在他刚按下的那个控件上。
-    if (saved.proposal) {
-      proposal.value = saved.proposal.content
-      return
-    }
-    menuOpen.value = false
-    more.value = false
-    emit('changed')
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.roomMachine.saveFailed')
-  } finally {
-    saving.value = false
-  }
+// 选了哪一台（或者给不给整台机器）往上发；保存、回执、重取都在父层那一侧。
+function pick(choice: ComputeChoice, visibility?: 'host' | 'isolated') {
+  emit('select', choice, visibility)
 }
 </script>
 
