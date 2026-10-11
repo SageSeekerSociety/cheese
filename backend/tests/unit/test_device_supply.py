@@ -16,7 +16,7 @@ import pytest
 from app.core.errors import ForbiddenError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply
 
 
 def _service() -> DeviceService:
@@ -100,57 +100,3 @@ async def test_an_unclassified_device_reads_as_self_hosted():
     )
 
     assert device.supply is Supply.self_hosted
-
-
-def test_a_room_nobody_chose_for_runs_isolated():
-    """The default is the isolated environment on every machine (#2320): the
-    whole machine is something its owner gives a room, never what a room gets
-    by nobody choosing."""
-    from app.domain.device.supply import default_visibility
-
-    assert default_visibility() is Visibility.isolated
-
-
-def test_no_binding_point_picks_a_visibility_of_its_own():
-    """四个绑定点都问，没有一个自己挑。
-
-    自己挑的那些年里，「这个档默认是什么」在代码里有四份声明，而选择器读的是第五
-    份——人在界面上被告知自己的房间是沙盒，而每一个房间实际拿到的都是整台机器。这
-    道守卫盯的就是那个形状：把一个字面量写回任何一个绑定点，这里红。
-    """
-    import ast
-    from pathlib import Path
-
-    from app.domain.device import supply as supply_mod
-
-    root = Path(supply_mod.__file__).resolve().parents[3]
-    offenders = []
-    for path in sorted((root / "app").rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text())):
-            if not isinstance(node, ast.Call):
-                continue
-            if getattr(node.func, "attr", None) != "bind_topic_device":
-                continue
-            for value in [*node.args, *(kw.value for kw in node.keywords)]:
-                if (
-                    isinstance(value, ast.Attribute)
-                    and getattr(value.value, "id", None) == "Visibility"
-                ):
-                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
-    assert offenders == []
-
-
-def test_the_catalogue_default_is_the_one_the_resolver_would_bind():
-    """The picker and the resolver must agree, and exactly one 档 is the default.
-
-    Nothing else in the suite covers the pair — each side was individually
-    correct and they still contradicted each other in production."""
-    from app.domain.agent.market import visibility_listings
-    from app.domain.device.supply import default_visibility
-
-    listings = visibility_listings()
-    defaults = [entry for entry in listings if entry.default]
-    assert len(defaults) == 1
-    assert defaults[0].id == default_visibility().value
-    # And a default nobody can run is the contradiction itself.
-    assert defaults[0].available is True

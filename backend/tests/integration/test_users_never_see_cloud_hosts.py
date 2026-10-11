@@ -1,10 +1,9 @@
-"""Users see their session's sandbox, never the cloud host under it, and no
-team counts cloud machines any more."""
+"""Users see an agent's sandbox, never the platform machine under it, and no
+team counts the platform's machines."""
 
 import uuid
 
 from app.core.config import settings
-from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent_session.models import AgentSession
 from app.domain.project.repositories import ProjectRepository
 from tests.integration.conftest import new_project, session_auth_headers
@@ -30,13 +29,10 @@ def test_a_cloud_sessions_sandbox_is_shown_without_its_host(client, monkeypatch)
                     conversation_id=uuid.UUID(room),
                     agent_handle="agent",
                     harness="claude-code",
-                    execution_request={
-                        "generation": generation,
-                        "choice": standard_choice("cloud").model_dump(),
-                        "authorized_by": None,
-                    },
+                    execution_request={"generation": generation},
                     work_lease={
                         "kind": "device",
+                        "platform": True,
                         "generation": generation,
                         "resource_id": generation,
                         "device_id": HOST_DEVICE,
@@ -53,12 +49,12 @@ def test_a_cloud_sessions_sandbox_is_shown_without_its_host(client, monkeypatch)
     client.portal.call(seed)
 
     answer = client.get(
-        f"/topics/{room}/compute-profile", headers=session_auth_headers("alice")
+        f"/topics/{room}/environment", headers=session_auth_headers("alice")
     )
 
     assert answer.status_code == 200, answer.text
     [session] = answer.json()["data"]["sessions"]
-    assert session["lease"] == {"status": "ready", "online": False}
+    assert (session["status"], session["online"]) == ("ready", False)
     assert HOST_DEVICE not in answer.text
     assert "/home/cheese" not in answer.text
 
@@ -91,7 +87,7 @@ def test_no_route_lists_counts_or_powers_cloud_machines(client):
     }
 
 
-def test_a_cloud_choice_carries_no_machine_size(client, monkeypatch):
+def test_a_sandbox_carries_no_machine_size(client, monkeypatch):
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
     project = new_project(client, "No sizes", owner="alice")
@@ -102,8 +98,8 @@ def test_a_cloud_choice_carries_no_machine_size(client, monkeypatch):
     ).json()["data"]["id"]
 
     sized = client.put(
-        f"/topics/{room}/compute-profile",
-        json={"choice": {"profile": "cloud", "cores": 8}},
+        f"/topics/{room}/environment-default",
+        json={"environment": {"kind": "sandbox", "spec": "standard", "cores": 8}},
         headers=session_auth_headers("alice"),
     )
 

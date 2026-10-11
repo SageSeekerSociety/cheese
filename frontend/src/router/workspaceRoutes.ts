@@ -92,6 +92,16 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
+      // 一个频道自己的文件：贴进来的图、芝士交付的文档、定时任务交回的结果。整页打开
+      // （不是工作面板里的一格），因为它是「这个频道里有什么」的完整答案，而且是唯一
+      // 一处能看见它们的地方——以前只有干活的那台机器和知道名字的人看得见。
+      name: 'workspace-channel-files',
+      path: `channels/:topicId${NUMBER_OR_ID}/files`,
+      component: () => import('@/views/workspace/ChannelFiles.vue'),
+      props: addressProps,
+      meta: { titleKey: 'navigation.project.channelFiles', hideTabs: true, backTo: 'workspace-topic' },
+    },
+    {
       // 一条支线：频道主线上一条消息下面的回复。和频道页是同一个组件——桌面上频道
       // 主线还在左边，支线占右边那一半；手机上支线是一整页，← 回到频道。
       name: 'workspace-thread',

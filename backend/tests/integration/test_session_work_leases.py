@@ -35,7 +35,7 @@ pytestmark = pytest.mark.anyio
 
 @pytest.mark.parametrize("background_state", ["running", "unresponsive"])
 @pytest.mark.parametrize("old_online", [True, False])
-async def test_every_session_in_a_room_acquires_the_rooms_device(
+async def test_each_session_in_a_room_acquires_its_own_environments_device(
     client, monkeypatch, old_online, background_state
 ):
     project = post_project(
@@ -77,14 +77,13 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
             session = await AgentSessionService(db).ensure(
                 topic_id, handle, harness="claude-code"
             )
-            session.execution_request = {
-                "generation": str(uuid.uuid4()),
-                "choice": {
-                    "name": handle,
-                    "profile": "device",
-                    "device_id": device.device_id,
-                },
-            }
+            session.execution_request = {"generation": str(uuid.uuid4())}
+            await AgentSessionService(db).set_environment(
+                topic_id,
+                handle,
+                {"kind": "self_hosted", "device_id": device.device_id},
+                chosen_by=None,
+            )
             session.runtime_location = {
                 "device_id": "center",
                 "resource_id": resource,
@@ -101,13 +100,6 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
             )
             identities.append((session.id, device.device_id, token))
             assert session.work_lease is None
-        # 房间的选择是第一台：两条会话各自那份 ``choice`` 指着不同的机器，也都落在这
-        # 一台上——会话行上那一份不是来源。
-        topic.compute_config = {
-            "name": "ada",
-            "profile": "device",
-            "device_id": identities[0][1],
-        }
         await db.commit()
 
     async def install(device, argv, **kwargs):
@@ -145,8 +137,8 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
 
             return {
                 "capabilities": ["prepare"],
-                # Installed isolated, as a room nobody gave the machine is.
-                "sandbox": True,
+                # Installed unisolated, as on a self-hosted machine.
+                "sandbox": False,
                 "protocol_version": runtime.PROTOCOL_VERSION,
                 "files": {
                     name: hashlib.sha256(value.encode()).hexdigest()
@@ -160,9 +152,7 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     remote = AsyncMock(side_effect=executor_answer)
     monkeypatch.setattr(execution, "call", remote)
     tokens = []
-    room_device = identities[0][1]
-    for session_id, _own_choice, token in identities:
-        device = room_device
+    for session_id, device, token in identities:
         response = client.post(
             f"/topics/{topic_id}/sessions/{session_id}/work-lease",
             headers={"X-Cheese-Token": token},
@@ -220,16 +210,18 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     assert hub.exec.await_count == 3
     assert upgraded.json()["data"]["target"]["device_id"] == identities[0][1]
     remote.side_effect = executor_answer
-    # Both sessions of the room hold hands on the one machine, each in a
-    # workspace of its own: one container per topic, one worktree per teammate.
+    # Each session of the room holds hands where its own environment is, in a
+    # workspace of its own.
     async with client.test_factory() as db:
         leases = [
             (await AgentSessionService(db).by_id(sid)).work_lease
             for sid, _, _ in identities
         ]
-    assert [lease["device_id"] for lease in leases] == [room_device, room_device]
+    assert [lease["device_id"] for lease in leases] == [
+        identities[0][1],
+        identities[1][1],
+    ]
     assert leases[0]["resource_id"] != leases[1]["resource_id"]
-    assert leases[0]["home"] != leases[1]["home"]
     wrong_session = client.post(
         f"/topics/{topic_id}/sessions/{identities[1][0]}/work-lease",
         headers={"X-Cheese-Token": identities[0][2]},
@@ -240,7 +232,8 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     owner_headers = session_auth_headers("alice")
     first_id, first_device, first_token = identities[0]
     second_id, second_device, _ = identities[1]
-    choice_path = f"/topics/{topic_id}/compute-profile"
+    switch_path = f"/topics/{topic_id}/sessions/{first_id}/environment"
+    on_second = {"kind": "self_hosted", "device_id": second_device}
     from app.domain.agent_instance.models import AgentInstance
 
     async with client.test_factory() as db:
@@ -274,14 +267,14 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         assert dispatch.outcome is None
     hub.is_online = lambda device: old_online or device != first_device
     listing = client.get(
-        f"/topics/{topic_id}/compute-profile", headers=owner_headers
+        f"/topics/{topic_id}/environment", headers=owner_headers
     ).json()["data"]["sessions"]
     assert (
-        next(item for item in listing if item["id"] == str(first_id))["lease"]["online"]
+        next(item for item in listing if item["session_id"] == str(first_id))["online"]
         is old_online
     )
-    # An agent may change its own work destination; the machine it leaves gets
-    # one checkpoint first, if it can be reached.
+    # One session's environment changes; the machine it leaves gets one
+    # checkpoint first, if it can be reached.
     from app.domain.agent.models import AgentTurn
 
     async with client.test_factory() as db:
@@ -338,12 +331,10 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
                 }
                 await db.commit()
             response = client.put(
-                f"/topics/{topic_id}/compute-profile",
-                headers={"X-Cheese-Token": first_token},
-                json={"profile": "device", "device_id": second_device},
+                switch_path, headers=owner_headers, json={"environment": on_second}
             )
-            # Reachable or not, its checkpoint through or not: the agent's own
-            # switch goes ahead.
+            # Reachable or not, its checkpoint through or not: the switch goes
+            # ahead.
             assert response.status_code == 200, response.text
         finally:
             release.set()
@@ -358,13 +349,14 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
         if call.args[1] == "control"
     )
     async with client.test_factory() as db:
-        # 整个房间一起搬：发起的这一条和房间里的另一条都把手交了出来。
-        for sid in (first_id, second_id):
-            moved = await AgentSessionService(db).by_id(sid)
-            assert moved.work_lease is None
-            assert moved.execution_request["choice"]["device_id"] == second_device
-        room_now = await db.get(Topic, topic_id)
-        assert room_now.compute_config["device_id"] == second_device
+        # Only the session that was switched gave its hands up; the other keeps
+        # the machine it holds.
+        moved = await AgentSessionService(db).by_id(first_id)
+        assert moved.work_lease is None
+        stayed = await AgentSessionService(db).by_id(second_id)
+        assert stayed.work_lease["device_id"] == second_device
+        chosen = await AgentSessionService(db).environment(topic_id, "ada")
+        assert chosen.environment == on_second
     old_call = client.post(
         f"/topics/{topic_id}/execution/{resource}",
         headers={"X-Cheese-Token": tokens[0]},
@@ -381,15 +373,7 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     current_token = response.json()["data"]["token"]
     current_target = response.json()["data"]["target"]
     repeated = client.put(
-        choice_path,
-        headers={"X-Cheese-Token": first_token},
-        json={
-            "choice": {
-                "name": "Renamed but same computer",
-                "profile": "device",
-                "device_id": second_device,
-            }
-        },
+        switch_path, headers=owner_headers, json={"environment": on_second}
     )
     assert repeated.status_code == 200, repeated.text
     async with client.test_factory() as db:
@@ -425,8 +409,9 @@ async def test_every_session_in_a_room_acquires_the_rooms_device(
     )
     assert revoked.status_code == 403
 
-    # A session that joins the room later takes the room's choice with it.
+    # A session that joins the room later takes the room's default.
     async with client.test_factory() as db:
+        (await db.get(Topic, topic_id)).default_environment = on_second
         fresh = await AgentSessionService(db).ensure(
             topic_id, "first-tool-later", harness="claude-code"
         )
@@ -496,14 +481,13 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             session = await AgentSessionService(db).ensure(
                 topic_id, handle, harness="claude-code"
             )
-            session.execution_request = {
-                "generation": str(uuid.uuid4()),
-                "choice": {
-                    "name": handle,
-                    "profile": "device",
-                    "device_id": device.device_id,
-                },
-            }
+            session.execution_request = {"generation": str(uuid.uuid4())}
+            await AgentSessionService(db).set_environment(
+                topic_id,
+                handle,
+                {"kind": "sandbox", "spec": f"devices_of:{owner.id}"},
+                chosen_by=None,
+            )
             session.runtime_location = {
                 "device_id": "center",
                 "resource_id": resource,
@@ -704,9 +688,10 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
         assert current.work_lease["resource_id"] == resource_id
 
 
-async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
-    """Being on the project is enough; the agent need not sit on the team itself."""
-    from app.domain.agent import compute_configs
+async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch):
+    """Being on the project is enough; the agent need not sit on the team itself.
+    It moves only itself, and leaving a platform sandbox gives its place back."""
+    from app.domain.machine import environments
     from app.domain.project.models import Project
     from app.domain.team.models import Team
 
@@ -753,28 +738,24 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
         team_id = team.id
         (await db.get(Project, project_id)).team_id = team_id
         await db.commit()
-    monkeypatch.setattr(compute_configs, "cloud_provisionable", lambda settings: True)
-    # 房间那条路由也问池接没接入（``compute_selectable``）。
-    from app.domain.agent import market
-
-    monkeypatch.setattr(market, "cloud_provisionable", lambda settings: True)
-    # 会话凭据改的是房间（一个话题一个容器）。
-    path = f"/topics/{topic_id}/compute-profile"
-    body = {"choice": {"name": "Cloud", "profile": "cloud"}}
+    monkeypatch.setattr(environments, "cloud_provisionable", lambda settings: True)
+    path = f"/topics/{topic_id}/sessions/{session_id}/environment"
+    standard = {"kind": "sandbox", "spec": "standard"}
     headers = {"X-Cheese-Token": token}
-    selected = client.put(path, headers=headers, json=body)
+    selected = client.put(path, headers=headers, json={"environment": standard})
     assert selected.status_code == 200, selected.text
-    assert selected.json()["data"]["choice"]["profile"] == "cloud"
+    assert selected.json()["data"]["environment"] == standard
     async with client.test_factory() as db:
         row = await AgentSessionService(db).by_id(session_id)
-        assert row.execution_request["choice"]["profile"] == "cloud"
         assert row.work_lease is None
-        assert row.execution_request["authorized_by"]["via"] == "cheese"
-        assert row.execution_request["authorized_by"]["handle"] == actor_handle
+        chosen = await AgentSessionService(db).environment(topic_id, actor_handle)
+        assert chosen.environment == standard
+        assert chosen.chosen_by["via"] == "cheese"
+        assert chosen.chosen_by["handle"] == actor_handle
 
     # The session was placed on a host still being created: it holds a home
     # there but no lease yet. Switching away gives that slot back to the pool.
-    from app.domain.machine.models import CloudHost, CloudHostHome, MachineStatus
+    from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 
     async with client.test_factory() as db:
         host = CloudHost(
@@ -792,8 +773,9 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
         db.add(host)
         await db.flush()
         db.add(
-            CloudHostHome(
+            SandboxHome(
                 host_id=host.id,
+                spec="standard",
                 project_id=project_id,
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
@@ -814,27 +796,20 @@ async def test_the_rooms_agent_may_choose_cloud(client, monkeypatch):
             project_id,
             actor_user_id=actor_id,
         )
-        device_id = device.device_id
         await db.commit()
-    replacement = {
-        "choice": {
-            "name": "Work computer",
-            "profile": "device",
-            "device_id": device_id,
-        }
-    }
-    switched = client.put(path, headers=headers, json=replacement)
+    replacement = {"kind": "sandbox", "spec": f"devices_of:{actor_id}"}
+    switched = client.put(path, headers=headers, json={"environment": replacement})
     assert switched.status_code == 200, switched.text
     async with client.test_factory() as db:
         homes = list(
-            await db.scalars(
-                select(CloudHostHome).where(CloudHostHome.host_id == host_id)
-            )
+            await db.scalars(select(SandboxHome).where(SandboxHome.host_id == host_id))
         )
         row = await AgentSessionService(db).by_id(session_id)
     assert homes == []
     assert row.work_lease is None
-    assert row.execution_request["choice"]["device_id"] == device_id
+    async with client.test_factory() as db:
+        chosen = await AgentSessionService(db).environment(topic_id, actor_handle)
+    assert chosen.environment == replacement
 
 
 async def test_each_dialer_gets_its_configured_base_not_the_request_host(
@@ -889,12 +864,13 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
         )
         session.execution_request = {
             "generation": str(uuid.uuid4()),
-            "choice": {
-                "name": "worker",
-                "profile": "device",
-                "device_id": device.device_id,
-            },
         }
+        await AgentSessionService(db).set_environment(
+            topic_id,
+            session.agent_handle,
+            {"kind": "sandbox", "spec": f"devices_of:{owner.id}"},
+            chosen_by=None,
+        )
         session.runtime_location = {
             "device_id": "center",
             "resource_id": resource,
@@ -983,10 +959,9 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
         await devices.assign_to_project(
             device.device_id, project_id, actor_user_id=owner.id
         )
-        topic.compute_config = {
-            "name": "ada",
-            "profile": "device",
-            "device_id": device.device_id,
+        topic.default_environment = {
+            "kind": "sandbox",
+            "spec": f"devices_of:{owner.id}",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"
@@ -1103,10 +1078,9 @@ async def test_a_recheck_that_outlasts_its_request_leaves_the_session_startable(
         await devices.assign_to_project(
             device.device_id, project_id, actor_user_id=owner.id
         )
-        topic.compute_config = {
-            "name": "ada",
-            "profile": "device",
-            "device_id": device.device_id,
+        topic.default_environment = {
+            "kind": "sandbox",
+            "spec": f"devices_of:{owner.id}",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"
@@ -1226,10 +1200,9 @@ async def test_an_own_machine_that_just_dropped_is_called_not_refused(
         await devices.assign_to_project(
             device.device_id, project_id, actor_user_id=owner.id
         )
-        topic.compute_config = {
-            "name": "laptop",
-            "profile": "device",
-            "device_id": device.device_id,
+        topic.default_environment = {
+            "kind": "sandbox",
+            "spec": f"devices_of:{owner.id}",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"
@@ -1312,10 +1285,9 @@ async def _a_room_on_its_own_machine(client):
         await devices.assign_to_project(
             device.device_id, project_id, actor_user_id=owner.id
         )
-        topic.compute_config = {
-            "name": "ada",
-            "profile": "device",
-            "device_id": device.device_id,
+        topic.default_environment = {
+            "kind": "sandbox",
+            "spec": f"devices_of:{owner.id}",
         }
         session = await AgentSessionService(db).ensure(
             topic_id, "cheese", harness="claude-code"

@@ -14,7 +14,7 @@ description: >
 
 Review changed code against cheese-backend-py project standards.
 
-项目基础规范：@CLAUDE.md
+项目基础规范：@AGENTS.md
 (git pull 后的检查见 `post-pull` skill;迁移/后端测试/e2e 的领域坑见 `.claude/rules/`。)
 
 ## Review Workflow
@@ -59,11 +59,11 @@ task check
 
 ## Review Checklist
 
-### 1. Conventions (canonical copies live in CLAUDE.md — already in context)
+### 1. Conventions (canonical copies live in AGENTS.md — already in context)
 
-Check the diff against every rule in CLAUDE.md's **Architecture / Python
+Check the diff against every rule in AGENTS.md's **Architecture / Python
 Conventions / API Design / Datetime / Security** sections. This skill does not
-restate them; CLAUDE.md is the single source of truth.
+restate them; AGENTS.md is the single source of truth.
 
 ### 2. Testing
 

@@ -116,6 +116,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。这条边在
         # api/doc_agent.py 时就有，挪进领域层才进了这本账。
         ("app.domain.agent.document.question", "app.domain.block.repositories"),
+        # agent.turn.steps.reminders 是从 agent.chat 里挪出来的那一块（平台往正
+        # 在跑的一轮里说话的两条扫底：沉默提醒、清单停着提醒）。它摸的
+        # repository 只有 block 一个，正是原先 chat.py 里 `remind_silent_turns` 那
+        # 一段跟着它走的：读一条消息、拿提问的人是谁（定这一句话用哪种语言）。
+        # block 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同
+        # 一件事。拆模块没有新增跨包的边，只是发起方从 chat.py 换成了
+        # reminders.py，所以按同一笔债入账。
+        ("app.domain.agent.turn.steps.reminders", "app.domain.block.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
@@ -405,7 +413,7 @@ def _stale_exemptions(
 
     **发起方模块在这棵树里根本不存在的，不算陈行。** 棘轮这一半主张的是「债还完
     了，把行删掉」；文件都不在这个 checkout 里，这个主张就无从谈起——本仓的工作区
-    经常落后于 main（见 CLAUDE.md），照 CI 在更新的 main 上报的违规入账时，那条
+    经常落后于 main（见 AGENTS.md），照 CI 在更新的 main 上报的违规入账时，那条
     豁免在旧 base 上必然找不到对应文件。不加这层判断，棘轮就会把「你的 checkout
     落后」误报成「这笔债还完了」，而正确的动作恰恰相反。
 

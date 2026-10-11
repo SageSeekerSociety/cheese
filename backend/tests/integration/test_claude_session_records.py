@@ -405,6 +405,61 @@ def test_a_runner_that_died_mid_turn_ends_the_turn_where_the_room_sees_it(
     assert "exited" in str(frames)
 
 
+def test_a_message_after_a_dead_runner_gets_a_turn(client, stub_hooks):
+    """The runner's abrupt exit leaves the inputs it was holding unfinished.
+    Nobody else will report on them, so the seat would refuse every later
+    message — the room goes quiet. The death is what ends them."""
+
+    def turn(topic, prompt, reply, agent=None):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        stub_hooks.uses(topic, "Bash", command="make build")
+
+    stub_hooks.emit_turn = turn
+    room = _room(client)
+    topic = uuid.UUID(room)
+    with room_socket(client, room, "alice") as ws:
+        post_message(client, room, "alice", {"content": "@芝士 编一下"})
+        _until(
+            ws,
+            lambda f: f["type"] == "event_block" and "make build" in str(f["block"]),
+        )
+        stub_hooks.alive = False
+        assert _until_done(ws)[-1]["type"] == "error"
+
+    # The work's inputs are ended where the death was heard: unfinished they
+    # would refuse the seat, and no sweep reaches a closed interval.
+    async def ended_for_good():
+        async with client.test_factory() as session:
+            rows = list(
+                await session.scalars(
+                    select(NativeInput).where(NativeInput.conversation_id == topic)
+                )
+            )
+            assert rows, "the killed turn held no input"
+            assert all(row.termination == "orphaned" for row in rows)
+            assert all(row.completed_at is None for row in rows)
+
+    client.portal.call(ended_for_good)
+
+    # The seat takes the next message: a turn starts for it and ends there.
+    # The runner the death took is replaced by a fresh one, as the machine
+    # would start another session.
+    stub_hooks.alive = True
+    stub_hooks.drop_session(topic)
+
+    def second(topic_id, prompt, reply, agent=None):
+        stub_hooks.starts(topic_id)
+        stub_hooks.says(topic_id, "好的")
+        stub_hooks.stops(topic_id, "好的")
+
+    stub_hooks.emit_turn = second
+    with room_socket(client, room, "alice") as ws:
+        post_message(client, room, "alice", {"content": "@芝士 再来一次"})
+        frames = _until_done(ws)
+    assert frames[-1]["type"] == "done", frames[-1]
+
+
 class StillWorking(StubChannel):
     def emit_turn(self, topic_id, prompt, reply, agent=None):
         del reply

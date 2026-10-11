@@ -24,8 +24,24 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
   component: blank,
 }))
 
-/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表），它们各要一条真名字。 */
+/** 目录中按 name 指路的链接都要有对应路由；路径与正式路由一致，才能画出正确的 href。 */
 const catalogTargets = [
+  { path: '/account/signin', name: 'SignIn', component: blank },
+  { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
+  // 空间设置那一层的七条子路由（`settings/Index.vue` 的 `SECTIONS`，名字与路径照
+  // `router/spaces.ts` 的 `manage/settings` 子树）。目录左边的链接按这些名字指路。
+  { path: '/spaces/:spaceId/manage/settings/basic', name: 'SpacesDetailSettingsBasic', component: blank },
+  { path: '/spaces/:spaceId/manage/settings/categories', name: 'SpacesDetailSettingsCategories', component: blank },
+  { path: '/spaces/:spaceId/manage/settings/templates', name: 'SpacesDetailSettingsTemplates', component: blank },
+  { path: '/spaces/:spaceId/manage/settings/invite-codes', name: 'SpacesDetailSettingsInviteCodes', component: blank },
+  {
+    path: '/spaces/:spaceId/manage/settings/domain-groups',
+    name: 'SpacesDetailSettingsDomainGroups',
+    component: blank,
+  },
+  { path: '/spaces/:spaceId/manage/settings/guidance', name: 'SpacesDetailSettingsGuidance', component: blank },
+  { path: '/spaces/:spaceId/manage/settings/materials', name: 'SpacesDetailSettingsMaterials', component: blank },
+  { path: '/users/:handle', name: 'UserPage', component: blank },
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
@@ -33,6 +49,11 @@ const catalogTargets = [
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
+  { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
+  { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
+  { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
   { path: '/spaces', name: 'HomeSpaces', component: blank },
 ]
 

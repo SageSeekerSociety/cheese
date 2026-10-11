@@ -1,7 +1,7 @@
 """守卫：产生事件的调用点必须从 `landing()` 取落点，不许就地挑一个 `conversation_id`。
 
 和 ``test_author_type_two_values.py`` / ``test_no_adhoc_auth_helpers.py`` 一样，
-这是一条**静态**测试 —— 被测的东西本身就是源码树的一个性质，属于 CLAUDE.md 那条
+这是一条**静态**测试 —— 被测的东西本身就是源码树的一个性质，属于 AGENTS.md 那条
 「测行为、不读源码」的例外。
 
 它守的是这次改动唯一守不住自己的一半。封闭表（``block/about.py``）只在被调用时才

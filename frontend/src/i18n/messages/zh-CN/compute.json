@@ -1,12 +1,30 @@
 {
-  "choice": {
-    "device": "自有设备",
-    "deviceOnFirstRun": "首次运行时选择在线设备",
-    "sandbox": "每个会话一个独立环境 · 首次运行时自动准备",
-    "vm": "每个会话一台独立的云虚拟机，可用 Docker 和 sudo · 首次运行时自动准备",
-    "cloud": "云端环境",
-    "cloudVm": "整台云虚拟机",
-    "anyDevice": "自有设备 · 自动选择"
+  "env": {
+    "sandbox": "沙箱",
+    "sandboxHint": "只看得到自己的工作目录和本项目的包缓存，看不到别的会话",
+    "sandboxOf": "沙箱 · {spec}",
+    "selfHosted": "指定我的电脑",
+    "selfHostedHint": "一定要用某台电脑时选它：直接在那台电脑上跑，不隔离，看得到并能操作整台电脑",
+    "noDeviceOfMine": "你还没有登记自己的电脑",
+    "whichDevice": "哪台电脑",
+    "ownerOnly": "只有这台电脑的主人能指定",
+    "removedDevice": "已移出的电脑",
+    "online": "在线",
+    "offline": "离线",
+    "edit": "改",
+    "cancel": "取消",
+    "submit": "使用这个环境",
+    "sessionHeading": "{name} 的环境",
+    "sessionHint": "只换这一个 AI 队友，别的队友不受影响。换之前先把它的改动推送到分支，推没推上去都会换；每一轮结束时的改动都有快照保存。",
+    "sessionLine": "{name}：{env}",
+    "notStarted": "还没开始运行，开工时用新会话默认",
+    "defaultHeading": "新会话默认",
+    "defaultHint": "只影响之后开始运行的 AI 队友，已经在运行的继续用各自的环境。",
+    "defaultHere": "新会话默认：{name}",
+    "projectDefault": "项目默认",
+    "loadFailed": "环境加载失败",
+    "saveFailed": "更换环境失败",
+    "specHeading": "规格"
   },
   "usage": {
     "unknown": "未知",

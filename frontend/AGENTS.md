@@ -1,6 +1,6 @@
 # frontend/ — for agents working in this directory
 
-Read [`../CLAUDE.md`](../CLAUDE.md) first; this file only adds what applies here.
+Read [`../AGENTS.md`](../AGENTS.md) first; this file only adds what applies here.
 
 ## A component does not fetch
 

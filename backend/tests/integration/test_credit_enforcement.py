@@ -314,10 +314,9 @@ async def test_a_free_team_cannot_use_a_model_above_its_plan_whatever_the_projec
 
 
 @pytest.mark.anyio
-async def test_a_project_narrows_a_plan_but_a_plan_never_limits_machines(db_factory):
+async def test_a_project_narrows_a_plan(db_factory):
     async with db_factory() as session:
         reserve = await team_terms(session, await _team(session, "us", "reserve"))
-        free = await team_terms(session, await _team(session, "lab"))
     included = gate.Call(
         resource=gate.Resource.model,
         subject="glm",
@@ -328,18 +327,6 @@ async def test_a_project_narrows_a_plan_but_a_plan_never_limits_machines(db_fact
     narrowed = gate.policy_of({"allowed_tiers": ["premium"]}, reserve.model_tiers)
     with pytest.raises(gate.OverTier):
         gate.check(included, narrowed, "agent")
-
-    cloud = gate.Call(
-        resource=gate.Resource.machine,
-        subject="cloud",
-        label="Cloud",
-        tier="premium",
-        approver="owner",
-    )
-    assert isinstance(
-        gate.check(cloud, gate.policy_of(None, free.model_tiers), "agent"),
-        gate.Allowed,
-    )
 
 
 @pytest.mark.anyio

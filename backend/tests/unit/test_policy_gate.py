@@ -1,11 +1,10 @@
 """撞上档位策略的调用变成给人的提议，或者一次说得出口的拒绝。
 
-四条判据（结论 3 后半、结论 40 后半）：
+三条判据（结论 3 后半、结论 40 后半）：
 
   ① 档内的调用直接放行
   ② 超档 + 处置是「变提议」 → 产物是一条提议，这次调用没有发生
   ③ 超档 + 处置是「拒绝」   → 一次看得见的拒绝，不是悄悄降档（I27）
-  ④ 要一台自托管机器，机主收到的是同一条提议路径
 
 外加一条守卫：全仓「超档怎么办」只有 `app/domain/policy/gate.py` 一处回答。
 
@@ -20,7 +19,6 @@ import pathlib
 import pytest
 
 from app.domain.agent.market import (
-    COMPUTE_TIERS,
     TIER_BYO,
     TIER_FRONTIER,
     TIER_INCLUDED,
@@ -51,20 +49,7 @@ def _model(tier: str = TIER_FRONTIER) -> Call:
     )
 
 
-def _machine(tier: str = TIER_BYO) -> Call:
-    return Call(
-        resource=Resource.machine,
-        subject="dev-box-7",
-        label="小王的工作站",
-        tier=tier,
-        approver="xiaowang",
-    )
-
-
-# —— ① 档内的调用直接放行 ————————————————————————————————————
-
-
-@pytest.mark.parametrize("call", [_model(TIER_INCLUDED), _machine(TIER_BYO)])
+@pytest.mark.parametrize("call", [_model(TIER_INCLUDED), _model(TIER_BYO)])
 @pytest.mark.parametrize("disposition", [DENY, PROPOSE])
 def test_a_call_inside_the_allowed_tiers_just_goes_through(call, disposition):
     """档内就是档内，处置是什么都无关——处置只在超档时才有话说。"""
@@ -77,7 +62,7 @@ def test_a_call_inside_the_allowed_tiers_just_goes_through(call, disposition):
     assert check(call, policy, "cheese") == Allowed(call)
 
 
-@pytest.mark.parametrize("call", [_model(TIER_FRONTIER), _machine(TIER_PREMIUM)])
+@pytest.mark.parametrize("call", [_model(TIER_FRONTIER), _model(TIER_PREMIUM)])
 def test_a_project_that_has_not_restricted_tiers_lets_everything_through(call):
     """默认是不限档——今天所有项目的行为，部署窗口两个方向读得懂同一份设置。"""
     assert check(call, policy_of(None), "cheese") == Allowed(call)
@@ -167,33 +152,6 @@ def test_a_refused_call_never_comes_back_as_a_cheaper_one():
     except OverTier:
         return
     pytest.fail(f"超档的调用被放行成了 {verdict!r}")
-
-
-# —— ④ 要一台自托管机器，机主收到的是同一条提议路径 ————————————
-
-
-def test_asking_for_someone_elses_machine_proposes_to_its_owner():
-    """结论 40：自托管要机主点头。走的是模型那条一模一样的路。"""
-    verdict = check(
-        _machine(COMPUTE_TIERS["device"]),
-        policy_of({ALLOWED_TIERS_KEY: [TIER_INCLUDED], OVER_TIER_KEY: PROPOSE}),
-        "cheese",
-    )
-    assert isinstance(verdict, Proposal)
-    assert verdict.approver == "xiaowang"
-    assert "小王的工作站" in verdict.content
-
-
-def test_a_machine_and_a_model_take_the_same_road():
-    """一个闸门两个调用者：两种资源的答案是同一个类型、同一个形状。"""
-    policy = policy_of({ALLOWED_TIERS_KEY: [TIER_INCLUDED], OVER_TIER_KEY: PROPOSE})
-    model_verdict = check(_model(TIER_FRONTIER), policy, "cheese")
-    machine_verdict = check(_machine(TIER_BYO), policy, "cheese")
-    assert type(model_verdict) is type(machine_verdict) is Proposal
-    assert model_verdict.approver != machine_verdict.approver
-
-
-# —— 守卫：「超档怎么办」只有一处回答 ————————————————————————
 
 
 def test_only_the_gate_knows_what_each_disposition_does():

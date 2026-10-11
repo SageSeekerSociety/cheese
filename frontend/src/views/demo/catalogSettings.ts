@@ -19,8 +19,9 @@
  * 末尾另收「归档项目」那一块（`ArchiveProjectSection`）和它的确认框（`ArchiveProjectDialog`）：
  * 两件都是哑的，请求和状态在 `composables/useProjectArchive.ts`。
  *
- * 再收一件 `ComputeChoiceForm`（选工作电脑的表单，设置页的算力那一组用它），
- * 从 `catalog.ts` 搬来：那份文件到了一千行的上限。
+ * 再收 `EnvironmentPicker`（选执行环境的那几组单选，设置页的算力那一组和名册都用它）
+ * 和包着它的 `EnvironmentMenu`（名册行尾那颗「改」），从 `catalog.ts` 搬来：那份文件
+ * 到了一千行的上限。
  *
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `SETTINGS_ENTRIES` 这个
  * 值，运行时不构成循环。
@@ -41,7 +42,8 @@ import {
 } from './catalogSettingsFixtures'
 
 import ArchiveProjectDialog from '@/components/ArchiveProjectDialog.vue'
-import ComputeChoiceForm from '@/components/ComputeChoiceForm.vue'
+import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
+import EnvironmentPicker from '@/components/EnvironmentPicker.vue'
 import ArchiveProjectSection from '@/components/settings/ArchiveProjectSection.vue'
 import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
@@ -263,18 +265,53 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'compute-choice-form',
-    title: 'ComputeChoiceForm',
-    about: '选一台工作电脑：云端沙箱或自有设备。云端沙箱没有规格可选，每个会话一个。',
-    file: 'src/components/ComputeChoiceForm.vue',
-    component: ComputeChoiceForm,
+    id: 'environment-menu',
+    title: 'EnvironmentMenu',
+    about:
+      '名册里一条会话、或「新会话默认」那一行行尾的「改」：点开是环境选择，选定后交给 `save`，提议和错误留在菜单里。',
+    file: 'src/components/EnvironmentMenu.vue',
+    component: EnvironmentMenu,
     needs: UI,
     states: [
       {
-        name: '云端可用',
-        note: '默认选中云端沙箱，下面说明每个会话在自己的沙箱里工作；另有两台自有设备（一台离线）。',
-        props: { devices: COMPUTE_DEVICES, cloudAvailable: true },
-        expect: '每个会话在自己的云端环境里工作，首次运行时自动准备',
+        name: '收着',
+        note: '只有行尾那颗「改」；点开才是环境选择。',
+        props: {
+          heading: '芝士 的环境',
+          current: { kind: 'sandbox', spec: 'standard' },
+          devices: COMPUTE_DEVICES,
+          specs: [
+            { spec: 'standard', label: '标准' },
+            { spec: 'vm', label: '虚拟机' },
+          ],
+          save: async () => {},
+        },
+        expect: '改',
+      },
+    ],
+  },
+  {
+    id: 'environment-picker',
+    title: 'EnvironmentPicker',
+    about:
+      '选一个执行环境：沙箱（选规格：标准、虚拟机……），或者指定我的电脑。沙箱在哪台机器上不显示；只能指定自己登记的电脑。',
+    file: 'src/components/EnvironmentPicker.vue',
+    component: EnvironmentPicker,
+    needs: UI,
+    states: [
+      {
+        name: '标准沙箱',
+        note: '默认选中沙箱 · 标准；两台登记的电脑，一台是读者自己的（离线），一台是别人的。',
+        props: {
+          current: { kind: 'sandbox', spec: 'standard' },
+          devices: COMPUTE_DEVICES,
+          specs: [
+            { spec: 'standard', label: '标准' },
+            { spec: 'vm', label: '虚拟机' },
+            { spec: 'devices_of:7', label: '张三的设备' },
+          ],
+        },
+        expect: '只看得到自己的工作目录和本项目的包缓存',
       },
     ],
   },

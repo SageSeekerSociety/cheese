@@ -2099,6 +2099,55 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert _poll(client)["cards_checked"] == 0
 
 
+def test_the_merge_that_closed_a_task_does_not_close_it_again(client, app_world):
+    """一次交付只落地一次：已经合过的那一笔不会再关一次重开出来的任务。
+
+    任务 #58（2026-10-11）：同一张 PR 上有一张退回过的卡。最后一步被采纳、合
+    并落地、任务关掉，负责人重开去接着做（新分支，`pr_number` 归 None）。下一
+    跳轮询又把那张退回卡读了一遍 —— 它自己从没结算过，而 PR 已经合了 —— 于是
+    同一笔合并第二次落到这个任务上，它一分钟后又进了一次写总结的窗口。开着却
+    写「已采纳」的任务谁都不收：左侧栏要 `closing_since` 为空，「未完成」要
+    presentation 不是 done，「已关闭」要 status 是 closed（2026-10-11，任务 #58）。"""
+    fake = app_world["fake"]
+    pid, tid, returned, number, head_sha = _ready_card(client, app_world)
+    rejected = client.post(
+        f"/accept-cards/{returned}/reject",
+        json={"decided_by": "alice", "note": "这批的边界还没证明"},
+        headers=session_auth_headers("alice"),
+    )
+    assert rejected.status_code == 200, rejected.text
+    # 同一张 PR 上再递一张 —— 生产上这是改完又交的那一版。
+    resent = _make_card(client, tid)
+    _give_card_a_pr(client, app_world, tid, resent, number)
+    fake.check_state_by_sha[head_sha] = ("success", "全部通过")
+    fake.merge_sha_by_number[number] = "merge-sha-1"
+    accepted = _accept(client, resent)
+    assert accepted.status_code == 200, accepted.text
+    task_id = delivery_task_id(client, tid)
+    summary_turn_ends(client, task_id)
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "closed"
+
+    reopened = client.post(
+        f"/topics/{task_id}/reopen",
+        headers=session_auth_headers(task["owner_handle"]),
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["data"]["pr_number"] is None
+
+    result = _poll(client)
+
+    assert result["errors"] == []
+    cards = {card["id"]: card for card in _cards(client, tid)}
+    # 这张退回卡自己从没结算过，所以它还在这条轮询路径上 —— 下面这一条就是
+    # 「这一跳真的读了那张已经合掉的 PR」的证据。
+    assert cards[returned]["status"] == "rejected"
+    assert cards[returned]["pr_merged_at"] is not None
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "open"
+    assert task["presentation"]["column"] != "done"
+
+
 @pytest.mark.parametrize("closed", [False, True])
 def test_poll_never_merges_or_rewrites_a_returned_pr(client, app_world, closed):
     fake = app_world["fake"]

@@ -13,7 +13,7 @@ vi.mock('@/api', async (importOriginal) => {
 
 import { MARKET_NODES_REFRESH_MS, useMarketNodes } from './useMarketNodes'
 
-const board = { nodes: [], active_turns_total: 0, current_provider: 'cloud' }
+const board = { nodes: [], active_turns_total: 0, current_provider: 'standard' }
 
 function host(options?: Parameters<typeof useMarketNodes>[0]) {
   let state!: ReturnType<typeof useMarketNodes>

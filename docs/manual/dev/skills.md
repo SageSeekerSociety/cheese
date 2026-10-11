@@ -35,7 +35,7 @@ covers:
 
 `backend/sandbox/skills/cheese/` 是平台自己的那份说明，讲在知是里交付工作的流程：开任务、提交推送、递卡修订、合并冲突，以及 `cheese` 命令行每个子命令的用途；产物与预览、邮箱和飞书、定时与触发、读 CI 各放一份 `references/`。平台工具不在里面列：每个工具带着自己的说明进会话。它对**所有托管仓库**都成立，托管仓库不需要为平台做任何改动。每轮都用得上的那几条平台规矩（房间里的人是产品用户、回复里不提内部机制、不用 `git stash`、改仓库前先开任务）在系统提示词的「平台规矩」一节。
 
-仓库自己的 `CLAUDE.md` 是另一回事，它讲这个仓库本身的结构与约定，跟着仓库走。两者的分工与注入场合见[提示词注入与上下文管理](/dev/context)的「不同场景」一节。
+仓库自己的 `AGENTS.md` 是另一回事，它讲这个仓库本身的结构与约定，跟着仓库走。两者的分工与注入场合见[提示词注入与上下文管理](/dev/context)的「不同场景」一节。
 
 `skills.py` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "wolfram")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md` 和 `doc_blocks.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
 

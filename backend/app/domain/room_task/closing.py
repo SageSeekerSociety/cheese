@@ -61,6 +61,11 @@ async def close_task(
     """
     if conclusion is not None:
         task.conclusion = conclusion
+    # A closed task is not waiting for a summary turn any more, so the window
+    # goes with it. Left behind, it would stay on a task its owner reopens and
+    # read there as 已采纳 while the task is open — the one state that is
+    # listed in neither 「未完成」 nor 「已关闭」.
+    task.closing_since = None
     if task.status is not TaskStatus.closed:
         task.status = TaskStatus.closed
         task.closed_at = datetime.now(UTC)

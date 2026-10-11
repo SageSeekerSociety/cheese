@@ -17,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -227,9 +228,12 @@ class Task(UuidPk, Timestamps, Base):
     )
     last_check_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_check_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
-    # 在哪台工作电脑上做。None = 跟着所在房间的那一项选择（再往上是项目默认）；
-    # 负责人改了才有自己的一份。第一次要用机器时解析一次，写进会话行，之后不变。
-    compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 新进来的 AI 队友在这个任务里用的执行环境（`agent.environment`）。None = 跟
+    # 所在频道的默认（再往上是项目默认）。改它不搬任何人：每位队友自己的那一份在
+    # `agent_environments`。
+    default_environment: Mapped[dict | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     # 哪位 AI 队友在做：它在名册上的座位（`agent_instance_handle`）。
     # None = 所在频道的队友（频道没有自己的就是项目默认的）。
     agent_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)

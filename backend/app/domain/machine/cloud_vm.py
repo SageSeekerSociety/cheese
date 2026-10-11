@@ -5,10 +5,10 @@ is truth in git. Like a sandbox it goes once idle, and the session's next tool
 call prepares a new one.
 
 **Idle** is a sandbox's definition (``SandboxLifecycle._idle_since``), held for
-``cloud_vm_idle_release_s``: the room runs no turn, the session has asked for
-no tool since, counted from the later of its last tool call and the end of the
-room's last turn, and no command the executor runs for it in the background
-keeps it up (up to ``cloud_sandbox_background_cap_s``).
+the vm spec's idle time (``Spec.idle_s``): the room runs no turn, the session
+has asked for no tool since, counted from the later of its last tool call and
+the end of the room's last turn, and no command the executor runs for it in
+the background keeps it up (up to ``cloud_sandbox_background_cap_s``).
 
 **Before it goes**, the VM gets the one best-effort checkpoint a switch of work
 computer gives the machine it leaves (``session_work.checkpoint``, ``cheese
@@ -25,12 +25,12 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
-from app.core.config import settings
+from app.domain.agent.environment import VM, spec_of
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
 from app.domain.machine import lease_claim, session_work
-from app.domain.machine.models import CloudHost, CloudHostHome
+from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_vm_released
 from app.domain.machine.services import HostPool
 from app.domain.topic.models import Topic, TopicStatus
@@ -47,28 +47,30 @@ async def release_idle(db, lifecycle) -> int:
     """Checkpoint and release every idle VM; returns how many were released.
     ``lifecycle`` is the ``SandboxLifecycle`` whose idle measure is used."""
     now = datetime.now(UTC)
-    idle_for = timedelta(seconds=settings.cloud_vm_idle_release_s)
+    vm = spec_of(VM)
+    assert vm is not None
+    idle_for = timedelta(seconds=vm.idle_s)
     candidates = (
         await db.execute(
             select(
-                CloudHostHome.id,
-                CloudHostHome.session_id,
-                CloudHostHome.topic_id,
-                CloudHostHome.active_at,
+                SandboxHome.id,
+                SandboxHome.session_id,
+                SandboxHome.topic_id,
+                SandboxHome.active_at,
                 CloudHost.device_id,
             )
-            .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
-            .join(Topic, Topic.id == CloudHostHome.topic_id)
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
+            .join(Topic, Topic.id == SandboxHome.topic_id)
             .where(
                 # An archived room's VM goes with the room's cleanup.
                 Topic.status != TopicStatus.archived,
                 CloudHost.whole_machine,
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
-                CloudHostHome.session_id.is_not(None),
-                CloudHostHome.active_at < now - idle_for,
+                SandboxHome.session_id.is_not(None),
+                SandboxHome.active_at < now - idle_for,
             )
-            .order_by(CloudHostHome.active_at)
+            .order_by(SandboxHome.active_at)
             .limit(PER_SWEEP)
         )
     ).all()
@@ -101,8 +103,8 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     await TopicService(db).lock_for_execution(home.topic_id)
     row = await AgentSessionService(db).by_id(home.session_id, lock=True)
     current = await db.scalar(
-        select(CloudHostHome)
-        .where(CloudHostHome.id == home.id)
+        select(SandboxHome)
+        .where(SandboxHome.id == home.id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )

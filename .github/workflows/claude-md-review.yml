@@ -1,6 +1,6 @@
-name: CLAUDE.md Review Gate
+name: AGENTS.md Review Gate
 
-# CLAUDE.md loads in full on every turn of every session. A wrong line in it is
+# AGENTS.md loads in full on every turn of every session. A wrong line in it is
 # not one wrong file — it is a standing instruction every agent obeys until a
 # person happens to notice, and nothing in CI notices for you. That asymmetry is
 # why this one file needs a human's approval when nothing else in the repo does.
@@ -12,7 +12,7 @@ name: CLAUDE.md Review Gate
 # into branch protection and delete this workflow.
 #
 # `pull_request_review` has no path filter — GitHub does not offer one for that
-# event — so the script re-derives whether the PR touches CLAUDE.md from the API
+# event — so the script re-derives whether the PR touches AGENTS.md from the API
 # rather than trusting the trigger. That also makes the two events take exactly
 # the same code path.
 on:
@@ -23,7 +23,7 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main]
     paths:
-      - 'CLAUDE.md'
+      - 'AGENTS.md'
   # Without this the gate would go red once and stay red: approving a PR does not
   # re-run its pull_request checks, so there would be no way to turn it green
   # short of pushing an empty commit.
@@ -51,7 +51,7 @@ jobs:
       - name: Gate self-test
         run: python3 .claude/scripts/check-claude-md-review.py --self-test
 
-      - name: A human must have approved this CLAUDE.md change
+      - name: A human must have approved this AGENTS.md change
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

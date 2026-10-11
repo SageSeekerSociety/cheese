@@ -354,6 +354,41 @@ describe('这一支的活', () => {
   })
 })
 
+describe('还没有东西可看的时候', () => {
+  // 没有机器打开过的任务还没有分支：它是「暂无改动」，不是「打不开这个任务」。
+  it('还没有分支的任务说「暂无改动」，不说打不开，也不去问', async () => {
+    listRoomTasks.mockResolvedValue({ data: [{ ...openTask(), branch_name: null }], total: 1 })
+    mount()
+    expect((await screen.findAllByText('暂无改动')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('无法打开这个任务，换一个来源查看')).toBeNull()
+    expect(getGitDiff).not.toHaveBeenCalled()
+    expect(listFiles).not.toHaveBeenCalled()
+  })
+
+  // 文件列表先回来、差异还在路上：这时说「暂无改动」是假话，人会以为这件任务什么都没改。
+  it('差异还没回来时不说「暂无改动」', async () => {
+    let answer!: (v: { diff: string }) => void
+    getGitDiff.mockReturnValue(new Promise((r) => (answer = r)))
+    mount()
+    await waitFor(() => expect(listFiles).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByText('暂无改动')).toBeNull()
+    answer({ diff: DIFF })
+    await waitFor(() => expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy())
+  })
+
+  // 先问这件任务的那一下也一样：那时还什么都没取。
+  it('还在问这件任务时也不说「暂无改动」', async () => {
+    let answer!: (v: unknown) => void
+    listRoomTasks.mockReturnValue(new Promise((r) => (answer = r)))
+    mount()
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByText('暂无改动')).toBeNull()
+    answer({ data: [openTask()], total: 1 })
+    await waitFor(() => expect(document.querySelector('.diff-file[data-path="src/app.ts"]')).toBeTruthy())
+  })
+})
+
 describe('待审阅和取不到的时候', () => {
   it('待审阅的任务默认看交上来的那一版，不去读现场', async () => {
     listRoomTasks.mockResolvedValue({

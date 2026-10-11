@@ -382,7 +382,7 @@ def test_format_status_renders_near_ceiling_state():
 
 # --- the self-describing layer -------------------------------------------
 #
-# CLAUDE.md's rule is "prose documents only what --help cannot tell you". That
+# AGENTS.md's rule is "prose documents only what --help cannot tell you". That
 # only holds if --help actually tells you something: the layer that can never go
 # stale (it is generated from this code) used to be empty at the subcommand
 # level, so every semantic lived in prose that drifted. These two tests keep it

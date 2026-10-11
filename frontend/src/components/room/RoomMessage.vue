@@ -7,7 +7,8 @@
 //
 // 它不认识名册，也不认识时间线：显示名、头像、时间、被回复的那一条，都是房间
 // 算好传进来的。它自己只回答「这一块该画成什么」。
-import type { Block, TodoItem } from '../../cx_types'
+import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
+import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 
 import { computed, ref } from 'vue'
@@ -84,6 +85,10 @@ const props = defineProps<{
   pinnable?: boolean
   /** 这一行置顶在频道上：名字旁边、文件旁边带一个小图钉。 */
   pinned?: boolean
+  /** 编辑时的 @ 候选：和发消息的输入区是同一份名册、同一份话题表。 */
+  mentionPool?: MentionPoolEntry[]
+  /** 编辑框自己 @ 得到的话题，和发消息那个输入区同一份表。 */
+  topicList?: Topic[]
 }>()
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
@@ -281,6 +286,8 @@ function renderPlain(text: string): string {
         v-else-if="editing"
         :text="editText ?? block.content"
         :saving="!!saving"
+        :mention-pool="mentionPool"
+        :topic-list="topicList"
         @save="emit('save-edit', $event)"
         @cancel="emit('cancel-edit')"
       />
