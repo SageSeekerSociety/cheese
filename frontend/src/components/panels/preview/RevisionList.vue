@@ -17,8 +17,6 @@
 import type { DocumentRevisionsBundle } from '../../../composables/useDocumentRevisions'
 import type { DocumentRevision } from '../../../cx_types'
 
-import { useProjectAgentName } from '@/composables/useProjectAgentName'
-
 import { isLibraryPath } from '../../../lib/library'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -35,7 +33,6 @@ const props = defineProps<{
   path?: string | null
 }>()
 
-const agentName = useProjectAgentName()
 function reads(row: DocumentRevision): string {
   if (row.kind === 'replace') return t('work.room.revisions.replaced', { removed: row.removed, added: row.added })
   if (row.kind === 'insert') return t('work.room.revisions.inserted', { added: row.added })
@@ -79,7 +76,7 @@ function reads(row: DocumentRevision): string {
     <p v-if="props.revs.readOnly.value && props.revs.revisions.value.length" class="revs__note t-meta">
       {{
         isLibraryPath(props.path ?? '')
-          ? t('work.room.revisions.libraryReadOnly', { name: agentName })
+          ? t('work.room.revisions.libraryReadOnly')
           : t('work.room.revisions.readOnlyNote')
       }}
     </p>

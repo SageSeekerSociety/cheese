@@ -678,7 +678,7 @@
       "count": "No revisions | 1 revision | {count} revisions",
       "acceptAll": "Accept all",
       "rejectAll": "Reject all",
-      "libraryReadOnly": "The original in the library stays unchanged. To change this document, ask {name} to make a new one from it",
+      "libraryReadOnly": "The original in the library stays unchanged. To change this document, ask the AI teammate to make a new one from it",
       "readOnlyNote": "This version is read-only, so revisions cannot be handled.",
       "where": "Paragraph {paragraph} · {author}",
       "anonymous": "Unnamed",
