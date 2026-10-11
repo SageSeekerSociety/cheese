@@ -77,6 +77,13 @@ the `session_id` header (`chatgpt_session.py`, registered under
 `litellm_settings.callbacks`). The Codex backend keeps a conversation on one
 machine by that header, and without it the conversation's prompt cache misses.
 
+A request to a model whose upstreams are all something other than Anthropic's
+API arrives there without the block Claude Code opens its system prompt with,
+`x-anthropic-billing-header: ...; cch=<hash>; ...` (`system_billing_line.py`,
+registered the same way). `cch` hashes the request body, so it changes on every
+request; at the head of the prompt it makes a prefix cache such as RUC's miss
+the whole conversation. Requests bound for Anthropic keep it.
+
 The box's `backend/.env` must contain:
 
 ```
