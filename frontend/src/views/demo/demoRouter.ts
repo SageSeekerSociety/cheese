@@ -33,6 +33,8 @@ const catalogTargets = [
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
+  { path: '/account/signin', name: 'SignIn', component: blank },
+  { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
   { path: '/spaces/:spaceId/manage/settings/templates', name: 'SpacesDetailSettingsTemplates', component: blank },
   { path: '/spaces/:spaceId/manage/settings/invite-codes', name: 'SpacesDetailSettingsInviteCodes', component: blank },
   {

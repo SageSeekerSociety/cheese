@@ -102,6 +102,8 @@ describe('组件预览站', () => {
     // Vuetify 的「少一个 provide」、vue-router 的「没有这条路由」都从这两个口子出。
     warned = vi.spyOn(console, 'warn').mockImplementation(() => {})
     errored = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // Vuetify rounds the opened invite menu's position to physical pixels.
+    vi.stubGlobal('devicePixelRatio', 1)
     vi.stubGlobal('visualViewport', {
       width: 1024,
       height: 768,

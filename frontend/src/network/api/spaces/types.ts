@@ -1,4 +1,4 @@
-import type { Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
+import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
 export type SpaceApplication = {
   id: number

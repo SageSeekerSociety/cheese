@@ -26,7 +26,7 @@ const LIST_ROUTE = { name: 'SpacesDetailSettingsTemplates', params: { spaceId: 8
 
 /** 题目列表每一行点去哪（`Tasks.vue` 里现算的正是这一条）：画面只把它透给 `TaskRow`。 */
 function rowTo(task: Task): UserRefTarget {
-  return { name: 'TasksDetail', params: { taskId: task.id } }
+  return { name: 'TasksDetail', params: { spaceId: 8, taskId: task.id } }
 }
 
 export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [

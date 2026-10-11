@@ -218,7 +218,7 @@ const announcementsTarget = computed<UserRefTarget>(() => ({
 /** 每一行的去处：题目页地址，带着列表的筛选 —— 从题目页返回时列表还是原来那样。 */
 const rowTo = (task: Task): UserRefTarget => ({
   name: 'TasksDetail',
-  params: { taskId: task.id },
+  params: { spaceId: spaceId.value, taskId: task.id },
   query: route.query,
 })
 

@@ -32,10 +32,11 @@ function mount() {
     routes: [
       // 「回模板列表」那条 NavLink 和底下取消那颗 BaseButton 都按 name 指路。
       {
-        path: '/spaces/:spaceId/settings/templates',
+        path: '/spaces/:spaceId/manage/settings/templates',
         name: 'SpacesDetailSettingsTemplates',
         component: { template: '<div />' },
       },
+      { path: '/:any(.*)*', component: { template: '<div />' } },
     ],
   })
   return render(TemplateFormView, {
@@ -49,12 +50,12 @@ function mount() {
 }
 
 // 左：字段名那一行自己的 id（Vuetify 给输入框挂的 `aria-labelledby` 认的也是它）。
-// 右：控件自己的 id —— Vuetify 把 `id` 落在这个原生 `<input>` 上。
+// 右：控件自己的 id —— Vuetify 把 `id` 落在这个原生控件上。
 const FIELDS = [
-  ['tpl-name-label', 'tpl-name'],
-  ['tpl-desc-label', 'tpl-desc'],
-  ['tpl-title-label', 'tpl-title'],
-  ['tpl-deadline-label', 'tpl-deadline'],
+  ['tpl-name-label', 'tpl-name', 'INPUT'],
+  ['tpl-desc-label', 'tpl-desc', 'TEXTAREA'],
+  ['tpl-title-label', 'tpl-title', 'INPUT'],
+  ['tpl-deadline-label', 'tpl-deadline', 'INPUT'],
 ] as const
 
 describe('题目模板表单的画面', () => {
@@ -65,16 +66,16 @@ describe('题目模板表单的画面', () => {
 
   it('字段名是真 <label>，for 认着字段自己的输入框（浏览器据此把点击转成聚焦）', () => {
     const { container } = mount()
-    for (const [labelId, fieldId] of FIELDS) {
+    for (const [labelId, fieldId, tagName] of FIELDS) {
       const label = container.querySelector(`#${labelId}`) as HTMLLabelElement | null
       expect(label, `没找到 ${labelId}`).toBeTruthy()
       // 拆分里把它从 <label> 改成过 <span>：那一下点着就不聚焦了。这里钉住它仍是真标签。
       expect(label!.tagName).toBe('LABEL')
       expect(label!.htmlFor).toBe(fieldId)
 
-      const control = label!.control as HTMLInputElement | null
+      const control = label!.control as HTMLInputElement | HTMLTextAreaElement | null
       expect(control, `${labelId} 没接上控件`).toBeTruthy()
-      expect(control!.tagName).toBe('INPUT')
+      expect(control!.tagName).toBe(tagName)
       expect(control!.id).toBe(fieldId)
     }
   })
