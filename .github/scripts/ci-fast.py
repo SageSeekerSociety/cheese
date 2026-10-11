@@ -212,7 +212,11 @@ def run(args, report, finish, started):
             source = "actual PR title"
             result = execute(["gh", "pr", "view", "--json", "title", "--jq", ".title"], REPO_ROOT,
                              min(10, max(0, deadline - time.monotonic())), args.memory_mib)
-            title = result["output"].strip() if result["result"] == "pass" else None
+            # gh (and the platform's credential wrapper) can print a preamble
+            # notice before the title; a PR title is one line, so take the last
+            # non-empty line rather than the whole merged stdout+stderr blob.
+            lines = [line.strip() for line in result["output"].splitlines() if line.strip()]
+            title = lines[-1] if result["result"] == "pass" and lines else None
         report["title"] = {"source": source, "value": title}
         if title is None:
             report["ran"].append({"id": "commit-title", "result": "unknown", "reason": "no PR title; provide proposed --title", "seconds": 0})

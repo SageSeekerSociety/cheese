@@ -409,13 +409,14 @@ class CiFastTest(unittest.TestCase):
         rep = json.loads((Path(gitdir) / "ci-fast-report.json").read_text())
         self.assertEqual(rep["status"], "pass")
 
-    def quick_tools(self, passed=2, skipped=0, missing_title=False):
+    def quick_tools(self, passed=2, skipped=0, missing_title=False, preamble=""):
         tools = self.tmp / "tools"
         tools.mkdir()
         body = f'''#!{sys.executable}
 import json, pathlib, sys
 args = sys.argv[1:]
 if pathlib.Path(sys.argv[0]).name == "gh":
+    print({preamble!r})  # a platform/credential notice before the title
     print("feat: actual PR title")
     sys.exit({1 if missing_title else 0})
 if "--outputFile" in args:
@@ -539,6 +540,16 @@ sys.exit(0)
                                            "CI_FAST_PRECOMMIT": "uvx pre-commit"})
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertEqual(self.report()["status"], "unknown")
+
+    def test_actual_pr_title_ignores_tool_preamble(self):
+        # The credential wrapper can print a notice before the title; the
+        # single-line PR title must still be read correctly, not the blob.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick",
+                                env_extra=self.quick_tools(preamble="notice: accessing the forge"))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.report()["title"]["value"], "feat: actual PR title")
 
     def test_quick_invalid_title_fails(self):
         self.write_hooks()
