@@ -322,6 +322,7 @@
       "exitFocus": "Exit focus mode",
       "newTask": "New task",
       "newTaskFailed": "Couldn’t create the task. Try again later",
+      "files": "Files",
       "rename": "Rename",
       "copyLink": "Copy link",
       "markRead": "Mark as read",

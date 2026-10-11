@@ -7276,6 +7276,32 @@ export interface paths {
         patch: operations["edit_review_comment_review_comments__comment_id__patch"];
         trace?: never;
     };
+    "/topics/{topic_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Files
+         * @description 这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。
+         *
+         *     这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫
+         *     什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，
+         *     这份清单就是那个目录本身，也是界面上看得见它的那一处。
+         *
+         *     `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
+         */
+        get: operations["list_files_topics__topic_id__files_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/topics/{topic_id}/files/raw": {
         parameters: {
             query?: never;
@@ -15898,6 +15924,46 @@ export interface components {
              * @default
              */
             reason: string;
+        };
+        /**
+         * RoomFileListOut
+         * @description 文件区的清单：``data`` 是文件，``truncated`` 说清单是不是全部。
+         */
+        RoomFileListOut: {
+            /** Data */
+            data: components["schemas"]["RoomFileOut"][];
+            /** Total */
+            total: number;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** RoomFileListOutEnvelope */
+        RoomFileListOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["RoomFileListOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * RoomFileOut
+         * @description 文件区里的一份文件：路径、大小、最后一次改动的时间。
+         */
+        RoomFileOut: {
+            /** Path */
+            path: string;
+            /** Bytes */
+            bytes: number;
+            /** Modified At */
+            modified_at: string;
         };
         /** RoutineIn */
         RoutineIn: {
@@ -31986,6 +32052,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReviewCommentOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_files_topics__topic_id__files_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoomFileListOutEnvelope"];
                 };
             };
             /** @description Validation Error */

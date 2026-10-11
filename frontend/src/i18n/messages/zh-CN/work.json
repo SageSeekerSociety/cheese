@@ -322,6 +322,7 @@
       "exitFocus": "退出专注模式",
       "newTask": "新建任务",
       "newTaskFailed": "未能新建任务，稍后重试",
+      "files": "文件",
       "rename": "重命名",
       "copyLink": "复制链接",
       "markRead": "标为已读",

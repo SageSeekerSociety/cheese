@@ -25,6 +25,7 @@ import { ACCEPT_ENTRIES } from './catalogAccept'
 import { ADMIN_ENTRIES } from './catalogAdmin'
 import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
+import { CHANNEL_FILES_ENTRIES } from './catalogChannelFiles'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
@@ -865,6 +866,8 @@ export const CATALOG: CatalogEntry[] = [
   ...SHARED_ENTRIES,
   // 整页那两件（一项产物的版本历史、小队的对外一面）在自己的文件里：`catalogViews.ts`。
   ...VIEW_ENTRIES,
+  // 一个频道的文件那一页在自己的文件里：`catalogChannelFiles.ts`。
+  ...CHANNEL_FILES_ENTRIES,
   // 反馈详情那一组（从详情页右栏拆出来的处理人、评论条、评论楼、进展时间线，数据在
   // `catalogFeedbackFixtures.ts`）在自己的文件里：`catalogFeedback.ts`。
   ...FEEDBACK_ENTRIES,

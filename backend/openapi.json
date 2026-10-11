@@ -27263,6 +27263,50 @@
         }
       }
     },
+    "/topics/{topic_id}/files": {
+      "get": {
+        "tags": [
+          "room-files"
+        ],
+        "summary": "List Files",
+        "description": "这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。\n\n这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫\n什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，\n这份清单就是那个目录本身，也是界面上看得见它的那一处。\n\n`truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。",
+        "operationId": "list_files_topics__topic_id__files_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomFileListOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/topics/{topic_id}/files/raw": {
       "get": {
         "tags": [
@@ -60020,6 +60064,93 @@
           "approved"
         ],
         "title": "ReviewSpaceRequest"
+      },
+      "RoomFileListOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RoomFileOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total",
+          "truncated"
+        ],
+        "title": "RoomFileListOut",
+        "description": "文件区的清单：``data`` 是文件，``truncated`` 说清单是不是全部。"
+      },
+      "RoomFileListOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RoomFileListOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoomFileListOutEnvelope"
+      },
+      "RoomFileOut": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          },
+          "modified_at": {
+            "type": "string",
+            "title": "Modified At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "bytes",
+          "modified_at"
+        ],
+        "title": "RoomFileOut",
+        "description": "文件区里的一份文件：路径、大小、最后一次改动的时间。"
       },
       "RoutineIn": {
         "properties": {

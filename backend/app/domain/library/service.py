@@ -23,7 +23,9 @@
 import hashlib
 import re
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from stat import S_ISREG
 
 from app.core.config import settings
 from app.core.errors import (
@@ -105,6 +107,54 @@ def read_room_text_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) ->
 
 def room_file_exists(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bool:
     return _safe_path(room_files_root(project_id, room_id), path).is_file()
+
+
+#: 一次列出多少份房间文件。频道文件区是几十份的量级（一个人往里放的东西、芝士交付
+#: 的东西、定时任务的结果）；这个数只挡一份失控的目录——目录里的路径由干活的那台机器
+#: 自己写，没有别的上限。超过的那部分由调用方照 `truncated` 说出来，不闷着。
+MAX_LISTED_ROOM_FILES = 500
+
+
+def list_room_files(
+    project_id: uuid.UUID, room_id: uuid.UUID
+) -> tuple[list[dict], int]:
+    """这个房间自己的文件：路径、大小、最后一次改动的时间，最近改的在最前。
+
+    房间文件此前只有按路径取一份的读法（:func:`read_room_file`）：一个人想知道这个
+    房间的文件区里有什么，得先知道那份文件叫什么。这份清单是那个目录本身——定时任务
+    放进来的结果、人贴进来的截图、芝士交付的文档都在里面。
+
+    交出 ``(清单, 找到的总数)``；总数超过上限时清单是最近改的那些，调用方据此报
+    「只列出了一部分」。
+    """
+    root = room_files_root(project_id, room_id)
+    found: list[tuple[float, dict]] = []
+    for entry in root.rglob("*"):
+        relative = entry.relative_to(root)
+        # 点开头的层是编辑器留下的临时文件和别的东西：它们没有消息引得到（
+        # :func:`read_preview_file` 那一侧也拒绝这种地址），占一格只会让人多点一次。
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        try:
+            info = entry.stat()
+        except OSError:
+            continue
+        if not S_ISREG(info.st_mode):
+            continue
+        found.append(
+            (
+                info.st_mtime,
+                {
+                    "path": relative.as_posix(),
+                    "bytes": info.st_size,
+                    "modified_at": datetime.fromtimestamp(
+                        info.st_mtime, UTC
+                    ).isoformat(),
+                },
+            )
+        )
+    found.sort(key=lambda item: (-item[0], item[1]["path"]))
+    return [entry for _, entry in found[:MAX_LISTED_ROOM_FILES]], len(found)
 
 
 def _revision_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
