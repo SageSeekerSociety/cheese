@@ -24,7 +24,7 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
   component: blank,
 }))
 
-/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表，以及登录页、空间任务列表、个人主页），它们各要一条真名字。 */
+/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表，以及登录页、空间任务列表、个人主页、项目总览里那两项产物的去向），它们各要一条真名字。 */
 const catalogTargets = [
   { path: '/account/signin', name: 'SignIn', component: blank },
   { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
@@ -37,6 +37,7 @@ const catalogTargets = [
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
   { path: '/spaces', name: 'HomeSpaces', component: blank },
+  { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
 ]
 
 export function demoRouter() {
