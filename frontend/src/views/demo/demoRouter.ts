@@ -24,7 +24,7 @@ const analytics = Object.entries(ANALYTICS_ROUTE_NAMES).map(([key, name]) => ({
   component: blank,
 }))
 
-/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表），它们各要一条真名字。 */
+/** 目录里有几件是用 name 指路的（协议那两句、反馈详情、小队主页、房间里的一次对话、回空间列表，以及题目板里拆出来的那几件画面上的去处 —— 题目页、题目的领取者页、公告页、模板表单回列表那一条），它们各要一条真名字。 */
 const catalogTargets = [
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
@@ -33,6 +33,10 @@ const catalogTargets = [
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
+  { path: '/spaces/:spaceId/settings/templates', name: 'SpacesDetailSettingsTemplates', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId', name: 'TasksDetail', component: blank },
+  { path: '/spaces/:spaceId/tasks/:taskId/participants', name: 'TasksParticipants', component: blank },
+  { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
   { path: '/spaces', name: 'HomeSpaces', component: blank },
 ]
 

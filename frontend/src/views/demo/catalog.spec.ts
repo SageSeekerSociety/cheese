@@ -188,6 +188,34 @@ describe('组件预览站', () => {
     })
   }
 
+  // 真页面（`DemoCatalog.vue`）挂每一件时，装的**始终是** `demoRouter` + Vuetify + i18n +
+  // pinia —— 不管这一条自己声明要哪几样。上面那一组按每一条声明的 `needs` 装：声明里
+  // 漏了 router，画面里那处按 name 指路的去处就根本没被点到，spec 静静地绿着，可真页面
+  // 上它是断的（`router-link`、带 `to` 的 `BaseButton` 碰到没注册的 name 会抛，整段渲染
+  // 停在那儿）。这一组照真页面那样挂，专门守这件事：哪一件声明漏了 router 也护得住。
+  describe('照真页面那样挂（始终装 demoRouter）', () => {
+    for (const entry of CATALOG) {
+      for (const [index, state] of entry.states.entries()) {
+        it(`${entry.id} 第 ${index + 1} 格「${state.name}」挂得起来`, async () => {
+          const host = entry.layout
+            ? ({ ...LAYOUT, components: { Case: entry.component } } as unknown as Component)
+            : entry.component
+          const { container } = render(host, {
+            props: stateProps(entry, state),
+            slots: state.slot ? { default: state.slot } : {},
+            global: {
+              plugins: [createVuetify({ components, directives }), i18n, demoRouter(), createPinia()],
+            },
+          })
+          const scope = entry.teleport ? document.body : container
+          // 只等它画出来，不看具体内容 —— afterEach 那一条已经守住了「这一挂的过程中
+          // 一句 warn/error 都没有」。按 name 指路却没注册的那一处会在这里当场抛出来。
+          await waitFor(() => expect(scope.innerHTML.trim()).not.toBe(''))
+        })
+      }
+    }
+  })
+
   describe('页面本身', () => {
     function mount(path: string) {
       return render(Page, {

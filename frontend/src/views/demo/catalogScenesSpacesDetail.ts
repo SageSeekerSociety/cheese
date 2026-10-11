@@ -5,11 +5,14 @@
  * 数据见 `catalogScenesSpacesDetailFixtures.ts`。
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
+import type { UserRefTarget } from '@/lib/userRef'
+import type { Task } from '@/types'
 
-import { announcement, memberRow, templateDraft } from './catalogScenesSpacesDetailFixtures'
+import { announcement, memberRow, publishedTask, task, templateDraft } from './catalogScenesSpacesDetailFixtures'
 
 import AnnouncementsView from '@/views/spaces/detail/AnnouncementsView.vue'
 import MembersView from '@/views/spaces/detail/MembersView.vue'
+import TasksView from '@/views/spaces/detail/TasksView.vue'
 import TemplateFormView from '@/views/spaces/detail/TemplateFormView.vue'
 
 /** 画面本来要装 Vuetify 和一套语言包。 */
@@ -20,6 +23,11 @@ const UI_TR: CatalogNeed[] = [...UI, 'router']
 
 /** 模板表单回列表那一条（`SpacesDetailSettingsTemplates`）：画面只把它透给 NavLink。 */
 const LIST_ROUTE = { name: 'SpacesDetailSettingsTemplates', params: { spaceId: 8 } }
+
+/** 题目列表每一行点去哪（`Tasks.vue` 里现算的正是这一条）：画面只把它透给 `TaskRow`。 */
+function rowTo(task: Task): UserRefTarget {
+  return { name: 'TasksDetail', params: { taskId: task.id } }
+}
 
 export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
   {
@@ -109,10 +117,11 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       '「题目模板」下一级那张整页表单的画面：左上角回模板列表，下面几摞字段（名称/描述/题目标题、题目默认设置、题目描述编辑器）绑在一份草稿上。认路、读模板、真保存都在容器 `TemplateForm.vue` 里；画面只收 `initial` 草稿、发 `submit`。',
     file: 'src/views/spaces/detail/TemplateFormView.vue',
     component: TemplateFormView,
-    // 回列表那一条走 `NavLink`，没装路由就退化成点不动的字（`NavLink.vue` 文件头那
-    // 一句）；表单里那颗带 `to` 的 `BaseButton` 同理。所以这里不装路由 —— 装上一套
-    // 不认识这条去处的路由反而会在解析时抛「No match for」。
-    needs: UI,
+    // 画面里「回模板列表」那一条是 `NavLink`，表单里那颗 `BaseButton` 也指着 `listRoute`：
+    // 两处都按 name 解析。演示页（`DemoCatalog.vue`）始终装的是 `demoRouter`，所以那条
+    // name 得在 `demoRouter.catalogTargets` 里注册（已注册 `SpacesDetailSettingsTemplates`）；
+    // 不装路由只会让这一格的 spec 漏报，护不住真页面。
+    needs: UI_TR,
     args: { initial: templateDraft(), isEditing: false, listRoute: LIST_ROUTE },
     states: [
       {
@@ -129,6 +138,64 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
           isEditing: true,
         },
         expect: '编辑题目模板',
+      },
+    ],
+  },
+  {
+    id: 'tasks-view',
+    title: 'TasksView',
+    about:
+      '「题目列表」那一页的画面：顶上那栏置顶公告、范围/话题/搜索/排序那一条筛选、普通题目列表，以及「我发布的」那一格（带审核状态、读失败与空状态）。筛选项、分页、读「我发布的」、以及每一行点去哪，都在容器 `Tasks.vue` 里算好传进来；画面只收 props、发事件。',
+    file: 'src/views/spaces/detail/TasksView.vue',
+    component: TasksView,
+    needs: UI_TR,
+    args: {
+      scope: 'all',
+      pendingOnly: false,
+      hotTopics: [
+        { id: 1, name: '动态规划' },
+        { id: 2, name: '图论' },
+      ],
+      categoryFilterOptions: [
+        { title: '全部题目', value: null },
+        { title: '第 1 章', value: 7 },
+      ],
+      spaceId: 8,
+      announcements: [announcement({ id: 1, title: '本周答疑改到周四', pinned: true })],
+      announcementsTarget: { name: 'SpacesAnnouncements', params: { spaceId: 8 } },
+      rowTo,
+      selectedCategory: null,
+      selectedTopics: [],
+      sort: 'latestPublished',
+      search: '',
+      loadingMore: false,
+      hasMore: false,
+      refreshing: false,
+      tasks: [task()],
+      total: 1,
+      publishedLoading: false,
+      publishedFailed: false,
+      publishedError: null,
+      publishedTasks: [],
+    },
+    states: [
+      {
+        name: '一栏题目',
+        note: '顶上是那栏置顶公告，下面是筛选条和题目列表；每一行的去处由容器算好传进来。',
+        props: {},
+        expect: '最短路径',
+      },
+      {
+        name: '我发布的',
+        note: '范围切到「我发布的」：换成带审核状态的卡片，右边写着上没上板、有几件事等着处理。',
+        props: { scope: 'publishing', publishedTasks: [publishedTask()] },
+        expect: '排课系统',
+      },
+      {
+        name: '我发布的读失败',
+        note: '「我发布的」没读出来：错误替换掉这一格，不落进「暂无题目」—— 那会让失败看着像本来就还没发过。',
+        props: { scope: 'publishing', publishedFailed: true, publishedError: '网络错误' },
+        expect: '无法加载题目',
       },
     ],
   },
