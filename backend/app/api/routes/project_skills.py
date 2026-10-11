@@ -19,10 +19,11 @@ from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
+from app.domain.agent.announce import settle_proposal
 from app.domain.agent.platform_notices import (
     EVENT_SKILL_PROPOSED,
     SEVERITY_INFO,
-    WHO_CHEESE,
+    WHO_HUMAN,
     notice,
 )
 from app.domain.agent.staleness import announce_stale
@@ -248,7 +249,8 @@ async def create_skill(
                         **notice(
                             EVENT_SKILL_PROPOSED,
                             severity=SEVERITY_INFO,
-                            who=WHO_CHEESE,
+                            # It waits on a person saving or declining it.
+                            who=WHO_HUMAN,
                             detail=say(
                                 "skillProposedDetail",
                                 description=row.description,
@@ -347,6 +349,23 @@ async def preview_import(
     return ok(read.to_json())
 
 
+async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
+    """A person decided on a teammate's proposal: its line in the room says so."""
+    if row.source_topic_id is None:
+        return
+    await settle_proposal(
+        db,
+        row.source_topic_id,
+        event_type=EVENT_SKILL_PROPOSED,
+        key="skill_id",
+        value=row.id,
+        content=say(
+            "skillProposalSaved" if saved else "skillProposalNotSaved",
+            title=row.title,
+        ),
+    )
+
+
 async def _changed(row: ProjectSkill) -> None:
     """Tell the room a method came from that its cards changed."""
     if row.source_topic_id is not None:
@@ -396,6 +415,7 @@ async def update_skill(
     row, actor = await _load(db, resolver, skill_id, topic)
     service = ProjectSkillService(db)
     by_agent = not _is_person(actor)
+    pending = row.state == "draft"
     row = await service.update(
         row,
         by=await _speaker(db, actor, topic),
@@ -403,6 +423,9 @@ async def update_skill(
         changes=body.model_dump(exclude_unset=True, exclude={"reason"}),
         proposal={"reason": body.reason.strip()} if by_agent else None,
     )
+    if pending and not by_agent:
+        # A person's own edit is what gets saved; the teammate's wording is not.
+        await _settled(db, row, saved=False)
     await db.commit()
     await service.publish(row.project_id)
     await _changed(row)
@@ -423,6 +446,7 @@ async def confirm_skill(
         for item in (row.proposal or {}).get("absorbs") or []
     ]
     row = await service.confirm(row, by=actor.handle)
+    await _settled(db, row, saved=True)
     if absorbed:
         await MemoryFileStore(db).forget(
             project_id=row.project_id,
@@ -446,6 +470,7 @@ async def decline_skill(
     _person(actor, say("skillDecline"))
     service = ProjectSkillService(db)
     row = await service.decline(row, by=actor.handle)
+    await _settled(db, row, saved=False)
     await db.commit()
     await service.publish(row.project_id)
     await _changed(row)
@@ -459,7 +484,10 @@ async def restore_skill(
     row, actor = await _load(db, resolver, skill_id, None)
     _person(actor, say("skillRestoreOld"))
     service = ProjectSkillService(db)
+    pending = row.state == "draft"
     row = await service.restore(row, revision, by=actor.handle)
+    if pending:
+        await _settled(db, row, saved=False)
     await db.commit()
     await service.publish(row.project_id)
     await _changed(row)
@@ -474,6 +502,8 @@ async def delete_skill(
     _person(actor, say("skillDelete"))
     project_id = row.project_id
     service = ProjectSkillService(db)
+    if row.state == "draft":
+        await _settled(db, row, saved=False)
     await service.delete(row)
     await db.commit()
     await service.publish(project_id)

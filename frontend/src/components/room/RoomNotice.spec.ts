@@ -128,7 +128,7 @@ describe('芝士起草、等人确认的那一行', () => {
       author: 'system',
       content: '芝士起草了「每周进展」，要你确认后才会执行',
       created_at: '2026-09-27T08:00:00Z',
-      meta: { severity: 'info', who: 'cheese', detail: '名称：每周进展', detail_label: '待确认的配置', ...meta },
+      meta: { severity: 'info', who: 'human', detail: '名称：每周进展', detail_label: '待确认的配置', ...meta },
     } as unknown as Block
   }
 
@@ -178,6 +178,16 @@ describe('芝士起草、等人确认的那一行', () => {
     )
     const link = getByTestId('notice-environment')
     expect(link.getAttribute('href')).toBe('/projects/proj-1/settings/environment?room=room-7')
+  })
+
+  it('人定下来以后：这一行只说结果，不再请人去确认，也不说谁在处理', async () => {
+    const block = proposed({ event_type: 'skill_proposed', skill_id: 's-3', who: '', state: 'over' })
+    block.content = '芝士提议的技能「组会纪要」已保存'
+    const { queryByTestId, container } = await mountWithRouter(block)
+    expect(container.textContent).toContain('已保存')
+    expect(queryByTestId('notice-confirm')).toBeNull()
+    expect(container.textContent).not.toContain('正在处理')
+    expect(container.textContent).not.toContain('等人处理')
   })
 
   it('别的平台提示不带这颗按钮', async () => {

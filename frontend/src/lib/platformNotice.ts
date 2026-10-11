@@ -483,6 +483,8 @@ export interface ConfirmTarget {
 export function confirmTarget(block: Block, projectId: string | null | undefined): ConfirmTarget | null {
   const m = meta(block)
   if (!projectId) return null
+  // 人已经定下来了（保存、拒绝、删除）：这一行只说结果，没有要去确认的了。
+  if (str(m?.state) === 'over') return null
   const kind = str(m?.event_type)
   if (kind === 'routine_proposed' && str(m?.routine_id))
     return { name: 'project-routines', params: { projectId }, query: { routine: str(m?.routine_id) } }
