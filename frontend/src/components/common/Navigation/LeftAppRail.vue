@@ -61,7 +61,7 @@
           <!-- button，不是 div：头像打开的菜单里有设置和退出登录，只用键盘的人也得够得着。 -->
           <button
             type="button"
-            class="mb-4 rail-avatar"
+            class="mb-3 rail-avatar"
             :aria-label="userMenu.nickname.value"
             v-bind="props"
             @pointerenter="rememberAvatar"
@@ -259,6 +259,13 @@ useEventListener(
     }
   }
 
+  // 底下那段（头像）是 overflow: hidden（Vuetify 的），上边正好贴着头像：头像的
+  // :focus-visible 框伸出去的那 4px 会被切平。上边留 4px 给它，头像的下外边距相应
+  // 少 4px（mb-3 而不是 mb-4），头像还在原来的位置。
+  .v-navigation-drawer__append {
+    padding-top: 4px;
+  }
+
   // 首页那一格的未读点和件数角标往右上角外探 2px / 4px。这一段和下面的项目
   // 列表一样会裁掉溢出的东西，而它的上沿就贴着标题栏：不留出角标探出去的那
   // 4px，点的顶上就被削平一条。项目列表那一段有 8px 的上下内边距，所以一直没事。
@@ -276,10 +283,10 @@ useEventListener(
 .rail-avatar {
   display: block;
   padding: 0;
+  cursor: pointer;
+  background: none;
   border: 0;
   border-radius: 50%;
-  background: none;
-  cursor: pointer;
 }
 
 /* `.rail-avatar-char` 那份自画的彩色首字母没了：现在整支交给 UserAvatar，尺寸/字色那
