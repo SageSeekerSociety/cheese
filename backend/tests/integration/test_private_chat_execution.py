@@ -13,7 +13,6 @@ from app.api import deps as session_turn_deps
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import BlockKind
@@ -70,13 +69,11 @@ class PrivateScreen(StubChannel):
 async def test_chat_runs_through_a_session(client, tmp_path, private):
     async def run():
         factory = client.test_request_factory
-        central, project_machine = PrivateScreen("device"), PrivateScreen("cloud")
-        # 房间选了哪条通道，私聊也走哪条——房间的选择是房间的，不因为私聊而改写。
-        screen = project_machine
+        screen = PrivateScreen("device")
         svc = ChatService(
             work_runner=session_turn_deps.get_work_runner(),
             session_factory=factory,
-            compute=ComputePool([central.runtime, project_machine.runtime], "cloud"),
+            compute=ComputePool([screen.runtime]),
             base_system_prompt="You are Cheese.",
             workspace_root=str(tmp_path / "ws"),
         )
@@ -92,7 +89,6 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
                     project_id=project.id, title="Work", created_by="u"
                 )
             topic_id = topic.id
-            topic.compute_config = standard_choice("cloud").model_dump()
             await session.commit()
         async for _ in svc.converse(
             topic_id=topic_id,
@@ -127,7 +123,6 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # 私聊独有的那段技能说明（`# 私聊`）只进私聊的提示词。停用之前这里看的是
         # 工具表里 `cheese_remember` 那一行——工具没了，换这段。
         assert ("\n# 私聊\n" in screen.last_system_prompt) is private
-        assert not central.prompts
         async with factory() as session:
             blocks = await BlockRepository(session).list_for_topic(topic_id)
         assert any(

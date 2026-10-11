@@ -61,7 +61,6 @@ from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent.turn.steps.prepared import PreparedSend
 from app.domain.agent.turn.steps.send import SendEffects, send_prepared
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
-from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.services import (
     AgentInstanceService,
@@ -222,7 +221,7 @@ class _Machines(Protocol):
     """What a turn asks of the service's compute pool (``agent.compute``)."""
 
     def choose(
-        self, project_settings: Mapping[str, Any] | None, provider_id: str | None
+        self, project_settings: Mapping[str, Any] | None
     ) -> tuple[str, RoomSessions | None]: ...
 
     def owned(self, harness: str) -> RoomSessions | None: ...
@@ -290,7 +289,7 @@ class TurnPreparation:
         self.send_effects = send_effects
 
     async def _backend_for(
-        self, session, agent, project, compute_id
+        self, session, agent, project
     ) -> tuple[str, RoomSessions | None]:
         """The harness this agent's turn runs and the backend it runs on.
 
@@ -300,7 +299,7 @@ class TurnPreparation:
         owned = await owned_instance(session, agent.instance_id)
         if owned is not None:
             return owned.harness, self.compute.owned(owned.harness)
-        return self.compute.choose(project.settings if project else None, compute_id)
+        return self.compute.choose(project.settings if project else None)
 
     async def launch_inputs(
         self, topic_id: uuid.UUID, agent_handle: str, *, acting: str
@@ -325,9 +324,7 @@ class TurnPreparation:
             needs_place = not _is_dm(topic)
             doc_text = await doc_text_of(session, place, needs_place=needs_place)
             role = await agents.system_prompt(agent)
-            harness, provider = await self._backend_for(
-                session, agent, project, resolve_compute_id(project.settings, topic)
-            )
+            harness, provider = await self._backend_for(session, agent, project)
             if provider is None:
                 return None
             resume_token = await AgentSessionService(session).resume_token(
@@ -533,15 +530,10 @@ class TurnPreparation:
             )
             # Read the selected agent once so this turn's role and model agree.
             role = await agents.system_prompt(agent)
-            # 骨架是这个项目在这台机器上跑的那一个（结论 28），不是这个参与者的属
+            # 骨架是这个项目跑的那一个（结论 28），不是这个参与者的属
             # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
             # 各自解析一次就够把一条会话拆成两条。
-            compute_id = resolve_compute_id(
-                project.settings if project else None, topic, task
-            )
-            wanted_harness, provider = await self._backend_for(
-                session, agent, project, compute_id
-            )
+            wanted_harness, provider = await self._backend_for(session, agent, project)
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
@@ -721,7 +713,10 @@ class TurnPreparation:
             if (
                 needs_place
                 and not provider.deferred_work
-                and compute_id == "device"
+                and place_choice(
+                    topic, task, project.settings if project else None
+                ).profile
+                == "device"
                 and topic.compute_config is None
             ):
                 await bind_room_device_choice(

@@ -34,7 +34,7 @@ The remaining sections describe ordinary work topics and their selected compute 
 
 设备那条总是装上；Cloud 只在这个部署配了云平台的地址和密钥时才装；整台云虚拟机还要运维配了虚拟机的规格（`MICROCLOUD_VM_OFFERING_ID`），没配时选不到。
 
-整台云虚拟机走的还是 Cloud 那条执行路（`cloud_provider.py`），区别在落点：`HostPool.place` 不往宿主机上放沙箱，而是为这条会话开一台虚拟机（`CloudHost.whole_machine`），不从预热池领，不放别的会话。它和宿主机一起算进平台的容量上限（`CLOUD_POOL_MAX_HOSTS`）。规格只有一种（`CLOUD_VM_CORES` / `CLOUD_VM_MEMORY_MB` / `CLOUD_VM_DISK_GB`，默认 4 核、8 GB、40 GB），记在虚拟机那一行上，连同为哪个项目开的；按「规格 × 时长」收费时从释放那一处（`services._vm_released`）读。虚拟机在三种时候删：房间换走、房间清理删掉了会话目录、会话闲置 `CLOUD_VM_IDLE_RELEASE_S`（默认 30 分钟，闲置的定义和沙箱相同：房间没在跑任务，会话最后一次工具调用和房间最后一轮结束都在这之前）。闲置释放前先像换机器一样做一次尽力而为的 checkpoint（`machine/cloud_vm.py`），推没推上去都释放；会话下一次要用时再开一台新的，要等几分钟。
+整台云虚拟机和沙箱走同一条执行通道，区别在落点：`HostPool.place` 不往宿主机上放沙箱，而是为这条会话开一台虚拟机（`CloudHost.whole_machine`），不从预热池领，不放别的会话。它和宿主机一起算进平台的容量上限（`CLOUD_POOL_MAX_HOSTS`）。规格只有一种（`CLOUD_VM_CORES` / `CLOUD_VM_MEMORY_MB` / `CLOUD_VM_DISK_GB`，默认 4 核、8 GB、40 GB），记在虚拟机那一行上，连同为哪个项目开的；按「规格 × 时长」收费时从释放那一处（`services._vm_released`）读。虚拟机在三种时候删：房间换走、房间清理删掉了会话目录、会话闲置 `CLOUD_VM_IDLE_RELEASE_S`（默认 30 分钟，闲置的定义和沙箱相同：房间没在跑任务，会话最后一次工具调用和房间最后一轮结束都在这之前）。闲置释放前先像换机器一样做一次尽力而为的 checkpoint（`machine/cloud_vm.py`），推没推上去都释放；会话下一次要用时再开一台新的，要等几分钟。
 
 These choices select the ordinary room's execution machine. Claude Code runs on the separately recorded central session host, which does not appear as a project execution choice. The two locations are described in `remote-execution.md`.
 
@@ -137,9 +137,9 @@ typst 退出码 0、PDF 大小正常、每个中文字是空心方框。
 Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 ```
 
-`build_compute_pool` 拿的就是这个值。**这两个答案必须是一个函数**：分开写就会分家，而分家之后看不出来——界面上写着一台机器，话题跑在另一台上，两边各自都是自洽的。
+一个没有选择的话题解析出的选择也问它（`compute_configs.standard_choice`）。**这两个答案必须是一个函数**：分开写就会分家，而分家之后看不出来——界面上写着一台机器，话题跑在另一台上，两边各自都是自洽的。
 
-一轮活的落点按这个顺序定（`agent/work_policy.py` 的 `resolve_compute_id`，轮次组装 `room/turn.py` 里问它）：
+一条会话要手时，机器按这个顺序定（`agent/compute_configs.py` 的 `place_choice`，`machine/session_work.py` 里问它）：
 
 1. 话题自己选的（第一轮跑完就钉住）
 2. 项目记住的上一次选择

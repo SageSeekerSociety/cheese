@@ -52,7 +52,6 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn.state.live import LiveWork
-from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_room, room_column
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
@@ -328,7 +327,6 @@ class MemoryLedger:
                 session, project_id, tokens_at_start=tokens, now=now
             )
             run_id = run.id
-            compute_id = resolve_compute_id(project.settings)
             agent_handle = await _agent_handle(session, root_topic_id)
             await session.commit()
         logger.info(
@@ -358,7 +356,7 @@ class MemoryLedger:
         )
 
         self._dreams.add(root_topic_id)
-        runtime = self._compute.platform_work(compute_id)
+        runtime = self._compute.platform_work()
         system_prompt = build_system_prompt(
             self._base_prompt,
             "",  # 聊天说明不带：整理这件事的规矩在 prompt 里。

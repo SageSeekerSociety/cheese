@@ -15,7 +15,6 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.domain.agent import gateway as gw
 from app.domain.agent.chat import ChatService
-from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.profiles import (
@@ -50,17 +49,6 @@ def _on_a_machine() -> RoomSessions:
     """A backend whose machine is somewhere else, so it builds that machine's
     model environment where the machine is."""
     return RoomSessions(DeviceChannel(), CLAUDE_CODE, SessionHost())
-
-
-def _leases_a_machine() -> RoomSessions:
-    """The Cloud backend, built the way the app wires it."""
-    return RoomSessions(
-        CloudChannel(
-            configured=True,
-        ),
-        CLAUDE_CODE,
-        SessionHost(),
-    )
 
 
 def _in_this_process() -> RoomSessions:
@@ -638,18 +626,13 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
 
 
 @pytest.mark.anyio
-async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
+async def test_a_turn_on_a_machine_is_metered_by_the_subscription_proxy(
     business_db_factory, tmp_path, monkeypatch
 ):
-    """Cloud and device are two answers to WHICH machine, never to which supply.
-
-    Both reach a machine over the same link and both assemble its model
-    environment there, so a subscription deployment must meter them the same way
-    and hand them the same --model alias. When this was decided by the backend's
-    NAME, a Cloud turn matched neither name: it was shipped the profile env and
-    a virtual gateway key, launched `claude --model <the pool's model>` at a
-    subscription that does not serve it, and its usage row named the gateway's
-    meter while its traffic went through the proxy — counted once in each.
+    """A session whose machine is elsewhere — a person's or the platform's —
+    has that machine's model environment built there, so a subscription
+    deployment meters it through the proxy and hands it the subscription's
+    --model alias; no gateway key is minted for it.
     """
     fake = FakeGateway()
     svc, factory, pid, _tid = await _mk_service(business_db_factory, tmp_path, fake)
@@ -660,19 +643,17 @@ async def test_a_leased_machine_takes_the_same_supply_as_an_enrolled_one(
         await put_on_plan(session, project.team_id, "reserve")
         await session.commit()
 
-    device_kwargs, device_route = await svc._model_kwargs(pid, _on_a_machine())
-    cloud_kwargs, cloud_route = await svc._model_kwargs(pid, _leases_a_machine())
+    kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
 
-    assert cloud_route == device_route == "subscription"
-    assert cloud_kwargs == device_kwargs
-    assert cloud_kwargs["model"] == "claude-sonnet-5"
-    assert set(cloud_kwargs["env"]) == {
+    assert route == "subscription"
+    assert kwargs["model"] == "claude-sonnet-5"
+    assert set(kwargs["env"]) == {
         "CHEESE_AGENT_CONFIG",
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
     }
-    assert fake.minted == []  # no gateway key is minted for either
+    assert fake.minted == []  # no gateway key is minted for it
 
 
 @pytest.mark.anyio

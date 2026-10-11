@@ -4,7 +4,6 @@ from typing import NamedTuple
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness import SessionRef
-from app.domain.device.supply import Supply
 
 # How long a session's scoped credential lives. It is baked into the process at
 # launch (its CONNECT password and OAuth token are read once), so it has to
@@ -80,9 +79,9 @@ class Channel:
     channel places the session and performs the launch it is handed.
     """
 
-    # WHICH machine pool this is: what a compute choice's ``profile`` names and
-    # what the market board lists. Deliberately not the runtime's ``harness`` —
-    # this says which machine, that says what runs on it.
+    # Which channel placed a session: recorded in its place
+    # (``runtime_location.channel``) so a restart recovers it on the same one.
+    # Deliberately not the runtime's ``harness``.
     name: str = "channel"
 
     deferred_work: bool = False
@@ -106,24 +105,6 @@ class Channel:
     # a real provider key — onto hardware over a network, which is the leak the
     # split exists to prevent.
     builds_model_env: bool = False
-
-    # --- 地点：这条通道租出来的那双手 (结论 24、60) ---------------------------
-    #
-    # 物理事实写在这里，上游读它，不读类名：按类名问的那条
-    # `isinstance(c, DeviceChannel)` 读起来像一条规则，实际恒为真。
-
-    #: 这台机器是谁开的。它今天只回答一个问题：一台这样进来的机器归哪条通道认领
-    #: （`owns` 就在下面）。
-    supply: Supply = Supply.self_hosted
-
-    def owns(self, supply: Supply) -> bool:
-        """一台这样进来的机器，是不是这条通道该认领的。
-
-        两条通道把话题绑进同一张表，所以一条绑定不说是谁做的——机器说，而供给正是
-        分开它们的那根轴。这里读的是同一位 `supply`，不是各通道自己写一条反过来的
-        判断：反着写的那一条，在轴上多一个取值的那天就是错的。
-        """
-        return supply is self.supply
 
     def available(self) -> bool:
         return True

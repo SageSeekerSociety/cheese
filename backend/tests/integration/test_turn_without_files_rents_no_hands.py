@@ -276,7 +276,7 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=ComputePool([channel.runtime], channel.name),
+        compute=ComputePool([channel.runtime]),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -314,7 +314,7 @@ async def test_a_room_turn_still_waits_for_its_hands(business_db_factory, tmp_pa
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=ComputePool([channel.runtime], channel.name),
+        compute=ComputePool([channel.runtime]),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )

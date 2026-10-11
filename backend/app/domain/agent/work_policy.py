@@ -8,20 +8,10 @@ close a loop through the harness packages.
 import uuid
 
 from app.core.config import settings
-from app.domain.agent.compute_configs import place_choice, project_configs
 from app.domain.agent_instance.own import owned_instance
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import PlaceResolver
 from app.domain.usage.ledger import Ledger, payer_for_project
-
-
-def resolve_compute_id(
-    project_settings: dict | None, topic=None, task=None
-) -> str | None:
-    """A task keeps its own choice, a room its; otherwise the project default."""
-    if topic is not None:
-        return place_choice(topic, task, project_settings).profile
-    return project_configs(project_settings).default.profile
 
 
 async def work_policy(
@@ -35,7 +25,7 @@ async def work_policy(
         place = await PlaceResolver(session).conversation(topic_id)
         if place is None:
             return None
-        topic, task = place.room, place.task
+        topic = place.room
         project = await ProjectRepository(session).get(topic.project_id)
         # A member's own coding agent is paid by its owner's own login and
         # runs on their machine: the project's credits and the session host's
@@ -60,9 +50,7 @@ async def work_policy(
     # The backend the turn will run on, chosen by the call the turn makes. Every
     # harness runs its session on the session host and reaches the room's
     # machine from there; a turn with no backend here starts no session at all.
-    _harness, provider = compute.choose(
-        project_settings, resolve_compute_id(project_settings, topic, task)
-    )
+    _harness, provider = compute.choose(project_settings)
     return {
         "project_id": str(topic.project_id),
         "max_concurrent_turns": max_concurrent,

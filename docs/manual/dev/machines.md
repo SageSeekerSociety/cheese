@@ -6,7 +6,6 @@ covers:
   - cli/
   - backend/app/domain/agent/device_hub.py
   - backend/app/domain/agent/device_provider.py
-  - backend/app/domain/agent/cloud_provider.py
   - backend/app/domain/agent/central_provider.py
   - backend/app/domain/agent/host_failure.py
   - backend/app/domain/agent/dispatch_log.py
@@ -50,8 +49,8 @@ steps:
 |---|---|---|
 | 本机沙盒容器 | 平台主机上的兄弟容器 | `compute.py` |
 | 自托管设备 | 用户用连接器接入的电脑 | `device_provider.py` |
-| 云端沙箱 | 平台云主机池里的一个沙箱，每条会话一个；宿主机是平台的 MicroCloud 机器，多个项目共用 | `cloud_provider.py`、`machine/services.py` |
-| 整台云虚拟机 | 每条会话一台 MicroCloud 虚拟机，不进沙箱，有 sudo 和 Docker；会话用完、闲置或房间清理后删掉 | `cloud_provider.py`、`machine/services.py`、`machine/cloud_vm.py` |
+| 云端沙箱 | 平台云主机池里的一个沙箱，每条会话一个；宿主机是平台的 MicroCloud 机器，多个项目共用 | `machine/services.py` |
+| 整台云虚拟机 | 每条会话一台 MicroCloud 虚拟机，不进沙箱，有 sudo 和 Docker；会话用完、闲置或房间清理后删掉 | `machine/services.py`、`machine/cloud_vm.py` |
 | 中心会话 + 执行机 | 会话在中心主机，工具调用落到租用的机器上 | `central_provider.py` |
 
 ## 连接 {#link}

@@ -78,7 +78,7 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(machine.workspace),
-            compute=ComputePool([channel.runtime], channel.name),
+            compute=ComputePool([channel.runtime]),
         )
 
     before = Channel()

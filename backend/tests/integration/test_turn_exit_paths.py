@@ -214,7 +214,7 @@ _CHILD = textwrap.dedent(
             session_factory=factory,
             base_system_prompt="你是芝士。",
             workspace_root=WS,
-            compute=ComputePool([screen.runtime], screen.name),
+            compute=ComputePool([screen.runtime]),
         )
         async for _ in chat.converse(
             topic_id=uuid.UUID(TOPIC), author="u", content="做事", summon=True
