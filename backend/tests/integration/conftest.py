@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import (
 from app.common.auth import create_access_token
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import seed_user
 
 if TYPE_CHECKING:
     import httpx
@@ -497,6 +498,26 @@ def in_thread(client, room_id: str, handle: str) -> str:
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]
+
+
+def inbox(client, handle: str, kind: str | None = None) -> list[dict]:
+    """What ``handle`` finds in their inbox (动态), only ``kind`` when given.
+
+    Only a person with an account has an inbox, and a notification reaches one
+    only if the account was there when it was sent: give the people a test
+    expects to hear something an account first (``seed_user``, which this
+    calls too, so here it only finds that account).
+    """
+    params: dict = {"pageSize": 100}
+    if kind is not None:
+        params["type"] = kind
+    r = client.get(
+        "/notifications",
+        params=params,
+        headers={"Authorization": f"Bearer {seed_user(client, handle)}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["notifications"]
 
 
 def post_message(client, topic_id: str, handle: str, body: dict) -> dict:

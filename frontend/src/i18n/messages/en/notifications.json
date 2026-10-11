@@ -29,7 +29,11 @@
   "MENTION": {
     "title": "{mentioner} mentioned you in a discussion",
     "title_anonymous": "Someone mentioned you in a discussion",
-    "body": "In \"{discussionTitle}\""
+    "body": "In \"{discussionTitle}\"",
+    "inChannel": "{who} mentioned you in “{topicTitle}”"
+  },
+  "THREAD_REPLY": {
+    "title": "{who} replied in a thread in “{topicTitle}”"
   },
   "REPLY": {
     "title": "{replier} replied to your comment",

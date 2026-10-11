@@ -6,7 +6,9 @@ Project.owner_handle 上），名册以前也不把他补进去，于是 <@他> 
 人，所以这等于「这个项目里 @ 谁都通知不到」。
 """
 
+from tests.conftest import seed_user
 from tests.integration.conftest import (
+    inbox,
     join_project_team,
     post_message,
     post_project,
@@ -24,14 +26,8 @@ def _post(client, topic_id: str, content: str, author: str) -> None:
                 break
 
 
-def _notifs(client, project_id: str, handle: str) -> list[dict]:
-    return client.get(
-        f"/projects/{project_id}/alerts",
-        headers=session_auth_headers(handle),
-    ).json()["data"]["data"]
-
-
 def test_mentioning_the_owner_notifies_them(client):
+    seed_user(client, "alice")
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     topic = client.post(
         "/topics",
@@ -47,6 +43,5 @@ def test_mentioning_the_owner_notifies_them(client):
 
     _post(client, topic["id"], "<@alice> 这个你看一下", author="bob")
 
-    alerts = _notifs(client, project["id"], "alice")
-    assert len(alerts) == 1
-    assert "bob" in alerts[0]["title"]
+    [mention] = inbox(client, "alice", "MENTION")
+    assert mention["contextMetadata"]["author"] == "bob"

@@ -147,9 +147,10 @@ def test_a_teammate_row_is_found_by_its_own_handle(client):
 def test_an_agent_can_chat_the_teammate_it_could_not_see(client):
     """验收②：队友手上那张名册上有另一位队友，所以 A 对 B 发得出一条 chat。
 
-    两件事一起断言：存下来的正文里是结构化的 ``<@handle>``（不是一段谁也点不动的
-    「@评审」原文），以及 B 收到一条强提醒。名册解析不到这个名字，两件事一件都不会
-    发生——这正是结论 12 以前在代码上跑不起来的样子。
+    断言的是存下来的正文里是结构化的 ``<@handle>``，不是一段谁也点不动的「@评审」
+    原文。名册解析不到这个名字就不会这样——这正是结论 12 以前在代码上跑不起来的样子。
+    队友不读收件箱：坐进这间房的那位由投递叫起一轮（`delivery/mention.py`），所以这
+    里不再看它的收件箱。
 
     评审没坐在这间房里：@ 一位还没进这间房的队友，和 @ 一个还没进来的人是同一件事。
     """
@@ -170,15 +171,6 @@ def test_an_agent_can_chat_the_teammate_it_could_not_see(client):
     )
     assert sent.status_code == 200, sent.text
     assert f"<@{reviewer['seat_handle']}>" in sent.json()["data"]["content"]
-
-    alerts = client.get(
-        f"/projects/{project_id}/alerts",
-        headers=session_auth_headers(reviewer["seat_handle"]),
-    )
-    assert alerts.status_code == 200, alerts.text
-    titles = [row["title"] for row in alerts.json()["data"]["data"]]
-    assert len(titles) == 1, titles
-    assert "房间" in titles[0]
 
 
 def test_the_roster_says_which_teammate_a_room_without_an_ai_seat_falls_to(client):

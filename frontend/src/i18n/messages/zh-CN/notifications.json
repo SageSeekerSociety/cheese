@@ -29,7 +29,11 @@
   "MENTION": {
     "title": "{mentioner} 在讨论中提到了你",
     "title_anonymous": "有人在讨论中提到了你",
-    "body": "在 \"{discussionTitle}\" 中提到了你"
+    "body": "在 \"{discussionTitle}\" 中提到了你",
+    "inChannel": "{who} 在「{topicTitle}」提到了你"
+  },
+  "THREAD_REPLY": {
+    "title": "{who} 在「{topicTitle}」的支线里回复了"
   },
   "REPLY": {
     "title": "{replier} 回复了你的评论",

@@ -130,3 +130,14 @@ def test_a_question_pushes_the_question_itself():
     )
     assert title == "预算按哪个口径统计"
     assert body == "在「预算复核」"
+
+
+def test_a_mention_pushes_who_and_where_in_the_readers_language():
+    """「有人 @ 我」 is said in the reader's language; the message is the body."""
+    title, body = push_text(
+        NotificationType.MENTION,
+        {"authorName": "Alice", "topicTitle": "前端", "content": "看一下"},
+        "en",
+    )
+    assert title == "Alice mentioned you in “前端”"
+    assert body == "看一下"

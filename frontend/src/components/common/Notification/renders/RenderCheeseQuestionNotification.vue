@@ -11,7 +11,7 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getRoomTitle, getStringMetadata } from './NotificationRenderUtils'
+import { getRoomTitle, getStringMetadata, messageLink } from './NotificationRenderUtils'
 
 /**
  * 芝士提出的待回答问题：本轮停在这里等回答。
@@ -23,17 +23,7 @@ import { getRoomTitle, getStringMetadata } from './NotificationRenderUtils'
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()
 
-const projectId = computed(() => getStringMetadata(props.notification, 'projectId'))
-const topicId = computed(() => getStringMetadata(props.notification, 'topicId'))
 const topicTitle = computed(() => getRoomTitle(props.notification))
-// 这条提问在时间线上的那条消息 —— 投递的时候就一并存下了（`announce.notify_question`），
-// 留着就是为了「点进去落在它身上」。
-const blockId = computed(() => getStringMetadata(props.notification, 'blockId'))
-// 它问在哪条会话里：一个任务的、一条支线的，空着就是频道自己那条线。芝士在哪条会话
-// 里问，那条消息就落在哪条线的时间线上 —— 落回频道，人点开是一页没有这条消息的地
-// 方（「这条消息已不存在」）。
-const taskId = computed(() => getStringMetadata(props.notification, 'taskId'))
-const threadId = computed(() => getStringMetadata(props.notification, 'threadId'))
 
 const title = computed(
   () => getStringMetadata(props.notification, 'question') || t('notifications.CHEESE_QUESTION.untitled')
@@ -50,28 +40,8 @@ const body = computed(() => {
     : t('notifications.CHEESE_QUESTION.body', { topicTitle: topicTitle.value })
 })
 
-const routerLink = computed(() => {
-  if (!projectId.value || !topicId.value) return undefined
-  // 提问记的是「这一轮停在这儿」，可一条通知点开时，那条消息可能已经在几小时的时间
-  // 线上游了很远 —— 「进房间」不等于「看到那一条」。房间页本来就认 `?block=`（搜索
-  // 结果、别人发来的链接都走它），所以把提问那条消息的 id 一起带上，落下去就是落在
-  // 它身上，而不是房间最新那几条。
-  //
-  // 落点是**问这道题的那条会话**：任务、支线，或频道自己那条线。`?block=` 只在它自
-  // 己那条线上找得到那条消息 —— 指向频道，人点开就是一页没有这条消息的地方。
-  const where = taskId.value
-    ? {
-        name: 'workspace-task',
-        params: { projectId: projectId.value, topicId: topicId.value, taskId: taskId.value },
-      }
-    : threadId.value
-      ? {
-          name: 'workspace-thread',
-          params: { projectId: projectId.value, topicId: topicId.value, threadId: threadId.value },
-        }
-      : { name: 'workspace-topic', params: { projectId: projectId.value, topicId: topicId.value } }
-  return { ...where, query: blockId.value ? { block: blockId.value } : undefined }
-})
+// 落点是问这道题的那条会话里的那条提问消息，而不是房间最新那几条（`messageLink`）。
+const routerLink = computed(() => messageLink(props.notification))
 
 const content = computed<RenderedNotificationContent>(() => ({
   title: title.value,
