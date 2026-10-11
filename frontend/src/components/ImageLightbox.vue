@@ -194,6 +194,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <template>
   <Teleport to="body">
+    <!-- The stage IS the dialog, so it cannot be a button: non-interactive
+         by role and holding the click. Keyboard stays on the window
+         listener (Escape to close) and the close button takes focus. -->
+    <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the dialog itself; Escape is handled on window -->
     <div
       ref="stage"
       class="lightbox"
@@ -207,6 +211,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
     >
+      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the double-click shortcut; the close button and Escape are the keyboard path -->
       <img
         ref="figure"
         class="lightbox__figure"
