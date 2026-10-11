@@ -88,9 +88,11 @@ const props = defineProps<{
   editingId: string | null
   editSaving: boolean
   /** 编辑那条消息时的 @ 候选：和房间输入区同一份名册、同一份话题表。
-   *  只 @ 人、话题和群播——编辑框不放附件，所以没有资料库那一级。 */
-  mentionPool: MentionPoolEntry[]
-  topicList: Topic[]
+   *  只 @ 人、话题和群播——编辑框不放附件，所以没有资料库那一级。
+   *  不填也画得出来：只有真在改一条消息时才用得上，预览站和别的用例挂的是
+   *  静态的一张时间线。 */
+  mentionPool?: MentionPoolEntry[]
+  topicList?: Topic[]
   /** Bound with `:ref`, so the pane the panel measures is this one. */
   scrollRef: Ref<HTMLElement | null>
   contentRef: Ref<HTMLElement | null>
