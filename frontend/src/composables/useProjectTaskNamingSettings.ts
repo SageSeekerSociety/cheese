@@ -36,14 +36,17 @@ export function useProjectTaskNamingSettings(
   // 第一次取数有没有落定：显示闸靠它开，见 useRevealGate。
   const settled = ref(false)
   let generation = 0
+  let actionGeneration = 0
+  let saveRevision = 0
 
   async function load() {
     settled.value = false
     const current = ++generation
+    const revision = saveRevision
     error.value = ''
     try {
       const result = await getTaskNaming(projectId())
-      if (current === generation) state.value = result
+      if (current === generation && revision === saveRevision) state.value = result
     } catch (e) {
       if (current === generation)
         error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.loadFailed')
@@ -54,17 +57,19 @@ export function useProjectTaskNamingSettings(
 
   async function choose(mode: TaskNamingMode) {
     if (!state.value?.can_manage || busy.value || mode === state.value.mode) return
-    const current = generation
+    const current = ++actionGeneration
     busy.value = true
     error.value = ''
     try {
       const result = await setTaskNaming(projectId(), mode)
-      if (current === generation) state.value = result
+      if (current !== actionGeneration) return
+      saveRevision++
+      state.value = result
     } catch (e) {
-      if (current === generation)
+      if (current === actionGeneration)
         error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.saveFailed')
     } finally {
-      if (current === generation) busy.value = false
+      if (current === actionGeneration) busy.value = false
     }
   }
 
@@ -77,6 +82,7 @@ export function useProjectTaskNamingSettings(
     if (on) void load()
     else {
       generation++
+      actionGeneration++
       settled.value = false
       state.value = null
       error.value = ''
@@ -84,6 +90,12 @@ export function useProjectTaskNamingSettings(
     }
   })
   watch(projectId, () => {
+    generation++
+    actionGeneration++
+    settled.value = false
+    state.value = null
+    error.value = ''
+    busy.value = false
     if (enabled()) void load()
   })
 

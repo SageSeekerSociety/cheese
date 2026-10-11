@@ -36,14 +36,19 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
   // 第一次取数有没有落定：显示闸靠它开，见 useRevealGate。
   const settled = ref(false)
   let generation = 0
+  let actionGeneration = 0
+  let saveRevision = 0
 
   async function load() {
     settled.value = false
     const current = ++generation
+    const revision = saveRevision
     error.value = ''
     try {
       const result = await getProjectComputeConfigs(projectId())
-      if (current === generation) state.value = result
+      if (current !== generation) return
+      // Refresh the distribution without restoring a default saved after this read started.
+      state.value = revision === saveRevision || !state.value ? result : { ...result, default: state.value.default }
     } catch (e) {
       if (current === generation) error.value = e instanceof Error ? e.message : t('work.projectMachine.loadFailed')
     } finally {
@@ -53,19 +58,21 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
 
   async function save(choice: Environment) {
     if (!state.value?.can_manage || busy.value) return
-    const current = generation
+    const current = ++actionGeneration
     busy.value = true
     error.value = ''
     try {
       const result = await saveProjectComputeConfigs(projectId(), { default: choice })
       window.dispatchEvent(new Event('project-compute-updated'))
-      if (current !== generation || !state.value) return
+      if (current !== actionGeneration || !state.value) return
+      saveRevision++
       state.value = { ...state.value, ...result }
       editing.value = false
     } catch (e) {
-      if (current === generation) error.value = e instanceof Error ? e.message : t('work.projectMachine.saveFailed')
+      if (current === actionGeneration)
+        error.value = e instanceof Error ? e.message : t('work.projectMachine.saveFailed')
     } finally {
-      if (current === generation) busy.value = false
+      if (current === actionGeneration) busy.value = false
     }
   }
 
@@ -83,6 +90,7 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
     if (on) void load()
     else {
       generation++
+      actionGeneration++
       busy.value = false
       settled.value = false
       editing.value = false
@@ -91,6 +99,13 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
     }
   })
   watch(projectId, () => {
+    generation++
+    actionGeneration++
+    busy.value = false
+    settled.value = false
+    editing.value = false
+    state.value = null
+    error.value = ''
     if (enabled()) void load()
   })
 
