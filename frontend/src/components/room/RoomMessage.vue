@@ -94,6 +94,16 @@ const personName = computed(() =>
   props.faceStatus ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceStatus }) : props.authorName
 )
 
+// 读屏停在这一条上时听到的：谁、几点（还没送出去的那条是送达状态），再是正文开头一段。
+// 行只能被脚本聚焦（tabindex=-1）：时间线让当前那一条成为 Tab 停靠点（useTimelineKeys）。
+const itemLabel = computed(() =>
+  t('work.room.chat.messageLabel', {
+    name: props.authorName,
+    time: props.time,
+    text: replySnippet(props.block, props.refs, 140),
+  })
+)
+
 const emit = defineEmits<{
   (e: 'open-file', path: string): void
   (e: 'open-card', taskId: string): void
@@ -161,7 +171,9 @@ function renderPlain(text: string): string {
     }"
     :data-mid="block.id"
     :data-actions="outgoing ? undefined : ''"
-    :tabindex="outgoing ? undefined : 0"
+    role="article"
+    :aria-label="itemLabel"
+    tabindex="-1"
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">

@@ -17,7 +17,7 @@ import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
 
 import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
@@ -317,20 +317,20 @@ function settleRow(e: AnimationEvent) {
 function emitOutboxLeave(el: Element, done: () => void) {
   emit('outbox-leave', el, done)
 }
+// 事件行和「新建了任务」那一条，读屏读到的名字就是这一行自己的字（谁、做了什么、几点）：
+// aria-labelledby 指向自己。id 带上这一列的前缀：同一条可能同时开在两栏里。
+const uid = useId()
+function rowId(id: string): string {
+  return `${uid}-row-${id}`
+}
 </script>
 
 <template>
   <!-- Message stream — Feishu group chat: left-aligned rows, grouped runs,
            per-row hover action bar, centered system/event lines. -->
-  <!-- Focusable so keyboard users can scroll it with the arrow and page keys (listed in the shortcut sheet). -->
-  <div
-    :ref="scrollRef"
-    class="messages flex-grow-1 overflow-y-auto py-2"
-    data-testid="chat-scroll"
-    tabindex="0"
-    role="region"
-    :aria-label="t('work.room.chat.timelineLabel')"
-  >
+  <!-- 滚动区本身不是 Tab 停靠点：键盘停在下面那一列消息里的一条上，↑↓ 在消息之间走，
+       走到哪就滚到哪（useTimelineKeys）。 -->
+  <div :ref="scrollRef" class="messages flex-grow-1 overflow-y-auto py-2" data-testid="chat-scroll">
     <!-- Screen readers hear one line per newly arrived message (who + the start of it), never the streaming text. -->
     <p class="visually-hidden" role="status" aria-live="polite" data-testid="chat-live">{{ liveAnnouncement }}</p>
     <!-- Single wrapper so a ResizeObserver can watch the timeline's total
@@ -403,199 +403,223 @@ function emitOutboxLeave(el: Element, done: () => void) {
         {{ loadingOlder ? t('work.room.chat.loadingOlder') : t('work.room.chat.older') }}
       </div>
 
-      <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
-        <!-- Leading rows wait for the first-paint batch (useRowBatch); every row ends up in the DOM. -->
-        <template v-if="i >= (hiddenRows ?? 0)">
-          <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
+      <!-- 一列消息（WAI-ARIA feed）：每一条是一个 article，整列只有当前那一条在 Tab 序列里。
+           没有自己的盒子样式，排版和直接排在 .tl-content 里一样。 -->
+      <div
+        class="tl-feed"
+        data-chat-feed
+        role="feed"
+        :aria-label="t('work.room.chat.timelineLabel')"
+        :aria-busy="loadingHistory || loadingOlder"
+      >
+        <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
+          <!-- Leading rows wait for the first-paint batch (useRowBatch); every row ends up in the DOM. -->
+          <template v-if="i >= (hiddenRows ?? 0)">
+            <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
                哪条是今天的——这条线是唯一说得出「那是上周」的东西。 -->
-          <TimelineMark v-if="dayLabels.get(m.id)" quiet>{{ dayLabels.get(m.id) }}</TimelineMark>
-          <!-- 时间刻度: 你上次离开时看到哪儿。侧栏的未读角标只回答「有没有新的」,
+            <TimelineMark v-if="dayLabels.get(m.id)" quiet>{{ dayLabels.get(m.id) }}</TimelineMark>
+            <!-- 时间刻度: 你上次离开时看到哪儿。侧栏的未读角标只回答「有没有新的」,
                这条线回答「新的从哪开始」。开话题时算一次就冻住，不随新消息移动。 -->
-          <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
-            <v-icon size="12">mdi-arrow-down</v-icon>
-            {{ t('work.room.chat.newMessagesBelow') }}
-          </TimelineMark>
-          <TaskCreatedPost
-            v-if="createdTasks[i]"
-            :class="{ 'tl-arrive': arrived.has(m.id) }"
-            :task="createdTasks[i]!"
-            :creator="createdTasks[i]!.creator"
-            :creator-name="(nameOf ?? String)(createdTasks[i]!.creator ?? '')"
-            :owner-name="ownerName(createdTasks[i]!)"
-            :avatar="avatarOf(createdTasks[i]!.creator ?? '')"
-            :time="fmtTime(m.created_at)"
-            :cont="createdCont[i]"
-            :data-row-id="m.id"
-            @open="emit('open-card', $event)"
-          />
-          <RoomNotice
-            v-else-if="notice"
-            :class="{ 'tl-arrive': arrived.has(m.id) }"
-            :block="m"
-            :notice="notice"
-            :run="run"
-            :agent="agentOf(m, notice)"
-            :time-of="fmtTime"
-            :cont="noticeCont[i]"
-            :face="faceRows.get(m.id)?.state ?? null"
-            :face-label="faceLabel(faceRows.get(m.id))"
-            :face-status="faceStatus(faceRows.get(m.id))"
-            :time="fmtTime(m.created_at)"
-            :agent-name="agentName"
-            :refs="refs"
-            :can-retry="i === retryIndex"
-            :retrying="retryBusy"
-            :project-id="topic?.project_id ?? null"
-            :data-row-id="m.id"
-            @animationend="settleRow"
-            @open-resource="emitOpenResource"
-            @open-card="emit('open-card', $event)"
-            @retry="emit('retry')"
-            @jump="emit('jump', $event)"
-          />
-          <!-- message row -->
-          <RoomMessage
-            v-else-if="!notice"
-            :class="{
-              'tl-arrive': arrived.has(m.id),
-              'tl-flash': flashId === m.id,
-              'tl-delivered': delivered.has(m.id),
-              'im-row--time': timeShownId === m.id,
-            }"
-            :block="m"
-            :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
-            :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
-            :run-start="runEdges[i] !== 'cont'"
-            :regroup="runEdges[i] === 'regroup'"
-            :mine="isMine(m)"
-            :topic-id="topic?.id ?? null"
-            :author-name="displayName(m)"
-            :external="isExternal(m.author)"
-            :avatar="avatarOf(m.author)"
-            :is-agent="isAgentBlock(m)"
-            :time="fmtTime(m.created_at)"
-            :refs="refs"
-            :viewer="viewer"
-            :ask-closed="askClosed"
-            :active="bar.shown && bar.id === m.id"
-            :live="liveChecklists.has(m.id)"
-            :face="faceRows.get(m.id)?.state ?? null"
-            :face-label="faceLabel(faceRows.get(m.id))"
-            :face-status="faceStatus(faceRows.get(m.id))"
-            :editing="editingId === m.id"
-            :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
-            :saving="editSaving"
-            :pinnable="pinnable"
-            :pinned="!!pinnedIds?.has(m.id)"
-            :data-row-id="m.id"
-            @animationend="settleRow"
-            @open-file="emitOpenFile"
-            @open-card="emit('open-card', $event)"
-            @react="emitReact"
-            @ask-reply="emitAskReply"
-            @checklist="emitChecklist"
-            @download="emit('download', $event)"
-            @jump="emit('jump', $event)"
-            @save-edit="emitSaveEdit"
-            @cancel-edit="emit('cancel-edit')"
-            @keep="emit('keep', $event)"
-            @pin="emit('pin', $event)"
-            @unpin="emit('unpin', $event)"
-          />
-          <!-- 例行任务的一次执行：哪条规则、跑得怎么样，去看这次执行的支线。 -->
-          <RoutineRunLine
-            v-if="!notice && m.routine_run"
-            class="tl-thread"
-            :run="m.routine_run"
-            :threaded="!!threadable && !!m.thread"
-            @open="emit('open-thread', m)"
-          />
-          <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
-               带插槽的行每次重画都会跟着重画。 -->
-          <!-- 这条消息下面：上面是支线里的讨论，下面是从它出来的任务。两样都有时合成一块。 -->
-          <div
-            v-if="!notice && threadable && (m.thread || under(m.id).length)"
-            class="tl-thread msg-work"
-            :class="{ 'msg-work--joined': !!m.thread && under(m.id).length > 0 }"
-          >
-            <ThreadLine
-              v-if="m.thread"
-              :summary="m.thread ?? null"
-              :replying="replyingFor?.(m) ?? null"
-              :status="threadStatusFor?.(m) ?? null"
+            <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
+              <v-icon size="12">mdi-arrow-down</v-icon>
+              {{ t('work.room.chat.newMessagesBelow') }}
+            </TimelineMark>
+            <TaskCreatedPost
+              v-if="createdTasks[i]"
+              :id="rowId(m.id)"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :task="createdTasks[i]!"
+              :creator="createdTasks[i]!.creator"
+              :creator-name="(nameOf ?? String)(createdTasks[i]!.creator ?? '')"
+              :owner-name="ownerName(createdTasks[i]!)"
+              :avatar="avatarOf(createdTasks[i]!.creator ?? '')"
+              :time="fmtTime(m.created_at)"
+              :cont="createdCont[i]"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              role="article"
+              tabindex="-1"
+              :aria-labelledby="rowId(m.id)"
+              @open="emit('open-card', $event)"
+            />
+            <RoomNotice
+              v-else-if="notice"
+              :id="rowId(m.id)"
+              :class="{ 'tl-arrive': arrived.has(m.id) }"
+              :block="m"
+              :notice="notice"
+              :run="run"
+              :agent="agentOf(m, notice)"
+              :time-of="fmtTime"
+              :cont="noticeCont[i]"
+              :face="faceRows.get(m.id)?.state ?? null"
+              :face-label="faceLabel(faceRows.get(m.id))"
+              :face-status="faceStatus(faceRows.get(m.id))"
+              :time="fmtTime(m.created_at)"
+              :agent-name="agentName"
               :refs="refs"
-              :name-of="nameOf ?? String"
-              :avatar-of="avatarOf"
-              :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
+              :can-retry="i === retryIndex"
+              :retrying="retryBusy"
+              :project-id="topic?.project_id ?? null"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              role="article"
+              tabindex="-1"
+              :aria-labelledby="rowId(m.id)"
+              @animationend="settleRow"
+              @open-resource="emitOpenResource"
+              @open-card="emit('open-card', $event)"
+              @retry="emit('retry')"
+              @jump="emit('jump', $event)"
+            />
+            <!-- message row -->
+            <RoomMessage
+              v-else-if="!notice"
+              :class="{
+                'tl-arrive': arrived.has(m.id),
+                'tl-flash': flashId === m.id,
+                'tl-delivered': delivered.has(m.id),
+                'im-row--time': timeShownId === m.id,
+              }"
+              :block="m"
+              :parent="showReplyCue(m) ? parentOf(m) ?? null : null"
+              :parent-name="showReplyCue(m) ? displayName(parentOf(m)!) : null"
+              :run-start="runEdges[i] !== 'cont'"
+              :regroup="runEdges[i] === 'regroup'"
+              :mine="isMine(m)"
+              :topic-id="topic?.id ?? null"
+              :author-name="displayName(m)"
+              :external="isExternal(m.author)"
+              :avatar="avatarOf(m.author)"
+              :is-agent="isAgentBlock(m)"
+              :time="fmtTime(m.created_at)"
+              :refs="refs"
+              :viewer="viewer"
+              :ask-closed="askClosed"
+              :active="bar.shown && bar.id === m.id"
+              :live="liveChecklists.has(m.id)"
+              :face="faceRows.get(m.id)?.state ?? null"
+              :face-label="faceLabel(faceRows.get(m.id))"
+              :face-status="faceStatus(faceRows.get(m.id))"
+              :editing="editingId === m.id"
+              :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
+              :saving="editSaving"
+              :pinnable="pinnable"
+              :pinned="!!pinnedIds?.has(m.id)"
+              :data-row-id="m.id"
+              :data-feed-item="m.id"
+              @animationend="settleRow"
+              @open-file="emitOpenFile"
+              @open-card="emit('open-card', $event)"
+              @react="emitReact"
+              @ask-reply="emitAskReply"
+              @checklist="emitChecklist"
+              @download="emit('download', $event)"
+              @jump="emit('jump', $event)"
+              @save-edit="emitSaveEdit"
+              @cancel-edit="emit('cancel-edit')"
+              @keep="emit('keep', $event)"
+              @pin="emit('pin', $event)"
+              @unpin="emit('unpin', $event)"
+            />
+            <!-- 例行任务的一次执行：哪条规则、跑得怎么样，去看这次执行的支线。 -->
+            <RoutineRunLine
+              v-if="!notice && m.routine_run"
+              class="tl-thread"
+              :data-feed-of="m.id"
+              :run="m.routine_run"
+              :threaded="!!threadable && !!m.thread"
               @open="emit('open-thread', m)"
             />
-            <div v-if="under(m.id).length" class="msg-work__tasks">
-              <TaskCard
-                v-for="task in under(m.id)"
-                :key="task.id"
-                :task="task"
-                :owner-name="ownerName(task)"
-                :in-list="!!m.thread"
-                @open="emit('open-card', $event)"
+            <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
+               带插槽的行每次重画都会跟着重画。 -->
+            <!-- 这条消息下面：上面是支线里的讨论，下面是从它出来的任务。两样都有时合成一块。 -->
+            <div
+              v-if="!notice && threadable && (m.thread || under(m.id).length)"
+              class="tl-thread msg-work"
+              :data-feed-of="m.id"
+              :class="{ 'msg-work--joined': !!m.thread && under(m.id).length > 0 }"
+            >
+              <ThreadLine
+                v-if="m.thread"
+                :summary="m.thread ?? null"
+                :replying="replyingFor?.(m) ?? null"
+                :status="threadStatusFor?.(m) ?? null"
+                :refs="refs"
+                :name-of="nameOf ?? String"
+                :avatar-of="avatarOf"
+                :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
+                @open="emit('open-thread', m)"
               />
+              <div v-if="under(m.id).length" class="msg-work__tasks">
+                <TaskCard
+                  v-for="task in under(m.id)"
+                  :key="task.id"
+                  :task="task"
+                  :owner-name="ownerName(task)"
+                  :in-list="!!m.thread"
+                  @open="emit('open-card', $event)"
+                />
+              </div>
             </div>
-          </div>
+          </template>
         </template>
-      </template>
 
-      <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,
+        <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,
              只是时间那一格写的是送达状态——「立即显示」是第一位的，送达状态是
              第二位的。 -->
-      <TransitionGroup :css="false" @leave="emitOutboxLeave">
+        <TransitionGroup :css="false" @leave="emitOutboxLeave">
+          <RoomMessage
+            v-for="(item, oi) in outbox"
+            :key="item.clientId"
+            :class="{ 'tl-sent': sentNow.has(item.clientId) }"
+            :data-cid="item.clientId"
+            :data-feed-item="`out-${item.clientId}`"
+            :block="pendingBlock(item)"
+            :parent="null"
+            :parent-name="null"
+            :run-start="outboxEdge(oi) !== 'cont'"
+            :regroup="outboxEdge(oi) === 'regroup'"
+            :mine="true"
+            :topic-id="topic?.id ?? null"
+            :author-name="myName"
+            :external="isExternal(viewer)"
+            :avatar="avatarOf(viewer)"
+            :is-agent="false"
+            :time="outgoingState(item)"
+            :refs="refs"
+            :viewer="viewer"
+            :ask-busy="false"
+            :outgoing="{ error: item.error, failed: item.state === 'failed' }"
+            @animationend="emit('settle-sent', $event, item.clientId)"
+            @retry="emit('retry-send', item.clientId)"
+            @edit="emit('edit-send', item)"
+          />
+        </TransitionGroup>
+
+        <!-- 队友正在写的那条：和它落下来之后同一个样子，淡一档，时间那一格写「正在输入…」。
+           它还不是消息，所以没有悬停条、没有表情、不进未读。 -->
         <RoomMessage
-          v-for="(item, oi) in outbox"
-          :key="item.clientId"
-          :class="{ 'tl-sent': sentNow.has(item.clientId) }"
-          :data-cid="item.clientId"
-          :block="pendingBlock(item)"
+          v-for="{ block: m, edge } in typing"
+          :key="m.id"
+          :block="m"
           :parent="null"
           :parent-name="null"
-          :run-start="outboxEdge(oi) !== 'cont'"
-          :regroup="outboxEdge(oi) === 'regroup'"
-          :mine="true"
+          :run-start="edge !== 'cont'"
+          :regroup="edge === 'regroup'"
+          :mine="false"
           :topic-id="topic?.id ?? null"
-          :author-name="myName"
-          :external="isExternal(viewer)"
-          :avatar="avatarOf(viewer)"
-          :is-agent="false"
-          :time="outgoingState(item)"
+          :author-name="displayName(m)"
+          :external="isExternal(m.author)"
+          :avatar="avatarOf(m.author)"
+          :is-agent="isAgentBlock(m)"
+          :time="t('work.room.chat.typing')"
           :refs="refs"
           :viewer="viewer"
           :ask-busy="false"
-          :outgoing="{ error: item.error, failed: item.state === 'failed' }"
-          @animationend="emit('settle-sent', $event, item.clientId)"
-          @retry="emit('retry-send', item.clientId)"
-          @edit="emit('edit-send', item)"
+          :outgoing="{ failed: false }"
         />
-      </TransitionGroup>
-
-      <!-- 队友正在写的那条：和它落下来之后同一个样子，淡一档，时间那一格写「正在输入…」。
-           它还不是消息，所以没有悬停条、没有表情、不进未读。 -->
-      <RoomMessage
-        v-for="{ block: m, edge } in typing"
-        :key="m.id"
-        :block="m"
-        :parent="null"
-        :parent-name="null"
-        :run-start="edge !== 'cont'"
-        :regroup="edge === 'regroup'"
-        :mine="false"
-        :topic-id="topic?.id ?? null"
-        :author-name="displayName(m)"
-        :external="isExternal(m.author)"
-        :avatar="avatarOf(m.author)"
-        :is-agent="isAgentBlock(m)"
-        :time="t('work.room.chat.typing')"
-        :refs="refs"
-        :viewer="viewer"
-        :ask-busy="false"
-        :outgoing="{ failed: false }"
-      />
+      </div>
 
       <!-- End of the conversation timeline — GitHub PR's merge box. Host fills. -->
       <div class="px-4">
@@ -763,8 +787,9 @@ function emitOutboxLeave(el: Element, done: () => void) {
   }
 }
 
-.messages:focus-visible {
-  outline: 2px solid var(--focus-ring);
+/* 键盘停在一条上：焦点环画在行内（offset 取负），和 RoomMessage 的 .im-row 一样——行是
+   整宽的，滚动区会把画在外面的环左右切掉。 */
+.tl-feed > [data-feed-item]:focus-visible {
   outline-offset: -2px;
 }
 </style>

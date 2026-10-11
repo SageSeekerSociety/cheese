@@ -10,7 +10,7 @@
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
@@ -22,6 +22,7 @@ import ChatErrorToast from './chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
+import { useComposerShortcut } from './chat/composables/useComposerShortcut'
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
@@ -308,6 +309,14 @@ const submitQuestion = createQuestionSubmit({
   send,
 })
 defineExpose({ send, linkDown, submitQuestion })
+
+// 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
+const chatRoot = ref<HTMLElement | null>(null)
+useComposerShortcut({
+  root: chatRoot,
+  open: () => !!props.topic && props.showComposer && !props.composerClosed && !!composerRef.value,
+  focus: () => composerRef.value?.focus(),
+})
 </script>
 
 <template>
@@ -316,7 +325,7 @@ defineExpose({ send, linkDown, submitQuestion })
        whole panel with `v-show` — which sets inline `display: none`, which
        `.d-flex { display: flex !important }` then overrides. The button
        toggled, the icon flipped, and the chat column never moved. -->
-  <div class="chat">
+  <div ref="chatRoot" class="chat">
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
