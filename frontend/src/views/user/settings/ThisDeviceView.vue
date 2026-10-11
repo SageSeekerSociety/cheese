@@ -37,7 +37,10 @@
       </div>
 
       <div class="srow">
-        <label class="srow__k" for="this-device-name">{{ t('account.thisDevice.name') }}</label>
+        <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
+        <label id="this-device-name-label" class="srow__k" for="this-device-name">{{
+          t('account.thisDevice.name')
+        }}</label>
         <v-text-field
           id="this-device-name"
           v-model="draftName"

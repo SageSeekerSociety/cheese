@@ -13,7 +13,10 @@
     <v-form class="tform__form" @submit.prevent="saveTemplate">
       <section class="settings-card">
         <div class="srow">
-          <label class="srow__k" for="tpl-name">{{ t('spaces.detail.templateForm.templateName') }}</label>
+          <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
+          <label id="tpl-name-label" class="srow__k" for="tpl-name">{{
+            t('spaces.detail.templateForm.templateName')
+          }}</label>
           <v-text-field
             id="tpl-name"
             v-model="template.name"
@@ -25,7 +28,9 @@
           />
         </div>
         <div class="srow srow--top">
-          <label class="srow__k" for="tpl-desc">{{ t('spaces.detail.templateForm.templateDescription') }}</label>
+          <label id="tpl-desc-label" class="srow__k" for="tpl-desc">{{
+            t('spaces.detail.templateForm.templateDescription')
+          }}</label>
           <v-textarea
             id="tpl-desc"
             v-model="template.description"
@@ -38,7 +43,9 @@
           />
         </div>
         <div class="srow">
-          <label class="srow__k" for="tpl-title">{{ t('spaces.detail.templateForm.contestTitle') }}</label>
+          <label id="tpl-title-label" class="srow__k" for="tpl-title">{{
+            t('spaces.detail.templateForm.contestTitle')
+          }}</label>
           <v-text-field
             id="tpl-title"
             v-model="template.title"
@@ -96,7 +103,9 @@
           </v-radio-group>
         </div>
         <div class="srow">
-          <label class="srow__k" for="tpl-deadline">{{ t('tasks.form.defaultDeadline') }}</label>
+          <label id="tpl-deadline-label" class="srow__k" for="tpl-deadline">{{
+            t('tasks.form.defaultDeadline')
+          }}</label>
           <div class="tform__range">
             <span class="tform__to">{{ t('spaces.detail.templateForm.deadlinePrefix') }}</span>
             <v-text-field

@@ -291,7 +291,8 @@ onMounted(() => {
     <p class="sb-legend t-meta-read">{{ t('feedback.submit.requiredLegend') }}</p>
 
     <div class="sb-field">
-      <label class="sb-label" for="sb-title">
+      <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
+      <label id="sb-title-label" class="sb-label" for="sb-title">
         {{ t('feedback.submit.field.title.label') }}
         <span class="sb-req" aria-hidden="true">*</span>
       </label>
