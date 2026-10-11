@@ -41,6 +41,8 @@ const feishu = ref<FeishuAvailability>({ configured: false, app_id: '', domain: 
 /** 上面那个问题问到答案没有。读不到时按钮不画灰 —— 没读到不等于没配，而「管理员还没
  *  配置飞书应用」是一句会被当真的话：宁可让人按下去，由服务端回那句实话。 */
 const feishuKnown = ref(false)
+/** 还在问：按钮先灰着，不然没配的时候它会先亮一下再变灰。 */
+const feishuAsking = ref(true)
 /** 确定没配：按钮灰着，底下写明为什么。 */
 const feishuMissing = computed(() => feishuKnown.value && !feishu.value.configured)
 const loading = ref(false)
@@ -148,6 +150,8 @@ async function load() {
     feishuKnown.value = true
   } catch {
     feishuKnown.value = false
+  } finally {
+    feishuAsking.value = false
   }
 }
 
@@ -355,7 +359,7 @@ onMounted(async () => {
             kind="secondary"
             size="sm"
             prepend-icon="mdi-link-variant-plus"
-            :disabled="feishuMissing"
+            :disabled="feishuMissing || feishuAsking"
             :loading="busy === 'feishu:connect'"
             @click="connectFeishuAccount"
           >

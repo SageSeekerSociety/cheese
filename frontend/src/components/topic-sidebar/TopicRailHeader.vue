@@ -10,11 +10,13 @@
 //
 // 这里只画：这个项目叫什么、露出来了哪几页、转不转得动项目，都是父级算好递进来的。
 
+import { computed } from 'vue'
+
 import TopicRailBadge from './TopicRailBadge.vue'
 
 import { t } from '@/i18n'
 
-defineProps<{
+const props = defineProps<{
   /** 整页形态（手机）：这一行填进顶栏，高度和底线归顶栏。 */
   page: boolean
   /** 两栏（平板）：留在左栏顶上，高度和底线照桌面那一条。 */
@@ -41,6 +43,13 @@ defineProps<{
   canTransfer: boolean
   canLeave: boolean
 }>()
+
+// 开着的是菜单里的一页（技能、成员、设置、项目文档……）：侧栏上别的行都不是它，
+// 这颗按钮就是它在侧栏上的位置，照选中的行那样标出来，不然整条侧栏一格都不亮。
+const onMenuPage = computed(
+  () =>
+    props.docsActive || props.routeName === 'project-settings' || props.menuPages.some((p) => p.key === props.routeName)
+)
 
 const emit = defineEmits<{
   (e: 'open-page', key: string): void
@@ -94,7 +103,8 @@ const emit = defineEmits<{
               v-bind="menuProps"
               type="button"
               class="rail-header__home"
-              :class="{ 'rail-header__home--active': isActive }"
+              :class="{ 'rail-header__home--active': isActive, 'rail-header__home--current': onMenuPage }"
+              :aria-current="onMenuPage ? 'page' : undefined"
               :title="projectName"
               :aria-label="t('work.sidebar.projectMenu')"
               :disabled="!projectSelected"
@@ -251,6 +261,11 @@ const emit = defineEmits<{
 /* 菜单开着：底色和悬停同一档。 */
 .rail-header__home--active {
   background: var(--fill);
+}
+/* 开着的是菜单里的一页：和侧栏上选中的那一行同一档（TopicRailPinnedRows 的 is-active）。 */
+.rail-header__home--current,
+.rail-header__home--current:hover {
+  background: var(--line-2);
 }
 .rail-header__more {
   flex: none;

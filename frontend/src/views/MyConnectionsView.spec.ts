@@ -104,6 +104,11 @@ async function mount(url = '/') {
 }
 
 const connectButton = () => screen.getByRole('button', { name: '连接飞书' }) as HTMLButtonElement
+/** 问完「配没配」、按钮能按了的那一刻。 */
+async function readyConnectButton(): Promise<HTMLButtonElement> {
+  await vi.waitFor(() => expect(connectButton().disabled).toBe(false))
+  return connectButton()
+}
 
 beforeEach(() => {
   setLocale('zh-CN')
@@ -129,6 +134,16 @@ describe('「连接飞书」这颗按钮', () => {
     expect(connectButton().disabled).toBe(true)
   })
 
+  it('还没问到「配没配」时先灰着：没配的时候不会先亮一下', async () => {
+    let answer!: (value: unknown) => void
+    feishuAvailability.mockReturnValue(new Promise((resolve) => (answer = resolve)))
+    await mount()
+
+    expect((await screen.findByRole('button', { name: '连接飞书' })).hasAttribute('disabled')).toBe(true)
+    answer({ configured: true, app_id: 'cli_p', domain: 'feishu' })
+    expect((await readyConnectButton()).disabled).toBe(false)
+  })
+
   it('问不到「配没配」时既不谎报没配，也不把整页连接一起掀掉', async () => {
     // 「没读到」和「没配」是两件事。前者的正确画法是照旧让人按，由服务端回那句实话 ——
     // 把没读到画成没配，是在替管理员说一句他可能没做过的事。
@@ -146,7 +161,7 @@ describe('「连接飞书」这颗按钮', () => {
     feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?x=1', redirect_uri: 'r' })
     await mount()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
+    await fireEvent.click(await readyConnectButton())
 
     await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?x=1'))
     expect(connectFeishu).toHaveBeenCalledTimes(1)
@@ -159,7 +174,7 @@ describe('「连接飞书」这颗按钮', () => {
     feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?x=1', redirect_uri: 'r' })
     await mount()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
+    await fireEvent.click(await readyConnectButton())
     await vi.waitFor(() => expect(connectButton().getAttribute('aria-busy')).toBe('true'))
     expect(navigatedTo).toBe('')
 
