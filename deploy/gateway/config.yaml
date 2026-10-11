@@ -122,9 +122,10 @@ model_list:
   # when every RUC key fails or is cooling down. RUC admits 3 parallel
   # requests per key and the limits are independent, so each of its keys is a
   # deployment of its own; a 429 on one is retried on another before the
-  # request leaves RUC. RUC's own gateway spreads requests across its vLLM
-  # nodes, so spreading ours across keys costs no prompt cache there. A
-  # conversation misses the cache once on each move to DeepSeek's API. Every
+  # request leaves RUC. RUC sends each key to one of its vLLM nodes, and each
+  # node has a prompt cache of its own, so a conversation keeps its key
+  # (router_settings below) and misses only when it moves: to another key while
+  # its own is busy, or to DeepSeek's API. Every
   # row carries the same cheese keys because the catalogue reads whichever
   # row /model/info lists first.
   - model_name: deepseek-flash
@@ -357,6 +358,14 @@ general_settings:
   coordination_redis:
     host: litellm-redis
     port: 6379
+
+router_settings:
+  # A conversation, named by Claude Code's session header, stays on the
+  # deployment it first used, so it keeps hitting one RUC node's prompt cache.
+  # A busy or cooling key moves it to another, where it stays; a request that
+  # falls over to DeepSeek's API does not pin it there.
+  model_group_affinity_config:
+    deepseek-flash: [session_affinity]
 
 litellm_settings:
   # The whole point: a row per call. LiteLLM sums those rows into daily totals
