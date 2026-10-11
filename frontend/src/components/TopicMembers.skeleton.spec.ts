@@ -18,7 +18,7 @@ vi.mock('../api', async () => {
     ...actual,
     listTopicMembers: (...a: unknown[]) => listTopicMembers(...a),
     // The work computers load on their own; this test is about the member list.
-    getTopicComputeProfile: () => new Promise(() => {}),
+    getTopicEnvironment: () => new Promise(() => {}),
   }
 })
 

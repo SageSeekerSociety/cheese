@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import type { ComputeChoice, TopicComputeProfile } from '../types/compute'
+import type { SessionEnvironment, TopicEnvironment } from '../types/compute'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -7,7 +7,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const machines = vi.hoisted(() => ({ get: vi.fn() }))
+const machines = vi.hoisted(() => ({ get: vi.fn(), setSession: vi.fn(), setDefault: vi.fn() }))
 
 // 服务端那份房间名册。加人（POST …/members）往里加一行；别的请求照常走（被网络守卫拦下）。
 const ROOM = [
@@ -38,7 +38,9 @@ vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
     ...actual,
-    getTopicComputeProfile: (...args: unknown[]) => machines.get(...args),
+    getTopicEnvironment: (...args: unknown[]) => machines.get(...args),
+    setSessionEnvironment: (...args: unknown[]) => machines.setSession(...args),
+    setEnvironmentDefault: (...args: unknown[]) => machines.setDefault(...args),
     listTopicMembers: vi.fn(async () => ({ data: server.rows.map((row) => ({ ...row })), total: server.rows.length })),
   }
 })
@@ -65,7 +67,7 @@ const PROJECT_MEMBERS = [
 
 const Roster = TopicMembers as unknown as Component
 
-// Vuetify 的浮层要这几样浏览器 API（happy-dom 没有），同 TopicComputePicker.spec。
+// Vuetify 的浮层要这几样浏览器 API（happy-dom 没有）。
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -117,24 +119,28 @@ async function openRoster(extra: Record<string, unknown> = {}) {
   return utils
 }
 
-const CLOUD: ComputeChoice = {
-  name: null,
-  profile: 'cloud',
-  device_id: null,
-}
-const LAB: ComputeChoice = { ...CLOUD, profile: 'device', device_id: null }
-
-function roomMachines(overrides: Partial<TopicComputeProfile> = {}): TopicComputeProfile {
+function roomEnvironments(overrides: Partial<TopicEnvironment> = {}): TopicEnvironment {
   return {
-    choice: CLOUD,
-    project_default: CLOUD,
-    current: 'cloud',
-    device_id: null,
-    devices: [{ device_id: 'lab', name: '实验室工作站', online: true }],
+    default: { kind: 'sandbox', spec: 'standard' },
+    default_from: 'project',
     sessions: [],
-    cloud_vm_available: false,
-    profiles: [],
-    visibility: { options: [], effective: null, machine_access: false },
+    devices: [{ device_id: 'lab', name: '实验室工作站', online: true, owned: false }],
+    specs: [
+      { spec: 'standard', label: '标准' },
+      { spec: 'vm', label: '虚拟机' },
+    ],
+    ...overrides,
+  }
+}
+
+function session(id: string, seat: string, overrides: Partial<SessionEnvironment> = {}): SessionEnvironment {
+  return {
+    session_id: id,
+    agent_handle: seat,
+    seat_handle: seat,
+    environment: { kind: 'sandbox', spec: 'standard' },
+    status: 'ready',
+    online: true,
     ...overrides,
   }
 }
@@ -143,7 +149,9 @@ beforeEach(() => {
   setLocale('zh-CN')
   server.rows = ROOM.map((row) => ({ ...row }))
   document.body.innerHTML = ''
-  machines.get.mockReset().mockResolvedValue(roomMachines())
+  machines.get.mockReset().mockResolvedValue(roomEnvironments())
+  machines.setSession.mockReset().mockResolvedValue({})
+  machines.setDefault.mockReset().mockResolvedValue({})
 })
 
 describe('成员名册', () => {
@@ -288,74 +296,74 @@ function agentRow(): Element {
   return Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes('cheese-t1'))!
 }
 
-describe('名册上这个话题的工作电脑', () => {
-  // 一个话题一个容器（2026-09-28，推翻结论 60）：房间里的 AI 队友都在同一台上，所以
-  // 名册只在底下写一行房间的，队友那一行不再各写一台。
-  it('房间里坐着几条会话，也只有房间那一行，队友那一行不写工作电脑', async () => {
-    const session = (id: string) => ({
-      id,
-      agent_handle: 'cheese-t1',
-      harness: `harness-${id}`,
-      choice: LAB,
-      lease: { device_id: 'lab', generation: 1, status: 'ready', online: true },
-      machine_access: true,
+function rowOf(handle: string): Element {
+  return Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
+}
+
+// 在打开的那张环境菜单里选一种沙箱规格、点「使用这个环境」。
+async function pickSpec(spec: string) {
+  const radio = await waitFor(() => {
+    const el = document.querySelector<HTMLInputElement>(`[data-testid="env-spec-${spec}"] input`)
+    expect(el).not.toBeNull()
+    return el!
+  })
+  await fireEvent.update(radio)
+  await fireEvent.click(document.querySelector('[data-testid="env-submit"]')!)
+  await settle()
+}
+
+describe('名册上每条会话的执行环境', () => {
+  // 每条会话有自己的执行环境（#2320）：换一位 AI 队友的，只搬它这一条。
+  it('在 A 那一行换环境，只换 A 的会话，B 的不动', async () => {
+    server.rows = [
+      ...ROOM.map((row) => ({ ...row })),
+      { member_handle: 'cheese-a2', name: '评审', role: 'member', agent: true, avatar_id: null },
+    ]
+    machines.get.mockResolvedValue(
+      roomEnvironments({ sessions: [session('s-a', 'cheese-t1'), session('s-b', 'cheese-a2')] })
+    )
+    await openRoster()
+    const rowA = document.querySelector('[data-testid="session-env-s-a"]')!
+    expect(rowA.closest('.roster__item')).toBe(rowOf('cheese-t1'))
+    await fireEvent.click(rowA.querySelector('.env-action')!)
+    await pickSpec('vm')
+
+    await waitFor(() => expect(machines.setSession).toHaveBeenCalledTimes(1))
+    expect(machines.setSession).toHaveBeenCalledWith('t1', 's-a', { kind: 'sandbox', spec: 'vm' })
+    expect(machines.setDefault).not.toHaveBeenCalled()
+  })
+
+  it('点开再取消，什么也不发', async () => {
+    machines.get.mockResolvedValue(roomEnvironments({ sessions: [session('s-a', 'cheese-t1')] }))
+    await openRoster()
+    await fireEvent.click(document.querySelector('[data-testid="session-env-s-a"] .env-action')!)
+    const radio = await waitFor(() => {
+      const el = document.querySelector<HTMLInputElement>('[data-testid="env-spec-vm"] input')
+      expect(el).not.toBeNull()
+      return el!
     })
-    machines.get.mockResolvedValue(
-      roomMachines({
-        choice: { ...LAB, name: '实验室工作站', device_id: 'lab' },
-        sessions: [session('s1'), session('s2')],
-      })
-    )
-    await openRoster()
-    expect(document.querySelectorAll('[data-testid="agent-machine"]')).toHaveLength(0)
-    expect(agentRow().textContent).not.toContain('环境')
-    const rooms = document.querySelectorAll('[data-testid="future-machine"]')
-    expect(rooms).toHaveLength(1)
-    expect(rooms[0].textContent).toContain('本频道运行在：实验室工作站')
-    expect(rooms[0].textContent).toContain('改')
-  })
-
-  it('房间那一行跟着项目默认时标出来', async () => {
-    await openRoster()
-    const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('本频道运行在：云端环境')
-    expect(room.textContent).toContain('项目默认')
-  })
-
-  it('房间那台能访问整台电脑时，提醒挂在房间那一行上', async () => {
-    machines.get.mockResolvedValue(
-      roomMachines({
-        choice: { ...LAB, name: '实验室工作站', device_id: 'lab' },
-        visibility: {
-          options: [],
-          effective: 'host',
-          machine_access: true,
-        },
-      })
-    )
-    await openRoster()
-    const room = document.querySelector('[data-testid="future-machine"]')!
-    expect(room.textContent).toContain('能访问整台电脑')
-    expect(room.textContent).not.toContain('项目默认')
-  })
-
-  it('有队友能访问整台电脑时告诉页头，名册合着也看得见', async () => {
-    machines.get.mockResolvedValue(
-      roomMachines({
-        visibility: {
-          options: [],
-          effective: 'host',
-          machine_access: true,
-        },
-      })
-    )
-    const { emitted } = render(Roster, {
-      props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice' },
-      global: { plugins: [createVuetify({ components, directives })] },
-    })
+    await fireEvent.update(radio)
+    await fireEvent.click(document.querySelector('[data-testid="env-cancel"]')!)
     await settle()
-    const notices = emitted()['machine-access'] as [string | null][]
-    expect(notices.at(-1)).toEqual(['让它看到整台电脑（能操作这台电脑上的服务和其他频道）'])
+    expect(machines.setSession).not.toHaveBeenCalled()
+    expect(machines.setDefault).not.toHaveBeenCalled()
+  })
+
+  it('还没开工的队友没有会话，那一行不写环境', async () => {
+    await openRoster()
+    expect(agentRow().querySelector('[data-testid^="session-env-"]')).toBeNull()
+  })
+
+  it('「新会话默认」那一行改的是默认，不搬任何一条会话', async () => {
+    machines.get.mockResolvedValue(roomEnvironments({ sessions: [session('s-a', 'cheese-t1')] }))
+    await openRoster()
+    const row = document.querySelector('[data-testid="future-machine"]')!
+    expect(row.textContent).toContain('新会话默认：沙箱 · 标准')
+    expect(row.textContent).toContain('项目默认')
+    await fireEvent.click(row.querySelector('.env-action')!)
+    await pickSpec('vm')
+    await waitFor(() => expect(machines.setDefault).toHaveBeenCalledWith('t1', { kind: 'sandbox', spec: 'vm' }))
+    expect(machines.setSession).not.toHaveBeenCalled()
   })
 })
 

@@ -413,13 +413,13 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
       },
     },
     {
-      name: "room's members and work computer",
+      name: "room's members and environments",
       path: `${project}/topics/${roomId}`,
       ready: visible(".members-mini"),
       act: async (page) => {
         await page.locator(".members-mini").first().click();
-        await page.locator(".cp-action").first().click();
-        await page.locator(".cp-menu").waitFor();
+        await page.locator(".env-action").first().click();
+        await page.locator(".env-menu").waitFor();
       },
     },
     {
