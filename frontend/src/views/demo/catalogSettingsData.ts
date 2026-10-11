@@ -24,7 +24,7 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, markRaw } from 'vue'
 
 import {
   computeState,
@@ -48,7 +48,7 @@ import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vu
  *  全局注册，不装就解析不了、挂起来会警告。 */
 const UI: CatalogNeed[] = ['vuetify']
 const UI_I18N: CatalogNeed[] = ['vuetify', 'i18n']
-const DeviceSessionsPreview = defineComponent({ setup: () => () => h('span', '设备会话入口') })
+const DeviceSessionsPreview = markRaw(defineComponent({ setup: () => () => h('span', '设备会话入口') }))
 
 export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
   {
