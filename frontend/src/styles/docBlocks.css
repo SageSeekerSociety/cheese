@@ -53,6 +53,14 @@
 .cv-measure .md-reader > * {
   content-visibility: visible;
 }
+/* 自己会横向滚的块（表格、代码、块公式）不跳：没画过的块按 28px 占位，内容溢出这个
+   框，Chrome 就把它当成能用键盘滚的区域，Tab 停上去；一聚焦它按真实高度画出来、不再
+   溢出，焦点就没了去处，掉到 <body>。往前 Tab 时它又因为还没排版而被整段跳过，宽表
+   用键盘滚不了。 */
+.md-reader > :is(.tableWrapper, pre, [data-math='block']),
+.doc-reading.doc-prose > :is(.tableWrapper, pre, [data-math='block']) {
+  content-visibility: visible;
+}
 
 /* ---- Video: a Bilibili player at 16:9, no wider than a reading column ---- */
 
