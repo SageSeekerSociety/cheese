@@ -235,7 +235,7 @@ class RoutineService:
         self._session.add(row)
         await self._session.flush()
         if by_agent:
-            line = say("routineProposed", title=row.title)
+            line = say("routineProposedBy", who=f"<@{by}>", title=row.title)
             self._session.add(
                 Block(
                     id=uuid.uuid4(),
@@ -298,7 +298,14 @@ class RoutineService:
             raise ValidationError(say("routineAlreadyConfirmed"))
         self._activate(row, confirmed_by=by)
         await self._session.flush()
-        await self._settled(row, say("routineProposalConfirmed", title=row.title))
+        await self._settled(
+            row,
+            say(
+                "routineProposalConfirmedBy",
+                who=f"<@{row.proposed_by}>",
+                title=row.title,
+            ),
+        )
         return row
 
     async def _settled(self, row: Routine, content: str) -> None:
@@ -373,7 +380,14 @@ class RoutineService:
 
     async def delete(self, row: Routine) -> None:
         if row.state == RoutineState.draft.value:
-            await self._settled(row, say("routineProposalDeleted", title=row.title))
+            await self._settled(
+                row,
+                say(
+                    "routineProposalDeletedBy",
+                    who=f"<@{row.proposed_by}>",
+                    title=row.title,
+                ),
+            )
         await self._session.delete(row)
         await self._session.flush()
 
@@ -641,7 +655,9 @@ async def _fire(
                         severity=SEVERITY_INFO,
                         who=WHO_PLATFORM,
                         detail=content,
-                        detail_label=say("labelRoutineWork"),
+                        detail_label=say(
+                            "labelRoutineWorkFor", who=f"<@{routine.agent_handle}>"
+                        ),
                     ),
                     "routine_id": str(routine.id),
                     "routine_run_id": str(run.id),

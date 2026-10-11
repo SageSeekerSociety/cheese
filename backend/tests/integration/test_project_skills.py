@@ -10,7 +10,11 @@ from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 OWNER = "user-1"
 PERSON = session_auth_headers(OWNER)
@@ -336,6 +340,50 @@ def test_the_rooms_line_about_a_proposal_says_how_a_person_decided(client):
     [line] = _proposal_lines(client, room, declined["id"])
     assert "没有保存" in line["content"], line["content"]
     assert line["meta"]["state"] == "over"
+
+
+def test_the_rooms_line_about_a_proposal_names_the_teammate_that_proposed(client):
+    """The line names the teammate by its handle, the way a mention chip does,
+    so a teammate called Nova is not announced as 「芝士」, before a person
+    decides and after."""
+    project = _project(client)
+    room = _room(client, project)
+    seat = room_agent_seat(client, room)
+    for name, decide in (("weekly-report", "confirm"), ("grading", "decline")):
+        skill = client.post(f"/topics/{room}/skills", json=_proposal(name)).json()[
+            "data"
+        ]
+        [line] = _proposal_lines(client, room, skill["id"])
+        assert line["content"].startswith(f"<@{seat}> "), line["content"]
+        assert "芝士" not in line["content"]
+
+        client.post(f"/skills/{skill['id']}/{decide}", headers=PERSON)
+        [line] = _proposal_lines(client, room, skill["id"])
+        assert line["meta"]["state"] == "over"
+        assert line["content"].startswith(f"<@{seat}> "), line["content"]
+        assert "芝士" not in line["content"]
+
+
+def test_the_rooms_line_about_a_proposed_change_names_the_teammate(client):
+    project = _project(client)
+    written = client.post(
+        f"/projects/{project}/skills", json=METHOD, headers=PERSON
+    ).json()["data"]
+    room = _room(client, project, "组会")
+    seat = room_agent_seat(client, room)
+    client.patch(
+        f"/skills/{written['id']}?topic={room}",
+        json={"body": "1. 先写结论\n2. 再列数字", "reason": "用户说结论放最前面"},
+    )
+    [line] = _proposal_lines(client, room, written["id"])
+    assert line["content"].startswith(f"<@{seat}> "), line["content"]
+    assert "芝士" not in line["content"]
+
+    client.post(f"/skills/{written['id']}/confirm", headers=PERSON)
+    [line] = _proposal_lines(client, room, written["id"])
+    assert line["meta"]["state"] == "over"
+    assert line["content"].startswith(f"<@{seat}> "), line["content"]
+    assert "芝士" not in line["content"]
 
 
 def test_deleting_a_pending_proposal_settles_its_line(client):
