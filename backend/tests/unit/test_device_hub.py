@@ -140,7 +140,9 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
 
     monkeypatch.setattr(connector, "device_hub", hub)
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
-    monkeypatch.setattr("app.domain.topic.retire.sweep_retired_storage", AsyncMock())
+    monkeypatch.setattr(
+        "app.domain.room_cleanup.retire.sweep_retired_storage", AsyncMock()
+    )
     monkeypatch.setattr(
         "app.domain.room_task.checkouts.remove_closed_checkouts",
         last_step_of_recovery,

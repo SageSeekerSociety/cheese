@@ -7,12 +7,8 @@ For a completed, failed Required CI PR run, use the repository's `rerun-failed`
 dispatch to retry failed jobs instead of pushing an empty commit. A new event
 can change scope as main advances, while a rerun preserves the original run's
 selection and successful jobs; `workflows/rerun-failed.yml` validates the run
-before using its workflow token's Actions permission.
-
-```bash
-gh api --method POST repos/SageSeekerSociety/cheese/dispatches \
-  -f event_type=rerun-failed -F 'client_payload[run_id]=<run-id>'
-```
+before using its workflow token's Actions permission. The exact
+`POST /repos/{owner}/{repo}/dispatches` body is in that workflow's header.
 
 Inspect `PR title recheck` when a correct title still has an old failure.
 `workflows/pr-title.yml` responds to title edits and readiness by retrying
