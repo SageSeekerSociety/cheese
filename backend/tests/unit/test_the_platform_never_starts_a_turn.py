@@ -44,7 +44,7 @@ _REPAIR_TURN = (
     "规则：平台只投递，从来不自己点起一轮（结论 13，不变量 I12、I13）；点名由服务端"
     "从正文解析。修法：调用点收寻址结果 addressed，不收一个「跑不跑」的布尔；"
     "summon 在 app/domain/agent/chat.py 的 ChatService.converse 上必填、没有默认值；"
-    "会话自己开的那一行，发件人 author 是读出来的表达式（room_agent_seat(...)），"
+    "会话自己开的那一行，发件人 author 传读出来的变量或表达式（如 author=author），"
     "不是引号里的字面量；KICKOFF_PROMPT / submit_kickoff 这条路已退役，不要再写。"
     "文档：docs/manual/dev/turn.md「一条消息怎么变成芝士的一轮」（#turn）。"
     "复查：cd backend && uv run pytest "
