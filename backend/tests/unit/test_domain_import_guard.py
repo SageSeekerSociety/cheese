@@ -128,7 +128,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
         ("app.domain.comments.services", "app.domain.user.repositories"),
-        ("app.domain.discussion.services", "app.domain.user.repositories"),
         ("app.domain.groups.services", "app.domain.user.repositories"),
         # --- dashboard（读模型，横跨 7 个领域聚合，单独还） ---
         ("app.domain.dashboard.services", "app.domain.notification.repositories"),
@@ -204,7 +203,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
-        ("app.domain.topic.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
         # --- webhook / workspace ---

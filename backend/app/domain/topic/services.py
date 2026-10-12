@@ -45,7 +45,6 @@ from app.domain.identity.handles import (
 from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.living_doc.services import Documents
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.services import AcceptService
@@ -161,7 +160,10 @@ class TopicService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TopicRepository(session)
-        self._projects = ProjectRepository(session)
+        # deferred-import: breaks the cycle project.services -> topic.services
+        from app.domain.project.services import ProjectService
+
+        self._projects = ProjectService(session)
         self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
         # 与我的相关性 asks three other domains the same question at once, and

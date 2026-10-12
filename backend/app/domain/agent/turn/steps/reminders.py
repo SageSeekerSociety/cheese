@@ -104,7 +104,7 @@ async def remind_silent_turns(chat: TurnNotices, now: datetime) -> int:
                 )
             # THAT a reminder fired was already visible — the periodic loop logs
             # `chat progress reminder: <count>` on any cycle whose result is
-            # worth reporting (app/core/background.py). What a count cannot
+            # worth reporting (app/domain/agent/periodic.py). What a count cannot
             # carry is which room, which turn, how long it had been dark, and
             # whether the transport took it, and those are the four things
             # needed to tell 「the agent was reminded and stayed quiet」 from

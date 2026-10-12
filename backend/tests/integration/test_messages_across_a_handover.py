@@ -15,13 +15,13 @@ from sqlalchemy import select
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
-from app.core import background
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block
 from app.main import app
+from app.periodic_jobs import periodic_jobs
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
@@ -256,21 +256,19 @@ def test_a_message_whose_wake_up_was_missed_starts_on_the_next_sweep(
     runner.start_turns()
     assert _sent_to_the_session(channel, room) == []
 
-    class Unused:
+    async def unused():
         """The other jobs in the list are built, never run here."""
-
-        def __getattr__(self, name):
-            return None
 
     monkeypatch.setattr(settings, "queued_message_sweep_interval_s", 1)
     [sweep] = [
         job
-        for job in background.periodic_jobs(
+        for job in periodic_jobs(
             chat=service,
-            machines=Unused(),
-            sandboxes=Unused(),
-            compute=Unused(),
+            machines=unused,
+            sandboxes=unused,
+            compute=unused,
             sessions=client.test_request_factory,
+            get_runner=get_work_runner,
         )
         if job.name == "queued message sweep"
     ]

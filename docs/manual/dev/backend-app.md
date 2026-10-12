@@ -12,6 +12,7 @@ covers:
   - backend/app/core/single_use_state.py
   - backend/app/core/ownership.py
   - backend/app/core/background.py
+  - backend/app/periodic_jobs.py
   - backend/app/domain/idempotency/
   - backend/alembic/
   - docs/api-conventions.md
@@ -136,7 +137,9 @@ covers:
 
 ## 周期任务清单 {#periodic}
 
-平台所有常驻巡检都在 `core/background.py` 的 `periodic_jobs()` 一个列表里，`lifespan` 起的就是它。放在一处而不是散在各域，是为了让「写完了、部署了、从来没有跑过」这种**没有报错、只有缺席**的失败有个能被看见的地方。
+`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 32 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
+
+登记名称重复、清单缺项或出现未列出的任务都会报错，防止巡检漏接后静默缺席。
 
 `PeriodicRunner` 把每条常驻任务都会踩的四个坑一次收掉：强引用（asyncio 只持弱引用，任务可能在 await 中途被 GC）；**interval ≤ 0 表示这台机器不跑它**（部署和测试共用的那个开关）；一轮崩掉只算一次而不是让循环死掉；只在**这一轮真的做了点什么**的时候打日志（`_worth_reporting` 对 mapping 的语义是「任何一个值非假就说话」，所以 `{"failed": 0}` 闭嘴）。
 
