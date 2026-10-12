@@ -59,7 +59,7 @@ async def require_place_access(
         x_cheese_token or "", project_id=str(project_id)
     )
     if not scoped and not await may_access_project(request, db, project_id):
-        raise NotFoundError("project not found")
+        raise NotFoundError(say("projectNotFound"))
 
     # Files and Git diffs contain the private room's source, not just its title.
     # The path-bound room wins over a query parameter on work-summary requests.
@@ -75,9 +75,9 @@ async def require_place_access(
     work = await TaskService(db).get(task) if task is not None else None
     if task is not None:
         if work is None or work.project_id != project_id:
-            raise NotFoundError("Task not found")
+            raise NotFoundError(say("taskNotFound"))
         if room_id is not None and str(work.room_id) != str(room_id):
-            raise NotFoundError("Task not found")
+            raise NotFoundError(say("taskNotFoundInRoom"))
         room_id = work.room_id
     if scoped and room_id is None:
         # The whole project's source, to an agent that still sits in the room
@@ -89,10 +89,10 @@ async def require_place_access(
         try:
             room_uuid = uuid.UUID(str(room_id))
         except ValueError as exc:
-            raise NotFoundError("Topic not found") from exc
+            raise NotFoundError(say("topicNotFound")) from exc
         room = await TopicService(db).get_or_404(room_uuid)
         if room.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         actor = await resolver.resolve(project_id=project_id, topic_id=room.id)
         await resolver.authorize_topic(actor, project_id=project_id, topic_id=room.id)
         if request.method == "PUT" and room.status == TopicStatus.archived:
@@ -113,7 +113,7 @@ async def require_project_access(
     `require_place_access` alone and answers "nothing changed yet".
     """
     if work is not None and work.branch_name is None:
-        raise NotFoundError("Historical task has no individual workspace")
+        raise NotFoundError(say("taskNoOwnFileVersion"))
 
 
 @router.get("/{project_id}/files", dependencies=[Depends(require_project_access)])
@@ -217,7 +217,7 @@ async def write_file(
     version = body.get("version") or None
     base = body.get("base")
     if not path:
-        raise ValidationError("path is required")
+        raise ValidationError(say("pathEmpty"))
     if task is None:
         raise ValidationError(say("chooseTaskToEdit"))
     actor = await resolver.resolve(project_id=project_id, topic_id=task)

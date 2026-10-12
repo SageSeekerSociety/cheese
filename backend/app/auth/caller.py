@@ -12,6 +12,8 @@ from starlette.requests import Request
 
 from app.auth.project_access import may_read_project
 from app.common.auth import verify_access_token
+from app.core.errors import AuthenticationRequiredError
+from app.core.sentences import say
 from app.domain.user.repositories import UserRepository
 
 
@@ -46,7 +48,21 @@ async def may_access_project(
     every route that reads a project's conversations, rather than one per route.
     This function is only the HTTP-shaped half: pull the credential off the
     request, then ask.
+
+    A bearer that WAS presented and did not verify raises 401 rather than
+    answering ``False``. The route reads ``False`` as 「这个项目不存在」 and
+    answers 404 with no ``error.i18n``, so a browser holding a token the server
+    can no longer check — expired, or signed for another deployment — was told
+    the project was gone, by a sentence it could not act on: the frontend
+    refreshes on 401 and retries, and has nothing to do with a 404. It is
+    ``app.api.auth.reject_failed_credential``'s rule, for a route that has no
+    ``Actor`` to hand it: 认不出 is an answer, but only no-credential-at-all
+    may be treated as anonymous. With no ``Authorization`` header and no
+    ``token`` parameter nothing was presented, so genuinely anonymous traffic
+    still gets ``False``.
     """
-    return await may_read_project(
-        session, project_id=project_id, handle=await caller_handle(request, session)
-    )
+    credential = _bearer(request)
+    handle = await caller_handle(request, session)
+    if handle is None and credential is not None:
+        raise AuthenticationRequiredError(say("sessionExpired"))
+    return await may_read_project(session, project_id=project_id, handle=handle)
