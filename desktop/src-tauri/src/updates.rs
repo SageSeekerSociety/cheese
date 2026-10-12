@@ -19,10 +19,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::connect;
+use crate::{connect, update_launch};
 
 const UPDATE_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
-const START_HIDDEN_FILE: &str = "start-hidden";
 
 /// Where the app's own update stands, as the page reads it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -38,6 +37,8 @@ pub enum Status {
     /// Downloaded; it takes a restart to finish.
     Ready { version: String },
     Failed,
+    #[serde(rename = "install-failed")]
+    InstallFailed,
 }
 
 #[derive(Default)]
@@ -111,40 +112,62 @@ async fn install_when_away(app: AppHandle) {
         let in_sight = app
             .get_webview_window("main")
             .is_some_and(|w| w.is_visible().unwrap_or(false));
+        if !matches!(status(&app), Status::Ready { .. }) {
+            return;
+        }
         if may_install_unattended(connecting(&app), in_sight) {
-            break;
+            if install_and_restart(app.clone(), true).await.is_ok() {
+                return;
+            }
         }
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
-    // The restarted app stays out of sight, as the window was.
-    let _ = install_and_restart(&app, true);
 }
 
-/// Installs the downloaded update and starts the new version. Returns only when
-/// there is nothing to install or installing failed.
-fn install_and_restart(app: &AppHandle, hidden: bool) -> Result<(), String> {
-    let Some((update, bytes)) = app.state::<Updates>().pending.lock().unwrap().take() else {
-        return Err("no-update".into());
-    };
-    if hidden {
-        if let Ok(dir) = app.path().app_config_dir() {
-            let _ = std::fs::create_dir_all(&dir);
-            let _ = std::fs::write(dir.join(START_HIDDEN_FILE), "");
+/// Installation may wait for the main thread (macOS authorization); never block
+/// that thread with a synchronous IPC command. Windows' installer owns relaunch.
+async fn install_and_restart(app: AppHandle, hidden: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let updates = app.state::<Updates>();
+        let Some((update, bytes)) = updates.pending.lock().unwrap().take() else {
+            return Err("no-update".into());
+        };
+        let marker = match app.path().app_config_dir() {
+            Ok(dir) => match update_launch::RestartMarker::prepare(&dir, hidden) {
+                Ok(marker) => Some(marker),
+                Err(e) => {
+                    eprintln!("cheese: could not save the update restart intent: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("cheese: could not find the update restart directory: {e}");
+                None
+            }
+        };
+        if let Err(e) = update.install(bytes) {
+            eprintln!("cheese: installing the update failed: {e}");
+            set(&app, Status::InstallFailed);
+            return Err("install-failed".into());
         }
-    }
-    if let Err(e) = update.install(bytes) {
-        eprintln!("cheese: installing the update failed: {e}");
-        set(app, Status::Failed);
-        return Err("failed".into());
-    }
-    app.restart();
+        if let Some(marker) = marker {
+            marker.commit();
+        }
+        // Use the event loop's exit path: single-instance releases its lock on
+        // RunEvent::Exit before Tauri starts the replacement process. restart()
+        // called on the main thread skips those events and can kill both apps.
+        app.request_restart();
+        Ok(())
+    }).await.map_err(|e| {
+        eprintln!("cheese: updating the app failed: {e}");
+        "restart-failed".to_string()
+    })?
 }
 
-/// Whether this launch is the restart after an unattended update, which keeps the window out of sight.
-pub fn restarted_by_update(app: &tauri::App) -> bool {
-    app.path()
-        .app_config_dir()
-        .is_ok_and(|dir| std::fs::remove_file(dir.join(START_HIDDEN_FILE)).is_ok())
+pub fn start_hidden(app: &tauri::App, at_login: bool) -> bool {
+    app.path().app_config_dir()
+        .map(|dir| update_launch::start_hidden(&dir, at_login))
+        .unwrap_or(at_login)
 }
 
 #[tauri::command]
@@ -160,11 +183,11 @@ pub async fn check_for_updates(app: AppHandle) -> Status {
 /// The person clicked 重启以完成更新. Refused with "connecting" while this
 /// computer is being connected, which a restart would cut off.
 #[tauri::command]
-pub fn restart_to_update(app: AppHandle) -> Result<(), String> {
+pub async fn restart_to_update(app: AppHandle) -> Result<(), String> {
     if connecting(&app) {
         return Err("connecting".into());
     }
-    install_and_restart(&app, false)
+    install_and_restart(app, false).await
 }
 
 #[cfg(test)]
@@ -194,5 +217,6 @@ mod tests {
             serde_json::json!({ "state": "ready", "version": "0.1.9" })
         );
         assert_eq!(json(Status::Failed), serde_json::json!({ "state": "failed" }));
+        assert_eq!(json(Status::InstallFailed), serde_json::json!({ "state": "install-failed" }));
     }
 }
