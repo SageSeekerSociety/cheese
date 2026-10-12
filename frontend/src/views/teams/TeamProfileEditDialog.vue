@@ -11,11 +11,11 @@ import { toast } from 'vuetify-sonner'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { ApiError } from '@/api'
+import { createAvatar } from '@/api/avatars'
 import { TeamsApi } from '@/api/teams'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import { t } from '@/i18n'
-import { createAvatar } from '@/api/avatars'
 
 const props = defineProps<{ team: Team }>()
 const emit = defineEmits<{ updated: [team: Team] }>()

@@ -306,6 +306,7 @@ import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { type AppVersion, createProject, getAppVersion } from '@/api'
+import { NotificationsApi } from '@/api/notifications'
 import { TeamsApi } from '@/api/teams'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
@@ -345,7 +346,6 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
-import { NotificationsApi } from '@/api/notifications'
 import { queryClient } from '@/query/client'
 import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'

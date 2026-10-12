@@ -81,13 +81,13 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { ApiError } from '@/api'
+import { createAvatar } from '@/api/avatars'
 import { TeamsApi } from '@/api/teams'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { t } from '@/i18n'
-import { createAvatar } from '@/api/avatars'
 
 const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
 

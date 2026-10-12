@@ -79,10 +79,7 @@ export namespace TeamsApi {
 
   // 加入（或在需要审批时提交申请）；返回的 team.joinStatus 说明结果是 member 还是 pending。
   export const joinByJoinLink = (token: string, data?: TeamJoinRequestCreate) =>
-    axiosRequest<{ team: Team }>(
-      { url: `/team-invites/${encodeURIComponent(token)}/join`, method: 'POST', data },
-      true
-    )
+    axiosRequest<{ team: Team }>({ url: `/team-invites/${encodeURIComponent(token)}/join`, method: 'POST', data }, true)
 
   export const join = (teamId: number, data?: TeamJoinRequestCreate) =>
     axiosRequest<{ team: Team }>({ url: `/teams/${teamId}/join`, method: 'POST', data }, true)
@@ -90,8 +87,7 @@ export namespace TeamsApi {
   export const detailByHandle = (handle: string) =>
     axiosRequest<{ team: Team }>({ url: `/teams/by-handle/${encodeURIComponent(handle)}`, method: 'GET' }, true)
 
-  export const getMyTeams = () =>
-    axiosRequest<{ teams: Team[] }>({ url: '/teams/my-teams', method: 'GET' }, true)
+  export const getMyTeams = () => axiosRequest<{ teams: Team[] }>({ url: '/teams/my-teams', method: 'GET' }, true)
 
   export const list = (params: { pageSize?: number; pageStart?: number; sortBy: string; sortOrder: string }) =>
     axiosRequest<{ teams: Team[]; page: Page }>({ url: '/teams', method: 'GET', params }, true)

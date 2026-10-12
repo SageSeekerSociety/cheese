@@ -68,12 +68,12 @@ import { useI18n } from 'vue-i18n'
 
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 
+import { NotificationsApi } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import { NotificationsApi } from '@/api/notifications'
 
 const { t } = useI18n()
 

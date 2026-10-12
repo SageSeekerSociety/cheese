@@ -223,6 +223,7 @@ import { usePaging } from '@/utils/paging'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import { createAvatar } from '@/api/avatars'
 import { SpacesApi } from '@/api/spaces'
 import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -236,7 +237,6 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-import { createAvatar } from '@/api/avatars'
 import AccountService from '@/services/account'
 
 const { t } = useI18n()
