@@ -1416,10 +1416,7 @@ class Executor:
                 "f_bavail": fs.f_bavail,
             }
         if operation in ("directory", "list"):
-            # The project's directories, looked up one at a time: the central
-            # session keeps its shell's directory only if it exists in the
-            # forwarded view, and a directory a command just made exists only
-            # here. Directories only — files stay with the file tools.
+            # Project directories are looked up one at a time.
             relative = Path(params.get("path", ""))
             if relative.is_absolute() or ".." in relative.parts:
                 return {"missing": True}
@@ -1615,8 +1612,14 @@ class Executor:
             include(path, imports=True)
         nested_skills = []
         for directory, directories, files in os.walk(root):
-            directories[:] = [name for name in directories if name != ".git"]
             here = Path(directory)
+            directories[:] = [
+                n for n in directories if n not in (".git", "node_modules")
+            ]
+            for name in directories:
+                path = here / name
+                if path.is_symlink() and project_path(path) is not None:
+                    selected.add(path)
             for name in (
                 "AGENTS.override.md",
                 "AGENTS.md",
@@ -1902,10 +1905,7 @@ def serve(state):
             try:
                 value = json.loads(self.rfile.readline())
                 if value["method"] == "shutdown":
-                    # How an executor is stopped everywhere. A signal would
-                    # name it by a pid, and the pid a sandboxed executor
-                    # reports is its own namespace's, which names some other
-                    # process outside it; Windows has no SIGTERM at all.
+                    # A sandboxed pid names the wrong process; Windows has no SIGTERM.
                     stop(None, None)
                     response = {"result": {}}
                 else:
