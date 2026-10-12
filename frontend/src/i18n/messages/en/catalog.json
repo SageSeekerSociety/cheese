@@ -1372,5 +1372,87 @@
       "name": "Add dialog",
       "note": "Search is server-side; candidates already on the roster are drawn disabled, with a badge."
     }
+  },
+  "pendingView": {
+    "about": "Requests and invitations: each section owns its loading, failure and results; actions go back to the page.",
+    "s1": {
+      "name": "Requests and invitations",
+      "note": "The three sections show their rows, with cancel, accept or decline for pending items."
+    },
+    "s2": {
+      "name": "Loading requests",
+      "note": "Requests load first; the other two sections retain their original empty states."
+    },
+    "s3": {
+      "name": "Loading team invitations",
+      "note": "Requests have arrived while team invitations are loading."
+    },
+    "s4": {
+      "name": "Loading project invitations",
+      "note": "The team sections have arrived while project invitations are loading."
+    },
+    "s5": {
+      "name": "Empty sections",
+      "note": "All three sections were successfully read and are empty."
+    },
+    "s6": {
+      "name": "Requests failed",
+      "note": "Only requests show a reason and retry; invitations remain usable."
+    },
+    "s7": {
+      "name": "Team invitations failed",
+      "note": "Team invitations retry independently of requests and project invitations."
+    },
+    "s8": {
+      "name": "Project invitations failed",
+      "note": "Project invitations show the failure without hiding the two team sections."
+    },
+    "s9": {
+      "name": "Answering a project invitation",
+      "note": "Only the current project invitation has both buttons disabled; other invitations remain usable."
+    },
+    "s10": {
+      "name": "Refreshing with existing rows",
+      "note": "Each refreshing section retains its existing rows instead of becoming an initial load."
+    }
+  },
+  "learningView": {
+    "about": "Learning analytics: filter by student and knowledge point, select stuck points or questions, and build a teaching outline.",
+    "s1": {
+      "name": "Queues and questions",
+      "note": "Shows stuck points and questions, with a reason for unavailable review signals."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Shows progress before queues arrive without prematurely showing empty questions."
+    },
+    "s3": {
+      "name": "Load failed",
+      "note": "A failed queue or question read replaces content with the reason and retry."
+    },
+    "s4": {
+      "name": "Empty queues and questions",
+      "note": "Loaded with no flagged items, stuck points or questions."
+    },
+    "s5": {
+      "name": "No member projects",
+      "note": "No member projects takes precedence even when the queue read failed."
+    },
+    "s6": {
+      "name": "Filters and selection",
+      "note": "Both filters are selected; a question is checked in both its stuck point and list row."
+    },
+    "s7": {
+      "name": "Generated outline",
+      "note": "Shows outline sessions, excerpts and the notice for unavailable questions."
+    },
+    "s8": {
+      "name": "Refreshing and building",
+      "note": "Keeps queues, selections and the outline while the build button is busy."
+    },
+    "s9": {
+      "name": "Flagged questions",
+      "note": "Available review signals show their questions instead of an unavailable reason."
+    }
   }
 }
