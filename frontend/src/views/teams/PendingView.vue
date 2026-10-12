@@ -219,13 +219,14 @@
 import type { ProjectInvitation } from '@/cx_types'
 import type { TeamMembershipApplication } from '@/types'
 
+import { getAvatarUrl } from '@/utils/materials'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
-import { getAvatarUrl } from '@/utils/materials'
 
 defineProps<{
   myRequests: TeamMembershipApplication[]

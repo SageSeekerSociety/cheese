@@ -1,5 +1,5 @@
-import { createMemoryHistory, createRouter } from 'vue-router'
 import { defineComponent } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { cleanup, render as renderComponent } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -33,7 +33,19 @@ const flushPromises = () => new Promise<void>((resolve) => setTimeout(resolve, 0
 let state: Record<string, unknown>
 let send: (event: string, ...args: unknown[]) => void
 const Probe = defineComponent({
-  props: ['student', 'knowledgePoint', 'loading', 'outlineLoading', 'learningFilters', 'queues', 'questions', 'outline', 'failed', 'errorDetail', 'selected'],
+  props: [
+    'student',
+    'knowledgePoint',
+    'loading',
+    'outlineLoading',
+    'learningFilters',
+    'queues',
+    'questions',
+    'outline',
+    'failed',
+    'errorDetail',
+    'selected',
+  ],
   setup(props, { emit }) {
     state = props
     send = emit
@@ -41,7 +53,10 @@ const Probe = defineComponent({
   },
 })
 async function render(query = '') {
-  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/spaces/:spaceId/learning', component: Learning }] })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/spaces/:spaceId/learning', component: Learning }],
+  })
   await router.push(`/spaces/7/learning${query}`)
   await router.isReady()
   renderComponent(Learning, { global: { plugins: [router, i18n], stubs: { LearningView: Probe } } })

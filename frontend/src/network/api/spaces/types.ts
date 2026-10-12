@@ -287,16 +287,16 @@ export type SpaceAnalyticsParticipants = {
 
 // 学习数据属于领域；旧接口类型入口继续导出同一组定义。
 export type {
-  SpaceLearningStudent,
-  SpaceLearningKnowledgePoint,
-  SpaceLearningFilters,
   SpaceLearningExcerpt,
+  SpaceLearningFilters,
+  SpaceLearningKnowledgePoint,
+  SpaceLearningOutline,
+  SpaceLearningOutlineSection,
   SpaceLearningQuestion,
   SpaceLearningQuestions,
-  SpaceLearningStuckPoint,
   SpaceLearningQueues,
-  SpaceLearningOutlineSection,
-  SpaceLearningOutline,
+  SpaceLearningStuckPoint,
+  SpaceLearningStudent,
 } from '@/types/learning'
 
 // 「我发布的题目」那几个类型挪到领域类型 `@/types/spaces.ts` 了：题目列表拆出来的那半张

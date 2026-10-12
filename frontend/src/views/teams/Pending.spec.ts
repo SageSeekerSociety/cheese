@@ -30,7 +30,21 @@ const flushPromises = () => new Promise<void>((resolve) => setTimeout(resolve, 0
 let state: Record<string, unknown>
 let send: (event: string, ...args: unknown[]) => void
 const Probe = defineComponent({
-  props: ['myRequests', 'myInvitations', 'projectInvitations', 'loadingMyRequests', 'loadingMyInvitations', 'loadingProjectInvitations', 'failedMyRequests', 'failedMyInvitations', 'failedProjectInvitations', 'myRequestsError', 'myInvitationsError', 'projectInvitationsError', 'answering'],
+  props: [
+    'myRequests',
+    'myInvitations',
+    'projectInvitations',
+    'loadingMyRequests',
+    'loadingMyInvitations',
+    'loadingProjectInvitations',
+    'failedMyRequests',
+    'failedMyInvitations',
+    'failedProjectInvitations',
+    'myRequestsError',
+    'myInvitationsError',
+    'projectInvitationsError',
+    'answering',
+  ],
   setup(props, { emit }) {
     state = props
     send = emit
