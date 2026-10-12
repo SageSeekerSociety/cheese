@@ -46,28 +46,27 @@ _TITLE = re.compile(
 #: The ` (#123)` GitHub appends to a squash title: not the author's text.
 _PR_NUMBER = re.compile(r" \(#\d+\)$")
 
-#: A run of Chinese characters, and an English word (two letters or more, so
-#: the `a` and `I` of a sentence and the `x` of a variable don't count).
+#: Chinese characters, a run of them, and an English word (two letters or more,
+#: so the `a` and `I` of a sentence and the `x` of a variable don't count).
+_HAN = re.compile(r"[一-鿿]")
 _HAN_RUN = re.compile(r"[一-鿿]+")
+_LATIN = re.compile(r"[A-Za-z]")
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9'-]*[A-Za-z0-9]")
-
-#: A Chinese run this long is a clause. Shorter ones are product terms such as
-#: 芝士 or 支线, which this repo's English titles name and keep doing.
-_CLAUSE = 4
 
 
 def is_english(description: str) -> bool:
-    """English, allowing product terms in Chinese inside the sentence.
+    """English, allowing UI strings and product terms in Chinese inside it.
 
-    Not English: a Chinese clause (a run of `_CLAUSE` characters or more), or
-    terms in Chinese that outnumber half the English words around them, which is
-    a Chinese sentence naming `GitHub` (`修复 GitHub token 刷新失败`), not the
-    other way round.
+    This repo's English titles name Chinese UI text (`say 暂无改动 only when it
+    is true`) and product terms (支线, 芝士), so a long Chinese run alone proves
+    nothing. Not English: more Chinese characters than Latin letters, or Chinese
+    terms outnumbering the English words around them, which is a Chinese
+    sentence naming `GitHub` (`修复 GitHub 的 token 刷新失败`) and not the other
+    way round.
     """
-    runs = _HAN_RUN.findall(description)
-    if any(len(run) >= _CLAUSE for run in runs):
+    if len(_HAN.findall(description)) > len(_LATIN.findall(description)):
         return False
-    return len(runs) * 2 <= len(_WORD.findall(description))
+    return len(_HAN_RUN.findall(description)) <= len(_WORD.findall(description))
 
 
 EXAMPLE = "fix(accept): keep the PR branch when a merge conflicts"

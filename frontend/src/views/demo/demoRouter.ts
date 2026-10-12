@@ -62,6 +62,7 @@ export function demoRouter() {
     history: createMemoryHistory(),
     routes: [
       { path: '/projects/:projectId/overview', name: 'workspace-overview', component: blank },
+      // topicId is optional only so a link that passes one (the app strips it in addresses.ts) isn't warned about.
       { path: '/projects/:projectId/topics/:topicId?/tasks/:taskId', name: 'workspace-task', component: blank },
       { path: '/projects/:projectId/library', name: 'project-library', component: blank },
       ...analytics,

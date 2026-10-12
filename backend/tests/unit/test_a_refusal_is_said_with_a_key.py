@@ -551,7 +551,10 @@ def _how_to_update(baseline: dict[str, int], found: Counter[str], exists) -> str
         "that moved keeps its count under its new path):"
     ]
     for old, new in moved.items():
-        lines.append(f'  moved: rename "{old}" to "{new}" ({baseline[old]})')
+        lines.append(
+            f'  moved?: rename "{old}" to "{new}" ({baseline[old]}) if the file '
+            "moved, else delete the old line"
+        )
     for path, count in sorted(baseline.items()):
         now = found.get(path, 0)
         if now < count and path not in moved:
