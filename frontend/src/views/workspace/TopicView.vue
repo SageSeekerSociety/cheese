@@ -32,6 +32,7 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
+import { dayStamp } from '@/lib/dateText'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
@@ -282,10 +283,7 @@ onUnmounted(() => clearDynamicTitle('workspace-topic'))
 onUnmounted(() => clearDynamicTitle('workspace-thread'))
 /** 支线清单里最后一条回复的时间：今天的写钟点，更早的写日期。 */
 function threadTime(iso: string): string {
-  const at = new Date(iso)
-  return at.toDateString() === new Date().toDateString()
-    ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : at.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
+  return dayStamp(new Date(iso).getTime())
 }
 
 // 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：总览、资料库、

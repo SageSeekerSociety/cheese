@@ -239,6 +239,7 @@ import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { calendarDaysAgo, clockTime, dayTimeText } from '@/lib/dateText'
 import { vRovingTabs } from '@/lib/rovingTabs'
 
 /** 一行的状态：先看领取申请批没批，批了再看最新那一版提交判没判。 */
@@ -405,11 +406,12 @@ function day(ms: number): string {
   return dayjs(ms).format(t('tasks.page.dateFormat'))
 }
 
+/** 什么时候提交的：今天和昨天说日词，更早给日期。跨年要带上年份。 */
 function when(ms: number): string {
-  const d = dayjs(ms)
-  if (d.isSame(dayjs(), 'day')) return t('tasks.roster.today', { time: d.format('HH:mm') })
-  if (d.isSame(dayjs().subtract(1, 'day'), 'day')) return t('tasks.roster.yesterday', { time: d.format('HH:mm') })
-  return d.format(t('tasks.roster.dateTimeFormat'))
+  const days = calendarDaysAgo(ms)
+  if (days <= 0) return t('tasks.roster.today', { time: clockTime(ms) })
+  if (days === 1) return t('tasks.roster.yesterday', { time: clockTime(ms) })
+  return dayTimeText(ms)
 }
 
 // ── 拒绝与截止那两张对话框 ─────────────────────────────────────────────────────
