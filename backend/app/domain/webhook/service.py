@@ -12,11 +12,11 @@ is a silent hole in the topic's timeline (CI results, deploy outcomes), so a
 transient DB failure must not be the end of it.
 """
 
-import asyncio
 import logging
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from tenacity import AsyncRetrying, stop_after_attempt, wait_chain, wait_fixed
 
 from app.core.webhook_auth import mint_webhook_token, webhook_token_claims
 from app.domain.agent.announce import announce
@@ -24,7 +24,9 @@ from app.domain.webhook.repositories import WebhookTokenRepository
 
 logger = logging.getLogger(__name__)
 
-_RETRY_DELAYS_SECONDS = (0, 5, 30)
+# The waits before the second and the third attempt.
+_RETRY_DELAYS_SECONDS = (5, 30)
+_ATTEMPTS = len(_RETRY_DELAYS_SECONDS) + 1
 
 
 async def mint(
@@ -76,35 +78,37 @@ async def post_with_retries(
     them means committing with whatever changed hands, so it calls `announce`
     on the caller's own session instead of through this retry.
     """
-    last_exc: Exception | None = None
-    for delay in _RETRY_DELAYS_SECONDS:
-        if delay:
-            await asyncio.sleep(delay)
-        try:
-            async with session_factory() as session:
-                block = await announce(
-                    session,
-                    place_id=topic_id,
-                    task_id=task_id,
-                    content=content,
-                    meta={"source": source, **(meta or {})},
-                    author=source,
-                )
-                if block is None:
-                    logger.error(
-                        "dropping %s post: topic %s no longer exists",
-                        source,
-                        topic_id,
-                    )
-                    return False
-                await session.commit()
-            return True
-        except Exception as exc:  # noqa: BLE001 — retry, then give up loudly
-            last_exc = exc
-    logger.error(
-        "failed to land webhook post for topic %s after %d attempts: %s",
-        topic_id,
-        len(_RETRY_DELAYS_SECONDS),
-        last_exc,
+    retrying = AsyncRetrying(
+        stop=stop_after_attempt(_ATTEMPTS),
+        wait=wait_chain(*map(wait_fixed, _RETRY_DELAYS_SECONDS)),
+        reraise=True,
     )
+    try:
+        async for attempt in retrying:
+            with attempt:
+                async with session_factory() as session:
+                    block = await announce(
+                        session,
+                        place_id=topic_id,
+                        task_id=task_id,
+                        content=content,
+                        meta={"source": source, **(meta or {})},
+                        author=source,
+                    )
+                    if block is None:
+                        logger.error(
+                            "dropping %s post: topic %s no longer exists",
+                            source,
+                            topic_id,
+                        )
+                        return False
+                    await session.commit()
+                return True
+    except Exception as exc:  # noqa: BLE001 — retried, now give up loudly
+        logger.error(
+            "failed to land webhook post for topic %s after %d attempts: %s",
+            topic_id,
+            _ATTEMPTS,
+            exc,
+        )
     return False
