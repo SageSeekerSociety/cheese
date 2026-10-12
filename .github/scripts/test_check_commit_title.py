@@ -1,8 +1,10 @@
 """This repo's commit-title check, run the way CI runs it."""
 
 from pathlib import Path
+import json
 import subprocess
 import sys
+import tempfile
 import unittest
 
 SCRIPT = Path(__file__).with_name("check-commit-title.py")
@@ -57,6 +59,31 @@ class CommitTitleTest(unittest.TestCase):
 
     def test_no_title_at_all_is_a_failure(self):
         self.assertEqual(run(stdin="").returncode, 1)
+
+    def test_a_draft_pull_requests_placeholder_title_is_not_judged(self):
+        draft = pull_request(title="WIP: 回复变长时对话栏不再贴住最下端", draft=True)
+        result = run("--pull-request", draft)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("::error::", result.stdout)
+
+    def test_a_pull_request_ready_for_review_is_judged_by_its_title(self):
+        ready = pull_request(title="WIP: 回复变长时对话栏不再贴住最下端", draft=False)
+        result = run("--pull-request", ready)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("::error::", result.stdout)
+        retitled = pull_request(
+            title="fix(chat): the pane keeps following when the rows above it shrink",
+            draft=False,
+        )
+        self.assertEqual(run("--pull-request", retitled).returncode, 0)
+
+
+def pull_request(*, title, draft):
+    """A pull request as the GitHub API returns it, written to a file."""
+    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    with handle:
+        json.dump({"number": 3423, "title": title, "draft": draft}, handle)
+    return handle.name
 
 
 if __name__ == "__main__":

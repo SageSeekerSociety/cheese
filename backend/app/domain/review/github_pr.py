@@ -1362,6 +1362,21 @@ class GitHubPRClient:
         return resp.json()
 
     @_as_pr_error
+    async def close_pr(self, number: int) -> dict:
+        """Close the PR without merging it. Its branch is left where it is."""
+        token, _ = await self._tokens.write_token()
+        async with forge_client(transport=self._transport, timeout=30.0) as client:
+            resp = await client.patch(
+                self._url(f"/pulls/{number}"),
+                json={"state": "closed"},
+                headers=self._headers(token),
+            )
+        status, reply = resp.status_code, resp.text[:300]
+        if status != 200:
+            raise GitHubPRError(say("githubPrCloseFailed", status=status, reply=reply))
+        return resp.json()
+
+    @_as_pr_error
     async def mark_ready_for_review(self, node_id: str) -> None:
         """Flip a draft PR to ready using GitHub's GraphQL API.
 

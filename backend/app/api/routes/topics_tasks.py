@@ -60,6 +60,7 @@ from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
 from app.domain.review.services import AcceptService
 from app.domain.review.task_landing import tell_origin
+from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.schemas import TaskOut
@@ -324,9 +325,9 @@ async def conclude_task(
     # The owner closes the task, or its own session (`cheese_close_task`).
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
-            raise ForbiddenError(say("taskOwnerOnly"))
+            raise ForbiddenError(say("taskOwnSessionCloses"))
     elif actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
+        raise ForbiddenError(say("taskOwnSessionCloses"))
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -356,6 +357,7 @@ async def conclude_task(
     task = await close_task(
         db, task, None if actor.via == "cheese" else chat, conclusion=conclusion
     )
+    close_pr_after_commit(db, task)
     # The task's own conversation hears how it ended, and so does the
     # discussion it came from; the channel's card for it updates in place.
     ended = (

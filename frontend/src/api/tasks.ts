@@ -3,7 +3,16 @@
 // 所在的房间决定。列出、新建任务和 AI 的提议挂在房间下。
 import type { ListPayload, RoomTask } from '../cx_types'
 
+import { rememberNumbered } from '../lib/addresses'
+
 import { readSince, request } from './http'
+
+// 手上有了一件任务，就记下它的地址：点开它时，地址守卫（`lib/addresses`
+// `canonicalAddress`）不必先问服务端一趟「这件任务的编号是几」才换页。
+function remembered<T extends { data: RoomTask[] }>(page: T): T {
+  rememberNumbered('tasks', page.data)
+  return page
+}
 
 function taskPath(taskId: string): string {
   return `/topics/${encodeURIComponent(taskId)}`
@@ -22,7 +31,7 @@ export function listProjectTasks(
   signal?: AbortSignal
 ): Promise<ListPayload<RoomTask>> {
   const path = `/projects/${encodeURIComponent(projectId)}/tasks`
-  return readSince(opts.open ? `${path}?status=open` : path, previous, signal)
+  return readSince(opts.open ? `${path}?status=open` : path, previous, signal).then(remembered)
 }
 
 /** 「全部任务」里谁的：我负责的、我协助的、别人的。 */
@@ -54,7 +63,7 @@ export function pageProjectTasks(
   if (opts.before) q.set('before', opts.before)
   if (opts.channel) q.set('channel', opts.channel)
   if (opts.whose) q.set('whose', opts.whose)
-  return request<ProjectTaskPage>(`/projects/${encodeURIComponent(projectId)}/tasks?${q.toString()}`)
+  return request<ProjectTaskPage>(`/projects/${encodeURIComponent(projectId)}/tasks?${q.toString()}`).then(remembered)
 }
 
 /** Tasks in this room, each with its own branch and delivery — narrowed to what
@@ -86,12 +95,12 @@ export function listRoomTasks(
   for (const id of opts?.blocks ?? []) q.append('blocks', id)
   if (opts?.branch) q.set('branch', 'true')
   const query = q.toString() ? `?${q.toString()}` : ''
-  return readSince(`/topics/${encodeURIComponent(roomId)}/tasks${query}`, previous, signal)
+  return readSince(`/topics/${encodeURIComponent(roomId)}/tasks${query}`, previous, signal).then(remembered)
 }
 
 /** 一个任务。它的对话和房间的一样读（`/topics/{task}/blocks`）。 */
 export function getTask(taskId: string): Promise<RoomTask> {
-  return request<RoomTask>(`${taskPath(taskId)}/task`)
+  return request<RoomTask>(`${taskPath(taskId)}/task`).then((task) => remembered({ data: [task] }).data[0])
 }
 
 /** 新建任务：创建的人就是负责人。 */

@@ -124,8 +124,10 @@ jobs:
       # This repo's own commit convention (docs/workflows.md §5); the platform
       # leaves a hosted repo's titles to that repo. In the merge queue it reads
       # the squash commits about to land, which is what main will say. On a PR
-      # it fetches the title live rather than from the event payload, so
-      # re-running this job after editing the title sees the new one.
+      # it fetches the PR live rather than from the event payload, so
+      # re-running this job after editing the title sees the new one, and it
+      # passes a draft, whose title is still a placeholder. pr-title.yml re-runs
+      # this job when a PR is marked ready or retitled.
       - name: Commit titles follow the convention
         if: ${{ !cancelled() }}
         env:
@@ -139,8 +141,8 @@ jobs:
               --jq '.commits[].commit.message | split("\n")[0]' \
               | python3 .github/scripts/check-commit-title.py
           else
-            title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
-            python3 .github/scripts/check-commit-title.py "$title"
+            gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+            python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
 
   remote:
