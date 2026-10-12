@@ -1417,6 +1417,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/stats/machines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Machines Stats
+         * @description 机器那一块：MicroCloud 上的每台宿主机、它上面的沙箱、温机池，和过去一天沙箱
+         *     起得怎么样。口径写在 `app/domain/machine/admin.py` 的模块 docstring 上。
+         */
+        get: operations["machines_stats_admin_stats_machines_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/topics/{topic_id}/agent/control": {
         parameters: {
             query?: never;
@@ -14899,6 +14920,187 @@ export interface components {
             /** Totpcode */
             totpCode?: string | null;
         };
+        /** MachineConfigOut */
+        MachineConfigOut: {
+            /** Slots Per Core */
+            slots_per_core: number;
+            /** Sandbox Memory Mb */
+            sandbox_memory_mb: number;
+            /** Sandbox Idle S */
+            sandbox_idle_s: number;
+            /** Host Idle Hold S */
+            host_idle_hold_s: number;
+            /** Vm Idle S */
+            vm_idle_s: number;
+        };
+        /** MachineHistoryOut */
+        MachineHistoryOut: {
+            /** Since */
+            since: string;
+            /** Prepared */
+            prepared: number;
+            /** Ready */
+            ready: number;
+            /** Abandoned */
+            abandoned: number;
+            /** Replaced */
+            replaced: number;
+            /** Released Idle */
+            released_idle: number;
+            /** Released Unpaid */
+            released_unpaid: number;
+            /** Wait P50 S */
+            wait_p50_s: number | null;
+            /** Wait P95 S */
+            wait_p95_s: number | null;
+            /** Wait Max S */
+            wait_max_s: number | null;
+        };
+        /** MachineHostOut */
+        MachineHostOut: {
+            /** Id */
+            id: string;
+            /** Hostname */
+            hostname: string;
+            /** Machine Id */
+            machine_id: number | null;
+            /** Whole Machine */
+            whole_machine: boolean;
+            /** Project */
+            project: string | null;
+            /** Phase */
+            phase: string;
+            /** Status */
+            status: string;
+            /** Online */
+            online: boolean;
+            /** Ip */
+            ip: string | null;
+            /** Cores */
+            cores: number;
+            /** Memory Mb */
+            memory_mb: number;
+            /** Disk Gb */
+            disk_gb: number;
+            /** Slots */
+            slots: number;
+            /** Used */
+            used: number;
+            /** Created At */
+            created_at: string | null;
+            /** Enrolled At */
+            enrolled_at: string | null;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Idle Since */
+            idle_since: string | null;
+            /** Offline Since */
+            offline_since: string | null;
+            /** Failed At */
+            failed_at: string | null;
+            /** Released At */
+            released_at: string | null;
+            /** Enroll Attempts */
+            enroll_attempts: number;
+            /** Enroll Error */
+            enroll_error: string | null;
+            /** Sandboxes */
+            sandboxes: components["schemas"]["MachineSandboxOut"][];
+        };
+        /** MachinePoolOut */
+        MachinePoolOut: {
+            /** Hosts */
+            hosts: number;
+            /** Vms */
+            vms: number;
+            /** Max Hosts */
+            max_hosts: number;
+            /** At Cap */
+            at_cap: boolean;
+            /** Slots */
+            slots: number;
+            /** Used */
+            used: number;
+            /** Free */
+            free: number;
+            /** Min Free */
+            min_free: number;
+            /** Waiting */
+            waiting: number;
+            /** Oldest Wait Since */
+            oldest_wait_since: string | null;
+            /** Provider Failures */
+            provider_failures: number;
+            /** Provider Failure Limit */
+            provider_failure_limit: number;
+            /** Provider Window Min */
+            provider_window_min: number;
+            /** Provider Probe Min */
+            provider_probe_min: number;
+            /** Last Provider Failure */
+            last_provider_failure: string | null;
+            /** Refusing */
+            refusing: boolean;
+            /** Warm Target */
+            warm_target: number;
+        };
+        /** MachineSandboxOut */
+        MachineSandboxOut: {
+            /** Id */
+            id: string;
+            /** Spec */
+            spec: string;
+            /** State */
+            state: string;
+            /** Project Id */
+            project_id: string;
+            /** Project */
+            project: string | null;
+            /** Room Id */
+            room_id: string;
+            /** Room */
+            room: string | null;
+            /** Placed At */
+            placed_at: string | null;
+            /** Waiting Since */
+            waiting_since: string | null;
+            /** Active At */
+            active_at: string | null;
+            /** Stopped At */
+            stopped_at: string | null;
+            /** Idle Deadline */
+            idle_deadline: string | null;
+        };
+        /** MachinesOverviewOut */
+        MachinesOverviewOut: {
+            /** Configured */
+            configured: boolean;
+            /** Now */
+            now: string;
+            pool: components["schemas"]["MachinePoolOut"];
+            config: components["schemas"]["MachineConfigOut"];
+            /** Hosts */
+            hosts: components["schemas"]["MachineHostOut"][];
+            /** Warm */
+            warm: components["schemas"]["WarmMachineOut"][];
+            history: components["schemas"]["MachineHistoryOut"];
+        };
+        /** MachinesOverviewOutEnvelope */
+        MachinesOverviewOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["MachinesOverviewOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** MailIn */
         MailIn: {
             /**
@@ -16934,6 +17136,27 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** WarmMachineOut */
+        WarmMachineOut: {
+            /** Id */
+            id: string;
+            /** State */
+            state: string;
+            /** Machine Id */
+            machine_id: number | null;
+            /** Ip */
+            ip: string | null;
+            /** Online */
+            online: boolean;
+            /** Created At */
+            created_at: string | null;
+            /** Enrolled At */
+            enrolled_at: string | null;
+            /** Attempts */
+            attempts: number;
+            /** Error */
+            error: string | null;
         };
         /**
          * WebElementQuoteIn
@@ -19511,6 +19734,26 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    machines_stats_admin_stats_machines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachinesOverviewOutEnvelope"];
                 };
             };
         };
