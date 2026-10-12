@@ -16,7 +16,7 @@ would otherwise carry up to 120 × 8 KiB, so a transcript row only says it has
 some (`output_bytes`) and this endpoint hands it over when somebody opens it.
 
 What stays behind, and why. `_actor_in_place` (identity, then the room's roster
--- the shape every `topics_*` module imports it in), `DbSession`, `Block`,
+-- the shape every `topics_*` module imports it in), `Block`,
 `BlockKind`, `BlockOut` and `BlockRepository` are imported from topics.py rather
 than from `app.domain.block.*`. `BlockRepository` for the guard in
 `tests/unit/test_domain_import_guard.py`, which ratchets (route module,
