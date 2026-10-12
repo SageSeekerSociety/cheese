@@ -11,7 +11,7 @@ import type {
 
 import { axiosMutation, axiosRequest } from './axiosHttp'
 
-// 旧栈从 `@/network/utils` 取这个值，两者都是构建时的 VITE_API_BASE_URL，不带兜底。
+// 这个值取自构建时的 VITE_API_BASE_URL，不带兜底。
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 /** 证明「你是谁」：登录、注册、找回、两步验证、sudo 与 OAuth。
