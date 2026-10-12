@@ -57,10 +57,23 @@ lark-cli auth status --profile cheese    # 查 token 是否有效
 ## Updating project skills
 
 Lark skills live in `.agents/skills/`, with directory links in `.claude/skills/`
-for Claude Code. Codex reads `.agents/skills/` directly. Commit any local skill
-changes, then run `bash scripts/update-lark-skills.sh` to refresh the complete
-official collection and `skills-lock.json` in this checkout. Review and commit
-the resulting diff. Each Git worktree uses the skills in its own checkout.
+for Claude Code. Codex reads `.agents/skills/` directly. This repository keeps five
+of them — `lark-shared`, `lark-wiki`, `lark-doc`, `lark-drive` and
+`lark-openapi-explorer`, which is what reading the team's wiki, documents and Drive
+needs. The feed serves the whole official collection, but an installed skill puts
+its name and description in front of every agent on every turn, and the other
+twenty-three were never called. They stay out of this checkout; git history has
+them, and the feed still serves them.
+
+Commit any local skill changes, then run `bash scripts/update-lark-skills.sh` to
+refresh those five and `skills-lock.json`. Review and commit the resulting diff.
+Each Git worktree uses the skills in its own checkout.
+
+The retained skills are upstream content, replaced wholesale by the script, and
+they name sibling skills (`lark-sheets`, `lark-base`, `lark-meeting` and others) in
+their descriptions and reference pages. Those siblings are not installed here, so
+a pointer to one leads nowhere in this checkout: use `lark-cli` directly, or add
+the skill to the script's list while you need it.
 
 Keep these skills project-scoped. The script omits `--global`; `lark-cli update`
 also installs skills and can recreate global entries. Upgrade the CLI separately,
