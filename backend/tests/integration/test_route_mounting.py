@@ -21,7 +21,7 @@ def _clean_registry():
 
 def test_readiness_fails_while_a_module_is_unmounted(client, monkeypatch):
     """The rollout waits on /readyz, so this 503 is what keeps the build off traffic."""
-    from app.api.routes import health
+    from app.core import health
 
     async def _up():
         return {"status": "up"}
@@ -81,7 +81,7 @@ def test_production_keeps_serving_and_records_the_damage(monkeypatch):
 
 def test_an_import_failure_at_boot_makes_the_build_unready(client, monkeypatch):
     """End to end: a module that fails to import in production → /readyz 503."""
-    from app.api.routes import health
+    from app.core import health
 
     async def _up():
         return {"status": "up"}

@@ -40,6 +40,7 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.request_limits import RequestLimits
+from app.core.route_mounting import FAILED_ROUTE_MODULES
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
@@ -468,10 +469,11 @@ async def lifespan(application: FastAPI):
                 await hub_runtime.close()
 
 
-# Route modules that failed to import this boot. Read by the `routes` check in
-# app/api/routes/health.py, which makes /readyz answer 503 — so a partially
-# mounted build fails the rollout gate instead of taking traffic quietly.
-FAILED_ROUTE_MODULES: list[str] = []
+# Route modules that failed to import this boot. Owned by app/core/route_mounting
+# and re-exported on this module for callers that already read it off here. Read
+# by the `routes` check in app/core/health.py, which makes /readyz answer
+# 503 — so a partially mounted build fails the rollout gate instead of taking
+# traffic quietly.
 
 
 def _discover_routers(application: FastAPI) -> list[str]:

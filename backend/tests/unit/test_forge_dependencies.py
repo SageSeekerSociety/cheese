@@ -351,9 +351,8 @@ async def test_dependency_notice_reaches_the_task_and_recovers_only_unsent_claim
     parent, child = await seed(db_factory, delivered=False)
     await assign_parent(db_factory, child.id)
     await retarget_completed_dependencies(db_factory)
-    chat = SimpleNamespace(session_factory=db_factory)
     runner = Mock()
-    monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
+    chat = SimpleNamespace(session_factory=db_factory, work_runner=runner)
     await pr_poll.deliver_dependency_notices(chat)
     assert runner.submit.call_count == 1
     first_attempt = runner.submit.call_args.kwargs["turn_id"]
@@ -364,7 +363,7 @@ async def test_dependency_notice_reaches_the_task_and_recovers_only_unsent_claim
         row.lease_until = datetime.now(UTC) - timedelta(seconds=1)
         await session.commit()
     await pr_poll.deliver_dependency_notices(
-        SimpleNamespace(session_factory=db_factory)
+        SimpleNamespace(session_factory=db_factory, work_runner=runner)
     )
     assert runner.submit.call_count == 2
     assert runner.submit.call_args.kwargs["turn_id"] != first_attempt
@@ -433,7 +432,6 @@ async def test_dependency_delivery_needs_the_matching_native_receipt(
         workspace_root="/unused-dependency-receipt-test",
         compute=stub_compute(),
     )
-    monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
     await pr_poll.deliver_dependency_notices(chat)
     attempt = runner.submit.call_args.kwargs
     await begin_send(db_factory, attempt["delivery_id"], attempt["turn_id"])
