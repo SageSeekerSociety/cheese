@@ -35,7 +35,7 @@ import type { FileDiff } from '@/lib/diff'
 import type { DocThreadActions, DocThreadState } from '@/lib/docThreadTypes'
 import type { RailMemberMark } from '@/lib/memberActivity'
 import type { VisibleRow } from '@/lib/topicTree'
-import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
+import type { SpaceLearningExcerpt } from '@/types/apiSpaces'
 import type { ChangesScene, ChatLine, Frame } from './demoScene'
 
 import { ref } from 'vue'
@@ -862,7 +862,7 @@ const DOC_BASE = {
     stopAgent: noopAsync,
   } as DocThreadActions,
   fetchDocNodes: async () => [],
-  imageSrc: (src: string) => src,
+  imageSrc: async (src: string) => src,
   toggleEditable: noop,
   setError: noop,
 }

@@ -10,14 +10,14 @@ import { pendingSudo, SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import SudoDialog from './SudoDialog.vue'
 
+import { ApiError } from '@/api/http'
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
-import { BusinessError } from '@/network/types/error'
 
 const browser = vi.hoisted(() => ({ webAuthn: true }))
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: {
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
     requestSudoTicket: vi.fn(),
     getMyAuthMethods: vi.fn(),
     getPasskeyAuthenticationOptions: vi.fn(),
@@ -43,17 +43,22 @@ beforeEach(() => {
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
   // Outside the sudo window unless a test says otherwise, so the dialog opens.
-  vi.mocked(UserApi.requestSudoTicket).mockRejectedValue(
-    new BusinessError('Re-authentication required for this operation', 403, {
-      name: 'SudoRequiredError',
-      message: 'Re-authentication required for this operation',
-    })
+  vi.mocked(UserAuthApi.requestSudoTicket).mockRejectedValue(
+    new ApiError(
+      403,
+      'Re-authentication required for this operation',
+      'SudoRequiredError',
+      undefined,
+      undefined,
+      undefined
+    )
   )
-  vi.mocked(UserApi.verifySudoPassword).mockResolvedValue({ data: { verified: true, sudoTicket: 'ticket-1' } } as never)
-  vi.mocked(UserApi.verifySudoTOTP).mockResolvedValue({ data: { verified: true, sudoTicket: 'ticket-2' } } as never)
-  vi.mocked(UserApi.requestSudoEmailCode).mockResolvedValue({ data: { email: 'alice@example.com' } } as never)
-  vi.mocked(UserApi.verifySudoEmailCode).mockResolvedValue({
-    data: { verified: true, sudoTicket: 'ticket-4' },
+  vi.mocked(UserAuthApi.verifySudoPassword).mockResolvedValue({ verified: true, sudoTicket: 'ticket-1' } as never)
+  vi.mocked(UserAuthApi.verifySudoTOTP).mockResolvedValue({ verified: true, sudoTicket: 'ticket-2' } as never)
+  vi.mocked(UserAuthApi.requestSudoEmailCode).mockResolvedValue({ email: 'alice@example.com' } as never)
+  vi.mocked(UserAuthApi.verifySudoEmailCode).mockResolvedValue({
+    verified: true,
+    sudoTicket: 'ticket-4',
   } as never)
 })
 afterEach(() => {
@@ -65,13 +70,11 @@ afterEach(() => {
 })
 
 function accountWith(methods: { password?: boolean; passkey: boolean; twoFactor: boolean; emailCode?: boolean }) {
-  vi.mocked(UserApi.getMyAuthMethods).mockResolvedValue({
-    data: {
-      password: methods.password ?? true,
-      passkey: methods.passkey,
-      twoFactor: methods.twoFactor,
-      emailCode: methods.emailCode ?? false,
-    },
+  vi.mocked(UserAuthApi.getMyAuthMethods).mockResolvedValue({
+    password: methods.password ?? true,
+    passkey: methods.passkey,
+    twoFactor: methods.twoFactor,
+    emailCode: methods.emailCode ?? false,
   } as never)
 }
 
@@ -104,25 +107,26 @@ const otherWays = () => screen.queryAllByRole('button', { name: /^Enter / }).map
 
 describe('shortly after the person proved who they are', () => {
   it('runs the operation with the ticket the server grants, without opening the dialog', async () => {
-    vi.mocked(UserApi.requestSudoTicket).mockResolvedValue({
-      data: { verified: true, sudoTicket: 'silent-ticket' },
+    vi.mocked(UserAuthApi.requestSudoTicket).mockResolvedValue({
+      verified: true,
+      sudoTicket: 'silent-ticket',
     } as never)
     render(SudoDialog, { global: { plugins: [createVuetify({ components, directives })] } })
     const operation = vi.fn(async (ticket: string) => `done with ${ticket}`)
 
     await expect(withSudo('2fa:disable', operation)).resolves.toBe('done with silent-ticket')
 
-    expect(UserApi.requestSudoTicket).toHaveBeenCalledWith('2fa:disable')
+    expect(UserAuthApi.requestSudoTicket).toHaveBeenCalledWith('2fa:disable')
     expect(operation).toHaveBeenCalledWith('silent-ticket')
     expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull()
-    expect(UserApi.getMyAuthMethods).not.toHaveBeenCalled()
+    expect(UserAuthApi.getMyAuthMethods).not.toHaveBeenCalled()
   })
 
   it('opens the dialog when the server asks for confirmation', async () => {
     accountWith({ passkey: false, twoFactor: false })
     const { result, operation } = await ask('2fa:disable')
 
-    expect(UserApi.requestSudoTicket).toHaveBeenCalledWith('2fa:disable')
+    expect(UserAuthApi.requestSudoTicket).toHaveBeenCalledWith('2fa:disable')
     await fireEvent.update(await screen.findByLabelText('Password'), 'correct horse!1')
     expect(operation).not.toHaveBeenCalled()
     await submit(screen.getByLabelText('Password'))
@@ -132,7 +136,7 @@ describe('shortly after the person proved who they are', () => {
   })
 
   it('reports any other failure instead of asking', async () => {
-    vi.mocked(UserApi.requestSudoTicket).mockRejectedValue(new BusinessError('Service unavailable', 503))
+    vi.mocked(UserAuthApi.requestSudoTicket).mockRejectedValue(new ApiError(503, 'Service unavailable'))
     render(SudoDialog, { global: { plugins: [createVuetify({ components, directives })] } })
     const operation = vi.fn()
 
@@ -242,31 +246,32 @@ describe('confirming', () => {
 
     await expect(result).resolves.toBe('done with ticket-1')
     expect(operation).toHaveBeenCalledTimes(1)
-    expect(UserApi.verifySudoPassword).toHaveBeenCalledWith('correct horse!1', 'password:change')
+    expect(UserAuthApi.verifySudoPassword).toHaveBeenCalledWith('correct horse!1', 'password:change')
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull())
   })
 
   it('runs the operation with the ticket a passkey earns', async () => {
     accountWith({ passkey: true, twoFactor: false })
-    vi.mocked(UserApi.getPasskeyAuthenticationOptions).mockResolvedValue({
-      data: { options: { challenge: 'c', rpId: 'example.test' } },
+    vi.mocked(UserAuthApi.getPasskeyAuthenticationOptions).mockResolvedValue({
+      options: { challenge: 'c', rpId: 'example.test' },
     } as never)
     vi.mocked(startAuthentication).mockResolvedValue({ id: 'assertion' } as never)
-    vi.mocked(UserApi.verifySudoPasskey).mockResolvedValue({
-      data: { verified: true, sudoTicket: 'ticket-3' },
+    vi.mocked(UserAuthApi.verifySudoPasskey).mockResolvedValue({
+      verified: true,
+      sudoTicket: 'ticket-3',
     } as never)
     const { result } = await ask('passkey:delete')
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Confirm with a passkey' }))
 
     await expect(result).resolves.toBe('done with ticket-3')
-    expect(UserApi.verifySudoPasskey).toHaveBeenCalledWith({ id: 'assertion' }, 'passkey:delete')
+    expect(UserAuthApi.verifySudoPasskey).toHaveBeenCalledWith({ id: 'assertion' }, 'passkey:delete')
   })
 
   it('stays open when the passkey prompt is dismissed', async () => {
     accountWith({ passkey: true, twoFactor: false })
-    vi.mocked(UserApi.getPasskeyAuthenticationOptions).mockResolvedValue({
-      data: { options: { challenge: 'c', rpId: 'example.test' } },
+    vi.mocked(UserAuthApi.getPasskeyAuthenticationOptions).mockResolvedValue({
+      options: { challenge: 'c', rpId: 'example.test' },
     } as never)
     vi.mocked(startAuthentication).mockRejectedValue(Object.assign(new Error('denied'), { name: 'NotAllowedError' }))
     const { outcome } = await ask()
@@ -290,12 +295,12 @@ describe('confirming', () => {
     await fireEvent.paste(firstDigit, { clipboardData: { getData: () => '123456' } })
 
     await expect(result).resolves.toBe('done with ticket-2')
-    expect(UserApi.verifySudoTOTP).toHaveBeenCalledWith('123456', '2fa:disable')
+    expect(UserAuthApi.verifySudoTOTP).toHaveBeenCalledWith('123456', '2fa:disable')
   })
 
   it('keeps the dialog open and says why when the password is wrong', async () => {
     accountWith({ passkey: false, twoFactor: false })
-    vi.mocked(UserApi.verifySudoPassword).mockRejectedValue(new BusinessError('Incorrect password', 400))
+    vi.mocked(UserAuthApi.verifySudoPassword).mockRejectedValue(new ApiError(400, 'Incorrect password'))
     const { outcome } = await ask()
 
     await fireEvent.update(await screen.findByLabelText('Password'), 'wrong')
@@ -325,7 +330,7 @@ describe('confirming with a code mailed to the account', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Get a code by email' }))
 
     expect(await screen.findByText('We sent a code to alice@example.com')).toBeTruthy()
-    expect(UserApi.requestSudoEmailCode).toHaveBeenCalledTimes(1)
+    expect(UserAuthApi.requestSudoEmailCode).toHaveBeenCalledTimes(1)
   })
 
   it('is the way in for an account that has no other, sent only when asked', async () => {
@@ -333,21 +338,19 @@ describe('confirming with a code mailed to the account', () => {
     const { result } = await ask('oauth:unbind')
 
     const send = await screen.findByRole('button', { name: 'Email me a code' })
-    expect(UserApi.requestSudoEmailCode).not.toHaveBeenCalled()
+    expect(UserAuthApi.requestSudoEmailCode).not.toHaveBeenCalled()
     await fireEvent.click(send)
     await fireEvent.paste(await codeField(), { clipboardData: { getData: () => '246810' } })
 
     await expect(result).resolves.toBe('done with ticket-4')
-    expect(UserApi.verifySudoEmailCode).toHaveBeenCalledWith('246810', 'oauth:unbind')
+    expect(UserAuthApi.verifySudoEmailCode).toHaveBeenCalledWith('246810', 'oauth:unbind')
   })
 
   it('says a wrong code is wrong in the interface language, and stays open', async () => {
     accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
-    vi.mocked(UserApi.verifySudoEmailCode).mockRejectedValue(
-      new BusinessError('Invalid or expired code', 401, {
-        name: 'AuthenticationRequiredError',
-        message: 'Invalid or expired code',
-        data: { reason: 'invalid_email_code' },
+    vi.mocked(UserAuthApi.verifySudoEmailCode).mockRejectedValue(
+      new ApiError(401, 'Invalid or expired code', 'AuthenticationRequiredError', undefined, undefined, {
+        reason: 'invalid_email_code',
       })
     )
     const { outcome } = await ask()
@@ -362,11 +365,9 @@ describe('confirming with a code mailed to the account', () => {
 
   it('says so when two-step verification was turned on meanwhile', async () => {
     accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
-    vi.mocked(UserApi.verifySudoEmailCode).mockRejectedValue(
-      new BusinessError('An email code cannot confirm this account', 403, {
-        name: 'ForbiddenError',
-        message: 'An email code cannot confirm this account',
-        data: { reason: 'email_code_unavailable' },
+    vi.mocked(UserAuthApi.verifySudoEmailCode).mockRejectedValue(
+      new ApiError(403, 'An email code cannot confirm this account', 'ForbiddenError', undefined, undefined, {
+        reason: 'email_code_unavailable',
       })
     )
     const { outcome } = await ask()
@@ -381,11 +382,10 @@ describe('confirming with a code mailed to the account', () => {
 
   it('says how long to wait when a code was sent too recently', async () => {
     accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
-    vi.mocked(UserApi.requestSudoEmailCode).mockRejectedValue(
-      new BusinessError('Please wait before requesting a new code', 400, {
-        name: 'BadRequestError',
-        message: 'Please wait before requesting a new code',
-        data: { reason: 'email_code_too_soon', retryAfterSeconds: 20 },
+    vi.mocked(UserAuthApi.requestSudoEmailCode).mockRejectedValue(
+      new ApiError(400, 'Please wait before requesting a new code', 'BadRequestError', undefined, undefined, {
+        reason: 'email_code_too_soon',
+        retryAfterSeconds: 20,
       })
     )
     await ask()
@@ -405,7 +405,7 @@ describe('backing out', () => {
 
     await expect(result).rejects.toBeInstanceOf(SudoCancelledError)
     expect(operation).not.toHaveBeenCalled()
-    expect(UserApi.verifySudoPassword).not.toHaveBeenCalled()
+    expect(UserAuthApi.verifySudoPassword).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull())
   })
 

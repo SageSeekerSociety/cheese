@@ -1,7 +1,11 @@
 <template>
   <div class="an-section">
     <div class="an-bar">
-      <AnalyticsPublisherSelect v-model="publisherIdModel" :space-id="spaceId" :filters="filters" />
+      <AnalyticsPublisherSelect
+        v-model="publisherIdModel"
+        :publishers="publisherOptions"
+        :loading="publishersLoading"
+      />
       <v-select
         v-model="participationApprovedModel"
         autocomplete="off"
@@ -103,11 +107,13 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceAnalyticsParticipants } from '@/network/api/spaces/types'
+import type { SpaceAnalyticsParticipants } from '@/types/apiSpaces'
 import type { AnalyticsGroupBy, AnalyticsRealNameFilter } from './utils'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
 
 import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
@@ -120,9 +126,9 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import { SpacesApi } from '@/api/spaces'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import { SpacesApi } from '@/network/api/spaces'
 
 const { t, te } = useI18n()
 const options = useAnalyticsOptions()
@@ -133,6 +139,8 @@ const loading = ref(false)
 const failed = ref(false)
 const errorDetail = ref<string | null>(null)
 const participants = ref<SpaceAnalyticsParticipants | null>(null)
+const { publishers: publisherOptions, loading: publishersLoading } = useAnalyticsPublishers(spaceId, filters)
+
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
 const participationApprovedModel = ref(filters.value.participationApproved ?? null)
 const completionStatusModel = ref(filters.value.completionStatus ?? null)
@@ -162,7 +170,7 @@ const load = async () => {
   failed.value = false
   errorDetail.value = null
   try {
-    const { data } = await SpacesApi.getAnalyticsParticipants(
+    const data = await SpacesApi.getAnalyticsParticipants(
       spaceId.value,
       buildAnalyticsApiParams('participants', filters.value)
     )

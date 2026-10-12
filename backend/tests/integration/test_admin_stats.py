@@ -441,6 +441,9 @@ def test_usage_totals_series_and_top_projects_read_the_window(client, as_admin):
             "name": "看板项目",
             "tokens": 450,
             "cost_usd": 3.0,
+            # No row in the window recorded a cache read: no ratio, not 0%.
+            "cache_hit": None,
+            "models": [{"model": "m", "tokens": 450, "cost_usd": 3.0}],
         }
     ]
 

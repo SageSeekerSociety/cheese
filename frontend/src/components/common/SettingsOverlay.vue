@@ -94,6 +94,8 @@ const layer = ref<HTMLElement | null>(null)
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented) return
   if (document.querySelector('.v-overlay--active')) return
+  // 处理了就 preventDefault：别的 window 监听（Esc 栈）看到已消费，不会再关第二层。
+  event.preventDefault()
   // 目录搜索还有字：这一下先清字（焦点不在搜索框里也一样，比如已经 Tab 到了某一项上）。
   if (search.value) {
     search.value = ''

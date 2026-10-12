@@ -30,14 +30,48 @@ uv run python scripts/check_deferred_imports.py            # what CI runs (add -
 uv run python scripts/check_deferred_imports.py --update   # lower the baseline (never raises)
 ```
 
+## Refactors must preserve the callers and the frozen graph
+
+When shrinking an oversized module, extract new leaf modules rather than moving
+existing modules just to lower the line count. The import and deferred-import
+ledgers key debt by module path; relocating it is not removing it, and accepting
+new frozen pairs is not a routine refactor step.
+
+Before moving a public name in `app/`, search the whole repository for callers,
+including top-level `scripts/`, not just `backend/`. Pyright's configured scope
+is `app`, so a green backend type check cannot clear those outside callers.
+
+## Generated routes and database predicates
+
+Resolve a conflict in `scripts/route_index.json` by regenerating from the merged
+routes: from `backend/`, run `uv run python -m scripts.route_index --emit > scripts/route_index.json`, then
+`uv run python -m scripts.route_index --sync scripts/route_index.json`. Run
+`uv run python -m scripts.route_index --check` too to validate the frozen
+shadowing pairs. If route ordering changed, verify
+the identities behind `scripts/route_index_frozen.py`'s indexed pairs and update
+their indices and tests together; never freeze a newly introduced shadowing
+relationship just to clear the check (`tests/unit/test_route_index*.py`).
+
+Keep a partial index's predicate and its querying expression aligned, including
+literal values and casts; a parameterised or differently spelled expression may
+not prove the index applicable. For the handle-prefix predicates, reuse
+`app/domain/block/indexed_rows.py`'s literal `^@` expression: the asyncpg DDL path
+can leave SQLAlchemy's escaped `%%` in a LIKE predicate.
+
+Tests have additional setup rules in [`tests/AGENTS.md`](tests/AGENTS.md).
+Changes to `app/domain/usage/subscription_ingest.py` also follow the normal-path
+and cache-pricing constraints in
+[`../deploy/metering-proxy/AGENTS.md`](../deploy/metering-proxy/AGENTS.md).
+
 ## Caps and conventions
 
-- `app/**/*.py` over **1500 lines** may not grow — 16 files are already there and
+- `app/**/*.py` over **1500 lines** may not grow — 4 files are already there and
   are frozen at their current size. `.claude/scripts/check-file-sizes.py` judges
   only the files this branch changed, each against the size it had at the merge
   base with `origin/main`.
-- `uv run ruff check .`, `uv run pyright` and `uv run pytest tests/ -n 4 -q` are
-  the rest of `task check`; `task be:check` runs all four locally.
+- From the repository root, run `task ci:fast` before you push: it runs the
+  checks your changed paths select, inside a time budget. Add `--types` when you
+  touch shared types; `task be:check` runs the whole backend check locally.
 - Migrations: [`../.claude/rules/migrations.md`](../.claude/rules/migrations.md)
   — the alembic chain has exactly one head at all times.
 - Test pitfalls by symptom:

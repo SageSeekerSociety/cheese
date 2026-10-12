@@ -312,6 +312,7 @@ def release(name, record):
                     os.kill(int(pid), signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+        # Hand-written, not tenacity: this runs on machines with the stdlib only.
         deadline = time.monotonic() + 10
         while group.exists():
             try:

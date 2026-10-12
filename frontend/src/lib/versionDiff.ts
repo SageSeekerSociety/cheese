@@ -7,6 +7,7 @@
 // 相邻的删和加配成一对「改了的一段」，行内再用 inlineDiff 标出改了哪几个字。
 import type { Segment } from './paragraphDiff'
 
+import { lcsOps } from './lcs'
 import { inlineDiff } from './paragraphDiff'
 
 export type DiffRow =
@@ -25,8 +26,6 @@ export interface VersionDiff {
 
 /** 改动前后各留几段没改的上下文。 */
 const CONTEXT = 2
-// 行数相乘超过这个量就不再逐行找最长公共子序列：整篇算删了又加了，比卡住页面好。
-const MAX_CELLS = 4_000_000
 
 type Op = { kind: 'same' | 'add' | 'del'; text: string }
 
@@ -42,38 +41,7 @@ function lineOps(a: string[], b: string[]): Op[] {
   }
   const head: Op[] = a.slice(0, start).map((text) => ({ kind: 'same', text }))
   const tail: Op[] = a.slice(endA).map((text) => ({ kind: 'same', text }))
-  const midA = a.slice(start, endA)
-  const midB = b.slice(start, endB)
-  const mid: Op[] = []
-  if (midA.length * midB.length > MAX_CELLS) {
-    for (const text of midA) mid.push({ kind: 'del', text })
-    for (const text of midB) mid.push({ kind: 'add', text })
-    return [...head, ...mid, ...tail]
-  }
-  const width = midB.length + 1
-  const lcs = new Uint32Array((midA.length + 1) * width)
-  for (let i = midA.length - 1; i >= 0; i--) {
-    for (let j = midB.length - 1; j >= 0; j--) {
-      lcs[i * width + j] =
-        midA[i] === midB[j]
-          ? lcs[(i + 1) * width + j + 1] + 1
-          : Math.max(lcs[(i + 1) * width + j], lcs[i * width + j + 1])
-    }
-  }
-  let i = 0
-  let j = 0
-  while (i < midA.length && j < midB.length) {
-    if (midA[i] === midB[j]) {
-      mid.push({ kind: 'same', text: midA[i++] })
-      j++
-    } else if (lcs[(i + 1) * width + j] >= lcs[i * width + j + 1]) {
-      mid.push({ kind: 'del', text: midA[i++] })
-    } else {
-      mid.push({ kind: 'add', text: midB[j++] })
-    }
-  }
-  while (i < midA.length) mid.push({ kind: 'del', text: midA[i++] })
-  while (j < midB.length) mid.push({ kind: 'add', text: midB[j++] })
+  const mid: Op[] = lcsOps(a.slice(start, endA), b.slice(start, endB)).map(({ kind, item }) => ({ kind, text: item }))
   return [...head, ...mid, ...tail]
 }
 

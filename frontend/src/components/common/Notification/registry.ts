@@ -2,7 +2,7 @@
 // 数据，也不认识路由，只决定画什么；所以它和它映射的这批渲染组件住在一起，
 // `src/services/` 留给真正跟服务端说话的那些模块（`.claude/rules/architecture.md`）。
 import type { Component } from 'vue'
-import type { Notification, NotificationType } from '@/network/api/notifications/types'
+import type { Notification, NotificationType } from '@/types/apiNotifications'
 
 import RenderCheeseQuestionNotification from '@/components/common/Notification/renders/RenderCheeseQuestionNotification.vue'
 import RenderDeadlineRemindNotification from '@/components/common/Notification/renders/RenderDeadlineRemindNotification.vue'

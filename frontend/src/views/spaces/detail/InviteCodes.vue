@@ -18,8 +18,8 @@ import dayjs from 'dayjs'
 
 import InviteCodesView from './InviteCodesView.vue'
 
+import { SpacesApi } from '@/api/spaces'
 import { userRefRoute } from '@/lib/userRef'
-import { SpacesApi } from '@/network/api/spaces'
 
 const route = useRoute()
 const router = useRouter()
@@ -72,7 +72,7 @@ async function refresh() {
   errorDetail.value = null
   try {
     const res = await SpacesApi.listInviteCodes(spaceId)
-    codes.value = res.data.inviteCodes ?? []
+    codes.value = res.inviteCodes ?? []
   } catch (error) {
     failed.value = true
     errorDetail.value = error instanceof Error && error.message ? error.message : null

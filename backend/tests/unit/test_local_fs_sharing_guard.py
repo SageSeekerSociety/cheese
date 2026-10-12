@@ -19,6 +19,8 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from app.api.routes.local_dirs import _grant_view
 from app.domain.local_fs.memory_repository import InMemoryLocalFsRepository
 from app.domain.local_fs.paths import Platform
@@ -47,6 +49,22 @@ _SHARING_WORDS = (
     "attachment",
     "clone",
     "template",
+)
+
+#: 几条静态门禁指向同一条纪律，修法写一次。规则：分享出去的是成果本身，不是进入
+#: 用户电脑的钥匙。修法是模块接缝：授权只出现在主人命名空间
+#: `/my/devices/{device_id}/...` 下（`backend/app/api/routes/local_dirs.py`），
+#: 端点在响应前先 `_require_owned_device` 或（不接 device_id 的）`_require_user`；
+#: 别的路由模块不许 import `app.domain.local_fs`，
+#: 唯一放行的是设备连上来时推授权表的 `push_grants_on_connect`（connector.py）。
+#: 文档：docs/manual/dev/local-fs.md 的「对外接口」（#api）与「边界与坑」（#traps）。
+_REPAIR_LOCAL_FS = (
+    "修法：授权只出现在主人命名空间 /my/devices/{device_id}/... 下（"
+    "backend/app/api/routes/local_dirs.py）；碰 device_id 的端点先 "
+    "_require_owned_device、不碰的端点先 _require_user；别的路由模块不许 import "
+    "app.domain.local_fs（唯一放行 push_grants_on_connect）。"
+    "规则/文档：docs/manual/dev/local-fs.md#api、#traps。"
+    "复查：cd backend && uv run pytest tests/unit/test_local_fs_sharing_guard.py -q"
 )
 
 
@@ -83,14 +101,20 @@ def test_every_directory_endpoint_checks_device_ownership():
             # 不接设备 id 的端点（审计列表）只能靠登录身份自己限定，这里只要求它
             # 真的把 user_id 传下去。
             source = ast.dump(handler)
-            assert "_require_user" in source, f"{handler.name} 没有登录校验"
+            assert "_require_user" in source, (
+                f"{handler.name} 没有登录校验——不接 device_id 的端点也要靠登录身份"
+                "限定：\n" + _REPAIR_LOCAL_FS
+            )
             continue
         source = ast.dump(handler)
         if "_require_owned_device" not in source:
             unchecked.append(handler.name)
 
     assert unchecked == [], (
-        "这些端点碰了 device_id 却没有确认它属于调用者：" + ", ".join(unchecked)
+        "这些端点碰了 device_id 却没有确认它属于调用者："
+        + ", ".join(unchecked)
+        + "\n"
+        + _REPAIR_LOCAL_FS
     )
 
 
@@ -128,6 +152,8 @@ def test_no_other_route_module_touches_local_fs():
     assert offenders == [], (
         "这些路由模块碰了 local_fs——授权不该跟成果一起被分享出去："
         + ", ".join(offenders)
+        + "\n"
+        + _REPAIR_LOCAL_FS
     )
 
 
@@ -154,7 +180,10 @@ def test_no_endpoint_puts_a_directory_next_to_a_sharing_word():
 
     bad = [p for p in paths if any(word in p.lower() for word in _SHARING_WORDS)]
     assert bad == [], (
-        "授权出现了在可分享的路径下——分享出去的应该是成果，不是钥匙：" + ", ".join(bad)
+        "授权出现了在可分享的路径下——分享出去的应该是成果，不是钥匙："
+        + ", ".join(bad)
+        + "\n"
+        + _REPAIR_LOCAL_FS
     )
 
 
@@ -166,6 +195,8 @@ def test_every_directory_endpoint_is_scoped_to_the_callers_own_machine():
     assert outside == [], (
         "这些端点不在「我的电脑」下，所以它们可以用别的项目的身份去碰别人的磁盘："
         + ", ".join(outside)
+        + "\n"
+        + _REPAIR_LOCAL_FS
     )
 
 
@@ -202,7 +233,46 @@ def test_the_grant_response_carries_no_field_that_could_be_handed_out():
         created_at=datetime.now(UTC),
     )
 
-    assert set(_grant_view(grant)) == _GRANT_FIELDS
+    fields = set(_grant_view(grant))
+    assert fields == _GRANT_FIELDS, (
+        "授权响应（backend/app/api/routes/local_dirs.py 的 _grant_view）多/少了字段："
+        f"多 {sorted(fields - _GRANT_FIELDS)}，少 {sorted(_GRANT_FIELDS - fields)}。"
+        "每个字段都是刻意选的——多一个 share_token / signature / url 就得先想清楚"
+        "它能不能被发给别人。\n" + _REPAIR_LOCAL_FS
+    )
+
+
+def test_an_extra_grant_field_is_named(monkeypatch):
+    """形状棘轮红了要报出多/少了哪个字段和修法。"""
+    from app.api.routes.local_dirs import _grant_view as real_view
+
+    monkeypatch.setattr(
+        "tests.unit.test_local_fs_sharing_guard._grant_view",
+        lambda g: {**real_view(g), "share_token": "x"},
+    )
+    with pytest.raises(AssertionError) as caught:
+        test_the_grant_response_carries_no_field_that_could_be_handed_out()
+    message = str(caught.value)
+    assert "share_token" in message
+    assert "local_dirs.py" in message
+    assert "local-fs.md" in message
+    assert "test_local_fs_sharing_guard.py" in message
+
+
+def test_a_route_module_reaching_local_fs_is_reported(monkeypatch, tmp_path):
+    """别的路由模块 import local_fs 要被报出来，并带上修法。"""
+    (tmp_path / "tasks.py").write_text(
+        "from app.domain.local_fs.records import DirectoryGrant\n"
+    )
+    (tmp_path / "local_dirs.py").write_text("")  # 自己的模块要放行
+    monkeypatch.setattr("tests.unit.test_local_fs_sharing_guard.ROUTES", tmp_path)
+    with pytest.raises(AssertionError) as caught:
+        test_no_other_route_module_touches_local_fs()
+    message = str(caught.value)
+    assert "tasks.py" in message
+    assert "push_grants_on_connect" in message
+    assert "local-fs.md" in message
+    assert "test_local_fs_sharing_guard.py" in message
 
 
 # -- (五) 审计也是每条设备、每个主人各看各的 -------------------------

@@ -390,6 +390,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
 import { ApiError } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -398,7 +399,6 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
-import { TeamsApi } from '@/network/api/teams'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
@@ -576,9 +576,7 @@ const fetchTeamMembers = async (teamId: number) => {
   failedMembers.value = false
   membersError.value = null
   try {
-    const {
-      data: { members },
-    } = await TeamsApi.getMembers(teamId)
+    const { members } = await TeamsApi.getMembers(teamId)
     teamMembers.value = members
   } catch (error) {
     console.error('Failed to load team members', error)
@@ -598,7 +596,7 @@ const fetchJoinRequests = async (teamId: number) => {
   requestsError.value = null
   try {
     const response = await TeamsApi.listTeamJoinRequests(teamId)
-    joinRequests.value = response.data.applications
+    joinRequests.value = response.applications
   } catch (error) {
     console.error('Failed to load join requests', error)
     failedRequests.value = true
@@ -618,7 +616,7 @@ const fetchTeamInvitations = async (teamId: number) => {
   invitationsError.value = null
   try {
     const response = await TeamsApi.listTeamInvitations(teamId)
-    teamInvitations.value = response.data.invitations
+    teamInvitations.value = response.invitations
   } catch (error) {
     console.error('Failed to load sent invitations', error)
     failedInvitations.value = true

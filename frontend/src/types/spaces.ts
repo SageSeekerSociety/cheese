@@ -204,7 +204,7 @@ export type SpaceMaterialsState = 'loading' | 'ready' | 'error'
 
 // ---- 「我发布的题目」（`SpacesApi.getMyPublishedTasks` 的形状）-----------------
 //
-// 这几个原来长在 `@/network/api/spaces/types` 里；挪到领域类型这儿，是因为「题目列表」
+// 这几个原来长在 `@/types/apiSpaces` 里；挪到领域类型这儿，是因为「题目列表」
 // 拆出来的那半张画面（`views/spaces/detail/TasksView.vue`）只认 props、不连网络层，
 // 不能从 `@/network` 取类型。网络层再从这儿转出去，对外形状一个字没变。
 

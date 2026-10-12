@@ -1,6 +1,6 @@
 // 动态里的「删除」是一条不可撤销的动作，而且这颗按钮就贴在正文旁边、每一条都常驻：
 // 点一下直接删会误触。这里锁住「先问一句」——确认之前不删，确认之后才删。
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'

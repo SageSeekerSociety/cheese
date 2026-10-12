@@ -2,6 +2,7 @@ import type { BusinessError } from '@/network/types/error'
 
 import { toast } from 'vuetify-sonner'
 
+import { ApiError } from '@/api/http'
 import { reportError } from '@/errorReporter'
 import { t } from '@/i18n'
 
@@ -37,12 +38,14 @@ class ErrorHandlerService {
 
     const opts = { ...this.defaultOptions, ...options }
 
-    // 判断是否为业务错误
-    if ('name' in error && error.name && this.handlers[error.name]) {
+    // 服务端给这次回绝起的名字：新 ApiError 在 `code`（错误名字符串），老
+    // BusinessError 在 `name`（后端错误名）。哪一代落在注册过的那条上，就按那一条办。
+    const refusalName = refusalHandlerName(error)
+    if (refusalName && this.handlers[refusalName]) {
       // Not reported: everything with a registered handler is a refusal the
       // product means — no permission, a locked team — which is the system
       // working. Recording those would bury the failures that are not.
-      return await this.handlers[error.name](error)
+      return await this.handlers[refusalName](error)
     }
 
     // Everything else is reported. These are exactly the failures a person SEES
@@ -56,8 +59,9 @@ class ErrorHandlerService {
     const fallback = opts.defaultMessage || t('shell.errors.actionFailed')
     reportError(error.message || fallback, error.stack, `ui:${error.name || 'Error'}`)
 
-    // 如果是业务错误但没有特定处理器
-    if ('code' in error && (error as BusinessError).code) {
+    // 服务端回绝了这次请求、却没有专属处理器：说服务端那句话，别拿通用文案把它盖掉。
+    // 两代都算 —— 新 ApiError 的 `code` 是错误名，老 BusinessError 的 `code` 是数字。
+    if (hasServerRefusal(error)) {
       if (opts.showToast) {
         toast.error(error.message || fallback)
       }
@@ -84,12 +88,31 @@ class ErrorHandlerService {
   }
 }
 
+// 服务端给这次回绝起的名字：新 `ApiError` 放在 `code`（错误名字符串），老
+// `BusinessError` 放在 `name`（后端错误名）。取到一个就按它找注册过的那条。
+function refusalHandlerName(error: Error): string | undefined {
+  const code = (error as ApiError).code
+  if (typeof code === 'string' && code) return code
+  return 'name' in error && error.name ? error.name : undefined
+}
+
+// 这次失败是服务端有条有理地回绝的（带着业务 code），不是网络断了也不是未知错误。
+// 两代都算：新 `ApiError` 的 `code` 是字符串，老 `BusinessError` 的 `code` 是数字。
+function hasServerRefusal(error: Error): boolean {
+  if (error instanceof ApiError) return typeof error.code === 'string' && error.code.length > 0
+  const code = (error as BusinessError).code
+  return typeof code === 'number' && code > 0
+}
+
 // 创建单例
 const errorHandler = new ErrorHandlerService()
 
 errorHandler.register('TeamLockedError', (error) => {
-  if (error instanceof Error && 'error' in error && (error as any).error?.data) {
-    const data = (error as any).error.data
+  // 谁锁着：新 ApiError 把回绝数据放在 `data`（= 后端的 error.data），老的放在 `error.data`。
+  const data = (error instanceof ApiError ? error.data : (error as { error?: { data?: unknown } }).error?.data) as
+    | { lockingTasks?: string }
+    | undefined
+  if (data?.lockingTasks) {
     toast.warning(t('shell.errors.teamLockedBy', { tasks: data.lockingTasks }))
   } else {
     toast.warning(t('shell.errors.teamLocked'))

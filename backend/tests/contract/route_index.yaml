@@ -1113,6 +1113,8 @@ routes:
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/comments/{comment_id}/resolve", auth: "document.member", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/comments/{comment_id}/reopen", auth: "document.member", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/comments/{comment_id}/agent/stop", auth: "document.member", owner: "living_doc"}
+  # app.api.routes.document_images
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/image", auth: "document.reader", owner: "living_doc"}
   # app.api.routes.document_comments
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/nodes", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/comments", auth: "document.reader", owner: "living_doc"}

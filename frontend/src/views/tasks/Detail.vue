@@ -20,13 +20,13 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
 import TaskSide from './components/TaskSide.vue'
 
+import { TaskBoardApi } from '@/api/taskBoard'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { TasksApi } from '@/network/api/tasks'
 import { splitOrigin } from '@/views/spaces/model'
 import { TaskDialogs } from '@/views/tasks/components'
 import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
@@ -169,7 +169,7 @@ async function loadMine() {
   const participantId = myIdentity.value?.id
   if (participantId === undefined || !taskData.value) return
   try {
-    const { data } = await TasksApi.listSubmissions(taskData.value.id, participantId, {
+    const data = await TaskBoardApi.listSubmissions(taskData.value.id, participantId, {
       pageSize: 1,
       sort_by: 'createdAt',
       sort_order: 'desc',

@@ -29,7 +29,7 @@ const api = vi.hoisted(() => ({
   patchSubmissionReview: vi.fn(),
   deleteSubmissionReview: vi.fn(),
 }))
-vi.mock('@/network/api/tasks', () => ({ TasksApi: api }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: api }))
 
 import TaskSubmissionHistory from '../TaskSubmissionHistory.vue'
 
@@ -49,22 +49,20 @@ beforeAll(() => {
 beforeEach(() => {
   vi.clearAllMocks()
   api.listSubmissions.mockResolvedValue({
-    data: {
-      submissions: [
-        {
-          id: 77,
-          version: 1,
-          createdAt: Date.now(),
-          content: [],
-          submitter: { nickname: 'someone' },
-          review: { reviewed: false },
-        },
-      ],
-      page: { page_start: 0, page_size: 10, has_more: false, total: 1 },
-    },
+    submissions: [
+      {
+        id: 77,
+        version: 1,
+        createdAt: Date.now(),
+        content: [],
+        submitter: { nickname: 'someone' },
+        review: { reviewed: false },
+      },
+    ],
+    page: { page_start: 0, page_size: 10, has_more: false, total: 1 },
   })
-  api.postSubmissionReview.mockResolvedValue({ data: {} })
-  api.patchSubmissionReview.mockResolvedValue({ data: {} })
+  api.postSubmissionReview.mockResolvedValue({})
+  api.patchSubmissionReview.mockResolvedValue({})
 })
 
 afterEach(cleanup)
@@ -80,19 +78,17 @@ async function choose(key: 'accept' | 'reject') {
 /** The latest version already carries a saved review. */
 function savedReview(detail: { accepted: boolean; score: number; comment: string }) {
   api.listSubmissions.mockResolvedValue({
-    data: {
-      submissions: [
-        {
-          id: 77,
-          version: 1,
-          createdAt: Date.now(),
-          content: [],
-          submitter: { nickname: 'someone' },
-          review: { reviewed: true, detail },
-        },
-      ],
-      page: { page_start: 0, page_size: 10, has_more: false, total: 1 },
-    },
+    submissions: [
+      {
+        id: 77,
+        version: 1,
+        createdAt: Date.now(),
+        content: [],
+        submitter: { nickname: 'someone' },
+        review: { reviewed: true, detail },
+      },
+    ],
+    page: { page_start: 0, page_size: 10, has_more: false, total: 1 },
   })
 }
 

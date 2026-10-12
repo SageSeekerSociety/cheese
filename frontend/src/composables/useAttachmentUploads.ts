@@ -13,7 +13,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vuetify-sonner'
 
-import { AttachmentsApi } from '@/network/api/attachments'
+import { AttachmentsApi } from '@/api/attachments'
 
 /** 这道题带着的一份材料。 */
 export interface PickedAttachment {
@@ -40,8 +40,8 @@ export function useAttachmentUploads(target: AttachmentTarget) {
   // 这句话是建议，不是闸门：拿不到就少说一句，选择与上传照旧，也不弹错。
   onMounted(async () => {
     try {
-      const { data } = await AttachmentsApi.limits()
-      maxFileBytes.value = data.maxFileBytes
+      const { maxFileBytes: bytes } = await AttachmentsApi.limits()
+      maxFileBytes.value = bytes
     } catch {
       maxFileBytes.value = null
     }

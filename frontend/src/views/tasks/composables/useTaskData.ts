@@ -5,11 +5,11 @@ import { useRoute } from 'vue-router'
 
 import { truncateString } from '@/utils/form'
 
+import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { TasksApi } from '@/network/api/tasks'
-import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
+import { TaskParticipationInfo } from '@/types/taskBoard'
 
 export function useTaskData() {
   const route = useRoute()
@@ -87,7 +87,7 @@ export function useTaskData() {
     }
 
     try {
-      const { data } = await TasksApi.detail(taskId.value)
+      const data = await TaskBoardApi.detail(taskId.value)
       taskData.value = data.task
 
       // 获取参与身份信息

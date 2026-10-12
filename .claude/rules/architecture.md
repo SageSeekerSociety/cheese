@@ -129,9 +129,9 @@ still exists before writing it.
 `deferred-imports`, CI, `task boundaries`):
 
 - Unannotated ones are frozen **per file** in `backend/deferred-import-baseline.json`.
-  A file not in it must have none; a file in it may only go down. 773 in 171
-  files when the ratchet started (2026-10, after the sign-in routes were lifted
-  from 850).
+  A file not in it must have none; a file in it may only go down. 77 in 14 files
+  (773 in 171 when the ratchet started, 2026-10, after the sign-in routes were
+  lifted from 850).
 - Annotated ones are not limited, and every run lists them with their reasons,
   so a reviewer sees what was explained and how.
 - Counting is by AST: an import lexically inside a `def`/`async def`, once each
@@ -198,7 +198,7 @@ keep writing `vi.mock('@/api')`; the facade is what both resolve to.
 - **A module under `src/api/` stays under 400 lines.** Past that it is two
   domains. **Enforced** by `.claude/scripts/check-file-sizes.py`.
 - **A module imports `./http` and its siblings, not `../api`.** Going through
-  the facade puts a call inside whatever a test mocked `@/api` with. Sixteen
+  the facade puts a call inside whatever a test mocked `@/api` with. Eighteen
   older modules still do (`request` from `'../api'`); changing one changes what
   its tests intercept, so it is its own change. **建议**.
 - Helpers shared by modules but not part of the public surface
@@ -270,7 +270,7 @@ claim that a catalogued component really does render alone.
 A file does not become unreadable in one commit, so this is differential: only
 the files this branch changed are read, each against the size it had where the
 branch left `origin/main` (the merge base), a new file must land under the cap,
-and a file already over it is frozen at its size there — 35 files are, so the
+and a file already over it is frozen at its size there — 7 files are, so the
 check fails a file that *grew*, not the ones that are big today. Shrinking is
 always allowed. A checkout that cannot compute that merge base is a "cannot
 judge" (exit 2), never a comparison against main's moving tip. The failure
@@ -279,7 +279,8 @@ message names the file, its line count, the cap and why the cap exists.
 An exemption is one exact path and one reason, in `EXEMPT` in
 `.claude/scripts/check-file-sizes.py` — a registry or a generated table
 legitimately grows line by line, and a cap on it only teaches people to route
-around the cap. Nothing is exempt today.
+around the cap. The one today is the generated OpenAPI types
+(`frontend/src/api/openapi.d.ts`).
 
 Over its cap, a file is a prompt to split, not a defect: the split is the point,
 and raising the cap is the one answer that helps nothing.

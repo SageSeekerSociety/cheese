@@ -110,4 +110,63 @@ describe('useEscapeLayer', () => {
     await escape()
     expect(closed).toEqual(['panel'])
   })
+
+  it('关掉栈顶的那一下 Esc 标记为已消费，别的 window 监听看到就让过去', async () => {
+    const { openPanel } = mountLayers()
+    await openPanel()
+    const seen: boolean[] = []
+    // 排在栈后面注册的第二个 window 监听（比如另一层自己听 Esc 的浮层）。
+    window.addEventListener('keydown', (e) => seen.push(e.defaultPrevented))
+
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(seen).toEqual([true])
+  })
+
+  it('栈空了不吃 Esc：事件原样留给别人', async () => {
+    mountLayers()
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  it('不是 Esc 的键不碰', async () => {
+    const { closed, openPanel } = mountLayers()
+    await openPanel()
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+    expect(closed).toEqual([])
+  })
+
+  it('组件卸载时它的那层退栈，不再响应 Esc', async () => {
+    const { closed, openPanel, escape } = mountLayers()
+    await openPanel()
+    cleanup()
+    await escape()
+    expect(closed).toEqual([])
+  })
+
+  it('最后一层退栈后摘掉 window 监听，再开又装回来', async () => {
+    const add = vi.spyOn(window, 'addEventListener')
+    const remove = vi.spyOn(window, 'removeEventListener')
+    const { closed, openPanel, panelOpen, escape } = mountLayers()
+    const keydowns = (spy: typeof add) => spy.mock.calls.filter(([type]) => type === 'keydown').length
+    expect(keydowns(add)).toBe(0)
+
+    await openPanel()
+    expect(keydowns(add)).toBe(1)
+
+    panelOpen.value = false
+    await nextTick()
+    expect(keydowns(remove)).toBe(1)
+
+    await openPanel()
+    expect(keydowns(add)).toBe(2)
+    await escape()
+    expect(closed).toEqual(['panel'])
+    add.mockRestore()
+    remove.mockRestore()
+  })
 })

@@ -566,7 +566,7 @@ const rowLabels = computed(() =>
             >
               <ThreadLine
                 v-if="m.thread"
-                v-guide-anchor="m.thread?.failed && !replyingFor?.(m) ? 'reply-failed' : 'reply-thread'"
+                v-guide-anchor="replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'"
                 :summary="m.thread ?? null"
                 :replying="replyingFor?.(m) ?? null"
                 :status="threadStatusFor?.(m) ?? null"

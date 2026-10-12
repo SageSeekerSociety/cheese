@@ -1,7 +1,7 @@
 /**
  * 预览精简构建里 `@/router` 的替身（临时，供话题预览用）。
  *
- * **为什么需要它**：`AdminSpacesPage.vue` 从 `@/network/api/spaces` 进来，那条链一路
+ * **为什么需要它**：`AdminSpacesPage.vue` 从 `@/api/spaces` 进来，那条链一路
  * 走到 `network/Interceptors/hooks/refreshToken.ts`，而它 `import router from '@/router'`
  * —— 只为了 token 过期时 `router.replace('/account/signin')` 这一句。`@/router` 是
  * **整棵应用路由树**，于是预览这份产物把工作区、WorkPanel、CodeEditor 和 monaco

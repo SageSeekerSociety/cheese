@@ -1,5 +1,5 @@
 // 动态里的一条公告：点开去的是发它的那个空间的公告页，并且这一条随之标为已读。
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'

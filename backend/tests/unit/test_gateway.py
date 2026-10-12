@@ -605,3 +605,85 @@ async def test_a_blocked_model_is_never_offered():
     assert reported["closed-again"].priced is True
     assert reported["closed-again"].selectable is False
     assert reported["still-open"].selectable is True
+
+
+def _cached_day(date: str, key: str, models: dict[str, tuple]) -> dict:
+    """One day's `/user/daily/activity` for one key, with LiteLLM's cache
+    metrics: {model: (prompt, completion, usd, cache_read, cache_creation)}."""
+    return {
+        "results": [
+            {
+                "date": date,
+                "breakdown": {
+                    "models": {
+                        model: {
+                            "api_key_breakdown": {
+                                _hash(key): {
+                                    "metrics": {
+                                        "prompt_tokens": p,
+                                        "completion_tokens": c,
+                                        "spend": usd,
+                                        "cache_read_input_tokens": read,
+                                        "cache_creation_input_tokens": written,
+                                    }
+                                }
+                            }
+                        }
+                        for model, (p, c, usd, read, written) in models.items()
+                    }
+                },
+            }
+        ]
+    }
+
+
+def _serving(days: dict[str, dict[str, tuple]]) -> gw.LlmGateway:
+    """A gateway answering each day's cumulative totals for the key ``k``."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        day = request.url.params["start_date"]
+        return httpx.Response(200, json=_cached_day(day, "k", days.get(day, {})))
+
+    return gw.LlmGateway("http://gw", "mk", transport=_transport(handler))
+
+
+@pytest.mark.anyio
+async def test_cache_tokens_the_gateway_reports_are_drained_once():
+    today = gw.utc_today()
+    days = {today: {"m": (1000, 50, 0.10, 900, 60)}}
+    g = _serving(days)
+
+    rows, ckpt = await gw.drain_new_usage(g, "k", None)
+    assert [
+        (r.prompt_tokens, r.cache_read_tokens, r.cache_write_tokens) for r in rows
+    ] == [(1000, 900, 60)]
+
+    days[today] = {"m": (1500, 70, 0.12, 1300, 80)}
+    rows, ckpt = await gw.drain_new_usage(g, "k", ckpt)
+    assert [
+        (r.prompt_tokens, r.cache_read_tokens, r.cache_write_tokens) for r in rows
+    ] == [(500, 400, 20)]
+
+    rows, _ = await gw.drain_new_usage(g, "k", ckpt)
+    assert rows == []
+
+
+@pytest.mark.anyio
+async def test_a_pre_cache_checkpoint_does_not_bill_old_cache_to_new_calls():
+    """A checkpoint written before cache tokens were kept does not say how much
+    of the day's cache it already counted. Its next drain must not hand the
+    whole day's cache reads to the few calls since; counting starts there."""
+    today = gw.utc_today()
+    days = {today: {"m": (1050, 70, 0.11, 950, 0)}}
+    g = _serving(days)
+    old = {
+        "date": today,
+        "models": {"m": {"prompt": 1000, "completion": 50, "spend_usd": 0.10}},
+    }
+
+    rows, ckpt = await gw.drain_new_usage(g, "k", old)
+    assert [(r.prompt_tokens, r.cache_read_tokens) for r in rows] == [(50, 0)]
+
+    days[today] = {"m": (1250, 80, 0.12, 1130, 0)}
+    rows, _ = await gw.drain_new_usage(g, "k", ckpt)
+    assert [(r.prompt_tokens, r.cache_read_tokens) for r in rows] == [(200, 180)]

@@ -5,11 +5,11 @@
 // 失败不抛：这一块是**说明**，不是必经之路。取不到就不显示，不拦着人领题、
 // 建项目 —— 服务端那条读接口给了 404（题没了、看不见）时也一样。
 import type { MaybeRefOrGetter } from 'vue'
-import type { TaskInheritanceData } from '@/network/api/tasks/types'
+import type { TaskInheritanceData } from '@/types/taskBoard'
 
 import { ref, toValue, watch } from 'vue'
 
-import { TasksApi } from '@/network/api/tasks'
+import { TaskBoardApi } from '@/api/taskBoard'
 
 export function useTaskInheritance(taskId: MaybeRefOrGetter<number | null | undefined>) {
   const inheritance = ref<TaskInheritanceData | null>(null)
@@ -43,9 +43,9 @@ export function useTaskInheritance(taskId: MaybeRefOrGetter<number | null | unde
     inFlight.value = id
     loading.value = true
     try {
-      const res = await TasksApi.inheritance(id)
+      const res = await TaskBoardApi.inheritance(id)
       if (mine !== seq) return
-      inheritance.value = res.data
+      inheritance.value = res
       loadedFor.value = id
     } catch {
       if (mine !== seq) return

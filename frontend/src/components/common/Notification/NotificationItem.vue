@@ -146,7 +146,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import type { MenuAction } from '@/components/common/menuAction'
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 import type { RenderedNotificationContent } from './renders/NotificationRenderUtils'
 
 import { computed, markRaw, onMounted, onUpdated, ref, shallowRef, watch } from 'vue'

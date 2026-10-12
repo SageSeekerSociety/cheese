@@ -26,13 +26,12 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/network/api/tasks/types'
 import type { Task } from '@/types'
+import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/types/taskBoard'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { TasksApi } from '@/network/api/tasks'
 import AccountService from '@/services/account'
 
 const { t } = useI18n()

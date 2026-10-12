@@ -387,6 +387,8 @@ def _open_with_patience(
     bounded window while the client is held; refusal (bad token, missing
     route) still fails on the first attempt. The token is re-resolved per
     attempt so a launcher-refreshed token takes effect mid-window."""
+    # Hand-written rather than tenacity: this file is shipped to machines
+    # that have python3 and no packages, so it can use the standard library only.
     deadline = time.monotonic() + window_s
     delay = start_delay_s
     attempt = 0

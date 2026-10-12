@@ -30,6 +30,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.day_windows import utc_day_window
 from app.domain.delivery.ledger import MAX_ATTEMPTS
 from app.domain.delivery.models import Delivery
 from app.domain.device.models import DeviceRow, HostedDeviceRow
@@ -39,7 +40,6 @@ from app.domain.machine.models import (
     WarmMachine,
     capacity,
 )
-from app.domain.platform_stats.windows import utc_day_window
 from app.domain.project.models import Project
 from app.domain.usage import ledger
 from app.domain.usage.models import ComputeGrant, GrantSource, ResourceUsage

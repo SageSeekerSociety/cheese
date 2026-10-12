@@ -10,12 +10,12 @@ import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { ApiError } from '@/api'
+import { createAvatar } from '@/api/avatars'
+import { TeamsApi } from '@/api/teams'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import { t } from '@/i18n'
-import { AvatarsApi } from '@/network/api/avatars'
-import { TeamsApi } from '@/network/api/teams'
-import { BusinessError } from '@/network/types/error'
 
 const props = defineProps<{ team: Team }>()
 const emit = defineEmits<{ updated: [team: Team] }>()
@@ -57,11 +57,9 @@ const save = async () => {
   try {
     // 换头像 = 先把图传上去换一个 id，再把它和另外两项一起 PATCH 上去；
     // 没换图就不带 avatarId，免得把现成的头像覆盖掉。
-    const avatarId = avatarFile.value ? (await AvatarsApi.createAvatar(avatarFile.value)).data.avatarId : null
+    const avatarId = avatarFile.value ? (await createAvatar(avatarFile.value)).avatarId : null
 
-    const {
-      data: { team },
-    } = await TeamsApi.update(props.team.id, {
+    const { team } = await TeamsApi.update(props.team.id, {
       name: trimmedName,
       intro: intro.value.trim(),
       ...(avatarId ? { avatarId } : {}),
@@ -73,9 +71,9 @@ const save = async () => {
   } catch (e) {
     // 名字全站唯一：撞名是 409「Team name already exists」，要落到名字那一格，
     // 别和「没网」「没权限」混成同一句通用报错 —— 用户能自己换一个名字解决它。
-    if (e instanceof BusinessError && e.code === 409) {
+    if (e instanceof ApiError && e.status === 409) {
       nameError.value = t('work.teamProfile.nameTaken')
-    } else if (e instanceof BusinessError && e.code === 403) {
+    } else if (e instanceof ApiError && e.status === 403) {
       error.value = t('work.teamProfile.forbidden')
     } else {
       error.value = t('work.teamProfile.saveFailed')

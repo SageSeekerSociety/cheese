@@ -25,6 +25,7 @@ dev and production are separate deployments; a change reaching one does not reac
 - Do not substitute custom images, local builds or retagged candidates; hot-edit containers; mount candidate source over deployed code; run deployments or migrations by hand; or write an ad hoc script or workflow to get around the pipeline. Building an artifact in CI and handing it to someone to install is not the pipeline. Image recipes, dependency changes and recovery take the same path, recovery with database-compatible artifacts.
 - SSH diagnosis is allowed. Pre-merge experiments belong in separate test environments, which this rule does not cover, and must not touch the production deployment or its data.
 - Services maintained outside this repository (MicroCloud, the metering proxy) follow their own deployment and authorisation rules; do not impose this one on them. All other safety and authorisation rules still apply.
+- A request to change the dev deployment does not authorise changing production or their shared deployment scripts and compose files. Keep the change on the dev-only path unless the request explicitly includes those shared files; otherwise a dev fix can change a different deployment.
 
 ## The company's knowledge is in Feishu
 

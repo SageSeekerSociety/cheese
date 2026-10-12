@@ -16,11 +16,11 @@ const spacesDetail = vi.fn()
 const listCategories = vi.fn()
 const toastError = vi.fn()
 
-vi.mock('@/network/api/tasks', () => ({
-  TasksApi: { list: (...a: unknown[]) => taskList(...a) },
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: { list: (...a: unknown[]) => taskList(...a) },
 }))
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spacesDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
@@ -49,12 +49,10 @@ const Page = defineComponent({ render: () => h('div', '题目列表') }) as Comp
 async function mount(userId: number, extra: Record<string, unknown> = {}, child: Component = Blank) {
   AccountService._user.value = { id: userId } as never
   spacesDetail.mockResolvedValue({
-    data: {
-      space: { id: SPACE_ID, name: '数据结构空间', admins: [{ user: { id: ADMIN_ID }, role: 'ADMIN' }], ...extra },
-    },
+    space: { id: SPACE_ID, name: '数据结构空间', admins: [{ user: { id: ADMIN_ID }, role: 'ADMIN' }], ...extra },
   })
-  taskList.mockResolvedValue({ data: { tasks: [], page: { total: 3 } } })
-  listCategories.mockResolvedValue({ data: { categories: [] } })
+  taskList.mockResolvedValue({ tasks: [], page: { total: 3 } })
+  listCategories.mockResolvedValue({ categories: [] })
 
   const router = createRouter({
     history: createMemoryHistory(),

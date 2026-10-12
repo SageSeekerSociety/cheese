@@ -33,7 +33,7 @@ import type {
 } from '@/cx_types'
 
 import { adminRoutes } from './proto-admin-fixtures'
-import { claudePool, creditsBurnout } from './proto-usage-fixtures'
+import { withUsageExtras } from './proto-usage-fixtures'
 
 /** 预览里「我」是谁。管理端入口和「我的」那一栏都看它。 */
 const ME = 'andy'
@@ -2286,12 +2286,7 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
     if (stats[1] === 'product') return { data: productStats() }
     if (stats[1] === 'integrations') return { data: integrationsStats() }
     if (stats[1] === 'feedback') return { data: feedbackStats(url) }
-    if (stats[1] === 'usage') {
-      const u = usageStats(url) as Record<string, unknown>
-      u.credits = creditsBurnout()
-      u.claude_accounts = claudePool()
-      return { data: u }
-    }
+    if (stats[1] === 'usage') return { data: withUsageExtras(usageStats(url)) }
     if (stats[1] === 'platform') {
       const plat = platformStats(url) as Record<string, unknown>
       plat.extras = {

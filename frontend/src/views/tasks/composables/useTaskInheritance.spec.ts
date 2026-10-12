@@ -6,14 +6,14 @@
 // 旧实现在这里栽了两次：闸门写成 `if (loading.value || loadedFor.value === id)`，
 // 于是「在途」这件事被当成了「在途的那一道题」—— 切题时新题一个请求都发不出去，
 // 屏幕上一直停着旧题那份清单；就算发了，晚到的旧响应也照样把新题的覆盖掉。
-import type { TaskInheritanceData } from '@/network/api/tasks/types'
+import type { TaskInheritanceData } from '@/types/taskBoard'
 
 import { nextTick, ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ inheritance: vi.fn() }))
 
-vi.mock('@/network/api/tasks', () => ({ TasksApi: { inheritance: mocks.inheritance } }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: { inheritance: mocks.inheritance } }))
 
 import { useTaskInheritance } from './useTaskInheritance'
 
@@ -38,8 +38,8 @@ function payload(taskId: number): TaskInheritanceData {
 }
 
 function deferred() {
-  let resolve!: (value: { data: TaskInheritanceData }) => void
-  const promise = new Promise<{ data: TaskInheritanceData }>((r) => (resolve = r))
+  let resolve!: (value: TaskInheritanceData) => void
+  const promise = new Promise<TaskInheritanceData>((r) => (resolve = r))
   return { promise, resolve }
 }
 
@@ -63,8 +63,8 @@ describe('会继承什么：取数那一半', () => {
     expect(mocks.inheritance).toHaveBeenCalledWith(2)
 
     // 旧的先回来、新的后回来 —— 屏幕上必须是第二道题的。
-    first.resolve({ data: payload(1) })
-    second.resolve({ data: payload(2) })
+    first.resolve(payload(1))
+    second.resolve(payload(2))
     await flush()
 
     expect(inheritance.value?.taskId).toBe(2)
@@ -83,14 +83,14 @@ describe('会继承什么：取数那一半', () => {
     taskId.value = null
     await nextTick()
 
-    first.resolve({ data: payload(1) })
+    first.resolve(payload(1))
     await flush()
 
     expect(inheritance.value).toBeNull()
   })
 
   it('同一道题不重复取', async () => {
-    mocks.inheritance.mockResolvedValue({ data: payload(7) })
+    mocks.inheritance.mockResolvedValue(payload(7))
     const taskId = ref<number | null>(7)
     const { inheritance, reload } = useTaskInheritance(taskId)
     await flush()

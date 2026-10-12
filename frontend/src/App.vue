@@ -330,6 +330,8 @@ import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { type AppVersion, createProject, getAppVersion } from '@/api'
+import { NotificationsApi } from '@/api/notifications'
+import { TeamsApi } from '@/api/teams'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
@@ -370,8 +372,6 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
-import { NotificationsApi } from '@/network/api/notifications'
-import { TeamsApi } from '@/network/api/teams'
 import { queryClient } from '@/query/client'
 import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
@@ -620,7 +620,7 @@ watch(
   () => AccountService.loggedIn && AccountService.user?.id,
   (userId, previous) => {
     if (typeof userId === 'number') {
-      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).data.token).catch(() => {})
+      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).token).catch(() => {})
     } else if (typeof previous === 'number') {
       desktopStopNotices()
     }
@@ -813,9 +813,7 @@ async function loadProjectTeams() {
   teamLoadError.value = null
   newProjectTeamId.value = null
   try {
-    const {
-      data: { teams },
-    } = await TeamsApi.getMyTeams()
+    const { teams } = await TeamsApi.getMyTeams()
     newProjectTeams.value = teams
     if (!teams.length) teamLoadError.value = t('work.newProject.teamsEmpty')
   } catch {

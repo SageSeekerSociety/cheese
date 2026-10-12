@@ -9,8 +9,8 @@ import { toast } from 'vuetify-sonner'
 
 import { getErrorMessage } from '@/utils/errors'
 
+import { QuestionApi } from '@/api/questions'
 import { t } from '@/i18n'
-import { QuestionApi } from '@/network/api/questions'
 import AccountService from '@/services/account'
 
 export function useQuestionInvitations(questionId: MaybeRefOrGetter<number>) {
@@ -47,14 +47,7 @@ export function useQuestionInvitations(questionId: MaybeRefOrGetter<number>) {
     if (!loggedIn.value || !toValue(questionId)) return
 
     try {
-      const [
-        {
-          data: { users },
-        },
-        {
-          data: { invitations },
-        },
-      ] = await Promise.all([
+      const [{ users }, { invitations }] = await Promise.all([
         QuestionApi.invitationRecommend(toValue(questionId)),
         QuestionApi.getInvitaions(toValue(questionId)),
       ])
@@ -72,7 +65,7 @@ export function useQuestionInvitations(questionId: MaybeRefOrGetter<number>) {
   async function invite(user: User): Promise<void> {
     if (isInvited(user)) return
     try {
-      const { data } = await QuestionApi.inviteUser(toValue(questionId), user.id)
+      const data = await QuestionApi.inviteUser(toValue(questionId), user.id)
       if (data) invited.value.push(user)
     } catch (e) {
       toast.error(t('questions.invitationList.errors.inviteFailed', { reason: getErrorMessage(e) }))

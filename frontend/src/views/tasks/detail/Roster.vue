@@ -32,9 +32,9 @@ import dayjs from 'dayjs'
 
 import RosterView from './RosterView.vue'
 
+import { SpacesApi } from '@/api/spaces'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { SpacesApi } from '@/network/api/spaces'
-import { TasksApi } from '@/network/api/tasks'
 import { useEvents } from '@/views/tasks/events'
 
 const props = defineProps<{
@@ -64,13 +64,13 @@ async function load() {
   loadError.value = null
   try {
     const [rosterRes, subsRes] = await Promise.all([
-      TasksApi.getParticipants(task.id, { queryRealNameInfo: true, queryTeamInfo: true }),
+      TaskBoardApi.getParticipants(task.id, { queryRealNameInfo: true, queryTeamInfo: true }),
       SpacesApi.getSubmissionQueue(Number(route.params.spaceId), { taskId: task.id, pageSize: 200 }),
     ])
-    participants.value = rosterRes.data.participants ?? []
+    participants.value = rosterRes.participants ?? []
     // 同一人可能有多版：按 `version` 取最大的那一版 —— 要回答的永远是「现在这一版判没判」。
     const latest = new Map<number, Latest>()
-    for (const s of subsRes.data.submissions ?? []) {
+    for (const s of subsRes.submissions ?? []) {
       const prev = latest.get(s.participantId)
       if (!prev || s.version > prev.version) {
         latest.set(s.participantId, {
@@ -106,7 +106,7 @@ async function approve(id: number) {
   const raw = task.defaultDeadline ?? 0
   const days = raw >= 86_400_000 ? Math.round(raw / 86_400_000) : raw
   try {
-    await TasksApi.updateParticipant(task.id, id, {
+    await TaskBoardApi.updateParticipant(task.id, id, {
       approved: 'APPROVED',
       deadline: dayjs()
         .add(days || 7, 'day')
@@ -125,7 +125,7 @@ async function reject(id: number, reason: string) {
   const task = props.taskData
   if (!task) return
   try {
-    await TasksApi.updateParticipant(task.id, id, { approved: 'DISAPPROVED', rejectReason: reason || undefined })
+    await TaskBoardApi.updateParticipant(task.id, id, { approved: 'DISAPPROVED', rejectReason: reason || undefined })
     toast.success(t('tasks.roster.rejectDone', { name: nameOf(id) }))
     events.emit('participation-changed')
   } catch {
@@ -137,7 +137,7 @@ async function setDeadline(id: number, at: number) {
   const task = props.taskData
   if (!task) return
   try {
-    await TasksApi.updateParticipant(task.id, id, { deadline: at })
+    await TaskBoardApi.updateParticipant(task.id, id, { deadline: at })
     toast.success(t('tasks.roster.deadlineSaved'))
     events.emit('participation-changed')
   } catch {

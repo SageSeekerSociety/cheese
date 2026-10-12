@@ -20,8 +20,8 @@ const clearSession = vi.fn(async () => {
 })
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
-vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { getDefaultAvatarId: () => getDefaultAvatarId() } }))
-vi.mock('@/network/api/users', () => ({ UserApi: { logout: logoutRequest } }))
+vi.mock('@/api/avatars', () => ({ getDefaultAvatarId: () => getDefaultAvatarId() }))
+vi.mock('@/api/userAuth', () => ({ UserAuthApi: { logout: logoutRequest } }))
 vi.mock('@/services/account', () => ({ default: { _user: user, _loggedIn: loggedIn, logout: clearSession } }))
 
 /** 默认头像那一行的 id 是种子数据，各环境不同 —— 所以要现问。 */
@@ -47,7 +47,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   logoutRequest.mockResolvedValue(undefined)
   loggedIn.value = true
-  getDefaultAvatarId.mockResolvedValue({ data: { avatarId: DEFAULT_AVATAR_ID } })
+  getDefaultAvatarId.mockResolvedValue({ avatarId: DEFAULT_AVATAR_ID })
 })
 
 describe('Sign out', () => {

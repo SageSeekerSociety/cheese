@@ -1,6 +1,6 @@
 // 从文件里读出的题目：一道一道在发题页上改，勾上的一起发出去。
 import type { JSONContent } from '@tiptap/core'
-import type { PdfTaskDraftData } from '@/network/api/tasks/types'
+import type { PdfTaskDraftData } from '@/types/taskBoard'
 
 export interface PublishDraft {
   key: string

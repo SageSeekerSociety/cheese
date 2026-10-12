@@ -262,6 +262,29 @@ async def test_a_request_to_a_team_with_no_admins_notifies_nobody(db_factory):
         assert await _inbox(session, requester) == []
 
 
+def _off_ledger_call_sites(root: pathlib.Path) -> list[str]:
+    return [
+        f"{path}:{i}"
+        for path in sorted(root.rglob("*.py"))
+        for i, line in enumerate(path.read_text().split("\n"), 1)
+        if "publish_notification_event" in line or "NotificationTriggerEvent" in line
+    ]
+
+
+def _off_ledger_message(offenders: list[str]) -> str:
+    return (
+        "这些调用点绕开投递账本发通知（I11：发通知只有账本一处出口）：\n"
+        + "\n".join(offenders)
+        + "\n修法：不要用 publish_notification_event / NotificationTriggerEvent "
+        "这两个退役的名字，改走 backend/app/domain/delivery/ledger.py 的唯一出口"
+        "（Ledger.deliver / deliver(...)），带一个 DeliveryEvent（id 是这条事件的身份，"
+        "多半是房间里那条 block 的 id）和寻址结果。"
+        "规则：docs/manual/dev/notifications.md「发通知只有账本一处」（#ledger）。"
+        "复查：cd backend && uv run pytest "
+        "tests/unit/test_social_notifications_through_the_ledger.py -q"
+    )
+
+
 def test_no_call_site_can_send_a_notification_off_the_ledger():
     """守卫：全仓没有第二条发通知的路（I11 从目标变成现状）。
 
@@ -269,10 +292,25 @@ def test_no_call_site_can_send_a_notification_off_the_ledger():
     几条路走了账本，而漏掉的恰恰是没人想起来去跑的那一处 —— 社交这 8 处当初就是
     这么留在账本外面的。
     """
-    offenders = [
-        f"{path}:{i}"
-        for path in sorted(APP.rglob("*.py"))
-        for i, line in enumerate(path.read_text().split("\n"), 1)
-        if "publish_notification_event" in line or "NotificationTriggerEvent" in line
-    ]
-    assert offenders == [], f"又有调用点绕开账本发通知：{offenders}"
+    offenders = _off_ledger_call_sites(APP)
+    assert offenders == [], _off_ledger_message(offenders)
+
+
+def test_an_off_ledger_call_site_names_its_file_line_and_repair(tmp_path, monkeypatch):
+    """命中时把 file:line 和修法一起报出来，而不是只报一串路径。
+
+    在一棵临时树上造一个真的绕过账本的调用点，触发守卫会红的那个分支。"""
+    bad = tmp_path / "example.py"
+    bad.write_text("publish_notification_event(event)\n")
+    offenders = _off_ledger_call_sites(tmp_path)
+    assert offenders == [f"{bad}:1"]
+    monkeypatch.setattr(
+        "tests.unit.test_social_notifications_through_the_ledger.APP", tmp_path
+    )
+    with pytest.raises(AssertionError) as caught:
+        test_no_call_site_can_send_a_notification_off_the_ledger()
+    message = str(caught.value)
+    assert "example.py:1" in message
+    assert "delivery/ledger.py" in message
+    assert "notifications.md" in message
+    assert "test_social_notifications_through_the_ledger.py" in message

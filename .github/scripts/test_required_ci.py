@@ -478,6 +478,70 @@ def run_bodies(text):
         yield "\n".join(body)
 
 
+def jobs_of(text):
+    """Every job of a workflow: ``{job key: {"name": ..., "if": ..., "text": ...}}``.
+
+    Just enough of the format for the job-level keys these guards read — a job is
+    a key indented two spaces under ``jobs:``, and its own keys are indented four,
+    with a folded (``>-``) value joined back onto one line. No third-party YAML
+    parser is imported: this suite runs on a bare ``python3``, the same way the
+    scripts it covers do. An unsupported shape shows up as a missing key in the
+    assertions below, not as a silent pass.
+    """
+    lines = text.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if line.rstrip() == "jobs:"), None
+    )
+    if start is None:
+        raise AssertionError("workflow has no jobs: mapping")
+    jobs, current, i = {}, None, start + 1
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() and not line.startswith(" "):
+            break
+        job = re.match(r"^  (\S+):\s*$", line)
+        if job:
+            current = jobs[job.group(1)] = {"text": []}
+        elif current is not None:
+            current["text"].append(line)
+            key = re.match(r"^    ([\w-]+):[ \t]*(.*)$", line)
+            if key:
+                value = key.group(2)
+                if value in (">", "|", ">-", "|-", ">+", "|+"):
+                    block, j = [], i + 1
+                    while j < len(lines) and (not lines[j].strip()
+                                              or lines[j].startswith("      ")):
+                        block.append(lines[j].strip())
+                        j += 1
+                    value, i = " ".join(part for part in block if part), j - 1
+                current[key.group(1)] = value
+        i += 1
+    for job in jobs.values():
+        job["text"] = "\n".join(job["text"])
+    return jobs
+
+
+def condition_holds(expression, event_name, draft, cancelled=False):
+    """Whether a workflow ``if:`` holds on a plain event.
+
+    So the tier guards are checked by which event each job answers, not by how
+    the condition is spelled. Only the subset this workflow uses is supported;
+    anything else raises, so a guard rewritten into a shape this cannot read
+    fails loudly instead of quietly falling out of the assertions.
+    """
+    match = re.fullmatch(r"\$\{\{(.*)\}\}", expression.strip(), re.S)
+    if not match:
+        raise AssertionError(f"not a workflow expression: {expression!r}")
+    py = match.group(1).strip()
+    py = py.replace("github.event.pull_request.draft", repr(draft))
+    py = py.replace("github.event_name", repr(event_name))
+    py = py.replace("!cancelled()", "not cancelled")
+    py = py.replace("&&", " and ").replace("||", " or ").replace("!(", "not (")
+    if re.search(r"[!&|]", py):
+        raise AssertionError(f"unsupported operator in {expression!r}: {py}")
+    return bool(eval(py, {"__builtins__": {}}, {"cancelled": cancelled}))  # noqa: S307
+
+
 def run_body_containing(text, needle):
     """The single ``run:`` body whose shell contains ``needle``.
 
@@ -553,6 +617,47 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertEqual(len(argv), at + 2, f"title split or extra args: {argv}")
             self.assertFalse((tmp / "pwned").exists(), "title reached the shell as code")
 
+    def test_the_draft_job_states_the_runner_bounds(self):
+        # ci-fast's defaults (180s, a 3072 MiB sampled ceiling) are the WORK
+        # MACHINE's own limits — 3072 MiB is its session cap. A draft runs on a
+        # CI runner instead, and with those defaults nothing behind the
+        # frontend suite was ever reached: every completed draft run in the
+        # 10-12 03:56–06:30 window died in frontend-unit at 2771–3079 MiB
+        # sampled, leaving every later check at 0s. So the job states bounds
+        # sized for the runner: above the local defaults, still quick tier (a
+        # draft must not be trimmed to the static hooks), and within what
+        # ci-fast will accept.
+        body = run_body_containing(self.text, "ci-fast.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            argv_log = tmp / "argv"
+            _stub(bindir, "gh", "printf '%s' \"$STUB_TITLE\"\n")
+            _stub(bindir, "python3",
+                  'for a in "$@"; do printf "%s\\0" "$a" >> "$ARGV_LOG"; done\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "STUB_TITLE": "feat: x", "ARGV_LOG": str(argv_log),
+                   "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1", "GH_TOKEN": "x"}
+            subprocess.run(["bash", "-c", body], env=env, cwd=tmp, check=True,
+                           capture_output=True, text=True)
+            argv = argv_log.read_text().split("\0")[:-1]
+        flags = {flag: argv[i + 1] for i, flag in enumerate(argv) if flag.startswith("--")}
+        self.assertEqual(flags.get("--tier"), "quick", f"argv: {argv}")
+        for flag, default, prompt in (
+            ("--budget", 180, "the work machine's budget"),
+            ("--memory-mib", 3072, "the work machine's ceiling"),
+        ):
+            self.assertIn(flag, flags, f"draft job falls back to {prompt}: {argv}")
+            self.assertGreater(float(flags[flag]), default, f"{flag} is not sized for a runner")
+        help_text = subprocess.run(
+            [sys.executable, str(WORKFLOW.parent.parent / "scripts" / "ci-fast.py"), "--help"],
+            check=True, capture_output=True, text=True).stdout
+        cap = int(re.search(r"ceiling, 1\.\.(\d+)", help_text).group(1))
+        # A workflow asking for more than ci-fast accepts is a red draft run for
+        # every PR, which is the failure this tier just came back from.
+        self.assertLessEqual(int(flags["--memory-mib"]), cap, "ceiling ci-fast refuses")
+
     def test_the_draft_job_installs_both_dependency_sets(self):
         # ci-fast widens its own scope beyond the raw select() flags (unknown
         # paths → backend+frontend, i18n → backend), so the draft's install must
@@ -582,6 +687,54 @@ class WorkflowTextTest(unittest.TestCase):
                             f"backend toolchain not installed: {calls}")
             self.assertTrue(any("install" in args for args in frontend),
                             f"frontend toolchain not installed: {calls}")
+
+    def test_the_two_tiers_are_two_jobs_with_literal_names(self):
+        # Each tier aggregates in its own job, and each job's `name` is written
+        # out literally. A computed `name:` is only rendered once GitHub
+        # evaluates it, so a run nobody evaluated it for shows the expression's
+        # own text as the check's name — a draft-quick run cancelled by the next
+        # push left `github.event_name == 'pull_request' && ...` on the PR page,
+        # where a cancelled check with a name like that reads as a red.
+        jobs = jobs_of(self.text)
+        aggregators = {
+            job["name"]: job
+            for job in jobs.values()
+            if job.get("name") and "required-ci.py check" in job["text"]
+        }
+        # Both names, and only these: a full run under the draft name or a third
+        # aggregation job would change which check branch protection reads.
+        self.assertEqual(
+            sorted(aggregators), ["CI required", "CI required (draft quick)"]
+        )
+        for name, job in aggregators.items():
+            self.assertNotIn("${{", name, f"the {name!r} job computes its name")
+            # One judge, both tiers: the job only hands its `needs` over and
+            # required-ci.py recomputes the tier. Two sets of rules could drift.
+            for suite in gate.PATHS:
+                self.assertIn(suite, job["text"], f"the {name!r} job ignores {suite}")
+        # Which job runs is the event's own draft flag, never a job result or a
+        # scope output: if `scope` fails its `tier` output is empty, and keying
+        # off it would fall through to `CI required` on a draft run — the
+        # collision the two names exist to prevent.
+        for name, job in aggregators.items():
+            self.assertIn("github.event.pull_request.draft", job["if"], name)
+            self.assertNotIn("needs", job["if"], name)
+        full, draft = aggregators["CI required"], aggregators["CI required (draft quick)"]
+        for event_name, is_draft, running in (
+            ("pull_request", True, "draft"),
+            ("pull_request", False, "full"),
+            ("merge_group", None, "full"),
+        ):
+            self.assertEqual(
+                {label for label, job in (("full", full), ("draft", draft))
+                 if condition_holds(job["if"], event_name, is_draft)},
+                {running},
+                f"wrong aggregator on {event_name} draft={is_draft}",
+            )
+        # A cancelled run starts neither: the aggregator reports what the suites
+        # did, and a cancelled one has nothing to report.
+        self.assertFalse(condition_holds(draft["if"], "pull_request", True, True))
+        self.assertFalse(condition_holds(full["if"], "merge_group", None, True))
 
 
 class MainCliTest(unittest.TestCase):

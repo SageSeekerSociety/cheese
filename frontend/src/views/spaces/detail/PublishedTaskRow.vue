@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 「我发布的」里的一行：和普通的题目行同一个外形，右边换成出题人关心的——审核到哪一步、
 // 有几件事在等他。待批准的领取和待评审的提交都在题目页的「领取者」页签里处理。
-import type { SpaceMyPublishedTask, SpaceTaskVisibilityStatus } from '@/network/api/spaces/types'
+import type { SpaceMyPublishedTask, SpaceTaskVisibilityStatus } from '@/types/apiSpaces'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'

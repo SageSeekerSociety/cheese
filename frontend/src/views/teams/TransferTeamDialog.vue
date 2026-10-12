@@ -8,10 +8,10 @@ import { computed, ref, watch } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { TeamsApi } from '@/api/teams'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 
 const props = defineProps<{ team: Team }>()
@@ -32,7 +32,7 @@ watch(
     error.value = null
     picked.value = null
     try {
-      members.value = (await TeamsApi.getMembers(props.team.id)).data.members
+      members.value = (await TeamsApi.getMembers(props.team.id)).members
     } catch (e) {
       error.value = e instanceof Error ? e.message : t('home.nav.transferTeamLoadFailed')
     }
@@ -45,9 +45,9 @@ async function transfer() {
   transferring.value = true
   error.value = null
   try {
-    const { data } = await TeamsApi.transferOwner(props.team.id, picked.value)
+    const { team } = await TeamsApi.transferOwner(props.team.id, picked.value)
     open.value = false
-    emit('transferred', data.team)
+    emit('transferred', team)
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('home.nav.transferTeamFailed')
   } finally {

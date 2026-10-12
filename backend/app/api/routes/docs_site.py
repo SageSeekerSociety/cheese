@@ -39,8 +39,8 @@ from app.core.sentences import exception_text, say
 from app.domain.admin.services import AdminService
 from app.domain.docs_site import access, assistant, library, retrieval, site, tools
 from app.domain.docs_site.limits import AskLimits
-from app.domain.feature_stats import pricing
 from app.domain.topic.services import TopicService
+from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.user.sessions import SessionService
 

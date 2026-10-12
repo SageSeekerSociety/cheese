@@ -45,6 +45,7 @@ from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.topics import DbSession
 from app.api.routes.topics_file_sources import source_bytes
+from app.core import raster_images
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.sentences import exception_text, say
@@ -80,20 +81,9 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 # 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以落在房间文件
 # 区一个独占的目录下。
 
-# Only these image types may render inline; other files require download.
-_IMAGE_MIME_EXT = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-}
-_EXT_IMAGE_MIME = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-}
+# Only raster image types may render inline; other files require download.
+_IMAGE_MIME_EXT = raster_images.MEDIA_TYPE_SUFFIX
+_EXT_IMAGE_MIME = raster_images.SUFFIX_MEDIA_TYPE
 #: 贴进对话的一份附件多大为止；数与落地那一层同一个（`library.MAX_FILE_BYTES`）。
 MAX_ATTACHMENT_BYTES = library.MAX_FILE_BYTES
 

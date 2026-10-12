@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // 附件那一格上的上限问的是 `GET /attachments/limits`：与上传同一道门。
 const mocks = vi.hoisted(() => ({ limits: vi.fn(), toastError: vi.fn() }))
-vi.mock('@/network/api/attachments', () => ({ AttachmentsApi: { limits: mocks.limits } }))
+vi.mock('@/api/attachments', () => ({ AttachmentsApi: { limits: mocks.limits } }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: mocks.toastError } }))
 
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
@@ -49,7 +49,7 @@ describe('题目带的材料', () => {
     setLocale('zh-CN')
     mocks.limits.mockReset()
     mocks.toastError.mockReset()
-    mocks.limits.mockResolvedValue({ data: { maxFileBytes: LIMIT_BYTES } })
+    mocks.limits.mockResolvedValue({ maxFileBytes: LIMIT_BYTES })
   })
 
   it('写的上限是接口报的那个数；问不到就不写这句话，选择照旧', async () => {

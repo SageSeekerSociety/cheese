@@ -7,11 +7,10 @@ import { useRoute, useRouter } from 'vue-router'
 
 import TeamProfile from './teams/TeamProfile.vue'
 
-import { authToken } from '@/api'
+import { ApiError, authToken } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
-import { BusinessError } from '@/network/types/error'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,13 +33,11 @@ async function load() {
   if (needsLogin.value) return
   busy.value = true
   try {
-    const {
-      data: { team: result },
-    } = await TeamsApi.detailByJoinLink(String(route.params.token))
+    const { team: result } = await TeamsApi.detailByJoinLink(String(route.params.token))
     if (sequence === loadSequence) team.value = result
   } catch (e) {
     if (sequence !== loadSequence) return
-    invalid.value = e instanceof BusinessError && e.code === 404
+    invalid.value = e instanceof ApiError && e.status === 404
     error.value = invalid.value ? t('work.teamProfile.invalid') : t('work.teamProfile.failed')
   } finally {
     if (sequence === loadSequence) busy.value = false
@@ -48,9 +45,7 @@ async function load() {
 }
 
 async function join(message: string) {
-  const {
-    data: { team: result },
-  } = await TeamsApi.joinByJoinLink(String(route.params.token), { message: message || undefined })
+  const { team: result } = await TeamsApi.joinByJoinLink(String(route.params.token), { message: message || undefined })
   team.value = result
 }
 

@@ -1255,6 +1255,9 @@ export interface paths {
          *     `credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者
          *     不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。
          *
+         *     `cache` / `top_users` / `unattributed` / `hourly` / `recent` 回答缓存命中多少、
+         *     谁触发的、什么时候用的，口径在 `platform_stats/usage_detail.py`。
+         *
          *     `claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里
          *     唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，
          *     理由见那个模块的 docstring）。
@@ -3017,6 +3020,29 @@ export interface paths {
          *     written. Its reply keeps what was written, marked as stopped.
          */
         post: operations["stop_agent_documents__document_id__comments__comment_id__agent_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{document_id}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Document Image
+         * @description The bytes of an image the document references by ``path``.
+         *
+         *     A browser cannot send its credential with an ``<img src>``, so the editor
+         *     fetches these and shows them from memory.
+         */
+        get: operations["document_image_documents__document_id__image_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -12927,6 +12953,12 @@ export interface components {
             where?: string | null;
             /** Request Id */
             request_id?: string | null;
+            /** Received Events */
+            received_events?: number | null;
+            /** Upstream Failure */
+            upstream_failure?: string | null;
+            /** Ended By */
+            ended_by?: string | null;
         };
         /** BindTeamRequest */
         BindTeamRequest: {
@@ -22641,6 +22673,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    document_image_documents__document_id__image_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image's bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/gif": unknown;
+                    "image/webp": unknown;
                 };
             };
             /** @description Validation Error */

@@ -80,8 +80,8 @@ const props = withDefaults(
     activeThread?: string | null
     /** 取一份最新的节点树：闪某一段要它。 */
     fetchDocNodes: () => Promise<Block[]>
-    /** 图片 src 的显示期解析：工作区相对路径走原始文件接口。 */
-    imageSrc: (src: string) => string
+    /** 文档里引用的一张图拿什么画：取回来的字节做成的 object URL（本来就是地址的原样给回）。 */
+    imageSrc: (src: string) => Promise<string>
     /** 段落定位不到时的兜底：整篇闪一下 —— 那一下归页面那一半画。 */
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
@@ -338,7 +338,7 @@ function onPointerDown() {
 function buildEditor(session: DocSession): DocEditor {
   return new DocEditor({
     extensions: [
-      ...editorBlocks(docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) }), () =>
+      ...editorBlocks(docExtensions({ loadImage: (src) => props.imageSrc(src) }), () =>
         props.agentHandle ? { name: props.agentName, run: (ed, from, to) => emit('agent', spotAt(ed, from, to)) } : null
       ),
       Collaboration.configure({ document: session.doc }),
