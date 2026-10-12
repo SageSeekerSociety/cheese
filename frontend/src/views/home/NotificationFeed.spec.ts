@@ -9,10 +9,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const list = vi.fn()
+const countByTypes = vi.fn(async () => [0, 0, 0])
 const refresh = vi.fn()
 vi.mock('@/api/notifications', () => ({
   NotificationsApi: {
     list: (...args: unknown[]) => list(...args),
+    countByTypes: (...args: unknown[]) => countByTypes(...args),
     getUnreadCount: async () => ({ count: 0 }),
     updateStatus: vi.fn(),
     markAllAsRead: vi.fn(),
@@ -37,6 +39,8 @@ beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
   list.mockReset()
+  countByTypes.mockReset()
+  countByTypes.mockResolvedValue([0, 0, 0])
   refresh.mockReset()
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -146,5 +150,37 @@ describe('待办页「动态」这一块', () => {
 
     await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(3))
     await waitFor(() => expect(screen.queryByText('翻页失败')).toBeNull())
+  })
+
+  // 「动态」按事由分档：默认停在「需我处理」，一格上的数字是那一档的总条数。筛选交给
+  // 服务端做（分页和 total 都是它算的），所以这里要确认问出去的正是这一档的几种事由。
+  it('默认停在「需我处理」，三档各带着自己的条数，问服务端要的就是这一档的事由', async () => {
+    countByTypes.mockResolvedValue([3, 7, 2])
+    list.mockResolvedValueOnce(emptyPage())
+
+    await mount()
+
+    expect(await screen.findByRole('radio', { name: `${t('notifications.category.mine')} · 3` })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: `${t('notifications.category.notice')} · 7` })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: `${t('notifications.category.system')} · 2` })).toBeTruthy()
+
+    const asked = list.mock.calls[0][0] as { type: string[] }
+    expect(asked.type).toContain('CHEESE_QUESTION')
+    expect(asked.type).not.toContain('MENTION')
+  })
+
+  it('换一档就从第一页重问，而且要的是那一档的事由', async () => {
+    countByTypes.mockResolvedValue([3, 7, 2])
+    list.mockResolvedValue(emptyPage())
+
+    await mount()
+    await fireEvent.click(await screen.findByRole('radio', { name: `${t('notifications.category.notice')} · 7` }))
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    const asked = list.mock.calls[1][0] as { type: string[]; pageStart?: string }
+    expect(asked.type).toContain('MENTION')
+    expect(asked.type).not.toContain('CHEESE_QUESTION')
+    // 换了档就从第一页来：游标是跟着上一档走到底的，接着往下翻会漏。
+    expect(asked.pageStart).toBeUndefined()
   })
 })

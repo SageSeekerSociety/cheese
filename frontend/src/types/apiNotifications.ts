@@ -48,7 +48,10 @@ export interface Notification {
 }
 
 export interface ListNotificationsParams {
-  type?: NotificationType
+  // 要哪一种，或者要哪几种里的任意一种。线上的参数只有一个、是字符串，几种就逗号
+  // 分开（`?type=MENTION,REPLY`，服务端那个 `type` 就收这个样子），所以两种写法到
+  // 服务端是同一个请求，API 层负责拼。
+  type?: NotificationType | NotificationType[]
   read?: boolean
   pageStart?: string
   pageSize: number
