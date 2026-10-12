@@ -1,63 +1,108 @@
 <script setup lang="ts">
-// 组件预览站（`/demo/catalog`），文档动态演示那一套里的第二页。
+// 组件预览站（`/demo/catalog`）的壳：顶栏 + 常驻左栏 + 窄屏抽屉。底下的每一页各是
+// 一个文件：
 //
-//   /demo/catalog          → 目录：每个组件一张卡，写着它是什么、在哪儿、独立渲染要哪几样
-//   /demo/catalog/<id>     → 这个组件的那一页：一格里一个状态，喂的是真产品的形状
+//   /demo/catalog                 → 目录：每个组件一张卡，卡上一小格活预览
+//   /demo/catalog/<id>            → 这个组件那一页：一格里一个状态
+//   /demo/catalog/<id>/frame/<n>  → 上面那一页里 iframe 取的那一格（不带这个壳）
 //
-// 和 DemoView 一样不连后端、不登录、不起真路由之外的任何东西：`installDemoBackend()`
-// 把会自己取数的组件（验收卡）接在演示后端的答案上。**这一页只读目录，不写任何源
-// 文件** —— 想把一个新的组件放进来，改的是 `catalog.ts`。
+// 和 DemoView 一样不连后端、不登录：`installDemoBackend()` 把会自己取数的组件（验收
+// 卡）接在演示后端的答案上。**这里只读目录，不写任何源文件** —— 想把新组件放进来，
+// 改的是 `catalog.ts` 或它展开的分册。
 //
 // 地址照 DemoView 的做法由入口当 props 传进来（测试里换得了 props，换不了 location）。
-import type { CatalogEntry } from './catalog'
+import type { BackdropId } from './demoCatalogStudio'
+import type { MotionMode } from './demoMotion'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, provide, reactive, ref, watch } from 'vue'
+import { useDisplay, useTheme } from 'vuetify'
 
-import { CATALOG, catalogEntry, catalogGroup, stateProps } from './catalog'
+import { CATALOG, catalogEntry, catalogGroup } from './catalog'
+import CatalogDetailPage from './CatalogDetailPage.vue'
 import { installCatalogAnswers } from './catalogFixtures'
+import CatalogFramePage from './CatalogFramePage.vue'
+import CatalogIndexPage from './CatalogIndexPage.vue'
+import CatalogRail from './CatalogRail.vue'
 import { installDemoBackend } from './demoBackend'
+import { defaultPrefs, groupCatalog, parseCatalogPath, STUDIO } from './demoCatalogStudio'
+import { applyMotion } from './demoMotion'
 
-const props = withDefaults(defineProps<{ path?: string }>(), { path: '/' })
+import { applyResolvedTheme } from '@/theme'
+
+const props = withDefaults(defineProps<{ path?: string; search?: string }>(), { path: '/', search: '' })
 
 installDemoBackend()
 installCatalogAnswers()
 
-/** 地址里那一段：`/demo/catalog/<id>`。没有就是目录。 */
-const id = computed(() => /^\/demo\/catalog\/([\w-]+)/.exec(props.path)?.[1] ?? null)
-const entry = computed(() => (id.value ? catalogEntry(id.value) : null))
+const route = ref(parseCatalogPath(props.path))
+watch(
+  () => props.path,
+  (path) => {
+    route.value = parseCatalogPath(path)
+    drawer.value = false
+  }
+)
+
+const id = computed(() => route.value.id)
+const entry = computed(() => (id.value === null ? null : catalogEntry(id.value)))
 const missing = computed(() => id.value !== null && entry.value === null)
 
-const NEED_LABELS: Record<string, string> = {
-  vuetify: 'Vuetify',
-  i18n: '语言包',
-  router: '路由',
-  pinia: 'store',
-}
+/** iframe 里要画的那一格：地址上给了第几格，就画第几格。 */
+const frameState = computed(() => {
+  const index = route.value.frame
+  if (index === null || !entry.value) return null
+  return entry.value.states[index] ?? null
+})
+
+/** iframe 那一页只看地址上给的这几样：动效和底在它自己的文档里生效。 */
+const frameQuery = computed<{ motion: MotionMode; bg: BackdropId }>(() => {
+  const params = new URLSearchParams(props.search)
+  const motion = params.get('motion')
+  return {
+    motion: motion === 'slow' || motion === 'off' ? motion : 'normal',
+    bg: params.get('bg') === 'canvas' ? 'canvas' : 'surface',
+  }
+})
+
+/** 预览偏好：顶栏和工具条改的是同一份。 */
+const studio = reactive(defaultPrefs())
+provide(STUDIO, studio)
+
+/**
+ * 主题落在文档自己的 `<html>` 上，不是某一格舞台上：`style.css` 的深色选择器是
+ * `:root[data-theme='dark']`，给里面某个 div 加属性，深色那套 token 根本轮不到它。
+ * iframe 里那几格是另外写的文档，靠地址上的 `?theme=` 各自落地。
+ */
+const theme = useTheme()
+watch(
+  () => studio.theme,
+  (mode) => {
+    applyResolvedTheme(mode)
+    // `theme.global.name.value = …` 是旧写法，Vuetify 会就此报一条 deprecation：这里
+    // 每一页都挂一遍，报出来就是满屏噪音。`change()` 是它指的那一个。
+    theme.change(mode)
+  },
+  { immediate: true }
+)
+
+/**
+ * 动效也是整篇文档一档。慢放改的是产品那几条 `--dur-*`（见 demoMotion.ts），不另写
+ * 一套时长；iframe 里那几格靠地址上的 `?motion=` 各自落地。
+ */
+watch(
+  () => studio.motion,
+  (mode) => applyMotion(document.documentElement, mode),
+  { immediate: true }
+)
 
 /** 目录页上的搜索：标题、说明、源码路径里出现就算。 */
 const query = ref('')
 
-/**
- * 按源码目录分组，组内按标题排。几百条平铺成一页没人找得到；目录就是这个仓库自己
- * 给组件分的类，不用另起一套。
- */
-const groups = computed(() => {
-  const words = query.value.trim().toLowerCase()
-  const hit = (item: CatalogEntry) =>
-    !words || [item.title, item.about, item.file].some((text) => text.toLowerCase().includes(words))
-  const byGroup = new Map<string, CatalogEntry[]>()
-  for (const item of CATALOG.filter(hit)) {
-    const key = catalogGroup(item)
-    byGroup.set(key, [...(byGroup.get(key) ?? []), item])
-  }
-  return [...byGroup.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, items]) => ({ name, items: items.sort((a, b) => a.title.localeCompare(b.title)) }))
-})
+const groups = computed(() => groupCatalog(CATALOG, query.value, catalogGroup))
+/** 左栏永远列全份：搜出来几条的时候，别处还有什么是不能丢的。 */
+const allGroups = computed(() => groupCatalog(CATALOG, '', catalogGroup))
+const shown = computed(() => groups.value.reduce((total, group) => total + group.items.length, 0))
 
-const shown = computed(() => groups.value.reduce((n, group) => n + group.items.length, 0))
-
-/** 搜索的结果说一句：读屏软件听得到「找到几个」，什么都没对上时说的也是这一句。 */
 const resultText = computed(() => {
   if (!query.value.trim()) return ''
   return shown.value ? `找到 ${shown.value} 个组件` : '没有对得上的组件。'
@@ -76,300 +121,320 @@ watch(resultText, (text) => {
 })
 onBeforeUnmount(() => clearTimeout(settle))
 
-function needsOf(needs: string[]): string {
-  return needs.length ? needs.map((n) => NEED_LABELS[n] ?? n).join(' · ') : '一件都不用装'
+/** 窄屏那一下抽屉：宽屏上左栏一直在，这个开关在宽屏上根本不显示。 */
+const drawer = ref(false)
+
+// 窄不窄和 CSS 那条 `@media (width <= 900px)` 是同一个数：窄屏上左栏才收成抽屉。
+// 这个数还要在 JS 里用一次 —— 收起时那一栏只是被 `translateX(-100%)` 挪出画面，
+// 人眼看不见，键盘却还走得到它里面那排按钮，所以得给它 `inert`。
+const NARROW_MAX_WIDTH = 900
+const display = useDisplay()
+const narrow = computed(() => (display.width.value ?? 0) <= NARROW_MAX_WIDTH)
+/** 左栏这一会儿是不是看不见：宽屏上永远看得见，窄屏上要抽屉开着才看得见。 */
+const railHidden = computed(() => narrow.value && !drawer.value)
+
+// 抽屉开着的时候把窗口拉过 900px：CSS 那条 media 不再命中，遮罩那层就退回成一颗没有
+// 样式的空按钮，留在页尾。宽回去了就自己把抽屉关掉，不留这颗东西。
+watch(narrow, (isNarrow) => {
+  if (!isNarrow) drawer.value = false
+})
+
+/** 搜到东西就直接看结果，不管现在站在哪一页上。 */
+const showingIndex = computed(() => (id.value === null || query.value.trim() !== '') && !missing.value)
+
+function toggleTheme(): void {
+  studio.theme = studio.theme === 'dark' ? 'light' : 'dark'
 }
 </script>
 
 <template>
-  <div class="catalog">
-    <header class="catalog-head">
-      <a class="catalog-back" href="/demo/catalog">组件预览站</a>
-      <span class="catalog-count">{{ CATALOG.length }} 个组件</span>
-      <a class="catalog-demo" href="/demo/quickstart">去看动态演示 →</a>
+  <!-- iframe 取的那一格：不带壳，只有这一格本身。 -->
+  <CatalogFramePage
+    v-if="frameState && entry"
+    :entry="entry"
+    :state="frameState"
+    :motion="frameQuery.motion"
+    :bg="frameQuery.bg"
+  />
+  <p v-else-if="route.frame !== null" class="catalog-missing">目录里没有这一个。</p>
+
+  <div v-else class="studio" :data-drawer="drawer ? 'on' : 'off'">
+    <header class="studio-top">
+      <button
+        type="button"
+        class="studio-burger"
+        aria-label="打开目录"
+        aria-controls="studio-rail"
+        :aria-expanded="drawer"
+        @click="drawer = !drawer"
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
+      </button>
+
+      <a class="studio-brand" href="/demo/catalog">
+        <span class="studio-mark" aria-hidden="true">知</span>
+        <span class="studio-name">组件站</span>
+      </a>
+
+      <span class="studio-find">
+        <svg class="studio-find-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <path d="m15.5 15.5 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        </svg>
+        <input
+          v-model="query"
+          class="studio-search"
+          type="search"
+          autocomplete="off"
+          aria-label="按名字、说明或路径找组件"
+          placeholder="按名字、说明或路径找"
+        />
+      </span>
+
+      <span class="studio-count">{{ CATALOG.length }} 个组件</span>
+      <a class="studio-demo" href="/demo/quickstart">动态演示 →</a>
+
+      <button
+        type="button"
+        class="studio-icon"
+        :aria-label="studio.theme === 'dark' ? '切到浅色' : '切到深色'"
+        @click="toggleTheme"
+      >
+        <svg v-if="studio.theme === 'dark'" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6" />
+          <path
+            d="M12 2.6v2.4M12 19v2.4M2.6 12h2.4M19 12h2.4M5.3 5.3 7 7M17 17l1.7 1.7M18.7 5.3 17 7M7 17l-1.7 1.7"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+          />
+        </svg>
+        <svg v-else viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
     </header>
 
-    <!-- 目录：扫一眼有哪些组件、各自要什么。这一页不挂组件，挂满一屏的组件没人看。 -->
-    <template v-if="!entry">
-      <h1 class="catalog-name">组件目录</h1>
-      <p class="catalog-lede">
-        每个组件一页，用真产品的形状渲染几种状态。这一页不连后端、不登录 —— <code>pnpm dev</code> 打开
-        <code>/demo/catalog</code> 就能看。加一个组件：<code>node scripts/catalog-scaffold.mjs</code> 按 props
-        生成骨架，补完后放进 <code>catalog.ts</code> 或它展开的分册。
-      </p>
-      <input
-        v-model="query"
-        class="catalog-search"
-        type="search"
-        autocomplete="off"
-        aria-label="按名字、说明或路径找组件"
-        placeholder="按名字、说明或路径找"
-      />
-      <!-- 一直在页面上的那一格：内容变了读屏软件才会念（中途插进来的 live region 常常不念）。 -->
-      <p class="catalog-result" role="status">{{ resultNote }}</p>
-      <section v-for="group in groups" :key="group.name" class="catalog-group">
-        <h2 class="catalog-group-name">
-          <code>{{ group.name }}</code> <span>{{ group.items.length }}</span>
-        </h2>
-        <ul class="catalog-index">
-          <li v-for="item in group.items" :key="item.id">
-            <a class="catalog-card" :href="`/demo/catalog/${item.id}`">
-              <span class="catalog-card-title">{{ item.title }}</span>
-              <span class="catalog-card-about">{{ item.about }}</span>
-              <span class="catalog-card-meta">
-                <code>{{ item.file }}</code>
-                <span>{{ needsOf(item.needs) }}</span>
-                <span>{{ item.states.length }} 格</span>
-              </span>
-            </a>
-          </li>
-        </ul>
-      </section>
-    </template>
+    <div class="studio-body">
+      <aside id="studio-rail" class="studio-rail" :inert="railHidden || undefined">
+        <CatalogRail :groups="allGroups" :current="missing ? null : id" />
+      </aside>
 
-    <!-- 这个组件的那一页：一格里一个状态。 -->
-    <template v-else>
-      <div class="catalog-title">
-        <h1 class="catalog-name">{{ entry.title }}</h1>
-        <p class="catalog-about">{{ entry.about }}</p>
-        <p class="catalog-card-meta">
-          <code>{{ entry.file }}</code>
-          <span>独立渲染需要：{{ needsOf(entry.needs) }}</span>
+      <main class="studio-main">
+        <CatalogIndexPage v-if="showingIndex" :groups="groups" :note="resultNote" />
+        <CatalogDetailPage v-else-if="entry" :entry="entry" />
+        <p v-if="missing" class="catalog-missing">
+          目录里没有这一个。回<a class="catalog-missing-link" href="/demo/catalog">目录</a>看看。
         </p>
-      </div>
-      <section v-for="(state, i) in entry.states" :key="i" class="catalog-case">
-        <header class="catalog-case-head">
-          <h2 class="catalog-case-name">{{ state.name }}</h2>
-          <span v-if="state.needs" class="catalog-case-needs">这里只装：{{ needsOf(state.needs) }}</span>
-        </header>
-        <p class="catalog-case-note">{{ state.note }}</p>
-        <!-- 要坐在 Vuetify 布局里的那两件（底栏、底部动作面板）本来就长在 layout 里，
-             别处没有它们的位置：这里给的就是它们在产品里的那一层。 -->
-        <div class="catalog-stage">
-          <v-layout v-if="entry.layout">
-            <component :is="entry.component" v-bind="stateProps(entry, state)">{{ state.slot }}</component>
-          </v-layout>
-          <component :is="entry.component" v-else v-bind="stateProps(entry, state)">{{ state.slot }}</component>
-        </div>
-      </section>
-    </template>
+      </main>
+    </div>
 
-    <p v-if="missing" class="catalog-missing">目录里没有这一个。回<a href="/demo/catalog">目录</a>看看。</p>
+    <button v-if="drawer" type="button" class="studio-scrim" aria-label="收起目录" @click="drawer = false" />
   </div>
 </template>
 
 <style scoped>
-.catalog {
+.studio {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  height: 100vh;
-  padding: 16px 24px 32px;
-  overflow: auto;
+  height: 100dvh;
+  overflow: hidden;
   background: var(--canvas);
 }
 
-.catalog-head {
+.studio-top {
   display: flex;
-  gap: 12px;
-  align-items: baseline;
-  flex: none;
+  gap: 10px;
+  align-items: center;
+  height: 56px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
 }
 
-.catalog-back {
+.studio-burger {
+  display: none;
+  padding: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+.studio-burger:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.studio-brand {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   font-size: 15px;
   font-weight: 600;
   color: var(--ink);
   text-decoration: none;
 }
 
-.catalog-count,
-.catalog-demo {
+.studio-mark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
   font-size: 13px;
-  color: var(--muted);
+  color: var(--accent-ink);
+  background: var(--accent-wash);
+  border-radius: var(--radius-sm);
 }
 
-.catalog-demo {
-  margin-left: auto;
-  text-decoration: none;
+.studio-find {
+  display: flex;
+  position: relative;
+  max-width: 420px;
+  min-width: 0;
+  margin-left: 12px;
+  flex: 1 1 200px;
+  align-items: center;
 }
 
-.catalog-lede {
-  max-width: 60ch;
-  margin: 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-.catalog-lede code,
-.catalog-card-meta code {
-  font-family: var(--font-mono);
-  font-size: 12px;
+.studio-find-icon {
+  position: absolute;
+  left: 10px;
   color: var(--faint);
+  pointer-events: none;
 }
 
-.catalog-search {
-  max-width: 360px;
-  padding: 6px 10px;
+.studio-search {
+  width: 100%;
+  padding: 6px 10px 6px 32px;
+
   /* 16px 以下 iOS Safari 聚焦时会把整页放大。 */
   font-size: 16px;
   color: var(--ink);
-  background: var(--surface);
+  background: var(--fill-2);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);
 }
 
-.catalog-search:focus-visible {
+.studio-search:focus-visible {
   border-color: var(--accent);
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-.catalog-result {
-  margin: 0;
+.studio-count,
+.studio-demo {
   font-size: 13px;
   color: var(--muted);
 }
 
-/* 没在搜的时候它是空的：不占那一行，但留在无障碍树里（display: none 会让它下次不被念）。 */
-.catalog-result:empty {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
+.studio-count {
+  margin-left: auto;
 }
 
-.catalog-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.catalog-group-name {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.catalog-group-name code {
-  font-family: var(--font-mono);
-}
-
-.catalog-index {
-  display: grid;
-  gap: 8px;
-  /* 窄屏（360 宽的手机减去左右留白）放不下 320px 一列：最窄退到整行宽。 */
-  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.catalog-card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  height: 100%;
-  padding: 12px 14px;
-  color: inherit;
+.studio-demo {
   text-decoration: none;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
 }
 
-.catalog-card:hover {
-  border-color: var(--accent);
+.studio-demo:hover {
+  color: var(--accent-ink);
 }
 
-.catalog-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.catalog-card-about {
-  font-size: 13px;
-  line-height: var(--lh-13);
+.studio-icon {
+  display: grid;
+  place-items: center;
+  padding: 6px;
   color: var(--muted);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
 }
 
-.catalog-card-meta {
+.studio-icon:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+
+.studio-body {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0 12px;
-  margin: 0;
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--faint);
-  /* 文件路径是最长的那一格，而 flex 子项的 min-content 就是「整条路径」的宽度：
-     不折断的话它会把卡片撑破（深路径那几个正好卡在断行还没到的地方）。 */
-  overflow-wrap: anywhere;
+  flex: 1;
+  min-height: 0;
 }
 
-.catalog-title {
+.studio-rail {
   flex: none;
-}
-
-.catalog-name {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.catalog-about {
-  max-width: 70ch;
-  margin: 0 0 4px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-.catalog-case {
-  flex: none;
-}
-
-.catalog-case-head {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-}
-
-.catalog-case-name {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.catalog-case-needs {
-  font-size: 12px;
-  color: var(--faint);
-}
-
-.catalog-case-note {
-  max-width: 70ch;
-  margin: 2px 0 8px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-/* 摆得下这一格的地方。给一块底、一条边，免得组件自己没边的时候看不出它有多宽
-   （KPI 卡、页签条都是「自己不带框」的那种）。 */
-.catalog-stage {
-  padding: 12px;
+  width: 264px;
+  overflow: auto;
   background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
+  border-right: 1px solid var(--line);
+}
+
+.studio-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
 }
 
 .catalog-missing {
-  margin: 0;
+  margin: 24px;
   color: var(--muted);
+}
+
+.catalog-missing-link {
+  color: var(--accent-ink);
+}
+
+/* 窄下来左栏收成抽屉：地方没了，但目录还得找得到。 */
+@media (width <= 900px) {
+  .studio-burger {
+    display: grid;
+    place-items: center;
+  }
+
+  .studio-count,
+  .studio-demo {
+    display: none;
+  }
+
+  /* 上面那两个在窄屏收掉了，靠它把主题开关顶到右边。 */
+  .studio-icon {
+    margin-left: auto;
+  }
+
+  .studio-rail {
+    position: fixed;
+    top: 56px;
+    bottom: 0;
+    left: 0;
+    z-index: 30;
+    width: min(300px, 84vw);
+    box-shadow: var(--shadow-2);
+    transform: translateX(-100%);
+    transition: transform var(--dur-base) var(--ease-out);
+  }
+
+  .studio[data-drawer='on'] .studio-rail {
+    transform: none;
+  }
+
+  .studio-scrim {
+    position: fixed;
+    inset: 56px 0 0;
+    z-index: 20;
+    padding: 0;
+    cursor: pointer;
+    background: var(--overlay);
+    border: 0;
+  }
 }
 </style>
