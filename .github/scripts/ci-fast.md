@@ -29,10 +29,10 @@ run that still exhausts 900s is reported **unknown**, never trimmed to green.
 
 The quick tier's 180s is the work machine's own limit, not a property of the
 selection. A narrowed frontend run seeds the read-off-disk specs beside the
-changed roots, and those fifteen cost ~70s on the work machine (127 tests,
-71.4s wall, one worker per file): on a tight local budget the tier can exhaust
-it and report unknown where the runner (1200s) has room. That is the budget
-talking, not the change.
+changed roots, and those cost ~70s on the work machine (127 tests, 71.4s wall,
+one worker per file, measured when there were fifteen of them): on a tight local
+budget the tier can exhaust it and report unknown where the runner (1200s) has
+room. That is the budget talking, not the change.
 
 Both bounds are overridable, because they describe the machine rather than the
 tier: `--budget` and `--memory-mib` default to the work machine's own limits
@@ -46,7 +46,9 @@ raises only the budget.
 requests: one inline job runs
 
 ```
-ci-fast.py --tier quick --budget 1200 --memory-mib 9216
+gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+ci-fast.py --tier quick --budget 1200 --memory-mib 9216 \
+  --pull-request "$RUNNER_TEMP/pull.json"
 ```
 
 and every product suite is skipped. The aggregating job for a draft is named
@@ -56,6 +58,52 @@ suite is skipped. Promoting the draft (`ready_for_review`) starts a fresh
 **full** run; the draft-quick green is not reused. `merge_group` entries are
 always the full tier. This tier says a draft is buildable; it is not, and cannot
 be, the merge gate (see `docs/workflows.md` §6).
+
+### What the draft tier does not judge
+
+A draft is a work in progress, and the tier is red only for what its author can
+act on. Three things it does not own, and therefore does not turn red (each is
+in the run's `not_run`):
+
+- **A draft's title.** It is the platform's placeholder for the task ("WIP:
+  <task title>"), it says nothing about the change, and the author did not write
+  it. Both reads of the PR carry the draft flag — the `--pull-request` payload
+  the draft job passes, and the `gh pr view` lookup the local entry point uses —
+  so ci-fast does not check it either way; `check-commit-title.py` skips a
+  draft for the same reason. The `required`
+  job checks the title, and `pr-title.yml` re-runs that job when the PR is
+  marked ready.
+- **Tests that need the pinned Claude Code / Codex / pi builds.** These come
+  from the environment (`CHEESE_TEST_*`), installed by full CI and by
+  `dev-db.sh`; a test that reaches for one FAILS where they are absent, it does
+  not skip (`tests/pinned_claude.py`). Installing three binaries into every
+  draft run is the full CI's job, so those tests are named not run instead —
+  and left in the run's required files, where the audit names them
+  (`not_run_pure`) and reports a change whose every pinpointed consumer was
+  dropped that way as `unknown`, not green. A change that still has required
+  files the run did execute is judged by them: those are what it was for.
+  The files are the transitive importers of the helper and of the variables
+  themselves (measured: 30 of 186 for a pi change). This counts import
+  statements only: the dynamic-import widening would make `app.main` a harness
+  consumer — it loads its routes that way — and drag most of the suite in.
+- **A run the tier could not finish.** As everywhere else in this tool, an
+  exhausted budget or a check with no input is `unknown` (exit 2), never a red
+  it did not observe. What is different here is only what the workflow does with
+  that exit code: `1` (a real failure) fails the draft, `2`/`3` do not — they
+  are written into the step summary and a warning annotation instead. GitHub has
+  no third conclusion, so the summary is where "not judged" is readable; the
+  green of `CI required (draft quick)` is not a statement that everything ran.
+  The merge queue's full run on the same commit is.
+
+The three together were the bulk of the red: over the two days to 2026-10-12,
+of 188 merged PRs 83 failed their first Required CI run; the draft tier went
+live at 03:47 on 10-12, and 17 of the 39 first-push failures it created after
+that were this tier's false reds — a placeholder title it was never supposed to
+own, or tests it was never given the builds for.
+
+This job DOES have Redis (a valkey service, same image and port as every
+full-tier job), because a pure test that touches it was red on a connection to
+`localhost:6379` — a service this job had simply not been given.
 
 The job keeps the quick tier's *selection* — a draft is never a trimmed full CI
 — but not the work machine's *bounds*: it runs on a 4 vCPU / 16 GiB runner, which
@@ -136,7 +184,7 @@ everything is still allowed to answer unknown.
 
   A narrowed run is seeded with the changed source roots **and** every spec that
   judges a frontend file by reading it off disk rather than importing it
-  (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the fifteen specs that assert a
+  (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the specs that assert a
   component's markup, a stylesheet's rules, a page's scroll container or a whole
   directory). A read is not an import edge, so `related` would never select one
   of them for the file it answers for, whatever else the change contains:
@@ -177,7 +225,7 @@ everything is still allowed to answer unknown.
 |------|---------|
 | 0 | every selected check actually ran and passed. Not full CI. |
 | 1 | a selected check really failed. |
-| 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty or skipped test report, a selected file that produced no executed case, an unavailable merge base, a hook/config drift, a worktree that changed during the run, or an unreadable report. |
+| 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty or skipped test report, a selected file that produced no executed case, an unavailable merge base, a hook/config drift, a worktree that changed during the run, a `--pull-request` payload that could not be read (the title is the only check that costs), or an unreadable report. |
 | 3 | **blocked** — a required tool or dependency is missing (`backend/.venv`, `frontend/node_modules`, pre-commit, a machine without `ps`), or the platform is not Linux. |
 
 A single missed memory sample is not blocked. The sampler rides a few misses
