@@ -102,6 +102,11 @@ def ended(launch: str) -> str:
     return f"cheese-runner {launch} ended"
 
 
+#: How a launch's record of its ending says Claude Code never came up: what the
+#: backend reads to tell a session that did not start from one that ended.
+NEVER_STARTED = "before it started"
+
+
 def _is_claude(argv0: str) -> bool:
     """Whether a process's first argument is a Claude Code binary.
 
@@ -419,6 +424,9 @@ class Runner(runner.Runner[Journal]):
         self.execution: str | None = None
         self.helpers: list[asyncio.Task] = []
         self.proven = False
+        # Claude Code itself wrote a record: what failed after that was the
+        # build, not the executor client's bootstrap in front of it.
+        self.ran = False
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
@@ -457,9 +465,9 @@ class Runner(runner.Runner[Journal]):
         if resumed is not None:
             self.session_id, flag = resumed, f"--resume {resumed}"
             # Consumed at the first proof the session is alive, or at a stop we
-            # asked for; still here after an exit of its own, it names a
-            # transcript this build cannot continue, and the next start begins
-            # afresh instead of dying on it again.
+            # asked for; still here after Claude Code's own failing exit, it
+            # names a transcript this build cannot continue, and the next start
+            # begins afresh instead of dying on it again (`close`).
             self.journal.remember("resuming", resumed)
         else:
             fresh = (
@@ -530,17 +538,22 @@ class Runner(runner.Runner[Journal]):
             helper.cancel()
         await asyncio.gather(*self.helpers, return_exceptions=True)
         # Claude Code that exited by itself, failing, before it ever answered
-        # was handed a transcript it cannot continue. An exit we asked for, or
-        # a clean one, says nothing about the transcript.
+        # was handed a transcript it cannot continue. An exit we asked for, a
+        # clean one, or the bootstrap failing before Claude Code ran (its lease,
+        # its machine) says nothing about the transcript.
         process = self.process
         failed = (
             process is not None
             and process.returncode not in (None, 0)
             and not self.proven
         )
+        if failed:
+            # Whether Claude Code wrote anything is known once its output is
+            # read to the end, which an exit does not wait for.
+            await self.stopped()
         with contextlib.suppress(Exception):
             resuming = self.journal.recall("resuming")
-            if failed and resuming:
+            if failed and resuming and self.ran:
                 self.journal.remember("resume_failed", resuming)
             self.journal.remember("resuming", "")
         if failed and process is not None:
@@ -563,7 +576,7 @@ class Runner(runner.Runner[Journal]):
                 said = log.read().decode("utf-8", "replace").strip()
             print(
                 f"{ended(self.launch)}: "
-                f"Claude Code exited with status {status} before it started"
+                f"Claude Code exited with status {status} {NEVER_STARTED}"
                 + (f":\n{said}" if said else ", and said nothing"),
                 file=sys.stderr,
                 flush=True,
@@ -585,6 +598,7 @@ class Runner(runner.Runner[Journal]):
                 continue
             if not isinstance(record, dict):
                 continue
+            self.ran = True
             kind = record.get("type")
             if kind == "control_response":
                 response = record.get("response") or {}

@@ -64,7 +64,11 @@ class _Hub:
             # waiting out the whole startup window for a ping that cannot come.
             if getattr(self.channel, "alive", True):
                 return {"exit": 0, "stdout": ""}
-            return {"exit": 0, "stdout": f"{ending[1]}\nthe session's process is gone"}
+            # What the runner wrote of its process ending: a test that cares
+            # says it (``ending``), as dev's runner log does.
+            said = getattr(self.channel, "ending", None)
+            said = said or "the session's process is gone"
+            return {"exit": 0, "stdout": f"{ending[1]}\n{said}"}
         if argv != ["python3", "-"] or not stdin or "payload=json.loads(" not in stdin:
             return {"exit": 0, "stdout": ""}
         # A launch program (pi's, Codex's): the seat it starts is named by its
