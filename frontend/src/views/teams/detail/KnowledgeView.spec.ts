@@ -14,7 +14,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import KnowledgeView from './KnowledgeView.vue'
 
@@ -63,8 +63,23 @@ async function selectBox(view: ReturnType<typeof mount>, cls: string) {
   return view.container.querySelector(`${cls} input`) as HTMLInputElement
 }
 
-beforeEach(() => setLocale('zh-CN'))
-afterEach(cleanup)
+beforeEach(() => {
+  setLocale('zh-CN')
+  vi.stubGlobal('devicePixelRatio', 1)
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
+})
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 describe('知识库', () => {
   it('还在读的时候画转圈，不画「知识库暂无内容」', () => {

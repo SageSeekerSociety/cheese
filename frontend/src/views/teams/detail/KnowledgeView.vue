@@ -2,6 +2,7 @@
 import type { KnowledgeDraft } from '@/lib/knowledgeDraft'
 import type { Knowledge, KnowledgeContentData, KnowledgeType } from '@/types'
 
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import KnowledgeDetailDialog from '@/components/teams/knowledge/KnowledgeDetailDialog.vue'
 import KnowledgeEmpty from '@/components/teams/knowledge/KnowledgeEmpty.vue'
 import KnowledgeGrid from '@/components/teams/knowledge/KnowledgeGrid.vue'
@@ -33,7 +34,7 @@ defineProps<{
   failed: boolean
   /** 读失败时服务端原话（取不到时是 null）；`forbidden` 是 401/403。由页面算好递上来，
    *  这一半不碰 `loadFailure`。 */
-  reason: string | undefined
+  reason: string | null
   forbidden: boolean
   selectedResource: Knowledge | null
   selectedResourceContent: KnowledgeContentData
