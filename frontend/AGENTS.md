@@ -81,7 +81,7 @@ To add a component:
 4. `pnpm run lint:catalog:update` crosses the component off the pending list.
 
 The same steps in Chinese, with the CSF mapping, are in
-`docs/manual/dev/frontend.md#catalog`.
+`../docs/manual/dev/frontend.md#catalog`.
 
 Rendering the site writes nothing to the source tree.
 
@@ -241,7 +241,7 @@ merge handling is in [`metric-snapshots.md`](../.claude/rules/metric-snapshots.m
 
 ## Caps and conventions
 
-- Files under `src/` over **1000 lines** may not grow; 19 are already there and
+- Files under `src/` over **1000 lines** may not grow; 3 are already there and
   are frozen at their current size. `.claude/scripts/check-file-sizes.py` judges
   only the files this branch changed, each against the size it had at the merge
   base with `origin/main`.
@@ -252,8 +252,8 @@ merge handling is in [`metric-snapshots.md`](../.claude/rules/metric-snapshots.m
   checks your changed paths select, inside a time budget. `task fe:check` runs
   the whole frontend check, including the a11y, scene-debt and build steps the
   fast tier never runs.
-- A dev server may already be running on 3001/3002 in this worktree; do not
-  restart one you did not start.
+- A dev server may already be running on 3000, or the next free port when 3000 is
+  taken; do not restart one you did not start.
 - A new page under `src/views/admin/features/`: the chart components take props
   and the view is the only thing that fetches —
   [`../docs/manual/dev/feature-stats.md`](../docs/manual/dev/feature-stats.md).
