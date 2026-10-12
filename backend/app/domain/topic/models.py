@@ -227,7 +227,7 @@ class RawTranscript(UuidPk, Timestamps, Base):
     """The index of transcript chunks already uploaded to TRANSCRIPT_S3_BUCKET.
 
     Retained only as that index, pending a decision on those objects; nothing
-    writes or reads it. Transcripts are no longer uploaded (topic/retire.py
+    writes or reads it. Transcripts are no longer uploaded (room_cleanup/retire.py
     keeps them on the session host instead).
     """
 

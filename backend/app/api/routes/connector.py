@@ -185,8 +185,8 @@ async def _recover_business_state(device_id: str) -> None:
     # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
 
-    # deferred-import: tests patch this name on app.domain.topic.retire
-    from app.domain.topic.retire import sweep_retired_storage
+    # deferred-import: tests patch this name on app.domain.room_cleanup.retire
+    from app.domain.room_cleanup.retire import sweep_retired_storage
 
     background.spawn(
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),

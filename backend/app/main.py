@@ -150,7 +150,7 @@ async def lifespan(application: FastAPI):
         SandboxSweeper,
     )
     from app.domain.machine.session_work import checkpoint_room
-    from app.domain.topic.retire import sweep_retired_storage
+    from app.domain.room_cleanup.retire import sweep_retired_storage
 
     # The running work — sessions to listen to, turns to watch, sweeps on a
     # clock — belongs to one backend process at a time (`app.core.ownership`).
