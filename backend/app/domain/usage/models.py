@@ -212,8 +212,8 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     model: Mapped[str] = mapped_column(String(64), default="")
     # Every prompt token, cached ones included; the cache columns are the
     # shares of it read from and written to the provider's cache, and of the
-    # writes, those to the one-hour cache. 0 where the supply reports only the
-    # total (the gateway's daily drain).
+    # writes, those to the one-hour cache. The gateway's drain does not split
+    # cache writes by lifetime, so its one-hour column stays 0.
     input_tokens: Mapped[int] = mapped_column(BigInteger, default=0)
     cache_read_tokens: Mapped[int] = mapped_column(
         BigInteger, default=0, server_default="0"
