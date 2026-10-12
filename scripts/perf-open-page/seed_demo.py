@@ -33,9 +33,11 @@ task's branch still gets a base from an inert local ProjectForge row.
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import select
 
@@ -53,12 +55,16 @@ from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project import forge as project_forge
-from app.domain.project.models import Project, ProjectForge
+from app.domain.project.models import Project, ProjectArtifact, ProjectForge
 from app.domain.project.services import ProjectService
+from app.domain.project_skill.service import ProjectSkillService
 from app.domain.team.models import Team
 from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
 from app.domain.thread.services import open_thread
+from app.domain.thread.models import Thread
+from app.domain.room_task.models import Task
+from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.user.repositories import UserRepository
 
@@ -138,6 +144,36 @@ ARTIFACTS = [
     ("性能基线报告", "首屏打开耗时的基线与目标，给项目成员和评审看。"),
     ("重构方案", "工作台拆分的方案文档，给实现的人照着做。"),
     ("演示地址", "演示环境的入口，给要看效果的人打开。"),
+]
+
+# (name, title, description, body) — confirmed project skills, so the skills
+# page has rows to draw instead of its empty state.
+SKILLS = [
+    (
+        "weekly-report",
+        "周报",
+        "每周把项目进展整理成一页给人看。",
+        "## 需要的输入\n\n用户给的这一周的进展和数字。\n\n"
+        "## 步骤\n\n先写结论，再写依据。\n",
+    ),
+    (
+        "page-open-budget",
+        "页面打开耗时预算",
+        "新页面按这个预算做，超了就说明理由。",
+        "## 预算\n\n点开不超过 500ms，冷开不超过 1.5s。\n",
+    ),
+    (
+        "review-reply",
+        "评审回复",
+        "收到评审意见后怎么逐条回。",
+        "## 步骤\n\n每条先写处理了没有，再写怎么改的。\n",
+    ),
+]
+
+# Projects shown on the demo team's own page.
+TEAM_PROJECTS = [
+    ("性能演示 · 小队主页一号", "alice"),
+    ("性能演示 · 小队主页二号", "bobby"),
 ]
 
 THREAD_REPLIES = [
@@ -367,6 +403,38 @@ async def _seed_project(session, project: Project, owner: str, authors: list[str
     return counts
 
 
+async def _seed_skills(session, project: Project) -> int:
+    """Confirmed project skills, so the skills page draws rows and not an empty state."""
+    service = ProjectSkillService(session)
+    have = {row.name for row in await service.list(project.id)}
+    made = 0
+    for name, title, description, body in SKILLS:
+        if name in have:
+            continue
+        await service.create(
+            project_id=project.id,
+            topic_id=None,
+            by=OWNER,
+            by_agent=False,
+            name=name,
+            fields={"title": title, "description": description, "body": body},
+        )
+        made += 1
+    return made
+
+
+async def _seed_team_projects(session, team_id: int, users: dict[str, int]) -> int:
+    """Projects under the demo team, so the team's own page has cards."""
+    made = 0
+    for name, owner in TEAM_PROJECTS:
+        found = await session.scalar(select(Project).where(Project.name == name))
+        if found is not None:
+            continue
+        await _make_project(session, name, team_id, owner)
+        made += 1
+    return made
+
+
 async def _seed_devices(session, users: dict[str, int], team_id: int, project: Project) -> int:
     owner_id = users[OWNER]
     service = device_service_for_session(session)
@@ -449,7 +517,7 @@ async def seed() -> None:
     random.seed(20261012)
     totals = dict(projects=0, channels=0, messages=0, tasks=0, threads=0,
                   documents=0, library_files=0, artifacts=0, notifications=0,
-                  devices=0, integrations=0)
+                  devices=0, integrations=0, skills=0, team_projects=0)
 
     async with async_session_factory() as session:
         users = await _users_by_handle(session)
@@ -460,7 +528,10 @@ async def seed() -> None:
         authors = [h for h in DEMO_MEMBERS if h in users]
 
         team_id = await _ensure_team(session, users)
-        await _purge_projects(session, [name for name, _, _ in DEMO_PROJECTS])
+        await _purge_projects(
+            session,
+            [name for name, _, _ in DEMO_PROJECTS] + [name for name, _ in TEAM_PROJECTS],
+        )
 
         first_project: Project | None = None
         for name, project_team, owner in DEMO_PROJECTS:
@@ -473,14 +544,51 @@ async def seed() -> None:
             print(f"seeded project {name!r} (team {project_team}, owner {owner})")
 
         assert first_project is not None
+        totals["skills"] = await _seed_skills(session, first_project)
+        totals["team_projects"] = await _seed_team_projects(session, team_id, users)
         totals["devices"] = await _seed_devices(session, users, team_id, first_project)
         totals["integrations"] = await _seed_integrations(session, users)
 
         await session.commit()
+        await _write_params(session, first_project)
 
     print("\nTotals:")
     for key, value in totals.items():
         print(f"  {key:16s} {value}")
+
+
+async def _write_params(session, project: Project) -> None:
+    """Point params.json at the rows that were just written.
+
+    The ids change on every re-seed (the projects are dropped and rebuilt), so
+    the harness would silently measure a deleted project if this were left for a
+    person to update by hand.
+    """
+    room = await session.scalar(
+        select(Topic).where(Topic.project_id == project.id, Topic.title == EXTRA_CHANNELS[0])
+    )
+    assert room is not None, f"missing channel {EXTRA_CHANNELS[0]!r}"
+    thread = await session.scalar(
+        select(Thread).where(Thread.room_id == room.id).order_by(Thread.created_at).limit(1)
+    )
+    task = await session.scalar(
+        select(Task).where(Task.room_id == room.id).order_by(Task.created_at).limit(1)
+    )
+    artifact = await session.scalar(
+        select(ProjectArtifact).where(ProjectArtifact.project_id == project.id).limit(1)
+    )
+    params = {
+        "handle": OWNER,
+        "projectId": str(project.id),
+        "topicId": str(room.id),
+        "threadId": str(thread.id) if thread else "",
+        "taskId": str(task.id) if task else "",
+        "artifactId": str(artifact.id) if artifact else "",
+        "teamHandle": DEMO_TEAM_HANDLE,
+    }
+    out = Path(__file__).with_name("params.json")
+    out.write_text(json.dumps(params, ensure_ascii=False, indent=2) + "\n")
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":

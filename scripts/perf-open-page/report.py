@@ -18,6 +18,8 @@ COLS = [
     ("last_response_ms", "最后一份响应"),
     ("network_ms", "网络跨度"),
     ("api_requests", "接口数"),
+    ("api_bursts", "批次"),
+    ("api_serial_ms", "串行段"),
     ("long_task_ms", "长任务"),
 ]
 

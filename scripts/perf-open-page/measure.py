@@ -43,6 +43,8 @@ from pages import PageSpec, PAGES
 # The sign-in form. Kept here (not in pages.py) because it is about the app
 # shell rather than about any one page; the fallbacks cover the current markup
 # and the plain-HTML shape the Vue components render.
+SERIAL_GAP_MS = 0.0
+
 SIGNIN_URL = "/account/signin"
 USER_FIELD = "input[autocomplete='username'], input[name='username'], #username"
 PASSWORD_FIELD = "input[type='password']"
@@ -62,7 +64,10 @@ new PerformanceObserver((l) => {
 # freezes t1 on the first frame where the page's content is up, which is why
 # the numbers come from the browser's clock and not from ours.
 PROBE_INIT = """
-window.__probe = null;
+// A cold run starts a fresh document: the clock starts at the document, and
+// there is nobody to push a route. Installing the probe as an init script
+// gives that document the same helpers the walk uses.
+window.__probe = { t0: 0, t1: null, path: location.pathname };
 window.__lt = window.__lt || { total: 0, count: 0 };
 window.__nav = (path) => {
   const app = document.querySelector('#app');
@@ -83,7 +88,12 @@ window.__ready = (spec) => {
 };
 window.__collect = () => {
   const p = window.__probe || {};
-  return { t0: p.t0, t1: p.t1 };
+  // The page's own resource timeline, which is the same clock as t0/t1 and
+  // survives a service worker serving a request from cache.
+  const res = performance.getEntriesByType('resource').map((e) => ({
+    n: e.name, s: e.startTime, e: e.responseEnd, t: e.initiatorType, sz: e.transferSize,
+  }));
+  return { t0: p.t0, t1: p.t1, res, origin: performance.timeOrigin };
 };
 """
 
@@ -100,33 +110,16 @@ class Sample:
     long_task_ms: float = 0.0
     long_task_count: int = 0
     network_ms: float | None = None
+    # API requests that ran as separate bursts, and the time spent in the bursts
+    # after the first: that time was spent waiting for an earlier request.
+    api_bursts: int = 0
+    api_serial_ms: float = 0.0
+    # (path, start_ms, end_ms) — on the page clock, for anyone re-checking.
+    api_timeline: list[list] = field(default_factory=list)
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return self.__dict__
-
-
-def _request_tracker(page: Page, sink: list[dict[str, Any]]) -> None:
-    """Record every request the page makes, with when it started and ended."""
-
-    def on_request(req) -> None:
-        sink.append({"url": req.url, "start": None, "end": None, "type": req.resource_type})
-
-    page.on("request", on_request)
-
-    def on_finished(req) -> None:
-        timing = None
-        try:
-            timing = req.timing
-        except Exception:  # a redirected or cached request may have none
-            timing = None
-        for row in reversed(sink):
-            if row["url"] == req.url and row["start"] is None and timing:
-                row["start"] = timing.get("startTime")
-                row["end"] = (timing.get("startTime") or 0) + (timing.get("responseEnd") or 0)
-                break
-
-    page.on("requestfinished", on_finished)
 
 
 def _login(page: Page, base_url: str, username: str, password: str) -> None:
@@ -163,25 +156,19 @@ def _measure_one(
     params: dict[str, object],
     timeout_ms: int = 30000,
 ) -> Sample:
-    requests: list[dict[str, Any]] = []
-    sink: list[dict[str, Any]] = []
-    _request_tracker(page, sink)
-
-    page.evaluate(LONG_TASK_INIT)
-    page.evaluate(PROBE_INIT)
-
     if mode == "walk":
+        page.evaluate(LONG_TASK_INIT)
+        page.evaluate(PROBE_INIT)
         page.goto(warm_url, wait_until="networkidle")
         page.wait_for_timeout(300)
         page.evaluate(LONG_TASK_INIT)
         page.evaluate(PROBE_INIT)
-        sink.clear()
         # A path, not a URL: the router treats "http://host/inbox" as a path it
         # cannot match, and the app would simply stay where it was.
         page.evaluate("(p) => window.__nav(p)", spec.route_path(params))
     else:
-        sink.clear()
-        page.evaluate("() => { window.__lt = { total: 0, count: 0 }; }")
+        # The probes were installed with add_init_script, so the document that
+        # is about to load already has them.
         page.goto(spec.path(url, params), wait_until="commit")
 
     spec_payload = {"sel": spec.ready_selector, "min": spec.min_text, "notSel": spec.not_ready_selector}
@@ -190,27 +177,21 @@ def _measure_one(
             "(spec) => window.__ready(spec)", arg=spec_payload, timeout=timeout_ms, polling="raf"
         )
     except Exception as exc:  # noqa: BLE001 — a page that never shows content is a result too
-        return Sample(spec.name, mode, float("nan"), None, len(sink), error=str(exc)[:200])
+        return Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200])
 
     probe = page.evaluate("() => window.__collect()")
     lt = page.evaluate("() => window.__lt")
     t0, t1 = probe["t0"], probe["t1"]
-    ready = t1 - t0 if mode == "walk" else t1
-
-    # Request timing is in epoch milliseconds; the page's own clock starts at
-    # timeOrigin. Put both on the same axis, then measure from where the page
-    # was told to open (t0 in walk; the document's start in cold).
-    origin = page.evaluate("() => performance.timeOrigin")
     base = t0 if mode == "walk" else 0.0
-    window_lo = t0 if mode == "walk" else 0.0
+    ready = t1 - base
 
-    def rel(ms: float | None) -> float | None:
-        return None if ms is None else ms - origin - base
-
-    starts = [rel(r["start"]) for r in sink if r["start"] is not None]
-    ends = [rel(r["end"]) for r in sink if r["end"] is not None]
-    starts = [s for s in starts if s is not None and s >= window_lo]
-    ends = [e for e in ends if e is not None and e >= window_lo]
+    # Everything here is on the page's own clock: resource entries carry
+    # startTime/responseEnd relative to timeOrigin, so subtract where the page
+    # was told to open and both ends line up with ready_ms.
+    res = [r for r in probe["res"] if r["s"] >= base]
+    api = [r for r in res if "/api/" in r["n"]]
+    ends = [r["e"] - base for r in res]
+    starts = [r["s"] - base for r in res]
     last = max(ends) if ends else None
     # The network share: from the first request's start to the last response's
     # end. Rendering that finishes earlier than the last response means the page
@@ -218,17 +199,37 @@ def _measure_one(
     # from waiting on the network.
     network = (last - min(starts)) if (last is not None and starts) else None
 
+    # Requests fired together overlap, so they land in one burst. A request that
+    # only starts once everything already in flight has come back opens a new
+    # burst: it was waiting on an earlier response. ``api_serial_ms`` is the time
+    # spent in those later bursts — the part that only goes away if the request
+    # turns out not to have needed what it waited for.
+    intervals = sorted((r["s"] - base, r["e"] - base) for r in api)
+    bursts: list[list[float]] = []
+    for start_at, end_at in intervals:
+        if bursts and start_at <= bursts[-1][1] + SERIAL_GAP_MS:
+            bursts[-1][1] = max(bursts[-1][1], end_at)
+        else:
+            bursts.append([start_at, end_at])
+    serial_ms = sum(end_at - start_at for start_at, end_at in bursts[1:])
+
     return Sample(
         page=spec.name,
         mode=mode,
         ready_ms=round(ready, 1),
         last_response_ms=round(last, 1) if last is not None else None,
-        requests=len(sink),
-        api_count=len([r for r in sink if "/api/" in r["url"]]),
-        api_requests=sorted({r["url"].split("/api/", 1)[1].split("?")[0] for r in sink if "/api/" in r["url"]}),
+        requests=len(res),
+        api_count=len(api),
+        api_requests=sorted({r["n"].split("/api/", 1)[1].split("?")[0] for r in api}),
         long_task_ms=round(lt["total"], 1),
         long_task_count=lt["count"],
         network_ms=round(network, 1) if network is not None else None,
+        api_bursts=len(bursts),
+        api_serial_ms=round(serial_ms, 1),
+        api_timeline=[
+            [r["n"].split("/api/", 1)[-1].split("?")[0], round(r["s"] - base, 1), round(r["e"] - base, 1)]
+            for r in sorted(api, key=lambda r: r["s"])
+        ],
     )
 
 
@@ -254,6 +255,13 @@ def _median(samples: list[Sample]) -> Sample:
         long_task_ms=round(pick([s.long_task_ms for s in ok]), 1),
         long_task_count=int(pick([s.long_task_count for s in ok])),
         network_ms=round(pick(net_vals), 1) if net_vals else None,
+        api_bursts=int(pick([s.api_bursts for s in ok])),
+        api_serial_ms=round(pick([s.api_serial_ms for s in ok]), 1),
+        # The timeline is not a number, so take it from the run whose ready_ms is
+        # the median: the rest of the row then describes that same run.
+        api_timeline=min(
+            ok, key=lambda s: abs(s.ready_ms - pick([x.ready_ms for x in ok]))
+        ).api_timeline,
     )
 
 
@@ -347,6 +355,7 @@ def main() -> None:
                         # cold is a fresh document every time anyway, so it gets
                         # its own page: nothing from the walk stays resident.
                         fresh = context.new_page()
+                        fresh.add_init_script(PROBE_INIT + "\n" + LONG_TASK_INIT)
                         fresh.on("pageerror", lambda e: print("[pageerror]", str(e)[:200], flush=True))
                         try:
                             samples.append(

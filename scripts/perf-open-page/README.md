@@ -5,17 +5,35 @@
 
 ## 怎么跑
 
-    # 1) 起本地全栈（见仓库 README「Quick Start」；本目录的 setup 步骤另见下）
-    #    后端 :8081，前端 :3000
-    # 2) 量
-    uv run --with playwright python scripts/perf-open-page/measure.py \
-        --base-url http://127.0.0.1:3000 \
-        --username alice --password demo12345 \
-        --runs 3 --modes walk,cold --out /tmp/perf-open-page.json
+1. 起本地全栈（后端 :8081 + Postgres :5433 + 前端），见仓库 README「Quick Start」。
+2. 前端要跑生产构建（`npm run build`），静态起在 :3000，并把 `/api` 转给 :8081。
+   开发模式的 HMR 会让数字失真。
+3. 造演示数据并写出 `params.json`：
+
+       cd backend && PYTHONPATH=. uv run python ../scripts/perf-open-page/seed_demo.py
+
+   它会建好项目、频道、支线、任务、演示技能和演示小队，把它们的 id 写进本目录的
+   `params.json`。页面判据要读的那些区块得先有数据，否则页面永远画不出来、量到的是
+   超时。重新播种后 id 会变，`measure.py` 每次启动都重读 `params.json`。
+4. 量：
+
+       uv run --with playwright python scripts/perf-open-page/measure.py \
+           --base-url http://127.0.0.1:3000 \
+           --username alice --password demo12345 \
+           --runs 3 --modes walk,cold --out /tmp/perf-open-page.json
+
+5. 出表：
+
+       python scripts/perf-open-page/report.py /tmp/perf-open-page.json
 
 第一次跑要先装浏览器：`uv run --with playwright python -m playwright install chromium`。
 
 `--only inbox,devices` 只量某几页；`--runs` 是每个页面重复几遍（取中位数）。
+
+## 上次那批数字
+
+`measurements.json` 是 2026-10-12 那次全量跑的原始输出，`report.py` 直接读它就能
+重出那张表，不必先起栈。
 
 ## 两个口径
 
