@@ -42,14 +42,20 @@ export const SpacesApi = {
       true
     ),
   resubmit: (id: number, data: PostSpaceRequestData) =>
-    axiosMutation({ url: `/space-applications/${id}/resubmit`, method: 'POST', data }, true),
+    axiosRequest<{ application: SpaceApplication }>(
+      { url: `/space-applications/${id}/resubmit`, method: 'POST', data },
+      true
+    ),
   reviews: (status: string, offset = 0, limit = 50) =>
     axiosRequest<{ items: SpaceApplication[] }>(
       { url: '/admin/spaces', method: 'GET', params: { status, offset, limit } },
       true
     ),
   review: (id: number, approved: boolean, reason = '') =>
-    axiosMutation({ url: `/admin/spaces/${id}/review`, method: 'POST', data: { approved, reason } }, true),
+    axiosRequest<{ application: SpaceApplication }>(
+      { url: `/admin/spaces/${id}/review`, method: 'POST', data: { approved, reason } },
+      true
+    ),
   create: (data: PostSpaceRequestData) =>
     axiosRequest<{ space: Space; inviteCode: SpaceInviteCode | null }>({ url: '/spaces', method: 'POST', data }, true),
   join: (data: PostSpaceJoinRequestData) =>

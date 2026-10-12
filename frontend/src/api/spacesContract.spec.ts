@@ -80,12 +80,12 @@ const cases: Record<string, ContractCase> = {
   },
   revokeInviteCode: { method: 'DELETE', path: '/spaces/7/invite-codes/9', args: [7, 9] },
   listMaterials: { method: 'GET', path: '/spaces/7/materials', args: [7] },
-  uploadMaterial: { method: 'POST', path: '/spaces/7/materials', args: [], fileFields: { visibility: 'ALL' } },
+  uploadMaterial: { method: 'POST', path: '/spaces/7/materials', args: [], fileFields: { visibility: 'members' } },
   updateMaterialVisibility: {
     method: 'PATCH',
     path: '/spaces/7/materials/9',
-    args: [7, 9, 'ALL'],
-    body: { visibility: 'ALL' },
+    args: [7, 9, 'members'],
+    body: { visibility: 'members' },
   },
   deleteMaterial: { method: 'DELETE', path: '/spaces/7/materials/9', args: [7, 9] },
   downloadMaterial: { method: 'GET', path: '/spaces/7/materials/9/download', args: [7, 9], blob: true },
@@ -265,7 +265,7 @@ describe('spaces browser contract', () => {
   it.each(Object.entries(cases))('%s preserves the request and returns the payload', async (name, test) => {
     const { SpacesApi: old } = await import('@/network/api/spaces')
     const { SpacesApi: next } = await import('./spaces')
-    const args = name === 'uploadMaterial' ? [7, uploadFile(), 'ALL'] : test.args
+    const args = name === 'uploadMaterial' ? [7, uploadFile(), 'members'] : test.args
     await compareRequests(
       test,
       () => (old[name as keyof typeof old] as (...args: unknown[]) => Promise<unknown>)(...args),

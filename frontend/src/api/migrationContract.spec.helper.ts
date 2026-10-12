@@ -90,20 +90,24 @@ export async function compareRequests(
       if (test.fileFields) {
         expect(request.headers.get('content-type')).toContain('multipart/form-data; boundary=')
         const form = await request.formData()
-        body = Object.fromEntries(
-          await Promise.all(
-            [...form.entries()].map(async ([key, value]) => [
-              key,
-              typeof value === 'string'
-                ? value
-                : { name: value.name, type: value.type, bytes: [...new Uint8Array(await value.arrayBuffer())] },
-            ])
-          )
+        // Keep all entries: converting to an object would hide duplicate files or fields.
+        const entries = [...form.entries()]
+        expect(entries.filter(([, value]) => typeof value !== 'string')).toHaveLength(1)
+        expect(entries.filter(([, value]) => typeof value === 'string')).toHaveLength(
+          Object.keys(test.fileFields).length
         )
-        expect(body).toEqual({
-          ...test.fileFields,
-          file: { name: 'notes.pdf', type: 'application/pdf', bytes: [...new TextEncoder().encode('%PDF-1.7')] },
-        })
+        body = await Promise.all(
+          entries.map(async ([key, value]) => [
+            key,
+            typeof value === 'string'
+              ? value
+              : { name: value.name, type: value.type, bytes: [...new Uint8Array(await value.arrayBuffer())] },
+          ])
+        )
+        expect(body).toEqual([
+          ['file', { name: 'notes.pdf', type: 'application/pdf', bytes: [...new TextEncoder().encode('%PDF-1.7')] }],
+          ...Object.entries(test.fileFields),
+        ])
       } else {
         const text = await request.text()
         body = text ? JSON.parse(text) : undefined
