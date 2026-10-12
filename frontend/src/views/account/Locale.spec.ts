@@ -12,10 +12,10 @@ import SignIn from './SignIn.vue'
 import LanguageToggle from '@/components/common/LanguageToggle.vue'
 import { resolveInitialLocale, setLocale } from '@/i18n'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: {
-    getOAuthProviders: vi.fn().mockResolvedValue({ data: { providers: [] } }),
-    getRegistrationConfig: vi.fn().mockResolvedValue({ data: { requireInviteCode: false } }),
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
+    getOAuthProviders: vi.fn().mockResolvedValue({ providers: [] }),
+    getRegistrationConfig: vi.fn().mockResolvedValue({ requireInviteCode: false }),
   },
 }))
 vi.mock('@/services/account', () => ({ default: { loggedIn: false } }))

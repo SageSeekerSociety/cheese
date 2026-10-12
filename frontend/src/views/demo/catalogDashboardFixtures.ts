@@ -326,6 +326,20 @@ export const DASH_USAGE: StatsUsage = {
   // 30 天的窗口按天看就够了，后端不给每小时那条。
   hourly: null,
   recent: [
+    // 订阅通路一行是一次请求；网关那两行是网关按模型合计的一段用量（页上标「汇总」）。
+    {
+      at: '2026-05-14T15:44:31+08:00',
+      project_id: '4a1c0f6e-7b52-4d9a-9c31-2f8d5a0b7e11',
+      project: '知是平台后端',
+      handle: 'lin',
+      model: 'claude-opus-4-1',
+      route: 'subscription',
+      kind: 'chat',
+      input_tokens: 61200,
+      output_tokens: 830,
+      cache_read_tokens: 58800,
+      cost_usd: 0.142,
+    },
     {
       at: '2026-05-14T15:42:10+08:00',
       project_id: '4a1c0f6e-7b52-4d9a-9c31-2f8d5a0b7e11',

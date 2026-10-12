@@ -161,7 +161,7 @@
 
 <script setup lang="ts">
 import type { UserRefTarget } from '@/lib/userRef'
-import type { RealNameInfo, UserIdentityAccessLog } from '@/network/api/users/types'
+import type { RealNameInfo, UserIdentityAccessLog } from '@/types/apiUsers'
 
 import { computed, reactive, ref, watch } from 'vue'
 

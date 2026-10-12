@@ -22,7 +22,7 @@
 
 <script lang="ts" setup>
 import type { AuthenticationResponseJSON } from '@simplewebauthn/browser'
-import type { OAuthProvider } from '@/network/api/users/types'
+import type { OAuthProvider } from '@/types/apiUsers'
 import type { User } from '@/types/users'
 import type { SignInMethod } from './lastSignIn'
 import type { SignInWay } from './SignInView.vue'
@@ -45,8 +45,9 @@ import { passkeyWrongHostMessage } from './passkeyHost'
 import { signInNotice } from './signInNotice'
 import SignInView from './SignInView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { forgetOAuthRedirect, postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
@@ -116,7 +117,7 @@ async function signedIn(
   method: SignInMethod,
   accessToken: string,
   user: User,
-  passkeyEnrollment?: UserApi.PasskeyEnrollment
+  passkeyEnrollment?: UserAuthApi.PasskeyEnrollment
 ) {
   rememberSignIn(method)
   AccountService.login(accessToken, user)
@@ -131,7 +132,7 @@ async function login(value: { username: string; password: string }) {
   errorMessage.value = ''
   submitting.value = true
   try {
-    const { data } = await UserApi.login(value)
+    const data = await UserAuthApi.login(value)
     if (data.requires2FA) {
       rememberSignIn('password')
       firstStepAccepted('password')
@@ -147,7 +148,7 @@ async function login(value: { username: string; password: string }) {
     stopAutofill()
     await signedIn('password', data.accessToken!, data.user!, data.passkeyEnrollment)
   } catch (e) {
-    errorMessage.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signIn.failed'))
+    errorMessage.value = attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.signIn.failed')))
     waitFor(e)
   } finally {
     submitting.value = false
@@ -155,7 +156,7 @@ async function login(value: { username: string; password: string }) {
 }
 
 async function finishPasskey(assertion: AuthenticationResponseJSON) {
-  const { data } = await UserApi.verifyPasskeyAuthentication(assertion)
+  const data = await UserAuthApi.verifyPasskeyAuthentication(assertion)
   await signedIn('passkey', data.accessToken!, data.user!)
 }
 
@@ -175,7 +176,7 @@ const handlePasskeyLogin = async () => {
   let rpId: string | undefined
   try {
     // Starting a ceremony cancels the waiting autofill one.
-    const { data } = await UserApi.getPasskeyAuthenticationOptions()
+    const data = await UserAuthApi.getPasskeyAuthenticationOptions()
     rpId = data.options.rpId
     await finishPasskey(await startAuthentication({ optionsJSON: data.options }))
   } catch (error) {
@@ -195,7 +196,7 @@ async function startAutofill() {
   autofillOn = true
   let assertion: AuthenticationResponseJSON
   try {
-    const { data } = await UserApi.getPasskeyAuthenticationOptions()
+    const data = await UserAuthApi.getPasskeyAuthenticationOptions()
     assertion = await startAuthentication({ optionsJSON: data.options, useBrowserAutofill: true })
   } catch {
     autofillOn = false
@@ -216,7 +217,7 @@ async function startAutofill() {
 
 const fetchOAuthProviders = async () => {
   try {
-    const { data } = await UserApi.getOAuthProviders()
+    const data = await UserAuthApi.getOAuthProviders()
     oAuthProviders.value = data.providers
     try {
       localStorage.setItem(PROVIDERS_KEY, JSON.stringify(data.providers))
@@ -236,7 +237,7 @@ const handleOAuthLogin = (providerId: string) => {
     const state = crypto.randomUUID()
     localStorage.setItem('oauth_state', state)
     stashOAuthRedirect(postLoginTarget(route.query))
-    UserApi.redirectToOAuthLogin(providerId, state)
+    UserAuthApi.redirectToOAuthLogin(providerId, state)
   } catch {
     busy.value = null
     errorMessage.value = t('account.signIn.providerFailed')

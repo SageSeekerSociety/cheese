@@ -47,7 +47,7 @@
 
 <script setup lang="ts">
 import type { OAuthConnectionInfo } from '@/cx_types'
-import type { PasskeyInfo, SessionInfo } from '@/network/api/users/types'
+import type { PasskeyInfo, SessionInfo } from '@/types/apiUsers'
 import type { SetupStep } from './SecurityView.vue'
 
 import { onMounted, ref } from 'vue'
@@ -59,8 +59,9 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 import SecurityView from './SecurityView.vue'
 
 import { ApiError, deleteOAuthConnection, listOAuthConnections } from '@/api'
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
@@ -70,7 +71,8 @@ import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 const dialogs = useDialog()
 const webAuthnSupported = browserSupportsWebAuthn()
 
-const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessage(error, fallback))
+const fail = (error: unknown, fallback: string) =>
+  toast.error(axiosErrorMessage(error, requestErrorMessage(error, fallback)))
 
 async function copy(text: string) {
   try {
@@ -117,7 +119,7 @@ const deletingPasskey = ref<string | null>(null)
 const fetchPasskeys = async () => {
   if (!currentUserId.value) return
   try {
-    const { data } = await UserApi.getUserPasskeys(currentUserId.value)
+    const data = await UserApi.getUserPasskeys(currentUserId.value)
     passkeys.value = data.passkeys
   } catch (error) {
     fail(error, t('account.security.loadFailed'))
@@ -130,7 +132,7 @@ const handleAddPasskey = async () => {
   let rpId: string | undefined
   try {
     await withSudo('passkey:add', async (sudoTicket) => {
-      const { data } = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!, sudoTicket)
+      const data = await UserApi.getPasskeyRegistrationOptions(currentUserId.value!, sudoTicket)
       rpId = data.options.rp?.id
       const attestation = await startRegistration({ optionsJSON: data.options })
       await UserApi.verifyPasskeyRegistration(currentUserId.value!, attestation)
@@ -192,7 +194,7 @@ const backupCodes = ref<string[]>([])
 const fetch2FAStatus = async () => {
   if (!currentUserId.value) return
   try {
-    const { data } = await UserApi.get2FAStatus(currentUserId.value)
+    const data = await UserApi.get2FAStatus(currentUserId.value)
     totpEnabled.value = data.enabled
   } catch (error) {
     fail(error, t('account.security.loadFailed'))
@@ -204,7 +206,7 @@ const handleInitTOTP = async () => {
   totpBusy.value = true
   try {
     await withSudo('2fa:enable', async (sudoTicket) => {
-      const { data } = await UserApi.initializeTOTP(currentUserId.value!, sudoTicket)
+      const data = await UserApi.initializeTOTP(currentUserId.value!, sudoTicket)
       totpSecret.value = data.secret
       qrCodeData.value = data.qrcode
       codesOnly.value = false
@@ -224,7 +226,7 @@ const handleEnableTOTP = async () => {
   totpBusy.value = true
   verifyError.value = ''
   try {
-    const { data } = await UserApi.enableTOTP(currentUserId.value, {
+    const data = await UserApi.enableTOTP(currentUserId.value, {
       code: verificationCode.value,
       secret: totpSecret.value,
     })
@@ -233,7 +235,7 @@ const handleEnableTOTP = async () => {
     await fetch2FAStatus()
   } catch (error) {
     verificationCode.value = ''
-    verifyError.value = requestErrorMessage(error, t('account.security.wrongCode'))
+    verifyError.value = axiosErrorMessage(error, requestErrorMessage(error, t('account.security.wrongCode')))
   } finally {
     totpBusy.value = false
   }
@@ -292,7 +294,7 @@ const generateBackupCodes = async () => {
   generatingCodes.value = true
   try {
     await withSudo('2fa:backup-codes', async (sudoTicket) => {
-      const { data } = await UserApi.generateBackupCodes(currentUserId.value!, sudoTicket)
+      const data = await UserApi.generateBackupCodes(currentUserId.value!, sudoTicket)
       backupCodes.value = data.backup_codes
       codesOnly.value = true
       setupStep.value = 'backup'
@@ -363,7 +365,7 @@ const signingOutOthers = ref(false)
 
 const fetchSessions = async () => {
   try {
-    const { data } = await UserApi.listSessions()
+    const data = await UserApi.listSessions()
     sessions.value = data.sessions
   } catch (error) {
     fail(error, t('account.security.loadFailed'))
@@ -392,7 +394,7 @@ const handleSignOutOthers = async () => {
   if (!confirmed) return
   signingOutOthers.value = true
   try {
-    const { data } = await UserApi.revokeOtherSessions()
+    const data = await UserApi.revokeOtherSessions()
     await fetchSessions()
     toast.success(t('account.security.signedOutOthers', { count: data.revokedCount }))
   } catch (error) {

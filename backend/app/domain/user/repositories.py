@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.answers.models import Answer
 from app.domain.avatars.models import Avatar
+from app.domain.day_windows import utc_day
 from app.domain.identity.models import AgentBinding
 from app.domain.knowledge.models import Knowledge
-from app.domain.platform_stats.windows import utc_day
 from app.domain.questions.models import Question
 from app.domain.task.models import TaskMembership, TaskSubmission
 from app.domain.team.models import Team, TeamUserRelation

@@ -114,6 +114,7 @@ class Jobs:
 
     async def _pump(self, job: str, command_id: str, offset: int) -> None:
         directory = self._dir(job)
+        # Hand-written, not tenacity: this runs on machines with the stdlib only.
         while True:
             try:
                 read = await asyncio.to_thread(

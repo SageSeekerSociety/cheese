@@ -11,15 +11,13 @@ import SignIn from './SignIn.vue'
 
 import { setLocale } from '@/i18n'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: {
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
     getOAuthProviders: vi.fn().mockResolvedValue({
-      data: {
-        providers: [
-          { id: 'github', name: 'GitHub' },
-          { id: 'google', name: 'Google' },
-        ],
-      },
+      providers: [
+        { id: 'github', name: 'GitHub' },
+        { id: 'google', name: 'Google' },
+      ],
     }),
   },
 }))

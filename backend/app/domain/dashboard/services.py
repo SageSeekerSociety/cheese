@@ -21,6 +21,7 @@ from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
 from app.domain.conversation.services import of_rooms, room_column
+from app.domain.day_windows import dense_series, utc_day, utc_day_window
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     agent_instance_handle,
@@ -31,7 +32,6 @@ from app.domain.memory.models import MemoryEntry, parse_user_scope_id
 from app.domain.memory.store import about_person
 from app.domain.notification.models import NotificationType
 from app.domain.notification.repositories import NotificationRepository
-from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_window
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from app.domain.user.models import User
 
 # A personal page's heatmap covers the last year, by UTC day (the day the
-# platform's other per-day charts use, ``app.domain.platform_stats.windows``);
+# platform's other per-day charts use, ``app.domain.day_windows``);
 # each project's sparkline covers the last twelve weeks of it.
 _ACTIVITY_DAYS = 365
 _SPARKLINE_WEEKS = 12

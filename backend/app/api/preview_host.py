@@ -2,7 +2,6 @@
 
 import asyncio
 import hashlib
-import hmac
 import json
 import mimetypes
 import re
@@ -23,6 +22,7 @@ from starlette.websockets import WebSocket, WebSocketState
 from app.api.auth import ActorResolver
 from app.api.preview_runtime import inject_runtime_script
 from app.api.routes.app_preview import relay_http, relay_ws
+from app.core import scoped_jwt
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, BaseError, NotFoundError
@@ -83,10 +83,8 @@ def room_file_addressable(relative: str) -> bool:
     )
 
 
-def _key() -> bytes:
-    return hmac.digest(
-        settings.jwt_secret.encode(), b"cheese:topic-preview:v1", hashlib.sha256
-    )
+#: The purpose these tokens are signed for (`app.core.scoped_jwt`).
+TOKEN_DOMAIN = b"cheese:topic-preview:v1"
 
 
 def mint_preview_token(
@@ -98,7 +96,7 @@ def mint_preview_token(
     resource: dict | None = None,
 ) -> str:
     now = int(time.time())
-    return jwt.encode(
+    return scoped_jwt.sign(
         {
             "sub": handle,
             "topic": str(topic_id),
@@ -108,8 +106,7 @@ def mint_preview_token(
             "iat": now,
             "exp": now + ttl,
         },
-        _key(),
-        algorithm="HS256",
+        domain=TOKEN_DOMAIN,
     )
 
 
@@ -117,12 +114,11 @@ def _claims(
     token: str, topic_id: uuid.UUID, purpose: str, origin: str | None = None
 ) -> dict | None:
     try:
-        claims = jwt.decode(
+        claims = scoped_jwt.verify(
             token,
-            _key(),
-            algorithms=["HS256"],
+            domain=TOKEN_DOMAIN,
             audience=origin or preview_origin(topic_id),
-            options={"require": ["sub", "topic", "aud", "type", "iat", "exp"]},
+            require=["sub", "topic", "aud", "type", "iat", "exp"],
         )
     except (jwt.PyJWTError, AppError, BaseError):
         return None

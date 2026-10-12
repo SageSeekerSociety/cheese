@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.routes import health as health_routes
 from app.core.metrics import registry
 from app.domain.admin.services import AdminService
+from app.domain.day_windows import dense_series, utc_day_window
 from app.domain.feedback.models import FeedbackStatus
 from app.domain.feedback.services import FeedbackService
 from app.domain.platform_stats.claude_pool import read_claude_pool, snapshot_path
@@ -41,7 +42,6 @@ from app.domain.platform_stats.usage_detail import (
     TOP_USERS,
     UsageDetailRepository,
 )
-from app.domain.platform_stats.windows import dense_series, utc_day_window
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.services import UsageService
 from app.domain.user.services import AccountService

@@ -146,10 +146,11 @@ const path = (s: ChartSeries): string => s.values.map((v, i) => `${i === 0 ? 'M'
 /** 末点直标：不开 tooltip 也有结论（「今天走到哪」）。多系列只标**第一条**（主系列）：
  *  每条线都标一个数，右缘就是一列数字墙。系列**全相等**时不标 —— 零流量周标一个
  *  「0」像在说「没有数据」，而压着底的那条线本身就是答案；恒值线同理。
- *  直标会占据最末刻度左边那一小块，它落在**最后一天**的 x 刻度上时那个刻度让位
- *  （同一个位置两个数，留结论、不留坐标 —— 窗口长度在页头上已经写着）。 */
-const END_LABEL_GUARD = 24
-
+ *
+ *  直标和最后一个 x 刻度**同时画**：直标的基线在点上方 8px，最低也在基线（y=160）
+ *  上方，x 刻度字在 y=176 —— 两行字纵向错开，不会压在一起。曾经让最后一个刻度给直标
+ *  让位，结果最后一天（「今天」、最后一个小时）在轴上读不出是哪一天：点画到了 10/12，
+ *  轴字停在 10/11。 */
 const endLabels = computed(() => {
   const s = props.series[0]
   if (!s || s.values.length === 0) return []
@@ -175,9 +176,10 @@ const tickSpan = (tick: { i: number; anchor: 'start' | 'middle' | 'end' }): [num
  *  30 天标 6+1 个，90 天标 0/15/30/45/60/75/89 共 7 个。轴上永远读得出两端和
  *  走向，中间的交给 hover。
  *
- *  窄画布上一格放不下一个字时，步长再放大到放得下；最后一天靠右对齐，紧挨着它的
- *  那个居中的字若仍会压上去，就让位给最后一天（两端永远在）。390px 宽的 7 天窗口
- *  里，「10/10」和「10/11」曾经叠在一起。 */
+ *  窄画布上一格放不下一个字时，步长再放大到放得下。两端的字不居中（第一个靠左、最后
+ *  一个靠右），各比居中的多占半个字宽，所以步长放得下仍可能压上邻居：中间的字压上前一个
+ *  就不画，压上最后一个的也让位给最后一个（两端永远在）。390px 宽的 7 天窗口里，
+ *  「10/10」和「10/11」曾经叠在一起；每小时那张图上「10-06 00:00」压过第二个字。 */
 const xTicks = computed(() => {
   const n = props.xLabels.length
   if (n === 0) return []
@@ -189,17 +191,15 @@ const xTicks = computed(() => {
   }
   if (n - 1 > out[out.length - 1]!.i) out.push({ i: n - 1, anchor: 'end' })
   else out[out.length - 1]!.anchor = 'end'
-  while (out.length > 2 && tickSpan(out[out.length - 2]!)[1] > tickSpan(out[out.length - 1]!)[0]) {
-    out.splice(out.length - 2, 1)
+  if (out.length === 1) return out
+  const last = out[out.length - 1]!
+  const kept = [out[0]!]
+  for (const tick of out.slice(1, -1)) {
+    if (tickSpan(tick)[0] >= tickSpan(kept[kept.length - 1]!)[1]) kept.push(tick)
   }
-  return out
-})
-
-/** 末点直标出现时让位的那个 x 刻度（见 `endLabels` 的守卫注）。 */
-const xTicksVisible = computed(() => {
-  if (endLabels.value.length === 0) return xTicks.value
-  const lastX = x(props.xLabels.length - 1)
-  return xTicks.value.filter((tick) => Math.abs(x(tick.i) - lastX) > END_LABEL_GUARD)
+  while (kept.length > 1 && tickSpan(kept[kept.length - 1]!)[1] > tickSpan(last)[0]) kept.pop()
+  kept.push(last)
+  return kept
 })
 
 /** 点标记只在点数 ≤ 45 时画：90 个点在 1400px 宽下间距 ~15px，实心圆会糊成一条粗线
@@ -334,7 +334,7 @@ const tooltipLeft = computed(() => {
             :y2="PAD_TOP + PLOT_H"
           />
           <text
-            v-for="tick in xTicksVisible"
+            v-for="tick in xTicks"
             :key="`x-${tick.i}`"
             class="alc__ink"
             :x="x(tick.i)"

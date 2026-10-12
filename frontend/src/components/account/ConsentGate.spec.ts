@@ -26,7 +26,7 @@ vi.mock('@/services/account', async () => {
   return { default: { logout: accountLogout }, currentUserId: id }
 })
 vi.mock('@/api/legal', () => ({ LegalApi: { getPendingConsents, acceptDocuments } }))
-vi.mock('@/network/api/users', () => ({ UserApi: { logout: apiLogout } }))
+vi.mock('@/api/userAuth', () => ({ UserAuthApi: { logout: apiLogout } }))
 
 import { usePendingConsent } from '@/composables/usePendingConsent'
 

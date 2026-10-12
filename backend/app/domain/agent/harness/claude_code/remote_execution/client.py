@@ -146,10 +146,10 @@ _CWD_FILE = re.compile(r" && pwd -P >\| ('(?:[^']|'\\'')*'|\S+)\Z")
 SHELL_INPUT_BYTES = 16 * 1024 * 1024
 SHELL_OUTPUT_BYTES = 256 * 1024 * 1024
 # How long a command that never started keeps being retried across a dropped
-# link before the machine is reported out of reach.
+# link before the machine is reported out of reach; how long a reader keeps
+# retrying an executor that answers, but with an error, before giving it up.
+# Retries are hand-written, not tenacity: this ships stdlib-only (`release.sources`).
 SHELL_START_RETRY_S = 60.0
-# How long a reader keeps retrying an executor that answers, but with an error,
-# before giving the command up.
 SHELL_ERROR_RETRY_S = 60.0
 SHELL_READ_RETRY_S = (0.5, 5.0)  # first and longest wait between read retries
 PRIVATE_INSTRUCTIONS = (

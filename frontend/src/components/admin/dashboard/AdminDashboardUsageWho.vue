@@ -10,7 +10,7 @@ import { usageRouteLabel } from '@/lib/adminStats'
 import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 import { userRefRoute } from '@/lib/userRef'
 
-// 用量那一屏的下半：谁触发了多少、每个项目用了哪些模型、最近的调用。三张表都只吃
+// 用量那一屏的下半：谁触发了多少、每个项目用了哪些模型、最近的用量记录。三张表都只吃
 // `/admin/stats/usage` 那一份响应；口径（命中率只算记了缓存的行、按触发的人算）在
 // 后端 `platform_stats/usage_detail.py` 的模块 docstring，这里只负责把它说出来。
 const props = defineProps<{
@@ -132,11 +132,11 @@ function when(at: string): string {
     <h2 class="adw__title">{{ t('feedback.dashboard.usage.recent') }}</h2>
     <BaseTable
       :label="t('feedback.dashboard.usage.recent')"
-      :cols="['120px', null, '120px', '160px', '104px', '96px', '80px', '88px', '88px']"
+      :cols="['120px', null, '120px', '160px', '128px', '96px', '80px', '88px', '88px']"
       :loading="loading && !data"
       :skeleton-rows="5"
       :empty="data && !recent.length ? t('feedback.dashboard.empty.title') : null"
-      min-width="1000px"
+      min-width="1024px"
       cards
     >
       <template #head>
@@ -161,7 +161,14 @@ function when(at: string): string {
         <td class="adw__model" :data-label="t('feedback.dashboard.usage.col.model')" :title="row.model">
           {{ row.model || t('feedback.dashboard.usage.unknownModel') }}
         </td>
-        <td :data-label="t('feedback.dashboard.usage.col.route')">{{ usageRouteLabel(t, row.route) }}</td>
+        <td :data-label="t('feedback.dashboard.usage.col.route')">
+          {{ usageRouteLabel(t, row.route) }}
+          <!-- 网关的一行不是一次请求：是从这把 key 上次读到这次之间、一个模型的花费合计
+               （`gateway_spend.py`），可能是很多次请求。账本不记次数，这里也不写。 -->
+          <span v-if="row.route === 'gateway'" class="adw__batch" :title="t('feedback.dashboard.usage.batchTitle')">
+            · {{ t('feedback.dashboard.usage.batch') }}
+          </span>
+        </td>
         <td class="adw__num t-num" :data-label="t('feedback.dashboard.usage.col.input')">
           {{ fmtNum(row.input_tokens) }}
         </td>
@@ -230,5 +237,10 @@ function when(at: string): string {
 
 .adw__note {
   margin: 8px 0 0;
+}
+
+.adw__batch {
+  color: var(--muted);
+  white-space: nowrap;
 }
 </style>

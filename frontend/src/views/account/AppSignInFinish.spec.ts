@@ -9,10 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AppSignInFinish from './AppSignInFinish.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
-vi.mock('@/network/api/users', () => ({ UserApi: { finishAppSignIn: vi.fn(async () => ({ data: null })) } }))
+vi.mock('@/api/userAuth', () => ({ UserAuthApi: { finishAppSignIn: vi.fn(async () => null) } }))
 vi.mock('@/services/account', () => ({ default: { resumeFromCookie: vi.fn(async () => 'ok') } }))
 
 async function arrive(query: string) {
@@ -40,13 +40,13 @@ describe('AppSignInFinish', () => {
   it('signs nobody in from a link the app did not ask for', async () => {
     await arrive('code=from-somewhere')
     await vi.waitFor(() => expect(document.body.textContent).toContain('登录'))
-    expect(UserApi.finishAppSignIn).not.toHaveBeenCalled()
+    expect(UserAuthApi.finishAppSignIn).not.toHaveBeenCalled()
   })
 
   it('finishes the sign-in this app started, with its secret, and goes where it was headed', async () => {
     localStorage.setItem('cheese.appSignIn', JSON.stringify({ verifier: 'kept-secret', target: '/inbox' }))
     const router = await arrive('code=the-code')
     await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/inbox'))
-    expect(UserApi.finishAppSignIn).toHaveBeenCalledWith('the-code', 'kept-secret')
+    expect(UserAuthApi.finishAppSignIn).toHaveBeenCalledWith('the-code', 'kept-secret')
   })
 })

@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_window
+from app.domain.day_windows import dense_series, utc_day, utc_day_window
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.topic.models import Topic

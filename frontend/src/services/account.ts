@@ -3,13 +3,13 @@ import type { User } from '@/types/users'
 
 import { computed, ref } from 'vue'
 
+import { UserApi } from '@/api/users'
 import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale } from '@/i18n'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { identityChanges } from '@/lib/identity'
 import { resetRoomLink } from '@/lib/roomLink'
 import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
-import { UserApi } from '@/network/api/users'
 import { queryClient } from '@/query/client'
 import { forgetPersistedQueries } from '@/query/persist'
 import { forgetRoomSnapshots } from '@/query/snapshot'
@@ -255,7 +255,7 @@ export class AccountService {
     if (!this.loggedIn || !this.accessToken) return
 
     try {
-      const { data } = await UserApi.getCurrentUser()
+      const data = await UserApi.getCurrentUser()
       if (data.user) {
         this.user = data.user
         localStorage.setItem('user', JSON.stringify(data.user))

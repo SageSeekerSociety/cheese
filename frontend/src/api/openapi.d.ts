@@ -12984,6 +12984,12 @@ export interface components {
             where?: string | null;
             /** Request Id */
             request_id?: string | null;
+            /** Received Events */
+            received_events?: number | null;
+            /** Upstream Failure */
+            upstream_failure?: string | null;
+            /** Ended By */
+            ended_by?: string | null;
         };
         /** BindTeamRequest */
         BindTeamRequest: {

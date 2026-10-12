@@ -1,4 +1,4 @@
-"""Tables for the docs site: what was asked of 问芝士, who came, and credentials."""
+"""Tables for the docs site: what was asked of 问芝士, and who came."""
 
 from datetime import date, datetime
 
@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.domain.common import Timestamps, UuidPk
+from app.domain.common import UuidPk
 
 
 class DocsQuestion(UuidPk, Base):
@@ -102,17 +102,3 @@ class DocsVisit(UuidPk, Base):
         UniqueConstraint("day", "visitor_id", name="uq_docs_visits_day_visitor"),
         Index("ix_docs_visits_day", "day"),
     )
-
-
-class ServiceCredential(Timestamps, Base):
-    """A credential the platform mints for itself at run time and must keep.
-
-    The gateway's virtual key for 问芝士 is the first: minting one is not
-    idempotent on the gateway, so it is minted once, under an advisory lock, and
-    stored here rather than in any deployment's env file.
-    """
-
-    __tablename__ = "service_credentials"
-
-    name: Mapped[str] = mapped_column(String(64), primary_key=True)
-    secret: Mapped[str] = mapped_column(Text)

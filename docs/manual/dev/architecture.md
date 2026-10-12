@@ -24,11 +24,11 @@ covers:
 
 ## 一屏看完 {#summary}
 
-六条线，每条都有一个终点和一道只许变好的检查。「今天」一列是 2026-10-07 在 `main@3d9039c7` 上量的。
+六条线，每条都有一个终点和一道只许变好的检查。「今天」一列除领域分层外是 2026-10-07 在 `main@3d9039c7` 上量的；领域分层一行是 2026-10-12 补完 `__init__.py` 之后重量的。
 
 | 线 | 今天 | 终点 | 看住它的检查 |
 |---|---|---|---|
-| [领域分层](#backend) | 72 个领域包有 395 条跨包边，40 个包在同一个环里，双向依赖 46 对 | 七层，跨层只向下；同层无环；「让高层去做事」只走事件 | `.importlinter` 的 C1–C3，加一条分层契约 |
+| [领域分层](#backend) | 77 个领域包有 428 条跨包边，36 个包在同一个环里，双向依赖 43 对 | 七层，跨层只向下；同层无环；「让高层去做事」只走事件 | `.importlinter` 的 C1–C3，加一条分层契约 |
 | [函数内导入](#deferred-imports) | 850 条，没有一条写明原因 | 没写原因的为 0 | `backend/scripts/check_deferred_imports.py` |
 | [变更推送](#realtime) | 写入后手写通知（`announce_stale`、`tell_project`），只说哪样变了，前端重读；漏写没有检查 | 写入钩子按一张映射表在提交后推，没有手写的通知 | 「不许新增 `announce_stale`」守卫，之后是「面板读到的模型都有变更映射」 |
 | [工作租约与后台任务](#work) | 工作租约是一个 JSON 列，按各进程自己的时钟判过期；一把全局锁下跑 29 个周期任务 | 租约是一张表，四条带条件的 SQL 领取回收；周期任务按任务各自租；全局锁最后退役 | 租约写入只经一个模块；周期任务逐个迁出的清单 |
@@ -39,7 +39,7 @@ covers:
 
 后端的终点是七层领域，一个包只能依赖比它低的层；同一层里的依赖不能成环；低层要让高层去做一件事，只能发事件。
 
-今天的问题在依赖方向，不在目录。`app/domain` 下 72 个包有 395 条跨包边，40 个包落在同一个强连通分量里（2026-08 量的时候是 42 个包里的 26 个）。把只经 `models` 的 69 条边全部去掉，环里还剩 34 个包，所以环不是 ORM 关系一家造成的，业务调用本身在双向走：`agent` 依赖 31 个包，`project` 被 25 个包依赖，它们又互相依赖。[领域包解环](https://github.com/SageSeekerSociety/cheese/blob/main/docs/topics/领域包解环.md)量过，把 repository 调用改成 service 调用，包级的边一条不少。解环只能去掉依赖本身。
+今天的问题在依赖方向，不在目录。`app/domain` 下 77 个包有 428 条跨包边，36 个包落在同一个强连通分量里，双向依赖 43 对（2026-10-12 搬走时间窗口和计价、把服务密钥表挪出文档站、再把归档清理从 `topic` 挪到编排层之后的实测；搬之前是 75 个包、421 条边、44 个包、49 对双向依赖；2026-08 量的时候是 42 个包里的 26 个）。`answers`、`discussion`、`knowledge`、`questions` 四个包原来没有 `__init__.py`，依赖图看不见它们，2026-10-12 补上后才量进来：补之前是 71 个包、403 条边、40 个包成环。把只经 `models` 的 69 条边全部去掉，环里还剩 34 个包（2026-10-07 量的，补入口文件之前），所以环不是 ORM 关系一家造成的，业务调用本身在双向走：`agent` 依赖 31 个包，`project` 被 25 个包依赖，它们又互相依赖。[领域包解环](https://github.com/SageSeekerSociety/cheese/blob/main/docs/topics/领域包解环.md)量过，把 repository 调用改成 service 调用，包级的边一条不少。解环只能去掉依赖本身。
 
 ### 分层 {#backend-tiers}
 
@@ -47,27 +47,26 @@ covers:
 
 | 层 | 是什么 | 包 |
 |---|---|---|
-| 1 底座 | 没有业务判断、被所有人用的记录和工具 | `common`、`conversation`、`idempotency`、`run_record`、`attachment`、`avatars`、`textfile`、`service_keys`、`backend_log`、`frontend_log`、`tag`、`legal` |
+| 1 底座 | 没有业务判断、被所有人用的记录和工具 | `common`、`day_windows`、`conversation`、`idempotency`、`run_record`、`attachment`、`avatars`、`textfile`、`service_keys`、`backend_log`、`frontend_log`、`tag`、`legal` |
 | 2 身份与归属 | 谁、属于哪个团队和项目、在哪个话题里、能做什么 | `identity`、`user`、`team`、`project`、`topic`、`membership`、`topic_membership`、`authz`、`policy`、`invite`、`passkey`、`oauth`、`agent_type`、`agent_credential`、`ratchet` |
-| 3 平台服务 | 被业务同步调用的能力：代码托管、模型单次调用、额度与计量、通知收件箱、投递账本 | `forge`（新）、`repository`、`integration`、`webhook`、`fetch`、`remote_mcp`、`gateway_chat`、`usage`、`notification`、`delivery_ledger`（新） |
-| 4 协作内容 | 房间里的东西：消息、线程、任务、采纳、文档、记忆、反馈、题目 | `notices`（新）、`block`、`thread`、`pin`、`mentions`、`room_task`、`task`、`review`、`living_doc`、`documents`、`library`、`memory`、`feedback`、`space`、`groups`、`questions`、`answers`、`comments`、`discussion`、`knowledge`、`materials`、`project_skill`、`search`、`docs_site` |
+| 3 平台服务 | 被业务同步调用的能力：模型单次调用、额度与计量（含计价）、通知收件箱 | `repository`、`integration`、`webhook`、`fetch`、`remote_mcp`、`gateway_chat`、`usage`、`notification` |
+| 4 协作内容 | 房间里的东西：消息、线程、任务、采纳、文档、记忆、反馈、题目 | `block`、`thread`、`pin`、`mentions`、`room_task`、`task`、`review`、`living_doc`、`documents`、`library`、`memory`、`feedback`、`space`、`groups`、`questions`、`answers`、`comments`、`discussion`、`knowledge`、`materials`、`project_skill`、`search`、`docs_site` |
 | 5 智能体执行 | 一轮怎么跑、在哪台机器上跑 | `agent` 拆出的各包（见[下文](#agent-split)）、`agent_session`、`agent_instance`、`machine`、`device`、`local_fs`、`shell`、`site`、`preview`、`assistant`、`delivery` |
-| 6 编排 | 到点或有事时决定唤起谁 | `routine`、`task_quiet`、`admin` |
+| 6 编排 | 到点或有事时决定唤起谁、清理什么 | `routine`、`task_quiet`、`admin`、`room_cleanup` |
 | 7 报表 | 只读汇总，没有任何包依赖它 | `platform_stats`、`feature_stats`、`dashboard`、`project_progress` |
 
-分层之前先搬五组模块。它们今天住在高层的包里，却被低层大量引用；不搬的话，分层契约第一天就冻进一大批「其实只是放错地方」的边：
+分层之前先搬两组模块。它们住在高层的包里，却被低层引用；不搬的话，分层契约第一天就冻进「其实只是放错地方」的边。这两组已经搬完（2026-10-12）：
 
 | 模块 | 搬到 | 为什么 |
 |---|---|---|
-| `platform_stats/windows.py` | `common` | 一个时间窗口工具，被 `user`、`usage`、`feedback`、`memory` 引用 |
-| `feature_stats/pricing.py` | `usage` | 计价是计量的一部分 |
-| `agent/announce.py`、`agent/platform_notices.py` | `notices`（第 4 层） | 往房间时间线写一条平台消息，属于协作内容；`project`、`policy`、`review`、`webhook` 都在用 |
-| `agent/github_app.py`、`agent/forgejo_tokens.py`、`agent/forge_cli.py` | `forge`（第 3 层） | `review`、`project` 要同步拿令牌，必须在它们下面 |
-| `delivery/addressing.py`、`delivery/ledger.py` | `delivery_ledger`（第 3 层） | 投递账本被 `membership`、`team`、`policy` 引用；把消息交给智能体的那一半留在第 5 层的 `delivery` |
+| `platform_stats/windows.py` | `day_windows.py`（`app/domain` 下的顶层模块，第 1 层） | 一个时间窗口工具，被 `user`、`usage`、`feedback`、`memory` 引用；做成顶层模块而不是塞进 `common`，是因为 `common` 目前是单个文件 |
+| `feature_stats/pricing.py` | `usage/pricing.py` | 计价是计量的一部分 |
 
-按这张表、做完这次搬家，向上的包级边约 70 条（2026-10-07 在依赖图上模拟），全部冻进分层契约，之后逐条还。大头是三类：`topic` 归档时直接清理机器和会话（第 2 层调第 5 层）；`project` 直接读 `review`、`task`、`library`（第 2 层调第 4 层）；`block`、`review`、`room_task` 直接调 `agent` 的 `chat` 和 `runtime` 去唤起一轮（第 4 层调第 5 层，12 条）。
+另外三组（平台通知 `agent/announce.py`、`agent/platform_notices.py`；代码托管凭据 `agent/github_app.py`、`agent/forgejo_tokens.py`、`agent/forge_cli.py`；投递账本 `delivery/addressing.py`、`delivery/ledger.py`）不搬。2026-10-12 在补入口文件之前的依赖图上模拟：五组全搬，包间依赖从 403 条变成 425 条，最大环 40 → 39；只搬上面两组，最大环 40 → 36。三组的层位也还没定：第 2 层的 `membership`、`team`、`policy`、`project` 要用它们，放在第 3、4 层仍是向上依赖；平台通知还依赖第 5 层的 `agent_instance` 和 `delivery`，本身就在环上，放进哪一层都留向上依赖。先拆开这些依赖，再定层位。
 
-**哪些改成事件，哪些保留同步调用。** 只有「让高层去做一件事」改成事件：话题已归档、消息已写入、采纳卡已通过、任务已创建，由第 5、6 层订阅后决定唤起谁、清理什么。需要当场拿到结果的调用（拿 GitHub 令牌、查额度、写一条平台消息）保留同步，办法是把被调用方放到调用方下面，也就是上面那张搬家表做的事。
+向上的包级边按上表在 2026-10-12 实测，归档清理挪到编排层之后是 64 条（搬家前 72 条，两组搬完 67 条，服务密钥表挪走后 66 条；向上的 import 语句 156 条降到 140 条），全部冻进分层契约，之后逐条还。归档清理原来在 `topic` 里，第 2 层直接调第 5 层的机器和会话，现在是编排层的 `room_cleanup`。大头是三类：`topic` 的服务直接调智能体执行层（第 2 层调第 5 层）；`project` 直接读 `review`、`task`、`library`（第 2 层调第 4 层）；`block`、`review`、`room_task` 直接调 `agent` 的 `chat` 和 `runtime` 去唤起一轮（第 4 层调第 5 层，12 条）。
+
+**哪些改成事件，哪些保留同步调用。** 只有「让高层去做一件事」改成事件：话题已归档、消息已写入、采纳卡已通过、任务已创建，由第 5、6 层订阅后决定唤起谁、清理什么。需要当场拿到结果的调用（拿 GitHub 令牌、查额度、写一条平台消息）保留同步，办法是把被调用方放到调用方下面（先把依赖拆开，再定它的层位）。
 
 ### 为什么选这个方案 {#backend-options}
 
@@ -108,7 +107,7 @@ app/domain/<包>/
 
 | 新包 | 从 `agent/` 搬走的 | 层 |
 |---|---|---|
-| `forge`、`notices` | 见上面的搬家表 | 3、4 |
+| `forge`、`notices` | 上面说的两组待定模块，层位先拆依赖再定 | 待定 |
 | `chat`（新，不并进 `conversation`） | `chat.py` 的消息收发、`mentions`、`turn_inputs`、`turn_speakers`、`prompt`、`pending_messages` | 5 |
 | `turns` | `runtime.py` 的 `AgentWorkRunner`、`recovery`、`liveness`、`turn_*`、`turn_adoption` | 5 |
 | `live` | `agent/realtime/` 的 broker、`live_frames`、`live_notices`、`room_events` | 5 |
@@ -119,7 +118,7 @@ app/domain/<包>/
 
 `chat.py` 不并进 `conversation`：`conversation` 在第 1 层，一个依赖都没有、被 20 个包依赖，把 `chat.py` 的依赖带进去会当场造出新环。
 
-拆的顺序按依赖：先拆 `forge` 和 `notices`（只需要搬家），再拆 `preview`、`device`；`gateway` 今天还引用 `agent` 内部的 `service`、`queries`、`room.sessions`、`profiles`、`supply`（`gateway_usage.py:42`），要先断开这几条才能独立。`chat.py` 和 `runtime.py` 最后拆，并且等「合并异常基类」那条任务进 main，否则两边同时大改同一批文件。
+拆的顺序按依赖：先拆 `forge` 和 `notices`（先拆开它们的向上依赖），再拆 `preview`、`device`；`gateway` 今天还引用 `agent` 内部的 `service`、`queries`、`room.sessions`、`profiles`、`supply`（`gateway_usage.py:42`），要先断开这几条才能独立。`chat.py` 和 `runtime.py` 最后拆，并且等「合并异常基类」那条任务进 main，否则两边同时大改同一批文件。
 
 ### 函数内导入 {#deferred-imports}
 
@@ -324,7 +323,7 @@ frontend/src/
 | 步 | 内容 | 依赖 |
 |---|---|---|
 | 1 | 本页；清掉导入契约里失效的冻结条目；`api/routes/users/` 和 `users_password.py` 的函数内导入上提；函数内导入的棘轮；前端分级不再把注释里的 `vue-router` 算成读路由；几处组件不再自己取数或读路由 | 无 |
-| 2a | 搬家：`windows`、`pricing`、`notices`、`forge`、`delivery_ledger` 五组模块 | 1 |
+| 2a | 搬家：`windows`、`pricing` 两组模块（已完成）；`notices`、`forge`、`delivery_ledger` 三组不搬，先拆依赖 | 1 |
 | 2b | 「不许新增 `announce_stale`」「不许新增读进程内存运行态」「新路由必须声明响应模型」三道守卫 | 1 |
 | 2c | 已合并：工作区和应用外壳的服务端数据只经一个 QueryClient，手写缓存删掉；就地改数据改成 `patchQuery`；KeepAlive 页面的 `enabled`。反馈中心、管理后台、空间、资料库另作一步 | 1 |
 | 2d | 租约写入收口：10 处写入收进一个 `lease_store`，带状态转移表；`claim_until` 改用数据库 `now()`；守卫：写 `work_lease` 只许经过它 | 1 |

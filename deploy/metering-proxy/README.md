@@ -200,9 +200,10 @@ An egress that is down or refuses the proxy fails the request; it is never sent
 direct instead. Before a request goes out through it, the proxy checks that the
 egress accepts a connection, with three short attempts so that a blip of a few
 seconds does not fail the turn. An egress that does not answer gets a 503 with
-`x-should-retry: false`, which Claude Code does not retry, and the room shows a
-notice that the subscription's egress machine is offline. That verdict lasts
-five seconds, so the machine is used again as soon as it is back.
+`retry-after`, so the client waits and asks again instead of ending the turn; a
+turn that runs out of retries still shows the notice that the subscription's
+egress machine is offline. That verdict lasts five seconds, so the machine is
+used again as soon as it is back.
 
 - `claude-login.sh egress set http://[user:pass@]host:port` sets it, from the
   next request.

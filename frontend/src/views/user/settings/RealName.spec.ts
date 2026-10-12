@@ -13,8 +13,8 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import RealName from './RealName.vue'
 
+import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
 const STORED = {
   realName: '林知远',
@@ -25,7 +25,7 @@ const STORED = {
 }
 const MASKED = { ...STORED, realName: '林**', studentId: '2********7' }
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
     getRealNameInfo: vi.fn(),
     getPreciseRealNameInfo: vi.fn(),
@@ -84,14 +84,16 @@ beforeEach(() => {
   vi.clearAllMocks()
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
-  vi.mocked(UserApi.getRealNameInfo).mockResolvedValue({ data: { hasIdentity: true, identity: MASKED } } as never)
+  vi.mocked(UserApi.getRealNameInfo).mockResolvedValue({ hasIdentity: true, identity: MASKED } as never)
   vi.mocked(UserApi.getPreciseRealNameInfo).mockResolvedValue({
-    data: { hasIdentity: true, identity: STORED },
+    hasIdentity: true,
+    identity: STORED,
   } as never)
-  vi.mocked(UserApi.updateRealNameInfo).mockResolvedValue({ data: { identity: STORED } } as never)
+  vi.mocked(UserApi.updateRealNameInfo).mockResolvedValue({ identity: STORED } as never)
   vi.mocked(UserApi.deleteRealNameInfo).mockResolvedValue({} as never)
   vi.mocked(UserApi.getRealNameAccessLogs).mockResolvedValue({
-    data: { logs: [], page: { pageSize: 0, hasMore: false, total: 0 } },
+    logs: [],
+    page: { pageSize: 0, hasMore: false, total: 0 },
   } as never)
   vi.mocked(withSudo).mockImplementation(confirmed as never)
   confirmAnswer.mockResolvedValue(true)

@@ -75,7 +75,7 @@ covers:
 - 项目卡片（`_project_card`）：话题数按状态分、最近一次活动、人/AI 贡献比。
 - **贡献比读署名，不读事件行的档位**：档位只分得出「参与者」和「平台」，而这张活跃度问的正是参与者里的哪一种——按档位分组再滤掉平台事件，剩下的全是同一个档，两个数字都归零。判据是 `looks_like_agent_handle(author)`。
 - 机构看板（`space_board`）：这个空间下每个团队一行。它走 **Space → 赛题 → 项目**（`list_ids_for_space_tasks`），不再走 Space → 模板 → 任务 → 关联表那条和赛题平行的层级（#370）。
-- 个人页（`user_profile`）：一年的热力图按 UTC 天、按项目，每个项目再切出最近 12 周的 sparkline（`_SPARKLINE_WEEKS`），和 `platform_stats/windows.py` 用的是同一个「一天」。私人一对一聊天不算任何话题列表的一部分，在本人自己的页面上也不算（`_listed_topic`）。
+- 个人页（`user_profile`）：一年的热力图按 UTC 天、按项目，每个项目再切出最近 12 周的 sparkline（`_SPARKLINE_WEEKS`），和 `day_windows.py` 用的是同一个「一天」。私人一对一聊天不算任何话题列表的一部分，在本人自己的页面上也不算（`_listed_topic`）。
 
 ## 边界与坑 {#traps}
 

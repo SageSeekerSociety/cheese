@@ -230,6 +230,6 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 索引每轮注入，正文要 agent 自己去读一个文件——这整套机制成立的前提就是**它会去读**。所以有一个数：`Read` 打到 `.cheese/memory/` 下的、不是 `MEMORY.md` 的那些调用，**按项目、按天**（`domain/memory/reads.py`）。
 
-数的是事件块（`blocks.kind = 'event'`，`meta.tool` / `meta.detail`），所以没有新表、没有新迁移，历史是免费的。判据用 `meta.detail`（**未剪裁**的参数原文）而不是 `meta.arg`：后者是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录不准。天按 **UTC** 切（`platform_stats.windows.utc_day`）——单参数的 `date_trunc('day', timestamptz)` 按会话时区切天，而部署的会话时区不一定是 UTC（本机是 `Asia/Shanghai`），那会把每天的边界挪几小时，还会让返回的日期和实际分桶的那条边界差一天。
+数的是事件块（`blocks.kind = 'event'`，`meta.tool` / `meta.detail`），所以没有新表、没有新迁移，历史是免费的。判据用 `meta.detail`（**未剪裁**的参数原文）而不是 `meta.arg`：后者是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录不准。天按 **UTC** 切（`day_windows.utc_day`）——单参数的 `date_trunc('day', timestamptz)` 按会话时区切天，而部署的会话时区不一定是 UTC（本机是 `Asia/Shanghai`），那会把每天的边界挪几小时，还会让返回的日期和实际分桶的那条边界差一天。
 
 查：`GET /admin/memory/reads?days=7&project_id=…`（默认七天）。它回答的是「有没有人翻开」，不是「有没有用上」——读了没读懂照样 +1，要回答后者得看别的东西。试点要回答的问题是「一周下来是不是接近 0」；真是 0 的话，下一步是让索引行本身更有信息量，或者把最常要用的几条正文也放进注入预算，不是回去做关键词召回。

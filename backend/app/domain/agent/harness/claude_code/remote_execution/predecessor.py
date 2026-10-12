@@ -77,6 +77,7 @@ def await_predecessor(state, runtime, grace=PREDECESSOR_GRACE_S):
     never answers is neither usable nor installable over, and saying so is the
     one honest outcome left.
     """
+    # Hand-written, not tenacity: this runs on machines with the stdlib only.
     deadline = time.monotonic() + grace
     while time.monotonic() < deadline:
         time.sleep(LOOK_AGAIN_S)
