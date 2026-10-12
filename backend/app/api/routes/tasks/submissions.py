@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, Path, Query
 from app.api.routes.tasks._common import (
     CreateSubmissionReviewRequest,
     PatchSubmissionReviewRequest,
+)
+from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
     get_task_submission_review_service,

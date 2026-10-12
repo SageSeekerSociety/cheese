@@ -14,6 +14,8 @@ from app.api.routes.tasks._common import (
     JoinTaskAsTeamRequest,
     PatchTaskParticipantRequest,
     TaskParticipantRequest,
+)
+from app.api.task_deps import (
     get_task_membership_service,
 )
 from app.api.task_serialization import (

@@ -41,7 +41,6 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.routes.tasks._common import get_task_submission_service
 from app.api.space_deps import (
     _ensure_space_admin,
     _ensure_space_visible,
@@ -49,6 +48,7 @@ from app.api.space_deps import (
     get_space_user_realname_service,
     require_reviewed_space,
 )
+from app.api.task_deps import get_task_submission_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.client_address import resolved_client_address
@@ -317,7 +317,7 @@ class LearningOutlineRequest(BaseModel):
 async def get_space_submission_service(
     db=Depends(get_db),
 ) -> TaskSubmissionService:
-    """空间提交队列要的提交服务: 走 `routes.tasks` 那个现成的装配点。"""
+    """空间提交队列要的提交服务: 走 `app.api.task_deps` 那个现成的装配点。"""
 
     return await get_task_submission_service(db=db)
 

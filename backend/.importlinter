@@ -477,8 +477,6 @@ ignore_imports =
     app.api.routes.notifications_live -> app.api.routes.awaiting
     app.api.routes.preview_sessions -> app.api.preview_host
     app.api.routes.recruitment -> app.api.routes.teams
-    app.api.routes.spaces_analytics -> app.api.routes.tasks._common
-    app.api.routes.task_inheritance -> app.api.routes.tasks._common
     app.api.routes.topics -> app.api.routes.projects
     app.api.routes.topics -> app.api.routes.topics_rows
     app.api.routes.topics_asks -> app.api.routes.topics
