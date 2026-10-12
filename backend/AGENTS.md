@@ -36,8 +36,9 @@ uv run python scripts/check_deferred_imports.py --update   # lower the baseline 
   are frozen at their current size. `.claude/scripts/check-file-sizes.py` judges
   only the files this branch changed, each against the size it had at the merge
   base with `origin/main`.
-- `uv run ruff check .`, `uv run pyright` and `uv run pytest tests/ -n 4 -q` are
-  the rest of `task check`; `task be:check` runs all four locally.
+- From the repository root, run `task ci:fast` before you push: it runs the
+  checks your changed paths select, inside a time budget. Add `--types` when you
+  touch shared types; `task be:check` runs the whole backend check locally.
 - Migrations: [`../.claude/rules/migrations.md`](../.claude/rules/migrations.md)
   — the alembic chain has exactly one head at all times.
 - Test pitfalls by symptom:
