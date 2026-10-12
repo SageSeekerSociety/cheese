@@ -21,12 +21,18 @@ SEVERITY_ORDER = {"blocker": 0, "major": 1, "minor": 2}
 def problems(value, schema, at="result"):
     """The ways `value` breaks `schema`, for the subset of JSON Schema schema.json uses."""
     if "enum" in schema:
-        return [] if value in schema["enum"] else [f"{at}: {value!r} is not one of {schema['enum']}"]
+        return (
+            []
+            if value in schema["enum"]
+            else [f"{at}: {value!r} is not one of {schema['enum']}"]
+        )
     kind = schema.get("type")
     if kind == "object":
         if not isinstance(value, dict):
             return [f"{at}: expected an object"]
-        out = [f"{at}: missing {k}" for k in schema.get("required", []) if k not in value]
+        out = [
+            f"{at}: missing {k}" for k in schema.get("required", []) if k not in value
+        ]
         props = schema.get("properties", {})
         if schema.get("additionalProperties") is False:
             out += [f"{at}: unexpected {k}" for k in value if k not in props]
@@ -37,7 +43,11 @@ def problems(value, schema, at="result"):
     if kind == "array":
         if not isinstance(value, list):
             return [f"{at}: expected an array"]
-        return [p for i, v in enumerate(value) for p in problems(v, schema["items"], f"{at}[{i}]")]
+        return [
+            p
+            for i, v in enumerate(value)
+            for p in problems(v, schema["items"], f"{at}[{i}]")
+        ]
     if kind == "string":
         return [] if isinstance(value, str) else [f"{at}: expected a string"]
     if kind == "integer":
@@ -61,8 +71,10 @@ def render(result: dict, sha: str, method_rev: str, head_now: str) -> str:
         "",
         result["summary"].strip(),
         "",
-        f"Finders raised {result['candidates_found']} candidates; refuters killed "
-        f"{result['candidates_refuted']}; {len(findings)} survived.",
+        (
+            f"Finders raised {result['candidates_found']} candidates; refuters killed "
+            f"{result['candidates_refuted']}; {len(findings)} survived."
+        ),
     ]
     for i, f in enumerate(findings, 1):
         verified = "verified" if f["rung"] >= 4 else "unverified"
@@ -82,9 +94,11 @@ def render(result: dict, sha: str, method_rev: str, head_now: str) -> str:
         lines += [f"- {item.strip()}" for item in result["not_covered"]]
     lines += [
         "",
-        "<sub>Evidence rungs: 1 stated · 2 code read · 3 related test run · "
-        "4 a loud-failing command run · 5 reproduced live. Below 4 a finding still needs "
-        "its confirm command run before it counts.</sub>",
+        (
+            "<sub>Evidence rungs: 1 stated · 2 code read · 3 related test run · "
+            "4 a loud-failing command run · 5 reproduced live. Below 4 a finding still needs "
+            "its confirm command run before it counts.</sub>"
+        ),
     ]
     return "\n".join(lines) + "\n"
 
