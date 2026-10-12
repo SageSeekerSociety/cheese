@@ -481,7 +481,18 @@ class TurnPreparation:
             # 队友手里的句柄不是一个作用域。本轮说话的这几位同时也是这一轮对账
             # 要点名的那几个（`MemoryLedger.remember_turn`），周期任务那一轮的主人也
             # 在里面：他没有署名的消息，只能从那一笔投递上认（`turn_speakers`）。
-            speakers = await turn_speakers(session, delivery_id, pending, private_owner)
+            speakers = await turn_speakers(
+                session,
+                delivery_id,
+                pending,
+                private_owner,
+                # 实况文档写给负责人看：任务自己的会话每一轮都读他那一份。
+                task_owner=(
+                    task.owner_handle
+                    if task is not None and place.thread is None
+                    else None
+                ),
+            )
             memory = await memory_index(
                 session, topic.project_id, speaker_handles=list(speakers)
             )

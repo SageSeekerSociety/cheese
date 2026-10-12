@@ -2133,7 +2133,7 @@
     "checklist": "{name}'s checklist for this turn",
     "opening": {
       "drafting": "{name} is drafting…",
-      "draftingWhat": "Turning the discussion into this task's doc: goal, current state, decided, open",
+      "draftingWhat": "Turning the discussion into this task's doc",
       "waiting": "Not started yet; continues once the environment is connected",
       "failed": "{name} could not draft the doc",
       "failedWhy": "This turn did not finish",

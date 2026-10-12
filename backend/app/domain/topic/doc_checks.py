@@ -79,7 +79,8 @@ def living_doc_warnings(content: str) -> list[str]:
     if len(content) > LIVING_DOC_CHAR_LIMIT:
         warnings.append(
             f"正文 {len(content)} 字，超过 {LIVING_DOC_CHAR_LIMIT} 字的写作预算。"
-            "删掉做完的事、过程和证据细节，只留目标、现状、分工、已确定的事和待决；"
+            "删掉做完的事、过程和证据细节，只留读的人要知道的：为什么做、到哪了、"
+            "在等谁、定了什么、还有什么没定；"
             "细节留在聊天、任务卡和 PR 里。"
         )
 

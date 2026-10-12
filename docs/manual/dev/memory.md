@@ -82,7 +82,7 @@ steps:
 | team | `team/` | 这个项目所有人和所有芝士共看共写 | 项目成员 |
 | private | `private/<handle>/` | **人 × 项目**：某一个人在这个项目里的那一份 | 本人 + 项目管理员 |
 
-注入的规矩：**`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个没说话的人的偏好上是白付。
+注入的规矩：**`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。这一轮替谁做事，他那一份也读，哪怕他这一轮没说话：周期任务那一轮是规则的主人，任务自己的会话里是任务的负责人，实况文档写给他看（`turn_speakers`）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个和这一轮无关的人的偏好上是白付。
 
 这句话不是权限，是预算：`private` 的可见性是另一道闸，在 API 上（见下）。
 
