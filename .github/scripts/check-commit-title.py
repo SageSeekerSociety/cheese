@@ -46,11 +46,29 @@ _TITLE = re.compile(
 #: The ` (#123)` GitHub appends to a squash title: not the author's text.
 _PR_NUMBER = re.compile(r" \(#\d+\)$")
 
-#: Chinese characters. A description with more of them than Latin letters is
-#: written in Chinese; fewer is an English sentence naming a product term such
-#: as 芝士 or 支线, which this repo's titles do and keep doing.
-_HAN = re.compile(r"[一-鿿]")
-_LATIN = re.compile(r"[A-Za-z]")
+#: A run of Chinese characters, and an English word (two letters or more, so
+#: the `a` and `I` of a sentence and the `x` of a variable don't count).
+_HAN_RUN = re.compile(r"[一-鿿]+")
+_WORD = re.compile(r"[A-Za-z][A-Za-z0-9'-]*[A-Za-z0-9]")
+
+#: A Chinese run this long is a clause. Shorter ones are product terms such as
+#: 芝士 or 支线, which this repo's English titles name and keep doing.
+_CLAUSE = 4
+
+
+def is_english(description: str) -> bool:
+    """English, allowing product terms in Chinese inside the sentence.
+
+    Not English: a Chinese clause (a run of `_CLAUSE` characters or more), or
+    terms in Chinese that outnumber half the English words around them, which is
+    a Chinese sentence naming `GitHub` (`修复 GitHub token 刷新失败`), not the
+    other way round.
+    """
+    runs = _HAN_RUN.findall(description)
+    if any(len(run) >= _CLAUSE for run in runs):
+        return False
+    return len(runs) * 2 <= len(_WORD.findall(description))
+
 
 EXAMPLE = "fix(accept): keep the PR branch when a merge conflicts"
 
@@ -68,7 +86,7 @@ def problems(title: str) -> list[str]:
     if title.endswith("."):
         found.append("ends with a period")
     description = match.group("description")
-    if len(_HAN.findall(description)) > len(_LATIN.findall(description)):
+    if not is_english(description):
         found.append("the description is not English")
     return found
 

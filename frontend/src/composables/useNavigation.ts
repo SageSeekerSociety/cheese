@@ -113,6 +113,11 @@ export function useNavigation(): Navigation | null {
       try {
         return (router as Router).resolve(to).href
       } catch {
+        // 名字写错了（改名、拼错）和少一个参数在这里长得一样：都是一条不可点的
+        // 链接，单测里没人会发现。名字根本不在路由表里时在开发/测试下喊一声。
+        if (import.meta.env.DEV && typeof to === 'object' && 'name' in to && to.name != null && !(router as Router).hasRoute(to.name)) {
+          console.warn(`[useNavigation] 路由表里没有叫 ${String(to.name)} 的路由，这条链接画成了不可点的`)
+        }
         return null
       }
     },

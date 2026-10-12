@@ -25,6 +25,8 @@ class CommitTitleTest(unittest.TestCase):
             "fix(accept): open the PR as the requester, not the bot",
             "feat(api)!: drop the v1 topic endpoints",
             "fix(oauth): GitHub token refresh silently returns None",
+            "fix(chat): reply in a 支线",
+            "feat(memory): keep 记忆 and 支线 notes under one 芝士 folder",
             "feat(threads): reply under a channel message in a 支线, where 芝士 answers (#2846)",
             "fix(compute): a room's later sessions start on its whole choice, and every"
             " session on an enrolled device shows the notice (#1899)",
@@ -40,6 +42,9 @@ class CommitTitleTest(unittest.TestCase):
             "misc: tidy things",
             "WIP: 记忆改造 (#1815)",
             "fix(palette): 归档的话题不再出现在「等你处理」里 (#2656)",
+            "fix(accept): 修复 GitHub token 刷新失败",
+            "fix: 改 PR 描述",
+            "fix(chat): 回复变长时对话栏不再贴住最下端 and more",
             "fix: stop the crash.",
             "fix: stop the crash. (#12)",
             "",
