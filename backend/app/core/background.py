@@ -292,6 +292,7 @@ class PeriodicJobs:
         owner_only: bool = True,
     ) -> None:
         if name in self._jobs:
+            # i18n-exempt: startup wiring error for developers, not a user refusal
             raise ValueError(f"periodic job registered twice: {name!r}")
         self._jobs[name] = PeriodicRunner(
             name, interval_seconds, job, owner_only=owner_only
@@ -299,10 +300,12 @@ class PeriodicJobs:
 
     def ordered(self, names: Sequence[str]) -> list[PeriodicRunner]:
         if len(names) != len(set(names)):
+            # i18n-exempt: startup wiring error for developers, not a user refusal
             raise ValueError("periodic job manifest contains duplicate names")
         missing = set(names) - self._jobs.keys()
         unlisted = self._jobs.keys() - set(names)
         if missing or unlisted:
+            # i18n-exempt: startup wiring error for developers, not a user refusal
             raise ValueError(
                 f"periodic job manifest mismatch: missing={sorted(missing)!r}, "
                 f"unlisted={sorted(unlisted)!r}"

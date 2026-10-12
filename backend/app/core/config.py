@@ -866,7 +866,7 @@ class Settings(BaseSettings):
     # can leave a turn running.
     closed_task_stop_interval_s: int = 10
     # How long a message can wait for its turn past a missed wake-up
-    # (`background.periodic_jobs`). One indexed read of the few waiting
+    # (`app.periodic_jobs.periodic_jobs`). One indexed read of the few waiting
     # messages per run (`ix_blocks_queued_messages`), owner process only.
     queued_message_sweep_interval_s: int = 10
     # How long a backend on its way out waits for the prompts it is still
