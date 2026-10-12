@@ -136,7 +136,8 @@ export const boundaryRule = {
      * names its props' types, and the type of a server record lives in the API
      * layer, with no house re-export to reach it through (`.claude/rules/
      * architecture.md`: "Data in by prop … **the shape of the props is on
-     * you**"). 21 of the 95 frozen violations were this and nothing else.
+     * you**"). When this half was written, 21 of the 95 frozen violations were
+     * this and nothing else.
      *
      * The vue-router half keeps counting type-only imports on purpose: there
      * *is* a house alternative — `NavTarget` from `lib/navTarget.ts` — and
