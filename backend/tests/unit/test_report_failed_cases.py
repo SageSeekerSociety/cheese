@@ -2,6 +2,7 @@
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 from scripts.report_failed_cases import (
     ANNOTATION_LIMIT,
     COMMAND_LIMIT,
+    Failure,
     format_annotations,
     report,
 )
@@ -225,6 +227,106 @@ def test_format_annotations_keeps_nothing_when_there_are_no_failures() -> None:
 
 def test_the_empty_message_placeholder_is_used() -> None:
     commands = format_annotations(
-        [("backend/tests/unit/x.py", "3", "test_x", _EMPTY_MESSAGE)]
+        [Failure("backend/tests/unit/x.py", "3", None, "test_x", _EMPTY_MESSAGE)]
     )
     assert _EMPTY_MESSAGE in commands[0]
+
+
+def _rerun_in(annotation: str) -> str:
+    """The rerun command an annotation carries, without the ``rerun: `` label."""
+    return annotation.split("rerun: ", 1)[1]
+
+
+def _argument_after_pytest(annotation: str) -> str:
+    """The text the annotation hands to ``pytest``, quoting and all."""
+    return _rerun_in(annotation).split("pytest ", 1)[1]
+
+
+def _shell_arguments(text: str) -> list[str]:
+    """The argv a real shell builds from ``text``.
+
+    The property under test is where the shell decides one argument ends, so a
+    shell has to answer it; ``shlex.split`` shares the bug it would be checking
+    for. ``%s\\0`` keeps the arguments separable, and ``check`` turns bash's own
+    complaint — an unterminated quote — into a failure here.
+    """
+    done = subprocess.run(
+        ["bash", "-c", f'printf "%s\\0" {text}'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return done.stdout.split("\0")[:-1]
+
+
+# Node ids this suite really produces. A parametrised id quotes the tested text,
+# so an id can carry an apostrophe, a double quote, a pipe or a space — quoting
+# the id with a fixed pair of single quotes ends early on the first id, and a
+# pair of double quotes on the second.
+REAL_NODE_IDS = [
+    "tests/unit/test_machine_files.py::test_find_matches_names_and_paths_and_"
+    "skips_what_git_ignores[the platform's ripgrep]",
+    "tests/unit/test_analytics_view_helpers.py::TestCsvRow::"
+    'test_a_cell_that_would_be_a_formula_is_neutralised[=HYPERLINK("http://'
+    'evil.example","click")]',
+    "tests/unit/test_analytics_view_helpers.py::TestCsvRow::"
+    "test_a_cell_that_would_be_a_formula_is_neutralised[=cmd|'/C calc'!A1]",
+]
+
+
+def test_an_annotation_names_the_case_by_node_id_and_how_to_rerun_it(
+    tmp_path: Path,
+) -> None:
+    # The node id is what a reader pastes into pytest; the bare name does not say
+    # which module's ``test_fails`` broke. The parametrised id has a space and
+    # brackets in it, so the shell only reaches pytest with it intact if it is
+    # quoted — the argv below is the property, not the quoting style.
+    nodeid = "tests/unit/test_mod.py::TestWidget::test_import_error[case 2]"
+    body = case(
+        "test_import_error[case 2]",
+        file="tests/unit/test_mod.py",
+        line="18",
+        message="AssertionError: boom",
+        nodeid=nodeid,
+    )
+    (command,) = [
+        c for c in report(write_report(tmp_path, body), None) if " file=" in c
+    ]
+    assert command.startswith(
+        "::error file=backend/tests/unit/test_mod.py,line=18::"
+        "tests/unit/test_mod.py::TestWidget::test_import_error[case 2] —"
+    )
+    assert shlex.split(_rerun_in(command)) == [
+        "cd",
+        "backend",
+        "&&",
+        "uv",
+        "run",
+        "pytest",
+        nodeid,
+    ]
+
+
+def test_every_real_node_id_reaches_the_shell_as_one_argument() -> None:
+    # ``shlex.split`` proves the annotation and the test agree with each other;
+    # only a shell proves the command reaches pytest, which is what the reader
+    # pastes into a terminal.
+    for nodeid in REAL_NODE_IDS:
+        commands = format_annotations(
+            [Failure("backend/tests/unit/x.py", "3", nodeid, "test_x", "boom")]
+        )
+        assert _shell_arguments(_argument_after_pytest(commands[0])) == [nodeid], nodeid
+
+
+def test_without_a_node_id_the_name_names_the_case_and_no_rerun_is_offered(
+    tmp_path: Path,
+) -> None:
+    # pytest's xUnit 1 report carries file/line but no node id; the annotation
+    # then falls back to the test name and offers no command, rather than
+    # inventing one that will not resolve.
+    body = case("test_named_only", file="tests/unit/test_mod.py", line="7")
+    (command,) = [
+        c for c in report(write_report(tmp_path, body), None) if " file=" in c
+    ]
+    assert "test_named_only —" in command
+    assert "rerun:" not in command

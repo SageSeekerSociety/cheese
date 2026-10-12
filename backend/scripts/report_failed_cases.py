@@ -8,6 +8,10 @@ step asks for; this reads the report back and restates its failing cases as
 ``::error`` workflow commands, which GitHub attaches to the files in the change
 instead of leaving them buried in a log nobody can open.
 
+Each annotation names the case by its node id and carries the one command that
+reruns it, so a reader can reproduce the failure without working out which of a
+module's cases broke.
+
 A shard can also die before it writes any report — collection stopped and the
 partition artifact never appeared. Then its captured stdout is the only evidence
 left, so the tail of that is annotated instead.
@@ -18,9 +22,11 @@ its own: ``main`` prints and exits 0 whatever it finds.
 
 import argparse
 import re
+import shlex
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import NamedTuple
 
 # GitHub keeps ten error annotations per step and silently drops the rest; the
 # summary below is one of the ten, so at most nine files get a line of their own.
@@ -117,8 +123,37 @@ def _repo_relative(raw: str | None) -> str | None:
     return str(BACKEND.relative_to(REPO_ROOT) / candidate)
 
 
-def _failures(tree: ET.ElementTree) -> list[tuple[str | None, str | None, str, str]]:
-    """``(file, line, test name, reason)`` for every failing case, in report order."""
+class Failure(NamedTuple):
+    """One failing case: where it lives, how to name and rerun it, and why."""
+
+    file: str | None
+    line: str | None
+    nodeid: str | None
+    name: str
+    reason: str
+
+
+def _display(failure: Failure) -> str:
+    """What to call the case: its node id when the report carries one, else its name."""
+    return failure.nodeid or failure.name
+
+
+def _rerun(failure: Failure) -> str:
+    """The command that runs only this case, or ``""`` when no node id is known.
+
+    The node id is relative to the pytest rootdir, which is ``backend/``, so the
+    command enters that directory first. ``shlex.quote`` rather than a pair of
+    single quotes: a parametrised id quotes the test's own text, and this suite
+    already has ids carrying an apostrophe (``[the platform's ripgrep]``), which
+    a fixed pair of quotes would end early and hand the shell as two arguments.
+    """
+    if not failure.nodeid:
+        return ""
+    return f"rerun: cd backend && uv run pytest {shlex.quote(failure.nodeid)}"
+
+
+def _failures(tree: ET.ElementTree) -> list[Failure]:
+    """One ``Failure`` per failing case, in report order."""
     found = []
     for case in tree.getroot().iter("testcase"):
         node = _failure_node(case)
@@ -126,31 +161,42 @@ def _failures(tree: ET.ElementTree) -> list[tuple[str | None, str | None, str, s
             continue
         file_name, line = _location(case, node)
         name = case.get("name") or case.get("classname") or "<unknown>"
-        found.append((_repo_relative(file_name), line, name, _first_line(node)))
+        found.append(
+            Failure(
+                _repo_relative(file_name),
+                line,
+                _property(case, "cheese_nodeid") or None,
+                name,
+                _first_line(node),
+            )
+        )
     return found
 
 
-def format_annotations(
-    failures: list[tuple[str | None, str | None, str, str]],
-) -> list[str]:
+def format_annotations(failures: list[Failure]) -> list[str]:
     """The ``::error`` commands for ``failures``: one per file, then a summary."""
-    groups: dict[str | None, list[tuple[str | None, str | None, str, str]]] = {}
+    groups: dict[str | None, list[Failure]] = {}
     for failure in failures:
-        groups.setdefault(failure[0], []).append(failure)
+        groups.setdefault(failure.file, []).append(failure)
     # The most informative first: a file that broke five cases says more than one
     # that broke a single case. Ties keep report order.
     ordered = sorted(groups.values(), key=len, reverse=True)
 
     commands = []
     for group in ordered[: ANNOTATION_LIMIT - 1]:
-        file_name, line, name, reason = group[0]
-        detail = f"{name} — {reason}"
+        first = group[0]
+        detail = f"{_display(first)} — {first.reason}"
         if len(group) > 1:
             detail += f" ({len(group)} failures in this file)"
-        if file_name and line:
-            commands.append(_command(f"::error file={file_name},line={line}::", detail))
+        rerun = _rerun(first)
+        if rerun:
+            detail += f" | {rerun}"
+        if first.file and first.line:
+            commands.append(
+                _command(f"::error file={first.file},line={first.line}::", detail)
+            )
         else:
-            detail = f"{file_name}: {detail}" if file_name else detail
+            detail = f"{first.file}: {detail}" if first.file else detail
             commands.append(_command("::error::", detail))
     commands.append(
         _command(
@@ -161,7 +207,7 @@ def format_annotations(
     return commands
 
 
-def _read_failures(results: Path) -> list[tuple[str | None, str | None, str, str]]:
+def _read_failures(results: Path) -> list[Failure]:
     if not results.exists():
         return []
     try:

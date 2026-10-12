@@ -248,7 +248,10 @@ merge handling is in [`metric-snapshots.md`](../.claude/rules/metric-snapshots.m
 - `pnpm run lint` is the read-only ESLint (the writer is `lint:fix`); never gate
   on the writing form. Design tokens and the two themes have their own ratchet —
   [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).
-- `task fe:check` runs lint, boundaries, scenes, scene debt, catalog, style, typecheck, unit tests and build.
+- From the repository root, run `task ci:fast` before you push: it runs the
+  checks your changed paths select, inside a time budget. `task fe:check` runs
+  the whole frontend check, including the a11y, scene-debt and build steps the
+  fast tier never runs.
 - A dev server may already be running on 3001/3002 in this worktree; do not
   restart one you did not start.
 - A new page under `src/views/admin/features/`: the chart components take props
