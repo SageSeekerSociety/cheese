@@ -1,16 +1,20 @@
 // @vitest-environment jsdom
+// 空间一域：逐个方法钉住它发出去的浏览器请求（方法、地址与查询、鉴权头、JSON/多分体正文），
+// 并核对载荷契约 —— JSON 调用直接给 payload，无载荷命令给显式成功值。空间端点在**新 origin**
+// （`newer`），多分体上传（`uploadMaterial`）的文件在前、可见性字段在后。钉的是浏览器可见的
+// 请求，不是 axios 配置或包装源码。
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
 import {
-  compareRequests,
   type ContractCase,
   contractEnvironment,
+  contractRequest,
   envelope,
   newer,
   server,
   uploadFile,
-} from './migrationContract.spec.helper'
+} from './requestContract.spec.helper'
 
 contractEnvironment()
 const cases: Record<string, ContractCase> = {
@@ -257,19 +261,14 @@ describe('spaces browser contract', () => {
           : HttpResponse.json(kind === 'null' ? envelope(null) : { code: 200, message: 'ok' })
       )
     )
-    const { SpacesApi: old } = await import('@/network/api/spaces')
     const { SpacesApi: next } = await import('./spaces')
-    await expect(old.removeMember(7, 9)).resolves.not.toBeUndefined()
     await expect(next.removeMember(7, 9)).resolves.toBe(true)
   })
   it.each(Object.entries(cases))('%s preserves the request and returns the payload', async (name, test) => {
-    const { SpacesApi: old } = await import('@/network/api/spaces')
     const { SpacesApi: next } = await import('./spaces')
     const args = name === 'uploadMaterial' ? [7, uploadFile(), 'members'] : test.args
-    await compareRequests(
-      test,
-      () => (old[name as keyof typeof old] as (...args: unknown[]) => Promise<unknown>)(...args),
-      () => (next[name as keyof typeof next] as (...args: unknown[]) => Promise<unknown>)(...args)
+    await contractRequest(test, () =>
+      (next[name as keyof typeof next] as (...args: unknown[]) => Promise<unknown>)(...args)
     )
   })
 })

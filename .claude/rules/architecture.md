@@ -43,8 +43,10 @@ Conventions no contract sees:
 ## Frontend: a component does not fetch
 
 Enforced by ESLint under `src/components/**` (no `@/api`, `@/services/*`,
-`@/network/*`, `vue-router`); the rule's own message is the fix. The four
-principles, in the order they matter:
+`vue-router`); the rule's own message is the fix. Outside the component
+boundary the whole tree is barred from `@/network` — that stack was retired and
+`frontend/eslint.config.mjs` keeps a `no-restricted-imports` rule so it cannot
+come back. The four principles, in the order they matter:
 
 1. **Data in by prop, out by emit.** A component that takes what it renders
    can be reasoned about from its template; **the shape of the props is on

@@ -1,16 +1,15 @@
 // @vitest-environment jsdom
 // The teams domain's authentication contract, split out of
 // `teamsContract.spec.ts` to keep each file under the src/api size cap. Teams
-// rides the new origin on both stacks, so its old (`NewApiInstance`) and new
-// (`axiosNewApi`) transports are the two objects whose 401 refresh/redirect
-// behaviour must agree — that flow is where the migration changed the
-// transport, so it is exercised here on the migrated (new) path. The request and
-// payload contract, the refusals and the empty-command success bit are in
-// `teamsContract.spec.ts`.
+// rides the new origin, so this pins how the new transport (`axiosNewApi`)
+// handles the 401 refresh/redirect flow — no bearer when the caller is signed
+// out or holds an empty token, one refresh-and-retry, and what happens when the
+// refresh is rejected or unreachable. The request and payload contract, the
+// refusals and the empty-command success bit are in `teamsContract.spec.ts`.
 import { http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { auth, contractEnvironment, envelope, newer, refresh, replace, server } from './migrationContract.spec.helper'
+import { auth, contractEnvironment, envelope, newer, refresh, replace, server } from './requestContract.spec.helper'
 
 // The reporter is a side effect (a queued fetch to the run records), not a
 // method under test: silence it so a refusal we deliberately send does not
@@ -19,18 +18,14 @@ vi.mock('@/errorReporter', () => ({ reportError: vi.fn() }))
 
 contractEnvironment()
 
-let oldTeams: typeof import('@/network/api/teams').TeamsApi
 let newTeams: typeof import('./teams').TeamsApi
 
 beforeAll(async () => {
-  ;({ TeamsApi: oldTeams } = await import('@/network/api/teams'))
   ;({ TeamsApi: newTeams } = await import('./teams'))
 })
 
-describe('teams migration: authentication edge cases', () => {
-  // The old `NewApiInstance` and the new `axiosNewApi` share the new origin, so
-  // both carry the same bearer; the 401 refresh/redirect flow is exercised on
-  // the migrated (new) path, which is where the contract changed.
+describe('teams: authentication edge cases', () => {
+  // The 401 refresh/redirect flow lives in the new transport (`axiosNewApi`).
   const unauthorized = () => {
     let requests = 0
     server.use(
@@ -43,7 +38,7 @@ describe('teams migration: authentication edge cases', () => {
     return () => requests
   }
 
-  it('sends no bearer for a logged-out or empty-token caller on either stack', async () => {
+  it('sends no bearer for a logged-out or empty-token caller', async () => {
     for (const state of [
       { loggedIn: false, accessToken: 'contract-token' },
       { loggedIn: true, accessToken: '' },
@@ -57,7 +52,6 @@ describe('teams migration: authentication edge cases', () => {
         })
       )
       expect(await newTeams.detail(7)).toEqual({ team: { id: 7 } })
-      expect((await oldTeams.detail(7)).data).toEqual({ team: { id: 7 } })
     }
   })
 

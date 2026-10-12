@@ -260,9 +260,9 @@ describe('公告没读出来', () => {
   })
 
   it('403 说的是「没权限」，并且不给一颗按不动的重试', async () => {
-    // `code: 403` 是 axios 拦截器翻出来的那种（`BusinessError`，见
-    // `lib/loadFailure.ts` 的 `isForbidden`），不是 `status`。
-    const view = await failedPage(Object.assign(new Error('nope'), { code: 403 }))
+    // `status: 403` 是 `@/api` 交上来的那种（`ApiError`，见 `lib/loadFailure.ts`
+    // 的 `isForbidden`）。
+    const view = await failedPage(Object.assign(new Error('nope'), { status: 403 }))
     const block = view.container.querySelector('.base-load-error') as HTMLElement
 
     expect(block.textContent).toContain('你没有权限查看')

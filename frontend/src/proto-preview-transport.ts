@@ -5,7 +5,7 @@
  *
  *  出口有两条，都要汇到同一份假数据上：
  *    * `src/api.ts` 那一层用 `fetch`；
- *    * `network/api` 那一层用 axios（空间申请、成员管理走它），而 axios 在浏览器里
+ *    * `src/api/**` 那一层用 axios（空间申请、成员管理走它），而 axios 在浏览器里
  *      默认用 XHR 适配器，**根本不经过 `window.fetch`**。
  */
 import axios from 'axios'
@@ -20,7 +20,7 @@ const PREVIEW_SLOW = typeof location !== 'undefined' && new URLSearchParams(loca
  *  **两种形状都要接**，因为两条出口发出来的路径本来就不一样：
  *    * `/api/...` —— `src/api.ts` 那条出口；`VITE_API_BASE_URL=/api` 时 axios 也发这个。
  *    * 无前缀的 `/admin/...` 与 `/feedback/...` —— **`VITE_API_BASE_URL` 为空时 axios
- *      发的就是这个**（`network/api/index.ts` 的 `baseURL` 直接取那个变量，没有
+ *      发的就是这个**（`api/axiosHttp.ts` 的 `baseURL` 直接取那个变量，没有
  *      fallback）。
  *
  *  空 baseURL 不是假想：Vite 只加载 `.env` / `.env.local` / `.env.[mode]*`，**不加载

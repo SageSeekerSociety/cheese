@@ -6,7 +6,7 @@
 // - 领了才能用这道题新建项目；
 // - 我的进度按我最新那一版提交与它的评审算。
 //
-// 接口在 `@/network/api/*` 那一层换掉：真 axios 会被 `src/test/setup-network.ts` 逮住。
+// 接口在 API 层换掉：真 axios 会被 `src/test/setup-network.ts` 逮住。
 // 页签内容是子路由，这里用空壳顶上 —— 它们各有各的测试。
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'

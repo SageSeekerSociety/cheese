@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 // The spaces domain's failure and edge evidence: what a refusal, an edge page,
-// a lost network, a 401 and a blob answer each do to the old axios stack and
-// the new payload stack. The happy-path request/response contract for every
-// method lives in `spacesContract.spec.ts`; this file is only the cases a
-// success handler cannot reach, kept separate so neither spec becomes a bin.
+// a lost network, a 401 and a blob failure each do to the new payload stack. The
+// happy-path request/response contract for every method lives in
+// `spacesContract.spec.ts`; this file is only the cases a success handler cannot
+// reach, kept separate so neither spec becomes a bin.
 import { delay, http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -16,7 +16,7 @@ import {
   replace,
   server,
   uploadFile,
-} from './migrationContract.spec.helper'
+} from './requestContract.spec.helper'
 
 // The reporter is a side effect (a queued fetch to the run records), not a
 // method under test: silence it so a swallowed failure does not leave the
@@ -25,17 +25,13 @@ vi.mock('@/errorReporter', () => ({ reportError: vi.fn() }))
 
 contractEnvironment()
 
-let oldSpaces: typeof import('@/network/api/spaces').SpacesApi
-let newSpaces: typeof import('./spaces').SpacesApi
+let spaces: typeof import('./spaces').SpacesApi
 let handler: typeof import('@/services/ErrorHandler').default
-let legacyErrorMessage: (error: unknown, fallback: string) => string
 let newErrorMessage: (error: unknown, fallback: string) => string
 
 beforeAll(async () => {
-  ;({ SpacesApi: oldSpaces } = await import('@/network/api/spaces'))
-  ;({ SpacesApi: newSpaces } = await import('./spaces'))
+  ;({ SpacesApi: spaces } = await import('./spaces'))
   ;({ default: handler } = await import('@/services/ErrorHandler'))
-  ;({ requestErrorMessage: legacyErrorMessage } = await import('@/network/utils/requestErrorMessage'))
   ;({ axiosErrorMessage: newErrorMessage } = await import('./axiosHttp'))
 })
 
@@ -50,24 +46,17 @@ const structuredRefusal = (status: number) =>
     { status }
   )
 
-describe('spaces migration: structured refusals keep their meaning', () => {
+describe('spaces: structured refusals keep their meaning', () => {
   it.each([400, 403, 404, 422, 500, 503])('%s keeps the condition name, sentence and data', async (status) => {
     server.use(http.get(`${newer}/spaces/7`, () => structuredRefusal(status)))
-    const old = await oldSpaces.detail(7).catch((error) => error)
-    const next = await newSpaces.detail(7).catch((error) => error)
-    expect(old).toMatchObject({
-      message: 'You cannot read this',
-      code: status,
-      error: { name: 'AccessDeniedError', data: { reason: 'membership' } },
-    })
-    expect(next).toMatchObject({
+    const error = await spaces.detail(7).catch((failure) => failure)
+    expect(error).toMatchObject({
       message: 'You cannot read this',
       status,
       code: 'AccessDeniedError',
       data: { reason: 'membership' },
     })
-    expect(legacyErrorMessage(old, 'fallback')).toBe('You cannot read this')
-    expect(newErrorMessage(next, 'fallback')).toBe('You cannot read this')
+    expect(newErrorMessage(error, 'fallback')).toBe('You cannot read this')
   })
 
   it('keeps an unnamed 403 sentence rather than replacing it with a generic one', async () => {
@@ -76,22 +65,16 @@ describe('spaces migration: structured refusals keep their meaning', () => {
         HttpResponse.json({ code: 403, message: 'Server sentence', data: null }, { status: 403 })
       )
     )
-    const old = await oldSpaces.detail(7).catch((error) => error)
-    const next = await newSpaces.detail(7).catch((error) => error)
-    expect(legacyErrorMessage(old, 'fallback')).toBe('Server sentence')
-    expect(newErrorMessage(next, 'fallback')).toBe('Server sentence')
+    const error = await spaces.detail(7).catch((failure) => failure)
+    expect(newErrorMessage(error, 'fallback')).toBe('Server sentence')
   })
 
   it('reads an edge page as a transport failure, including a 200 one', async () => {
     for (const status of [200, 502]) {
       server.use(http.get(`${newer}/spaces/7`, () => new HttpResponse('<html>offline</html>', { status })))
-      const old = await oldSpaces.detail(7).catch((error) => error)
-      const next = await newSpaces.detail(7).catch((error) => error)
-      expect(old).toBeInstanceOf(Error)
-      expect(next).toBeInstanceOf(Error)
-      expect(next.message).toBe(old.message)
-      expect(legacyErrorMessage(old, 'fallback')).toBe(old.message)
-      expect(newErrorMessage(next, 'fallback')).toBe(old.message)
+      const error = (await spaces.detail(7).catch((failure) => failure)) as Error
+      expect(error).toBeInstanceOf(Error)
+      expect(newErrorMessage(error, 'fallback')).toBe(error.message)
     }
   })
 
@@ -103,29 +86,23 @@ describe('spaces migration: structured refusals keep their meaning', () => {
         return HttpResponse.error()
       })
     )
-    const old = await oldSpaces.detail(7).catch((error) => error)
-    const next = await newSpaces.detail(7).catch((error) => error)
-    expect(old).toBeInstanceOf(Error)
-    expect(next).toBeInstanceOf(Error)
-    expect(legacyErrorMessage(old, 'fallback')).toBe('fallback')
-    expect(newErrorMessage(next, 'fallback')).toBe('fallback')
-    expect(requests).toBe(2)
+    const error = await spaces.detail(7).catch((failure) => failure)
+    expect(error).toBeInstanceOf(Error)
+    expect(newErrorMessage(error, 'fallback')).toBe('fallback')
+    expect(requests).toBe(1)
   })
 })
 
-describe('spaces migration: a read never invents a command success', () => {
+describe('spaces: a read never invents a command success', () => {
   it.each([null, false, 0, ''])('a payload read returns falsy %j unchanged', async (value) => {
     server.use(http.get(`${newer}/spaces/7`, () => HttpResponse.json(envelope(value))))
-    const old = await oldSpaces.detail(7)
-    const next = await newSpaces.detail(7)
-    expect(old).toEqual({ code: 200, message: 'ok', data: value })
-    expect(next).toEqual(value)
+    expect(await spaces.detail(7)).toEqual(value)
   })
 
   it('distinguishes a command sentinel from a caught failure for the caller', async () => {
     server.use(http.delete(`${newer}/spaces/7/members/9`, () => HttpResponse.json(envelope(null))))
     const success = vi.fn()
-    const sentinel = await handler.withErrorHandling(() => newSpaces.removeMember(7, 9), { showToast: false })
+    const sentinel = await handler.withErrorHandling(() => spaces.removeMember(7, 9), { showToast: false })
     if (sentinel !== undefined) success()
     expect(sentinel).toBe(true)
     expect(success).toHaveBeenCalledOnce()
@@ -136,14 +113,14 @@ describe('spaces migration: a read never invents a command success', () => {
       )
     )
     const failure = vi.fn()
-    const caught = await handler.withErrorHandling(() => newSpaces.removeMember(7, 9), { showToast: false })
+    const caught = await handler.withErrorHandling(() => spaces.removeMember(7, 9), { showToast: false })
     if (caught !== undefined) failure()
     expect(caught).toBeUndefined()
     expect(failure).not.toHaveBeenCalled()
   })
 })
 
-describe('spaces migration: authentication edge cases', () => {
+describe('spaces: authentication edge cases', () => {
   const detailUnauthorized = () => {
     let requests = 0
     server.use(
@@ -169,7 +146,7 @@ describe('spaces migration: authentication edge cases', () => {
           return HttpResponse.json(envelope({ space: { id: 7 } }))
         })
       )
-      expect(await newSpaces.detail(7)).toEqual({ space: { id: 7 } })
+      expect(await spaces.detail(7)).toEqual({ space: { id: 7 } })
     }
   })
 
@@ -189,7 +166,7 @@ describe('spaces migration: authentication edge cases', () => {
         return HttpResponse.json(envelope({ space: { id: 7 } }))
       })
     )
-    expect(await newSpaces.detail(7)).toEqual({ space: { id: 7 } })
+    expect(await spaces.detail(7)).toEqual({ space: { id: 7 } })
     expect(authorization).toEqual(['Bearer contract-token', 'Bearer refreshed-token'])
     expect(refresh).toHaveBeenCalledOnce()
   })
@@ -198,7 +175,7 @@ describe('spaces migration: authentication edge cases', () => {
     const count = detailUnauthorized()
     refresh.mockReset().mockResolvedValue({ kind: 'rejected' })
     replace.mockReset()
-    await expect(newSpaces.detail(7)).rejects.toBeInstanceOf(Error)
+    await expect(spaces.detail(7)).rejects.toBeInstanceOf(Error)
     expect(count()).toBe(1)
     expect(replace).toHaveBeenCalledWith('/account/signin')
   })
@@ -207,7 +184,7 @@ describe('spaces migration: authentication edge cases', () => {
     const count = detailUnauthorized()
     refresh.mockReset().mockResolvedValue({ kind: 'unreachable' })
     replace.mockReset()
-    await expect(newSpaces.detail(7)).rejects.toBeInstanceOf(Error)
+    await expect(spaces.detail(7)).rejects.toBeInstanceOf(Error)
     expect(count()).toBe(1)
     expect(replace).not.toHaveBeenCalled()
   })
@@ -218,14 +195,14 @@ describe('spaces migration: authentication edge cases', () => {
       auth.accessToken = 'refreshed-token'
       return { kind: 'ok', token: 'refreshed-token' }
     })
-    const error = await newSpaces.detail(7).catch((failure) => failure)
+    const error = await spaces.detail(7).catch((failure) => failure)
     expect(error).toBeInstanceOf(Error)
     expect(count()).toBe(2)
     expect(refresh).toHaveBeenCalledOnce()
   })
 })
 
-describe('spaces migration: upload progress, timeout and multipart shape', () => {
+describe('spaces: upload progress, timeout and multipart shape', () => {
   it('lets a slow upload finish and carries the 60s upload timeout, not the 30s default', async () => {
     const { axiosNewApi } = await import('./axiosHttp')
     // What is verified: the upload dial raises the per-request timeout above
@@ -251,7 +228,7 @@ describe('spaces migration: upload progress, timeout and multipart shape', () =>
           return HttpResponse.json(envelope({ material: { id: 1 } }), { status: 201 })
         })
       )
-      const material = await newSpaces.uploadMaterial(7, uploadFile(), 'members', (event) => {
+      const material = await spaces.uploadMaterial(7, uploadFile(), 'members', (event) => {
         progress.push(event.loaded ?? 0)
         final = { loaded: event.loaded ?? 0, total: event.total ?? 0 }
       })
@@ -284,7 +261,7 @@ describe('spaces migration: upload progress, timeout and multipart shape', () =>
         return HttpResponse.json(envelope({ material: { id: 1 } }), { status: 201 })
       })
     )
-    await newSpaces.uploadMaterial(7, uploadFile(), 'members')
+    await spaces.uploadMaterial(7, uploadFile(), 'members')
     expect(seen[0]).toEqual([
       ['file', { name: 'notes.pdf', type: 'application/pdf' }],
       ['visibility', 'members'],
@@ -292,7 +269,7 @@ describe('spaces migration: upload progress, timeout and multipart shape', () =>
   })
 })
 
-describe('spaces migration: material downloads carry bytes, not sentences', () => {
+describe('spaces: material downloads carry bytes, not sentences', () => {
   // Non-ASCII but valid UTF-8 (0, CR LF, é, €, PNG): a byte-for-byte read.
   const bytes = [0, 13, 10, 195, 169, 226, 130, 172, 80, 78, 71]
 
@@ -303,18 +280,16 @@ describe('spaces migration: material downloads carry bytes, not sentences', () =
         () => new HttpResponse(new Uint8Array(bytes), { status: 200, headers: { 'Content-Type': 'application/pdf' } })
       )
     )
-    const oldBlob = await oldSpaces.downloadMaterial(7, 9)
-    const nextBlob = await newSpaces.downloadMaterial(7, 9)
-    expect([...new Uint8Array(await oldBlob.arrayBuffer())]).toEqual(bytes)
-    expect([...new Uint8Array(await nextBlob.arrayBuffer())]).toEqual(bytes)
-    expect(oldBlob.type).toBe('application/pdf')
-    expect(nextBlob.type).toBe('application/pdf')
+    const blob = await spaces.downloadMaterial(7, 9)
+    expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual(bytes)
+    expect(blob.type).toBe('application/pdf')
   })
 
-  // Bytes that are not valid UTF-8: the XHR/jsdom harness re-encodes the body
-  // identically on both stacks, so the migration contract here is parity — the
-  // new download must hand back exactly the bytes the old one did.
-  it('returns the same bytes as the old stack for invalid-UTF8 content', async () => {
+  // Bytes that are not valid UTF-8: the XHR/jsdom harness decodes the response
+  // body as text and replaces each invalid byte with U+FFFD (EF BF BD), so the
+  // download still hands the caller a blob — never an error — carrying the
+  // response's own MIME type and the decoded bytes.
+  it('hands an invalid-UTF8 download back as a blob with the response type', async () => {
     const invalid = [0, 255, 137, 80, 78, 71, 226, 130, 172]
     server.use(
       http.get(
@@ -326,17 +301,19 @@ describe('spaces migration: material downloads carry bytes, not sentences', () =
           })
       )
     )
-    const oldBlob = await oldSpaces.downloadMaterial(7, 9)
-    const nextBlob = await newSpaces.downloadMaterial(7, 9)
-    expect([...new Uint8Array(await nextBlob.arrayBuffer())]).toEqual([...new Uint8Array(await oldBlob.arrayBuffer())])
-    expect(nextBlob.type).toBe(oldBlob.type)
+    const blob = await spaces.downloadMaterial(7, 9)
+    // 0xFF and 0x89 are not valid UTF-8 and surface as the replacement sequence.
+    expect([...new Uint8Array(await blob.arrayBuffer())]).toEqual([
+      0, 239, 191, 189, 239, 191, 189, 80, 78, 71, 226, 130, 172,
+    ])
+    expect(blob.type).toBe('application/octet-stream')
   })
 
   it('answers an empty material with an empty blob, not an error or a fake success', async () => {
     server.use(http.get(`${newer}/spaces/7/materials/9/download`, () => new HttpResponse(null, { status: 200 })))
-    const next = await newSpaces.downloadMaterial(7, 9)
-    expect(next).toBeInstanceOf(Blob)
-    expect(next.size).toBe(0)
+    const blob = await spaces.downloadMaterial(7, 9)
+    expect(blob).toBeInstanceOf(Blob)
+    expect(blob.size).toBe(0)
   })
 
   it('rejects a refused or edge-page download instead of returning it as content', async () => {
@@ -350,11 +327,9 @@ describe('spaces migration: material downloads carry bytes, not sentences', () =
     ]
     for (const respond of refusals) {
       server.use(http.get(`${newer}/spaces/7/materials/9/download`, respond))
-      const old = await oldSpaces.downloadMaterial(7, 9).catch((error) => error)
-      const next = await newSpaces.downloadMaterial(7, 9).catch((error) => error)
-      expect(old).toBeInstanceOf(Error)
-      expect(next).toBeInstanceOf(Error)
-      expect(next).not.toBeInstanceOf(Blob)
+      const error = await spaces.downloadMaterial(7, 9).catch((failure) => failure)
+      expect(error).toBeInstanceOf(Error)
+      expect(error).not.toBeInstanceOf(Blob)
     }
   })
 })
