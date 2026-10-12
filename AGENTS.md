@@ -63,7 +63,7 @@ A test earns its place by guarding a rule someone could state before the code ex
 
 ## Run `task ci:fast` before you push
 
-`task ci:fast` runs the static hooks the change selects plus the `pure` backend tests and the frontend type/vitest work for the area you touched, inside a bounded budget: the `quick` tier is 180 seconds and a sampled 3072 MiB process-group RSS ceiling. Run it before you push.
+`task ci:fast` runs the static hooks the change selects plus the `pure` backend tests and the frontend type/vitest work for the area you touched, inside a bounded budget: the `quick` tier is 180 seconds and a sampled 3072 MiB process-group RSS ceiling. Run it before you push. Its frontend type check covers only the files you changed, so do not run the whole-tree `pnpm run typecheck` or `vue-tsc` in a sandbox: it can be killed for memory.
 
 Exit 0 means the selected checks ran and passed, nothing more — it is not full CI. An `unknown` or `blocked` result, and any check reported as not run, is not green: the tier ran out of budget, a tool was missing, or a report could not be judged, and none of that may stand in for a pass. A change to shared config, a deleted path, or a path the map does not carry can widen the selection to the whole suite and exceed the budget; the tier reports that honestly instead of trimming itself to green. Required CI and the merge queue remain the only merge gate.
 

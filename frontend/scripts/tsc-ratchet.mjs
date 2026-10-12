@@ -65,6 +65,12 @@ const currentTotal = Object.values(current).reduce((a, b) => a + b, 0)
 if (run.status !== 0 && currentTotal === 0) {
   console.error('vue-tsc failed without reporting any diagnostic:')
   console.error(output.trim() || '(no output)')
+  if (run.signal) {
+    console.error(
+      `vue-tsc was killed by ${run.signal}, most likely out of memory: a whole-tree check needs more than a 3 GiB sandbox has.`
+    )
+    console.error('Run `task ci:fast` from the repo root instead: it type-checks only the files you changed.')
+  }
   cannotJudge({ id: ID }, 'vue-tsc failed without reporting any diagnostic')
 }
 
