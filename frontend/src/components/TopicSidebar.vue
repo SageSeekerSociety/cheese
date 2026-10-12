@@ -81,7 +81,7 @@ const props = defineProps<{
   selectedTaskId?: string | null
   /** 正打开的东西在哪个频道里（见 `useTopicRail` 的同名字段）。 */
   hereChannelId?: string | null
-  /** 「浏览频道」那一页正开着。 */
+  /** 「全部频道」那一页正开着。 */
   browsingChannels?: boolean
 }>()
 
@@ -90,7 +90,7 @@ const emit = defineEmits<{
   (e: 'select-task', task: { roomId: string; taskId: string }): void
   // 频道下面最后那一行：展开或收起这个频道其余进行中的任务（读失败时是再读一次）。
   (e: 'toggle-tasks', channelId: string): void
-  // 「浏览频道」：去看这个项目的全部频道（侧栏只列加入了的）。
+  // 「全部频道」：去看这个项目的全部频道（侧栏只列加入了的）。
   (e: 'browse-channels'): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
@@ -479,7 +479,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             @cancel-prefetch="cancelPrefetch()"
           />
 
-          <!-- 新建频道在「浏览频道」那一页，这里不放「＋」：频道少而稳定，新建是一年几次
+          <!-- 新建频道在「全部频道」那一页，这里不放「＋」：频道少而稳定，新建是一年几次
                的事。 -->
           <div class="t-eyebrow side-subhead">{{ t('work.sidebar.topics') }}</div>
 

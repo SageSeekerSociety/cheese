@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 「浏览频道」：项目里我能看到的频道，找、加入、退出、新建都在这一页。侧栏只列我
+// 「全部频道」：项目里我能看到的频道，找、加入、退出、新建都在这一页。侧栏只列我
 // 加入的频道，别的频道从这里找。数据和动作都从外面来（`ChannelBrowse.vue`）。
 import type { ChannelEntry } from '@/types/channelDirectory'
 

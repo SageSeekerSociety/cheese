@@ -1,4 +1,4 @@
-"""A project's channels from the project's side: the list 「浏览频道」 and the
+"""A project's channels from the project's side: the list 「全部频道」 and the
 settings' channels page read (`topic/directory.py`), and what whoever manages
 the project may do to a channel without being in it: name its manager, or join
 a private one, which is said in the channel so its people know. Archiving needs

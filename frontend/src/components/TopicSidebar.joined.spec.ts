@@ -1,4 +1,4 @@
-// 侧栏只列我加入了的频道：没加入的、已归档的都不在这里（从「浏览频道」去找），
+// 侧栏只列我加入了的频道：没加入的、已归档的都不在这里（从「全部频道」去找），
 // 只有我此刻正看着的那个没加入的频道例外——不然人不知道自己在哪儿。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
@@ -136,10 +136,10 @@ describe('侧栏只列我加入了的频道', () => {
     expect(visibleTitles(container)).toContain('plain')
   })
 
-  it('「浏览频道」通到全部频道', async () => {
+  it('「全部频道」通到全部频道', async () => {
     const onBrowseChannels = vi.fn()
     const view = mount({ onBrowseChannels })
-    await fireEvent.click(view.getByRole('button', { name: '浏览频道' }))
+    await fireEvent.click(view.getByRole('button', { name: '全部频道' }))
     expect(onBrowseChannels).toHaveBeenCalled()
   })
 

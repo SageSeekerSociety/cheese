@@ -4,7 +4,7 @@
   "newProject": "New {project}",
   "project": {
     "library": "Library",
-    "channels": "Browse channels",
+    "channels": "All channels",
     "members": "Members",
     "docs": "Project docs",
     "settings": "Project settings",

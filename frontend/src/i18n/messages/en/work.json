@@ -2232,7 +2232,7 @@
     "notJoined": "You haven't joined this channel. Join to post in the main line, or reply in a message's thread.",
     "archivedNotice": "This channel is archived and read-only",
     "describeFailed": "Couldn't save the channel description",
-    "browse": "Browse channels",
+    "browse": "All channels",
     "visibilityFailed": "Couldn't change who can see the channel",
     "privateTip": "Private channel"
   },

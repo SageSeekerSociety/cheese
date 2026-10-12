@@ -110,7 +110,7 @@ function toggleTasks(channelId: string) {
 function openOverview() {
   void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
 }
-// 「浏览频道」：全部频道都在那一页，加入、退出、新建也在那里。
+// 「全部频道」：全部频道都在那一页，加入、退出、新建也在那里。
 function browseChannels() {
   void router.push({ name: 'project-channels', params: { projectId: props.projectId } })
 }
@@ -166,7 +166,7 @@ function onPressTask(task: { roomId: string; taskId: string }) {
   })
 }
 
-// 新建频道在「浏览频道」那一页（先起名再建），命令面板里这一条去那里。
+// 新建频道在「全部频道」那一页（先起名再建），命令面板里这一条去那里。
 useCommands(() => [
   {
     id: 'topic.new',

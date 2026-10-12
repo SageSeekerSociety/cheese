@@ -119,7 +119,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     const depths = new Map<string, number>()
     const rows: TreeRow[] = []
     for (const row of tree.value) {
-      // 侧栏只列我加入了的频道，外加我此刻正在里面的那一个（从「浏览频道」点进来、还没
+      // 侧栏只列我加入了的频道，外加我此刻正在里面的那一个（从「全部频道」点进来、还没
       // 加入的）——不然人就不知道自己在哪儿。打开它的一件任务也还在它里面：顶栏写着
       // 「# 频道 / 任务」，侧栏不能在这时把那个频道收走。已归档的频道不在侧栏里，在项目设置的
       // 「频道」一栏。`joined` 缺席（没经过 list_topics 的载荷）当作加入了：宁可多列，

@@ -1,4 +1,4 @@
-"""A project's channels as one person may know them: what 「浏览频道」 lists
+"""A project's channels as one person may know them: what 「全部频道」 lists
 for everyone, and the channels page of the project's settings for whoever
 manages the project.
 
