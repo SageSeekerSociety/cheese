@@ -956,6 +956,63 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-changed" for p in plan))
         self.assertFalse(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
+    def test_frontend_deletion_a_surviving_file_imports_widens(self):
+        # The narrowed run is seeded from the changed files, so the spec of an
+        # unchanged file that imports the deleted one is never selected — and
+        # the typecheck cannot stand in, because the app declares *.vue and Vite
+        # declares *.css, so vue-tsc resolves an import of a file that is gone.
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/keep.ts", "import Gone from '@/gone'\nexport const x = Gone\n")
+        self.put("frontend/src/keep.css", "@import './gone.css';\n")
+        for named in ("frontend/src/gone.vue", "frontend/src/gone.css"):
+            plan, _ = test_plan(self.root, [named, "frontend/src/keep.ts", "frontend/src/keep.css"],
+                                {"frontend": True}, self.root)
+            unit = next(p for p in plan if p["id"] == "frontend-unit")
+            self.assertEqual(unit["evidence"]["mode"], "full", named)
+        # A basename in prose is not a reference. This tree discusses its own
+        # files in comments constantly, and reading those as references would
+        # run the whole suite for a rename nobody left dangling.
+        self.put("frontend/src/mentioned.ts", "// see old-thing.vue for the old shape\n")
+        plan, _ = test_plan(self.root, ["frontend/src/old-thing.vue", "frontend/src/mentioned.ts"],
+                            {"frontend": True}, self.root)
+        self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
+                         "related")
+
+    def test_frontend_scope_is_the_paths_the_map_routed_there(self):
+        # The path map routes backend/openapi.json into frontend scope, so a
+        # backend change enters this branch through it. Read from the whole
+        # change, its own .py files counted as frontend runtime content and the
+        # suite ran in full for a document no test can load.
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
+        changed = ["backend/app/api/projects.py", "backend/openapi.json",
+                   "frontend/src/api/openapi.d.ts"]
+        plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root,
+                                    frontend_scope=["backend/openapi.json",
+                                                    "frontend/src/api/openapi.d.ts"])
+        self.assertEqual([o["id"] for o in omissions], ["frontend-unit"])
+        self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
+        self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+        # With no scope from the caller the whole change is read, as before.
+        plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root)
+        self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
+                         "full")
+
+    def test_read_off_disk_specs_matches_the_specs_that_read_the_tree(self):
+        # The tuple is written by hand, and a stale entry is filtered out of
+        # both the seeds and required_files by `is_file()` without a word. This
+        # is what notices a spec starting to read the tree, or one renamed.
+        from ci_fast_checks import I18N_SPECS, OFF_DISK_SPECS
+        src = SCRIPT.parents[2] / "frontend" / "src"
+        readers = {"src/" + p.relative_to(src).as_posix()
+                   for p in src.rglob("*.spec.ts")
+                   if "node:fs" in p.read_text(encoding="utf-8", errors="ignore")}
+        # src/collab/ is outside this Vitest project (frontend/vite.config.ts
+        # excludes it, it has its own config); the i18n guards are required by
+        # frontend-i18n instead.
+        self.assertEqual(readers - set(I18N_SPECS) - {"src/collab/guide.spec.ts"},
+                         set(OFF_DISK_SPECS))
+
     def test_frontend_seedless_change_widens_unless_it_is_prose(self):
         # A seedless change that carries runtime content cannot be judged
         # narrow, and the guards are not what judges it: a catalog, a ratchet

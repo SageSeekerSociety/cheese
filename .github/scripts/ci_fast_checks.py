@@ -16,8 +16,16 @@ commands and turns each command's report into a verdict nobody can fake:
     module watches (FRONTEND_META: the two package manifests, the vite and
     tsconfig files, .pre-commit-config.yaml), a .github/ edit, a test-harness
     source or an unknown scope. A config outside that list does not widen by
-    itself. A deletion, a style edit, a prose change or a types-only input
-    keeps the related run seeded by the surviving roots. A change under src/
+    itself: beside a changed source root the related run keeps it narrowed,
+    and alone it seeds no root and widens like any other runtime file. A style
+    edit, a prose change, a types-only input or a deletion whose
+    references went with it keeps the related run seeded by the surviving roots.
+    A deletion something surviving still imports widens: the run is seeded
+    from the changed files, so the spec of an unchanged file that imports the
+    deleted one is never selected, and the typecheck is no fallback — the app
+    declares `*.vue`, Vite declares `*.css` and every other kind it serves, so
+    vue-tsc resolves an import of a file that is gone, and the narrow project
+    holds only the changed files. A change under src/
     that seeds no root — a locale catalog, a ratchet baseline, an asset —
     widens: `related` is seeded from the changed source files, and a file a spec
     reads off disk rather than imports creates no edge to that spec
@@ -29,15 +37,22 @@ commands and turns each command's report into a verdict nobody can fake:
     the suite nothing to judge — prose, a declaration file, a types-only input
     like backend/openapi.json — runs the guards alone and reports frontend-unit
     as not run rather than expanding to it. A full run must show both i18n guard
-    specs actually executed.
+    specs actually executed. Whether a change carries frontend runtime content
+    is read from the paths the path map routed into frontend scope, not from
+    every changed path: a backend change that regenerates backend/openapi.json
+    carries frontend scope with it, and reading its own .py files as content
+    this suite must execute would run the whole Vitest suite for a document no
+    test can load — the sole reader of it writes types-only.
   * The read-off-disk spec gets the same treatment without widening: a narrowed
     run is seeded with the changed roots *and* every spec that judges a
     frontend file by reading it (OFF_DISK_SPECS), because those are the specs
     the graph cannot reach. The report must show each of them ran, so a
     selection that quietly drops one is unknown rather than green. That covers
     the read that a surviving root used to hide: a component whose template a
-    spec reads, a stylesheet edited beside a changed component, a source file
-    deleted while another survives.
+    spec reads, a stylesheet edited beside a changed component. A deletion is a
+    read only where a spec reads it, and an import is not a read: the spec that
+    imports the deleted file is reached by neither the seeds nor this list, so
+    that case widens instead of being seeded here.
   * The frontend's parallelism is derived from the memory ceiling the caller
     passed (vitest_workers), not pinned: a run given a ceiling that backs
     several forks gets several, and the local default still gets one.
@@ -46,6 +61,7 @@ commands and turns each command's report into a verdict nobody can fake:
 import json
 import os
 from pathlib import Path
+import re
 import xml.etree.ElementTree as ET
 
 from ci_fast_backend import select_backend
@@ -61,7 +77,10 @@ I18N_SPECS = ("src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts")
 # reaches the suite, beside the related selection, and the report must show they
 # did. This is every spec under frontend/src importing `node:fs` at the time of
 # writing (catalog.spec.ts is already an i18n guard; collab/ has its own config);
-# a new spec that reads the tree this way belongs in this tuple.
+# a new spec that reads the tree this way belongs in this tuple. Reading through
+# `?raw` is the same kind of read — measured, `related` draws no edge for it
+# either — so a spec that reaches a file that way, with no import edge to it,
+# belongs here too. test_ci_fast.py holds this tuple against the tree.
 OFF_DISK_SPECS = (
     "src/branchProtectionSection.spec.ts",
     "src/components/ChatPanel.mentionMenu.spec.ts",
@@ -88,6 +107,16 @@ FRONTEND_META = {
 # check, never the test run: a backend route change used to run all 700+ specs
 # for a document no test can load.
 FRONTEND_TYPES_META = {"backend/openapi.json"}
+# What the dangling-import scan reads: every file kind that can hold a module
+# specifier.
+SCAN_SUFFIXES = (".ts", ".tsx", ".vue", ".js", ".jsx", ".mjs", ".cjs",
+                 ".css", ".scss", ".sass", ".less", ".html")
+# What a specifier written without an extension can resolve to: the module
+# kinds this frontend imports, the same set Vite tries for it.
+SPECIFIER_SUFFIXES = (".ts", ".tsx", ".vue", ".js", ".jsx", ".mjs", ".cjs",
+                      ".css", ".scss", ".sass", ".less", ".json")
+#: A quoted string, the only place a module specifier appears.
+SPECIFIER = re.compile(r"""["']([^"'\n]+)["']""")
 VITEST_FLAGS = ["--no-passWithNoTests", "--no-allowOnly"]
 # Sampled group RSS one Vitest fork is allowed. frontend/vite.config.ts sizes
 # its own pool the same way ("a fork peaks at 1.7-2.1 GB": happy-dom plus its
@@ -160,7 +189,90 @@ def _narrow_config(root, tmp, ts_files):
     return config
 
 
-def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072):
+def _resolves_to(specifier, importer, frontend):
+    """The file a module specifier names, or None if it names no local file.
+
+    Vite's own rules for the ones this repository uses: ``@/`` is frontend/src,
+    a leading ``/`` is the frontend root, and ``./``/``../`` are relative to the
+    importer. A bare name is a package — except in a stylesheet, where
+    ``@import "theme.css"`` and ``url(icon.svg)`` are relative too.
+    """
+    specifier = specifier.split("?")[0].split("#")[0]
+    if specifier.startswith("@/"):
+        base, rest = frontend / "src", specifier[2:]
+    elif specifier.startswith("/"):
+        base, rest = frontend, specifier[1:]
+    elif specifier.startswith("."):
+        base, rest = importer.parent, specifier
+    elif "/" not in specifier and Path(specifier).suffix in SPECIFIER_SUFFIXES:
+        base, rest = importer.parent, specifier
+    else:
+        return None
+    try:
+        return (base / rest).resolve()
+    except OSError:
+        return None
+
+
+def _candidates(target):
+    """What an extension-less specifier can resolve to, plus the file itself."""
+    yield target
+    if target.suffix:
+        return
+    for suffix in SPECIFIER_SUFFIXES:
+        yield Path(str(target) + suffix)
+    for suffix in SPECIFIER_SUFFIXES:
+        yield target / f"index{suffix}"
+
+
+def _imports_a_deleted_path(root, deleted):
+    """Whether a file that survived still imports one of the ``deleted`` paths.
+
+    A narrowed run is seeded from the changed roots, so it selects the specs
+    that reach a root — never the spec of an unchanged file that imports a
+    deleted one. Nothing else judges that import either: the app declares
+    ``*.vue`` and Vite declares ``*.css`` and every asset kind it serves, so a
+    module that is gone still resolves for vue-tsc, and the changed-files
+    project holds only what the change set names.
+
+    Only a specifier that resolves to the deleted file counts. A basename
+    somewhere in the text does not: this tree talks about its own files in
+    comments constantly ("see ./index.ts", "plugins/index.ts"), and reading
+    those as references would run the whole suite for a rename nobody left
+    dangling. Deletions that took their references with them — a component
+    deleted beside its spec, a rename — resolve to nothing here and keep the run
+    narrowed. What this cannot see is a reference the graph itself cannot see:
+    a computed specifier, or a file a glob picks up (`import.meta.glob` in
+    commands/palette/sources.ts and views/demo/scenes/index.ts, neither of which
+    matches a module kind either of them is handed).
+    """
+    if not deleted:
+        return False
+    frontend = root / "frontend"
+    gone = {(root / p).resolve() for p in deleted}
+    for directory, dirnames, filenames in os.walk(frontend):
+        dirnames[:] = [d for d in dirnames if d != "node_modules"]
+        for name in filenames:
+            if not name.endswith(SCAN_SUFFIXES):
+                continue
+            importer = Path(directory) / name
+            try:
+                text = importer.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            # No substring pre-filter on the basename: the common specifier
+            # drops the extension (`'@/stores/workspace'` for workspace.ts), so
+            # the basename of a deleted module often appears in no importer at
+            # all — filtering on it would miss exactly the imports this exists
+            # to find.
+            for specifier in SPECIFIER.findall(text):
+                target = _resolves_to(specifier, importer, frontend)
+                if target and any(candidate in gone for candidate in _candidates(target)):
+                    return True
+    return False
+
+
+def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, frontend_scope=None):
     plan, omissions = [], []
     flags = vitest_flags(memory_mib)
     if scope.get("frontend"):
@@ -188,15 +300,24 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072):
         # wherever it sits: a path outside frontend/ can still be routed into
         # frontend scope (a site stylesheet, a ratchet script) and is still
         # content the suite would have to read.
+        # Which paths carry that content is the caller's answer when it has one:
+        # the paths the path map routed into frontend scope. A backend change
+        # rides into this branch through a regenerated backend/openapi.json, and
+        # its own .py files are not content this suite can execute — the sole
+        # reader of the document writes types-only (FRONTEND_TYPES_META).
         carries_runtime = any(not p.endswith((".md", ".d.ts"))
-                              and p not in FRONTEND_TYPES_META for p in changed)
+                              and p not in FRONTEND_TYPES_META
+                              for p in (changed if frontend_scope is None else frontend_scope))
         # Config, ambient hooks, test-harness sources and unknown scopes cannot
         # be narrowed: nothing tells the related graph what they affect.
         unjudgeable = (conservative
                        or any(p in FRONTEND_META for p in changed)
                        or any(p.startswith(".github/") for p in changed)
                        or any(p.startswith(("frontend/src/test/", "frontend/scripts/")) for p in frontend_paths)
-                       or (carries_runtime and not roots))
+                       or (carries_runtime and not roots)
+                       # Last: the scan reads the frontend tree, so it runs only
+                       # for a deletion nothing above has already widened.
+                       or _imports_a_deleted_path(root, deleted))
         output = tmp / "vitest.json"
         i18n_output = tmp / "i18n.json"
         i18n_check = {"id": "frontend-i18n", "cwd": root / "frontend",

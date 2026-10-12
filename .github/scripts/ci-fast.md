@@ -27,6 +27,12 @@ tier, which is *not* what `task ci:fast` runs — the Taskfile passes
 `extended` is the same work with more wall clock. It does not add suites, and a
 run that still exhausts 900s is reported **unknown**, never trimmed to green.
 
+The quick tier's 180s is the work machine's own limit, not a property of the
+selection. A narrowed frontend run seeds the read-off-disk specs beside the
+changed roots, and those twelve cost ~34s on a cold single-fork run: on a tight
+local budget the tier can exhaust it and report unknown where the runner (1200s)
+has room. That is the budget talking, not the change.
+
 Both bounds are overridable, because they describe the machine rather than the
 tier: `--budget` and `--memory-mib` default to the work machine's own limits
 (the 3072 MiB default is literally its session cap), and a machine that can back
@@ -110,11 +116,17 @@ everything is still allowed to answer unknown.
   unknown path, no merge base, or a change that seeds no related root while
   carrying runtime content — a catalog, a ratchet baseline, a stylesheet, a
   deletion with no surviving root, a path outside `frontend/` that the scope map
-  still routes here (a site stylesheet, a ratchet script). A config outside that
-  list does not widen by itself: `frontend/collab/vitest.config.ts` beside a
-  changed source file still stays `related`. The full run must be shown to have
+  still routes here (a site stylesheet, a ratchet script). Whether a change
+  carries that content is read from the paths the scope map routed into frontend
+  scope, not from the whole diff: a backend route change rides in through a
+  regenerated `backend/openapi.json`, and its own `.py` files are not frontend
+  content — the one reader of that document writes types-only, so the suite has
+  nothing to execute for it. A config outside the watched list does not widen by
+  itself: `frontend/collab/vitest.config.ts` beside a changed source file still
+  stays `related`. The full run must be shown to have
   executed both i18n guard specs. Everything else stays narrow: a deletion
-  beside a surviving source root, and a catalog, stylesheet or prose edit next
+  beside a surviving source root that nothing surviving still imports, and a
+  catalog, stylesheet or prose edit next
   to a changed source file, still seed `related` from those roots. Only a change
   that seeds nothing *and* leaves the suite nothing to judge — prose (`.md`), a
   declaration file, or a types-only input such as `backend/openapi.json` — leaves
@@ -132,10 +144,15 @@ everything is still allowed to answer unknown.
   the `padding-left` of `.doc-status[data-status]` from 6px to 8px leaves both
   i18n guards green and turns only `docBlocks.spec.ts` red. The same read hides
   behind a surviving root when that stylesheet is edited beside a changed
-  component, when the file a spec reads is itself the changed component, or when
-  it is deleted while another root survives. The report must show each of those
+  component, or when the file a spec reads is itself the changed component. A
+  deletion is a read only where a spec reads it: a spec that *imports* the
+  deleted file is reached by neither the seeds nor this list, and the typecheck
+  cannot stand in for it, so that case widens the run instead. The report must
+  show each of those
   specs ran, so a selection that silently drops one is unknown, not green; a new
-  spec that reads the tree this way belongs in that tuple. The
+  spec that reads the tree this way belongs in that tuple — `test_ci_fast.py`
+  holds it against the tree, so a renamed or newly reading spec fails the
+  self-test rather than quietly leaving the tuple. The
   narrow type project
   extends the real `frontend/tsconfig.json`,
   bridges `node_modules`, and checks only the surviving changed files against the
