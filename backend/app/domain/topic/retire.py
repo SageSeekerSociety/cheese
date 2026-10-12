@@ -76,6 +76,22 @@ def _went_on(operation: RoomCleanup) -> None:
     operation.failures = 0
 
 
+async def _remove_deleted_room(session, operation: RoomCleanup) -> None:
+    """一条被人删掉的频道，清理走完就把它的行删掉（`Topic.deleted_at`，见
+    `topic/services.py` 的 `delete`）。外键级联带走它的话、任务和文档，
+    `conversations` 注册表由数据库触发器跟着删。
+
+    归档的频道不走这里 —— 它们停在这一步，等着有人取消归档。清理自己的行留着：
+    它记的是「这一代清理做到了什么」，删掉它等于把一段事实抹掉，而它认的是
+    topic_id 这个普通列，没有外键牵着。
+    """
+    room = await session.get(Topic, operation.topic_id)
+    if room is None or room.deleted_at is None:
+        return
+    await session.delete(room)
+    logger.info("deleted room removed operation=%s room=%s", operation.id, room.id)
+
+
 def _keeps_transcripts(entry: dict) -> bool:
     """Whether this resource's transcripts are kept when its home is removed.
 
@@ -650,6 +666,9 @@ async def _advance(
     else:
         operation.state = "complete"
     _went_on(operation)
+    # A channel someone deleted has nothing left to hold its row for. An
+    # archived one waits here for whoever unarchives it.
+    await _remove_deleted_room(session, operation)
     await session.commit()
     logger.info(
         "cleanup %s operation=%s room=%s",

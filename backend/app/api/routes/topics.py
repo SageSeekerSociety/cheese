@@ -1362,6 +1362,32 @@ async def unarchive_topic(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
+@router.delete("/{topic_id}")
+async def delete_topic(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """删除频道 (清单第 2 条): 频道连同消息、任务和文档一起走，不能恢复。
+
+    It goes the way archiving goes — session stopped, cards settled, machines
+    freed — and then does not come back: no list shows it, and 取消归档 is
+    refused for it.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
+    # Who may archive a channel may delete it; the project's own overview is
+    # refused in the service, where the rule lives.
+    await resolver.authorize_project(actor, project_id=topic.project_id)
+    if not actor.authenticated:
+        raise ForbiddenError(say("deleteChannelSignIn"))
+    await TopicMemberService(db).require_administrator(topic_id, actor.handle)
+    await TopicService(db).delete(topic_id, by=actor.handle)
+    await db.commit()
+    await tell_project(topic_id, TOPICS)
+    return ok({"id": str(topic_id), "deleted": True})
+
+
 @router.post("/{topic_id}/check-result")
 async def record_check_result(
     topic_id: uuid.UUID,

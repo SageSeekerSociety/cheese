@@ -59,6 +59,7 @@ from app.domain.room_task.services import TaskService, said_title
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.services import team_service
 from app.domain.thread.models import Thread
+from app.domain.thread.services import open_thread
 from app.domain.topic.models import (
     NotifyLevel,
     RoomCleanup,
@@ -750,6 +751,8 @@ class TopicService:
         topic = await self._repo.lock(topic_id)
         if topic is None:
             raise NotFoundError("Topic not found")
+        if topic.deleted_at is not None:
+            raise ValidationError(say("channelDeletedCannotUnarchive"))
         if topic.status != TopicStatus.archived:
             return topic
         operation = (
@@ -787,6 +790,53 @@ class TopicService:
         )
         await self._session.flush()
         return topic
+
+    # ---- 删除 (归档的去向，清单第 2 条) ---------------------------------
+
+    async def delete(self, topic_id: uuid.UUID, *, by: str) -> None:
+        """A person deletes a channel: it leaves every list for good, and what
+        was said in it, the tasks in it and its documents go with it.
+
+        Deleting is archiving that does not come back, and it goes the same way
+        (``_archive_one``): the channel's session is stopped, its cards are
+        settled, its machines are freed. The row goes when that cleanup
+        finishes (``topic/retire.py``); until then the channel is an archived
+        row with ``deleted_at`` set — off every list, and 取消归档 is refused
+        for it. 综合 is never deleted, and a channel still holding open tasks
+        is refused, for the same reason archiving it is idempotent: no new work
+        in a channel that is leaving.
+        """
+        topic = await self._repo.lock(topic_id)
+        if topic is None:
+            raise NotFoundError("Topic not found")
+        if topic.kind == TopicKind.root:
+            raise ValidationError(say("projectRootCannotDelete"))
+        if topic.deleted_at is not None:
+            return
+        if topic.status != TopicStatus.archived:
+            if any(
+                task.status == TaskStatus.open
+                for task in await TaskService(self._session).list_in_room(topic.id)
+            ):
+                raise ValidationError(say("channelArchiveOpenTasks"))
+            await self._archive_one(topic, by=by)
+            await self._archive_children(topic, by=by)
+        deleted_at = datetime.now(UTC)
+        topic.deleted_at = deleted_at
+        # 归档把清理排在宽限之后；删除就排在现在 —— 删掉就是删掉，不必等一天。
+        topic.cleanup_due_at = deleted_at
+        operation = (
+            await self._session.get(RoomCleanup, topic.cleanup_id)
+            if topic.cleanup_id
+            else None
+        )
+        if operation is None or operation.state == "complete":
+            # 没有清理会再来了（早归档的频道，或者归档时它就没排上）：这一行现在
+            # 就交出去删掉，不然它会永远躺着。
+            await self._session.delete(topic)
+        else:
+            operation.due_at = deleted_at
+        await self._session.flush()
 
     async def archive_with_project(self, project_id: uuid.UUID, *, by: str) -> None:
         """Archive every room of a project being archived — the overview and the
@@ -860,6 +910,44 @@ class TopicService:
 
         thread = await self._session.get(Thread, block.conversation_id)
         return thread.root_block_id if thread is not None else block.id
+
+    async def open_thread_here(
+        self, *, room_id: uuid.UUID, title: str, by: str
+    ) -> Thread:
+        """在频道里手动开一条支线 (清单第 4 条)。
+
+        支线今天只挂在频道主线里的**一条消息**下面（`thread/services.py` 的
+        `open_thread` 只认 `kind == message` 的根），所以「填个标题就开出来」落地
+        成：以创建者自己的名义在主线说一句标题，支线开在这句话下。这样支线永远有
+        根，`threads.root_block_id` 不必改成可空，读它的每一处（只有人回复时才开
+        支线的那条路）也都不用动。
+
+        私聊没有主线，也就没有支线；归档的频道冻结，和别处一样。
+        """
+        place = await PlaceResolver(self._session).resolve(room_id)
+        if place is None:
+            raise NotFoundError(say("topicNotFound"))
+        room = place.room
+        if room.status == TopicStatus.archived:
+            raise ValidationError(say("topicArchivedFrozen"))
+        if room.is_private:
+            raise ValidationError(say("privateChatHasNoThreads"))
+        named = title.strip()[:300]
+        if not named:
+            raise ValidationError(say("threadTitleRequired"))
+        landed = landing(EventAbout.room, project_id=room.project_id, room_id=room.id)
+        block = await self._blocks.add(
+            project_id=landed.project_id,
+            conversation_id=landed.conversation_id,
+            author=by,
+            author_type=AuthorType.participant,
+            content=named,
+            kind=BlockKind.message,
+            # 这句话是支线的名字，不是谁说的话：界面读这个标记，把它画成「开了一条
+            # 支线」而不是一条发言。
+            meta={"opened_thread": True},
+        )
+        return await open_thread(self._session, block.id, by=by)
 
     async def _card_block(self, room: Topic, task: Task, *, actor: str) -> Block:
         """The room's timeline says a task was created here, and whose it is.

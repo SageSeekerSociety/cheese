@@ -1,10 +1,12 @@
 """支线: the replies under a message in a channel.
 
 `POST /blocks/{block}/thread` opens the 支线 under a main-line message (or
-gives back the one it has), `GET /topics/{channel}/threads` lists a channel's
-支线 for its overview, and `GET /topics/{thread}/thread` is one 支线 and the
-message it hangs under. Talking in a 支线 and reading it go through the same
-routes as a room's (`/messages`, `/blocks`, `/read`), with the 支线's id.
+gives back the one it has), `POST /topics/{channel}/threads` opens one by
+itself — a title, no message first (清单第 4 条) — `GET /topics/{channel}/threads`
+lists a channel's 支线 for its overview, and `GET /topics/{thread}/thread` is
+one 支线 and the message it hangs under. Talking in a 支线 and reading it go
+through the same routes as a room's (`/messages`, `/blocks`, `/read`), with the
+支线's id.
 
 `_actor_in_place` and `DbSession` come from topics.py, as the other topics_*
 modules take them.
@@ -14,6 +16,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
@@ -25,9 +28,16 @@ from app.domain.block.schemas import BlockOut
 from app.domain.thread import reads
 from app.domain.thread.services import open_thread
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 block_router = APIRouter(prefix="/blocks", tags=["topics"])
+
+
+class ThreadCreateIn(BaseModel):
+    #: 支线的名字。手动开的支线总要先有话（`TopicService.open_thread_here` 把它说
+    #: 在主线里），那句话就是它。
+    title: str = Field(min_length=1, max_length=300)
 
 
 def _thread_out(thread) -> dict:
@@ -59,6 +69,35 @@ async def open_block_thread(
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("threadOpenedByPerson"))
     thread = await open_thread(db, block_id, by=actor.handle)
+    out = _thread_out(thread)
+    await db.commit()
+    await announce_stale(place.room_id, "threads")
+    return ok(out)
+
+
+@router.post("/{topic_id}/threads")
+async def create_thread(
+    topic_id: uuid.UUID,
+    body: ThreadCreateIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """新建支线 (清单第 4 条): a 支线 opened from a channel by a person, which
+    today is not possible — a 支线 needs a message to hang under, and the only
+    way to one was replying to a message that was already said.
+
+    A person opens it, as with the other road into a 支线: 芝士 does not open
+    one by itself, and cats may not speak in a channel they have not joined.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    actor = await _actor_in_place(resolver, place)
+    if not actor.authenticated or actor.via == "cheese":
+        raise ForbiddenError(say("threadOpenedByPerson"))
+    if not await TopicMemberService(db).may_speak(place.room, actor.handle):
+        raise ForbiddenError(say("channelJoinToPost"))
+    thread = await TopicService(db).open_thread_here(
+        room_id=place.room_id, title=body.title, by=actor.handle
+    )
     out = _thread_out(thread)
     await db.commit()
     await announce_stale(place.room_id, "threads")
