@@ -2159,6 +2159,8 @@
     "more": "更多操作",
     "close": "关闭任务",
     "reopen": "重新打开任务",
+    "archive": "归档任务",
+    "unarchive": "取消归档",
     "closeTitle": "关闭这个任务？",
     "closeBody": "写下结论表示已经做完；不写表示不再做。",
     "handOver": "转交",
@@ -2176,6 +2178,7 @@
     "helping": "我协作的",
     "others": "其他人的",
     "closed": "已关闭",
+    "archived": "已归档",
     "empty": "暂无任务",
     "loadFailed": "无法加载任务"
   },

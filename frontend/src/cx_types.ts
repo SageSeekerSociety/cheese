@@ -267,6 +267,9 @@ export interface RoomTask {
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
+  // 被负责人收起来的时刻（后端 `Task.archived_at`）：从那刻起它不在各处清单里，页面
+  // 只读。非空的一定是关掉的，所以「能不能说话」还是只看 `status`。
+  archived_at?: string | null
   upgraded_from_block_id?: string | null
   created_at: string
   updated_at: string
@@ -291,7 +294,7 @@ export interface RoomTask {
  *    delivering 检查中 —— 下一步在平台/芝士手上
  *    needs_you  待处理 —— 下一步在人手上
  *    done       已完成 —— 已采纳，或已关闭且没交付
- *    archived   已归档 —— 房间才有；活不归档
+ *    archived   已归档 —— 被收起来的活和归档的房间，两边都走这一列
  */
 export type BoardColumn = 'not_started' | 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 

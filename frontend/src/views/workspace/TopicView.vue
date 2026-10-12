@@ -608,6 +608,8 @@ void openPlace()
         :start="taskPage.start"
         :close="taskPage.close"
         :reopen="taskPage.reopen"
+        :archive="taskPage.archive"
+        :unarchive="taskPage.unarchive"
         :hand-over="taskPage.handOver"
         :rename="taskPage.rename"
         :set-collaborators="taskPage.setCollaborators"

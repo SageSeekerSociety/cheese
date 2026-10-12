@@ -8,6 +8,7 @@ import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
+import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
@@ -42,6 +43,8 @@ const props = defineProps<{
   start: (reviewer: string | null) => Promise<void>
   close: (conclusion: string) => Promise<boolean>
   reopen: () => Promise<boolean>
+  archive: () => Promise<boolean>
+  unarchive: () => Promise<boolean>
   handOver: (owner: string) => Promise<boolean>
   rename: (title: string) => Promise<boolean>
   setCollaborators: (handles: string[]) => Promise<boolean>
@@ -63,6 +66,8 @@ const { mdAndUp } = useDisplay()
 const ME = myHandle()
 const isOwner = computed(() => !!props.task && props.task.owner_handle === ME)
 const isOpen = computed(() => props.task?.status === 'open')
+// 收起来了（后端 `archived_at`）：还在清单里的活归档给「归档任务」，收起来的给「取消归档」。
+const isArchived = computed(() => props.task?.archived_at != null)
 const takesPart = computed(() => isOwner.value || (!!props.task && (props.task.contributor_handles ?? []).includes(ME)))
 const ownerName = computed(() => {
   const handle = props.task?.owner_handle ?? ''
@@ -179,6 +184,16 @@ async function confirmRename() {
 
 const handOverOpen = ref(false)
 const handingOver = ref(false)
+// 归档不弹确认框，收起来之后给一条能撤销的提示（和频道归档同一条路，`topicActions`）。
+// 撤销就是「取消归档」：收回去的活回来还是关着的，「重新打开任务」是另一件事。
+async function archive() {
+  if (await props.archive()) {
+    toast(t('work.room.archiveNotice.done'), {
+      duration: 6000,
+      action: { label: t('work.room.archiveNotice.undo'), onClick: () => void props.unarchive() },
+    })
+  }
+}
 const nextOwner = ref('')
 async function confirmHandOver() {
   handingOver.value = true
@@ -412,12 +427,21 @@ async function confirmHandOver() {
             />
             <v-list-item role="menuitem" :title="t('work.task.close')" @click="closeOpen = true" />
           </template>
+          <!-- 关掉的活：还能重新打开它；收起来了就只剩「取消归档」——那件活已经不在
+               任何清单里，重新打开是把它放回来之后才谈得上的事。 -->
           <v-list-item
-            v-else-if="isOwner"
+            v-if="isOwner && !isArchived"
             role="menuitem"
             :title="t('work.task.reopen')"
             data-testid="task-reopen"
             @click="reopen()"
+          />
+          <v-list-item
+            v-if="isOwner"
+            role="menuitem"
+            :title="isArchived ? t('work.task.unarchive') : t('work.task.archive')"
+            :data-testid="isArchived ? 'task-unarchive' : 'task-archive'"
+            @click="isArchived ? unarchive() : archive()"
           />
         </v-list>
       </v-menu>

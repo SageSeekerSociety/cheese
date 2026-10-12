@@ -21,16 +21,21 @@ export function openProjectTasksQuery(projectId: string) {
   })
 }
 
-/** 「全部任务」里已经结束的，往下滚到哪读到哪。 */
+/** 「全部任务」里一页页读的那两份（已结束的、已归档的），往下滚到哪读到哪。 */
 export const CLOSED_PAGE = 50
 
-/** 已经结束的任务，最近结束的在前，一页一页读；频道、谁的在服务端筛，计数也是服务端数的。 */
-export function closedProjectTasksQuery(projectId: string, filter: { channel: string | null; whose: TaskFilter }) {
+/** 已经结束的、或者被收起来的任务，一页一页读；频道、谁的在服务端筛，计数也是服务端
+ *  数的。两份各是各的清单：收起来的不出现在「已关闭」里。 */
+export function pagedProjectTasksQuery(
+  projectId: string,
+  status: 'closed' | 'archived',
+  filter: { channel: string | null; whose: TaskFilter }
+) {
   return infiniteQueryOptions({
-    queryKey: keys.projectClosedTasks(projectId, filter),
+    queryKey: keys.projectPagedTasks(projectId, status, filter),
     queryFn: ({ pageParam }) =>
       pageProjectTasks(projectId, {
-        status: 'closed',
+        status,
         limit: CLOSED_PAGE,
         before: pageParam,
         channel: filter.channel,

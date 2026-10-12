@@ -7,7 +7,16 @@ import { computed, ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { ApiError, setEnvironmentDefault, setSessionEnvironment } from '@/api'
-import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
+import {
+  archiveTask,
+  closeTask,
+  compareDocumentVersions,
+  renameTask,
+  reopenTask,
+  startTask,
+  unarchiveTask,
+  updateTask,
+} from '@/api/tasks'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { patchQuery, queryClient } from '@/query/client'
@@ -71,6 +80,8 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     () => isOwner.value || (!!task.value && (task.value.contributor_handles ?? []).includes(ME))
   )
   const isOpen = computed(() => task.value?.status === 'open')
+  // 被收起来了（后端 `archived_at`）。归档的一定也关掉了，所以它和 `isOpen` 不会同时为真。
+  const isArchived = computed(() => task.value?.archived_at != null)
   // 能接这件事、能来协作的人：项目里的人（不含 AI 队友）。
   const people = computed(() => opts.people().filter((m) => !m.agent))
 
@@ -109,6 +120,31 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     actionError.value = null
     try {
       await apply(await reopenTask(task.value.id))
+      return true
+    } catch (e) {
+      actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
+      return false
+    }
+  }
+  // ---- 负责人：归档、取消归档 ----
+  // 归档把这条活从各处清单里收起来，还开着的先关掉（后端 `TaskService.archive`）；
+  // 取消归档把它放回清单里，但**不会**替它「重新打开」——要接着做是另一回事。
+  async function archive(): Promise<boolean> {
+    if (!task.value) return false
+    actionError.value = null
+    try {
+      await apply(await archiveTask(task.value.id))
+      return true
+    } catch (e) {
+      actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
+      return false
+    }
+  }
+  async function unarchive(): Promise<boolean> {
+    if (!task.value) return false
+    actionError.value = null
+    try {
+      await apply(await unarchiveTask(task.value.id))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -226,6 +262,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     setCollaborators,
     setAgent,
     isOpen,
+    isArchived,
     people,
     starting,
     startError,
@@ -233,6 +270,8 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     actionError,
     close,
     reopen,
+    archive,
+    unarchive,
     handOver,
     rename,
     machine,
