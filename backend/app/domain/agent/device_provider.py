@@ -93,7 +93,7 @@ async def _false() -> bool:
 # The platform's footprint on the device, and a place's isolated claude home
 # inside it, relative to the device's own `$HOME` (expanded by its shell, never
 # by us). Everything below hangs off `DEVICE_ROOT` so that the launcher that
-# creates these, the retirement that removes them (topic/retire.py) and the
+# creates these, the retirement that removes them (room_cleanup/retire.py) and the
 # connector's `uninstall` are all naming one directory.
 DEVICE_ROOT = f"$HOME/{footprint_root()}"
 DEVICE_HOME_ROOT = f"{DEVICE_ROOT}/home"

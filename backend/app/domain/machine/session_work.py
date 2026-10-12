@@ -329,7 +329,7 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
 async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     """One best-effort checkpoint (``checkpoint``) of each of the room's
     sessions on its machine, all at once, before the room's cleanup stops them
-    (``topic.retire``, which is handed this by whoever starts its sweep). The
+    (``room_cleanup.retire``, which is handed this by whoever starts its sweep). The
     cleanup goes on whatever they answer: what a lost checkpoint loses is held
     by the snapshot of the session's last turn."""
     rows = list(

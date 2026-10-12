@@ -40,7 +40,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.services import ProjectService
-from app.domain.topic import retire
+from app.domain.room_cleanup import retire
 from app.domain.topic.models import KeptRoomFiles, RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered, session_auth_headers

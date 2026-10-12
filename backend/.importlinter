@@ -365,11 +365,6 @@ ignore_imports =
     app.domain.team.membership_services -> app.domain.delivery.ledger
     app.domain.team.membership_services -> app.domain.notification.models
     app.domain.team.services -> app.domain.task.repositories
-    app.domain.topic.retire -> app.domain.agent.device_hub
-    app.domain.topic.retire -> app.domain.agent.device_storage
-    app.domain.topic.retire -> app.domain.agent.models
-    app.domain.topic.retire -> app.domain.agent.resource_cleanup
-    app.domain.topic.retire -> app.domain.machine.services
     app.domain.topic.services -> app.domain.agent.clone
     app.domain.topic.services -> app.domain.agent.harness
     app.domain.topic.services -> app.domain.review.archive

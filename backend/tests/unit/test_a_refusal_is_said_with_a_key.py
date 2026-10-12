@@ -489,7 +489,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/textfile.py": 1,
     "app/domain/thread/services.py": 1,
     "app/domain/topic/cleanup_trigger.py": 1,
-    "app/domain/topic/retire.py": 8,
+    "app/domain/room_cleanup/retire.py": 8,
     "app/domain/topic/services.py": 15,
     "app/domain/topic_membership/services.py": 10,
     "app/domain/usage/ledger.py": 1,
