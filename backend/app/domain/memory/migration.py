@@ -43,7 +43,7 @@ from app.domain.memory.files import (
     valid_name,
 )
 
-#: 总览文档里那两节。它们是第三个来源，和人 / agent 的池子同一个待遇：一条一条
+#: 项目目标文档里那两节。它们是第三个来源，和人 / agent 的池子同一个待遇：一条一条
 #: 列出来，各自有一个去处。**含标题不含正文**——「由记忆整理迁入」那一节是上一版
 #: 迁移写进去的，而它写的正是旧表里的行，所以这一节和 `memory_entries` 有重叠；
 #: 重叠由人（或模型）在报告里看见，不在这里去重：两处可能已经分叉了，按字符串去重
@@ -112,7 +112,7 @@ class Source(StrEnum):
     agent = "agent"
     #: `scope=user`：某个 agent 对某个人的认识。**不许进 team。**
     person = "person"
-    #: 总览文档里的那一节。
+    #: 项目目标文档里的那一节。
     overview = "overview"
 
 
@@ -269,21 +269,21 @@ def _line_count(text: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 来源：旧表和总览文档各自读成一样的东西
+# 来源：旧表和项目目标文档各自读成一样的东西
 # ---------------------------------------------------------------------------
 
 
 def overview_entries(doc: str) -> list[OldEntry]:
-    """总览文档里那两节，读成一条条旧记忆。
+    """项目目标文档里那两节，读成一条条旧记忆。
 
     一节里的正文按**空行**切段：文档是给人看的，一段一件事，而段落是它唯一自带
-    的结构。没有那两节就是空的——一份还没按这个结构写过的总览不该被硬读出东西来。
+    的结构。没有那两节就是空的——一份还没按这个结构写过的文档不该被硬读出东西来。
     """
     entries: list[OldEntry] = []
     for heading, body in _sections(doc):
         if heading not in OVERVIEW_SECTIONS:
             continue
-        where = f"总览文档 · {heading}"
+        where = f"项目目标文档 · {heading}"
         for number, paragraph in enumerate(_paragraphs(body), start=1):
             entries.append(
                 OldEntry(

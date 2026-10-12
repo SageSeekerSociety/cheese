@@ -103,7 +103,7 @@ const emit = defineEmits<{
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
   // final: the platform stops renaming that room from then on.
   (e: 'rename-topic', payload: { id: string; title: string }): void
-  // Open 项目文档 in the main area. The rail always asks for 章程 — the page
+  // Open 项目文档 in the main area. The rail always asks for 项目目标 — the page
   // itself carries the tabs that reach the other two.
   (e: 'select-docs', kind: 'charter' | 'weeklies' | 'memory'): void
 }>()
@@ -343,7 +343,7 @@ const rowSheetActions = computed<MenuAction[]>(() =>
   rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
 )
 
-// 项目文档 (C4): 章程 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
+// 项目文档 (C4): 项目目标 / 周报集 / 记忆 在侧栏只占一行，点开进项目目标；
 // 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
 // 这一行在任何一种文档打开时都是选中态。
 const onDocs = computed(() => !!props.activeDocs)

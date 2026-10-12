@@ -108,7 +108,7 @@ async def whose_document(
 
 async def seed(session: AsyncSession, doc: Document, content: str) -> None:
     """The first version of a document, written by the platform from words it
-    already had (a new project's overview). The caller holds its lock."""
+    already had (a new project's goals). The caller holds its lock."""
     if doc.version != 0:
         raise _doc_conflict(doc.version)
     written = await Documents(session).write(

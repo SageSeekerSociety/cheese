@@ -2170,12 +2170,13 @@
   },
   "channel": {
     "overview": {
-      "project": "Project overview",
+      "project": "Project goals",
       "projectNote": "{name} reads this in every conversation",
       "expand": "Show all",
       "collapse": "Show less",
-      "noProject": "No project overview yet",
-      "writeProject": "Write one",
+      "noProject": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+      "writeProject": "Write project goals",
+      "editProject": "Edit project goals",
       "description": "About this channel",
       "edit": "Edit",
       "save": "Save",
@@ -2257,12 +2258,12 @@
     "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived"
   },
   "overview": {
-    "document": "Project overview",
-    "edit": "Edit",
+    "document": "Project goals",
+    "edit": "Edit project goals",
     "expand": "Show all",
     "collapse": "Collapse",
-    "noDocument": "No project overview yet",
-    "write": "Write one",
+    "noDocument": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+    "write": "Write project goals",
     "progress": "Recent progress",
     "progressFailed": "Unable to load recent progress",
     "noProgress": "No progress in the last two weeks",

@@ -41,7 +41,7 @@ class Document(UuidPk, Base):
     kind: Mapped[str] = mapped_column(String(16), default="doc", server_default="doc")
     #: Its number among the project's documents, for addresses
     #: (`project_counters`). Only a document of the project's own has one: a
-    #: task's goes by the task, the overview by the project.
+    #: task's goes by the task, the project's goals by the project.
     number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: None for a task's document, which goes by the task's title.
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)

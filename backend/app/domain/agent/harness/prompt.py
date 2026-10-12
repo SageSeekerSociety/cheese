@@ -522,7 +522,7 @@ def build_session_opening(
     keeps_memory: bool = False,
     machine: str | None = None,
 ) -> SessionOpening:
-    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。
+    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、项目目标、文档、记忆索引。
 
     ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。
     ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
@@ -598,14 +598,15 @@ def build_session_opening(
         )
     if overview_doc:
         # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
-        # 有一份总览，每段对话都读到同一份，谁改了都留痕。
+        # 有一份项目目标，每段对话都读到同一份，谁改了都留痕。
         where = f"（`document: {overview_doc_id}`）" if overview_doc_id else ""
         sections["overview"] = (
-            "## 项目总览（全项目共看的那一份）\n"
-            "项目所有人和所有芝士共同看的就是它：这个项目是什么——目标、范围"
-            "（做 / 不做）、对外口径，≤1500 字。它很少变，变了才改，用 "
-            f"`cheese_doc_edit`{where}。项目现在在做什么不写在这里，要看就查各"
-            "频道里的任务。\n"
+            "## 项目目标（全项目共看的那一份）\n"
+            "项目所有人和所有芝士共同看的就是它，只写三件事：这个项目要做成什么、"
+            "什么时候做成、这阶段不做什么，≤1500 字。代码是什么、怎么跑看仓库的 "
+            "README，给 AI 的规矩写在仓库的 CLAUDE.md，都不写进这里；项目现在在做"
+            "什么也不写在这里，要看就查各频道里的任务。它很少变，目标、时间或范围变"
+            f"了才改，用 `cheese_doc_edit`{where}。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,

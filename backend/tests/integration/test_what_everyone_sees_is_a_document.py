@@ -2,14 +2,14 @@
 
 一个共享池和一份文档差的不是存在哪儿。池子没有主、不留痕、人翻不到也改不了，
 而它偏偏又是「大家都该知道的事」唯一的落点——于是项目的共识住在一个只有模型读
-得到的地方。文档三样都有，所以那一路的去向是项目总览。
+得到的地方。文档三样都有，所以那一路的去向是项目目标。
 
 写记忆的那个旧入口已经整个停用（话题「记忆机制照搬CC」）：先是 `cheese_remember
-everyone` 往这份文档里追加的那一路——它把总览写成了只增不减的观察清单——接着是
+everyone` 往这份文档里追加的那一路——它把这份文档写成了只增不减的观察清单——接着是
 `cheese_remember` 本身，它写的条目池已经不再注入任何地方。这一组守的是还成立的那
-几头：停用要明说、并且说清该去哪写；每段对话跑一轮时，总览在它的提示词里。
+几头：停用要明说、并且说清该去哪写；每段对话跑一轮时，项目目标在它的提示词里。
 
-总览只有「项目是什么」那一块进提示词：手抄进别的小节的字谁都读不到。
+按小节写的老文档只有「项目是什么」那一块进提示词：手抄进别的小节的字谁都读不到。
 """
 
 from tests.integration.conftest import (
@@ -25,7 +25,7 @@ FACT = "中期答辩定在 11 月 15 日，要现场演示一个能跑的 demo"
 
 
 def _overview(client, project_id: str) -> str:
-    """The project's overview, as the document routes address it."""
+    """The project's goals document, as the document routes address it."""
     return f"/documents/{overview_of(client, project_id)}"
 
 
@@ -69,11 +69,11 @@ def _write_overview(client, project_id: str, content: str) -> None:
 def test_writing_memory_through_this_endpoint_is_retired_and_says_where(client):
     """写记忆的旧入口整个停用了，而且明说停在哪、该去哪写，不是静默吞掉。
 
-    `scope="everyone"` 那一路先停：它把总览文档写成了一份只增不减的观察清单
+    `scope="everyone"` 那一路先停：它把这份文档写成了一份只增不减的观察清单
     （话题「记忆机制照搬CC」）。剩下的写入面随后一起收掉——`cheese_remember` 写
     的是条目池，而条目池已经不再注入任何地方，所以「已记入」是一句谎话。旧会话
     里的调用方读到的这句要说清记忆现在是什么形状：`~/.cheese/memory/` 下的
-    文件。总览文档只写「项目是什么」。
+    文件。这份文档是项目目标，只写要做成什么、什么时候做成、这阶段不做什么。
     """
     project_id, topic_id = _project_and_room(client)
 
@@ -91,7 +91,7 @@ def test_writing_memory_through_this_endpoint_is_retired_and_says_where(client):
 
 
 def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_hooks):
-    """别的房间跑一轮，总览那一份在提示词里。"""
+    """别的房间跑一轮，项目目标那一份在提示词里。"""
     project_id, topic_id = _project_and_room(client)
     _write_overview(client, project_id, FACT)
 
@@ -103,7 +103,7 @@ def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_
 
 
 def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
-    """每段对话只注入「项目是什么」：手抄进别的小节的字谁都读不到，写在那儿
+    """按小节写的老文档只注入「项目是什么」：手抄进别的小节的字谁都读不到，写在那儿
     等于没写——不必每轮往每段对话塞项目快照。"""
     project_id, topic_id = _project_and_room(client)
     _write_overview(
@@ -123,7 +123,7 @@ def test_another_room_gets_only_what_the_project_is(client, stub_hooks):
 
 
 def test_a_stranger_cannot_read_the_overview(client):
-    """总览是项目的：认得出来是谁，还得是项目里的人。"""
+    """项目目标是项目的：认得出来是谁，还得是项目里的人。"""
     project_id, _ = _project_and_room(client)
     stranger = session_auth_headers("stranger")
     resp = client.get(f"/projects/{project_id}/overview", headers=stranger)

@@ -1,4 +1,4 @@
-/** 频道概览：进行中只列最近有动静的；综合最上面的项目总览只读，要改就整份打开。 */
+/** 频道概览：进行中只列最近有动静的；综合最上面的项目目标只读，要改就整份打开。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 
@@ -15,7 +15,7 @@ vi.mock('@/components/common/MarkdownView.vue', () => ({
 
 import ChannelOverview from './ChannelOverview.vue'
 
-import i18n, { setLocale } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 setLocale('zh-CN')
 const vuetify = createVuetify({ components, directives })
@@ -80,8 +80,8 @@ describe('进行中的任务', () => {
   })
 })
 
-describe('项目总览', () => {
-  it('只读地显示，点「编辑」整份打开那一份文档', async () => {
+describe('项目目标', () => {
+  it('只读地显示，点编辑整份打开那一份文档', async () => {
     const ui = mount({ overviewText: '## 目标\n\n做一个课程助手。' })
     expect(ui.getByTestId('md').textContent).toContain('做一个课程助手')
     expect(ui.container.querySelector('[contenteditable="true"], textarea')).toBeNull()
@@ -90,9 +90,9 @@ describe('项目总览', () => {
     expect(ui.emitted()['edit-overview']).toEqual([['doc1']])
   })
 
-  it('还没写过时，给一个写一份的入口', async () => {
+  it('还没写过时，给一个去写的入口', async () => {
     const ui = mount({ overviewText: '  ' })
-    await fireEvent.click(ui.getByRole('button', { name: '写一份' }))
+    await fireEvent.click(ui.getByRole('button', { name: t('work.channel.overview.writeProject') }))
     expect(ui.emitted()['edit-overview']).toEqual([['doc1']])
   })
 })

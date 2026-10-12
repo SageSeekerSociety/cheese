@@ -119,7 +119,7 @@ function backToRoom() {
 }
 
 // Bumped on every AI turn / tool use. Watched by the documents in the panel
-// and the project overview on 综合's overview (reload what 芝士 maintained).
+// and the project's goals on 综合's overview (reload what 芝士 maintained).
 const activityTick = ref(0)
 
 // URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。

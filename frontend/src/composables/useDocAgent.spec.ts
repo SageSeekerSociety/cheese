@@ -152,13 +152,13 @@ describe('在文档里找 AI 队友', () => {
   it('只是问：正文不动，回答给出来，能转成评论，评论标在选中的字上', async () => {
     const { doc, editor } = room('数据量到一千万行时开始评估迁移。')
     const before = exportMarkdown(doc)
-    const { ctl, toComment } = controller(editor, service(doc, { answer: '一千万和章程里写的一致。' }))
+    const { ctl, toComment } = controller(editor, service(doc, { answer: '一千万和项目目标里写的一致。' }))
 
     ctl.open(select(editor, '一千万'))
     ctl.run(check, '检查')
     await vi.waitFor(() => expect(ctl.phase.value).toBe('answered'))
 
-    expect(ctl.answer.value).toBe('一千万和章程里写的一致。')
+    expect(ctl.answer.value).toBe('一千万和项目目标里写的一致。')
     expect(exportMarkdown(doc)).toBe(before)
     expect(await ctl.toComment()).toBe('thread-1')
     expect(toComment).toHaveBeenCalledWith('conversation-1', '一千万', '检查')
