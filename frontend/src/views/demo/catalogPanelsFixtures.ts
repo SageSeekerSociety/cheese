@@ -224,7 +224,9 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     selectFile: noopAsync,
     closeFile: noop,
     selectVersion: noopAsync,
-    openFile: noopAsync,
+    // 这一格要回一句「这份文件我这儿有没有」（没有就由工作面板退到项目当前版本）。
+    // 预览站里没有真文件，开哪一份都当开到了。
+    openFile: async () => true,
     toggleDir: noop,
     downloadOpenFile: noopAsync,
     saveFile: noopAsync,
