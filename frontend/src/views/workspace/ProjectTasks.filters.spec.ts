@@ -84,9 +84,9 @@ async function mount(path: string) {
 it('从地址恢复三组筛选与频道，离开任务后返回仍保留', async () => {
   const { view, router } = await mount('/projects/p1/tasks?status=closed&whose=mine&delivery=accepted&channel=front')
   const row = await view.findByRole('button', { name: /已采纳交付的任务/ })
-  expect(view.getByRole('button', { name: t('work.channelTasks.closed'), exact: true }).getAttribute('aria-pressed')).toBe(
-    'true'
-  )
+  expect(
+    view.getByRole('button', { name: t('work.channelTasks.closed'), exact: true }).getAttribute('aria-pressed')
+  ).toBe('true')
   expect(view.getByRole('button', { name: t('taskList.acceptedDelivery') }).getAttribute('aria-pressed')).toBe('true')
   expect(view.getByRole('button', { name: /^我负责的 1$/ }).getAttribute('aria-pressed')).toBe('true')
   expect(api.page).toHaveBeenCalledWith(
