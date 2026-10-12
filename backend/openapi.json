@@ -7332,6 +7332,348 @@
         }
       }
     },
+    "/documents/{document_id}/canvases": {
+      "get": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Document Canvases",
+        "description": "The canvases the document's text names, each as text, in order.",
+        "operationId": "document_canvases_documents__document_id__canvases_get",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentCanvasTextOutListEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Create Canvas",
+        "description": "A new, empty canvas of this document, for a canvas block an editor just\nput in it.",
+        "operationId": "create_canvas_documents__document_id__canvases_post",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvases/{canvas_id}": {
+      "get": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Get Canvas",
+        "operationId": "get_canvas_canvases__canvas_id__get",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Patch Canvas",
+        "operationId": "patch_canvas_canvases__canvas_id__patch",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanvasPatchIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvases/{canvas_id}/text": {
+      "get": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Canvas Text",
+        "description": "The canvas as an outline an AI teammate reads; ``positions`` adds where\neach card sits.",
+        "operationId": "canvas_text_canvases__canvas_id__text_get",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          },
+          {
+            "name": "positions",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Positions"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasTextOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvases/{canvas_id}/changes": {
+      "post": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Change Canvas",
+        "description": "Make the changes in order, all or none; a refusal names the change\n(``data.index``). Answers the canvas as it now is, and the numbers new\ncards got by their ``ref`` (``refs``).",
+        "operationId": "change_canvas_canvases__canvas_id__changes_post",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangesIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasChangedOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvases/{canvas_id}/copy": {
+      "post": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Copy Canvas",
+        "description": "A copy of this canvas as it is now, belonging to ``document_id``: a\ncanvas block pasted into a document, or into the same one again. Whoever\nmay read the canvas and write that document may make one.",
+        "operationId": "copy_canvas_canvases__canvas_id__copy_post",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanvasCopyIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/comments/{commentId}/attitudes": {
       "post": {
         "tags": [
@@ -51367,6 +51709,103 @@
         ],
         "title": "AcceptRequest"
       },
+      "AddCard": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add",
+            "title": "Op"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Content",
+            "default": ""
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": -100000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": -100000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4000.0,
+                "minimum": 40.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4000.0,
+                "minimum": 40.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "title": "AddCard"
+      },
       "AddEmailCodeRequest": {
         "properties": {
           "email": {
@@ -52468,6 +52907,470 @@
         ],
         "title": "BulkUpdateRequest"
       },
+      "CanvasCardOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "number": {
+            "type": "integer",
+            "title": "Number"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasTaskOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_hidden": {
+            "type": "boolean",
+            "title": "Task Hidden"
+          },
+          "updated_by": {
+            "type": "string",
+            "title": "Updated By"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "content",
+          "x",
+          "y",
+          "width",
+          "height",
+          "task",
+          "task_hidden",
+          "updated_by",
+          "updated_at"
+        ],
+        "title": "CanvasCardOut"
+      },
+      "CanvasChangedOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "document_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Id"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "writable": {
+            "type": "boolean",
+            "title": "Writable"
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasCardOut"
+            },
+            "type": "array",
+            "title": "Cards"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasEdgeOut"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "refs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Refs"
+          },
+          "added": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Added"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "document_id",
+          "height",
+          "writable",
+          "cards",
+          "edges",
+          "refs",
+          "added"
+        ],
+        "title": "CanvasChangedOut"
+      },
+      "CanvasChangedOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CanvasChangedOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "CanvasChangedOutEnvelope"
+      },
+      "CanvasCopyIn": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "document_id"
+        ],
+        "title": "CanvasCopyIn"
+      },
+      "CanvasEdgeOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "from": {
+            "type": "string",
+            "format": "uuid",
+            "title": "From"
+          },
+          "to": {
+            "type": "string",
+            "format": "uuid",
+            "title": "To"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "from",
+          "to",
+          "label"
+        ],
+        "title": "CanvasEdgeOut"
+      },
+      "CanvasOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "document_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Id"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "writable": {
+            "type": "boolean",
+            "title": "Writable"
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasCardOut"
+            },
+            "type": "array",
+            "title": "Cards"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasEdgeOut"
+            },
+            "type": "array",
+            "title": "Edges"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "document_id",
+          "height",
+          "writable",
+          "cards",
+          "edges"
+        ],
+        "title": "CanvasOut"
+      },
+      "CanvasOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CanvasOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "CanvasOutEnvelope"
+      },
+      "CanvasPatchIn": {
+        "properties": {
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4000.0,
+                "minimum": 160.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "height"
+        ],
+        "title": "CanvasPatchIn"
+      },
+      "CanvasTaskOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "room_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Room Id"
+          },
+          "column": {
+            "type": "string",
+            "title": "Column"
+          },
+          "phrase": {
+            "type": "string",
+            "title": "Phrase"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "title",
+          "room_id",
+          "column",
+          "phrase"
+        ],
+        "title": "CanvasTaskOut",
+        "description": "The task a card points at, as the reader's board shows it."
+      },
+      "CanvasTextOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "CanvasTextOut"
+      },
+      "CanvasTextOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CanvasTextOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "CanvasTextOutEnvelope"
+      },
       "ChangePasswordRequest": {
         "properties": {
           "password": {
@@ -52491,6 +53394,55 @@
           "password"
         ],
         "title": "ChangePasswordRequest"
+      },
+      "ChangesIn": {
+        "properties": {
+          "changes": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AddCard"
+                },
+                {
+                  "$ref": "#/components/schemas/UpdateCard"
+                },
+                {
+                  "$ref": "#/components/schemas/MoveCard"
+                },
+                {
+                  "$ref": "#/components/schemas/DeleteCard"
+                },
+                {
+                  "$ref": "#/components/schemas/Connect"
+                },
+                {
+                  "$ref": "#/components/schemas/Disconnect"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "op",
+                "mapping": {
+                  "add": "#/components/schemas/AddCard",
+                  "connect": "#/components/schemas/Connect",
+                  "delete": "#/components/schemas/DeleteCard",
+                  "disconnect": "#/components/schemas/Disconnect",
+                  "move": "#/components/schemas/MoveCard",
+                  "update": "#/components/schemas/UpdateCard"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Changes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "changes"
+        ],
+        "title": "ChangesIn"
       },
       "ChatAttachmentIn": {
         "properties": {
@@ -53207,6 +54159,52 @@
         ],
         "title": "ConfirmTaskPublishFromPdfRequest"
       },
+      "Connect": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "connect",
+            "title": "Op"
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "From"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "To"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Label",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "from",
+          "to"
+        ],
+        "title": "Connect",
+        "description": "A line from one card to another; between two connected cards it\nreplaces the words on the line."
+      },
       "ConnectRequest": {
         "properties": {
           "device_code": {
@@ -53889,6 +54887,33 @@
         ],
         "title": "CreateTeamRequest"
       },
+      "DeleteCard": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "delete",
+            "title": "Op"
+          },
+          "card": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Card"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "card"
+        ],
+        "title": "DeleteCard"
+      },
       "Deleted": {
         "properties": {
           "deleted": {
@@ -53978,6 +55003,45 @@
         ],
         "title": "DigestCadence"
       },
+      "Disconnect": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "disconnect",
+            "title": "Op"
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "From"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "To"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "from",
+          "to"
+        ],
+        "title": "Disconnect"
+      },
       "Dismissed": {
         "properties": {
           "dismissed": {
@@ -54057,6 +55121,70 @@
           "expected_version"
         ],
         "title": "DocEditIn"
+      },
+      "DocumentCanvasTextOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "title"
+        ],
+        "title": "DocumentCanvasTextOut"
+      },
+      "DocumentCanvasTextOutListEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentCanvasTextOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "DocumentCanvasTextOutListEnvelope"
       },
       "DocumentIn": {
         "properties": {
@@ -57960,6 +59088,73 @@
         "type": "object",
         "title": "ModelUpdate",
         "description": "`PATCH /admin/gateway/models/{name}` 的体 —— 只传要改的，缺的都不动。\n\n每个字段都可有可无，`None` 一律表示「这次别碰它」。两处例外，都在签名上：\n\n- `api_key_unchanged` 默认 `true`：编辑界面不回显上游凭据，所以一次没带 key 的提交\n  绝不能把现有 key 清空 —— 那会让这条模型下一次调用直接失败。\n- `name` 虽然在体里（前端把同一个表单原样提交），但**改名不支持**：真正的名字以\n  路径上的 `{name}` 为准，服务层的 `update` 也是分开收这两个的。"
+      },
+      "MoveCard": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "move",
+            "title": "Op"
+          },
+          "card": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Card"
+          },
+          "x": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4000.0,
+                "minimum": 40.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4000.0,
+                "minimum": 40.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "card",
+          "x",
+          "y"
+        ],
+        "title": "MoveCard"
       },
       "NoteCreate": {
         "properties": {
@@ -63134,6 +64329,57 @@
           "content"
         ],
         "title": "Turn"
+      },
+      "UpdateCard": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "update",
+            "title": "Op"
+          },
+          "card": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Card"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "card"
+        ],
+        "title": "UpdateCard"
       },
       "ValidationError": {
         "properties": {

@@ -37,6 +37,7 @@ import { computed, reactive, ref, shallowRef } from 'vue'
 
 import { useDocPeople } from '@/composables/useDocPeople'
 
+import { memoryCanvas } from './catalogCanvasFixtures'
 import {
   ACCEPT_REVIEWERS,
   AGENT_NAME,
@@ -353,6 +354,7 @@ export function docBundle(
     setError: view.setError,
     fetchDocNodes: view.fetchDocNodes,
     imageSrc: view.imageSrc,
+    canvas: memoryCanvas(),
     applyEdits: refuseWrite,
   }
 }
