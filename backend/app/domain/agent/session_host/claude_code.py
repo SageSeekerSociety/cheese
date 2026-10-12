@@ -62,9 +62,6 @@ if TYPE_CHECKING:
 STARTUP_WAIT_S = 120.0
 STARTUP_FIRST_POLL_S = 0.05
 STARTUP_POLL_S = 1.0
-# How many times, a poll apart, a gone session's runner is read for the record
-# of its ending (`last_words`).
-LAST_WORDS_POLLS = 3
 
 
 class ClaudeCodeDriver:
@@ -256,18 +253,14 @@ class ClaudeCodeDriver:
     async def last_words(
         self, wire: Wire, host: str, ref: SessionRef, launched: Launched
     ) -> str:
-        """Its runner's record of this launch ending, once the runner has
-        written it: it says the process is gone a moment before it does."""
+        """Its runner's record of this launch never coming up, which the
+        runner writes before it says the process is gone."""
         if launched.name is None:
             return ""
-        for _ in range(LAST_WORDS_POLLS):
-            # The same record carries other lines this launch signed (a memory
-            # sync held back); only these words say it never came up.
-            record = await self._ended(wire, host, ref.state, launched.name)
-            if NEVER_STARTED in record:
-                return record
-            await asyncio.sleep(STARTUP_POLL_S)
-        return ""
+        # The same record carries other lines this launch signed (a memory sync
+        # held back); only these words say it never came up.
+        record = await self._ended(wire, host, ref.state, launched.name)
+        return record if NEVER_STARTED in record else ""
 
     async def adopt(self, wire: Wire, found: list[tuple[str, Access]]) -> None:
         """The screen machinery forgets every screen when the backend restarts,

@@ -427,6 +427,7 @@ class Runner(runner.Runner[Journal]):
         # Claude Code itself wrote a record: what failed after that was the
         # build, not the executor client's bootstrap in front of it.
         self.ran = False
+        self.settling: asyncio.Future | None = None
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
@@ -537,6 +538,24 @@ class Runner(runner.Runner[Journal]):
         for helper in self.helpers:
             helper.cancel()
         await asyncio.gather(*self.helpers, return_exceptions=True)
+        await self._ending()
+        await super().close()
+
+    async def _announce_exit(self, process: asyncio.subprocess.Process) -> None:
+        # The backend reads why it never came up as soon as it hears the
+        # process is gone (`Driver.last_words`), so that is written first.
+        await process.wait()
+        await asyncio.shield(self._ending())
+        self.announce()
+
+    def _ending(self) -> asyncio.Future:
+        """Settle what the process's ending says, once, whether its exit or a
+        close comes first."""
+        if self.settling is None:
+            self.settling = asyncio.ensure_future(self._settle_ending())
+        return self.settling
+
+    async def _settle_ending(self) -> None:
         # Claude Code that exited by itself, failing, before it ever answered
         # was handed a transcript it cannot continue. An exit we asked for, a
         # clean one, or the bootstrap failing before Claude Code ran (its lease,
@@ -558,7 +577,6 @@ class Runner(runner.Runner[Journal]):
             self.journal.remember("resuming", "")
         if failed and process is not None:
             self._last_words(process.returncode)
-        await super().close()
 
     def _last_words(self, status: int | None) -> None:
         """Say why Claude Code never came up, where the backend will look.
