@@ -573,6 +573,33 @@ def self_test() -> int:
         edit_blocks(edits[:4] + [("b", "Bash", _command_of({"arg": "ruff check ."}))] + edits[:4]),
         [],
     )
+    # The transcript a real turn leaves: one call described, one not. Read
+    # through `_tool_calls`, because a command taken from the wrong field is
+    # invisible to a test that calls `_command_of` itself.
+    page = {
+        "data": [
+            {
+                "id": "b1",
+                "meta": {
+                    "tool": "Bash",
+                    "at": "2026-10-12T11:00:01",
+                    "arg": "跑测试",
+                    "detail": "uv run pytest -q",
+                },
+            },
+            {"id": "b2", "meta": {"tool": "Bash", "at": "2026-10-12T11:00:02", "arg": "ruff check ."}},
+        ],
+        "has_more": False,
+    }
+    real_request = _request
+    globals()["_request"] = lambda *a, **k: page
+    try:
+        calls = list(_tool_calls({"id": "t"}, "tok", "2026-10-12T00:00:00", "2026-10-12T23:00:00"))
+    finally:
+        globals()["_request"] = real_request
+    check("a described call's command comes from detail", calls[0][3], "uv run pytest -q")
+    check("a plain call's command comes from arg", calls[1][3], "ruff check .")
+    check("and that check ends a block", edit_blocks([(c[1], c[2], c[3]) for c in calls]), [])
     check("tasks sort by number", ledger["s"]["tasks"], ["2", "10"])
     check("a task without a number keeps its id", _label({"number": None, "id": "abcdef12"}), "?abcdef")
     check("two tasks flag deep dive", ledger["s"]["status"], DEEP_DIVE)

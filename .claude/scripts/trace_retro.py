@@ -456,6 +456,28 @@ def first_judged_head(pushes: list[dict]) -> dict | None:
     return next((p for p in pushes if p["rounds"]), None)
 
 
+def pr_report(pr: dict, pushes: list[dict], exits: list[dict]) -> dict:
+    """One merged PR's row, assembled from what `pr_reports` fetched.
+
+    Kept apart from the fetching so the 首推 wiring can be asserted without a
+    network: `pushes` is one entry per head in push order, each carrying its
+    `rounds`."""
+    first = first_judged_head(pushes)
+    return {
+        "number": pr["number"],
+        "title": pr.get("title"),
+        "merged_at": pr.get("mergedAt"),
+        "merge_commit": (pr.get("mergeCommit") or {}).get("oid"),
+        "pushes": len(pushes),
+        "ci_runs": sum(len(p["rounds"]) for p in pushes),
+        "push_detail": pushes,
+        "first_head": first["sha"] if first else None,
+        "strict_first_pass": strict_pass(first) if first else False,
+        "lenient_first_pass": _lenient(first["rounds"] if first else [], pushes),
+        "exits": exits,
+    }
+
+
 def pr_reports(repo: str, since: datetime, until: datetime) -> list[dict]:
     """One record per merged PR, every GitHub-side fact the retro needs."""
     prs = merged_prs(repo, since, until)
@@ -464,26 +486,11 @@ def pr_reports(repo: str, since: datetime, until: datetime) -> list[dict]:
     for pr in prs:
         number = pr["number"]
         timeline = pr_timeline(repo, number)
-        heads = heads_of(timeline)
-        pushes = []
-        for sha in heads:
-            pushes.append({"sha": sha, "rounds": ci_rounds(required_checks(repo, sha))})
-        first = first_judged_head(pushes)
-
+        pushes = [
+            {"sha": sha, "rounds": ci_rounds(required_checks(repo, sha))} for sha in heads_of(timeline)
+        ]
         reports.append(
-            {
-                "number": number,
-                "title": pr.get("title"),
-                "merged_at": pr.get("mergedAt"),
-                "merge_commit": (pr.get("mergeCommit") or {}).get("oid"),
-                "pushes": len(heads),
-                "ci_runs": sum(len(p["rounds"]) for p in pushes),
-                "push_detail": pushes,
-                "first_head": first["sha"] if first else None,
-                "strict_first_pass": strict_pass(first) if first else False,
-                "lenient_first_pass": _lenient(first["rounds"] if first else [], pushes),
-                "exits": merge_queue_exits(timeline, mg.get(number, []), repo, since, until),
-            }
+            pr_report(pr, pushes, merge_queue_exits(timeline, mg.get(number, []), repo, since, until))
         )
     return reports
 
@@ -1030,8 +1037,9 @@ def render_markdown(report: dict) -> str:
             "——把被顶掉的 cancelled 轮和 draft 层去掉后，第一个跑过必需 CI 的 head 上有没有一次绿的 "
             "full 必需检查。"
         ),
-        "  本窗口比复盘多一条：#3493 的首个 `committed` 一次 CI 都没跑过（不是它的 head），"
-        "按 head 判它是 draft 红后 full 绿，算过；把提交列表的第一项当首个 head 就得到复盘那 7 条。",
+        "  这一栏两种读法会差数：把提交列表的第一项当首个 head，和按「第一个跑过必需 CI 的 head」"
+        "判，在第一个 `committed` 没跑过 CI 的 PR 上不同——10-12 窗口的 #3493 就是这种，按 head 判"
+        "它算过，复盘那 7 条里不算它。",
     ]
     return "\n".join(lines)
 
@@ -1207,6 +1215,50 @@ def self_test() -> int:
             [rnd("a"), rnd("b", "cancelled", "green")],
         ),
         True,
+    )
+    # pr_report: the three 首推 fields go through the same head, not `pushes[0]`.
+    rep = pr_report(
+        {"number": 1, "title": "t", "mergedAt": "x", "mergeCommit": {"oid": "m"}},
+        [rnd("a"), rnd("b", "cancelled", "green")],
+        [],
+    )
+    check("首推 names the head CI ran on", rep["first_head"], "b")
+    check("首推 严格 reads that head", rep["strict_first_pass"], False)
+    check("首推 宽松 reads that head", rep["lenient_first_pass"], True)
+    check("and every head still counts as a push", rep["pushes"], 2)
+
+    # green_of: the boundary is a full-tier green, not a draft one.
+    draft_green = {"outcome": "green", "tier": "draft", "started_at": "2026-10-12T11:00:00"}
+    check(
+        "a draft-tier green is not the boundary",
+        green_of({"push_detail": [{"sha": "a", "rounds": [draft_green]}]}),
+        None,
+    )
+    check(
+        "the later full-tier green is",
+        green_of(
+            {
+                "push_detail": [
+                    {
+                        "sha": "a",
+                        "rounds": [draft_green, {"outcome": "green", "tier": "full", "completed_at": "2026-10-12T11:30:00"}],
+                    }
+                ]
+            }
+        ),
+        "2026-10-12T11:30:00",
+    )
+
+    # merge_queue_exits: only removals inside the window are this window's.
+    # `runs=[]` keeps both calls off the network — no entry, so no job lookup.
+    window = (_iso("2026-10-12T11:00:00Z"), _iso("2026-10-12T14:05:00Z"))
+    before = [{"event": "removed_from_merge_queue", "created_at": "2026-10-12T10:00:00Z"}]
+    inside = [{"event": "removed_from_merge_queue", "created_at": "2026-10-12T12:00:00Z"}]
+    check("a removal before the window is not this window's", merge_queue_exits(before, [], "r", *window), [])
+    check(
+        "a removal inside the window counts",
+        [e["at"] for e in merge_queue_exits(inside, [], "r", *window)],
+        ["2026-10-12T12:00:00Z"],
     )
 
     # first_error: earliest failing job by completion time, not the aggregate.
