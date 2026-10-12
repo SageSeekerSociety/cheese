@@ -32,6 +32,7 @@ import { toast } from 'vuetify-sonner'
 import AddEmailView from './AddEmailView.vue'
 import { emailCodeMessage } from './attemptWait'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
@@ -49,7 +50,12 @@ const signingOut = ref(false)
 
 const goOn = () => router.replace(postLoginTarget(route.query))
 
-const reasonOf = (e: unknown) => (e as { error?: { data?: { reason?: string } } })?.error?.data?.reason
+const reasonOf = (e: unknown) =>
+  (
+    (e instanceof ApiError ? e.data : (e as { error?: { data?: unknown } })?.error?.data) as
+      | { reason?: string }
+      | undefined
+  )?.reason
 
 // Only a recent sign-in may add the address. An older one is asked to sign in
 // again and comes back here, on its way to the same place.

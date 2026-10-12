@@ -10,9 +10,9 @@ import { pendingSudo, SudoCancelledError, withSudo } from '@/utils/sudo'
 
 import SudoDialog from './SudoDialog.vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 
 const browser = vi.hoisted(() => ({ webAuthn: true }))
 
@@ -44,10 +44,14 @@ beforeEach(() => {
   vi.stubGlobal('visualViewport', new EventTarget())
   // Outside the sudo window unless a test says otherwise, so the dialog opens.
   vi.mocked(UserAuthApi.requestSudoTicket).mockRejectedValue(
-    new BusinessError('Re-authentication required for this operation', 403, {
-      name: 'SudoRequiredError',
-      message: 'Re-authentication required for this operation',
-    })
+    new ApiError(
+      403,
+      'Re-authentication required for this operation',
+      'SudoRequiredError',
+      undefined,
+      undefined,
+      undefined
+    )
   )
   vi.mocked(UserAuthApi.verifySudoPassword).mockResolvedValue({ verified: true, sudoTicket: 'ticket-1' } as never)
   vi.mocked(UserAuthApi.verifySudoTOTP).mockResolvedValue({ verified: true, sudoTicket: 'ticket-2' } as never)
@@ -132,7 +136,7 @@ describe('shortly after the person proved who they are', () => {
   })
 
   it('reports any other failure instead of asking', async () => {
-    vi.mocked(UserAuthApi.requestSudoTicket).mockRejectedValue(new BusinessError('Service unavailable', 503))
+    vi.mocked(UserAuthApi.requestSudoTicket).mockRejectedValue(new ApiError(503, 'Service unavailable'))
     render(SudoDialog, { global: { plugins: [createVuetify({ components, directives })] } })
     const operation = vi.fn()
 
@@ -296,7 +300,7 @@ describe('confirming', () => {
 
   it('keeps the dialog open and says why when the password is wrong', async () => {
     accountWith({ passkey: false, twoFactor: false })
-    vi.mocked(UserAuthApi.verifySudoPassword).mockRejectedValue(new BusinessError('Incorrect password', 400))
+    vi.mocked(UserAuthApi.verifySudoPassword).mockRejectedValue(new ApiError(400, 'Incorrect password'))
     const { outcome } = await ask()
 
     await fireEvent.update(await screen.findByLabelText('Password'), 'wrong')
@@ -345,10 +349,8 @@ describe('confirming with a code mailed to the account', () => {
   it('says a wrong code is wrong in the interface language, and stays open', async () => {
     accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
     vi.mocked(UserAuthApi.verifySudoEmailCode).mockRejectedValue(
-      new BusinessError('Invalid or expired code', 401, {
-        name: 'AuthenticationRequiredError',
-        message: 'Invalid or expired code',
-        data: { reason: 'invalid_email_code' },
+      new ApiError(401, 'Invalid or expired code', 'AuthenticationRequiredError', undefined, undefined, {
+        reason: 'invalid_email_code',
       })
     )
     const { outcome } = await ask()
@@ -364,10 +366,8 @@ describe('confirming with a code mailed to the account', () => {
   it('says so when two-step verification was turned on meanwhile', async () => {
     accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
     vi.mocked(UserAuthApi.verifySudoEmailCode).mockRejectedValue(
-      new BusinessError('An email code cannot confirm this account', 403, {
-        name: 'ForbiddenError',
-        message: 'An email code cannot confirm this account',
-        data: { reason: 'email_code_unavailable' },
+      new ApiError(403, 'An email code cannot confirm this account', 'ForbiddenError', undefined, undefined, {
+        reason: 'email_code_unavailable',
       })
     )
     const { outcome } = await ask()
@@ -383,10 +383,9 @@ describe('confirming with a code mailed to the account', () => {
   it('says how long to wait when a code was sent too recently', async () => {
     accountWith({ password: false, passkey: false, twoFactor: false, emailCode: true })
     vi.mocked(UserAuthApi.requestSudoEmailCode).mockRejectedValue(
-      new BusinessError('Please wait before requesting a new code', 400, {
-        name: 'BadRequestError',
-        message: 'Please wait before requesting a new code',
-        data: { reason: 'email_code_too_soon', retryAfterSeconds: 20 },
+      new ApiError(400, 'Please wait before requesting a new code', 'BadRequestError', undefined, undefined, {
+        reason: 'email_code_too_soon',
+        retryAfterSeconds: 20,
       })
     )
     await ask()

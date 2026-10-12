@@ -34,6 +34,7 @@ import { attemptMessage } from './attemptWait'
 import { landingAfterSignIn, takeFirstStep, upgradeAfterSecondStep } from './passkeyEnrollment'
 import Verify2FAView from './Verify2FAView.vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
 import { postLoginTarget, takeOAuthRedirect } from '@/router/loginRedirect'
@@ -105,7 +106,7 @@ const handleVerify = async () => {
     // 验证票是一次性的（#357），所以每次失败后端都会连同拒绝理由回一张新票。
     // 三种拒绝要三种处置：留在本页重试 / 回去重新登录 / 等到期限过去——压成同一句
     // 提示的话，用户会一直重试一个根本不可能成功的操作。
-    const detail = error?.error?.data ?? {}
+    const detail = (error instanceof ApiError ? error.data : error?.error?.data) ?? {}
     totpCode.value = ''
     backupCode.value = ''
 

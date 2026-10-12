@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AddEmail from './AddEmail.vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
@@ -102,7 +103,9 @@ describe('adding the email an account is missing', () => {
   })
 
   it('keeps the account here after a wrong code', async () => {
-    vi.mocked(UserApi.addEmail).mockRejectedValue({ error: { data: { reason: 'invalid_email_code' } } })
+    vi.mocked(UserApi.addEmail).mockRejectedValue(
+      new ApiError(422, 'Invalid or expired code', undefined, undefined, undefined, { reason: 'invalid_email_code' })
+    )
     const { view, router } = await signedInAt('/projects/7')
     await requestCode(view, 'ada@example.com')
 
@@ -113,7 +116,9 @@ describe('adding the email an account is missing', () => {
   })
 
   it('says so when the address belongs to another account', async () => {
-    vi.mocked(UserApi.sendAddEmailCode).mockRejectedValue({ error: { data: { reason: 'email_taken' } } })
+    vi.mocked(UserApi.sendAddEmailCode).mockRejectedValue(
+      new ApiError(422, 'Email taken', undefined, undefined, undefined, { reason: 'email_taken' })
+    )
     const { view } = await signedInAt('/projects/7')
 
     await requestCode(view, 'taken@example.com')
@@ -123,7 +128,9 @@ describe('adding the email an account is missing', () => {
   })
 
   it('asks an older sign-in to sign in again, returning to where it was going', async () => {
-    vi.mocked(UserApi.sendAddEmailCode).mockRejectedValue({ error: { data: { reason: 'reauth_required' } } })
+    vi.mocked(UserApi.sendAddEmailCode).mockRejectedValue(
+      new ApiError(401, 'Sign in again', undefined, undefined, undefined, { reason: 'reauth_required' })
+    )
     const { view, router } = await signedInAt('/projects/7')
 
     await requestCode(view, 'ada@example.com')

@@ -28,19 +28,22 @@ vi.mock('@/api/users', () => ({
     dismissPasskeyPrompt: vi.fn(),
   },
 }))
-vi.mock('@/api/userAuth', () => ({
-  UserAuthApi: {
-    getOAuthProviders: vi.fn().mockResolvedValue({ providers: [] }),
-    login: vi.fn(),
-    verify2FA: vi.fn(),
-    getPasskeyAuthenticationOptions: vi.fn(),
-    verifyPasskeyAuthentication: vi.fn(),
-    // The sign-in is past its sudo window in these tests, so confirming is asked for.
-    requestSudoTicket: vi
-      .fn()
-      .mockRejectedValue(Object.assign(new Error('Re-authentication required'), { name: 'SudoRequiredError' })),
-  },
-}))
+vi.mock('@/api/userAuth', async () => {
+  const { ApiError } = await import('@/api/http')
+  return {
+    UserAuthApi: {
+      getOAuthProviders: vi.fn().mockResolvedValue({ providers: [] }),
+      login: vi.fn(),
+      verify2FA: vi.fn(),
+      getPasskeyAuthenticationOptions: vi.fn(),
+      verifyPasskeyAuthentication: vi.fn(),
+      // The sign-in is past its sudo window in these tests, so confirming is asked for.
+      requestSudoTicket: vi
+        .fn()
+        .mockRejectedValue(new ApiError(403, 'Re-authentication required', 'SudoRequiredError')),
+    },
+  }
+})
 vi.mock('@/services/account', async () => {
   const { ref } = await import('vue')
   return {

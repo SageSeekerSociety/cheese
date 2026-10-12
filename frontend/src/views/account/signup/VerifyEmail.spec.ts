@@ -8,9 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import VerifyEmail from './VerifyEmail.vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 import AccountService from '@/services/account'
 import { useSignupStore } from '@/stores/signup'
 
@@ -177,10 +177,9 @@ describe('verifying the email', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     await startSignup()
     vi.mocked(UserAuthApi.register).mockRejectedValue(
-      new BusinessError('Too many failed attempts from this network', 403, {
-        name: 'ForbiddenError',
-        message: '',
-        data: { reason: 'too_many_attempts', retryAfterSeconds: 90 },
+      new ApiError(403, 'Too many failed attempts from this network', 'ForbiddenError', undefined, undefined, {
+        reason: 'too_many_attempts',
+        retryAfterSeconds: 90,
       })
     )
     const { view } = await open()
@@ -199,10 +198,8 @@ describe('verifying the email', () => {
   it('says a wrong code is wrong in the interface language', async () => {
     await startSignup()
     vi.mocked(UserAuthApi.register).mockRejectedValue(
-      new BusinessError('Invalid or expired verification code', 422, {
-        name: 'UnprocessableEntityError',
-        message: 'Invalid or expired verification code',
-        data: { reason: 'invalid_email_code' },
+      new ApiError(422, 'Invalid or expired verification code', 'UnprocessableEntityError', undefined, undefined, {
+        reason: 'invalid_email_code',
       })
     )
     setLocale('zh-CN')
@@ -220,10 +217,9 @@ describe('verifying the email', () => {
     await startSignup()
     const { view } = await open()
     vi.mocked(UserAuthApi.sendEmailCode).mockRejectedValue(
-      new BusinessError('Please wait before requesting a new code', 400, {
-        name: 'BadRequestError',
-        message: 'Please wait before requesting a new code',
-        data: { reason: 'email_code_too_soon', retryAfterSeconds: 1800 },
+      new ApiError(400, 'Please wait before requesting a new code', 'BadRequestError', undefined, undefined, {
+        reason: 'email_code_too_soon',
+        retryAfterSeconds: 1800,
       })
     )
 

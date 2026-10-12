@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import OAuthComplete from './OAuthComplete.vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
 
@@ -144,7 +145,9 @@ describe('the email of a new third-party account', () => {
   })
 
   it('stays on the code step after a wrong code, and creates nothing', async () => {
-    vi.mocked(UserAuthApi.verifyOAuthEmail).mockRejectedValue({ error: { data: { reason: 'invalid_email_code' } } })
+    vi.mocked(UserAuthApi.verifyOAuthEmail).mockRejectedValue(
+      new ApiError(422, 'Invalid or expired code', undefined, undefined, undefined, { reason: 'invalid_email_code' })
+    )
     const { view } = await open({ email: 'ada@school.edu' })
     await createAccount(view)
 

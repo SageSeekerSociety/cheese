@@ -12,6 +12,8 @@ import type { SudoRequest } from '@/utils/sudo'
 
 import { computed, onScopeDispose, ref, watch } from 'vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -76,7 +78,8 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
   // An email code stops being accepted once two-step verification is on, which
   // can happen in another tab while this dialog is open.
   function emailCodeMessage(error: unknown): string | null {
-    const reason = (error as { error?: { data?: { reason?: unknown } } } | null)?.error?.data?.reason
+    const data = error instanceof ApiError ? error.data : (error as { error?: { data?: unknown } } | null)?.error?.data
+    const reason = (data as { reason?: unknown } | undefined)?.reason
     if (reason === 'email_code_unavailable') return t('account.sudo.emailCodeUnavailable')
     return attemptMessage(error)
   }
@@ -119,7 +122,7 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
         passkeyWrongHostMessage(error, passkeyRpId) ??
         ((error as { name?: string } | null)?.name === 'NotAllowedError'
           ? t('account.sudo.passkeyCanceled')
-          : requestErrorMessage(error, t('account.sudo.failed')))
+          : axiosErrorMessage(error, requestErrorMessage(error, t('account.sudo.failed'))))
       code.value = ''
     } finally {
       loading.value = false

@@ -12,9 +12,9 @@ import { lastSignIn } from '../lastSignIn'
 import Request from './Request.vue'
 import Verify from './Verify.vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 import AccountService from '@/services/account'
 
 vi.mock('@/api/userAuth', () => ({
@@ -84,7 +84,7 @@ async function typeCode(container: Element, code = '123456') {
 }
 
 function refusal(status: number, data: Record<string, unknown>) {
-  return new BusinessError('English text from the server', status, { name: 'Error', message: '', data })
+  return new ApiError(status, 'English text from the server', 'Error', undefined, undefined, data)
 }
 
 describe('asking for a code', () => {

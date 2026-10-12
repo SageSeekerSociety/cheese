@@ -23,6 +23,7 @@ import { attemptMessage, useAttemptWait } from '../attemptWait'
 import { pendingCode, rememberCodeSent } from './pendingCode'
 import RequestView from './RequestView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -49,7 +50,8 @@ const submit = async (email: string) => {
     rememberCodeSent(address)
     router.push({ name: 'SignInEmailCodeVerify', query: { redirect: route.query.redirect } })
   } catch (e) {
-    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.resendFailed'))
+    error.value =
+      attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.verifyEmail.resendFailed')))
     waitFor(e)
   } finally {
     submitting.value = false

@@ -33,6 +33,7 @@ import { attemptMessage, useAttemptWait } from '../attemptWait'
 
 import VerifyEmailView from './VerifyEmailView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
@@ -81,7 +82,7 @@ const submit = async (value: { otp: string; password?: string }) => {
     toast.success(t('account.verifyEmail.accountCreated'))
     router.replace('/')
   } catch (e) {
-    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.failed'))
+    error.value = attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.verifyEmail.failed')))
     waitFor(e)
   } finally {
     submitting.value = false
@@ -103,7 +104,8 @@ const handleResend = async () => {
     now.value = Date.now()
     toast.success(t('account.verifyEmail.resent'))
   } catch (e) {
-    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.resendFailed'))
+    error.value =
+      attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.verifyEmail.resendFailed')))
   } finally {
     resending.value = false
   }

@@ -10,8 +10,14 @@ interface Refusal {
   retryAfterSeconds?: unknown
 }
 
+// The refusal data, whichever stack raised the error: the payload transport puts
+// it on `data` (`ApiError`), the legacy one nests it under `error.data`. Read by
+// shape, not by importing `ApiError`: this module is what a scene renders its
+// messages through, and importing the API surface would make every screen that
+// words a refusal reach the network layer.
 function refusalOf(error: unknown): Refusal {
-  const data = (error as { error?: { data?: unknown } } | null)?.error?.data
+  const carried = error as { data?: unknown; error?: { data?: unknown } } | null
+  const data = carried?.data ?? carried?.error?.data
   return data && typeof data === 'object' ? (data as Refusal) : {}
 }
 

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Verify2FA from './Verify2FA.vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
 import { forgetOAuthRedirect, stashOAuthRedirect } from '@/router/loginRedirect'
@@ -108,9 +109,13 @@ describe('过完 2FA 落在哪', () => {
 
   it('验证码输错换票之后，来路还在', async () => {
     vi.mocked(UserAuthApi.verify2FA)
-      .mockRejectedValueOnce({
-        error: { data: { reason: 'invalid_code', tempToken: 'ticket-2', attemptsRemaining: 4 } },
-      })
+      .mockRejectedValueOnce(
+        new ApiError(401, 'Invalid code', undefined, undefined, undefined, {
+          reason: 'invalid_code',
+          tempToken: 'ticket-2',
+          attemptsRemaining: 4,
+        })
+      )
       .mockResolvedValue({ accessToken: 't', user: {} } as never)
     const { view, router } = await open({ token: 'ticket', redirect: '/projects/7' })
 
@@ -125,9 +130,12 @@ describe('过完 2FA 落在哪', () => {
 describe('尝试次数过多', () => {
   it('按后端给的等待时间说明要等多久，并回到登录页', async () => {
     setLocale('zh-CN')
-    vi.mocked(UserAuthApi.verify2FA).mockRejectedValue({
-      error: { data: { reason: 'too_many_attempts', retryAfterSeconds: 42 } },
-    })
+    vi.mocked(UserAuthApi.verify2FA).mockRejectedValue(
+      new ApiError(403, 'Too many attempts', undefined, undefined, undefined, {
+        reason: 'too_many_attempts',
+        retryAfterSeconds: 42,
+      })
+    )
     const { view, router } = await open({ token: 'ticket' })
 
     await submitCode(view)

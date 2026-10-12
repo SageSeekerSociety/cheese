@@ -8,9 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SignIn from './SignIn.vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 import AccountService from '@/services/account'
 
 // Only what signing in with a password may touch: anything else it called
@@ -92,7 +92,7 @@ describe('a wrong password', () => {
   }
 
   const wrong = (data: Record<string, unknown>) =>
-    new BusinessError('Invalid username or password', 401, { name: 'AuthenticationRequiredError', message: '', data })
+    new ApiError(401, 'Invalid username or password', 'AuthenticationRequiredError', undefined, undefined, data)
 
   afterEach(() => vi.useRealTimers())
 
@@ -127,10 +127,9 @@ describe('a wrong password', () => {
 
   it('states the wait when too many attempts have been refused', async () => {
     vi.mocked(UserAuthApi.login).mockRejectedValue(
-      new BusinessError('Too many failed attempts from this network', 403, {
-        name: 'ForbiddenError',
-        message: '',
-        data: { reason: 'too_many_attempts', retryAfterSeconds: 240 },
+      new ApiError(403, 'Too many failed attempts from this network', 'ForbiddenError', undefined, undefined, {
+        reason: 'too_many_attempts',
+        retryAfterSeconds: 240,
       })
     )
     const view = await openSignIn()

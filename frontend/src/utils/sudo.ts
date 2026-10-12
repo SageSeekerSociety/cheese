@@ -1,5 +1,6 @@
 import { shallowRef } from 'vue'
 
+import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 
 /**
@@ -50,7 +51,7 @@ async function ticketWithoutAsking(purpose: UserAuthApi.SudoPurpose): Promise<st
     const data = await UserAuthApi.requestSudoTicket(purpose)
     return data.sudoTicket ?? null
   } catch (error) {
-    if ((error as { name?: unknown } | null)?.name === 'SudoRequiredError') return null
+    if (error instanceof ApiError && error.code === 'SudoRequiredError') return null
     throw error
   }
 }

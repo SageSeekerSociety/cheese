@@ -45,6 +45,7 @@ import { passkeyWrongHostMessage } from './passkeyHost'
 import { signInNotice } from './signInNotice'
 import SignInView from './SignInView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -147,7 +148,7 @@ async function login(value: { username: string; password: string }) {
     stopAutofill()
     await signedIn('password', data.accessToken!, data.user!, data.passkeyEnrollment)
   } catch (e) {
-    errorMessage.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signIn.failed'))
+    errorMessage.value = attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.signIn.failed')))
     waitFor(e)
   } finally {
     submitting.value = false

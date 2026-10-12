@@ -59,6 +59,7 @@ import { SudoCancelledError, withSudo } from '@/utils/sudo'
 import SecurityView from './SecurityView.vue'
 
 import { ApiError, deleteOAuthConnection, listOAuthConnections } from '@/api'
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
@@ -70,7 +71,8 @@ import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
 const dialogs = useDialog()
 const webAuthnSupported = browserSupportsWebAuthn()
 
-const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessage(error, fallback))
+const fail = (error: unknown, fallback: string) =>
+  toast.error(axiosErrorMessage(error, requestErrorMessage(error, fallback)))
 
 async function copy(text: string) {
   try {
@@ -233,7 +235,7 @@ const handleEnableTOTP = async () => {
     await fetch2FAStatus()
   } catch (error) {
     verificationCode.value = ''
-    verifyError.value = requestErrorMessage(error, t('account.security.wrongCode'))
+    verifyError.value = axiosErrorMessage(error, requestErrorMessage(error, t('account.security.wrongCode')))
   } finally {
     totpBusy.value = false
   }

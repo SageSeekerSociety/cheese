@@ -45,6 +45,7 @@ import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAv
 
 import RealNameView from './RealNameView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
 import { userRefRoute } from '@/lib/userRef'
@@ -56,7 +57,8 @@ import { UserIdentityAccessType } from '@/types/apiUsers'
 const LOG_PAGE = 20
 
 const dialogs = useDialog()
-const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessage(error, fallback))
+const fail = (error: unknown, fallback: string) =>
+  toast.error(axiosErrorMessage(error, requestErrorMessage(error, fallback)))
 
 // ---- The record ----
 
