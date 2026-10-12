@@ -72,7 +72,9 @@ class NudgeKind(enum.StrEnum):
     conflict = "conflict"
     #: GitHub 上的 PR 标题和卡片主题不是同一行 —— 合下去会把仓库检查没评判过
     #: 的一行写进历史，所以平台停下并叫执行者的那张卡（`_title_nudge`）。
-    title = "title"
+    #: 成员名不叫 `title`：`str.title` 是 `str` 上的方法，成员盖掉它，pyright
+    #: 会报「Literal['title'] 不能赋给 str.title 的重载」；值仍是 `"title"`。
+    pr_title = "title"
     #: PR 满足合并规则了（CLEAN）—— 发给验收人的那条，同一个 head 只说一次。
     #: （「采纳被作废」不占一类：批准被清掉这件事一个 head 只会发生一次，
     #: 事件天然不重复。）
@@ -204,7 +206,7 @@ NOTE_PRIORITY: Final[dict[NudgeKind, int]] = {
     # 标题分家和冲突同档：两件都是「PR 现在根本合不进去」的硬停，而且都要执行
     # 者动手（冲突改代码，标题改卡片）。排在评审意见那句前面，因为评审意见是
     # 要接着做的事，这两件是先决条件。
-    NudgeKind.title: 2,
+    NudgeKind.pr_title: 2,
     NudgeKind.review: 1,
 }
 

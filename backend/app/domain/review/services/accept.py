@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, NoReturn
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
 from app.domain.review import (
     archive,
@@ -667,7 +667,7 @@ async def _stop_accept_title_disagrees(
     await self._note_outside_accept_txn(
         card_id, notes.NoteCode.pr_title_disagrees, note
     )
-    raise ValidationError(say("acceptTitleDisagrees", pr=number))
+    raise UnprocessableEntityError(say("acceptTitleDisagrees", pr=number))
 
 
 async def _stop_accept_no_branch(

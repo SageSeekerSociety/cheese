@@ -278,7 +278,7 @@ def _title_nudge(
         return None
     shown = live or "（此刻读不出来）"
     return pr_signals.PendingNudge(
-        kind=pr_signals.NudgeKind.title,
+        kind=pr_signals.NudgeKind.pr_title,
         signature=pr_signals.signature("pr-title", subject, live),
         event=say("prTitleDisagrees", pr=card.pr_number),
         content=(

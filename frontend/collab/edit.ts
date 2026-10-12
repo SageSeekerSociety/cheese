@@ -30,7 +30,11 @@
 import type { Node as PMNode, Slice } from '@tiptap/pm/model'
 import type { Mapping } from '@tiptap/pm/transform'
 
-import { revertSuggestion, revertSuggestions, transformToSuggestionTransaction } from '@handlewithcare/prosemirror-suggest-changes'
+import {
+  revertSuggestion,
+  revertSuggestions,
+  transformToSuggestionTransaction,
+} from '@handlewithcare/prosemirror-suggest-changes'
 import { EditorState, type Transaction } from '@tiptap/pm/state'
 import { Transform } from '@tiptap/pm/transform'
 import { updateYFragment } from '@tiptap/y-tiptap'
@@ -228,11 +232,7 @@ function suggestAs(tr: Transaction, state: EditorState, id: string): PMNode | nu
 
 /** Whether an agent making the change may drop the suggestions it lands on:
  *  only an agent seat's own suggestions, never a person's. */
-function mayDrop(
-  touched: Set<string>,
-  editorIsAgent: boolean | undefined,
-  agentAuthors: ReadonlySet<string>
-): boolean {
+function mayDrop(touched: Set<string>, editorIsAgent: boolean | undefined, agentAuthors: ReadonlySet<string>): boolean {
   if (touched.size === 0) return true
   if (editorIsAgent !== true) return false
   return [...touched].every((id) => agentAuthors.has(suggestionAuthor(id)))
