@@ -11,7 +11,7 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getRoomTitle, getStringMetadata } from './NotificationRenderUtils'
+import { getRoomTitle, getStringMetadata, messageLink } from './NotificationRenderUtils'
 
 import { renderNoticeMessage } from '@/lib/noticeText'
 
@@ -29,8 +29,6 @@ import { renderNoticeMessage } from '@/lib/noticeText'
 const props = defineProps<NotificationRenderProps>()
 const { t, te } = useI18n()
 
-const projectId = computed(() => getStringMetadata(props.notification, 'projectId'))
-const topicId = computed(() => getStringMetadata(props.notification, 'topicId'))
 const topicTitle = computed(() => getRoomTitle(props.notification))
 const outcome = computed(() => getStringMetadata(props.notification, 'outcome'))
 
@@ -58,13 +56,7 @@ const body = computed(() => {
     : t('notifications.ROOM_NOTICE.body', { topicTitle: topicTitle.value })
 })
 
-const routerLink = computed(() => {
-  if (!projectId.value || !topicId.value) return undefined
-  return {
-    name: 'workspace-topic',
-    params: { projectId: projectId.value, topicId: topicId.value },
-  }
-})
+const routerLink = computed(() => messageLink(props.notification))
 
 const content = computed<RenderedNotificationContent>(() => ({
   title: title.value,

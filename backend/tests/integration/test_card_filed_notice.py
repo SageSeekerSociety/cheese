@@ -130,6 +130,8 @@ def test_the_reviewer_and_the_reporter_both_hear_about_it(client):
         assert row["contextMetadata"]["content"] == event["content"]
         assert row["contextMetadata"]["topicTitle"] == "预算复核"
         assert row["contextMetadata"]["topicId"] == room
+        assert row["contextMetadata"]["taskId"] == delivery_task_id(client, room)
+        assert row["contextMetadata"]["blockId"] == event["id"]
         assert row["read"] is False
 
 

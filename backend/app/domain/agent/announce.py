@@ -124,12 +124,14 @@ async def announce(
     place = await PlaceResolver(session).resolve(place_id)
     if place is None:
         return None
+    where = {}
     if task_id is not None:
         # A task's conversation, or a 支线's: either way one inside this room.
 
         inner = await PlaceResolver(session).conversation(task_id)
         if inner is None or inner.inner_id is None or inner.room_id != place.room_id:
             raise ValidationError("Event task does not belong to this room")
+        where = _asked_where(inner)
     landed = landing(
         EventAbout.task if task_id is not None else EventAbout.room,
         project_id=place.project_id,
@@ -155,6 +157,7 @@ async def announce(
         content=content,
         meta=meta or {},
         points_at=points_at,
+        where=where,
         about_card=about_card,
         event_id=event_id,
     )
@@ -451,6 +454,7 @@ async def _notify(
     content: str,
     meta: dict,
     points_at: Event,
+    where: dict[str, str],
     event_id: uuid.UUID | None = None,
     about_card: uuid.UUID | None = None,
 ) -> None:
@@ -469,6 +473,8 @@ async def _notify(
                 "topicId": str(place.room_id),
                 "topicTitle": place.title,
                 "content": content,
+                "blockId": str(block.id),
+                **where,
                 **notice_message(block.meta),
                 "eventType": str(meta.get("event_type") or ""),
                 "severity": str(meta.get("severity") or SEVERITY_INFO),

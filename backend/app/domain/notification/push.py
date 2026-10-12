@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any, Final
+from urllib.parse import urlencode
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -176,10 +177,12 @@ def push_link(payload: dict[str, Any]) -> str:
     topic_id = payload.get("topicId")
     task_id = payload.get("taskId")
     thread_id = payload.get("threadId")
-    if project_id and topic_id:
-        if task_id:
-            return f"/projects/{project_id}/topics/{topic_id}/tasks/{task_id}"
-        if thread_id:
-            return f"/projects/{project_id}/topics/{topic_id}/threads/{thread_id}"
-        return f"/projects/{project_id}/topics/{topic_id}"
-    return "/inbox"
+    if not (project_id and topic_id):
+        return "/inbox"
+    path = f"/projects/{project_id}/topics/{topic_id}"
+    if task_id:
+        path += f"/tasks/{task_id}"
+    elif thread_id:
+        path += f"/threads/{thread_id}"
+    block_id = payload.get("blockId")
+    return f"{path}?{urlencode({'block': block_id})}" if block_id else path

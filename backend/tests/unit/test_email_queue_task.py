@@ -5,6 +5,7 @@ provider is substituted; no email or browser push leaves this suite.
 """
 
 import asyncio
+import json
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,7 @@ from app.domain.notification.models import NotificationType
 from app.domain.notification.outbox import ChannelIntentHandler, drain_channel
 from app.domain.notification.preferences import EmailMode, default_preferences
 from app.domain.notification.preferences_models import PreferencesRepository
+from app.domain.notification.push import PushSubscriptionRepository
 from app.domain.user.repositories import UserRepository
 from tests.support.hang import HANG_S
 
@@ -43,7 +45,7 @@ def isolated_legacy_queues(monkeypatch):
         )
 
 
-async def _enqueue(db_factory, *, push=False, rollback=False):
+async def _enqueue(db_factory, *, push=False, rollback=False, destination=None):
     async with db_factory() as session:
         user = await UserRepository(session).create_user(
             username="outbox-user", email="outbox@example.com"
@@ -58,7 +60,11 @@ async def _enqueue(db_factory, *, push=False, rollback=False):
         item = NotificationDelivery(
             user.id,
             NotificationType.ROOM_NOTICE,
-            {"content": "Ready for your review", "topicTitle": "Room"},
+            {
+                "content": "Ready for your review",
+                "topicTitle": "Room",
+                **(destination or {}),
+            },
             "event-1:outbox-user",
         )
         handler = ChannelIntentHandler(session, push_enabled=push, now=lambda: NOON)
@@ -78,6 +84,37 @@ async def _rows(db_factory):
                 select(ChannelDelivery).order_by(ChannelDelivery.channel)
             )
         )
+
+
+@pytest.mark.parametrize("where", [{"taskId": "task-9"}, {"threadId": "thread-7"}, {}])
+async def test_a_committed_browser_push_keeps_the_message_destination(
+    db_factory, monkeypatch, where
+):
+    destination = {"projectId": "p", "topicId": "c", "blockId": "message-42", **where}
+    await _enqueue(db_factory, push=True, destination=destination)
+    push = next(row for row in await _rows(db_factory) if row.channel == "push")
+    async with db_factory() as session:
+        await PushSubscriptionRepository(session).save(
+            user_id=push.receiver_id,
+            endpoint="https://push.example/sub",
+            p256dh="key",
+            auth="auth",
+            user_agent=None,
+        )
+        await session.commit()
+    sent = []
+
+    def send_one(**kwargs):
+        sent.append(json.loads(kwargs["body"]))
+        return 201
+
+    monkeypatch.setattr(push_delivery, "_send_one", send_one)
+    result = await drain_channel(
+        db_factory, channel="push", batch_size=10, max_attempts=3
+    )
+    assert result["processed"] == 1
+    assert len(sent) == 1
+    assert sent[0].items() >= destination.items()
 
 
 async def test_rollback_never_contacts_an_external_recipient(db_factory, monkeypatch):

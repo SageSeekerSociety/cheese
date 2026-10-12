@@ -60,7 +60,18 @@ async def send_push(sessions, item):
         )
         targets = [(r.endpoint, r.p256dh, r.auth) for r in subscriptions]
     body = json.dumps(
-        {key: item.get(key) for key in ("title", "body", "projectId", "topicId")},
+        {
+            key: item.get(key)
+            for key in (
+                "title",
+                "body",
+                "projectId",
+                "topicId",
+                "taskId",
+                "threadId",
+                "blockId",
+            )
+        },
         separators=(",", ":"),
         ensure_ascii=False,
     )

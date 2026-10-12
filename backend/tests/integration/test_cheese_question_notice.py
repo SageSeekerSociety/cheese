@@ -250,8 +250,9 @@ def test_a_question_asked_in_a_task_points_back_at_that_task(client):
     assert "threadId" not in row["contextMetadata"]
     # 「在哪个房间」还是那个频道：里面说的是它，落点是它里面的那条会话。
     assert row["contextMetadata"]["topicId"] == room
+    block = row["contextMetadata"]["blockId"]
     assert push_link(row["contextMetadata"]) == (
-        f"/projects/{pid}/topics/{room}/tasks/{task}"
+        f"/projects/{pid}/topics/{room}/tasks/{task}?block={block}"
     )
 
 

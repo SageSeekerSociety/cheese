@@ -1,8 +1,14 @@
 import type { Notification } from '@/types/apiNotifications'
 
-import { render } from '@testing-library/vue'
-import { beforeAll, expect, it } from 'vitest'
+import { defineComponent, h } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { createVuetify } from 'vuetify'
+import * as components from 'vuetify/components'
+import * as directives from 'vuetify/directives'
+import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { beforeAll, expect, it, vi } from 'vitest'
 
+import NotificationItem from '../NotificationItem.vue'
 import { getNotificationMark } from '../registry'
 
 import RenderRoomNoticeNotification from './RenderRoomNoticeNotification.vue'
@@ -63,4 +69,37 @@ it('a settled notice stops being drawn as waiting on someone', () => {
     color: 'success',
   })
   expect(getNotificationMark(notice()).color).toBe('warning')
+})
+
+it.each([
+  [{}, 'workspace-topic'],
+  [{ taskId: 'task-9' }, 'workspace-task'],
+  [{ threadId: 'thread-7' }, 'workspace-thread'],
+])('clicking a platform notice opens its conversation at the message (%j)', async (where, name) => {
+  const Blank = defineComponent({ render: () => h('div') })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: Blank },
+      { path: '/p/:projectId/t/:topicId', name: 'workspace-topic', component: Blank },
+      { path: '/p/:projectId/t/:topicId/tasks/:taskId', name: 'workspace-task', component: Blank },
+      { path: '/p/:projectId/t/:topicId/threads/:threadId', name: 'workspace-thread', component: Blank },
+    ],
+  })
+  await router.push('/')
+  await router.isReady()
+  const notification = notice()
+  notification.read = false
+  Object.assign(notification.contextMetadata, where, { blockId: 'block-42' })
+  const onMarkAsRead = vi.fn()
+  const view = render(NotificationItem, {
+    props: { notification, onMarkAsRead, onDelete: vi.fn() },
+    global: { plugins: [createVuetify({ components, directives }), router, i18n] },
+  })
+  await waitFor(() => expect(view.container.querySelector('.v-list-item--link')).not.toBeNull())
+  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await waitFor(() => expect(router.currentRoute.value.name).toBe(name))
+  expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', topicId: 't1', ...where })
+  expect(router.currentRoute.value.query.block).toBe('block-42')
+  expect(onMarkAsRead).toHaveBeenCalledWith(1)
 })
