@@ -33,6 +33,7 @@ head_of() { gh api "repos/$REPO/pulls/$1" -q .head.sha; }
 resolve_sha() {
   local pr=$1 want=${2:-} commits
   [ -n "$want" ] || { head_of "$pr"; return; }
+  [[ $want =~ ^[0-9a-f]{4,40}$ ]] || { echo "pr-review: $want is not a commit SHA" >&2; return 1; }
   commits=$(gh api --paginate "repos/$REPO/pulls/$pr/commits" -q '.[].sha') || return 1
   grep -m1 "^$want" <<<"$commits" || { echo "pr-review: $want is not a commit of #$pr" >&2; return 1; }
 }
@@ -46,7 +47,9 @@ prepare() {
 
   tree=${PR_REVIEW_DIR:-/tmp}/pr-review-$pr-${sha:0:12}
   dir=$tree.input
-  if [ -e "$tree" ]; then git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null || rm -rf "$tree"; fi
+  # Unconditionally: a tree whose directory is gone (a reboot cleared /tmp)
+  # still holds its registration, and that alone blocks a second add.
+  git -C "$ROOT" worktree remove --force "$tree" 2>/dev/null; rm -rf "$tree"
   rm -rf "$dir"; mkdir -p "$dir"
   git -C "$ROOT" worktree add -q --detach "$tree" "$sha" || die "could not check out $sha"
 
