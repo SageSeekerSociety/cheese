@@ -865,7 +865,7 @@ def api_client(
     # deliberately skip ``with client:`` because it would replace our portal
     # with a fresh one for every test and run lifespan startup/shutdown
     # repeatedly — which would also start every periodic job the platform runs
-    # (app/core/background.py), once per test.
+    # (app/periodic_jobs.py), once per test.
     client.portal = _portal  # type: ignore[assignment]
     # The living document is written through the collaboration service.
     from tests.support.collab import install as install_collab

@@ -146,7 +146,7 @@ from tests.support.seat_channel import SeatChannel  # noqa: E402
 # decide test behavior.
 settings.authz_enforce_topic_access = True
 # The `client` fixture enters lifespan, which starts every periodic job the
-# platform runs (app/core/background.py). Two of them would act on the test's
+# platform runs (app/periodic_jobs.py). Two of them would act on the test's
 # own data behind its back: the email drain claims whatever a notification test
 # queued and dead-letters it after three tries, and the deadline sweep flips a
 # membership to FAILED. Zero is the same "not on this box" switch a deployment
