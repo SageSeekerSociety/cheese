@@ -17,13 +17,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
-import {
-  compare,
-  formatReport,
-  parseTscDiagnostics,
-  parseTscOutput,
-  tightenedBaseline,
-} from './tsc-ratchet-core.mjs'
+import { compare, formatReport, parseTscDiagnostics, parseTscOutput, tightenedBaseline } from './tsc-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')

@@ -23,12 +23,7 @@ import { fileURLToPath } from 'node:url'
 
 import { ESLint } from 'eslint'
 
-import {
-  BOUNDARY_RULE_ID,
-  compare,
-  formatBoundaryReport,
-  parseEslintJson,
-} from './import-boundary-ratchet-core.mjs'
+import { BOUNDARY_RULE_ID, compare, formatBoundaryReport, parseEslintJson } from './import-boundary-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')

@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import {
-  compare,
-  formatReport,
-  parseTscDiagnostics,
-  parseTscOutput,
-  tightenedBaseline,
-} from './tsc-ratchet-core.mjs'
+import { compare, formatReport, parseTscDiagnostics, parseTscOutput, tightenedBaseline } from './tsc-ratchet-core.mjs'
 
 const SAMPLE = `
 src/views/spaces/detail/PublishTask.vue(50,3): error TS2322: Type 'x' is not assignable.
@@ -120,7 +114,10 @@ test('the report prints the raw vue-tsc file(line,col) errors for a regressed fi
   const text = formatReport(compare(baseline, current), parseTscDiagnostics(SAMPLE))
 
   assert.match(text, /src\/views\/spaces\/detail\/PublishTask\.vue\(50,3\): error TS2322: Type 'x' is not assignable\./)
-  assert.match(text, /src\/views\/spaces\/detail\/PublishTask\.vue\(61,9\): error TS18048: 'a' is possibly 'undefined'\./)
+  assert.match(
+    text,
+    /src\/views\/spaces\/detail\/PublishTask\.vue\(61,9\): error TS18048: 'a' is possibly 'undefined'\./
+  )
   // The new error in a previously clean file is listed too.
   assert.match(text, /src\/plugins\/tiptap\/index\.ts\(12,1\): error TS2552: Cannot find name 'foo'\./)
   // And the fix points at the doc chapter, not only at the counts.
