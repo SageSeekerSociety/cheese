@@ -25,21 +25,17 @@ vi.mock('@/network/api/tasks', () => ({
   TasksApi: { list: (...a: unknown[]) => taskList(...a) },
 }))
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     getSpaceTopics: async () => ({
-      data: {
-        topics: [
-          { id: 3, name: '深度学习' },
-          { id: 4, name: '计算机视觉' },
-        ],
-      },
+      topics: [
+        { id: 3, name: '深度学习' },
+        { id: 4, name: '计算机视觉' },
+      ],
     }),
-    listCategories: async () => ({
-      data: { categories: [{ id: 7, name: '第 1 章', displayOrder: 0, archivedAt: null }] },
-    }),
+    listCategories: async () => ({ categories: [{ id: 7, name: '第 1 章', displayOrder: 0, archivedAt: null }] }),
     getMyPublishedTasks: (...a: unknown[]) => myPublished(...a),
-    listAnnouncements: async () => ({ data: { current: [], expired: [], notifyCount: null } }),
+    listAnnouncements: async () => ({ current: [], expired: [], notifyCount: null }),
   },
 }))
 
@@ -123,7 +119,7 @@ describe('题目列表的范围', () => {
         page: { hasMore: false, nextStart: null },
       },
     }))
-    myPublished.mockImplementation(async () => ({ data: { tasks: [publishedTask(5, '还在审核的题')] } }))
+    myPublished.mockImplementation(async () => ({ tasks: [publishedTask(5, '还在审核的题')] }))
   })
 
   afterEach(() => {
@@ -169,13 +165,11 @@ describe('题目列表的范围', () => {
 
   it('「只看待处理」只留有待评审提交的题', async () => {
     myPublished.mockImplementation(async () => ({
-      data: {
         tasks: [
           publishedTask(5, '没有待处理的题', { approved: 'APPROVED', visibilityStatus: 'APPROVED_VISIBLE' }),
           publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 1 }),
         ],
-      },
-    }))
+      }))
     const router = await mount({ filter: 'publishing' })
     await waitFor(() => expect(screen.getByText('没有待处理的题')).toBeTruthy())
 
@@ -187,9 +181,7 @@ describe('题目列表的范围', () => {
   })
 
   it('待评审的提交带出题人去「领取者」页签处理', async () => {
-    myPublished.mockImplementation(async () => ({
-      data: { tasks: [publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 2 })] },
-    }))
+    myPublished.mockImplementation(async () => ({ tasks: [publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 2 })] }))
     const router = await mount({ filter: 'publishing' })
 
     await fireEvent.click(await screen.findByText(/2 个待评审/))

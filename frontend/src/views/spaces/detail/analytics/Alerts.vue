@@ -9,7 +9,7 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceAnalyticsAlerts } from '@/network/api/spaces/types'
+import type { SpaceAnalyticsAlerts } from '@/types/apiSpaces'
 import type { SpaceAnalyticsQueryState } from './utils'
 
 import { ref, watch } from 'vue'
@@ -21,7 +21,7 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 
 const { t } = useI18n()
 const { pushToSection, spaceId } = useSpaceAnalyticsFilters()
@@ -37,7 +37,7 @@ const load = async () => {
   failed.value = false
   errorDetail.value = null
   try {
-    const { data } = await SpacesApi.getAnalyticsAlerts(spaceId.value)
+    const data = await SpacesApi.getAnalyticsAlerts(spaceId.value)
     alerts.value = data
   } catch (error) {
     console.error('load analytics alerts failed', error)

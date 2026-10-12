@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import type { AnalyticsDistribution } from '@/network/api/spaces/types'
+import type { AnalyticsDistribution } from '@/types/apiSpaces'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'

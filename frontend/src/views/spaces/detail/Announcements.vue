@@ -42,7 +42,7 @@ import AnnouncementsView from './AnnouncementsView.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 

@@ -22,7 +22,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import ManageDomainGroupsView from './ManageDomainGroupsView.vue'
 
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 import { useSpaceStore } from '@/stores/space'
 
 const route = useRoute()

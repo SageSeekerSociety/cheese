@@ -6,7 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const reviews = vi.fn()
 const review = vi.fn()
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: { reviews: (...args: unknown[]) => reviews(...args), review: (...args: unknown[]) => review(...args) },
 }))
 // 只换掉 `useI18n`（键名透传，断言直接写键名），`createI18n` 留着 —— `relTime`
@@ -71,8 +71,8 @@ beforeAll(() => {
   })
 })
 beforeEach(() => {
-  reviews.mockReset().mockResolvedValue({ data: { items: [application()] } })
-  review.mockReset().mockResolvedValue({ data: {} })
+  reviews.mockReset().mockResolvedValue({ items: [application()] })
+  review.mockReset().mockResolvedValue({})
 })
 afterEach(cleanup)
 
@@ -110,7 +110,7 @@ describe('space review queue', () => {
   })
 
   it('一条申请都没有时画空态', async () => {
-    reviews.mockResolvedValue({ data: { items: [] } })
+    reviews.mockResolvedValue({ items: [] })
     const page = mountPage()
     expect(await page.findByText('spaces.review.empty')).toBeTruthy()
   })
@@ -132,16 +132,14 @@ describe('space review queue · 列表', () => {
   })
 
   it('intro 与 description 是同一句话时只画一遍', async () => {
-    reviews.mockResolvedValue({ data: { items: [application({ intro: 'Exercises', description: 'Exercises' })] } })
+    reviews.mockResolvedValue({ items: [application({ intro: 'Exercises', description: 'Exercises' })] })
     const page = mountPage()
     await page.findByText('Programming course')
     expect(page.getAllByText('Exercises')).toHaveLength(1)
   })
 
   it('两句不一样时两句都画', async () => {
-    reviews.mockResolvedValue({
-      data: { items: [application({ intro: 'Exercises', description: 'Weekly exercises, graded' })] },
-    })
+    reviews.mockResolvedValue({ items: [application({ intro: 'Exercises', description: 'Weekly exercises, graded' })] })
     const page = mountPage()
     await page.findByText('Programming course')
     expect(page.getByText('Exercises')).toBeTruthy()
@@ -152,10 +150,8 @@ describe('space review queue · 列表', () => {
   // 两次（第二遍是前一遍的前缀）。包含时只画长的那句。
   it('一句是另一句的开头时只画长的那句', async () => {
     reviews.mockResolvedValue({
-      data: {
         items: [application({ intro: 'Hands-on d3. Anyone may join.', description: 'Hands-on d3.' })],
-      },
-    })
+      })
     const page = mountPage()
     await page.findByText('Programming course')
     expect(page.getByText('Hands-on d3. Anyone may join.')).toBeTruthy()
@@ -163,9 +159,7 @@ describe('space review queue · 列表', () => {
   })
 
   it('已驳回的那一条不再给按钮，并说出驳回原因', async () => {
-    reviews.mockResolvedValue({
-      data: { items: [application({ reviewStatus: 'REJECTED', reviewReason: 'not a course' })] },
-    })
+    reviews.mockResolvedValue({ items: [application({ reviewStatus: 'REJECTED', reviewReason: 'not a course' })] })
     const page = mountPage()
     await page.findByText('Programming course')
     expect(page.queryByRole('button', { name: 'spaces.review.reject' })).toBeNull()
@@ -176,9 +170,7 @@ describe('space review queue · 列表', () => {
   // 审核时间和申请时间一样按读者的时钟说成「几小时前」，不是把接口里的 ISO 串原样印出来。
   it('审过的那一条说什么时候审的，不印 ISO 时间串', async () => {
     const reviewedAt = new Date(Date.now() - 3 * 3600_000 - 60_000).toISOString().replace('Z', '+00:00')
-    reviews.mockResolvedValue({
-      data: { items: [application({ reviewStatus: 'APPROVED', reviewedBy: 'admin', reviewedAt })] },
-    })
+    reviews.mockResolvedValue({ items: [application({ reviewStatus: 'APPROVED', reviewedBy: 'admin', reviewedAt })] })
     const page = mountPage()
     await page.findByText('Programming course')
     expect(page.queryByText(new RegExp(reviewedAt.slice(0, 10)))).toBeNull()
@@ -193,7 +185,7 @@ describe('space review queue · 分页', () => {
   }
 
   it('多要一条：回来 51 条就说明后面还有，翻页时 offset 加一页', async () => {
-    reviews.mockResolvedValue({ data: { items: many(51) } })
+    reviews.mockResolvedValue({ items: many(51) })
     const page = mountPage()
     await page.findByText('Course 1')
 
@@ -207,7 +199,7 @@ describe('space review queue · 分页', () => {
   })
 
   it('正好五十条时不留下一页按钮（后面确实没有了）', async () => {
-    reviews.mockResolvedValue({ data: { items: many(50) } })
+    reviews.mockResolvedValue({ items: many(50) })
     const page = mountPage()
     await page.findByText('Course 1')
     // 一页装得下、又没有下一页时不摆一排灰按钮。

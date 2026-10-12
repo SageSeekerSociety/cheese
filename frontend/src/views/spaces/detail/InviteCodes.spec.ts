@@ -30,7 +30,7 @@ const updateInviteCode = vi.fn()
 const revokeInviteCode = vi.fn()
 const createInviteCode = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     listInviteCodes: (...a: unknown[]) => listInviteCodes(...a),
     updateInviteCode: (...a: unknown[]) => updateInviteCode(...a),
@@ -95,9 +95,9 @@ async function mount(expectText = 'ABCD2345EF') {
 
 describe('邀请码页', () => {
   beforeEach(() => {
-    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [code()] } }))
-    updateInviteCode.mockImplementation(async () => ({ data: { inviteCode: code() } }))
-    revokeInviteCode.mockImplementation(async () => ({ data: {} }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code()] }))
+    updateInviteCode.mockImplementation(async () => ({ inviteCode: code() }))
+    revokeInviteCode.mockImplementation(async () => ({}))
   })
 
   afterEach(() => {
@@ -110,9 +110,7 @@ describe('邀请码页', () => {
     expect(document.body.textContent).toContain('已用尽')
 
     // 服务端在 PATCH 之后会把这行换成新的：1/3、还可使用。
-    listInviteCodes.mockImplementation(async () => ({
-      data: { inviteCodes: [code({ maxUses: 3 })] },
-    }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code({ maxUses: 3 })] }))
 
     await fireEvent.click(screen.getByText('调整'))
     await fireEvent.update(screen.getByLabelText('可用人数'), '3')
@@ -133,14 +131,12 @@ describe('邀请码页', () => {
   })
 
   it('把期限清空 = 永不过期，发的是显式的 null 而不是不发', async () => {
-    listInviteCodes.mockImplementation(async () => ({
-      data: { inviteCodes: [code({ expiresAt: Date.now() + 86_400_000 })] },
-    }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code({ expiresAt: Date.now() + 86_400_000 })] }))
     await mount()
     expect(document.body.textContent).toContain('有效期至')
 
     // 清空之后服务端再报回来的就是一份不过期的码。
-    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [code()] } }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code()] }))
 
     await fireEvent.click(screen.getByText('调整'))
     expect(screen.getByLabelText('有效期至（留空 = 永不过期）')).toBeTruthy()
@@ -175,7 +171,7 @@ describe('邀请码页', () => {
     expect(revokeInviteCode).not.toHaveBeenCalled()
     await waitFor(() => expect(screen.getByText('确认撤销')).toBeTruthy())
 
-    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [] } }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [] }))
     await fireEvent.click(screen.getByText('确认撤销'))
 
     await waitFor(() => expect(revokeInviteCode).toHaveBeenCalledWith(SPACE_ID, 7))
@@ -183,9 +179,7 @@ describe('邀请码页', () => {
   })
 
   it('人数改到比已用掉的还少，本地就拦住并说明原因', async () => {
-    listInviteCodes.mockImplementation(async () => ({
-      data: { inviteCodes: [code({ maxUses: 5, useCount: 3 })] },
-    }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code({ maxUses: 5, useCount: 3 })] }))
     await mount()
 
     await fireEvent.click(screen.getByText('调整'))
@@ -199,9 +193,9 @@ describe('邀请码页', () => {
 
 describe('这一张码是谁的、给谁用的', () => {
   beforeEach(() => {
-    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [code()] } }))
-    updateInviteCode.mockImplementation(async () => ({ data: { inviteCode: code() } }))
-    createInviteCode.mockImplementation(async () => ({ data: { inviteCode: code({ id: 8 }) } }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code()] }))
+    updateInviteCode.mockImplementation(async () => ({ inviteCode: code() }))
+    createInviteCode.mockImplementation(async () => ({ inviteCode: code({ id: 8 }) }))
   })
 
   afterEach(() => {
@@ -211,15 +205,13 @@ describe('这一张码是谁的、给谁用的', () => {
 
   it('建码人与说明都摆出来，不藏在只有点开才看得到的地方', async () => {
     listInviteCodes.mockImplementation(async () => ({
-      data: {
         inviteCodes: [
           code({
             createdBy: { id: 3, username: 'lin', nickname: '林' },
             note: '给新来的设计师',
           }),
         ],
-      },
-    }))
+      }))
     await mount()
 
     expect(document.body.textContent).toMatch(/建码人\s*@林/)
@@ -237,9 +229,7 @@ describe('这一张码是谁的、给谁用的', () => {
   })
 
   it('调整时预填着原来的说明，保存原样发回去', async () => {
-    listInviteCodes.mockImplementation(async () => ({
-      data: { inviteCodes: [code({ note: '给新来的设计师' })] },
-    }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code({ note: '给新来的设计师' })] }))
     await mount()
 
     await fireEvent.click(screen.getByText('调整'))
@@ -254,15 +244,13 @@ describe('这一张码是谁的、给谁用的', () => {
   })
 
   it('把说明清空 = 真的清掉，发的是显式的 null', async () => {
-    listInviteCodes.mockImplementation(async () => ({
-      data: { inviteCodes: [code({ note: '给新来的设计师' })] },
-    }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code({ note: '给新来的设计师' })] }))
     await mount()
 
     await fireEvent.click(screen.getByText('调整'))
     await fireEvent.update(screen.getByLabelText('说明（留空 = 清掉）'), '   ')
     // 清掉之后服务端再报回来的就是一份没有说明的码。
-    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [code()] } }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [code()] }))
     await fireEvent.click(screen.getByText('保存'))
 
     await waitFor(() => expect(updateInviteCode).toHaveBeenCalledTimes(1))
@@ -294,9 +282,9 @@ describe('这一张码是谁的、给谁用的', () => {
 
 describe('当前使用中的码', () => {
   beforeEach(() => {
-    updateInviteCode.mockImplementation(async () => ({ data: { inviteCode: code() } }))
-    revokeInviteCode.mockImplementation(async () => ({ data: {} }))
-    createInviteCode.mockImplementation(async () => ({ data: { inviteCode: code({ id: 8 }) } }))
+    updateInviteCode.mockImplementation(async () => ({ inviteCode: code() }))
+    revokeInviteCode.mockImplementation(async () => ({}))
+    createInviteCode.mockImplementation(async () => ({ inviteCode: code({ id: 8 }) }))
   })
 
   afterEach(() => {
@@ -313,14 +301,12 @@ describe('当前使用中的码', () => {
 
   it('拿的是还能用的那一张，不是列表第一格', async () => {
     listInviteCodes.mockImplementation(async () => ({
-      data: {
         inviteCodes: [
           // 第一格就是用尽的 —— 照着第一格发给下一个人是发不出去的。
           code({ id: 7, code: 'USED1111AA', maxUses: 1, useCount: 1 }),
           code({ id: 8, code: 'LIVE2222BB', maxUses: 5, useCount: 0 }),
         ],
-      },
-    }))
+      }))
     await mount('LIVE2222BB')
 
     expect(currentBlock().querySelector('.current__code')?.textContent).toContain('LIVE2222BB')
@@ -329,7 +315,6 @@ describe('当前使用中的码', () => {
 
   it('全是用尽或过期的，就没有当前码', async () => {
     listInviteCodes.mockImplementation(async () => ({
-      data: {
         inviteCodes: [
           code({ id: 7, code: 'USED1111AA', maxUses: 1, useCount: 1 }),
           code({
@@ -340,15 +325,14 @@ describe('当前使用中的码', () => {
             expiresAt: Date.now() - 1000,
           }),
         ],
-      },
-    }))
+      }))
     await mount('DEAD2222BB')
 
     expect(currentBlock().querySelector('.current__code')).toBeNull()
   })
 
   it('一张码都没有时只有一个空状态，也不会凭空给出一张当前码', async () => {
-    listInviteCodes.mockImplementation(async () => ({ data: { inviteCodes: [] } }))
+    listInviteCodes.mockImplementation(async () => ({ inviteCodes: [] }))
     await mount('暂无邀请码')
     expect(document.querySelector('.current')).toBeNull()
     expect(document.body.textContent).not.toContain('暂无可用的码')

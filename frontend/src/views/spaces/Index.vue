@@ -209,7 +209,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { PostSpaceRequestData, SpaceApplication } from '@/network/api/spaces/types'
+import type { PostSpaceRequestData, SpaceApplication } from '@/types/apiSpaces'
 import type { Space } from '@/types'
 
 import { computed, onMounted, ref } from 'vue'
@@ -236,7 +236,7 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { AvatarsApi } from '@/network/api/avatars'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 import AccountService from '@/services/account'
 
 const { t } = useI18n()
@@ -250,7 +250,7 @@ const resubmittingId = ref<number | null>(null)
 async function loadApplications() {
   applicationsError.value = false
   try {
-    applications.value = (await SpacesApi.applications(applicationOffset.value)).data.items
+    applications.value = (await SpacesApi.applications(applicationOffset.value)).items
   } catch {
     applicationsError.value = true
   }
@@ -322,7 +322,7 @@ async function createSpace() {
     if (resubmittingId.value !== null) {
       await SpacesApi.resubmit(resubmittingId.value, payload)
     } else {
-      const { data } = await SpacesApi.create(payload)
+      const data = await SpacesApi.create(payload)
       createdInviteCode.value = data.inviteCode?.code ?? null
       createdSpace.value = data.space ?? null
       // 有码先把码给他（建版时就发好了），收起那张卡再进这门课；
@@ -357,7 +357,7 @@ const {
   loadingMore,
   total,
 } = usePaging(async (pageStart) => {
-  const { data } = await SpacesApi.list({
+  const data = await SpacesApi.list({
     sort_by: 'createdAt',
     sort_order: 'desc',
     pageStart: pageStart,

@@ -20,7 +20,7 @@ const listCategories = vi.fn()
 const delSpace = vi.fn()
 const updateSpace = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spacesDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
@@ -142,9 +142,9 @@ describe('题目板删除入口', () => {
         },
       })
     }
-    spacesDetail.mockResolvedValue({ data: { space: SPACE } })
-    listCategories.mockResolvedValue({ data: { categories: [] } })
-    delSpace.mockResolvedValue({ data: null })
+    spacesDetail.mockResolvedValue({ space: SPACE })
+    listCategories.mockResolvedValue({ categories: [] })
+    delSpace.mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -194,8 +194,8 @@ describe('题目板删除入口', () => {
 // 保存：改了什么就把什么发出去；没存上时，填好的内容还留在表单里。
 describe('基本信息的保存', () => {
   beforeEach(() => {
-    spacesDetail.mockResolvedValue({ data: { space: SPACE } })
-    listCategories.mockResolvedValue({ data: { categories: [] } })
+    spacesDetail.mockResolvedValue({ space: SPACE })
+    listCategories.mockResolvedValue({ categories: [] })
   })
 
   afterEach(() => {
@@ -213,7 +213,7 @@ describe('基本信息的保存', () => {
   }
 
   it('改过的名字发给服务端', async () => {
-    updateSpace.mockResolvedValue({ data: { space: SPACE } })
+    updateSpace.mockResolvedValue({ space: SPACE })
     const { getByLabelText } = await mountPage(OWNER_ID)
 
     await rename(getByLabelText, '算法题板')

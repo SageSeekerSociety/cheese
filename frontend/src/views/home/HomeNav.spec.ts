@@ -35,8 +35,8 @@ vi.mock('@/services/ErrorHandler', () => ({
   default: { withErrorHandling: async (fn: () => Promise<unknown>) => fn().catch(() => undefined) },
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
-vi.mock('@/network/api/spaces', () => ({
-  SpacesApi: { list: async () => ({ data: { spaces: [{ id: 3, name: '数据分析课' }] } }) },
+vi.mock('@/api/spaces', () => ({
+  SpacesApi: { list: async () => ({ spaces: [{ id: 3, name: '数据分析课' }] }) },
 }))
 
 import HomeNav from './HomeNav.vue'

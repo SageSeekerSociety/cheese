@@ -34,7 +34,7 @@ import { toast } from 'vuetify-sonner'
 import SpaceMaterialsView from './SpaceMaterialsView.vue'
 
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -59,8 +59,8 @@ async function refresh() {
   errorDetail.value = null
   try {
     const res = await SpacesApi.listMaterials(spaceId)
-    items.value = res.data.materials ?? []
-    canManage.value = res.data.canManage === true
+    items.value = res.materials ?? []
+    canManage.value = res.canManage === true
   } catch (error) {
     failed.value = true
     errorDetail.value = error instanceof Error && error.message ? error.message : null

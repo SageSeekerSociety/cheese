@@ -1,7 +1,7 @@
 <template>
   <div class="an-section">
     <div class="an-bar">
-      <AnalyticsPublisherSelect v-model="publisherIdModel" :space-id="spaceId" :filters="filters" />
+      <AnalyticsPublisherSelect v-model="publisherIdModel" :publishers="publisherOptions" :loading="publishersLoading" />
       <v-select
         v-model="participationApprovedModel"
         autocomplete="off"
@@ -103,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceAnalyticsParticipants } from '@/network/api/spaces/types'
+import type { SpaceAnalyticsParticipants } from '@/types/apiSpaces'
 import type { AnalyticsGroupBy, AnalyticsRealNameFilter } from './utils'
 
 import { computed, ref, watch } from 'vue'
@@ -113,6 +113,7 @@ import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vu
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
 import AnalyticsMetricCard from './components/AnalyticsMetricCard.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
+import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
 import AnalyticsStatStrip from './components/AnalyticsStatStrip.vue'
 import AnalyticsTrendCard from './components/AnalyticsTrendCard.vue'
 import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
@@ -122,7 +123,7 @@ import { buildAnalyticsApiParams } from './utils'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 
 const { t, te } = useI18n()
 const options = useAnalyticsOptions()
@@ -133,6 +134,8 @@ const loading = ref(false)
 const failed = ref(false)
 const errorDetail = ref<string | null>(null)
 const participants = ref<SpaceAnalyticsParticipants | null>(null)
+const { publishers: publisherOptions, loading: publishersLoading } = useAnalyticsPublishers(spaceId, filters)
+
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
 const participationApprovedModel = ref(filters.value.participationApproved ?? null)
 const completionStatusModel = ref(filters.value.completionStatus ?? null)
@@ -162,7 +165,7 @@ const load = async () => {
   failed.value = false
   errorDetail.value = null
   try {
-    const { data } = await SpacesApi.getAnalyticsParticipants(
+    const data = await SpacesApi.getAnalyticsParticipants(
       spaceId.value,
       buildAnalyticsApiParams('participants', filters.value)
     )

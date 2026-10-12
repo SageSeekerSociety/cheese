@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listMaterials = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: { listMaterials: (...args: unknown[]) => listMaterials(...args) },
 }))
 
@@ -47,7 +47,7 @@ beforeEach(() => {
 
 describe('useSpaceMaterials', () => {
   it('读回来的清单进 materials，状态是 ready', async () => {
-    listMaterials.mockResolvedValue({ data: { materials: [row(161)], canManage: true } })
+    listMaterials.mockResolvedValue({ materials: [row(161)], canManage: true })
     const spaceId = ref<number | undefined>(7)
 
     const { materials, state } = useSpaceMaterials(spaceId)
@@ -81,9 +81,9 @@ describe('useSpaceMaterials', () => {
     await nextTick()
 
     // 新板先回来，旧板后回来 —— 旧的那份必须是废的。
-    second.settle({ data: { materials: [row(200)] } })
+    second.settle({ materials: [row(200)] })
     await flush()
-    first.settle({ data: { materials: [row(100)] } })
+    first.settle({ materials: [row(100)] })
     await flush()
 
     expect(materials.value.map((item) => item.id)).toEqual([200])
@@ -91,7 +91,7 @@ describe('useSpaceMaterials', () => {
   })
 
   it('读不出来：状态写成 error，已经拿到的清单原样留着', async () => {
-    listMaterials.mockResolvedValueOnce({ data: { materials: [row(161)] } })
+    listMaterials.mockResolvedValueOnce({ materials: [row(161)] })
     const spaceId = ref<number | undefined>(7)
     const { materials, state } = useSpaceMaterials(spaceId)
     await flush()

@@ -14,8 +14,8 @@ import type { SpaceAdminRoleType, SpaceTaskTemplate } from '@/types'
 import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
-import { SpacesApi } from '@/network/api/spaces'
-import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/network/api/spaces/types'
+import { SpacesApi } from '@/api/spaces'
+import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
 import { TagsApi } from '@/network/api/tags'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
@@ -33,7 +33,7 @@ export function useSpaceData() {
     space.setCurrentSpaceId(spaceId)
 
     try {
-      const { data } = await SpacesApi.detail(spaceId, { queryClassificationTopics: true, queryMyRank: true })
+      const data = await SpacesApi.detail(spaceId, { queryClassificationTopics: true, queryMyRank: true })
       space.setSpace(data.space)
     } catch (error) {
       console.error('获取题目板信息失败:', error)
@@ -62,7 +62,7 @@ export function useSpaceData() {
   const updateSpace = async (spaceId: number, data: PatchSpaceRequestData, showToast = true) => {
     try {
       const response = await SpacesApi.update(spaceId, data)
-      space.setSpace(response.data.space)
+      space.setSpace(response.space)
       if (showToast) {
         toast.success(t('spaces.detail.data.updateSuccess'))
       }
@@ -124,7 +124,7 @@ export function useSpaceData() {
     const id = spaceId ?? space.currentSpaceId
     if (!id) return
     try {
-      const { data } = await SpacesApi.listDomainGroups(id)
+      const data = await SpacesApi.listDomainGroups(id)
       space.setDomainGroups(data.groups ?? [])
     } catch (error) {
       console.error('获取域名组失败:', error)
@@ -147,7 +147,7 @@ export function useSpaceData() {
 
     space.setLoadingCategories(true)
     try {
-      const { data } = await SpacesApi.listCategories(space.currentSpaceId, { includeArchived })
+      const data = await SpacesApi.listCategories(space.currentSpaceId, { includeArchived })
       space.setCategories(data.categories)
       return null
     } catch (error) {
@@ -247,7 +247,7 @@ export function useSpaceData() {
     if (!space.currentSpaceId) return
 
     try {
-      const { data } = await SpacesApi.addAdmin(space.currentSpaceId, { userId, role })
+      const data = await SpacesApi.addAdmin(space.currentSpaceId, { userId, role })
       space.setSpace(data.space)
       toast.success(t('spaces.detail.data.adminAddSuccess'))
     } catch (error) {
@@ -261,7 +261,7 @@ export function useSpaceData() {
     if (!space.currentSpaceId) return
 
     try {
-      const { data } = await SpacesApi.updateAdmin(space.currentSpaceId, userId, { role })
+      const data = await SpacesApi.updateAdmin(space.currentSpaceId, userId, { role })
       space.setSpace(data.space)
       toast.success(t('spaces.detail.data.adminRoleSuccess'))
     } catch (error) {

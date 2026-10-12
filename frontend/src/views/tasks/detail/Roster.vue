@@ -33,7 +33,7 @@ import dayjs from 'dayjs'
 import RosterView from './RosterView.vue'
 
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import { useEvents } from '@/views/tasks/events'
 
@@ -70,7 +70,7 @@ async function load() {
     participants.value = rosterRes.data.participants ?? []
     // 同一人可能有多版：按 `version` 取最大的那一版 —— 要回答的永远是「现在这一版判没判」。
     const latest = new Map<number, Latest>()
-    for (const s of subsRes.data.submissions ?? []) {
+    for (const s of subsRes.submissions ?? []) {
       const prev = latest.get(s.participantId)
       if (!prev || s.version > prev.version) {
         latest.set(s.participantId, {

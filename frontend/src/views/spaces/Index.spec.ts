@@ -25,7 +25,7 @@ vi.mock('@/api', async () => {
   return { ...actual, listProjects: (...a: unknown[]) => listProjects(...a) }
 })
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     list: (...a: unknown[]) => spacesList(...a),
     create: (...a: unknown[]) => spacesCreate(...a),
@@ -111,9 +111,9 @@ beforeEach(() => {
   uploadAvatar.mockReset().mockResolvedValue({ data: { avatarId: 77 } })
   resubmit.mockReset().mockResolvedValue({})
   URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
-  applications.mockReset().mockResolvedValue({ data: { items: [] } })
+  applications.mockReset().mockResolvedValue({ items: [] })
   listProjects.mockReset()
-  spacesList.mockReset().mockResolvedValue({ data: { spaces: [], page: { pageSize: 12, hasMore: false } } })
+  spacesList.mockReset().mockResolvedValue({ spaces: [], page: { pageSize: 12, hasMore: false } })
   showNewProjectDialog.mockReset()
   spacesCreate.mockReset()
   AccountService.loggedIn = true
@@ -154,7 +154,7 @@ describe('space creation', () => {
 
   it('lets an ordinary signed-in user submit a space for review', async () => {
     listProjects.mockResolvedValue({ data: [] })
-    spacesCreate.mockResolvedValue({ data: { space: { id: 42 } } })
+    spacesCreate.mockResolvedValue({ space: { id: 42 } })
     const page = mountPage()
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
@@ -170,7 +170,7 @@ describe('space creation', () => {
   it('keeps the draft after a failed request and allows retry', async () => {
     listProjects.mockResolvedValue({ data: [] })
     spacesCreate.mockRejectedValueOnce(new Error('Request failed'))
-    spacesCreate.mockResolvedValueOnce({ data: { space: { id: 43 } } })
+    spacesCreate.mockResolvedValueOnce({ space: { id: 43 } })
     const page = mountPage()
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
@@ -184,7 +184,7 @@ describe('space creation', () => {
 
   it('lands the creator in the new space instead of back on the list', async () => {
     listProjects.mockResolvedValue({ data: [] })
-    spacesCreate.mockResolvedValue({ data: { space: { id: 42 } } })
+    spacesCreate.mockResolvedValue({ space: { id: 42 } })
     const page = mountPage()
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
@@ -198,7 +198,6 @@ describe('space creation', () => {
   it('hands over the invite code first, then lands in the new space', async () => {
     listProjects.mockResolvedValue({ data: [] })
     spacesCreate.mockResolvedValue({
-      data: {
         space: { id: 7 },
         inviteCode: {
           id: 1,
@@ -209,8 +208,7 @@ describe('space creation', () => {
           expiresAt: null,
           createdAt: 0,
         },
-      },
-    })
+      })
     const page = mountPage()
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()
@@ -307,7 +305,7 @@ describe('空间名录没读出来', () => {
     expect(block.textContent).toContain('spaces.index.loadFailed')
     expect(page.queryByText('spaces.index.noSpaces')).toBeNull()
 
-    spacesList.mockResolvedValue({ data: { spaces: [], page: { pageSize: 12, hasMore: false } } })
+    spacesList.mockResolvedValue({ spaces: [], page: { pageSize: 12, hasMore: false } })
     await fireEvent.click(within(block).getByRole('button'))
     await waitFor(() => expect(spacesList).toHaveBeenCalledTimes(2))
   })
@@ -331,9 +329,7 @@ describe('空间名录没读出来', () => {
 describe('从申请列表进入一块板', () => {
   it('进的是题目板，和列表卡片同一处', async () => {
     listProjects.mockResolvedValue({ data: [] })
-    applications.mockResolvedValue({
-      data: { items: [{ id: 9, name: 'Algorithms', intro: '', reviewStatus: 'APPROVED' }] },
-    })
+    applications.mockResolvedValue({ items: [{ id: 9, name: 'Algorithms', intro: '', reviewStatus: 'APPROVED' }] })
     const page = mountPage()
     await waitFor(() => expect(page.getByText('spaces.review.enter')).toBeTruthy())
     await fireEvent.click(page.getByText('spaces.review.enter'))

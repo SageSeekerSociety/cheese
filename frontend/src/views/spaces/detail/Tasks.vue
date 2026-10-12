@@ -21,7 +21,7 @@ import TasksView from './TasksView.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import { useCommands } from '@/commands'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 
@@ -64,7 +64,7 @@ const fetchHotTopics = async () => {
   const sId = Number(route.params.spaceId)
   if (!sId) return
   try {
-    const { data } = await SpacesApi.getSpaceTopics(sId, 20, 'popularity')
+    const data = await SpacesApi.getSpaceTopics(sId, 20, 'popularity')
     hotTopics.value = data.topics || []
   } catch (e) {
     console.error('Fetch top topics failed', e)
@@ -183,7 +183,7 @@ const loadPublishedTasks = async () => {
   publishedFailed.value = false
   publishedError.value = null
   try {
-    const { data } = await SpacesApi.getMyPublishedTasks(spaceId, {
+    const data = await SpacesApi.getMyPublishedTasks(spaceId, {
       categoryId: selectedCategoryId.value ?? undefined,
       sortBy: 'publishedAt',
       sortOrder: 'desc',

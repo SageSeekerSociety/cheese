@@ -30,12 +30,12 @@ vi.mock('@/network/api/tasks', () => ({
   },
 }))
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spaceDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
     listDomainGroups: (...a: unknown[]) => listDomainGroups(...a),
-    listMaterials: vi.fn().mockResolvedValue({ data: { materials: [], canManage: false } }),
+    listMaterials: vi.fn().mockResolvedValue({ materials: [], canManage: false }),
   },
 }))
 
@@ -102,11 +102,9 @@ afterAll(() => {
 })
 
 beforeEach(() => {
-  spaceDetail.mockResolvedValue({ data: { space: { id: SPACE_ID, name: 'Systems', admins: [] } } })
-  listCategories.mockResolvedValue({
-    data: { categories: [{ id: 3, name: 'Basics', displayOrder: 1, archivedAt: null }] },
-  })
-  listDomainGroups.mockResolvedValue({ data: { groups: [] } })
+  spaceDetail.mockResolvedValue({ space: { id: SPACE_ID, name: 'Systems', admins: [] } })
+  listCategories.mockResolvedValue({ categories: [{ id: 3, name: 'Basics', displayOrder: 1, archivedAt: null }] })
+  listDomainGroups.mockResolvedValue({ groups: [] })
   previewFromPdf.mockResolvedValue({
     data: {
       drafts: [

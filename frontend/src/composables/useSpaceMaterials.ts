@@ -11,7 +11,7 @@ import type { SpaceMaterial, SpaceMaterialsState } from '@/types'
 
 import { type MaybeRefOrGetter, ref, toValue, watch } from 'vue'
 
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 
 export function useSpaceMaterials(spaceId: MaybeRefOrGetter<number | undefined>) {
   const materials = ref<SpaceMaterial[]>([])
@@ -30,7 +30,7 @@ export function useSpaceMaterials(spaceId: MaybeRefOrGetter<number | undefined>)
       const res = await SpacesApi.listMaterials(id)
       // 期间换了块板（或者页面被切走）就不要再落下来 —— 落下来的会是别人的清单。
       if (toValue(spaceId) !== id) return
-      materials.value = res.data.materials ?? []
+      materials.value = res.materials ?? []
       state.value = 'ready'
     } catch {
       if (toValue(spaceId) !== id) return

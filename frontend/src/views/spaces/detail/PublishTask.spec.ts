@@ -46,7 +46,7 @@ vi.mock('@/network/api/tasks', () => ({
   },
 }))
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spaceDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
@@ -198,13 +198,12 @@ async function check(input: Element) {
 /** 这条板子的分类/域名组/空间那一份（`activeCategories` 按 `displayOrder` 排、
  *  滤掉已归档，`TaskForm` 那枚下拉的选项就是它）。 */
 function categoriesBody() {
-  return { data: { categories: [{ id: 3, name: '基础题', displayOrder: 1, archivedAt: null }] } }
+  return { categories: [{ id: 3, name: '基础题', displayOrder: 1, archivedAt: null }] }
 }
 
 /** 空间那一份：角色是拿登录的人跟 `admins` 对出来的。 */
 function spaceBody() {
   return {
-    data: {
       space: {
         id: SPACE_ID,
         name: '数据结构空间',
@@ -213,8 +212,7 @@ function spaceBody() {
           { role: 'ADMIN', user: MANAGER },
         ],
       },
-    },
-  }
+    }
 }
 
 /** 以某个人的身份打开这一页（角色由空间 store 按登录的人算）。 */
@@ -280,8 +278,8 @@ function previewBody() {
 beforeEach(() => {
   spaceDetail.mockImplementation(async () => spaceBody())
   listCategories.mockImplementation(async () => categoriesBody())
-  listDomainGroups.mockImplementation(async () => ({ data: { groups: [] } }))
-  listMaterials.mockImplementation(async () => ({ data: { materials: [], canManage: false } }))
+  listDomainGroups.mockImplementation(async () => ({ groups: [] }))
+  listMaterials.mockImplementation(async () => ({ materials: [], canManage: false }))
   listTasks.mockImplementation(async () => ({ data: { tasks: [], distinctParticipants: 0 } }))
   previewFromPdf.mockImplementation(async () => ({ data: previewBody() }))
   confirmFromPdf.mockImplementation(async () => ({

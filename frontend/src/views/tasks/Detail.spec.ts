@@ -34,7 +34,7 @@ vi.mock('@/network/api/tasks', () => ({
     postSubmissionReview: (...a: unknown[]) => postSubmissionReview(...a),
   },
 }))
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: { getSubmissionQueue: (...a: unknown[]) => getSubmissionQueue(...a) },
 }))
 
@@ -202,7 +202,7 @@ describe('题目详情', () => {
     AccountService.user = null
     listSubmissions.mockImplementation(async () => ({ data: { submissions: [], page: {} } }))
     getParticipants.mockImplementation(async () => ({ data: { participants: [] } }))
-    getSubmissionQueue.mockImplementation(async () => ({ data: { submissions: [] } }))
+    getSubmissionQueue.mockImplementation(async () => ({ submissions: [] }))
   })
 
   afterEach(() => {
@@ -398,7 +398,7 @@ describe('题目详情', () => {
         ],
       },
     }))
-    getSubmissionQueue.mockImplementation(async () => ({ data: { submissions: [version()] } }))
+    getSubmissionQueue.mockImplementation(async () => ({ submissions: [version()] }))
     postSubmissionReview.mockImplementation(async () => {
       review = { reviewed: true, detail: { accepted: false, score: 0, comment: '' } }
       return {}

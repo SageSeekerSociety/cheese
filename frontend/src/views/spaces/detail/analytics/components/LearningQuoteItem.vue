@@ -26,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
+import type { SpaceLearningExcerpt } from '@/types/apiSpaces'
 
 import { useI18n } from 'vue-i18n'
 

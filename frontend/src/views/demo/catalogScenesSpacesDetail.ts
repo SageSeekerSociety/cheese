@@ -11,6 +11,7 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import { announcement, memberRow, publishedTask, task, templateDraft } from './catalogScenesSpacesDetailFixtures'
 
 import AnnouncementsView from '@/views/spaces/detail/AnnouncementsView.vue'
+import AnalyticsPublisherSelect from '@/views/spaces/detail/analytics/components/AnalyticsPublisherSelect.vue'
 import MembersView from '@/views/spaces/detail/MembersView.vue'
 import TasksView from '@/views/spaces/detail/TasksView.vue'
 import TemplateFormView from '@/views/spaces/detail/TemplateFormView.vue'
@@ -30,6 +31,20 @@ function rowTo(task: Task): UserRefTarget {
 }
 
 export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'analytics-publisher-select',
+    title: 'AnalyticsPublisherSelect',
+    about: '分析页的发布者筛选控件：候选与加载状态由页面传入，选择通过 v-model 发回；独立预览不请求服务。',
+    file: 'src/views/spaces/detail/analytics/components/AnalyticsPublisherSelect.vue',
+    component: AnalyticsPublisherSelect,
+    needs: UI,
+    args: { modelValue: null, publishers: [], loading: false },
+    states: [
+      { name: '全部发布者', note: '没有选择任何发布者，仍能显示全部这一项。', props: {}, expectSelector: '[role="combobox"]' },
+      { name: '选中发布者', note: '页面提供的候选可作为当前选择显示。', props: { modelValue: 8, publishers: [{ title: '课程管理员', value: 8 }] }, expect: '课程管理员' },
+      { name: '正在读取', note: '候选正在获取时保留当前的全部选项。', props: { loading: true }, expectSelector: '[role="combobox"]' },
+    ],
+  },
   {
     id: 'announcements-view',
     title: 'AnnouncementsView',

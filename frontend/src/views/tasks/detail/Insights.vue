@@ -30,7 +30,7 @@ import { useRoute } from 'vue-router'
 import InsightsView from './InsightsView.vue'
 
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 import { TasksApi } from '@/network/api/tasks'
 
 const props = defineProps<{
@@ -67,7 +67,7 @@ async function load() {
 
     // 同一人可能有多版提交：按 version 取最大的那一版 —— 看的永远是「现在这一版判没判」。
     const byVersion = new Map<number, { version: number; review?: TaskSubmissionReview }>()
-    for (const row of subsRes.data.submissions ?? []) {
+    for (const row of subsRes.submissions ?? []) {
       const prev = byVersion.get(row.participantId)
       if (!prev || row.version > prev.version) {
         byVersion.set(row.participantId, { version: row.version, review: row.review })

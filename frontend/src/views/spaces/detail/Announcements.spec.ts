@@ -24,7 +24,7 @@ const publishAnnouncement = vi.fn()
 const updateAnnouncement = vi.fn()
 const deleteAnnouncement = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spaceDetail(...a),
     listAnnouncements: (...a: unknown[]) => listAnnouncements(...a),
@@ -141,7 +141,6 @@ beforeEach(() => {
   setLocale('zh-CN')
   setActivePinia(createPinia())
   spaceDetail.mockImplementation(async () => ({
-    data: {
       space: {
         id: SPACE_ID,
         name: '数据分析课',
@@ -149,13 +148,10 @@ beforeEach(() => {
         taskTemplates: '[]',
         classificationTopics: [],
       },
-    },
-  }))
-  listAnnouncements.mockImplementation(async () => ({
-    data: { current: CURRENT, expired: EXPIRED, notifyCount: 3 },
-  }))
-  updateAnnouncement.mockImplementation(async () => ({ data: {} }))
-  publishAnnouncement.mockImplementation(async () => ({ data: {} }))
+    }))
+  listAnnouncements.mockImplementation(async () => ({ current: CURRENT, expired: EXPIRED, notifyCount: 3 }))
+  updateAnnouncement.mockImplementation(async () => ({}))
+  publishAnnouncement.mockImplementation(async () => ({}))
 })
 
 afterEach(() => {
@@ -219,7 +215,7 @@ describe('公告页', () => {
 
   it('一条公告都没有时，所有者也能发第一条', async () => {
     signIn(OWNER_ID)
-    listAnnouncements.mockImplementation(async () => ({ data: { current: [], expired: [], notifyCount: 0 } }))
+    listAnnouncements.mockImplementation(async () => ({ current: [], expired: [], notifyCount: 0 }))
     await mount()
 
     await waitFor(() => expect(buttonLabelled(document, '发布公告')).toBeDefined())
@@ -256,7 +252,7 @@ describe('公告没读出来', () => {
     const block = view.container.querySelector('.base-load-error') as HTMLElement
 
     // 这一次让它读成了：重试进去之后错误块应当让位给真正的公告。
-    listAnnouncements.mockResolvedValue({ data: { current: CURRENT, expired: EXPIRED, notifyCount: 3 } })
+    listAnnouncements.mockResolvedValue({ current: CURRENT, expired: EXPIRED, notifyCount: 3 })
     await fireEvent.click(within(block).getByRole('button'))
 
     await waitFor(() => expect(listAnnouncements).toHaveBeenCalledTimes(2))

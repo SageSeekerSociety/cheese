@@ -1,7 +1,7 @@
 <template>
   <div class="an-section">
     <div class="an-bar">
-      <AnalyticsPublisherSelect v-model="publisherIdModel" :space-id="spaceId" :filters="filters" />
+      <AnalyticsPublisherSelect v-model="publisherIdModel" :publishers="publisherOptions" :loading="publishersLoading" />
       <v-select
         v-model="sortByModel"
         autocomplete="off"
@@ -104,13 +104,14 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceAnalyticsTask } from '@/network/api/spaces/types'
+import type { SpaceAnalyticsTask } from '@/types/apiSpaces'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
+import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
 import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 import { formatCount, formatDate, formatPercent } from './helpers'
@@ -121,7 +122,7 @@ import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import TablePager from '@/components/base/TablePager.vue'
 import { useClientTable } from '@/components/base/tableSort'
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 
 const { t } = useI18n()
 const options = useAnalyticsOptions()
@@ -132,6 +133,8 @@ const loading = ref(false)
 const failed = ref(false)
 const errorDetail = ref<string | null>(null)
 const tasks = ref<SpaceAnalyticsTask[]>([])
+const { publishers: publisherOptions, loading: publishersLoading } = useAnalyticsPublishers(spaceId, filters)
+
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
 const sortByModel = ref(filters.value.sortBy || 'createdAt')
 const sortOrderModel = ref(filters.value.sortOrder || 'desc')
@@ -173,7 +176,7 @@ const load = async () => {
   failed.value = false
   errorDetail.value = null
   try {
-    const { data } = await SpacesApi.getAnalyticsTasks(spaceId.value, buildAnalyticsApiParams('tasks', filters.value))
+    const data = await SpacesApi.getAnalyticsTasks(spaceId.value, buildAnalyticsApiParams('tasks', filters.value))
     tasks.value = data.tasks
   } catch (error) {
     console.error('load analytics tasks failed', error)
