@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -531,21 +532,49 @@ class MainCliTest(unittest.TestCase):
         path.write_text(json.dumps(payload))
         return str(path)
 
-    def test_scope_mode_emits_the_tier_and_the_selection(self):
+    def test_scope_mode_reports_the_selection_and_the_tier(self):
+        # Required CI runs this on a depth=1 checkout, which has no parent
+        # commit to reach for. Build a throwaway repo with two explicit commits
+        # and run the CLI inside it, so the test never depends on the checkout's
+        # history depth (and the workflow checkout stays as shallow as it is).
+        scripts = WORKFLOW.parent.parent / "scripts"
         with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "out"
+            tmp = Path(tmp)
+            for name in ("required-ci.py", "required-ci-paths.json"):
+                shutil.copy(scripts / name, tmp / name)
+
+            def git(*args):
+                subprocess.run(
+                    ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
+                     "-c", "commit.gpgsign=false", *args],
+                    cwd=tmp, check=True, capture_output=True, text=True)
+
+            git("init", "-q")
+            (tmp / "base.txt").write_text("base\n")
+            git("add", "base.txt")
+            git("commit", "-qm", "base")
+            base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=tmp, text=True).strip()
+            changed = tmp / "backend/app/api/rooms.py"
+            changed.parent.mkdir(parents=True)
+            changed.write_text("x = 1\n")
+            git("add", "backend/app/api/rooms.py")
+            git("commit", "-qm", "change a backend file")
+
+            out = tmp / "github_output"
             env = {
                 **os.environ,
                 "GITHUB_EVENT_NAME": "pull_request",
                 "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": True}}),
                 "GITHUB_OUTPUT": str(out),
             }
-            base = subprocess.check_output(["git", "rev-parse", "HEAD~1"], text=True).strip()
-            subprocess.run([sys.executable, str(WORKFLOW.parent.parent / "scripts" / "required-ci.py"),
-                            "scope", base], env=env, cwd=WORKFLOW.parent.parent.parent,
-                           check=True, capture_output=True, text=True)
+            subprocess.run([sys.executable, str(tmp / "required-ci.py"), "scope", base],
+                           env=env, cwd=tmp, check=True, capture_output=True, text=True)
             written = dict(line.split("=", 1) for line in out.read_text().splitlines())
+            # The changed backend file selects backend (and e2e/remote/guards);
+            # a draft event makes it the quick tier.
             self.assertEqual(written["tier"], "quick")
+            self.assertEqual(written["backend"], "true")
+            self.assertEqual(written["cifast"], "false")
             self.assertTrue(all(v in ("true", "false") for k, v in written.items() if k != "tier"))
 
     def test_check_mode_fails_closed_when_the_event_is_unreadable(self):
