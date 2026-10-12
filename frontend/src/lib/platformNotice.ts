@@ -587,6 +587,9 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
         str(meta(prevBlock)?.seat) === str(meta(block)?.seat)
       if (sameAuthor && (sameType || (bothPlain && prevBlock.content === block.content))) {
         prev.run.push(block)
+        // A repeated failure retries the newest attempt, not the first card
+        // whose retry may already be claimed. All original details stay in run.
+        if (key === 'turn_failed' || key === 'platform_error') prev.block = block
         continue
       }
     }

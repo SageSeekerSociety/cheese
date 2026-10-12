@@ -91,6 +91,23 @@ describe('失败回复的重试入口', () => {
     expect(view.container.textContent).toContain(failure.meta!.detail)
   })
 
+  it('连续失败折叠后重试最新一次，保留两次报错详情', async () => {
+    vi.mocked(listBlocks).mockResolvedValue({
+      data: [
+        { ...failure, meta: { ...failure.meta, retryable: false } },
+        { ...failure, id: 'second-failure', turn_id: 'second-turn',
+          meta: { ...failure.meta, detail: 'second stream failure' } },
+      ],
+      total: 2,
+    })
+    vi.mocked(summonAgent).mockResolvedValue({ started: true })
+    const view = await mount()
+    expect(view.container.textContent).toContain(failure.meta!.detail)
+    expect(view.container.textContent).toContain('second stream failure')
+    await fireEvent.click(view.getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(summonAgent).toHaveBeenCalledWith('retry-room', 'second-failure'))
+  })
+
   it('网络请求失败时仍可重试同一张卡', async () => {
     vi.mocked(summonAgent).mockRejectedValueOnce(new Error('network unavailable'))
     const view = await mount()
