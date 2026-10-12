@@ -272,14 +272,23 @@ def _title_nudge(
     事实，都要再说一次（和 CI 失败带上 commit 是同一个理由）。
     """
     subject = pr_text.change_subject(card, topic)
-    # 两个都是外部可控 / 会被贴进终端或提交历史的字符串，先洗过。
-    live = pr_signals.sanitize_external(getattr(status, "title", "") or "").strip()
-    if pr_text.pr_title_matches_subject(card, topic, live):
+    # 比对用**原样**的标题，和两道合并闸（`merge_queue` 的点击合、`decisions` 的
+    # 放行合）读的是同一个字符串。这里先洗再比的话，一行只差几个不可见字节的标题
+    # 在轮询这条路上会判成「一致」—— 布防的自动合照合，而点击那条路上同一个 PR
+    # 会被拒：同一个事实两条车道两种结论，落进历史的那一行也就没个准。
+    raw = (getattr(status, "title", "") or "").strip()
+    # 展示用洗过的那一份：两个都是外部可控、会被贴进终端或提交历史的字符串。
+    live = pr_signals.sanitize_external(raw).strip()
+    if pr_text.pr_title_matches_subject(card, topic, raw):
         return None
     shown = live or "（此刻读不出来）"
+    if raw != live:
+        # 差别只在不可见字节上，两行看上去一模一样。不点破的话读的人只会以为
+        # 平台在无理取闹 —— 仓库的检查评判的是 PR 上原样的那一串字节。
+        shown += "（含不可见字符）"
     return pr_signals.PendingNudge(
         kind=pr_signals.NudgeKind.pr_title,
-        signature=pr_signals.signature("pr-title", subject, live),
+        signature=pr_signals.signature("pr-title", subject, raw),
         event=say("prTitleDisagrees", pr=card.pr_number),
         content=(
             f"PR #{card.pr_number}（{card.pr_url}）在 GitHub 上的标题和这张卡不是"

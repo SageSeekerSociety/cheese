@@ -4,11 +4,12 @@ convention, in any language, is accepted, and only a title the platform cannot
 use as a PR title or a commit's first line is refused."""
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
 from app.core.sentences import in_language
-from app.domain.review import pr_text
+from app.domain.review import notes, nudges, pr_text
 from app.domain.review.commit_message import (
     InvalidSubject,
     check_subject,
@@ -102,3 +103,31 @@ def test_an_unreadable_pr_title_is_not_a_match():
     card = AcceptCard(change_subject="fix: something")
     for absent in (None, "", "   "):
         assert not pr_text.pr_title_matches_subject(card, _topic("话题"), absent)
+
+
+def test_the_title_nudge_reads_the_same_string_the_merge_gates_do():
+    """轮询那条 nudge 要和两道合并闸比同一个字符串。
+
+    只差几个不可见字节的标题（GitHub 原样存着的那一串）在点击合、放行合上是
+    「不一致」，会当场把合并拦下。轮询这条路要是先洗再比，同一个 PR 会判成
+    「一致」——布防的自动合照合，两条车道两种结论。所以比对用原样的那一串，
+    洗净只用来展示。"""
+    line = "fix(review): land the title the checks judged"
+    card = AcceptCard(
+        change_subject=line, pr_number=7, pr_url="https://example.invalid/pull/7"
+    )
+    topic = _topic("话题")
+    status = SimpleNamespace(title=f"{line}\x1b[0m")
+
+    nudge = nudges._title_nudge(card=card, topic=topic, status=status)
+
+    assert nudge is not None
+    assert nudge.note_code is notes.NoteCode.pr_title_disagrees
+    # 展示那一行照旧是洗过的，并且点破差别在看不见的地方。
+    assert "\x1b" not in nudge.content
+    assert "含不可见字符" in nudge.content
+    # 逐字相同时不报。
+    assert (
+        nudges._title_nudge(card=card, topic=topic, status=SimpleNamespace(title=line))
+        is None
+    )
