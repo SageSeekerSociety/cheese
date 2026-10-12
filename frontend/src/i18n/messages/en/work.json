@@ -691,6 +691,7 @@
       "source": {
         "baseline": "Original",
         "upload": "Upload",
+        "template": "New from a template",
         "ai": "Edited by an AI teammate",
         "editor": "Saved from the online editor",
         "restore": "Restore",
