@@ -1279,11 +1279,11 @@ def test_without_an_egress_the_credentials_requests_go_direct(monkeypatch, tmp_p
     assert flow.server_conn.via is None
 
 
-def test_an_offline_egress_fails_the_turn_at_once_with_its_reason(
-    monkeypatch, tmp_path
-):
-    """Claude Code retries a 502 ten times, each one waiting out a connect
-    timeout; it gives up on a 503 that says not to retry."""
+def test_an_offline_egress_asks_the_turn_to_wait_and_come_back(monkeypatch, tmp_path):
+    """A machine that is offline for a reboot is back within a turn, so the
+    refusal asks the client to wait instead of ending the reply: Claude Code
+    gives up at once on the one answer that says not to retry, and the room then
+    waits for a person to wake it (#1451, 2026-10-12)."""
     mod, flow = _platform_turn(
         monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
     )
@@ -1293,7 +1293,8 @@ def test_an_offline_egress_fails_the_turn_at_once_with_its_reason(
     asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 503
-    assert flow.response.headers["x-should-retry"] == "false"
+    assert flow.response.headers["retry-after"] == str(mod.EGRESS_OFFLINE_RETRY_AFTER_S)
+    assert flow.response.headers.get("x-should-retry") != "false"
     assert b"subscription egress is offline" in flow.response.content
     assert flow.request.stream is False
     assert flow.server_conn.via is None
@@ -1302,6 +1303,9 @@ def test_an_offline_egress_fails_the_turn_at_once_with_its_reason(
 def test_requests_while_the_egress_is_known_offline_are_refused_without_waiting(
     monkeypatch, tmp_path
 ):
+    """The wait the refusal asks for is the client's, not the proxy's: a request
+    arriving while the verdict stands is answered from it, with the same
+    `retry-after`, instead of holding the turn here."""
     mod, first = _platform_turn(
         monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
     )
@@ -1314,6 +1318,9 @@ def test_requests_while_the_egress_is_known_offline_are_refused_without_waiting(
     asyncio.run(mod.requestheaders(second))
 
     assert second.response is not None and second.response.status_code == 503
+    assert second.response.headers["retry-after"] == str(
+        mod.EGRESS_OFFLINE_RETRY_AFTER_S
+    )
     assert time.monotonic() - started < 0.3
 
 
