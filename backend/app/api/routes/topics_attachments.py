@@ -42,8 +42,8 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession
 from app.api.routes.topics_file_sources import source_bytes
 from app.core import raster_images
 from app.core.config import settings

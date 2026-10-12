@@ -67,8 +67,8 @@ from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
 from app.api.place import channels_unseen, readable_rooms
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.routes.projects import DbSession
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.documents.compare import compare as office_compare

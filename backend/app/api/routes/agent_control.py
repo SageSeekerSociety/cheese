@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     ConflictError,
@@ -31,7 +31,7 @@ from app.domain.identity.actor import Actor
 from app.domain.topic.services import TopicService
 
 router = APIRouter(tags=["agent-control"])
-DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 Chat = Annotated[ChatService, Depends(get_chat_service)]
 
 

@@ -48,13 +48,13 @@ from datetime import datetime
 from fastapi import APIRouter, Query
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.routes.topics import (
     Block,
     BlockKind,
     BlockOut,
     BlockRepository,
-    DbSession,
     _actor_in_place,
 )
 from app.core.errors import NotFoundError

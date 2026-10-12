@@ -24,9 +24,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import get_consumptions, get_session_host
+from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import DbSession
-from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.background import spawn
 from app.core.config import settings
@@ -58,7 +57,7 @@ from app.domain.user.services import timezones_by_ids
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
-AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
+
 People = Annotated[SessionHost, Depends(get_session_host)]
 Questions = Annotated[Consumptions, Depends(get_consumptions)]
 

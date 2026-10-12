@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.project_feed import TOPICS, tell_project
@@ -24,8 +24,6 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(prefix="/topics", tags=["topic-members"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.get("/{topic_id}/members")

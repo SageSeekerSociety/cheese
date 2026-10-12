@@ -10,12 +10,10 @@ from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_profile_registry, get_work_runner
 from app.api.response import ok
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.sentences import notice_keys, say
 from app.domain.agent.environment import STANDARD, VM
 from app.domain.agent.market import ai_listings, compute_listings
@@ -25,7 +23,7 @@ from app.domain.agent.runtime import AgentWorkRunner
 router = APIRouter(prefix="/market", tags=["market"])
 
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
-DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 Runner = Annotated[AgentWorkRunner, Depends(get_work_runner)]
 
 

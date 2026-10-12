@@ -13,8 +13,9 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import DbSession, PlatformAdminDep
+from app.api.routes.admin_common import PlatformAdminDep
 from app.domain.integration.service import FeishuAppService, feishu_app_view
 
 router = APIRouter(prefix="/admin/integrations", tags=["admin"])
