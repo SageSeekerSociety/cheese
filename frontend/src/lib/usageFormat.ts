@@ -87,6 +87,33 @@ export function fmtSI(n: number | null | undefined, unit = ''): string {
 }
 
 /**
+ * A byte count, base 1024: `512 B`, `1.50 KB`, `5.00 GB`.
+ *
+ * One helper for the four places that showed a file size — the attachment
+ * list, the changed-files tree, the artifact page and the knowledge dialog
+ * each had their own copy, and two of them stopped at MB, so a 5 GiB file read
+ * as `5120.0 MB`.
+ *
+ * `SiteStepOutput.vue` still formats step output its own way (one decimal to
+ * 10 KiB, then none), but that is a log tail length, not a file size.
+ *
+ * `decimals` is not a free choice: the copies did not agree, and every caller
+ * keeps the width it already printed. The attachment surfaces show two
+ * (`1.50 KB`); the tree and the artifact page show one (`1.5 KB`). Callers that
+ * were on one decimal pass `1`; the default is the two-decimal form.
+ *
+ * Invalid input is passed through, not defended against (`NaN` and `Infinity`
+ * land on the top rung): a byte count that is not a finite number is a bug
+ * upstream, and inventing a size here would hide it.
+ */
+export function fmtFileSize(bytes: number, decimals = 2): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(decimals)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(decimals)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(decimals)} GB`
+}
+
+/**
  * Compact form for a KPI tile: SI from 1e6 up (`2.53M`), the grouped full form
  * below. Same caveat as `fmtSI` — put the full number in `title`.
  *

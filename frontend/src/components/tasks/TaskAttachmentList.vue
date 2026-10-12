@@ -4,7 +4,7 @@
       <v-icon size="16" class="ta__icon">mdi-file-outline</v-icon>
       <span class="ta__name">{{ file.name }}</span>
       <span class="ta__meta t-num">{{
-        t('tasks.attachments.meta', { size: formatFileSize(file.size), n: file.downloadCount })
+        t('tasks.attachments.meta', { size: fmtFileSize(file.size), n: file.downloadCount })
       }}</span>
       <!-- 看得见清单不等于拿得到文件。这一行由服务端的 canDownload 决定，
            前端不拿自己的角色去猜 —— 判据只有一份。 -->
@@ -28,9 +28,8 @@ import type { TaskAttachmentData } from '@/network/api/tasks/types'
 
 import { useI18n } from 'vue-i18n'
 
-import { formatFileSize } from '@/utils/materials'
-
 import BaseButton from '@/components/base/BaseButton.vue'
+import { fmtFileSize } from '@/lib/usageFormat'
 
 /** 一道题的材料清单。清单和能不能下载都由外面给，这里只画和报「要下载哪一个」。 */
 defineProps<{

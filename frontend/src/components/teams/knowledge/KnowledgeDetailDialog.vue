@@ -21,11 +21,11 @@ import {
   canEditKnowledge,
   formatDetailDate,
   formatDuration,
-  formatFileSize,
   formatMessageTime,
   resourceTypeIcon,
   resourceTypeName,
 } from '@/lib/knowledgeFormat'
+import { fmtFileSize } from '@/lib/usageFormat'
 
 defineOptions({ name: 'KnowledgeDetailDialog' })
 
@@ -113,7 +113,7 @@ const emit = defineEmits<{
                 {{ (resource.material.meta as FileMeta).name || t('teams.knowledge.documentExternal') }}
               </div>
               <div class="text-caption text-medium-emphasis mb-3">
-                {{ formatFileSize((resource.material.meta as FileMeta).size) }}
+                {{ fmtFileSize((resource.material.meta as FileMeta).size) }}
               </div>
               <BaseButton kind="secondary" size="sm" @click="emit('openLink', resource)">{{
                 t('teams.knowledge.openDocument')
@@ -185,7 +185,7 @@ const emit = defineEmits<{
           </div>
           <div v-if="resource.material" class="d-flex resource-info-row">
             <div class="resource-info-label">{{ t('teams.knowledge.size') }}</div>
-            <div>{{ formatFileSize(resource.material.meta.size) }}</div>
+            <div>{{ fmtFileSize(resource.material.meta.size) }}</div>
           </div>
           <div
             v-if="resource.material?.type === 'video' || resource.material?.type === 'audio'"
