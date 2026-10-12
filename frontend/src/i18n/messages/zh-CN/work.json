@@ -914,7 +914,27 @@
           "chart": "图表",
           "diagram": "流程图",
           "image": "图片",
-          "video": "视频"
+          "video": "视频",
+          "app": "小程序"
+        },
+        "app": {
+          "back": "返回文档",
+          "source": "源码",
+          "full": "全屏",
+          "more": "更多",
+          "untitled": "小程序",
+          "version": "第 {n} 版",
+          "fix": "让{name}修",
+          "ask": "让{name}改",
+          "failed": "小程序运行出错：{message}",
+          "unavailable": "这里无法运行小程序",
+          "navigated": "小程序试图打开别的页面，已停止运行",
+          "showAll": "全屏查看全部",
+          "run": "运行",
+          "copy": "复制",
+          "forbidden": "你没有权限查看这个小程序",
+          "missing": "找不到这个小程序的第 {n} 版",
+          "loadFailed": "小程序加载失败"
         }
       },
       "historyView": "右边显示",

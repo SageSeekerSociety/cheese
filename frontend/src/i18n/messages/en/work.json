@@ -914,7 +914,27 @@
           "chart": "Chart",
           "diagram": "Diagram",
           "image": "Image",
-          "video": "Video"
+          "video": "Video",
+          "app": "Mini-app"
+        },
+        "app": {
+          "back": "Back to the document",
+          "source": "Source",
+          "full": "Full screen",
+          "more": "More",
+          "untitled": "Mini-app",
+          "version": "Version {n}",
+          "fix": "Ask {name} to fix",
+          "ask": "Ask {name} to change",
+          "failed": "The mini-app failed: {message}",
+          "unavailable": "Mini-apps can't run here",
+          "navigated": "The mini-app tried to open another page and was stopped",
+          "showAll": "Show all in full screen",
+          "run": "Run",
+          "copy": "Copy",
+          "forbidden": "You don't have access to this mini-app",
+          "missing": "Version {n} of this mini-app can't be found",
+          "loadFailed": "The mini-app failed to load"
         }
       },
       "historyView": "Show",

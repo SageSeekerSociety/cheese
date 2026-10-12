@@ -3,6 +3,8 @@
 // something else. Everything the writing guide teaches is accepted as written.
 import { describe, expect, it } from 'vitest'
 
+import { nodeMarkdown, parseMarkdown } from '../src/lib/docSchema'
+
 import { checkMarkdownWrite } from './writeCheck'
 
 const GUIDE = `# 搜索框改版复盘
@@ -129,6 +131,30 @@ describe('a block in the wrong shape', () => {
 
   it('refuses a footnote with no definition', () => {
     expect(checkMarkdownWrite('花费占 59.8%[^2]。\n')?.line).toBe(1)
+  })
+})
+
+describe('a mini-app block', () => {
+  const block = ':::app q7m2kx4t@3 并发数的影响\n拖动并发数，看排队时间怎么变。\n:::'
+
+  it('is accepted and kept as written', () => {
+    expect(checkMarkdownWrite(block)).toBeNull()
+    expect(nodeMarkdown(parseMarkdown(block))).toBe(block)
+  })
+
+  it('keeps which app and version it shows, so the document names the same code after a round trip', () => {
+    const doc = parseMarkdown(block)
+    expect(doc.firstChild?.attrs).toMatchObject({ app: 'q7m2kx4t', version: 3, title: '并发数的影响' })
+  })
+
+  it('refuses an opening line with no key and version, naming its line and the right form', () => {
+    const problem = checkMarkdownWrite('正文\n\n:::app 并发数的影响\n说明\n:::\n')
+    expect(problem?.line).toBe(3)
+    expect(problem?.message).toContain('cheese_app_save')
+  })
+
+  it('refuses more than one sentence of text, which the block cannot hold', () => {
+    expect(checkMarkdownWrite(':::app q7m2kx4t@3 标题\n第一段。\n\n- 一项\n:::\n')).not.toBeNull()
   })
 })
 

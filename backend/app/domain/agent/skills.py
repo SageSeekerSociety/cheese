@@ -134,4 +134,6 @@ def _native_skill_files() -> dict[str, str]:
     )
     _, blocks = _parse(_SKILL_DIR / "doc_blocks.md")
     files["skills/cheese-docs/references/blocks.md"] = blocks + "\n"
+    _, apps = _parse(_SKILL_DIR / "doc_apps.md")
+    files["skills/cheese-docs/references/apps.md"] = apps + "\n"
     return files

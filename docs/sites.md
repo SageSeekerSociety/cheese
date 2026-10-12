@@ -32,6 +32,24 @@ Application session cookies are host-only, Secure, SameSite=None and Partitioned
 so ordinary cookie logins work inside the panel. Their HttpOnly, path and expiry
 attributes are preserved; application Bearer authentication is forwarded unchanged.
 
+## Document mini-apps
+
+A document's mini-app (`:::app <key>@<version>`) runs in a frame of
+`apps.<SITES_DOMAIN>`, which serves one thing: the shell the frontend builds
+(`frontend/miniapp/v<n>/`, fetched from `MINIAPP_SHELL_URL` and served at
+`/v<n>/`). The shell holds nothing private, so the host has no session and no
+cookie. The app's code never passes through it: the document's page reads the
+code with the reader's own permission on the document the app belongs to
+(`/apps/<key>/versions/<n>`) and hands it to the frame, which is sandboxed with
+scripts only — no storage, no network, no forms, framed by the platform alone.
+Without `SITES_DOMAIN` or `MINIAPP_SHELL_URL` no mini-app runs; its title and
+sentence still show.
+
+Before a version is kept, browser-render runs it in the shell at a phone's
+width and the document column's, light and dark. One that throws, draws nothing
+or keeps growing is refused; with no renderer to be had it is kept unchecked
+and without pictures.
+
 ## Publishing
 
 Select a website from the project's accepted revision, then publish it. Each
