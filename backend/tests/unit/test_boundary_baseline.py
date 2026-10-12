@@ -157,6 +157,7 @@ def _c3_config(bogus: bool) -> str:
             "api-domain-core": [],
             "routes-touch-no-models": [],
             "domains-acyclic": entries,
+            "routes-independent": [],
         },
     )
 
@@ -296,6 +297,7 @@ def test_dry_run_without_update_reports_the_dry_run_first(tmp_path):
             "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
             "routes-touch-no-models": [],
             "domains-acyclic": [],
+            "routes-independent": [],
         },
     )
     config = _plant(tmp_path, config_text)
@@ -461,6 +463,7 @@ def test_a_stale_entry_is_dropped_on_the_clean_tree(tmp_path):
             "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
             "routes-touch-no-models": [],
             "domains-acyclic": [],
+            "routes-independent": [],
         },
     )
     config = _plant(tmp_path, config_text)
@@ -561,6 +564,7 @@ def test_a_refresh_that_would_not_converge_rolls_back(tmp_path):
             "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
             "routes-touch-no-models": [],
             "domains-acyclic": [],
+            "routes-independent": [],
         },
     )
     config = _plant(tmp_path, config_text, _cycle_files())

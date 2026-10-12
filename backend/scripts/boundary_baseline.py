@@ -6,12 +6,12 @@
     cd backend && uv run python scripts/boundary_baseline.py --dry-run
     cd backend && uv run python scripts/boundary_baseline.py          # report only
 
-WHAT IT DOES. Runs the three contracts that carry a frozen baseline and rewrites
-their `ignore_imports` block. C1 and C2 are shrink-only: an entry that no longer
+WHAT IT DOES. Runs the four contracts that carry a frozen baseline and rewrites
+their `ignore_imports` block. C1, C2 and C4 are shrink-only: an entry that no longer
 matches is dropped, and an entry that *would* have to be added is reported and
 refused unless `--freeze-new` accepts it on purpose.
 
-C3 IS DIFFERENT, and the whole reason this script is not three lines shorter.
+C3 IS DIFFERENT, and the whole reason this script is not a few lines shorter.
 Its frozen list is a cycle-breaker set, and that set is not unique: recomputed
 from scratch the same knot can come back as a different set of edges — measured
 here, 21 live entries a recompute would silently drop and 66 it would add. So C3
@@ -52,7 +52,7 @@ CHECKER = HERE.parent / "check_boundaries.py"
 #: The contracts `check_boundaries.py` claims to run, kept in step with it on
 #: purpose: a declaration that lost one must not be "refreshed" into a smaller
 #: check, and this script refuses to judge a file that no longer declares all
-#: seven even though it only ever writes three of them.
+#: eight even though it only ever writes four of them.
 CONTRACT_IDS = (
     "api-domain-core",
     "routes-touch-no-models",
@@ -61,12 +61,18 @@ CONTRACT_IDS = (
     "turn-no-composition-imports",
     "realtime-no-turn",
     "turn-storage-purity",
+    "routes-independent",
 )
 
 #: The contracts that carry a generated frozen block. The four turn contracts
 #: are structural and have no exemptions; a block on one of them is a shape this
 #: script will not guess its way around.
-BLOCK_CONTRACTS = ("api-domain-core", "routes-touch-no-models", "domains-acyclic")
+BLOCK_CONTRACTS = (
+    "api-domain-core",
+    "routes-touch-no-models",
+    "domains-acyclic",
+    "routes-independent",
+)
 
 #: The one contract whose stale entries come from the checker instead of a
 #: recompute: its cycle-breaker set is not unique, so a fresh run names a
@@ -216,7 +222,7 @@ def parse(
 ) -> tuple[str, list[tuple[str, str | None, list[str], list[str]]]]:
     """(preamble, [(header, contract id, lines to keep, frozen entries)]).
 
-    Validates the whole file: the three block-carrying contracts must each have
+    Validates the whole file: the four block-carrying contracts must each have
     a canonical block, a contract that is not one of them may not have one, and
     a contract this script does not know may not smuggle in an `ignore_imports`.
     """
@@ -319,9 +325,14 @@ def entries_from_metadata(metadata: dict) -> list[str]:
                 edges.add((link["importer"], link["imported"]))
 
     # forbidden: invalid_chains -> chains -> links
+    # independence: invalid_chains -> chains -> {chain, extra_firsts, extra_lasts}
     for invalid in metadata.get("invalid_chains", []):
         for chain in invalid["chains"]:
-            for link in chain:
+            if isinstance(chain, dict):
+                links = [*chain["chain"], *chain["extra_firsts"], *chain["extra_lasts"]]
+            else:
+                links = chain
+            for link in links:
                 edges.add((link["importer"], link["imported"]))
 
     # acyclic_siblings: {package: {(importer, imported)}}
@@ -377,7 +388,7 @@ def check_tree(config_path: Path) -> tuple[int, dict[str, list[str]]]:
 def recompute(text: str) -> dict[str, list[str]]:
     """Every violation in `text` with the baselines stripped, per contract id.
 
-    Only C1 and C2 are read from this: it names the edges a *recompute* calls
+    Only C1, C2 and C4 are read from this: it names the edges a *recompute* calls
     violations, which for C3 is a different cut of the same cycles and not the
     set that was frozen.
     """
@@ -440,7 +451,7 @@ def recompute(text: str) -> dict[str, list[str]]:
 def measure(text: str, stale: dict[str, list[str]]) -> dict[str, list[str]]:
     """The baseline `text` should carry.
 
-    C1 and C2 are recomputed from their violations; C3 keeps its frozen cut and
+    C1, C2 and C4 are recomputed from their violations; C3 keeps its frozen cut and
     drops only the entries the checker called stale; the turn contracts hold
     nothing.
     """
