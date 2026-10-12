@@ -115,3 +115,38 @@ async def test_merge_refusal_does_not_claim_checks_are_green():
     assert "全绿" not in card.note + call["content"] + call["headline"]
     assert str(card.task_id) in call["content"]
     assert "merge method disabled" in call["content"]
+
+
+@pytest.mark.anyio
+async def test_leaving_the_merge_queue_wakes_cheese_and_says_what_to_do():
+    """出队是「已采纳的 PR 停住了」，和 GitHub 拒绝合并一样要叫人，而且只叫一次。
+
+    卡仍写着「已采纳」，没人被叫醒这条活就没人管（真实事故 PR #3496：12:26 出队，
+    26 分钟后巡检才发现）。平台不自动重新入队，修好后要人重新采纳。
+    """
+    service, card, topic = _service_and_card()
+    # 这条路径的去重靠卡上的 note 文本，`_service_and_card` 的 scalar 桩返回的是
+    # nudge ledger，所以这里改读 card.note。
+    service._session.scalar = AsyncMock(side_effect=lambda *_: card.note)
+    runner = MagicMock()
+    with patch(
+        "app.domain.review.services.TaskService.get",
+        new=AsyncMock(return_value=SimpleNamespace(status="open")),
+    ):
+        await service._note_left_merge_queue(card=card, topic=topic)
+        assert service._record_task_nudge.await_count == 1
+        first_note = card.note
+        # 轮询会再走一遍同一张卡：note 没变就不该再叫一次。
+        await service._note_left_merge_queue(card=card, topic=topic)
+
+    assert card.note_code is NoteCode.merge_refused
+    assert card.note == first_note
+    assert service._record_task_nudge.await_count == 1
+    call = service._record_task_nudge.call_args.kwargs
+    assert call["meta"]["event_type"] == "merge_refused"
+    assert call["meta"]["severity"] == "error"
+    assert call["meta"]["who"] == "cheese"
+    assert "合并队列" in call["headline"]
+    assert "cheese push-fix" in call["content"]
+    assert "重新入队" in call["content"]
+    runner.submit.assert_not_called()

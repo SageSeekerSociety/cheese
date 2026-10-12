@@ -636,14 +636,12 @@ async def _poll_pr_card(
             owner=owner, repo=repo, number=number, token=creds.read
         ):
             return
-        # Removal can mean failed checks or a human cancellation. Never re-enqueue.
+        # Removal can mean failed checks or a human cancellation. Never
+        # re-enqueue; but the card still reads 「已采纳」, so note it and wake
+        # the task's 芝士 instead of leaving it for someone to notice.
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
-        notes.record(
-            card,
-            notes.NoteCode.merge_refused,
-            f"PR #{number} 已离开合并队列但尚未确认合并，请检查 GitHub 后重新采纳。",
-        )
+        await self._note_left_merge_queue(card=card, topic=topic)
         await self._session.flush()
         return
 

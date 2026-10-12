@@ -680,6 +680,9 @@ class AcceptService:
             runner=runner,
         )
 
+    async def _note_left_merge_queue(self, *, card: AcceptCard, topic: Topic) -> None:
+        return await notices._note_left_merge_queue(self, card=card, topic=topic)
+
     def _ci_nudge(
         self,
         *,

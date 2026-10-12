@@ -193,38 +193,32 @@ async def _note_merge_blocked(
     - **One summon per reason.** The dispatch hangs off that same "the note
       really changed" test, so a 405 that turns into a 409 gets a fresh
       nudge while an unchanging one stays quiet.
+
+    The dispatch tail is `_note_merge_stop_and_wake`, shared with
+    `_note_left_merge_queue`: a refusal is not the only way an accepted PR
+    stops.
     """
     # GitHub 的原话是外部字符串，而它要被贴进芝士的终端（见
     # `pr_signals.sanitize_external`）。
     reason = pr_signals.sanitize_external(reason)
-    note = f"PR #{card.pr_number} GitHub 拒绝合并：{reason}"
-    current_note = await self._session.scalar(
-        select(AcceptCard.note).where(AcceptCard.id == card.id).with_for_update()
-    )
-    if current_note == note:
-        return
-    notes.record(card, notes.NoteCode.merge_refused, note)
-    logger.warning("PR merge refused for card %s: %s", card.id, reason)
-    task = await TaskService(self._session).get(card.task_id) if card.task_id else None
-    actionable = task is not None and task.status == TaskStatus.open
-    action = (
-        f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
-        "检查 GitHub 返回的具体原因；若是冲突，确认 PR 当前目标分支后再合入，"
-        "解决并验证后提交，用 cheese push-fix 更新原 PR。"
-        "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
-        "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
-        "请在话题里说清楚卡在哪、需要谁做什么。"
-        if actionable
-        else "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
-    )
-    await self._record_task_nudge(
+    await _note_merge_stop_and_wake(
+        self,
+        card=card,
         topic=topic,
-        task=task,
-        content=(
+        note=f"PR #{card.pr_number} GitHub 拒绝合并：{reason}",
+        log=f"PR merge refused for card {card.id}: {reason}",
+        lead=(
             f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
             "被 GitHub 拒绝合并：\n"
             f"```\n{reason[:1500]}\n```\n"
-            f"{action}"
+        ),
+        action=(
+            f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
+            "检查 GitHub 返回的具体原因；若是冲突，确认 PR 当前目标分支后再合入，"
+            "解决并验证后提交，用 cheese push-fix 更新原 PR。"
+            "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
+            "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
+            "请在话题里说清楚卡在哪、需要谁做什么。"
         ),
         headline=say("mergeRefused", pr=card.pr_number),
         meta=notice(
@@ -233,6 +227,94 @@ async def _note_merge_blocked(
             who=WHO_CHEESE,
             detail=reason[:1500],
             detail_label=say("labelGithubReason"),
+        ),
+    )
+
+
+#: 任务已关闭时替代「照做」指令的那句话 —— 卡上的提示照旧，只是没人被叫起来。
+_CLOSED_TASK_ACTION = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+
+
+async def _note_merge_stop_and_wake(
+    self: pkg.AcceptService,
+    *,
+    card: AcceptCard,
+    topic: Topic,
+    note: str,
+    log: str,
+    lead: str,
+    action: str,
+    headline,
+    meta,
+) -> None:
+    """Put `note` on the card and, when it is new, wake the task's 芝士.
+
+    The tail `_note_merge_blocked` and `_note_left_merge_queue` share. An
+    accepted PR stops being a live accept in more than one way, and every way
+    has to summon whoever can work the card rather than leaving a line nobody
+    is looking at. The 60s poll re-derives the same `note`, so both the
+    rewrite and the summon hang off "the text actually changed" — one write
+    and one nudge per distinct stop, never one per poll.
+    """
+    current_note = await self._session.scalar(
+        select(AcceptCard.note).where(AcceptCard.id == card.id).with_for_update()
+    )
+    if current_note == note:
+        return
+    notes.record(card, notes.NoteCode.merge_refused, note)
+    logger.warning(log)
+    task = await TaskService(self._session).get(card.task_id) if card.task_id else None
+    actionable = task is not None and task.status == TaskStatus.open
+    await self._record_task_nudge(
+        topic=topic,
+        task=task,
+        content=f"{lead}{action if actionable else _CLOSED_TASK_ACTION}",
+        headline=headline,
+        meta=meta,
+    )
+
+
+async def _note_left_merge_queue(
+    self: pkg.AcceptService,
+    *,
+    card: AcceptCard,
+    topic: Topic,
+) -> None:
+    """An accepted PR left GitHub's merge queue without merging: note it and
+    wake the task's 芝士.
+
+    GitHub drops an entry when a check fails or a person takes it out, and
+    the card keeps reading 「已采纳」 either way — so before this the topic sat
+    silent until somebody happened to look (真实案例: PR #3496 was dropped at
+    12:26 and went unnoticed for 26 minutes). Like a refusal it is something
+    芝士 can act on — a failed check is fixable in its own workspace — so it
+    summons it the same way `_note_merge_blocked` does. The platform never
+    re-enqueues the PR itself; a fix still needs a person to accept again.
+    """
+    await _note_merge_stop_and_wake(
+        self,
+        card=card,
+        topic=topic,
+        note=(
+            f"PR #{card.pr_number} 已离开合并队列但尚未确认合并，"
+            "请检查 GitHub 后重新采纳。"
+        ),
+        log=f"PR left the merge queue unmerged for card {card.id}",
+        lead=(
+            f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
+            "已离开合并队列但尚未确认合并，可能是检查失败或被人取出：\n"
+        ),
+        action=(
+            f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
+            "到 GitHub 上看 PR 为什么离开合并队列：若是检查失败，在任务目录里修好、"
+            "验证后提交，用 cheese push-fix 更新原 PR。"
+            "平台不会自动重新入队；修好后需要人重新采纳。"
+        ),
+        headline=say("mergeQueueLeft", pr=card.pr_number),
+        meta=notice(
+            EVENT_MERGE_REFUSED,
+            severity=SEVERITY_ERROR,
+            who=WHO_CHEESE,
         ),
     )
 
