@@ -1,27 +1,30 @@
 <script setup lang="ts">
 // 侧栏里挂在频道下面的一个任务。比频道的字往里缩一点，左边一条竖线从频道的 # 下面
-// 一直连到「展开其余」那一行，说「这几条是那个频道里的」；字和频道一样大。在等**你**的亮
-// 一颗暖色点（服务端按看的人算的 `awaits_me`，不是「在待处理那一列」），正在运行的
-// 一颗绿点，别的不画。
-import type { RoomTask } from '@/cx_types'
-
-import { computed } from 'vue'
+// 一直连到「展开其余」那一行，说「这几条是那个频道里的」；字和频道一样大。
+//
+// 行尾是那颗灯（`light`，父级按 `lib/roomLight.ts` 的四条判据算好）：黄 = 有事等你，
+// 呼吸绿 = 正在往前走，长绿 = 交付完了你还没看过，红 = 显示在跑但五分钟没动静。
+// 不亮就不画。
+import type { RowLight } from '@/lib/roomLight'
+import type { RailTask } from './moreTasks'
 
 import TopicRailBadge from './TopicRailBadge.vue'
+import TopicRailLight from './TopicRailLight.vue'
 
-import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
-    task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation' | 'awaits_me'>
+    task: RailTask
     selected: boolean
+    /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
+    light?: RowLight | null
     /** 任务里别人说了几句我还没读（只对负责人和协作者算，只算人说的）。 */
     unread?: number
     // 它的频道在树里的第几层：竖线跟着频道的图标列走。
     depth?: number
   }>(),
-  { depth: 0, unread: 0 }
+  { depth: 0, unread: 0, light: null }
 )
 
 const emit = defineEmits<{
@@ -31,12 +34,6 @@ const emit = defineEmits<{
   // 毫秒，打开它就少等这一段。
   (e: 'press', task: { roomId: string; taskId: string }): void
 }>()
-
-const mark = computed<'needs-you' | 'running' | null>(() => {
-  if (props.task.awaits_me) return 'needs-you'
-  if (props.task.presentation.phrase === 'running') return 'running'
-  return null
-})
 </script>
 
 <template>
@@ -59,13 +56,7 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
       >{{ taskTitle(task) }}</span
     >
     <TopicRailBadge v-if="unread > 0" :count="unread" />
-    <span
-      v-if="mark"
-      class="rail-task__dot"
-      :class="`rail-task__dot--${mark}`"
-      role="img"
-      :aria-label="mark === 'needs-you' ? t('work.sidebar.taskNeedsYou') : t('work.sidebar.taskRunning')"
-    />
+    <TopicRailLight v-if="light" :light="light" />
   </button>
 </template>
 
@@ -124,17 +115,5 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
 }
 .rail-task__title--unread {
   font-weight: 650;
-}
-.rail-task__dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-}
-.rail-task__dot--needs-you {
-  background: var(--warn);
-}
-.rail-task__dot--running {
-  background: var(--ok);
 }
 </style>

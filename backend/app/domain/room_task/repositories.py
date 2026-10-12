@@ -238,6 +238,19 @@ class TaskRepository:
             return helping
         return and_(Task.owner_handle.is_distinct_from(me), not_(helping))
 
+    @staticmethod
+    def takes_part(person: str):
+        """这个人沾过手的活：他负责的，或他在协作者名单里的。
+
+        `_whose` 正面的那两半合起来，单独起个名字是因为服务层也要按它筛 ——
+        `TaskService.unseen_deliveries` 那条跨域的查询读的是另一个域的表，所以它
+        在服务层（那里这个进口已经在契约的名单上），而这条判据只有这一份写法。
+        """
+        return or_(
+            TaskRepository._whose("mine", person),
+            TaskRepository._whose("helping", person),
+        )
+
     def _in_view(
         self,
         stmt,
