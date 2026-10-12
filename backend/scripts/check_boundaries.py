@@ -853,6 +853,29 @@ def _tail(output: str, lines: int = 25) -> str:
     return f"... ({len(kept) - lines} earlier lines)\n" + "\n".join(kept[-lines:])
 
 
+def _self_test_verdict(failures: list[str]) -> int:
+    """The self-test's exit code and closing line, decided in one place.
+
+    One is the meta-test's own breakage — a case that did not fire, or a
+    fixture that could not be built — and stays distinct from what 2 means
+    everywhere else: the check could not judge the tree.
+    """
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        print(
+            f"\nFAIL: check_boundaries self-test ({len(failures)} case(s))",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        "PASS: check_boundaries self-test (9 contracts fire on the violation they "
+        "exist to catch; an absent, a trimmed and a wildcarded declaration each "
+        "come back not-passing; every case agrees with the exit code under --json, "
+        "on one line of stdout, naming all nine contracts)"
+    )
+    return 0
+
+
 def self_test() -> int:
     failures: list[str] = []
     # Only self-tests need the project's default declaration. Normal --config,
@@ -865,7 +888,17 @@ def self_test() -> int:
     # the layer tables across instead of re-typing them: a layer this file
     # forgot to copy would come back as an undeclared module, and the failure
     # would read like a broken rule rather than a stale fixture.
-    declared = declared_layers(DEFAULT_CONFIG.read_text())
+    #
+    # A declaration that stopped naming one of those tables cannot seed them at
+    # all. That is this run's failure and not a planted case — and the gate
+    # already reports the state as `cannot judge: missing [...]` — so it is said
+    # in one line rather than unwound as a traceback out of the meta-test.
+    try:
+        declared = declared_layers(DEFAULT_CONFIG.read_text())
+    except RuntimeError as exc:
+        failures.append(f"the default declaration: {exc}")
+        print(f"  [FAIL] the default declaration: {exc}")
+        return _self_test_verdict(failures)
 
     def report(what: str, code: int, output: str, expected: int, needle: str | None):
         verdict = "ok"
@@ -959,6 +992,40 @@ def self_test() -> int:
                 CANNOT_JUDGE,
                 f"missing ['{contract_id}']",
             )
+
+        # The state no case above can plant: a default declaration that stopped
+        # naming a layer table, which is where the planted trees get theirs.
+        # The self-test has to say so and fail — unwinding a traceback through
+        # the same exit code is the failure nobody can read. A renamed section
+        # is the shape a contract rename leaves behind.
+        unlayered = sandbox / "unlayered"
+        unlayered.mkdir()
+        _plant(_seed_config(declared), {}, unlayered)
+        declaration = unlayered / DEFAULT_CONFIG.name
+        declaration.write_text(
+            declaration.read_text().replace(
+                "[importlinter:contract:domain-layers]",
+                "[importlinter:contract:domain-layers-renamed]",
+            )
+        )
+        copied = unlayered / "scripts" / HERE.name
+        copied.parent.mkdir()
+        shutil.copy(HERE, copied)
+        result = subprocess.run(
+            [sys.executable, str(copied), "--self-test"],
+            cwd=unlayered,
+            capture_output=True,
+            text=True,
+        )
+        report(
+            "a declaration that lost a layer table",
+            result.returncode,
+            result.stdout + result.stderr,
+            1,
+            # The named failure, not the exit code: a traceback out of the
+            # bootstrap carries the same text and the same 1.
+            "  [FAIL] the default declaration:",
+        )
 
         # No config at all. Nothing to judge, and 2 is not a pass.
         tmp = sandbox / "absent"
@@ -1097,20 +1164,7 @@ def self_test() -> int:
                 failures.append(f"--json {what}: {problem}")
             print(f"  [{verdict}] --json {what}")
 
-    if failures:
-        print("\n".join(failures), file=sys.stderr)
-        print(
-            f"\nFAIL: check_boundaries self-test ({len(failures)} case(s))",
-            file=sys.stderr,
-        )
-        return 1
-    print(
-        "PASS: check_boundaries self-test (9 contracts fire on the violation they "
-        "exist to catch; an absent, a trimmed and a wildcarded declaration each "
-        "come back not-passing; every case agrees with the exit code under --json, "
-        "on one line of stdout, naming all nine contracts)"
-    )
-    return 0
+    return _self_test_verdict(failures)
 
 
 if __name__ == "__main__":
