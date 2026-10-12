@@ -80,6 +80,14 @@ export function unarchiveTopic(topicId: string): Promise<Topic> {
   })
 }
 
+/** 删除一个频道：消息、任务、文档一起走，不能恢复（清单第 2 条）。服务端把这一行
+ *  标记成已删除、等它自己的清理走完再摘掉，所以这里回来之后别再读它。 */
+export function deleteTopic(topicId: string): Promise<{ id: string; deleted: boolean }> {
+  return request<{ id: string; deleted: boolean }>(`/topics/${encodeURIComponent(topicId)}`, {
+    method: 'DELETE',
+  })
+}
+
 /** 把频道里的一条消息转为这个频道的一个任务，点的人是负责人（由会话认，不由
  *  请求体说）。私聊里的消息不能转。 */
 export function upgradeBlock(blockId: string): Promise<RoomTask> {

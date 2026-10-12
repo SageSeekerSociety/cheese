@@ -305,6 +305,7 @@
       "topicName": "Channel name",
       "archive": "Archive",
       "unarchive": "Unarchive",
+      "delete": "Delete channel",
       "usage": "Usage",
       "thisTopic": "This channel",
       "wholeProject": "Whole project",
@@ -2240,7 +2241,14 @@
     "describeFailed": "Couldn't save the channel description",
     "browse": "All channels",
     "visibilityFailed": "Couldn't change who can see the channel",
-    "privateTip": "Private channel"
+    "privateTip": "Private channel",
+    "delete": {
+      "title": "Delete “{name}”?",
+      "body": "The channel goes away along with its messages, tasks and docs. This can't be undone.",
+      "hint": "Type the channel name to confirm",
+      "nameLabel": "Channel name",
+      "confirm": "Delete channel"
+    }
   },
   "channelBrowse": {
     "search": "Search channels",

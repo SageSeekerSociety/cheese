@@ -36,6 +36,8 @@ const emit = defineEmits<{
   (e: 'archive'): void
   (e: 'unarchive'): void
   (e: 'leave'): void
+  /** 「删除频道」（清单第 2 条）：这里只把确认框叫起来，真正的删除由页头做。 */
+  (e: 'delete'): void
   (e: 'notify', level: TopicNotifyLevel, until: string | null): void
 }>()
 
@@ -207,6 +209,15 @@ const canMakePublic = computed(
         <BaseButton v-else kind="danger" size="sm" @click="emit('archive')">{{
           t('work.projectSettings.channels.archive')
         }}</BaseButton>
+      </div>
+      <!-- 删除排在最后，和 ⋯ 菜单里同一个次序：不可撤销的那一件不该挤在随手点的中间。
+           「综合」是项目本身，删不得，也就不画这一行。 -->
+      <div v-if="canManage && !general" class="details__row">
+        <div class="details__what">
+          <span class="details__label">{{ t('work.room.menu.delete') }}</span>
+          <span class="t-meta c-muted">{{ t('work.channel.delete.body') }}</span>
+        </div>
+        <BaseButton kind="danger" size="sm" @click="emit('delete')">{{ t('work.room.menu.delete') }}</BaseButton>
       </div>
       <div v-if="topic.joined && !general" class="details__row">
         <div class="details__what">

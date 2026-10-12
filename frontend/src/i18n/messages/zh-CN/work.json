@@ -305,6 +305,7 @@
       "topicName": "频道名称",
       "archive": "归档",
       "unarchive": "取消归档",
+      "delete": "删除频道",
       "usage": "用量",
       "thisTopic": "本频道",
       "wholeProject": "全项目",
@@ -2240,7 +2241,14 @@
     "describeFailed": "频道说明没保存",
     "browse": "全部频道",
     "visibilityFailed": "频道可见范围没改成",
-    "privateTip": "私密频道"
+    "privateTip": "私密频道",
+    "delete": {
+      "title": "删除「{name}」？",
+      "body": "这个频道连同里面的消息、任务、文档会一起删掉，不能恢复。",
+      "hint": "把频道名原样打一遍才能删",
+      "nameLabel": "频道名称",
+      "confirm": "删除频道"
+    }
   },
   "channelBrowse": {
     "search": "搜索频道",
