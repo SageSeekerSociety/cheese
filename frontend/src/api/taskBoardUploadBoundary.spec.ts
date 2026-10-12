@@ -96,10 +96,12 @@ describe.skipIf(!RUN)('task board upload: real 30s / 60s wall-clock boundary', (
 
   it('aborts the same 35s response on the 30s default dial, before the server answers', async () => {
     const started = Date.now()
-    const error = (await TaskBoardApi.listAttachments(7).catch((failure) => failure)) as { code?: string }
+    const error = (await TaskBoardApi.listAttachments(7).catch((failure) => failure)) as { message?: string }
     const elapsed = Date.now() - started
     expect(error).toBeInstanceOf(Error)
-    expect(error.code).toBe('ECONNABORTED')
+    // `axiosHttp` maps a transport timeout to a plain Error carrying axios's own
+    // sentence (no `.code`): the dial that fired is the 30s instance default.
+    expect(error.message).toMatch(/timeout of 30000ms/)
     // Aborted at the 30s dial: comfortably before the 35s answer, and never
     // instant — a lost-network failure would return at once.
     expect(elapsed).toBeGreaterThanOrEqual(29000)
