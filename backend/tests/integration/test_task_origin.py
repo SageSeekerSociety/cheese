@@ -95,4 +95,8 @@ def test_a_task_created_on_its_own_came_from_nowhere(client):
         headers=session_auth_headers("alice"),
     )
 
-    assert _related(client, r.json()["data"]["id"]) == {"origin": None, "materials": []}
+    assert _related(client, r.json()["data"]["id"]) == {
+        "source": None,
+        "origin": None,
+        "materials": [],
+    }

@@ -14,8 +14,9 @@ from datetime import UTC, datetime
 
 from app.api.routes.topics import BlockRepository
 from app.domain.block.documents import DOC_CARD_KEY
-from app.domain.block.models import Block, BlockKind
-from app.domain.identity.handles import names_a_person, recipient_seat
+from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.identity.handles import recipient_seat
+from app.domain.identity.services import IdentityService
 from app.domain.room_task.models import Task
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic
@@ -89,9 +90,10 @@ async def asked_in(
     for block in reversed(recent):
         recipient = (block.meta or {}).get("agent_recipient") or {}
         if (
-            names_a_person(block.author)
+            block.author_type == AuthorType.participant
             and recipient_seat(recipient) == agent_handle
             and (recipient.get("mentioned") or not main_line)
+            and not await IdentityService(db).is_agent(block.author)
         ):
             return block
     return None
