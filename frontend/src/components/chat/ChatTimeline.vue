@@ -142,6 +142,7 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
+  (e: 'ask-withdraw', block: Block): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -283,6 +284,9 @@ function emitReact(block: Block, emoji: string) {
 }
 function emitAskReply(block: Block, text: string) {
   emit('ask-reply', block, text)
+}
+function emitAskWithdraw(block: Block) {
+  emit('ask-withdraw', block)
 }
 // ---- 读屏播报：新到的一整条消息念一句「谁：开头一段」 ----
 // 整条时间线不做 aria-live：历史加载、翻页、流式输出都会让读屏一直念。只在一条别人
@@ -536,6 +540,7 @@ const rowLabels = computed(() =>
               @open-card="emit('open-card', $event)"
               @react="emitReact"
               @ask-reply="emitAskReply"
+              @ask-withdraw="emitAskWithdraw"
               @checklist="emitChecklist"
               @download="emit('download', $event)"
               @jump="emit('jump', $event)"

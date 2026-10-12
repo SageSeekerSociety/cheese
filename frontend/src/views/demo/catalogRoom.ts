@@ -476,7 +476,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',
     about:
-      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」。输入框始终在，不被它占用。',
+      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。',
     file: 'src/components/ask/AskQuickReplies.vue',
     component: AskQuickReplies,
     needs: UI_T,
@@ -491,14 +491,25 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '有人答过了',
-        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。',
+        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。答的人不是看着这一页的人，所以没有撤回的入口。',
         props: {
           block: askBlock([
             { kind: 'option', option: '按部门', note: null, by: 'alice', at: null },
             { kind: 'note', option: null, note: '外包单列一栏', by: 'bob', at: null },
           ]),
           names: { alice: 'Alice', bob: 'Bob' },
+          viewer: 'me',
         },
+      },
+      {
+        name: '自己答的，可以撤回',
+        note: '答过的那一条旁边多一个「撤回」；点它先弹确认框，题回到重新等回答。',
+        props: {
+          block: askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }]),
+          names: { alice: 'Alice' },
+          viewer: 'alice',
+        },
+        expect: '撤回',
       },
     ],
   },
