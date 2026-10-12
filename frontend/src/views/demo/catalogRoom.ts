@@ -33,6 +33,7 @@ import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
+import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
@@ -216,6 +217,43 @@ const TASK_ENTRIES: CatalogEntry[] = [
         note: '一件刚建好的任务：标题在左，状态写着在讨论；数据都从 props 来，开始、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
+      },
+    ],
+  },
+  {
+    id: 'task-source-line',
+    title: 'TaskSourceLine',
+    about: '任务页「概览」顶上那一行：这个任务是从哪句话来的。点它回到说这句话的那段对话，停在这一条上。',
+    file: 'src/components/task/TaskSourceLine.vue',
+    component: TaskSourceLine,
+    needs: UI_T,
+    args: {
+      task: { ...TASK_HEADER_PROPS.task, created_by: 'alice' },
+      memberNames: { alice: 'Alice', 'cheese-topica': AGENT_NAME },
+    },
+    states: [
+      {
+        name: '从支线里的一句话来',
+        note: '引原话：谁说的、在哪个频道的支线里、什么时候；@ 过的人读成名字。',
+        props: {
+          source: {
+            block_id: 'demo-block',
+            author: 'alice',
+            content: '<@cheese-topica> 登录页加一个「记住我」，勾上以后七天内不用再登录',
+            created_at: '2026-10-05T00:00:00Z',
+            conversation_id: 'demo-thread',
+            room_id: 'demo-room',
+            where: 'thread',
+            title: '前端',
+          },
+        },
+        expect: '来自 #前端 的一条支线',
+      },
+      {
+        name: '自己新建的',
+        note: '不是从哪句话转来的任务，照实说是谁新建的，不拿别的话顶替。',
+        props: { source: null },
+        expect: 'Alice 新建的任务，不是从对话里转出来的',
       },
     ],
   },

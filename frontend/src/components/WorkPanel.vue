@@ -480,14 +480,13 @@ function markChangesSeen() {
 // 只取开着的活本身，不带对话：这里只是为了数一数有几条开着。和频道概览读同一份，
 // 切回房间时上次那个数先在。
 const openTasksRead = useQuery(
-  computed(() => {
-    const roomId = props.topic?.id ?? ''
-    return { ...openRoomTasksQuery(roomId), enabled: !!roomId && !props.taskId }
-  }),
+  computed(() => ({ ...openRoomTasksQuery(topicId.value ?? ''), enabled: !!topicId.value && !props.taskId })),
   queryClient
 )
+// 任务页上答 0（`threads` 是 `signalFor` 和 `tabTitle` 的唯一出处）：这一份属于房间，
+// 不属于画在它里面的任务，而它会漏进来——这一格和频道概览读同一份缓存，`enabled` 挡不住。
 const threads = computed<{ open: number }>(() => ({
-  open: (openTasksRead.data.value?.data ?? []).filter((r) => r.status === 'open').length,
+  open: props.taskId ? 0 : (openTasksRead.data.value?.data ?? []).filter((r) => r.status === 'open').length,
 }))
 
 function pollThreads() {

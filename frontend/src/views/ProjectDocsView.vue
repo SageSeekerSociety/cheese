@@ -27,7 +27,7 @@ import { keys } from '@/query/keys'
 import { projectQuery, roomRowQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-// 项目级文档 (spec §7.1): 章程 / 周报集 / 记忆 — one address each
+// 项目级文档 (spec §7.1): 项目目标 / 周报集 / 记忆 — one address each
 // (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
 // is a route parameter, not a route NAME: as three separate named routes this
 // page could be reached two different ways (a sidebar swap and a full-page push)
@@ -61,7 +61,7 @@ function openKind(next: unknown) {
 
 interface DocsPayload {
   rootTopicId: string | null
-  /** 章程就是项目总览那一份文档；编辑器还要知道它在哪个项目、话题怎么读名字。 */
+  /** 项目目标那一份文档；编辑器还要知道它在哪个项目、话题怎么读名字。 */
   rootTopic: Topic | null
   overviewId: string | null
   weeklies: Block[]
@@ -113,7 +113,8 @@ const errorMessage = computed<string | null>(() =>
   error.value ? error.value.message || t('project.docs.loadFailed') : null
 )
 
-// ---- 章程: the project's overview (改了就等于给每个芝士下指令). The same doc
+// ---- 项目目标: what the project is to achieve, by when, and what it leaves out
+// for now; every 芝士 reads it in every conversation. The same doc
 // panel the 综合 overview draws, on a page: one live document, toolbar,
 // selection bubble, `/` menu and comments, so the two never drift apart. ----
 const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
@@ -200,7 +201,7 @@ useCommands(() => {
 </script>
 
 <template>
-  <!-- 章程是一整篇文档，自己带工具条、自己滚、评论栏停在它旁边：这一页不滚，把高度让给它。 -->
+  <!-- 项目目标是一整篇文档，自己带工具条、自己滚、评论栏停在它旁边：这一页不滚，把高度让给它。 -->
   <!-- The weekly report and the memory log are prose the person reads through, so
        they take the reading column (`--page-w-read`), not the wider form / card-list
        width. Lists and forms elsewhere stay on `--page-w`. -->
@@ -220,7 +221,7 @@ useCommands(() => {
         >
           <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ t(`project.docs.kind.${k}`) }}</v-tab>
         </v-tabs>
-        <!-- 章程的顶栏（在线的人、建议、评论……）画在这一行的右边，不另起一行。 -->
+        <!-- 项目目标的顶栏（在线的人、建议、评论……）画在这一行的右边，不另起一行。 -->
         <div v-if="kind === 'charter'" id="charter-doc-bar" class="docs-tabs__bar" />
       </div>
       <p v-if="kind === 'charter'" class="t-body c-muted mt-2">
@@ -267,7 +268,7 @@ useCommands(() => {
         </v-card>
       </template>
 
-      <!-- ===== 章程: the project room's own doc panel, on a page ===== -->
+      <!-- ===== 项目目标: the project's own doc panel, on a page ===== -->
       <template v-else-if="kind === 'charter'">
         <PanelDocHost
           v-if="overviewDoc"
@@ -351,7 +352,7 @@ useCommands(() => {
   min-width: 0;
 }
 
-/* 章程：编辑器整页宽、占满剩下的高度、自己滚；页签那一行仍摆在阅读宽度的那一栏里，
+/* 项目目标：编辑器整页宽、占满剩下的高度、自己滚；页签那一行仍摆在阅读宽度的那一栏里，
    切到周报集、记忆时不跳。周报集、记忆那一档走 --page-w-read（AppPage 的 prose），
    所以这里也跟着用 --page-w-read——两处对不上，切页签时那一行就会横跳一下。 */
 .docs-head--page {

@@ -32,6 +32,7 @@ from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.instructions import MEMORY_INSTRUCTIONS, memory_block
+from app.domain.room_task.title_width import TITLE_CHARS
 from app.domain.task.teaching import TeachingContext
 
 _BARE_PATH_RE = re.compile(
@@ -239,7 +240,8 @@ ASK_ONLY_CHEESE_ASK = (
 WRITING = (
     "## 写作\n"
     "你写的每段文字（聊天消息、实况文档、记忆、PR 和提交说明）都是给读者看的，"
-    "不是记录你怎么想的。动笔前想清楚：读者是谁，他现在知道什么，读完要能做什么。\n"
+    "不是记录你怎么想的。动笔前想清楚：读者是谁，他现在知道什么，读完要能做什么。"
+    "在对话里给人发的消息另有「在对话里说话」一节，和下面不一样的地方以那一节为准。\n"
     "1. 先写结论。第一句就是读者最需要的那件事，理由和细节放在后面。\n"
     "2. 不反驳没人说过的话。读者心里没有的说法，不要先否定它再给答案。"
     "✗「原因不是一条，是三条叠在一起。」✓「原因有三条：……」"
@@ -341,7 +343,8 @@ DOC_SKILL = (
 #: 提示词：起完名就不该再说，而系统提示词在会话里是不变的。
 UNTITLED_TASK = (
     "这个任务还叫「新任务」（未命名）。等你弄清楚要做的是什么，用 `cheese_title` "
-    "给它起一个不超过 12 字的简短标题。只起一次，定了别反复改。"
+    f"给它起一个宽度不超过 {TITLE_CHARS} 个汉字的简短标题（一个汉字算一个，"
+    "英文、数字、空格各算半个）。只起一次，定了别反复改。"
 )
 
 #: 实况文档那一节里，和文档现在写了什么无关的那几句。文档的内容在会话的开场快照里。
@@ -522,7 +525,7 @@ def build_session_opening(
     keeps_memory: bool = False,
     machine: str | None = None,
 ) -> SessionOpening:
-    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。
+    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、项目目标、文档、记忆索引。
 
     ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。
     ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
@@ -599,14 +602,15 @@ def build_session_opening(
         )
     if overview_doc:
         # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
-        # 有一份总览，每段对话都读到同一份，谁改了都留痕。
+        # 有一份项目目标，每段对话都读到同一份，谁改了都留痕。
         where = f"（`document: {overview_doc_id}`）" if overview_doc_id else ""
         sections["overview"] = (
-            "## 项目总览（全项目共看的那一份）\n"
-            "项目所有人和所有芝士共同看的就是它：这个项目是什么——目标、范围"
-            "（做 / 不做）、对外口径，≤1500 字。它很少变，变了才改，用 "
-            f"`cheese_doc_edit`{where}。项目现在在做什么不写在这里，要看就查各"
-            "频道里的任务。\n"
+            "## 项目目标（全项目共看的那一份）\n"
+            "项目所有人和所有芝士共同看的就是它，只写三件事：这个项目要做成什么、"
+            "什么时候做成、这阶段不做什么，≤1500 字。代码是什么、怎么跑看仓库的 "
+            "README，给 AI 的规矩写在仓库的 CLAUDE.md，都不写进这里；项目现在在做"
+            "什么也不写在这里，要看就查各频道里的任务。它很少变，目标、时间或范围变"
+            f"了才改，用 `cheese_doc_edit`{where}。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
@@ -662,9 +666,9 @@ def task_opening_prompt(
         "需要谁做什么、已确定、待决；讨论里否掉的做法写进已确定，标明不采用及原因。"
         + (
             "任务创建时已经开始：写完文档就按文档动手，在任务自己的工作目录里做"
-            "（cheese worktree），做完提交审阅。要人决定的事，在任务里问负责人。"
+            "（cheese worktree），做完提交审阅。要人决定的事，用 cheese_ask 问负责人。"
             if started
-            else "然后用 chat_send 在任务里和负责人确认还没定的细节。"
+            else "还没定的细节用 cheese_ask 问负责人。"
             "负责人点「开始」之前，你只讨论、写文档，不改动项目。"
         )
     )
@@ -675,7 +679,7 @@ def task_started_prompt(*, title: str, actor: str) -> str:
     return (
         f"@{actor} 开始了任务「{title}」。从现在起你可以改动项目：按实况文档动手，"
         "在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
-        "做的过程中要求变了，就改实况文档；要人决定的事，在任务里问负责人。"
+        "做的过程中要求变了，就改实况文档；要人决定的事，用 cheese_ask 问负责人。"
         "开始之前你问过、还没人答的题，负责人开始就是不再等它们的答案："
         "按你最合理的判断定下来，写进实况文档的已确定并标明是你的判断，然后动手。"
     )

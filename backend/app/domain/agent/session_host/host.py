@@ -832,7 +832,10 @@ class SessionHost:
                 )
             if not heard.get("alive", True) and running.launched is launched:
                 self._forget(ref, running)
-                await hand(Read(None, Ended("exited")))
+                said = await driver.last_words(
+                    self._wire(), running.host, ref, launched
+                )
+                await hand(Read(None, Ended("exited", said)))
                 return
             if running.stopping:
                 # Asked to stop: this pass landed what was there.

@@ -677,6 +677,19 @@ class RemoteClient:
             ]
         return command
 
+    def take_now(self):
+        """Take this session's hands as they are, without waiting for a
+        machine being prepared. False when the platform cannot hand them out
+        at this moment (the machine still being prepared, gone, or refused);
+        a platform that failed to answer at all still raises."""
+        try:
+            self.acquire(deadline=time.monotonic())
+        except PlatformHTTPError:
+            raise
+        except RuntimeError:
+            return False
+        return True
+
     def acquire(self, *, deadline, abandoned=None, preparing=None):
         """Take this session's hands through the platform (`lease_path`): the
         machine the lease names becomes where its calls go, and the credential

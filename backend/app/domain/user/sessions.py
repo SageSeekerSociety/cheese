@@ -259,6 +259,25 @@ class SessionService:
             .values(sudo_until=now + SUDO_WINDOW)
         )
 
+    async def started_at(self, user_id: int, session_id: uuid.UUID) -> datetime | None:
+        """When the sign-in ``session_id`` began, if it is ``user_id``'s and not
+        revoked; None otherwise.
+
+        Refreshing does not move the start, so this is the moment the caller
+        actually signed in — the caller weighs it against its own short window
+        ("did you sign in recently enough"). Deliberately reads only
+        ``revoked_at``: a session inside such a window has not yet expired or
+        gone idle, and this answers one question, not the pair ``_live_clauses``
+        answers.
+        """
+        return await self._db.scalar(
+            select(UserSession.created_at).where(
+                UserSession.id == session_id,
+                UserSession.user_id == user_id,
+                UserSession.revoked_at.is_(None),
+            )
+        )
+
     async def in_sudo(self, user_id: int, session_id: uuid.UUID) -> bool:
         """Whether the session is live and inside its sudo window. Revoking
         the session ends the window with it."""

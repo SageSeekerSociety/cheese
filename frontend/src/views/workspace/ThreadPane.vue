@@ -51,6 +51,8 @@ const props = defineProps<{
   memberNames: Record<string, string>
   /** 整页（手机）：没有关闭键，返回在顶栏。 */
   page?: boolean
+  /** 地址点名的支线里那一条（`?block=`）：打开时停在它上面。 */
+  focusBlock?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -192,6 +194,7 @@ function toTask() {
         class="thread-pane__chat"
         :topic="room"
         :conversation-id="threadId"
+        :focus-block="focusBlock ?? null"
         hide-header
         show-composer
         :composer-closed="room.status === 'archived' ? t('work.channel.archivedNotice') : null"

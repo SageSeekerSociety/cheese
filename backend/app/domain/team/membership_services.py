@@ -71,6 +71,14 @@ async def _notify(
 
 
 class TeamMembershipService:
+    @classmethod
+    def from_session(cls, session: AsyncSession) -> "TeamMembershipService":
+        return cls(
+            session=session,
+            team_repo=TeamRepository(session=session),
+            application_repo=TeamMembershipApplicationRepository(session=session),
+        )
+
     def __init__(
         self,
         session: AsyncSession,

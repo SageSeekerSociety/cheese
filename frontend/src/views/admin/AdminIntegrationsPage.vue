@@ -6,14 +6,13 @@ import { useI18n } from 'vue-i18n'
 
 import { useSaveState } from '@/composables/useSaveState'
 
+import AdminIntegrationsPageView from './AdminIntegrationsPageView.vue'
+
 import { getPlatformFeishuApp, savePlatformFeishuApp } from '@/api/feishu'
-import AdminPage from '@/components/admin/AdminPage.vue'
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import SaveStatus from '@/components/base/SaveStatus.vue'
 import { relTime } from '@/lib/relTime'
 
 // 管理后台的「飞书应用」（`/admin/integrations`）：平台**唯一**一处飞书应用凭据。
+// 取数与写在这一半，画法在 `AdminIntegrationsPageView.vue`。
 //
 // 成员以前各自去飞书建一个企业自建应用，再把 App ID / Secret 填进「我的连接」——
 // 每个成员一次，做的是同一件事。应用属于组织：管理员在飞书建一个自建应用、开好文档
@@ -57,11 +56,6 @@ const app = ref<PlatformFeishuApp | null>(null)
 
 const form = reactive({ app_id: '', app_secret: '', domain: 'feishu' })
 
-const domains = computed(() => [
-  { value: 'feishu', title: t('admin.integrations.domainFeishu') },
-  { value: 'lark', title: 'Lark（larksuite.com）' },
-])
-
 const status = computed(() =>
   app.value?.configured
     ? `${t('integrations.admin.configured')} · ${app.value.app_id} · ${app.value.domain}`
@@ -71,6 +65,10 @@ const updated = computed(() => {
   if (!app.value?.updated_at || !app.value.updated_by) return ''
   return `${t('integrations.admin.updatedBy', { handle: app.value.updated_by })} · ${relTime(app.value.updated_at)}`
 })
+/** 首屏还没读回来时不画状态行：这时候还没有答案。 */
+const showStatus = computed(() => app.value !== null || !loading.value)
+/** 有没有配过 —— 状态行那个 `data-configured` 说的就是它。 */
+const configured = computed(() => app.value?.configured ?? false)
 
 async function load() {
   loading.value = true
@@ -111,98 +109,21 @@ onMounted(load)
 </script>
 
 <template>
-  <AdminPage :title="t('navigation.admin.integrations')" :sub="t('integrations.admin.sub')">
-    <div class="afi__body admin-form-card">
-      <!-- 读失败：标题说清是哪一页没读到，服务端原话作说明行，重试就在旁边。
-           **不**接着画「还没配置」和那张表单 —— 见文件开头第 4 条。
-           判据是 `!== null` 而不是真值：原话取不到时 `loadError` 是空串，仍要给出错态。 -->
-      <BaseLoadError
-        v-if="loadError !== null"
-        :title="t('integrations.admin.loadFailed')"
-        :error="loadError || undefined"
-        :retry-label="t('integrations.admin.retry')"
-        @retry="load"
-      />
-
-      <template v-else>
-        <!-- 首屏还没读回来时不画状态行：这时候还没有答案。 -->
-        <p v-if="app || !loading" class="afi__status t-body" :data-configured="app?.configured ? 'yes' : 'no'">
-          {{ status }}
-        </p>
-        <p v-if="updated" class="afi__meta t-meta">{{ updated }}</p>
-
-        <div class="afi__form">
-          <v-text-field
-            v-model="form.app_id"
-            autocomplete="off"
-            :label="t('integrations.admin.appId')"
-            :disabled="loading"
-          />
-          <v-text-field
-            v-model="form.app_secret"
-            class="afi__secret"
-            autocomplete="new-password"
-            type="password"
-            :label="t('integrations.admin.appSecret')"
-            :hint="t('integrations.admin.secretHint')"
-            persistent-hint
-          />
-          <v-select v-model="form.domain" autocomplete="off" :items="domains" :label="t('integrations.admin.domain')" />
-          <p v-if="validationError" role="alert" class="afi__error t-body">{{ validationError }}</p>
-          <div class="afi__actions">
-            <SaveStatus
-              :saving="saving"
-              :saved="saved"
-              :error="saveError"
-              :saved-text="t('integrations.admin.saved')"
-            />
-            <BaseButton kind="primary" :loading="saving" :disabled="loading" @click="save">
-              {{ t('integrations.admin.save') }}
-            </BaseButton>
-          </div>
-        </div>
-      </template>
-    </div>
-  </AdminPage>
+  <AdminIntegrationsPageView
+    v-model:app-id="form.app_id"
+    v-model:app-secret="form.app_secret"
+    v-model:domain="form.domain"
+    :loading="loading"
+    :load-error="loadError"
+    :status="status"
+    :show-status="showStatus"
+    :configured="configured"
+    :updated="updated"
+    :saving="saving"
+    :saved="saved"
+    :save-error="saveError"
+    :validation-error="validationError"
+    @retry="load"
+    @save="save"
+  />
 </template>
-
-<style scoped>
-/* 卡片的宽度（720 上限）、内边距（20/24）和内缩（16/24）都由 `.admin-form-card` 给，
-   和别的表单页同一套。 */
-
-.afi__status {
-  margin: 0;
-  color: var(--ink);
-}
-
-.afi__meta {
-  margin: 4px 0 0;
-  color: var(--faint);
-}
-
-.afi__form {
-  margin-top: 16px;
-}
-
-/* Secret 那格下面挂着 hint，而下一个字段的浮动标签有一半悬在它自己框的上沿之上
-   （见 `.claude/rules/frontend.md`），中间没有余量时两行字会叠在一起。给这一格
-   留一段底距，标签就落在空处。 */
-.afi__secret {
-  margin-bottom: 12px;
-}
-
-.afi__error {
-  margin: 8px 0 0;
-  color: var(--danger-ink);
-}
-
-.afi__actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  margin-top: 8px;
-}
-
-/* 窄屏的两侧收窄由 `.admin-form-card` 自己那条 ≤700 规则给，这一页不再各写一份。 */
-</style>

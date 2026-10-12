@@ -131,7 +131,7 @@ export const workspaceRoutes: RouteRecordRaw = {
     },
     {
       // 项目总览：进项目落在这一页（壳的 `home`）。它答的是「这个项目怎么样了」：项目
-      // 总览那份文档、最近进展、谁在做什么、做出了什么。「需要我处理」不在这里另列一
+      // 目标、最近进展、谁在做什么、做出了什么。「需要我处理」不在这里另列一
       // 份，只在首页「待办」。
       name: 'workspace-overview',
       path: 'overview',

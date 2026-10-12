@@ -1,10 +1,12 @@
 import json
 import logging
 from collections.abc import Sequence
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy.orm import Mapped
 
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -21,26 +23,6 @@ from app.domain.materials.services import MaterialService
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
-from app.domain.space.models import (
-    Space,
-    SpaceAdminRelation,
-    SpaceAdminRole,
-    SpaceCategory,
-    SpaceDomainGroup,
-    SpaceInviteCode,
-    SpaceMember,
-)
-from app.domain.space.repositories import (
-    SpaceAdminRelationRepository,
-    SpaceCategoryRepository,
-    SpaceClassificationTopicsRepository,
-    SpaceDomainGroupDomainRepository,
-    SpaceDomainGroupRepository,
-    SpaceInviteCodeRepository,
-    SpaceMemberRepository,
-    SpaceRepository,
-    SpaceUserRankRepository,
-)
 from app.domain.space.review_service import SpaceReviewService
 from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.space.tags_service import SpaceTagsService
@@ -55,6 +37,75 @@ from app.domain.user.repositories import (
 from app.domain.user.services import languages_by_ids
 
 _logger = logging.getLogger(__name__)
+
+
+# ── Rows handed back by the space domain ──────────────────────────────────────
+#
+# `SpaceService` returns rows this route only reads attributes off. Naming their
+# shape here — rather than importing `app.domain.space.models` — keeps the route
+# out of the space domain's ORM models, which the architecture guard (C2)
+# forbids an API module from reaching into. Only the attributes read below are
+# named, mirroring `_SessionRow` in routes/users_sessions.py.
+
+
+class SpaceRow(Protocol):
+    id: Mapped[int]
+    name: Mapped[str]
+    intro: Mapped[str]
+    description: Mapped[str]
+    review_status: Mapped[str]
+    review_reason: Mapped[str | None]
+    avatar_id: Mapped[int | None]
+    enable_rank: Mapped[bool]
+    visible_task_limit: Mapped[int | None]
+    default_category_id: Mapped[int | None]
+    task_templates: Mapped[list]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+
+class SpaceInviteCodeRow(Protocol):
+    id: Mapped[int]
+    space_id: Mapped[int]
+    code: Mapped[str]
+    max_uses: Mapped[int]
+    use_count: Mapped[int]
+    expires_at: Mapped[datetime | None]
+    created_at: Mapped[datetime]
+    note: Mapped[str | None]
+    created_by: Mapped[int | None]
+
+
+class SpaceMemberRow(Protocol):
+    user_id: Mapped[int]
+    invite_code_id: Mapped[int | None]
+    created_at: Mapped[datetime]
+
+
+class SpaceCategoryRow(Protocol):
+    id: Mapped[int]
+    space_id: Mapped[int]
+    name: Mapped[str]
+    description: Mapped[str | None]
+    display_order: Mapped[int]
+    archived_at: Mapped[datetime | None]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+
+class SpaceDomainGroupRow(Protocol):
+    id: Mapped[int]
+    space_id: Mapped[int]
+    name: Mapped[str]
+    description: Mapped[str | None]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+
+class SpaceAdminRelationRow(Protocol):
+    user_id: Mapped[int]
+    role: Mapped[int]
+    created_at: Mapped[datetime]
 
 
 # ── Request Models ────────────────────────────────────────────────────────────
@@ -268,7 +319,7 @@ async def require_reviewed_space(
         space_id = int(space_id)
     except ValueError:
         return  # Path validation supplies the normal 422 response.
-    space = await SpaceRepository(db).get_by_id(space_id)
+    space = await SpaceService.for_visibility(db).get_space(space_id)
     if space is None or space.review_status == "APPROVED":
         return
     # Applications are edited through resubmission, so a review covers fixed text.
@@ -302,33 +353,17 @@ def _expect_list(value: list | str | None, field: str) -> list:
 
 
 async def get_space_service(db=Depends(get_db)) -> SpaceService:
-    repo = SpaceRepository(session=db)
-    category_repo = SpaceCategoryRepository(session=db)
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    rank_repo = SpaceUserRankRepository(session=db)
-    task_repo = TaskRepository(session=db)
-    classification_topics_repo = SpaceClassificationTopicsRepository(session=db)
-    domain_group_repo = SpaceDomainGroupRepository(session=db)
-    domain_group_domain_repo = SpaceDomainGroupDomainRepository(session=db)
-    member_repo = SpaceMemberRepository(session=db)
-    invite_code_repo = SpaceInviteCodeRepository(session=db)
-    return SpaceService(
-        repo,
-        category_repo,
-        admin_repo,
-        rank_repo,
-        task_repo,
-        classification_topics_repo=classification_topics_repo,
-        domain_group_repo=domain_group_repo,
-        domain_group_domain_repo=domain_group_domain_repo,
-        member_repo=member_repo,
-        invite_code_repo=invite_code_repo,
-        # The write side of `teaching`'s references: a 项目集 may only name
-        # 知识 its teacher could already read, 课件 that exist, and 课件 an
-        # ordinary member could read (never one locked to a board's managers).
+    # The space domain wires its own repositories (see `SpaceService.for_routes`);
+    # the route hands in only the three collaborators that belong to other
+    # domains. `knowledge_service` / `material_service` guard the write side of
+    # `teaching`'s references — a 项目集 may only name 知识 its teacher could
+    # already read, 课件 that exist, and 课件 an ordinary member could read
+    # (never one locked to a board's managers).
+    return SpaceService.for_routes(
+        db,
+        task_repo=TaskRepository(session=db),
         knowledge_service=KnowledgeService.for_lookup(db),
         material_service=MaterialService.for_lookup(db),
-        session=db,
     )
 
 
@@ -385,7 +420,9 @@ async def _ensure_space_visible(*, db, space_id: int, user_id: int) -> None:
     question ``list_spaces`` asks for the list query: one rule, so a direct
     link and the list cannot drift apart.
     """
-    if not await SpaceRepository(db).is_member(space_id=space_id, user_id=user_id):
+    if not await SpaceService.for_visibility(db).is_member(
+        space_id=space_id, user_id=user_id
+    ):
         raise NotFoundError(
             "Resource space not found", data={"type": "space", "id": space_id}
         )
@@ -413,7 +450,7 @@ async def _ensure_space_admin(*, db, space_id: int, user_id: int) -> None:
         raise ForbiddenError("Only a board manager can perform this action")
 
 
-def _space_to_api_model(space: Space) -> dict:
+def _space_to_api_model(space: SpaceRow) -> dict:
     created_at_ms = int(space.created_at.timestamp() * 1000) if space.created_at else 0
     updated_at_ms = int(space.updated_at.timestamp() * 1000) if space.updated_at else 0
     return {
@@ -439,7 +476,7 @@ def _space_to_api_model(space: Space) -> dict:
 
 
 def _invite_code_to_api_model(
-    invite: SpaceInviteCode, created_by: dict | None = None
+    invite: SpaceInviteCodeRow, created_by: dict | None = None
 ) -> dict:
     """One code as the 邀请码 screen reads it.
 
@@ -469,7 +506,7 @@ def _invite_code_to_api_model(
 
 
 async def _invite_codes_to_api_models(
-    invites: Sequence[SpaceInviteCode],
+    invites: Sequence[SpaceInviteCodeRow],
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
@@ -494,9 +531,9 @@ async def _invite_codes_to_api_models(
 
 
 def _member_to_api_model(
-    member: SpaceMember,
+    member: SpaceMemberRow,
     user_info: dict | None = None,
-    invite_code: SpaceInviteCode | None = None,
+    invite_code: SpaceInviteCodeRow | None = None,
 ) -> dict:
     """One member row of the 成员 page.
 
@@ -519,7 +556,7 @@ def _member_to_api_model(
     return result
 
 
-def _category_to_api_model(cat: SpaceCategory) -> dict:
+def _category_to_api_model(cat: SpaceCategoryRow) -> dict:
     created_at_ms = int(cat.created_at.timestamp() * 1000) if cat.created_at else 0
     updated_at_ms = int(cat.updated_at.timestamp() * 1000) if cat.updated_at else 0
     raw_archived_at = getattr(cat, "archived_at", None)
@@ -541,7 +578,7 @@ def _category_to_api_model(cat: SpaceCategory) -> dict:
     }
 
 
-def _domain_group_to_api_model(group: SpaceDomainGroup, domains: list[str]) -> dict:
+def _domain_group_to_api_model(group: SpaceDomainGroupRow, domains: list[str]) -> dict:
     created_at_ms = int(group.created_at.timestamp() * 1000) if group.created_at else 0
     updated_at_ms = int(group.updated_at.timestamp() * 1000) if group.updated_at else 0
     return {
@@ -556,17 +593,16 @@ def _domain_group_to_api_model(group: SpaceDomainGroup, domains: list[str]) -> d
 
 
 def _admin_to_api_model(
-    rel: SpaceAdminRelation,
+    rel: SpaceAdminRelationRow,
     user_info: dict | None = None,
 ) -> dict:
     created_at_ms = int(rel.created_at.timestamp() * 1000) if rel.created_at else 0
-    role_name_map = {
-        SpaceAdminRole.OWNER.value: "OWNER",
-        SpaceAdminRole.ADMIN.value: "ADMIN",
-    }
     result: dict = {
         "userId": rel.user_id,
-        "role": role_name_map.get(rel.role, "ADMIN"),
+        # The stored role is an int the space domain names (`SpaceAdminRole`);
+        # `admin_role_name` reads that name without this module importing the
+        # enum off the model.
+        "role": SpaceService.admin_role_name(rel.role),
         "createdAt": created_at_ms,
     }
     if user_info is not None:
@@ -643,11 +679,11 @@ async def _build_admins_payload(
 
 
 async def _hydrate_members(
-    members: Sequence[SpaceMember],
+    members: Sequence[SpaceMemberRow],
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
-    invite_code_repo: SpaceInviteCodeRepository,
+    space_service: SpaceService,
 ) -> list[dict]:
     """Roster rows, with the people and the codes they came in on.
 
@@ -663,7 +699,7 @@ async def _hydrate_members(
         user_repo=user_repo,
         profile_repo=profile_repo,
     )
-    codes = await invite_code_repo.get_by_ids(
+    codes = await space_service.invite_codes_by_ids(
         [m.invite_code_id for m in members if m.invite_code_id is not None]
     )
     return [
@@ -677,7 +713,7 @@ async def _hydrate_members(
 
 
 async def _build_full_space_payload(
-    space: Space,
+    space: SpaceRow,
     *,
     service: SpaceService,
     db,
@@ -990,7 +1026,7 @@ async def list_space_members(
         members,
         user_repo=UserRepository(session=db),
         profile_repo=UserProfileRepository(session=db),
-        invite_code_repo=SpaceInviteCodeRepository(session=db),
+        space_service=service,
     )
     return {"code": 200, "message": "OK", "data": {"members": items}}
 
@@ -1024,7 +1060,7 @@ async def add_space_member(
         [member],
         user_repo=user_repo,
         profile_repo=UserProfileRepository(session=db),
-        invite_code_repo=SpaceInviteCodeRepository(session=db),
+        space_service=service,
     )
     return {"code": 201, "message": "Created", "data": {"member": items[0]}}
 

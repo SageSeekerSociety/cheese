@@ -1,7 +1,7 @@
 """the new-user guide: when it was done, and who the person said they are
 
 Revision ID: f175b976a14a
-Revises: c4e9a2f7d153
+Revises: a6c3e9d2f417
 Create Date: 2026-10-11 12:00:00.000000
 
 `onboarded_at` replaces `first_project_at`: the guide, not the first sign-in, now
@@ -20,7 +20,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "f175b976a14a"
-down_revision: str | Sequence[str] | None = "c4e9a2f7d153"
+down_revision: str | Sequence[str] | None = "a6c3e9d2f417"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

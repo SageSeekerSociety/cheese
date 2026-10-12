@@ -3,6 +3,7 @@ import type { AgentControlState, Block, ChatAttachment, TopicMemberRow } from '@
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
+import type { TaskSource } from '@/types/taskOrigin'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -32,6 +33,7 @@ import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
+import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
@@ -92,11 +94,14 @@ function onReview() {
   onPanelTab('changes')
 }
 
-// 地址点名的一条消息（搜索结果、别人发来的链接）：对话栏打开时停在它上面。
-const focusBlock = computed(() => {
+// 地址点名的一条消息（搜索结果、别人发来的链接、任务页顶上那句话）：打开时停在它上
+// 面。支线页上点名的是支线里的一条，交给支线那一栏；频道主线那一栏里没有它。
+const namedBlock = computed(() => {
   const q = route.query.block
   return typeof q === 'string' && q ? q : null
 })
+const focusBlock = computed(() => (props.threadId ? null : namedBlock.value))
+const threadFocusBlock = computed(() => (props.threadId ? namedBlock.value : null))
 // 任务有自己的页面：点开一个任务就去那里，浏览器的返回退回房间。
 function onOpenCard(taskId: string) {
   void router.push({ name: 'workspace-task', params: { projectId: props.projectId, topicId: props.topicId, taskId } })
@@ -119,7 +124,7 @@ function backToRoom() {
 }
 
 // Bumped on every AI turn / tool use. Watched by the documents in the panel
-// and the project overview on 综合's overview (reload what 芝士 maintained).
+// and the project's goals on 综合's overview (reload what 芝士 maintained).
 const activityTick = ref(0)
 
 // URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
@@ -388,9 +393,10 @@ const taskOverview = useTaskOverview({
   reloadTask: () => taskPage.load(true),
 })
 const taskOverviewRef = ref<InstanceType<typeof TaskOverview> | null>(null)
-function openDiscussion(conversationId: string) {
-  if (conversationId === props.topicId) backToRoom()
-  else showThread(conversationId)
+// 任务页顶上那句话：回到它所在的那段对话（频道主线、支线或另一个任务），停在它上面。
+function openSource(source: TaskSource) {
+  if (source.where === 'thread') channelThreads.markSeen(source.conversation_id)
+  void router.push(sourceRoute(props.projectId, source))
 }
 
 // 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
@@ -643,6 +649,7 @@ void openPlace()
         page
         :room="selectedTopic"
         :thread-id="threadId"
+        :focus-block="threadFocusBlock"
         :members="store.members"
         :topic-list="store.topics"
         :member-names="memberNames"
@@ -721,6 +728,7 @@ void openPlace()
             v-if="threadId && mdAndUp"
             :room="selectedTopic"
             :thread-id="threadId"
+            :focus-block="threadFocusBlock"
             :members="store.members"
             :topic-list="store.topics"
             :member-names="memberNames"
@@ -798,7 +806,7 @@ void openPlace()
                 @open-output="(path: string) => panelRef?.openFile?.(path)"
                 @open-file="(path: string) => panelRef?.openFile?.(path)"
                 @open-document="(id: string, title: string) => panelRef?.openDocument?.({ id, title })"
-                @open-discussion="openDiscussion"
+                @open-source="openSource"
               />
               <ChannelOverview
                 v-else-if="!taskId"

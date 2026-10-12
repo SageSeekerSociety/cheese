@@ -46,7 +46,7 @@ const errorMock = vi.hoisted(() => vi.fn())
 vi.mock('@/network/api/knowledges', () => ({
   KnowledgesApi: { create: createMock, list: listMock, deleteKnowledge: deleteMock },
 }))
-vi.mock('@/network/api/materials', () => ({ MaterialsApi: { upload: uploadMock } }))
+vi.mock('@/api/materials', () => ({ uploadMaterial: uploadMock }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: successMock, error: errorMock } }))
 
 /** 确认框回什么由这一格决定；`answer` 是「人点了确定还是取消」。 */

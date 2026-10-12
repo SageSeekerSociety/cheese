@@ -242,5 +242,11 @@ class PiDriver:
             for image in images
         ]
 
+    async def last_words(
+        self, wire: Wire, host: str, ref: SessionRef, launched: Launched
+    ) -> str:
+        # Its runner leaves no record of its process ending.
+        return ""
+
     async def adopt(self, wire: Wire, found: list[tuple[str, Access]]) -> None:
         return None

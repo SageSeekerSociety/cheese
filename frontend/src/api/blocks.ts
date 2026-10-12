@@ -1,5 +1,7 @@
 import type { Block, ListPayload, ReactionAgg } from '../cx_types'
 
+import { rememberNumbered } from '../lib/addresses'
+
 import { request } from './http'
 
 // 机构看板 / Space 看板 (eval F3).
@@ -40,7 +42,14 @@ export function listBlocks(
   const qs = q.toString()
   const query = qs ? `?${qs}` : ''
   const path = `/topics/${encodeURIComponent(topicId)}/blocks${query}`
-  return request<BlockPage>(path)
+  return request<BlockPage>(path).then((page) => {
+    // 消息下面挂着的任务卡：点开它和点侧栏里的任务一样，不再先问一趟地址。
+    rememberNumbered(
+      'tasks',
+      page.data.flatMap((block) => block.tasks ?? [])
+    )
+    return page
+  })
 }
 
 // Emoji reactions (Slack semantics): toggles (emoji, caller) on a block and

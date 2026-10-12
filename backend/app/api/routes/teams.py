@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
@@ -12,24 +13,25 @@ from app.core.errors import (
 from app.db.session import get_db
 from app.domain.project.services import ProjectService
 from app.domain.team.membership_services import TeamMembershipService
-from app.domain.team.models import (
+from app.domain.team.protocol import (
     ApplicationStatus,
-    Team,
     TeamMemberRole,
-    TeamUserRelation,
+    TeamMemberView,
+    TeamView,
     TeamVisibility,
 )
-from app.domain.team.repositories import (
-    TeamMembershipApplicationRepository,
-    TeamRepository,
-)
-from app.domain.team.services import TeamService, may_remove_member
+from app.domain.team.services import TeamService, may_remove_member, team_service
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRealNameRepository,
     UserRepository,
 )
+
+# The route consumes domain views returned by TeamService; ORM models stay in the
+# team domain rather than becoming an API-layer dependency.
+Team = TeamView
+TeamUserRelation = TeamMemberView
 
 # Number of admin / member examples to surface alongside the count, mirroring
 # the Kotlin TeamService implementation (PageRequest.of(0, 3)).
@@ -105,18 +107,13 @@ invites_router = APIRouter(prefix="/team-invites", tags=["Teams"])
 
 
 async def get_team_service(db=Depends(get_db)) -> TeamService:
-    repo = TeamRepository(session=db)
-    return TeamService(repo)
+    return team_service(db)
 
 
 async def get_team_membership_service(
     db=Depends(get_db),
 ) -> TeamMembershipService:
-    team_repo = TeamRepository(session=db)
-    app_repo = TeamMembershipApplicationRepository(session=db)
-    return TeamMembershipService(
-        session=db, team_repo=team_repo, application_repo=app_repo
-    )
+    return TeamMembershipService.from_session(db)
 
 
 def _user_payload(
@@ -166,7 +163,7 @@ def _team_handle(team: Team, users_map: dict) -> str | None:
 def _team_to_api_model(
     team: Team,
     *,
-    members: list[TeamUserRelation] | None = None,
+    members: Sequence[TeamUserRelation] | None = None,
     current_user_id: int | None = None,
     users_map: dict | None = None,
     profiles_map: dict | None = None,
@@ -309,7 +306,7 @@ def _member_to_api_model(
 
 
 async def _load_team_user_maps(
-    db, members: list[TeamUserRelation]
+    db, members: Sequence[TeamUserRelation]
 ) -> tuple[dict, dict, dict]:
     """Bulk-load User + UserProfile records, and the avatars they picked.
 
@@ -409,11 +406,11 @@ async def load_application_maps(db, apps) -> tuple[dict, dict, dict, dict]:
         team_ids.add(app.team_id)
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
-    team_repo = TeamRepository(session=db)
+    service = team_service(db)
     users_map = await user_repo.get_by_ids(list(user_ids))
     profiles_map = await profile_repo.get_profiles_by_user_ids(list(user_ids))
     avatars_map = await profile_repo.chosen_avatar_ids(list(user_ids))
-    teams_map = await team_repo.get_by_ids(list(team_ids))
+    teams_map = await service.get_teams_by_ids(list(team_ids))
     return users_map, profiles_map, avatars_map, teams_map
 
 
@@ -961,7 +958,7 @@ async def add_team_member_entry(
 
     await check_team_locking_status(db, team_id)
 
-    relation = await service._repo.add_member(team_id, user_id, role_val)
+    relation = await service.add_member(team_id, user_id, role_val)
     return {
         "code": 201,
         "message": "Created",

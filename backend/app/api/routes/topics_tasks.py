@@ -9,8 +9,9 @@ addressed by the task's own conversation id — `GET|PATCH /topics/{task}/task`
 document go through the same routes as a room's (`/messages`, `/title`,
 `/document`), with the task's id.
 
-`_actor_in_place`, `DbSession` and the repositories come from topics.py, so the
-import guard and `.importlinter` see no new edges.
+`_actor_in_place`, `DbSession` and the block/project/usage repositories come from
+topics.py, so the import guard and `.importlinter` see no new edges; the accept
+card is read through `AcceptService`, not a repository re-export.
 """
 
 import uuid
@@ -28,14 +29,19 @@ from app.api.place import task_conversation
 from app.api.response import ok, page
 from app.api.room_task_rows import named_task, task_rows
 from app.api.routes.topics import (
-    AcceptCardRepository,
     BlockRepository,
     DbSession,
     ProjectRepository,
     UsageRepository,
 )
 from app.api.task_instructions import dispatch, teammate_source_text, tell_task
-from app.api.task_origin import discussion, materials, materials_text
+from app.api.task_origin import (
+    asked_in,
+    discussion,
+    materials,
+    materials_text,
+    source,
+)
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     ConflictError,
@@ -58,11 +64,14 @@ from app.domain.living_doc.services import Documents
 from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
+from app.domain.review.services import AcceptService
 from app.domain.review.task_landing import tell_origin
+from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import ConclusionIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -201,7 +210,7 @@ async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dic
     """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
     snapshot a subscription to it opens with. The caller has authorised the
     reader."""
-    cards = await AcceptCardRepository(db).latest_by_task([task.id])
+    cards = await AcceptService(db).latest_by_task([task.id])
     out = await _task_out(db, chat, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
@@ -250,7 +259,11 @@ async def related_of(db: AsyncSession, task) -> dict:
     """Where a task came from and what it was given, as its page's 相关 shows
     it; also the `related` of a task's room snapshot."""
     origin, blocks = await discussion(db, task)
-    return {"origin": origin, "materials": materials(blocks)}
+    return {
+        "source": await source(db, task),
+        "origin": origin,
+        "materials": materials(blocks),
+    }
 
 
 @router.post("/{topic_id}/opening")
@@ -280,7 +293,7 @@ async def _task_out(db, chat: ChatService, task, card=None) -> dict:
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
     if card is None:
-        card = (await AcceptCardRepository(db).latest_by_task([task.id])).get(task.id)
+        card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     running = await running_tasks(chat, db, [task])
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")
@@ -323,9 +336,9 @@ async def conclude_task(
     # The owner closes the task, or its own session (`cheese_close_task`).
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
-            raise ForbiddenError(say("taskOwnerOnly"))
+            raise ForbiddenError(say("taskOwnSessionCloses"))
     elif actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
+        raise ForbiddenError(say("taskOwnSessionCloses"))
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -355,6 +368,7 @@ async def conclude_task(
     task = await close_task(
         db, task, None if actor.via == "cheese" else chat, conclusion=conclusion
     )
+    close_pr_after_commit(db, task)
     # The task's own conversation hears how it ended, and so does the
     # discussion it came from; the channel's card for it updates in place.
     ended = (
@@ -615,6 +629,14 @@ async def create_teammate_task(
     if actor.via != "cheese":
         raise ForbiddenError(say("teammateTaskByTeammate"))
     TopicService.refuse_tasks_in_private(place.room)
+    # A title nobody can read is not a title. Refused here, with the limit in
+    # the words, so the teammate writes a shorter one and calls again — cutting
+    # it instead would leave half a phrase in the sidebar and no one the wiser.
+    # Checked before the idempotency claim: a refused call leaves no record.
+    if not title_fits(body.title):
+        raise UnprocessableEntityError(
+            say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(body.title))
+        )
     # A turn sent again creates the same task again: one task, not two.
     continuation = get_work_runner().continuation_for(topic_id)
     key = (
@@ -638,6 +660,14 @@ async def create_teammate_task(
     ):
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
     owner = named or (origin.author if origin is not None else None)
+    # What the person said that this turn answers is where the task came from;
+    # in a 支线 that is usually a reply, not the message the 支线 hangs under.
+    asked = await asked_in(
+        db,
+        place.conversation_id,
+        actor.handle,
+        main_line=place.thread is None and place.task is None,
+    )
     task = await TopicService(db).create_task(
         room_id=place.room_id,
         created_by=actor.handle,
@@ -646,6 +676,7 @@ async def create_teammate_task(
         teammate=actor.handle,
         named_by_teammate=True,
         origin_block_id=origin.id if origin is not None else None,
+        source_block_id=asked.id if asked is not None else None,
     )
     blocks = (await discussion(db, task))[1]
     started, why_not = False, None

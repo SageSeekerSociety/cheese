@@ -36,7 +36,7 @@ const errorMock = vi.hoisted(() => vi.fn())
 vi.mock('@/network/api/knowledges', () => ({
   KnowledgesApi: { create: createMock, list: listMock, deleteKnowledge: vi.fn() },
 }))
-vi.mock('@/network/api/materials', () => ({ MaterialsApi: { upload: uploadMock } }))
+vi.mock('@/api/materials', () => ({ uploadMaterial: uploadMock }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: successMock, error: errorMock } }))
 vi.mock('@/plugins/dialog', async () => ({
   ...(await vi.importActual<typeof import('@/plugins/dialog')>('@/plugins/dialog')),
@@ -107,7 +107,7 @@ beforeEach(() => {
     },
   })
   createMock.mockReset()
-  uploadMock.mockReset().mockResolvedValue({ data: { id: 99 } })
+  uploadMock.mockReset().mockResolvedValue({ id: 99 })
   successMock.mockReset()
   errorMock.mockReset()
   vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -291,6 +291,32 @@ describe('落地', () => {
     await waitFor(() => expect(dialog(view)).toBeNull())
     await waitFor(() => expect(view.container.querySelectorAll('.resource-card').length).toBe(2))
     expect(view.container.querySelectorAll('.resource-card')[0]!.textContent).toContain('照片')
+  })
+
+  it('素材上传失败：不创建知识，草稿保留并可重试', async () => {
+    uploadMock.mockRejectedValueOnce(new Error('denied')).mockResolvedValueOnce({ id: 99 })
+    createMock.mockResolvedValue({ data: { knowledge: { ...existing(), id: 42, name: '照片' } } })
+    const view = mount()
+    const panel = await openUpload(view)
+    await fill(panel, '照片')
+    const file = new File(['x'], 'a.png', { type: 'image/png' })
+    await fireEvent.change(panel.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [file] },
+    })
+
+    await fireEvent.click(submitButton(panel))
+
+    await waitFor(() => expect(errorMock).toHaveBeenCalledWith('上传资料失败，请稍后重试'))
+    expect(createMock).not.toHaveBeenCalled()
+    expect(dialog(view)).toBeTruthy()
+    expect(nameField(panel).value).toBe('照片')
+    await waitFor(() => expect((submitButton(panel) as HTMLButtonElement).disabled).toBe(false))
+
+    await fireEvent.click(submitButton(panel))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1))
+    expect(uploadMock).toHaveBeenNthCalledWith(2, file, 'image')
+    expect(createdRequest()).toMatchObject({ name: '照片', materialId: 99 })
   })
 
   it('失败：说一句失败，对话框留着让人再试', async () => {

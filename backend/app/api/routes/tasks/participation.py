@@ -50,8 +50,8 @@ from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
 )
-from app.domain.team.models import TeamMemberRole
-from app.domain.team.repositories import TeamRepository
+from app.domain.team.protocol import TeamMemberRole
+from app.domain.team.services import team_service
 from app.domain.user.repositories import (
     UserRepository,
 )
@@ -99,7 +99,7 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
 
     owner_id = auth_user.user_id if membership.is_team else membership.member_id
     if membership.is_team:
-        members = await TeamRepository(db).list_members_of_team(membership.member_id)
+        members = await team_service(db).get_team_members(membership.member_id)
         if not any(member.user_id == owner_id for member in members):
             owner_id = next(
                 (
@@ -200,9 +200,7 @@ async def create_task_participant(
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
     is_team = task.submitter_type == 1
-    if is_team and not await TeamRepository(session=db).is_team_member(
-        member, auth_user.user_id
-    ):
+    if is_team and not await team_service(db).is_team_member(member, auth_user.user_id):
         # 这条路由的 ``member`` 在 TEAM 题上是**队伍 id**，而没带它时默认成了调用者
         # 自己的 **user id** —— 两张表各自自增，撞上就等于把别人的队伍报了上去。
         # 与 ``join_task_as_team`` 同一句话：要把一支队伍报上去，你先得是那支队的人。
@@ -302,8 +300,7 @@ async def join_task_as_team(
 ) -> dict:
     """Allow team to join a task."""
 
-    team_repo = TeamRepository(session=db)
-    if not await team_repo.is_team_member(payload.team_id, auth_user.user_id):
+    if not await team_service(db).is_team_member(payload.team_id, auth_user.user_id):
         raise ForbiddenError(
             "You must be a member of this team to register it for a task"
         )

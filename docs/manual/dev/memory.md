@@ -201,7 +201,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 1. `memory_entries` 里 `scope = agent_project` 的活条目（那个 agent 在项目里学到的）；
 2. 同一张表里 `scope = user` 的池（某个 agent 关于某个人的认识）；
-3. 项目总览文档里的「大家都该知道的」和「项目记忆（由记忆整理迁入）」两节。
+3. 项目目标文档里的「大家都该知道的」和「项目记忆（由记忆整理迁入）」两节。
 
 **去处五选一，每条都有：** `team`（新建一条全项目共读的）、`private/<handle>`（新建一条只属于某人的）、`merge`（并进一条已经存在的记忆）、`suggest`（只建议写进 `CLAUDE.md` / `SKILL.md`，**一个字都不自动改**）、`discard`（不值得变成记忆，但理由要写出来）。去处由模型判（它读得到正文，这是「进 team 还是进某个人的 private」唯一的判据），判完的结论和报告一起**存下来**——人复核的是那一份，落笔时重放它，不问第二次模型。
 

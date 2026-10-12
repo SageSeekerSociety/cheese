@@ -7,11 +7,18 @@ repository's titles to that repository, this one included, so the check lives
 here. It reads titles from its arguments, or one per line on stdin when there
 are none, and exits non-zero naming each title that breaks the convention.
 
+`--pull-request FILE` reads a pull request as `GET /repos/{owner}/{repo}/pulls/{n}`
+returns it instead. A draft's title is not checked: the platform opens a task's
+draft PR under a placeholder (`WIP: <task title>`) and writes the real subject
+when it hands the work over and marks the PR ready, and pr-title.yml runs this
+check again at that moment.
+
 Not checked, because this repo's own history does not follow it: a length
 limit (main's titles routinely run past 72 characters) and a lowercase first
 letter (`fix(oauth): GitHub token refresh fails` is correct).
 """
 
+import json
 import re
 import sys
 
@@ -67,6 +74,16 @@ def problems(title: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["--pull-request"]:
+        with open(argv[1]) as stream:
+            pull = json.load(stream)
+        if pull.get("draft"):
+            print(
+                f"::notice::#{pull.get('number')} is a draft; its title is checked"
+                " once it is marked ready for review."
+            )
+            return 0
+        argv = [pull.get("title") or ""]
     titles = argv or [line for line in sys.stdin.read().splitlines() if line]
     if not titles:
         print("no title to check", file=sys.stderr)

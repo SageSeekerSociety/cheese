@@ -141,6 +141,7 @@ class Task(UuidPk, Timestamps, Base):
         UniqueConstraint("project_id", "number", name="uq_tasks_project_number"),
         # The tasks under each message of a channel's main line.
         Index("ix_tasks_upgraded_from_block_id", "upgraded_from_block_id"),
+        Index("ix_tasks_source_block_id", "source_block_id"),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -296,6 +297,20 @@ class Task(UuidPk, Timestamps, Base):
             ondelete="SET NULL",
             use_alter=True,
             name="fk_tasks_upgraded_from_block_id",
+        ),
+        nullable=True,
+    )
+    # The message whose words the task was made from: the one turned into it,
+    # or the person's message the turn its AI teammate created it in was
+    # answering. Unlike `upgraded_from_block_id` it can be a reply in a 支线 or
+    # a message inside another task, so it says where the task came from, not
+    # where it shows. Empty for a task someone created on its own.
+    source_block_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "blocks.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_tasks_source_block_id_blocks",
         ),
         nullable=True,
     )

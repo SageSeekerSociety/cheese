@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Explicit release path for the stable preview owner (machine preview tunnels
-# and preview content hosts). Ordinary app deploys never call this script:
-# replacing this service drops every live preview tunnel, so it is released on
-# its own, exactly like the device connection owner.
+# Release path for the stable preview owner (machine preview tunnels and
+# preview content hosts). Replacing this service drops every live preview
+# tunnel, so an app deploy calls it only when its migrations would drop schema
+# the owner's image still maps (deploy-docker.sh, `hold_owners_behind_schema`);
+# otherwise it is released on its own, exactly like the device connection owner.
 #
 # Unlike the device connection owner this process has NO drain endpoint. It does
 # not hold executor calls that must finish, and a dropped preview tunnel is

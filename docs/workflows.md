@@ -74,7 +74,7 @@ PYTHONPATH=. uv run python scripts/smoke_agent.py   # 流式 + 记忆 + 会话�
 ```
 
 ### 截图工具
-`scripts/shots.py`：一条命令截全部关键屏到 `tmp_review/`（工作台/总览/看板/个人主页/章程/决策/私聊）。
+`scripts/shots.py`：一条命令截全部关键屏到 `tmp_review/`（工作台/总览/看板/个人主页/项目目标/决策/私聊）。
 
 ```bash
 # 服务要先起好 + seed
@@ -143,27 +143,31 @@ uv run --with playwright python scripts/shots.py
 
 ---
 
-## 6. 开 PR 前：task ci:fast（本地静态快检）
+## 6. 开 PR 前：task ci:fast（本地快检）
 
-Required CI 第一条有用信号约 8 分钟墙钟。`task ci:fast` 在本地按 merge diff 选出命中的静态检查并真实执行，让 lint 错误、超 cap 文件这类明显问题在开 PR 前就暴露。完整 Required CI + merge queue 仍是唯一合并门禁，ci:fast 绿不代表完整 CI 通过。
+Required CI 第一条有用信号约 8 分钟墙钟。`task ci:fast` 在本地按 merge diff 选出命中的检查并真实执行，让 lint 错误、超 cap 文件、被改模块的 pure 测试和窄类型这类问题在开 PR 前就暴露。完整 Required CI + merge queue 仍是唯一合并门禁，ci:fast 绿不代表完整 CI 通过。
 
 ```bash
-task ci:fast                 # 开 PR 前跑；先把分支跟进 main（fetch + merge/rebase）
-task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 pyright / vue-tsc
+task ci:fast                 # quick 档（180s）：先跑静态检查，再跑选中的 pure 测试 + 窄类型/前端 related；先把分支跟进 main（fetch + merge/rebase）
+task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 pyright / vue-tsc 全量 manual hook
 ```
+
+三档：`quick`（`task ci:fast` 默认，180s，测试+类型）、`static`（只跑 pre-commit 静态 hook，不跑测试/类型）、`extended`（同样的选中范围，只把预算放宽到 900s）。`--tier` 决定档位；`--title` 传拟用 PR 标题，不传就按 `gh` 读到的真实 PR 标题判 Conventional；两样都拿不到按未验证（unknown）处理并提示传 `--title`，绝不用可能无关的 HEAD 标题顶替已有 PR。
 
 **机器上没有 `task` 时**：本次核查覆盖的平台云执行机样本（cheese-de808b-27）未预装 task，422 作者当时所在执行机同样没有；可按 README 第 13 行的脚本装到 `~/.local/bin`（样本机上实测可装）。Taskfile 只是薄封装，不装 task 时用下面的等价入口——前提是机器上有 python3 和 uv/uvx（pre-commit 由 uvx 解析），装前端依赖还需要 pnpm：
 
 ```bash
-python3 .github/scripts/ci-fast.py               # ≡ task ci:fast
-python3 .github/scripts/ci-fast.py --types       # ≡ task ci:fast -- --types
+python3 .github/scripts/ci-fast.py --tier quick                # ≡ task ci:fast（quick 档）
+python3 .github/scripts/ci-fast.py --tier quick --types        # ≡ task ci:fast -- --types
 (cd backend && uv sync)                          # ≡ task be:deps:sync（备 backend/.venv）
 (cd frontend && pnpm install --frozen-lockfile)  # ≡ task fe:install（备 node_modules）
 ```
 
-- **它证明什么**：本次 merge diff 命中的静态检查真实执行并通过（scope 与 Required CI 同一个 select() + path map，guards 恒跑）。报告写在 gitdir 的 `ci-fast-report.json`（记 base/head/脏树内容指纹），**绿以报告落盘为准**。
-- **这些都不是绿**（退出码 2/3，机器可读）：hook 被 SKIP 环境跳过、无 merge-base 或自定义 `--base` 时 file-size/migration-fork 判不了、选中了却零执行、报告写失败、hook 超时、hook 配置漂移、缺 pre-commit / `backend/.venv` / `frontend/node_modules`（按提示先 `task be:deps:sync` / `task fe:install`）。退出码 1 是所选检查真实失败。
-- **边界**：只覆盖静态检查，pytest / build / e2e 不在这一层（摘要会列出未跑项和定向建议）。不带 `--types` 会漏缺 prop 类型那类回归。
-- **pre-push hook**：opt-in，片段在 `ci-fast.py` 文件头注释里，不默认安装；也别用 `SKIP` / `--no-verify` 绕过——被跳过的 hook 一律按未执行处理，整体不会是绿。
+注意：不带 `--tier` 直接 `python3 .github/scripts/ci-fast.py` 走的是 `static` 档，不等价于 `task ci:fast`。
 
-设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释；行为层快检不在 v1 范围。
+- **它证明什么**：本次 merge diff 命中的检查真实执行并通过（scope 与 Required CI 同一个 select() + path map，guards 恒跑；测试选择走纯静态反向 import 图 + tree/i18n guard）。报告写在 gitdir 的 `ci-fast-report.json`（记 base/head/脏树内容指纹），**绿以报告落盘为准**。
+- **这些都不是绿**（退出码 2/3，机器可读）：无 merge-base 或自定义 `--base` 时 file-size/migration-fork 判不了、选中了却零执行或选中文件没被真正执行、pytest 空/跳过/无覆盖、前端 related 图为空、报告写失败、hook 或检查超时/超内存/被信号杀、hook 配置漂移、缺 pre-commit / `backend/.venv` / `frontend/node_modules`（按提示先 `task be:deps:sync` / `task fe:install`）。退出码 1 是所选检查真实失败。
+- **边界**：quick/extended 只到 pure 测试 + 窄类型/前端 related；contract / integration / build / e2e / 完整前端消费方类型不在这一层（摘要会列出未跑项和定向建议）。`extended` 不扩大选中范围，只放宽预算，超预算仍是 unknown。前端 related 只在有改动源码根时可信，配置/删文件/未知路径/无 base 一律回退全量 Vitest。详细用法见 `.github/scripts/ci-fast.md`。
+- **pre-push hook**：opt-in，片段在 `ci-fast.py` 文件头注释里，不默认安装；也别用 `--no-verify` 绕过——被跳过的 hook 一律按未执行处理，整体不会是绿。外层 shell 里的 `SKIP` / `PRE_COMMIT_COLOR` 等会改判定的变量在起子进程前被清掉，不会把某个嵌套检查悄悄跳过。
+
+设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释。

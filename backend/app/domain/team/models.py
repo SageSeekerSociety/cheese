@@ -19,6 +19,18 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
+from app.domain.team.protocol import (
+    ApplicationStatus as ApplicationStatus,
+)
+from app.domain.team.protocol import (
+    RecruitmentStatus as RecruitmentStatus,
+)
+from app.domain.team.protocol import (
+    TeamMemberRole as TeamMemberRole,
+)
+from app.domain.team.protocol import (
+    TeamVisibility,
+)
 
 team_seq = Sequence("team_seq")
 team_user_relation_seq = Sequence("team_user_relation_seq")
@@ -33,18 +45,6 @@ PERSONAL_TEAM_ROW = text("personal_owner_user_id IS NOT NULL AND deleted_at IS N
 # it is what keeps `ix_team_user_relation_team_user` from holding people who
 # left. The migration building that index spells the same text out again.
 LIVE_TEAM_MEMBER_ROWS = text("deleted_at IS NULL")
-
-
-class TeamVisibility(str, Enum):
-    """Who can find a team without being in it.
-
-    PUBLIC teams show up in search and open by id; STEALTH teams do neither and
-    are reached only through the team's join link. How joining then works is
-    the team's ``join_approval`` — the same switch a project has.
-    """
-
-    PUBLIC = "public"
-    STEALTH = "stealth"
 
 
 #: The plan every new team starts on.
@@ -134,12 +134,6 @@ class Team(Base):
         )
 
 
-class TeamMemberRole:
-    OWNER = 0
-    ADMIN = 1
-    MEMBER = 2
-
-
 class TeamUserRelation(Base):
     __tablename__ = "team_user_relation"
     __table_args__ = (
@@ -185,15 +179,6 @@ class ApplicationType(str, Enum):
     INVITATION = "INVITATION"
 
 
-class ApplicationStatus(str, Enum):
-    PENDING = "PENDING"
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
-    ACCEPTED = "ACCEPTED"
-    DECLINED = "DECLINED"
-    CANCELED = "CANCELED"
-
-
 class TeamMembershipApplication(Base):
     __tablename__ = "team_membership_application"
 
@@ -229,12 +214,6 @@ class TeamMembershipApplication(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-
-
-class RecruitmentStatus(str, Enum):
-    OPEN = "OPEN"
-    CLOSED = "CLOSED"
-    EXPIRED = "EXPIRED"
 
 
 class TeamRecruitmentPost(Base):

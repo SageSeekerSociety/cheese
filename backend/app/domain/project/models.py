@@ -88,8 +88,9 @@ class Project(UuidPk, Timestamps, Base):
         ),
         nullable=True,
     )
-    # The project's overview: what the project is, read by every conversation's
-    # AI teammate and shown at the top of 综合's overview. A document of the
+    # The project's goals: what it is to achieve, by when, and what it leaves
+    # out for now; read by every conversation's AI teammate and shown at the top
+    # of 综合's overview. A document of the
     # project's own that the library does not list.
     overview_document_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(

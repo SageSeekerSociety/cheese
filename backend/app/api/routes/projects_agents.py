@@ -71,12 +71,14 @@ the same prefix and tags, is all it takes.
 """
 
 import uuid
+from typing import Protocol
 
 from fastapi import APIRouter
+from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
-from app.api.routes.projects import DbSession, Project
+from app.api.routes.projects import DbSession
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
@@ -114,8 +116,20 @@ def _changes_an_advanced_setting(saved: dict, config: AgentConfiguration) -> boo
     )
 
 
+class ProjectDefault(Protocol):
+    """What ``_holds_the_default`` reads off a project row.
+
+    ``Mapped``-shaped, not the unwrapped ``uuid.UUID | None``: pyright matches
+    the project model's own ``Mapped`` descriptor against this class member, so
+    a plain optional UUID here would not accept the model — see ``SpaceRow`` in
+    ``routes/spaces.py`` and ``TeamView`` in ``domain/team/protocol.py``.
+    """
+
+    default_agent_instance_id: Mapped[uuid.UUID | None]
+
+
 # --- A project's agents: its roster, and its default for new rooms -----------
-def _holds_the_default(project: Project, row: AgentInstance) -> bool:
+def _holds_the_default(project: ProjectDefault, row: AgentInstance) -> bool:
     """Whether this row is what a new topic in the project gets.
 
     One way to be it: the project points at it. A project is created with its

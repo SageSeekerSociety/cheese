@@ -274,7 +274,7 @@ describe('C4 项目文档', () => {
     return found!
   }
 
-  it('在项目菜单里，点它去章程', async () => {
+  it('在项目菜单里，点它去项目目标', async () => {
     const onSelectDocs = vi.fn()
     const { container, baseElement } = mount({ onSelectDocs })
     ;(await docsItem(container, baseElement)).click()

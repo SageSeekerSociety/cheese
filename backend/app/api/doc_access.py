@@ -3,7 +3,7 @@
 A task's living document is read by whoever may enter the task's channel, and
 written by the people working the task and the task's own session: what others
 have to say about a task they say in the channel. A document of the project's
-own — the project overview among them — is the project's members', and 芝士's
+own — the project's goals among them — is the project's members', and 芝士's
 wherever in the project it works. Every document route asks here, so they never
 disagree.
 """

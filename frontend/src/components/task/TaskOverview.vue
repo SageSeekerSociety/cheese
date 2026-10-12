@@ -1,13 +1,13 @@
 <script setup lang="ts">
-// 任务的概览：一整列，自然往下滚。从上到下是谁什么时候开始的（「与开始时相比」看从
-// 那以后改了什么）、关闭时写下的结论、实况文档（顶栏下面是 AI 队友这一轮的清单，只在
-// 它干活时有）、产出、相关。
+// 任务的概览：一整列，自然往下滚。从上到下是它从哪句话来的（点了回到那段对话）、谁
+// 什么时候开始的（「与开始时相比」看从那以后改了什么）、关闭时写下的结论、实况文档
+// （顶栏下面是 AI 队友这一轮的清单，只在它干活时有）、产出、相关。
 //
 // 从讨论转出来的任务，文档还空着时先是 AI 队友在整理它：那时这里说它整理到哪了，
 // 失败了给「重试」，也可以自己写。
 import type { ProjectMemberRow, RoomTask, TodoItem, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
-import type { TaskRelated } from '@/types/taskOrigin'
+import type { TaskRelated, TaskSource } from '@/types/taskOrigin'
 
 import { computed, ref, watch } from 'vue'
 
@@ -16,6 +16,7 @@ import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 import TaskDocCompare from '@/components/task/TaskDocCompare.vue'
 import TaskOutputs from '@/components/task/TaskOutputs.vue'
 import TaskRelatedList from '@/components/task/TaskRelatedList.vue'
+import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -47,7 +48,7 @@ const emit = defineEmits<{
   (e: 'mention-click', handle: string): void
   (e: 'retry-opening'): void
   (e: 'open-output', path: string): void
-  (e: 'open-discussion', conversationId: string): void
+  (e: 'open-source', source: TaskSource): void
   (e: 'open-document', id: string, title: string): void
   (e: 'open-file', path: string): void
 }>()
@@ -75,6 +76,12 @@ defineExpose({
 
 <template>
   <div class="task-overview">
+    <TaskSourceLine
+      :source="related ? related.source : undefined"
+      :task="task"
+      :member-names="memberNames"
+      @open="emit('open-source', $event)"
+    />
     <div v-if="task.started_at" class="task-overview__started t-meta">
       <span>{{
         t('work.task.startedLine', {
@@ -152,7 +159,6 @@ defineExpose({
     <TaskRelatedList
       :related="related"
       :member-names="memberNames"
-      @open-discussion="emit('open-discussion', $event)"
       @open-document="(id, title) => emit('open-document', id, title)"
       @open-file="emit('open-file', $event)"
     />

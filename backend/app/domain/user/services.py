@@ -276,6 +276,14 @@ def user_service(session: AsyncSession) -> "UserService":
     return UserService(UserProfileRepository(session))
 
 
+def user_profile_service(session: AsyncSession) -> "UserProfileService":
+    """接在这个 session 上的 ``UserProfileService`` —— 资料读改的路由走这里，
+    不必为了接线自己构造 ``UserProfileRepository``（守卫见
+    ``tests/unit/test_domain_import_guard.py``）。
+    """
+    return UserProfileService(UserProfileRepository(session))
+
+
 class UserService:
     """Read-only operations for user profiles (used by other domains)."""
 
@@ -432,9 +440,28 @@ class UserAuthService:
     async def get_user_by_email(self, email: str) -> User | None:
         return await self._user_repo.get_by_email(email)
 
+    async def get_user(self, user_id: int) -> User | None:
+        """The account row itself, alive only (``deleted_at IS NULL``).
+
+        The signed-in-caller routes read a couple of the caller's own columns
+        off it (``email``, ``hashed_password``). Like this class's other reads
+        it comes through ``UserRepository``, so a retired account reads as
+        absent — the route may not reach for ``session.get(User, ...)`` itself
+        (C2 in ``.importlinter``). ``get_user_with_profile`` is the same row
+        together with the caller's profile; this one is the bare account.
+        """
+        return await self._user_repo.get_by_id(user_id)
+
     async def update_password(self, user_id: int, new_password: str) -> None:
         hashed = await hash_password(new_password)
         await self._user_repo.update_password(user_id, hashed)
+
+    async def update_email(self, user: User, email: str) -> None:
+        """把账号的邮箱换成 ``email``；这个地址已被别的活账号占着时抛
+        ``IntegrityError``（``uq_user_email_lower``），会话仍可用。判据只有
+        ``UserRepository.update_email`` 一处（``/users/me/email`` 走这道门）。
+        """
+        await self._user_repo.update_email(user, email)
 
     @staticmethod
     def _reject_reserved(username: str) -> None:

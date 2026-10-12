@@ -60,6 +60,12 @@ Write functional tests. Do not read the source to work out what to assert: a tes
 
 A test earns its place by guarding a rule someone could state before the code existed: a product, security or data rule that a person who has never read the implementation can judge right or wrong. That holds at every layer. A component test that cancelling a dialog leaves the operation unrun is worth keeping; one that the dialog renders a particular sentence, class or DOM shape is not. Put the test at the lowest layer where the rule is observable without faking most of the system, assert what a user or caller can observe, and make sure it fails when the rule breaks, and only then. A test that goes red when the copy changes, or stays green when the rule is broken, costs more than it protects.
 
+## Run `task ci:fast` before you push
+
+`task ci:fast` runs the static hooks the change selects plus the `pure` backend tests and the frontend type/vitest work for the area you touched, inside a bounded budget: the `quick` tier is 180 seconds and a sampled 3072 MiB process-group RSS ceiling. Run it before you push.
+
+Exit 0 means the selected checks ran and passed, nothing more — it is not full CI. An `unknown` or `blocked` result, and any check reported as not run, is not green: the tier ran out of budget, a tool was missing, or a report could not be judged, and none of that may stand in for a pass. A change to shared config, a deleted path, or a path the map does not carry can widen the selection to the whole suite and exceed the budget; the tier reports that honestly instead of trimming itself to green. Required CI and the merge queue remain the only merge gate.
+
 ## Report real bugs, not theoretical ones
 
 When auditing, a finding needs a way to actually happen: a crash, corruption, a security hole, a wrong result. Style opinions and "this could in principle" are noise that buries the real ones.
