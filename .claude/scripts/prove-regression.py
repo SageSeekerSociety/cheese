@@ -31,12 +31,16 @@ The first run must fail and the second must pass. Exit 0 proven, 1 not proven,
 2 could not judge — the last for a node id that does not resolve, a revision that
 is not a commit here, a layout this script has no runner for, a --copy file that
 is missing or that would land outside the worktree, a runner that is not on PATH,
-a command that exited 127 without ever running. If your test is not one of the two
-layouts below, say how to run it with --command; the script will not guess a
-runner it does not know, because a runner that is not installed looks exactly
-like a test that does not fail. A test that needs Postgres needs the dev stack up
-first (`eval "$(bash .claude/scripts/dev-db.sh env)"`); this script never starts
-it.
+an inferred runner whose dependencies are not installed, a command that exited 127
+without ever running. If your test is not one of the two layouts below, say how to
+run it with --command; the script will not guess a runner it does not know,
+because a runner that is not installed looks exactly like a test that does not
+fail. The two it does know it asks first, so a runner that starts and then cannot
+find its test is a refusal too — with --command it cannot, and a program that
+starts but cannot run its test still reads as a result, so keeping that command's
+dependencies installed is yours to do. A test that needs Postgres needs the dev
+stack up first (`eval "$(bash .claude/scripts/dev-db.sh env)"`); this script never
+starts it.
 
 The runners it infers are the two this repository uses: pytest over `backend/`
 (`uv run --no-sync`), vitest over `frontend/` (`pnpm exec`).
@@ -89,6 +93,15 @@ STALE_AFTER = 24 * 60 * 60
 #: not installed" into a verdict about the test — the mistake `runner_for` exists
 #: to avoid, arriving by the other door.
 CANNOT_RUN = 127
+
+#: What an inferred runner exits when it started but could not find the thing it
+#: was asked to run: `uv run --no-sync pytest` on a tree whose dependencies are
+#: not installed exits 2, `pnpm exec vitest` exits 254. A test that ran and
+#: failed exits 1, so neither of these is a result. They are the same mistake
+#: CANNOT_RUN guards against, one door along — the runner started, so the check
+#: for a program that never did misses it, and only asking the runner up front
+#: tells that apart from a red half.
+CANNOT_SPAWN = {"uv": 2, "pnpm": 254}
 
 FIX_HINT = (
     "修法：把 --without 指到「不含这个修复」的提交（通常是你那条修复提交的父提交）。"
@@ -183,6 +196,25 @@ def runner_for(node: str, relative: str) -> tuple[list[str], str] | None:
             ["pnpm", "exec", "vitest", "run", relative[len("frontend/") :] + suffix],
             "frontend",
         )
+    return None
+
+
+def runner_probe(argv: list[str]) -> list[str] | None:
+    """A command that makes an inferred runner say whether it can run at all.
+
+    Both layouts below run through "use what is already installed" (`uv run
+    --no-sync`, `pnpm exec`), so a tree whose dependencies are missing gives a
+    runner that starts and then exits without running the test — the codes in
+    CANNOT_SPAWN, none of which is a result. Asking the same runner for its
+    version first puts that answer where it can be told apart from a red half.
+
+    `--command` gets no probe: the caller named that command, and whether it can
+    start is the caller's to know.
+    """
+    if argv[:3] == ["uv", "run", "--no-sync"]:
+        return [*argv[:4], "--version"]
+    if argv[:3] == ["pnpm", "exec", "vitest"]:
+        return [*argv[:3], "--version"]
     return None
 
 
@@ -320,7 +352,32 @@ def without_fix(root: Path, sha: str, tree: Path, copies: list[str], keep: bool)
     return note
 
 
-def run(argv: list[str], where: Path) -> int:
+def cannot_start(probe: list[str], where: Path) -> None:
+    """Stop when an inferred runner started and could not load its test.
+
+    Only the code that runner uses for that answer counts (`CANNOT_SPAWN`); any
+    other reply to `--version` is not this script's business, and the run that
+    follows is what decides. Judging a runner that never ran would put a verdict
+    on a test that was not executed — the mistake `runner_for` refuses to make
+    for layouts it does not know, arriving for the ones it does.
+    """
+    try:
+        done = subprocess.run(probe, cwd=str(where), capture_output=True, check=False)
+    except FileNotFoundError as exc:
+        print(f"prove-regression: {exc.filename} is not on PATH", file=sys.stderr)
+        raise SystemExit(2) from exc
+    if done.returncode == CANNOT_SPAWN.get(probe[0]):
+        print(
+            f"prove-regression: {' '.join(probe)} could not load the test "
+            f"({probe[0]} exited {done.returncode}); the test did not run",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+
+def run(argv: list[str], where: Path, probe: list[str] | None = None) -> int:
+    if probe is not None:
+        cannot_start(probe, where)
     print(f"  $ (cd {where}) {' '.join(argv)}", flush=True)
     try:
         done = subprocess.run(argv, cwd=str(where), check=False)
@@ -381,6 +438,7 @@ def check(root: Path, args: argparse.Namespace) -> int:
             )
             return 2
         argv, subdir = inferred
+    probe = runner_probe(argv)
     sha = resolve_rev(root, args.without)
     reclaim_stale(root)
     trees: list[Path] = []
@@ -391,9 +449,9 @@ def check(root: Path, args: argparse.Namespace) -> int:
     try:
         note = without_fix(root, sha, tree, copies, args.keep)
         print(f"without the fix ({args.without} → {note})")
-        before = run(argv, tree / subdir if subdir else tree)
+        before = run(argv, tree / subdir if subdir else tree, probe)
         print("with the fix (working tree)")
-        after = run(argv, root / subdir if subdir else root)
+        after = run(argv, root / subdir if subdir else root, probe)
         return judge(before, after, args.node)
     finally:
         if not args.keep:
@@ -569,7 +627,9 @@ def self_test() -> int:
         (repo / "e2e" / "tests" / "a.spec.ts").write_text("// e2e\n", encoding="utf-8")
         (repo / "backend" / "tests").mkdir(parents=True)
         (repo / "backend" / "tests" / "test_app.py").write_text("pass\n", encoding="utf-8")
-        g("add", "app.py", "helper.py", "test_app.py", "e2e", "backend")
+        (repo / "frontend" / "src").mkdir(parents=True)
+        (repo / "frontend" / "src" / "a.spec.ts").write_text("// spec\n", encoding="utf-8")
+        g("add", "app.py", "helper.py", "test_app.py", "e2e", "backend", "frontend")
         g("commit", "-q", "-m", "fix")
 
         def prove(
@@ -630,6 +690,9 @@ def self_test() -> int:
         shim = shims / "uv"
         shim.write_text(
             "#!/bin/sh\n"
+            # Answered the way a real `uv` answers it — without touching the
+            # project — so the count below is the two halves and not the probe.
+            'case "$*" in *--version*) exit 0;; esac\n'
             "if [ -f tests/test_app.py ]; then\n"
             f'  pwd >> "{seen}"\n'
             "  exit 0\n"
@@ -737,20 +800,79 @@ def self_test() -> int:
             "end to end: an absolute node id is not judged",
             prove(without, runs, node=str(repo / "test_app.py")).returncode == 2,
         )
-        # The copy keeps its position under the worktree, so a path that climbs
-        # out would be written to the real tree — or past it. The file it would
-        # have landed on says whether it was written.
-        escape = Path(scratch) / "escape.py"
+        # Where each copy would land if the guard were not there: `..` from the
+        # worktree is the temp directory the worktree itself sits in, not the
+        # repository, and an absolute path stays itself. Watching the files at
+        # those two spots is what tells "refused" apart from "written somewhere
+        # harmless" — the exit code alone cannot, because a copy that lands
+        # outside is only a misjudgement once something reads what it wrote.
+        escape = Path(tempfile.gettempdir()) / "escape.py"
         escape.write_text("outside\n", encoding="utf-8")
+        # The sentence this one would carry if it were copied: it has to differ
+        # from what is watched above, or the file landing on the watched spot
+        # would read the same either way and the assertion would decide nothing.
+        (Path(scratch) / "escape.py").write_text("copied\n", encoding="utf-8")
         outside_tree = Path(scratch) / "absolute.py"
         outside_tree.write_text("outside\n", encoding="utf-8")
-        tally.case(
-            "end to end: copies that would land outside the worktree are not judged",
+        escaped = (
             prove(without, runs, copy="../escape.py").returncode == 2
             and prove(without, runs, copy=str(outside_tree)).returncode == 2
             and escape.read_text(encoding="utf-8") == "outside\n"
-            and outside_tree.read_text(encoding="utf-8") == "outside\n",
+            and outside_tree.read_text(encoding="utf-8") == "outside\n"
         )
+        escape.unlink(missing_ok=True)
+        tally.case(
+            "end to end: copies that would land outside the worktree are not judged",
+            escaped,
+        )
+
+        # A runner that starts and then cannot find its test exits with its own
+        # code — 2 under uv, 254 under pnpm — and a test that ran and failed
+        # exits 1. Reading the first as the second is the mistake the 127 guard
+        # was added to close, one door along: nothing ran either way. Both
+        # layouts, because the probe and the code it is compared against are
+        # per runner.
+        broken = Path(scratch) / "broken-shims"
+        broken.mkdir()
+        for name, code in (("uv", 2), ("pnpm", 254)):
+            (broken / name).write_text(f"#!/bin/sh\nexit {code}\n", encoding="utf-8")
+            (broken / name).chmod(0o755)
+        stalled_path = f"{broken}{os.pathsep}{env.get('PATH', '')}"
+        for node, runner in (
+            ("backend/tests/test_app.py", "uv"),
+            ("frontend/src/a.spec.ts", "pnpm"),
+        ):
+            stalled = prove(without, None, node=node, path=stalled_path)
+            tally.case(
+                f"end to end: a {runner} that cannot load its test is not judged",
+                stalled.returncode == 2
+                and "could not load the test" in stalled.stderr
+                and "NOT PROVEN" not in stalled.stdout,
+            )
+
+        # The bookkeeping that decides whether a worktree is registered has to
+        # compare real paths: `git worktree add` resolves a symlink before it
+        # registers, so a worktree made under a linked path comes back from
+        # `worktree list` as its real path while `tempfile.gettempdir()` hands
+        # back the link. Raw strings then disagree, and the case fails on where
+        # TMPDIR points rather than on the code.
+        (Path(scratch) / "real").mkdir()
+        linked = Path(scratch) / "link"
+        os.symlink(Path(scratch) / "real", linked)
+        through_link = linked / f"{WORKTREE_PREFIX}0deada0deada-7"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(through_link), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        tally.case(
+            "a worktree reached through a symlink counts as registered",
+            str(through_link) not in _worktrees(repo)
+            and _registered(repo, through_link),
+        )
+        remove_worktree(repo, through_link)
         # Both NOT PROVEN paths exit 1; which one it is *is* the diagnosis, and
         # they are one assertion apart. Reading only the code, a duplicated or
         # swapped message would keep the suite green while the tool told an
@@ -805,14 +927,14 @@ def self_test() -> int:
                 check=True,
                 capture_output=True,
             )
-            assert path in [Path(p) for p in _worktrees(repo)], f"{path} is not a worktree"
+            assert _registered(repo, path), f"{path} is not a worktree"
             if age:
                 when = time.time() - age
                 os.utime(path, (when, when))
             return path
 
         def gone(path: Path) -> bool:
-            return not path.exists() and str(path) not in _worktrees(repo)
+            return not path.exists() and not _registered(repo, path)
 
         # A pid that could exist and does not, found rather than assumed: the
         # self-test must not rest on 999999 being free on this machine. Nothing
@@ -926,6 +1048,21 @@ def _worktrees(repo: Path) -> list[str]:
         for line in done.stdout.splitlines()
         if line.startswith("worktree ")
     ]
+
+
+def _registered(repo: Path, path: Path) -> bool:
+    """Whether `path` is one of `repo`'s worktrees, compared as real paths.
+
+    `git worktree add` resolves symlinks before it writes the registration, so a
+    worktree made under a TMPDIR that is a link comes back from `worktree list`
+    as its real path while the path this script built from TMPDIR is the link.
+    Comparing the raw strings makes the answer depend on where TMPDIR points —
+    the same trap the fixture's git environment is sealed against — rather than
+    on the code.
+    """
+    return str(path.resolve()) in {
+        str(Path(here).resolve()) for here in _worktrees(repo)
+    }
 
 
 def _extra_worktrees(repo: Path) -> list[str]:
