@@ -190,6 +190,43 @@ async def test_post_with_retries_gives_up_after_exhausting_retries(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_post_with_retries_waits_5_then_30_seconds_and_logs_the_last_error(
+    monkeypatch, caplog
+):
+    """Three attempts, the second after 5 s and the third after 30 s; then one
+    error naming the last failure, and False — never a raise."""
+    real_sleep = asyncio.sleep
+    waits: list[float] = []
+
+    async def record(seconds, *args, **kwargs):
+        waits.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", record)
+    attempts = {"n": 0}
+
+    async def failing(session, **kwargs):
+        attempts["n"] += 1
+        raise RuntimeError(f"db unavailable #{attempts['n']}")
+
+    monkeypatch.setattr(webhook_service, "announce", failing)
+
+    with caplog.at_level("ERROR", logger=webhook_service.logger.name):
+        landed = await webhook_service.post_with_retries(
+            lambda: FakeSessionCM(FakeSession()),
+            topic_id=uuid.uuid4(),
+            content="x",
+            source="ci",
+        )
+
+    assert landed is False
+    assert attempts["n"] == 3
+    assert waits == [5, 30]
+    [record_] = caplog.records
+    assert "after 3 attempts: db unavailable #3" in record_.getMessage()
+
+
+@pytest.mark.anyio
 async def test_post_with_retries_does_not_retry_a_room_that_is_gone(monkeypatch):
     """房间没了不是暂时故障 —— 重试三次改变不了这件事，直接放弃。"""
     real_sleep = asyncio.sleep

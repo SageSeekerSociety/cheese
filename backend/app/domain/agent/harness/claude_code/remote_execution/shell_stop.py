@@ -126,6 +126,7 @@ def deliver_stop(target, command_id, pipe):
     client = RemoteClient(current_target(target))
 
     def send(signalled):
+        # Hand-written, not tenacity: this runs on machines with the stdlib only.
         started = time.monotonic()
         nonlocal client
         while time.monotonic() < started + 600:

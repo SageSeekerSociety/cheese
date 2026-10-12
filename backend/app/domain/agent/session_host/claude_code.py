@@ -145,6 +145,8 @@ class ClaudeCodeDriver:
         window with no such record, the session is not coming either, and
         whatever the log last said travels back with the refusal.
         """
+        # Hand-written, not tenacity: it retries on answers as well as errors,
+        # reads the log between tries and words the final error from both.
         deadline = time.monotonic() + STARTUP_WAIT_S
         interval = STARTUP_FIRST_POLL_S
         log_read_at = time.monotonic() + STARTUP_POLL_S
