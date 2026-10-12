@@ -77,6 +77,9 @@ const props = defineProps<{
   /**
    * 正在改这条自己发过的消息：正文换成输入框，里面先放着 `editText`。
    * `saving` 是保存请求还在路上。
+   *
+   * 这一行同时挂上 `im-row--editing`（见 room-row.css）：编辑时要抬掉这一行的
+   * containment，否则 @ 候选菜单弹不出这一行，人只看得见贴着框沿的一条。
    */
   editing?: boolean
   editText?: string
@@ -175,7 +178,6 @@ function renderPlain(text: string): string {
       'im-row--self': mine,
       'im-row--pending': !!outgoing,
       'im-row--active': active,
-      // 改这条消息时抬掉这一行的 containment，否则 @ 候选菜单弹不出这一行（见 room-row.css）。
       'im-row--editing': editing,
     }"
     :data-mid="block.id"
