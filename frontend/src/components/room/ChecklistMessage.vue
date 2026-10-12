@@ -17,6 +17,7 @@ import type { ChecklistMeta, TodoItem } from '../../cx_types'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import { calendarDaysAgo, clockTime, dayTimeText } from '../../lib/dateText'
 import { relTime } from '../../lib/relTime'
 
 import { t } from '@/i18n'
@@ -65,24 +66,28 @@ const MARK: Record<TodoItem['status'], string> = {
   completed: 'mdi-check',
 }
 
-// 一小时以内说「刚刚 / N 分钟前」，再往前说钟点：一直开着的房间里这句话得跟着变，
-// 所以一小时以内每半分钟重算一次，过了一小时就不再动。
-const RELATIVE_FOR_MS = 60 * 60 * 1000
+// 今天之内说「刚刚 / N 分钟前 / N 小时前」，再往前按**日历天**说：「昨天 23:00」
+// 「前天 23:00」。一直开着的房间里这句话得跟着变，所以还在今天之内就每半分钟重算
+// 一次，过了零点不再动。
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | undefined
 function stopTicking() {
   clearInterval(timer)
   timer = undefined
 }
+/** 按日历天算还落在今天，这句话就还会变。 */
+function stillToday(at: number): boolean {
+  return calendarDaysAgo(at, now.value) <= 0
+}
 watch(
   () => props.updatedAt,
   () => {
     now.value = Date.now()
     stopTicking()
-    if (now.value - Date.parse(props.updatedAt) < RELATIVE_FOR_MS) {
+    if (stillToday(Date.parse(props.updatedAt))) {
       timer = setInterval(() => {
         now.value = Date.now()
-        if (now.value - Date.parse(props.updatedAt) >= RELATIVE_FOR_MS) stopTicking()
+        if (!stillToday(Date.parse(props.updatedAt))) stopTicking()
       }, 30_000)
     }
   },
@@ -91,13 +96,11 @@ watch(
 onBeforeUnmount(stopTicking)
 
 const when = computed(() => {
-  const at = new Date(props.updatedAt)
-  const age = now.value - at.getTime()
-  if (age < RELATIVE_FOR_MS) return relTime(props.updatedAt)
-  const clock = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  if (new Date(now.value).toDateString() === at.toDateString()) return clock
-  const day = `${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`
-  return `${day} ${clock}`
+  const at = Date.parse(props.updatedAt)
+  const days = calendarDaysAgo(at, now.value)
+  if (days <= 0) return relTime(props.updatedAt)
+  if (days === 1) return `${t('work.room.chat.yesterday')} ${clockTime(at)}`
+  return dayTimeText(at, now.value)
 })
 </script>
 

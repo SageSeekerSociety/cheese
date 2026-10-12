@@ -31,7 +31,6 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
-import dayjs from 'dayjs'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listMock = vi.hoisted(() => vi.fn())
@@ -82,6 +81,7 @@ import dialogSource from '@/components/teams/knowledge/KnowledgeDetailDialog.vue
 import gridSource from '@/components/teams/knowledge/KnowledgeGrid.vue?raw'
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { absDate } from '@/lib/dateText'
 
 const ME = 1
 const OTHER = 2
@@ -326,8 +326,9 @@ describe('两种视图', () => {
     const first = gridCards(view)[0]!
     expect(first.textContent).toContain('设计规范')
     expect(first.textContent).toContain('图片')
-    // 卡片上的日期是这条自己那个时间戳的「月/日」，跟着本地时区走。
-    expect(first.textContent).toContain(dayjs(1_700_000_000_000).format('MM/DD'))
+    // 卡片上的日期是这条自己那个时间戳，跟着本地时区走；跨年才带年份。
+    expect(first.textContent).toContain(absDate(1_700_000_000_000))
+    expect(first.textContent).not.toContain('/')
     // 四个标签只画三个，剩下一个折成 +1。
     expect(first.textContent).toContain('设计')
     expect(first.textContent).toContain('+1')

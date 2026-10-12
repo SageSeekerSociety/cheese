@@ -42,9 +42,11 @@ function points(n: number): string {
 /** 这份用量分的几条线，图例和分色条都按它。 */
 const shown = computed(() => linesOf(props.lines))
 
-/** 分色条每一段的宽度：各条线用的点数占本月方案额度的比例。 */
+/** 分色条每一段的宽度：各条线用的点数占本月方案额度的比例。方案用完后接着扣其他额度，
+ *  各线合计会超过方案额度，这时条画满，各段按各线用量之比分。 */
 const segments = computed(() => {
-  const whole = total.value ?? 0
+  const spent = shown.value.reduce((sum, line) => sum + (props.lines?.[line] ?? 0), 0)
+  const whole = Math.max(total.value ?? 0, spent)
   const share = (n: number) => (whole > 0 ? Math.min(1, n / whole) : 0)
   if (!shown.value.length) return [{ line: 'collab' as UsageLine, width: share(used.value ?? 0) }]
   return shown.value.map((line) => ({ line, width: share(props.lines?.[line] ?? 0) }))

@@ -507,6 +507,7 @@ useComposerShortcut({
         <RoomComposer
           v-else-if="showComposer"
           ref="composerRef"
+          v-guide-anchor="inThread ? 'thread-composer' : ''"
           v-model="draft"
           :guided="onProjectLine"
           :topic="topic"
