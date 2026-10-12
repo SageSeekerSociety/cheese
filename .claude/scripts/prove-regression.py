@@ -39,11 +39,14 @@ fail. The two it does know it asks first, and reads the answer after: a runner
 that cannot start, and a run that ends before the test reaches a verdict — a
 dependency that is not installed, a module the test imports that this half does
 not have, a test that only collects with the fix in place — are refusals rather
-than results. With --command it can ask nothing, and a program that starts but
-cannot run its test still reads as a result, so keeping that command's
-dependencies installed is yours to do. A test that needs Postgres needs the dev
-stack up first (`eval "$(bash .claude/scripts/dev-db.sh env)"`); this script never
-starts it.
+than results. A fix that adds a module the test imports is a real regression
+guard, and it is refused here too; pass --command to have that code read as the
+failure it looks like, which is the price of never calling a test that was not
+collected "watched failing". With --command it can ask nothing, and a program
+that starts but cannot run its test still reads as a result, so keeping that
+command's dependencies installed is yours to do. A test that needs Postgres
+needs the dev stack up first (`eval "$(bash .claude/scripts/dev-db.sh env)"`);
+this script never starts it.
 
 The runners it infers are the two this repository uses: pytest over `backend/`
 (`uv run --no-sync`), vitest over `frontend/` (`pnpm exec`).
@@ -406,11 +409,17 @@ def run(argv: list[str], where: Path, probe: list[str] | None = None) -> int:
         # during collection, or a module the test imports that this half does not
         # have. Nothing was asserted, so a red half here would credit the fix
         # with a failure that was the run's, and a green half with nothing at
-        # all. Only the two inferred runners have a code to compare: with
+        # all — and a before half that only could not be collected is exactly the
+        # "was this test ever red" this tool exists to answer. The price is that
+        # a fix which adds a module the test imports fails here instead of
+        # proving itself; --command is the way to have that code read as a
+        # failure. Only the two inferred runners have a code to compare: with
         # --command, argv[0] is the shell and this never fires.
         print(
             f"prove-regression: {' '.join(argv)} exited {done.returncode} without "
-            "the test reaching a verdict",
+            "the test reaching a verdict — the test could not be collected, or the "
+            "runner stopped. Pass --command to have a code like this read as the "
+            "failure it looks like.",
             file=sys.stderr,
         )
         raise SystemExit(2)
