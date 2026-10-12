@@ -81,18 +81,6 @@ class TaskRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
-        """How many open tasks each of these rooms has, in one read. A room
-        with none is absent."""
-        if not room_ids:
-            return {}
-        stmt = (
-            select(Task.room_id, func.count(Task.id))
-            .where(Task.room_id.in_(room_ids), Task.status == TaskStatus.open)
-            .group_by(Task.room_id)
-        )
-        return {room: n for room, n in (await self._session.execute(stmt)).all()}
-
     async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many tasks each of these rooms has underway: open and not in the
         window where a merged task is being written up before it closes. A room

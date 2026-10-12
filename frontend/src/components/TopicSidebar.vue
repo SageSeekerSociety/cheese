@@ -83,6 +83,8 @@ const props = defineProps<{
   hereChannelId?: string | null
   /** 「全部频道」那一页正开着。 */
   browsingChannels?: boolean
+  /** 「全部任务」那一页正开着（底部「进行中的任务」那一行跟着亮起来）。 */
+  tasksOpen?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -92,6 +94,8 @@ const emit = defineEmits<{
   (e: 'toggle-tasks', channelId: string): void
   // 「全部频道」：去看这个项目的全部频道（侧栏只列加入了的）。
   (e: 'browse-channels'): void
+  // 「进行中的任务」：去看这个项目的全部任务（那一页里也有已经结束的）。
+  (e: 'open-tasks'): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
@@ -145,6 +149,10 @@ const {
 function hiddenTasks(channelId: string): number {
   return Math.max(0, (props.roomTaskTotals?.[channelId] ?? 0) - (props.roomTasks?.[channelId]?.length ?? 0))
 }
+
+// 清单第 14 条：底部那一颗数字、项目总览、频道卡片上写的都叫「进行中的任务」，都按
+// 同一个判据数（`underway_counts`：还开着、也没在合并后的收尾窗口里）。
+const underwayCount = computed(() => Object.values(props.roomTaskTotals ?? {}).reduce((sum, n) => sum + n, 0))
 function moreTaskRows(channelId: string) {
   const more = props.moreTasks?.[channelId]
   return more?.state === 'ready' ? more.rows : []
@@ -634,8 +642,20 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 
             <TopicRailBrowseRow
               :label="t('work.channel.browse')"
+              icon="mdi-magnify"
               :selected="browsingChannels === true"
               @select="emit('browse-channels')"
+            />
+            <!-- 进行中的任务：项目和总览那两个入口在项目名那一行／项目菜单里（清单第 9
+                 条把总览从这一栏搬走了），但是「我手上还有多少活在跑」这一件事值得常驻
+                 一栏，所以这一行留着。数字的口径见 underwayCount。 -->
+            <TopicRailBrowseRow
+              :label="t('work.sidebar.underway')"
+              icon="mdi-progress-clock"
+              :selected="tasksOpen === true"
+              :count="underwayCount"
+              :hint="t('work.sidebar.underwayHint')"
+              @select="emit('open-tasks')"
             />
           </template>
         </template>

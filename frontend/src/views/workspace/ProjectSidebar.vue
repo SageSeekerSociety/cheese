@@ -115,6 +115,13 @@ function browseChannels() {
   void router.push({ name: 'project-channels', params: { projectId: props.projectId } })
 }
 const browsingChannels = computed(() => route.name === 'project-channels')
+// 「进行中的任务」那一行：在「全部任务」这一页上就亮。按频道筛开（频道 ⋯ 里那一项）
+// 的时候亮的是那个频道那一行，这一行不亮。
+const tasksOpen = computed(() => route.name === 'project-tasks' && !route.query.channel)
+// 「进行中的任务」那一行：去看这个项目的全部任务（那一页里也有已经结束的）。
+function goToProjectTasks() {
+  void router.push({ name: 'project-tasks', params: { projectId: props.projectId } })
+}
 function openTask(task: { roomId: string; taskId: string }) {
   void router.push({
     name: 'workspace-task',
@@ -212,6 +219,7 @@ useCommands(() => [
       :selected-task-id="activeTaskId"
       :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
+      :tasks-open="tasksOpen"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
       :active-docs="activeDocs"
@@ -222,6 +230,7 @@ useCommands(() => [
       @select-task="openTask"
       @toggle-tasks="toggleTasks"
       @browse-channels="browseChannels"
+      @open-tasks="goToProjectTasks"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @press-page="onPressPage"
