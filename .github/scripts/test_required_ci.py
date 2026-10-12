@@ -478,6 +478,70 @@ def run_bodies(text):
         yield "\n".join(body)
 
 
+def jobs_of(text):
+    """Every job of a workflow: ``{job key: {"name": ..., "if": ..., "text": ...}}``.
+
+    Just enough of the format for the job-level keys these guards read — a job is
+    a key indented two spaces under ``jobs:``, and its own keys are indented four,
+    with a folded (``>-``) value joined back onto one line. No third-party YAML
+    parser is imported: this suite runs on a bare ``python3``, the same way the
+    scripts it covers do. An unsupported shape shows up as a missing key in the
+    assertions below, not as a silent pass.
+    """
+    lines = text.splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if line.rstrip() == "jobs:"), None
+    )
+    if start is None:
+        raise AssertionError("workflow has no jobs: mapping")
+    jobs, current, i = {}, None, start + 1
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() and not line.startswith(" "):
+            break
+        job = re.match(r"^  (\S+):\s*$", line)
+        if job:
+            current = jobs[job.group(1)] = {"text": []}
+        elif current is not None:
+            current["text"].append(line)
+            key = re.match(r"^    ([\w-]+):[ \t]*(.*)$", line)
+            if key:
+                value = key.group(2)
+                if value in (">", "|", ">-", "|-", ">+", "|+"):
+                    block, j = [], i + 1
+                    while j < len(lines) and (not lines[j].strip()
+                                              or lines[j].startswith("      ")):
+                        block.append(lines[j].strip())
+                        j += 1
+                    value, i = " ".join(part for part in block if part), j - 1
+                current[key.group(1)] = value
+        i += 1
+    for job in jobs.values():
+        job["text"] = "\n".join(job["text"])
+    return jobs
+
+
+def condition_holds(expression, event_name, draft, cancelled=False):
+    """Whether a workflow ``if:`` holds on a plain event.
+
+    So the tier guards are checked by which event each job answers, not by how
+    the condition is spelled. Only the subset this workflow uses is supported;
+    anything else raises, so a guard rewritten into a shape this cannot read
+    fails loudly instead of quietly falling out of the assertions.
+    """
+    match = re.fullmatch(r"\$\{\{(.*)\}\}", expression.strip(), re.S)
+    if not match:
+        raise AssertionError(f"not a workflow expression: {expression!r}")
+    py = match.group(1).strip()
+    py = py.replace("github.event.pull_request.draft", repr(draft))
+    py = py.replace("github.event_name", repr(event_name))
+    py = py.replace("!cancelled()", "not cancelled")
+    py = py.replace("&&", " and ").replace("||", " or ").replace("!(", "not (")
+    if re.search(r"[!&|]", py):
+        raise AssertionError(f"unsupported operator in {expression!r}: {py}")
+    return bool(eval(py, {"__builtins__": {}}, {"cancelled": cancelled}))  # noqa: S307
+
+
 def run_body_containing(text, needle):
     """The single ``run:`` body whose shell contains ``needle``.
 
@@ -623,6 +687,54 @@ class WorkflowTextTest(unittest.TestCase):
                             f"backend toolchain not installed: {calls}")
             self.assertTrue(any("install" in args for args in frontend),
                             f"frontend toolchain not installed: {calls}")
+
+    def test_the_two_tiers_are_two_jobs_with_literal_names(self):
+        # Each tier aggregates in its own job, and each job's `name` is written
+        # out literally. A computed `name:` is only rendered once GitHub
+        # evaluates it, so a run nobody evaluated it for shows the expression's
+        # own text as the check's name — a draft-quick run cancelled by the next
+        # push left `github.event_name == 'pull_request' && ...` on the PR page,
+        # where a cancelled check with a name like that reads as a red.
+        jobs = jobs_of(self.text)
+        aggregators = {
+            job["name"]: job
+            for job in jobs.values()
+            if job.get("name") and "required-ci.py check" in job["text"]
+        }
+        # Both names, and only these: a full run under the draft name or a third
+        # aggregation job would change which check branch protection reads.
+        self.assertEqual(
+            sorted(aggregators), ["CI required", "CI required (draft quick)"]
+        )
+        for name, job in aggregators.items():
+            self.assertNotIn("${{", name, f"the {name!r} job computes its name")
+            # One judge, both tiers: the job only hands its `needs` over and
+            # required-ci.py recomputes the tier. Two sets of rules could drift.
+            for suite in gate.PATHS:
+                self.assertIn(suite, job["text"], f"the {name!r} job ignores {suite}")
+        # Which job runs is the event's own draft flag, never a job result or a
+        # scope output: if `scope` fails its `tier` output is empty, and keying
+        # off it would fall through to `CI required` on a draft run — the
+        # collision the two names exist to prevent.
+        for name, job in aggregators.items():
+            self.assertIn("github.event.pull_request.draft", job["if"], name)
+            self.assertNotIn("needs", job["if"], name)
+        full, draft = aggregators["CI required"], aggregators["CI required (draft quick)"]
+        for event_name, is_draft, running in (
+            ("pull_request", True, "draft"),
+            ("pull_request", False, "full"),
+            ("merge_group", None, "full"),
+        ):
+            self.assertEqual(
+                {label for label, job in (("full", full), ("draft", draft))
+                 if condition_holds(job["if"], event_name, is_draft)},
+                {running},
+                f"wrong aggregator on {event_name} draft={is_draft}",
+            )
+        # A cancelled run starts neither: the aggregator reports what the suites
+        # did, and a cancelled one has nothing to report.
+        self.assertFalse(condition_holds(draft["if"], "pull_request", True, True))
+        self.assertFalse(condition_holds(full["if"], "merge_group", None, True))
 
 
 class MainCliTest(unittest.TestCase):

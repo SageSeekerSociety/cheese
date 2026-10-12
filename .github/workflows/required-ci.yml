@@ -14,14 +14,27 @@ name: Required CI
 #   `ready_for_review` that promotes a draft) → the full tier: every suite the
 #   merge diff selects, aggregated under the required check name `CI required`.
 #
+# The two aggregating jobs are separate jobs with literal names (`required` and
+# `required-draft`), each gated by an `if` on the event. Not one job with a
+# computed name: an expression-named job renders as its own source text on a
+# cancelled run, which reads as a red check named
+# `github.event_name == 'pull_request' && ...`.
+#
+# A tier's job that the event does not select reports `skipped`, and GitHub
+# counts a skipped required check as satisfied — so on a draft PR `CI required`
+# is a skipped check rather than an absent one. That is not a way through: a
+# draft cannot be merged, the platform reads `skipped`/absent as "did not run"
+# (backend/app/domain/review/merge_state.py), and the merge queue re-runs the
+# full tier on `merge_group`, which is the result the queue and the deploy gates
+# read. What the two names keep is that a draft never produces a *green*
+# `CI required`.
+#
 # `ready_for_review` is listed explicitly so promoting a draft starts a fresh
 # FULL run. The concurrency group below (cancel-in-progress) stops a superseded
 # draft-quick run only while it is still in flight; a draft-quick run that
-# already completed is NOT revoked, and does not need to be — it carried the
-# distinct check name `CI required (draft quick)`, so it never satisfied the
-# `CI required` check that branch protection and the merge gate read. That
-# distinct name, not the cancellation, is what makes the full run's result the
-# one that stands.
+# already completed is NOT revoked, and does not need to be — it left
+# `CI required` skipped, which does not stand in for the full run's result on
+# that commit.
 on:
   pull_request:
     branches: [main]
@@ -216,21 +229,31 @@ jobs:
     if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.equivalence == 'true'
     uses: ./.github/workflows/mcp-equivalence.yml
 
+  # The tier's aggregator. There are two of them, one per tier, and each has its
+  # name written out as a literal. Two literals, not one computed name: a name
+  # built from an expression is only rendered when GitHub evaluates it, so a run
+  # that is cancelled — or any surface that reads the job before it starts —
+  # shows the expression's own text, which reads as a red check on the PR page.
+  #
+  # The pair is also what keeps the tiers apart. `CI required` is the name branch
+  # protection and the merge gate read; only a merge_queue entry or a non-draft
+  # pull_request can produce it. A draft run gets `CI required (draft quick)`, so
+  # its partial green can never satisfy the required check.
+  #
+  # Which job runs is keyed off the EVENT's own `draft` flag, not the scope
+  # output: if `scope` fails its `tier` output is empty, and keying off that
+  # would fall through to the bare `CI required` name on a draft run — exactly
+  # the collision this exists to prevent. The event's `draft` flag cannot be
+  # lost that way. Both jobs run the same judge, which recomputes the tier from
+  # the event and rejects any scope output that disagrees (required-ci.py:
+  # failures/tier_for), so a wrong tier is red, never a mislabelled pass.
+  #
+  # Both jobs need the whole `needs` list: the judge requires every suite to
+  # report `skipped` in the quick tier, and a job absent from `needs` is not
+  # `skipped` — it is `missing`, which the judge fails.
   required:
-    # The name IS the branch-protection check for the full tier. A draft run
-    # gets a DIFFERENT name so its (partial) green can never satisfy the
-    # required check; only a full run — merge queue or non-draft PR — answers
-    # to `CI required`.
-    #
-    # The name is keyed off the EVENT, not the scope output: if `scope` fails
-    # its `tier` output is empty, and keying off it would fall through to the
-    # bare `CI required` name on a draft run — exactly the collision this exists
-    # to prevent. The event's own `draft` flag cannot be lost that way. The
-    # aggregation still recomputes the tier from the event and rejects any
-    # scope output that disagrees (required-ci.py: failures/tier_for), so a
-    # wrong tier is red, never a mislabelled pass.
-    name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'CI required (draft quick)' || 'CI required' }}
-    if: ${{ !cancelled() }}
+    name: CI required
+    if: ${{ !cancelled() && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     # pull-requests: read is for the title step, which reads the PR's title.
     permissions:
       contents: read
@@ -250,7 +273,9 @@ jobs:
       # it fetches the PR live rather than from the event payload, so
       # re-running this job after editing the title sees the new one, and it
       # passes a draft, whose title is still a placeholder. pr-title.yml re-runs
-      # this job when a PR is marked ready or retitled.
+      # this job when a PR is marked ready or retitled — which is why the draft
+      # job below has no title step: a draft's title is the platform's
+      # placeholder, nothing to check, and `ready_for_review` starts this job.
       - name: Commit titles follow the convention
         if: ${{ !cancelled() }}
         env:
@@ -267,6 +292,21 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
             python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
+
+  required-draft:
+    name: CI required (draft quick)
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.draft }}
+    permissions:
+      contents: read
+    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require every selected suite to succeed
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/required-ci.py check
 
   remote:
     needs: scope
