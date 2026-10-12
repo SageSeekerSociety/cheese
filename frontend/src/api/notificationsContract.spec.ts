@@ -5,7 +5,14 @@
 import { http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { type ContractCase, contractEnvironment, contractRequest, envelope, newer, server } from './requestContract.spec.helper'
+import {
+  type ContractCase,
+  contractEnvironment,
+  contractRequest,
+  envelope,
+  newer,
+  server,
+} from './requestContract.spec.helper'
 
 contractEnvironment()
 
@@ -46,7 +53,11 @@ const cases: { name: string; test: ContractCase; call: () => Promise<unknown> }[
     test: { method: 'GET', path: '/notifications/unread-count' },
     call: () => notifications.getUnreadNotificationCount(),
   },
-  { name: 'liveToken', test: { method: 'POST', path: '/notifications/live-token' }, call: () => notifications.liveToken() },
+  {
+    name: 'liveToken',
+    test: { method: 'POST', path: '/notifications/live-token' },
+    call: () => notifications.liveToken(),
+  },
 ]
 
 describe('notifications: every method keeps its request and payload', () => {
