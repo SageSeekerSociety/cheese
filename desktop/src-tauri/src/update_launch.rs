@@ -10,6 +10,7 @@ const MAX_AGE_SECS: u64 = 10 * 60;
 
 pub struct RestartMarker {
     path: PathBuf,
+    hidden: bool,
     committed: bool,
 }
 
@@ -17,14 +18,23 @@ impl RestartMarker {
     pub fn prepare(dir: &Path, hidden: bool) -> io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         let path = dir.join(FILE);
-        let intent = if hidden { "hidden" } else { "visible" };
-        std::fs::write(&path, format!("{intent}\n{}", now_secs()))?;
-        Ok(Self { path, committed: false })
+        write_intent(&path, hidden)?;
+        Ok(Self { path, hidden, committed: false })
     }
 
     pub fn commit(mut self) {
+        // macOS installation can wait for administrator approval. The restart
+        // intent must stay fresh from installation completion, not its start.
+        if let Err(e) = write_intent(&self.path, self.hidden) {
+            eprintln!("cheese: could not refresh the update restart intent: {e}");
+        }
         self.committed = true;
     }
+}
+
+fn write_intent(path: &Path, hidden: bool) -> io::Result<()> {
+    let intent = if hidden { "hidden" } else { "visible" };
+    std::fs::write(path, format!("{intent}\n{}", now_secs()))
 }
 
 impl Drop for RestartMarker {
@@ -140,6 +150,20 @@ mod tests {
         assert!(!start_hidden(&dir.0, false));
         std::fs::write(dir.0.join(FILE), format!("visible\n{expired}")).unwrap();
         assert!(start_hidden(&dir.0, true));
+    }
+
+    #[test]
+    fn slow_install_preserves_the_requested_restart_mode() {
+        for hidden in [false, true] {
+            let dir = Dir::new();
+            let marker = RestartMarker::prepare(&dir.0, hidden).unwrap();
+            // Model an installation that outlasted the original intent.
+            let expired = now_secs() - MAX_AGE_SECS - 1;
+            let mode = if hidden { "hidden" } else { "visible" };
+            std::fs::write(dir.0.join(FILE), format!("{mode}\n{expired}")).unwrap();
+            marker.commit();
+            assert_eq!(start_hidden(&dir.0, !hidden), hidden);
+        }
     }
 
     #[test]
