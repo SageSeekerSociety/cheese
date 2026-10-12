@@ -1,5 +1,5 @@
 // 支线：主线上一条消息下面的回复，自成一段对话。它的 id 和房间、任务的一样用：
-// 消息、连接、已读都走 `/topics/{支线}/…`。这里只有支线自己才有的三件事。
+// 消息、连接、已读都走 `/topics/{支线}/…`。这里只有支线自己才有的几件事。
 import type { Thread, ThreadRow } from '../types/threads'
 
 import { request } from './http'
@@ -20,4 +20,13 @@ export function getThread(threadId: string): Promise<Thread> {
 /** 频道里有回复的支线，最近有回复的在前。 */
 export function listThreads(roomId: string, limit = 50): Promise<ThreadRow[]> {
   return request<ThreadRow[]>(`/topics/${encodeURIComponent(roomId)}/threads?limit=${limit}`)
+}
+
+/** 在频道下直接开一条支线，不必先有话说（清单第 4 条）。开的人由会话认，不由请求体
+ *  说；私聊里没有支线，那条路后端会拒。 */
+export function newThread(roomId: string, title: string): Promise<Thread> {
+  return request<Thread>(`/topics/${encodeURIComponent(roomId)}/threads`, {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  })
 }

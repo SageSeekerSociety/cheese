@@ -183,7 +183,7 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
 // 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变成「工作文档」。
 // 表里存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。
 const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
-  // 总览是首页，项目名下那一行的第一格。
+  // 总览是首页：它不进项目名下那一行，从点项目名弹出的菜单进（清单第 9 条）。
   'workspace-overview': { label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
   'project-tasks': { label: 'navigation.project.tasks', icon: 'mdi-format-list-checks' },
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
@@ -199,7 +199,7 @@ const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
 const terms = computed(() => termParams(shell.value))
 
-// 项目名下那一行只有总览和资料库，其余都进点项目名弹出的菜单（`projectPageLayout`）。
+// 项目名下那一行只有资料库，其余（含总览）都进点项目名弹出的菜单（`projectPageLayout`）。
 // 那一行**不再加东西**，见 .claude/rules/project-sidebar.md。
 const layout = computed(() => projectPageLayout(shell.value, KNOWN_PROJECT_PAGES))
 
@@ -467,7 +467,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         <template v-else>
           <!-- 列表顶上由外面填的一行（手机上是去项目总览的那一行，见 ProjectSidebar）。 -->
           <slot name="top" />
-          <!-- 项目名下面一行：总览和资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
+          <!-- 项目名下面一行：只有资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
           <TopicRailPinnedRows
             :pages="barPages"
             :route-name="routeName"

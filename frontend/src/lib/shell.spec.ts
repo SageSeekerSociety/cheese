@@ -103,25 +103,25 @@ describe('termParams: 词表切文案，壳没说就回落 catalog', () => {
   })
 })
 
-describe('projectPageLayout: 项目名下那一行只有总览和资料库，其余都在项目名菜单里', () => {
-  it('项目名下那一行只有总览和资料库', () => {
+describe('projectPageLayout: 项目名下那一行只有资料库，其余（含总览）都在项目名菜单里', () => {
+  it('项目名下那一行只有资料库', () => {
     // 这一行加一格，频道就往下挪一行；用户整理过不止一次，几个版本后又是一摞入口。
     // 新页面进项目名菜单。改这一条之前先读 .claude/rules/project-sidebar.md。
     const everything = shellLike({ nav: { ...DEFAULT_SHELL.nav, project: [...KNOWN, 'project-skills'] } })
     const { bar } = projectPageLayout(everything, [...KNOWN, 'project-skills'])
-    expect(bar).toEqual(['workspace-overview', 'project-library'])
+    expect(bar).toEqual(['project-library'])
   })
 
-  it('default 壳：那一行是总览和资料库，菜单里是其余几页', () => {
+  it('default 壳：那一行是资料库，菜单里是总览和其余几页', () => {
     const { bar, menu } = projectPageLayout(DEFAULT_SHELL, KNOWN)
-    expect(bar).toEqual(['workspace-overview', 'project-library'])
-    expect(menu).toEqual(['project-members', 'project-routines'])
+    expect(bar).toEqual(['project-library'])
+    expect(menu).toEqual(['workspace-overview', 'project-members', 'project-routines'])
   })
 
   it('壳不摆资料库，资料库就在菜单里', () => {
     const shell = shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['project-members', 'project-routines'] } })
     const { bar, menu } = projectPageLayout(shell, KNOWN)
-    expect(bar).toEqual(['workspace-overview'])
+    expect(bar).toEqual([])
     expect(menu).toContain('project-library')
   })
 

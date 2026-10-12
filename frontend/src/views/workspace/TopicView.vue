@@ -19,9 +19,10 @@ import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
 import { useTopicPanel } from '@/composables/useTopicPanel'
 
 import { getTask } from '@/api/tasks'
-import { openThread } from '@/api/threads'
+import { newThread, openThread } from '@/api/threads'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
+import NewThreadDialog from '@/components/channel/NewThreadDialog.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
@@ -167,6 +168,28 @@ async function onOpenThread(block: Block) {
     showThread((await openThread(block.id)).id)
   } catch (e) {
     store.reportError(e, t('work.room.thread.openFailed'))
+  }
+}
+
+// 在频道下手动开一条支线（清单第 4 条）：填个标题就开，不必先有话。开了之后直接落进
+// 那条支线——建出来就是为了马上在里面说话，停在原地等于让人再点一次。
+const newThreadOpen = ref(false)
+const creatingThread = ref(false)
+const canOpenThread = computed(() => {
+  const topic = selectedTopic.value
+  return !!topic && topic.status !== 'archived' && (topic.kind === 'root' || !!topic.joined)
+})
+async function createThread(title: string) {
+  creatingThread.value = true
+  try {
+    const thread = await newThread(props.topicId, title)
+    newThreadOpen.value = false
+    channelThreads.load()
+    showThread(thread.id)
+  } catch (e) {
+    store.reportError(e, t('work.room.thread.createFailed'))
+  } finally {
+    creatingThread.value = false
   }
 }
 
@@ -836,8 +859,10 @@ void openPlace()
                 :refs="{ mentionNames: memberNames, topicTitles: {} }"
                 :name-of="(handle: string) => memberNames[handle] || handle"
                 :fmt-time="threadTime"
+                :can-create="canOpenThread"
                 @open="showThread"
                 @open-task="onOpenCard"
+                @new="newThreadOpen = true"
               />
             </template>
             <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
@@ -873,6 +898,13 @@ void openPlace()
         </div>
       </div>
     </template>
+    <NewThreadDialog
+      v-if="newThreadOpen && selectedTopic"
+      v-model="newThreadOpen"
+      :busy="creatingThread"
+      :channel="topicTitle(selectedTopic)"
+      @create="createThread"
+    />
   </div>
 </template>
 

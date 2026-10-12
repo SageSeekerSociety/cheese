@@ -231,8 +231,8 @@ useCommands(() => [
       @retry="store.reloadTopics()"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     >
-      <!-- 手机上进项目落在频道列表上，项目名下那一行收进了菜单，所以去项目总览的那一行
-           放在列表最顶上。桌面上它就是项目名下那一行的第一格。 -->
+      <!-- 手机上进项目落在频道列表上，项目名下那一行和总览都收进了项目名菜单，所以去项目
+           总览的那一行放在列表最顶上。桌面上这一行不画（清单第 9 条：总览从项目名菜单进）。 -->
       <template v-if="page || column" #top>
         <button type="button" class="overview-entry t-body" data-testid="overview-entry" @click="openOverview">
           <v-icon size="18" class="overview-entry__icon">mdi-view-dashboard-outline</v-icon>

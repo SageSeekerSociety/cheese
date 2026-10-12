@@ -1168,6 +1168,12 @@
       "notFound": "These replies can't be found",
       "listCaption": "Latest replies first",
       "empty": "No threads",
+      "emptyHint": "A thread is a short side conversation off one message; it does not lengthen the main one.",
+      "new": "New thread",
+      "newIn": "New thread in \u201c{channel}\u201d",
+      "titleLabel": "Thread title",
+      "titlePlaceholder": "What is this thread about",
+      "createFailed": "The thread was not created — try again in a moment",
       "unread": "New replies",
       "people": "{replies} · {names}",
       "taskStatus": {
