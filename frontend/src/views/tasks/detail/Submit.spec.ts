@@ -7,11 +7,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   getParticipants: vi.fn(),
   createSubmission: vi.fn().mockResolvedValue({}),
-  listSubmissions: vi.fn().mockResolvedValue({ data: { submissions: [] } }),
+  listSubmissions: vi.fn().mockResolvedValue({ submissions: [] }),
   push: vi.fn(),
   limits: vi.fn(),
 }))
-vi.mock('@/network/api/tasks', () => ({ TasksApi: mocks }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: mocks }))
 vi.mock('@/api/attachments', () => ({ AttachmentsApi: { upload: vi.fn(), limits: mocks.limits } }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -104,7 +104,7 @@ describe('participant submission', () => {
   })
 
   it('tells a one-shot task that has been handed in that it is done, instead of offering the form again', async () => {
-    mocks.listSubmissions.mockResolvedValueOnce({ data: { submissions: [{ id: 1, version: 1 }] } })
+    mocks.listSubmissions.mockResolvedValueOnce({ submissions: [{ id: 1, version: 1 }] })
     const view = render(Submit, {
       props: {
         taskData: {

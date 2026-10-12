@@ -21,8 +21,8 @@ import TasksView from './TasksView.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
 import { SpacesApi } from '@/api/spaces'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { useCommands } from '@/commands'
-import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 
 type SortBy = 'createdAt' | 'updatedAt' | 'deadline'
@@ -151,7 +151,7 @@ const {
 } = usePaging<Task, QueryOptions, string>(
   async (pageStart, queryOptions) => {
     if (!queryOptions || !queryOptions.space) return createEmptyResult<Task, string>()
-    const { data } = await TasksApi.list({
+    const data = await TaskBoardApi.list({
       space: queryOptions.space,
       pageStart: pageStart,
       sort_by: queryOptions?.by ?? 'createdAt',

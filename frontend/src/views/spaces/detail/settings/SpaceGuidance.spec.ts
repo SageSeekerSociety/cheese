@@ -23,7 +23,7 @@ vi.mock('@/api/spaces', () => ({
   },
 }))
 
-vi.mock('@/network/api/tasks', () => ({ TasksApi: { list: vi.fn() } }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: { list: vi.fn() } }))
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 

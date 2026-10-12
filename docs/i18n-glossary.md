@@ -166,7 +166,7 @@ Delete this question? All of its answers will be deleted too.`
    | `tasks.form.taskLevel` | **赛题**难度 | `tasks` |
    | `tasks.publish.title` | 发布**赛题** | `tasks` |
 
-   两边是同一个实体的证据：`PublishTask.vue` 与 `Tasks.vue` 用的是同一个 `TasksApi`（`@/network/api/tasks`）。
+   两边是同一个实体的证据：`PublishTask.vue` 与 `Tasks.vue` 用的是同一个 `TaskBoardApi`（`@/api/taskBoard`）。
    外部佐证是既有英文：`tasks.form.accessControl.enableAccessRestrictionHint`（开启后，只有指定域名邮箱的
    用户才能查看和参与此**赛题**）与注册页的 `account.rule.emailHint`
    （Some **challenges** are open only to…）说的是同一道门槛。

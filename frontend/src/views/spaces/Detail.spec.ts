@@ -16,8 +16,8 @@ const spacesDetail = vi.fn()
 const listCategories = vi.fn()
 const toastError = vi.fn()
 
-vi.mock('@/network/api/tasks', () => ({
-  TasksApi: { list: (...a: unknown[]) => taskList(...a) },
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: { list: (...a: unknown[]) => taskList(...a) },
 }))
 
 vi.mock('@/api/spaces', () => ({
@@ -51,7 +51,7 @@ async function mount(userId: number, extra: Record<string, unknown> = {}, child:
   spacesDetail.mockResolvedValue({
     space: { id: SPACE_ID, name: '数据结构空间', admins: [{ user: { id: ADMIN_ID }, role: 'ADMIN' }], ...extra },
   })
-  taskList.mockResolvedValue({ data: { tasks: [], page: { total: 3 } } })
+  taskList.mockResolvedValue({ tasks: [], page: { total: 3 } })
   listCategories.mockResolvedValue({ categories: [] })
 
   const router = createRouter({

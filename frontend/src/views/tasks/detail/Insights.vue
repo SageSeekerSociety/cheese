@@ -30,8 +30,8 @@ import { useRoute } from 'vue-router'
 import InsightsView from './InsightsView.vue'
 
 import { SpacesApi } from '@/api/spaces'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { TasksApi } from '@/network/api/tasks'
 
 const props = defineProps<{
   taskData: Task | null
@@ -60,10 +60,10 @@ async function load() {
   loadError.value = null
   try {
     const [rosterRes, subsRes] = await Promise.all([
-      TasksApi.getParticipants(taskId),
+      TaskBoardApi.getParticipants(taskId),
       SpacesApi.getSubmissionQueue(Number(route.params.spaceId), { taskId, pageSize: 200 }),
     ])
-    roster.value = rosterRes.data.participants ?? []
+    roster.value = rosterRes.participants ?? []
 
     // 同一人可能有多版提交：按 version 取最大的那一版 —— 看的永远是「现在这一版判没判」。
     const byVersion = new Map<number, { version: number; review?: TaskSubmissionReview }>()

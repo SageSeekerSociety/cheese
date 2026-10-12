@@ -37,8 +37,8 @@ const uploadAttachment = vi.fn()
 const attachmentLimits = vi.fn()
 const toastError = vi.fn()
 
-vi.mock('@/network/api/tasks', () => ({
-  TasksApi: {
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: {
     previewFromPdf: (...a: unknown[]) => previewFromPdf(...a),
     confirmFromPdf: (...a: unknown[]) => confirmFromPdf(...a),
     create: (...a: unknown[]) => createTask(...a),
@@ -280,12 +280,10 @@ beforeEach(() => {
   listCategories.mockImplementation(async () => categoriesBody())
   listDomainGroups.mockImplementation(async () => ({ groups: [] }))
   listMaterials.mockImplementation(async () => ({ materials: [], canManage: false }))
-  listTasks.mockImplementation(async () => ({ data: { tasks: [], distinctParticipants: 0 } }))
-  previewFromPdf.mockImplementation(async () => ({ data: previewBody() }))
-  confirmFromPdf.mockImplementation(async () => ({
-    data: { tasks: [{ id: 101, name: '用 gdb 定位一次段错误' }], count: 1 },
-  }))
-  createTask.mockImplementation(async () => ({ data: { task: { id: 501, approved: false } } }))
+  listTasks.mockImplementation(async () => ({ tasks: [], distinctParticipants: 0 }))
+  previewFromPdf.mockImplementation(async () => previewBody())
+  confirmFromPdf.mockImplementation(async () => ({ tasks: [{ id: 101, name: '用 gdb 定位一次段错误' }], count: 1 }))
+  createTask.mockImplementation(async () => ({ task: { id: 501, approved: false } }))
   uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
   attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
@@ -393,7 +391,7 @@ describe('发题页：从文件导入', () => {
     previewFromPdf.mockImplementation(async () => {
       const body = previewBody()
       body.drafts = body.drafts.slice(0, 1)
-      return { data: body }
+      return body
     })
     const view = await mount()
 
@@ -423,7 +421,7 @@ describe('发题页：从文件导入', () => {
     previewFromPdf.mockImplementation(async () => {
       const body = previewBody()
       body.drafts.push({ ...body.drafts[1], name: '附录：评分细则', intro: '评分细则。' })
-      return { data: body }
+      return body
     })
     const view = await mount()
 
@@ -462,7 +460,7 @@ describe('发题页：从文件导入', () => {
     previewFromPdf.mockImplementation(async () => {
       const body = previewBody()
       body.drafts[1].name = ''
-      return { data: body }
+      return body
     })
     const view = await mount()
     await importFile(view, pdfFile())

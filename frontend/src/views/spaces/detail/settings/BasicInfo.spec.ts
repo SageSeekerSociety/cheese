@@ -30,8 +30,8 @@ vi.mock('@/api/spaces', () => ({
 }))
 
 // 空间外壳替管理员读一遍待审核的题数，这里不关心它的结果。
-vi.mock('@/network/api/tasks', () => ({
-  TasksApi: { list: vi.fn().mockResolvedValue({ data: { tasks: [], page: { total: 0 } } }) },
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: { list: vi.fn().mockResolvedValue({ tasks: [], page: { total: 0 } }) },
 }))
 
 vi.mock('@/api/avatars', () => ({

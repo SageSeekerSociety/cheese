@@ -1,4 +1,8 @@
-// src/api/tasks.ts
+// 题目（板上赛题，`/tasks/…`）的老栈实现。**已无生产调用方**：页面都改走
+// `@/api/taskBoard`（新栈，直接回 payload）。这一整只命名空间留着的唯一理由是
+// `src/api/taskBoardContract.spec.ts` / `migrationContract.spec.ts` 拿它跟新栈逐方法
+// 对拍（旧整只 `{code,message,data}` 信封 vs 新 payload）。**它是测试夹具**：命名整合
+// 与整层退役留到 PR3，那之前别再往这里加新调用方。
 
 import type { EncodedCursorPage, Page, TaskMembership, TaskSubmission, TeamSummary } from '@/types'
 import type { Task } from '@/types'

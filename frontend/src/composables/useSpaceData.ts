@@ -15,8 +15,8 @@ import { toast } from 'vuetify-sonner'
 
 import { SpacesApi } from '@/api/spaces'
 import { TagsApi } from '@/api/tags'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
-import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
 
@@ -46,7 +46,7 @@ export function useSpaceData() {
     const spaceId = space.currentSpaceId
     if (!spaceId) return
     try {
-      const { data } = await TasksApi.list({
+      const data = await TaskBoardApi.list({
         space: spaceId,
         approved: 'NONE',
         pageSize: 1,

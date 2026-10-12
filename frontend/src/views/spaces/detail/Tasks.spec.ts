@@ -21,8 +21,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 const taskList = vi.fn()
 const myPublished = vi.fn()
 
-vi.mock('@/network/api/tasks', () => ({
-  TasksApi: { list: (...a: unknown[]) => taskList(...a) },
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: { list: (...a: unknown[]) => taskList(...a) },
 }))
 
 vi.mock('@/api/spaces', () => ({
@@ -114,10 +114,8 @@ describe('题目列表的范围', () => {
   beforeEach(() => {
     setLocale('zh-CN')
     taskList.mockImplementation(async (params: { joined?: boolean }) => ({
-      data: {
-        tasks: params.joined ? [task(2, '我领过的题')] : [task(1, '别人的题'), task(2, '我领过的题')],
-        page: { hasMore: false, nextStart: null },
-      },
+      tasks: params.joined ? [task(2, '我领过的题')] : [task(1, '别人的题'), task(2, '我领过的题')],
+      page: { hasMore: false, nextStart: null },
     }))
     myPublished.mockImplementation(async () => ({ tasks: [publishedTask(5, '还在审核的题')] }))
   })
@@ -210,9 +208,7 @@ describe('题目列表的话题与搜索', () => {
 
   beforeEach(() => {
     setLocale('zh-CN')
-    taskList.mockImplementation(async () => ({
-      data: { tasks: [task(1, '一道题')], page: { hasMore: false, nextStart: null } },
-    }))
+    taskList.mockImplementation(async () => ({ tasks: [task(1, '一道题')], page: { hasMore: false, nextStart: null } }))
   })
 
   afterEach(() => {

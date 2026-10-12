@@ -19,7 +19,7 @@ const detail = vi.fn()
 vi.mock('@/api/spaces', () => ({
   SpacesApi: { detail: (...a: unknown[]) => detail(...a) },
 }))
-vi.mock('@/network/api/tasks', () => ({ TasksApi: { list: vi.fn(), applications: vi.fn() } }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: { list: vi.fn() } }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 // `isManager` 读的是「我」，那份身份住在 account 这个单例上。它也是守卫 await 的那

@@ -217,8 +217,8 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/network/api/tasks/types'
 import type { Task } from '@/types'
+import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/types/taskBoard'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -229,10 +229,10 @@ import { throttle } from 'lodash-es'
 import { formatFileSize } from '@/utils/materials'
 
 import { AttachmentsApi } from '@/api/attachments'
+import { TaskBoardApi } from '@/api/taskBoard'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { TasksApi } from '@/network/api/tasks'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -305,7 +305,7 @@ watch(
     alreadySubmitted.value = false
     if (!taskId || resubmittable || !identityId) return
     try {
-      const { data } = await TasksApi.listSubmissions(taskId, identityId, {
+      const data = await TaskBoardApi.listSubmissions(taskId, identityId, {
         pageSize: 1,
         sort_by: 'createdAt',
         sort_order: 'desc',
@@ -478,7 +478,7 @@ const submitTask = async () => {
     }
 
     // 使用参与者ID而不是成员ID进行提交
-    await TasksApi.createSubmission(props.taskData.id, currentIdentity.value.id, finalSubmissionContent)
+    await TaskBoardApi.createSubmission(props.taskData.id, currentIdentity.value.id, finalSubmissionContent)
     toast.success(t('tasks.submit.submitted'))
     // 题目页外框只在打开时读一次我的最新一版；不说一声，「我的进度」和「我的提交」上的数要等刷新才变。
     events.emit('participation-changed')

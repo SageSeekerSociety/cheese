@@ -27,9 +27,9 @@ import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimi
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { isTeachingBlank } from '@/lib/teaching'
-import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
 
@@ -133,7 +133,7 @@ async function importFile(file: File) {
 
   importing.value = true
   try {
-    const { data } = await TasksApi.previewFromPdf({
+    const data = await TaskBoardApi.previewFromPdf({
       spaceId: id,
       file,
       categoryId: preselectedCategoryId.value,
@@ -219,17 +219,15 @@ async function publish(form: TaskFormSubmitData) {
     const picked = drafts.value.filter((draft) => draft.picked)
     if (picked.length > 1 || drafts.value.length > 1) {
       const payloads = picked.map((draft) => toDraftPayload(draft, id))
-      const { data } = await TasksApi.confirmFromPdf({
+      const data = await TaskBoardApi.confirmFromPdf({
         drafts: payloads,
         taskOptions: { ...options, name: payloads[0].name, description: payloads[0].description },
       })
       toast.success(t('spaces.detail.publishTask.publishedMany', { n: data.count || data.tasks.length }))
     } else {
       const {
-        data: {
-          task: { approved },
-        },
-      } = await TasksApi.create(options)
+        task: { approved },
+      } = await TaskBoardApi.create(options)
       toast.success(
         approved
           ? t('spaces.detail.publishTask.createSuccess')
