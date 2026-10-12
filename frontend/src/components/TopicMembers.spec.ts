@@ -28,6 +28,10 @@ const server = vi.hoisted(() => ({
   // 状态停住，单独一个 hold 挂不住——它把整批都挂在同一道门上。闸放行就提交那一行，
   // 闸拒绝就当这一笔失败了。
   gates: [] as { promise: Promise<void>; release: () => void; fail: (e: Error) => void }[],
+  // 把「请完再刷一次名册」那一下挂住：整批请完会先 refetch 再收尾（把没成的退回选中、
+  // 清掉旧频道的报错），要看清「整批中途写进 error 的东西在切走后还在不在」，就得让
+  // 收尾那一步还没跑到。
+  rosterHold: null as null | { promise: Promise<void>; release: () => void },
 }))
 
 vi.mock('../api/http', async () => {
@@ -62,7 +66,10 @@ vi.mock('../api', async () => {
     getTopicEnvironment: (...args: unknown[]) => machines.get(...args),
     setSessionEnvironment: (...args: unknown[]) => machines.setSession(...args),
     setEnvironmentDefault: (...args: unknown[]) => machines.setDefault(...args),
-    listTopicMembers: vi.fn(async () => ({ data: server.rows.map((row) => ({ ...row })), total: server.rows.length })),
+    listTopicMembers: vi.fn(async () => {
+      if (server.rosterHold) await server.rosterHold.promise
+      return { data: server.rows.map((row) => ({ ...row })), total: server.rows.length }
+    }),
   }
 })
 
@@ -203,6 +210,7 @@ beforeEach(() => {
   server.attempts = []
   server.hold = null
   server.gates = []
+  server.rosterHold = null
   document.body.innerHTML = ''
   machines.get.mockReset().mockResolvedValue(roomEnvironments())
   machines.setSession.mockReset().mockResolvedValue({})
@@ -391,6 +399,9 @@ describe('成员名册', () => {
     await settle()
     await fireEvent.click(addButton())
     await settle()
+    // 名册那一下先挂住：整批请完会先 refetch 再收尾，收尾会把旧频道的报错清掉；不挂住
+    // 它，这里就永远只看得到收尾之后那一帧，catch 里写了什么根本测不出来。
+    server.rosterHold = gate()
     // 第一笔放行（Dave 进了 t1），第二笔还卡着 —— 这里正是「整批没跑完」。
     first.release()
     await settle()
@@ -403,11 +414,14 @@ describe('成员名册', () => {
       canManage: true,
     })
     await settle()
-    // 现在让第二笔失败：它落在切走之后，旧频道那笔的报错不能挂到新频道那一格上。
+    // 现在让第二笔失败：它落在切走之后 —— 收尾还没跑到，这一帧正是要防的那一帧。
     second.fail(new Error('邀请失败'))
     await settle()
     expect(server.attempts).toEqual(['t1:dave', 't1:cheese-a2'])
     expect(document.querySelector('.roster__error')).toBeNull()
+    // 放行收尾，让这一批走完（不挂在半路留给下一个用例）。
+    server.rosterHold.release()
+    await settle()
   })
 })
 
