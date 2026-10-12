@@ -129,6 +129,58 @@ describe('关于 in the desktop app', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('这台电脑正在接入，接入完成后再重启'))
   })
 
+  it.each(['install-failed', 'failed'])('explains an installation failure (%s) and permits retry', async (error) => {
+    const install = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined)
+    desktopApp(NEW_APP, {
+      status: { state: 'ready', version: '0.1.43' },
+      restart: install,
+    })
+    const { toast } = await import('vuetify-sonner')
+    const { restart, restarting } = await mount()
+    await restart()
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('安装更新失败'))
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('重新检查更新'))
+    expect(restarting.value).toBe(false)
+    await restart()
+    expect(install).toHaveBeenCalledTimes(2)
+  })
+
+  it('explains a restart failure without saying the update was installed', async () => {
+    desktopApp(NEW_APP, {
+      status: { state: 'ready', version: '0.1.43' },
+      restart: () => Promise.reject('restart-failed'),
+    })
+    const { toast } = await import('vuetify-sonner')
+    const { restart, restarting } = await mount()
+    await restart()
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('无法重启应用'))
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('手动打开'))
+    expect(restarting.value).toBe(false)
+  })
+
+  it('does not request another install while a restart is pending or already accepted', async () => {
+    let accept!: () => void
+    const install = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          accept = resolve
+        })
+    )
+    desktopApp(NEW_APP, {
+      status: { state: 'ready', version: '0.1.43' },
+      restart: install,
+    })
+    const { restart, restarting } = await mount()
+    const pending = restart()
+    await restart()
+    expect(install).toHaveBeenCalledTimes(1)
+    accept()
+    await pending
+    await restart()
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(restarting.value).toBe(true)
+  })
+
   it('asks an app from before updates could be checked for nothing', async () => {
     const app = desktopApp({ can: ['notices', 'badge', 'autostart', 'links'] })
     const { aboutOpen } = await mount()
