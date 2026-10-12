@@ -14,8 +14,8 @@ pnpm run lint:boundary          # what CI runs
 pnpm run lint:boundary:update   # after you fix some, rewrite the baseline
 ```
 
-59 violations across 47 components are frozen in
-`import-boundary-baseline.json`; only new ones fail. It is a separate ESLint
+Existing violations are frozen in `import-boundary-baseline.json`; read current
+counts from that file, since parallel migrations keep lowering them. Only new ones fail. It is a separate ESLint
 config (`eslint.boundary.config.mjs`) rather than a rule in `eslint.config.mjs`
 for exactly that reason — as a plain rule it reddens the whole tree on day one.
 Reasoning and the four component principles:
@@ -188,6 +188,56 @@ run in CI's frontend check. The same three records appear in ratchet snapshots.
 
 Sources for the migration shape: [Vue Router props](https://router.vuejs.org/guide/essentials/passing-props.html)
 and [ESLint restricted imports](https://eslint.org/docs/latest/rules/no-restricted-imports).
+
+## Testing the rendered result
+
+Keep template HTML comments, including `eslint-disable` reasons, in English.
+Vite dev and Vitest retain them, and the spaces i18n spec checks `innerHTML` as
+well as visible text; a Chinese comment can fail that check without visible copy.
+
+A spec asserting DOMPurify output uses `// @vitest-environment jsdom` and checks
+that safe content survives as well as unsafe content disappearing. With the
+repo's happy-dom default some inputs become empty strings, making a negative-only
+sanitisation assertion pass without proving the browser behaviour; see
+`src/utils/parser.spec.ts`.
+
+When testing `defineExpose`, verify that the instance belongs to the host being
+tested. If a stub renders its root, the element's `__vueParentComponent` can be
+the stub; climb to the intended host rather than accidentally testing its fake.
+
+Render interaction, layout, scrolling and streaming changes in a real browser
+before delivery; DOM tests do not exercise layout or paint containment. A small
+Vite entry mounting the real component with the repo's Vuetify plugin is enough
+when the full catalog is impractical; for an intercepted-module A/B repro,
+verify that the replacement actually matched before trusting equal results.
+
+A browser-only repro does not cover `src/lib/desktopNative.ts`: its selection
+rules and drag guard require `inDesktopApp()`, and its context-menu guard also
+skips dev builds. Exercise that layer for desktop selection/drag/menu bugs;
+native-shell changes follow [`../desktop/AGENTS.md`](../desktop/AGENTS.md).
+
+`.im-row` in `src/components/room/room-row.css` uses `content-visibility: auto`,
+which creates paint containment and clips row-local popovers. For a popup that
+must escape the row, teleport it out or deliberately lift containment on that
+row; raising `z-index` cannot fix clipping.
+
+## Diagnosing ratchets
+
+After merging main, compare a failing scene's `ready`/`debt` membership before
+the merge on both sides, not only the grade error. A newly frozen scene explains
+where the failure came from, but the merged tree must still meet the ready
+contract; do not move it back to debt or weaken the grader to turn CI green.
+
+The type ratchet reports counts, including in its JSON output. To see diagnostics
+for a small change, use a disposable tsconfig under `frontend/` that extends
+`tsconfig.json`, selects the affected files, and preserves ambient types such as
+`vite/client`; run `tsc --noEmit -p <config>` for TypeScript, or `vue-tsc` for Vue
+SFCs, then remove the config. This helps diagnosis, not proof of a full type pass.
+
+Read baseline counts from their JSON, not a prose snapshot. When lowering a
+shared baseline, check prose restatements against the merged baseline too;
+parallel PRs can preserve old numbers without failing a ratchet. Metric-page
+merge handling is in [`metric-snapshots.md`](../.claude/rules/metric-snapshots.md).
 
 ## Caps and conventions
 
