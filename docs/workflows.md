@@ -182,8 +182,8 @@ Required CI（`.github/workflows/required-ci.yml`）按事件分两档，档位�
 关键点：
 
 - **草稿的绿永远不会被当成正式门禁的绿**。分支保护要求的是 `CI required` 这个名字；草稿只产出 `CI required (draft quick)`，名字不同，草稿绿不可能满足分支保护。即使某个选测 suite 在草稿里被跳过，聚合 job 也绝不产出裸 `CI required`：名字由事件里的 `draft` 决定，不依赖 scope 输出，所以 scope 失败也不会退化成裸名字。
-- **`ready_for_review` 会重跑，且是完整的**。`pull_request` 触发器显式列了 `opened / synchronize / reopened / ready_for_review / converted_to_draft`；草稿转正触发的是一次全新的**完整** run，草稿那次快检的绿不会被复用。`pull_request` 的并发组按 ref 取消旧 run，被取代的草稿快检 run 会被取消，留下的是完整 run 的结果。
+- **`ready_for_review` 会重跑，且是完整的**。`pull_request` 触发器显式列了 `opened / synchronize / reopened / ready_for_review / converted_to_draft`；草稿转正触发的是一次全新的**完整** run，草稿那次快检的绿不会被复用。并发组按 ref 只取消**仍在途**的旧 run；已经跑完的草稿快检 run 不会被撤销，也不需要撤销——它留下的是 `CI required (draft quick)`，名字与分支保护要求的 `CI required` 不同，本就不满足门禁，留下的是完整 run 的 `CI required` 结果。
 - **判定失败即红，绝不放行**：`draft` 缺失、事件 JSON 读不出、事件名未知，一律按**完整档**处理（fail closed）；聚合时按事件重算档位，scope 报的档位与事件不一致就报错。草稿 run 里若有产品 suite 真的跑了（哪怕绿）也算失败——那意味着有完整 suite 在草稿名下跑过。所选 suite 缺结果、取消、空报告、超预算都不算绿。
 - **生产部署链不受影响**：部署门禁只认 `required-ci.yml` 的 `merge_group` run（`deploy/check-auto-deploy.py`）；这条链没改。
 
-**平台递卡（提验收）**：草稿转正式后，`ready_for_review` 才开始完整 Required CI。所以用平台递卡前，必须先让 PR 转正式（`cheese_ready` / 标记 ready），再等**完整的 `CI required`**（不是 `CI required (draft quick)`）变绿——草稿快检绿不构成可验收信号。
+**平台递卡（提验收）**：递卡本身就会把草稿 PR 转正式——`backend/app/domain/review/pr_publish.py` 在卡递出时对还开着的 draft PR 调 `mark_ready_for_review`（`test_accept_pr.py::test_filing_a_card_takes_the_batchs_pr_out_of_draft` 覆盖），于是 `ready_for_review` 触发一次**完整** Required CI。也就是说：**递卡自动开始完整门禁，不需要先手动 `cheese_ready`／标 ready**。但要拿到的验收信号是**同一 head** 上**完整的 `CI required`**（不是 `CI required (draft quick)`）变绿——递卡时那次草稿快检的绿不构成可验收信号，采纳必须等完整 `CI required` 绿。若想在递卡之前就先看完整结果，可以提前标记 ready（可选做法，不是递卡的前提）。

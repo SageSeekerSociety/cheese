@@ -459,13 +459,6 @@ class AggregationTierTest(unittest.TestCase):
         self.assertTrue(gate.failures(needs, "full"))
 
 
-def jobs_of(text):
-    """Split a workflow into ``{job: body}`` by two-space top-level keys."""
-    marks = list(re.finditer(r"(?m)^  ([A-Za-z0-9_]+):$", text))
-    return {m.group(1): text[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(text)]
-            for i, m in enumerate(marks)}
-
-
 def run_bodies(text):
     """The body of every ``run:`` in a workflow, block or inline."""
     lines, i = text.splitlines(), 0
