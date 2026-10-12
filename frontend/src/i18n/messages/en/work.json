@@ -1010,7 +1010,8 @@
       "readOnly": "Only people in the channel can add members",
       "listSeparator": ", ",
       "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
-      "creator": "Manager"
+      "creator": "Manager",
+      "managerHint": "Change it in the project's channel table"
     },
     "mail": {
       "noSubject": "(No subject)",
@@ -2277,6 +2278,8 @@
       "settings": "Settings"
     },
     "created": "Created",
+    "members": "Members",
+    "membersOpen": "View members",
     "archive": "Archive channel",
     "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived"
   },

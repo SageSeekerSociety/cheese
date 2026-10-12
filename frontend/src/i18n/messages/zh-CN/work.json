@@ -1010,7 +1010,8 @@
       "readOnly": "只有频道里的人能添加成员",
       "listSeparator": "、",
       "mentionLoadFailed": "成员名单加载失败，{'@'} 补全可能不全",
-      "creator": "管理者"
+      "creator": "管理者",
+      "managerHint": "在项目设置的频道表里更换"
     },
     "mail": {
       "noSubject": "（无主题）",
@@ -2277,6 +2278,8 @@
       "settings": "设置"
     },
     "created": "创建时间",
+    "members": "成员",
+    "membersOpen": "查看成员",
     "archive": "归档频道",
     "archiveHint": "归档后不能发送消息，历史消息仍可查看和搜索。有进行中的任务时不能归档"
   },

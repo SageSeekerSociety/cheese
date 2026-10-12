@@ -151,6 +151,8 @@ const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf
 
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
+// 成员名单开着没有。名单自己长在成员名册那一块上，详情只叫它开（清单第 5 条）。
+const membersOpen = ref(false)
 const managerName = ref<string | null>(null)
 // 我管不管这个项目：详情打开时才问，和工作区别处读同一份项目（`query/project`）。
 const projectRead = useQuery(
@@ -165,6 +167,11 @@ function archiveFromDetails() {
 function leaveFromDetails() {
   detailsOpen.value = false
   void store.setJoined(props.topic.id, false)
+}
+// 详情先关、名单再开：两张浮层叠在一起，关上面那张时下面那张会跟着晃一下。
+function openMembersFromDetails() {
+  detailsOpen.value = false
+  membersOpen.value = true
 }
 
 // 删除频道（清单第 2 条）：⋯ 菜单和详情「设置」都开到这张确认框上，真正删的是
@@ -232,6 +239,7 @@ useCommands(roomCommands)
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
       <TopicMembers
+        v-model:open="membersOpen"
         :topic-id="topic.id"
         :can-manage="topic.can_manage === true"
         :can-invite="topic.joined === true"
@@ -258,6 +266,7 @@ useCommands(roomCommands)
         @unarchive="store.unarchive(topic.id)"
         @leave="leaveFromDetails"
         @delete="removeChannel"
+        @open-members="openMembersFromDetails"
         @notify="(level, until) => store.setNotifyLevel(topic.id, level, until)"
       />
 
