@@ -1295,5 +1295,82 @@
       "name": "Paging",
       "note": "When there is a previous or next page, pager buttons appear at the bottom right; a single page leaves no row of grey buttons."
     }
+  },
+  "alertsView": {
+    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, claims to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
+    "s1": {
+      "name": "Counts with alerts",
+      "note": "The default: one card per count, and the ones you can act on are buttons that jump to the tasks filtered to them."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: a progress bar, not an empty 'No alerts'."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read states the reason the server gave, with a retry beside it."
+    },
+    "s4": {
+      "name": "Nothing waiting",
+      "note": "Read, and there really is nothing: it says 'No alerts' rather than leaving a blank block."
+    }
+  },
+  "knowledgeView": {
+    "about": "The team knowledge base: the toolbar, the grid and the table, and the two dialogs. Fetching and writing stay in the page — this half only reads props and reports actions.",
+    "s1": {
+      "name": "Grid, four resources",
+      "note": "The default: cards, one per resource, with type, author and time."
+    },
+    "s2": {
+      "name": "Table view",
+      "note": "Switched to the table: the same rows as a list, with an actions menu on each row."
+    },
+    "s3": {
+      "name": "First load",
+      "note": "Not back yet: a spinner in the middle, not an empty base."
+    },
+    "s4": {
+      "name": "Could not load",
+      "note": "A failed read states the reason and offers a retry."
+    },
+    "s5": {
+      "name": "No permission",
+      "note": "On 401/403 it says there is no access and offers no retry."
+    },
+    "s6": {
+      "name": "Nothing in the base",
+      "note": "Read, and there really are none: it offers how to add the first one."
+    },
+    "s7": {
+      "name": "Filtered to nothing",
+      "note": "Read, and the current filters match nothing: it says so and suggests adjusting them."
+    }
+  },
+  "adminMembersPageView": {
+    "about": "The admin 'members' page: the platform-admin roster in two groups (the root list from config, and the ones added here), with add and remove.",
+    "s1": {
+      "name": "The roster",
+      "note": "The default: two groups, avatars with nickname and handle, account status marks only the exceptions, and remove shows on the added rows only."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "No roster yet: skeleton rows in the table, not a premature empty state."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "The table says it could not be read (the server's words as the description) and the retry sits right there."
+    },
+    "s4": {
+      "name": "After adding",
+      "note": "A result notice — a success also speaks, so you can tell which handles were added."
+    },
+    "s5": {
+      "name": "Refreshing",
+      "note": "With a roster already on screen a refresh only dims it (busy); it does not flash the skeleton."
+    },
+    "s6": {
+      "name": "Add dialog",
+      "note": "Search is server-side; candidates already on the roster are drawn disabled, with a badge."
+    }
   }
 }
