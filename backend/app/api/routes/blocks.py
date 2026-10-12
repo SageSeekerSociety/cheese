@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.message_effects import announce_edited_message
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
@@ -35,6 +35,16 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 class MessageEditIn(BaseModel):
     # The same ceiling as sending a message (`ChatMessageIn`).
     content: str = Field(min_length=1, max_length=100000)
+
+
+class WithdrawnAnswer(BaseModel):
+    """撤回一道题的回答，回的是这道题撤回之后的样子。
+
+    和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+    不必再取一次。"""
+
+    id: str
+    answer_log: list[dict] = []
 
 
 @router.patch("/{block_id}")
@@ -126,7 +136,11 @@ async def toggle_reaction(
     return ok({"toggled": "added" if added else "removed", "reactions": reactions})
 
 
-@router.delete("/{block_id}/answer", dependencies=[ROUTE_DECIDES])
+@router.delete(
+    "/{block_id}/answer",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(WithdrawnAnswer),
+)
 async def withdraw_answer(
     block_id: uuid.UUID,
     db: DbSession,

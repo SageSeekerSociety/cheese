@@ -2173,6 +2173,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/blocks/{block_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw Answer
+         * @description Take back your own answer to a question asked with quick replies, so the
+         *     question is unanswered again and its options come back for everyone.
+         *
+         *     ``block_id`` is the question, not the answer: an answer is an ordinary
+         *     message, and what is withdrawn is the line it left on the question
+         *     (`domain/block/questions`). Only whoever answered it can — anyone else gets
+         *     a refusal, not a way to erase somebody's answer. The message the answerer
+         *     sent stays in the room; its words are not what this changes.
+         *
+         *     Whoever was watching gets the question as a `block_updated` frame, and the
+         *     agent that asked it runs another turn, because the turn it had been going
+         *     on was decided on an answer that no longer counts.
+         */
+        delete: operations["withdraw_answer_blocks__block_id__answer_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/comments/{commentId}/attitudes": {
         parameters: {
             query?: never;
@@ -16964,6 +16995,40 @@ export interface components {
             /** H */
             h: number;
         };
+        /**
+         * WithdrawnAnswer
+         * @description 撤回一道题的回答，回的是这道题撤回之后的样子。
+         *
+         *     和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+         *     不必再取一次。
+         */
+        WithdrawnAnswer: {
+            /** Id */
+            id: string;
+            /**
+             * Answer Log
+             * @default []
+             */
+            answer_log: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** WithdrawnAnswerEnvelope */
+        WithdrawnAnswerEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["WithdrawnAnswer"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** WorkLeaseRequest */
         WorkLeaseRequest: {
             /** Env */
@@ -21134,6 +21199,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    withdraw_answer_blocks__block_id__answer_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawnAnswerEnvelope"];
                 };
             };
             /** @description Validation Error */
