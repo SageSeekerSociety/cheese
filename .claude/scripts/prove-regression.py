@@ -34,27 +34,33 @@ The first run must fail and the second must pass. Exit 0 proven, 1 not proven,
 2 could not judge — the last for a node id that does not resolve, a revision that
 is not a commit here, a layout this script has no runner for, a --copy file that
 is missing or that would land outside the worktree, a runner that is not on PATH,
-an inferred run that did not end in a verdict, a command that exited 127 without
-ever running. If your test is not one of the two layouts below, say how to run it
+an inferred run that did not end in a verdict or that collected no test, a
+command that exited 127 without ever running. If your test is not one of the two layouts below, say how to run it
 with --command; the script will not guess a runner it does not know, because a
 runner that is not installed looks exactly like a test that does not fail.
 
 The two it does know get no guessing either: for them, only a pass and a failure
 are results. Each runner is asked for its version before either half is read, and
-the run itself is read only when it ends in 0 or 1 — pytest's 1 is "some tests
-failed", vitest's 1 is "tests failed". Anything else is refused, whatever the
-number. That asymmetry is the point: the codes a runner uses when the test never
-ran are its own to choose, and pytest spreads them over a range — 2 for a
-collection error, 4 for a node id that collected nothing, 5 for a run that
-collected nothing at all — so a table of them would always be one short. With
+the run itself is read only when it ends in 0 or 1. Anything else is refused,
+whatever the number. That asymmetry is the point: the codes a runner uses when
+the test never ran are its own to choose, and pytest spreads them over a range —
+2 for a collection error, 4 for a node id that collected nothing, 5 for a run
+that collected nothing at all — so a table of them would always be one short.
+Vitest chooses differently: 1 is a failing test *and* a spec it could not load,
+so there the code is not a verdict on its own either, and the vitest half is
+judged only when the run also wrote a report counting the tests it collected
+(`--reporter=json`, read by `report_ran`). With
 --command the script is told nothing, because the caller named that command and
-the tree it runs in; its dependencies are theirs to keep installed. A fix that adds a module the test
+the tree it runs in; its dependencies are theirs to keep installed, and a
+`--command` that exits 2 is a failure like any other. A fix that adds a module the test
 imports is a real regression guard, and it is refused on the inferred runner too,
-because the test is copied into the worktree but that module is not there; pass
-`--command` to have the code read as the failure it looks like, which is the
-price of never calling a test that was not collected "watched failing". A test
-that needs Postgres needs the dev stack up first (`eval "$(bash
-.claude/scripts/dev-db.sh env)"`); this script never starts it.
+because the test is copied into the worktree but that module is not there; on
+pytest that is a collection error and on vitest it is a file that collected
+nothing, and either way `--command` is how to have the code read as the failure
+it looks like — which is the price of never calling a test that was not
+collected "watched failing". A test that needs Postgres needs the dev stack up
+first (`eval "$(bash .claude/scripts/dev-db.sh env)"`); this script never starts
+it.
 
 The runners it infers are the two this repository uses: pytest over `backend/`
 (`uv run --no-sync`), vitest over `frontend/` (`pnpm exec`).
@@ -65,6 +71,7 @@ The runners it infers are the two this repository uses: pytest over `backend/`
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -108,19 +115,30 @@ STALE_AFTER = 24 * 60 * 60
 #: to avoid, arriving by the other door.
 CANNOT_RUN = 127
 
-#: What each inferred runner exits when the test failed. Everything else is a run
-#: that did not reach a verdict, and is refused rather than judged. pytest's
-#: codes are a range as wide as its failure modes — 2 "interrupted" (a collection
-#: error, a module the test imports that this half does not have), 3 an internal
-#: error, 4 "found no collectors" for a `::name` that is not there, 5 nothing
-#: collected — and `uv` passes them through, so a table of them would always be
-#: one short. Vitest has its own: it exits 1 for failed tests and 254 for a
-#: binary it could not load. Neither number is a verdict, and the two that are
-#: are the same in both. This is the mistake CANNOT_RUN guards
-#: against, one door along — the runner started, so the check for a program that
-#: never did misses it — and it closes the same way from both sides: asking the
-#: runner up front (`cannot_start`) and reading the run's own code after (`run`).
+#: What an inferred runner exits when the test passed and when it failed.
+#: Everything else is a run that did not reach a verdict, and is refused rather
+#: than judged. For pytest these two are exactly the verdicts: its codes are a
+#: range as wide as its failure modes — 2 "interrupted" (a collection error, a
+#: module the test imports that this half does not have), 3 an internal error, 4
+#: "found no collectors" for a `::name` that is not there, 5 nothing collected —
+#: and `uv` passes them through, so a table of them would always be one short.
+#: Vitest chooses differently: 1 is a failing test *and* a spec it could not
+#: load, a transform error, a run that found no test file at all, so there the
+#: code alone is not a verdict and the half is judged only when it also wrote a
+#: report counting the test it collected (`VITEST_REPORT_FLAGS`, `report_ran`).
+#: Without that second door a fix that adds a module the spec imports — the
+#: test is copied into the worktree, the module is not — reads as a watched
+#: failure. This is the mistake CANNOT_RUN guards against, one door along: the
+#: runner started, so the check for a program that never did misses it. It
+#: closes the same way from both sides, asking the runner up front
+#: (`cannot_start`) and reading what the run itself left after (`run`).
 FAILURE_CODES = {0, 1}
+
+#: How the vitest half is asked what it collected. `--reporter=json` alone would
+#: replace the output the caller reads; both reporters keep it and write the
+#: count to the file named by `--outputFile`, which is the only place the count
+#: can be read from without parsing the console.
+VITEST_REPORT_FLAGS = ("--reporter=default", "--reporter=json")
 
 FIX_HINT = (
     "修法：把 --without 指到「不含这个修复」的提交（通常是你那条修复提交的父提交）。"
@@ -177,8 +195,9 @@ def locate(node: str, root: Path) -> tuple[Path, str]:
     raise SystemExit(2)
 
 
-def runner_for(node: str, relative: str) -> tuple[list[str], str] | None:
-    """The command that runs `node`, and the subdirectory to run it from — or None.
+def runner_for(node: str, relative: str) -> tuple[list[str], str, bool] | None:
+    """The command that runs `node`, the subdirectory to run it from, and whether
+    its exit code needs a report to become a verdict — or None.
 
     None means this script has no runner for that layout, and the caller should
     say "could not judge" rather than run something and read its exit code. The
@@ -194,7 +213,14 @@ def runner_for(node: str, relative: str) -> tuple[list[str], str] | None:
     `pnpm exec` both mean "use what is already installed", which is what the
     symlinked dependency directories are for. `relative` is the test file's path,
     so the node id is rebuilt from it plus the `::test_name` the caller wrote.
+    The third element says the run has to leave a report behind before its exit
+    code can be read as a verdict, and is true of the vitest layout alone; see
+    FAILURE_CODES.
     """
+    # The file `locate` found is the stripped path, so the `::name` has to come
+    # off the same string: a node id padded with spaces would otherwise slice
+    # the suffix at the wrong offset and name a file that does not exist.
+    node = node.strip()
     suffix = node[len(test_path_of(node)) :]
     if relative.endswith(".py"):
         if relative.startswith("backend/"):
@@ -208,14 +234,46 @@ def runner_for(node: str, relative: str) -> tuple[list[str], str] | None:
                     "-q",
                 ],
                 "backend",
+                False,
             )
         return None
     if relative.startswith("frontend/"):
         return (
             ["pnpm", "exec", "vitest", "run", relative[len("frontend/") :] + suffix],
             "frontend",
+            True,
         )
     return None
+
+
+def report_path(tag: str) -> Path:
+    """A path for one half's report, before anything has written it."""
+    fd, name = tempfile.mkstemp(prefix=f"{WORKTREE_PREFIX}{tag}-", suffix=".json")
+    os.close(fd)
+    path = Path(name)
+    # Nothing wrote it yet, and a file left from an earlier run would be read as
+    # this half's. The runner creates it; until then it is absent.
+    path.unlink()
+    return path
+
+
+def report_ran(report: Path) -> bool:
+    """Whether that half's report says a test was collected at all.
+
+    The count is the runner's own, written whatever the run did, and 0 means
+    the half reached no test: the spec could not be loaded (the module the fix
+    adds is not in this tree), nothing matched what was named, or the run ended
+    before it began. A half that collected nothing has no failure to show, so
+    it cannot be the red half a fix is credited with.
+    """
+    try:
+        collected = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(collected, dict):
+        return False
+    total = collected.get("numTotalTests")
+    return isinstance(total, int) and total > 0
 
 
 def runner_probe(argv: list[str]) -> list[str] | None:
@@ -398,9 +456,18 @@ def cannot_start(probe: list[str], where: Path) -> None:
         raise SystemExit(2)
 
 
-def run(argv: list[str], where: Path, probe: list[str] | None = None) -> int:
+def run(
+    argv: list[str],
+    where: Path,
+    probe: list[str] | None = None,
+    report: Path | None = None,
+) -> int:
     if probe is not None:
         cannot_start(probe, where)
+    if report is not None:
+        # The layout needs it: `report` non-None is how the caller says this
+        # runner's exit code is not a verdict on its own (FAILURE_CODES).
+        argv = [*argv, *VITEST_REPORT_FLAGS, f"--outputFile={report}"]
     print(f"  $ (cd {where}) {' '.join(argv)}", flush=True)
     try:
         done = subprocess.run(argv, cwd=str(where), check=False)
@@ -421,8 +488,8 @@ def run(argv: list[str], where: Path, probe: list[str] | None = None) -> int:
         # An inferred runner ended somewhere other than a pass or a failure, so
         # the test did not reach a verdict: pytest's 2 is a collection error, its
         # 4 is a `::name` that collected nothing, its 5 is nothing collected at
-        # all, 3 is an error inside pytest, and `pnpm exec vitest` has a range of
-        # its own. Nothing was asserted, so a red half here would credit the fix
+        # all, 3 is an error inside pytest, and vitest's 254 is a binary it could
+        # not load. Nothing was asserted, so a red half here would credit the fix
         # with a failure that was the run's, and a before half that only could
         # not be collected is exactly the "was this test ever red" this tool
         # exists to answer. Keyed on the probe rather than on the runner's name,
@@ -433,6 +500,20 @@ def run(argv: list[str], where: Path, probe: list[str] | None = None) -> int:
             "the test reaching a verdict — the test was not collected, or the "
             "runner stopped. Pass --command to have a code like this read as the "
             "failure it looks like.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if report is not None and not report_ran(report):
+        # The same question as above, on the runner whose code cannot answer it:
+        # vitest exits 1 for a spec it could not load as well as for a test that
+        # failed, so the code that got this far is not the verdict it looks like.
+        # The report it wrote is the runner's own count of what it collected,
+        # and a half that collected nothing failed nothing.
+        print(
+            f"prove-regression: {' '.join(argv)} collected no test ({report} "
+            "counts none) — the file could not be loaded, nothing matched, or the "
+            "run ended before it began. That is not a red half; pass --command to "
+            "have it read the way you mean it.",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -464,6 +545,7 @@ def judge(before: int, after: int, node: str) -> int:
 def check(root: Path, args: argparse.Namespace) -> int:
     _, relative = locate(args.node, root)
     copies = [*args.copy, relative]
+    reports: list[Path | None] = [None, None]
     if args.command:
         # An explicit command runs at the repository root in both trees, so it
         # can reach whatever it needs without this script guessing a runner.
@@ -479,7 +561,11 @@ def check(root: Path, args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        argv, subdir = inferred
+        argv, subdir, wants_report = inferred
+        # One per half: a single path would be overwritten before it was read,
+        # and each half's answer is about that half's tree.
+        if wants_report:
+            reports = [report_path("before"), report_path("after")]
     probe = runner_probe(argv)
     sha = resolve_rev(root, args.without)
     reclaim_stale(root)
@@ -491,11 +577,14 @@ def check(root: Path, args: argparse.Namespace) -> int:
     try:
         note = without_fix(root, sha, tree, copies, args.keep)
         print(f"without the fix ({args.without} → {note})")
-        before = run(argv, tree / subdir if subdir else tree, probe)
+        before = run(argv, tree / subdir if subdir else tree, probe, reports[0])
         print("with the fix (working tree)")
-        after = run(argv, root / subdir if subdir else root, probe)
+        after = run(argv, root / subdir if subdir else root, probe, reports[1])
         return judge(before, after, args.node)
     finally:
+        for report in reports:
+            if report is not None:
+                report.unlink(missing_ok=True)
         if not args.keep:
             for path in trees:
                 remove_worktree(root, path)
@@ -552,7 +641,7 @@ def self_test() -> int:
             got = judge(before, after, "node")
         tally.case(label, got == want)
 
-    argv, subdir = runner_for(
+    argv, subdir, wants_report = runner_for(
         "backend/tests/unit/test_x.py::test_y", "backend/tests/unit/test_x.py"
     )
     tally.case(
@@ -560,21 +649,67 @@ def self_test() -> int:
         argv is not None
         and argv[:4] == ["uv", "run", "--no-sync", "pytest"]
         and argv[4] == "tests/unit/test_x.py::test_y"
-        and subdir == "backend",
+        and subdir == "backend"
+        and not wants_report,
     )
-    argv, subdir = runner_for("frontend/src/a.spec.ts", "frontend/src/a.spec.ts")
+    # The padded node is the same node: `locate` strips it to find the file, so
+    # the `::name` has to come off the same stripped string or the runner is
+    # handed a path with the caller's spaces spliced into the file name.
+    padded, _, _ = runner_for(
+        " backend/tests/unit/test_x.py::test_y ", "backend/tests/unit/test_x.py"
+    )
     tally.case(
-        "a frontend .ts node runs under vitest from frontend/",
+        "a node id with surrounding spaces names the same file",
+        padded is not None and padded[4] == "tests/unit/test_x.py::test_y",
+    )
+    argv, subdir, wants_report = runner_for(
+        "frontend/src/a.spec.ts", "frontend/src/a.spec.ts"
+    )
+    tally.case(
+        "a frontend .ts node runs under vitest from frontend/, and needs a report",
         argv is not None
         and argv[:4] == ["pnpm", "exec", "vitest", "run"]
         and argv[4] == "src/a.spec.ts"
-        and subdir == "frontend",
+        and subdir == "frontend"
+        and wants_report,
     )
     for relative in ("e2e/tests/a.spec.ts", ".github/scripts/test_x.py"):
         tally.case(
             f"{relative} has no inferred runner",
             runner_for(relative, relative) is None,
         )
+
+    # What vitest's report says about a half, which is the only thing that turns
+    # its exit 1 into a verdict. A report that is missing, unreadable or shaped
+    # like something else has to read as "no test", not as a failure: the cost of
+    # being wrong that way is a refused run, and the other way round is a fix
+    # credited with a failure that never happened.
+    with tempfile.TemporaryDirectory() as scratch:
+        holder = Path(scratch)
+        shapes = {
+            "one test collected, failed": '{"numTotalTests": 1, "numFailedTests": 1}',
+            "no test collected": '{"numTotalTests": 0, "numFailedTestSuites": 1}',
+            "not an object": "[1, 2]",
+            "no count at all": '{"success": false}',
+            "not json": "Tests  no tests\n",
+        }
+        for label, body in shapes.items():
+            probe = holder / f"{label.replace(' ', '-')}.json"
+            probe.write_text(body, encoding="utf-8")
+            tally.case(
+                f"a vitest report with {label} reads as ran={label.startswith('one ')}",
+                report_ran(probe) is label.startswith("one "),
+            )
+        tally.case(
+            "a report that was never written has no test in it",
+            not report_ran(holder / "absent.json"),
+        )
+        made = report_path("case")
+        tally.case(
+            "a report path is reserved but not created",
+            not made.exists() and made.parent == Path(tempfile.gettempdir()),
+        )
+        made.unlink(missing_ok=True)
 
     with tempfile.TemporaryDirectory() as scratch:
         holder = Path(scratch)
@@ -874,7 +1009,7 @@ def self_test() -> int:
 
         # A runner that is there but cannot load its test — the program exists,
         # the package it drives does not — exits with its own code: 2 under uv,
-        # 254 under pnpm. A test that ran and failed exits 1. Reading the first
+        # 254 under vitest. A test that ran and failed exits 1. Reading the first
         # as the second is the mistake the 127 guard was added to close, one door
         # along: nothing ran either way. A runner that cannot load its test
         # cannot answer for itself either, so this is the probe's door, and it is
@@ -931,9 +1066,8 @@ def self_test() -> int:
                 and "NOT PROVEN" not in stalled_run.stdout,
             )
         # The same door from the other runner, and the reason a check written
-        # against uv's numbers is not enough: pnpm's is 254 for a binary it could
-        # not load, and a `::name` in a vitest node id is no more collected than
-        # pytest's.
+        # against uv's numbers is not enough: 254 is vitest's code for a binary
+        # it could not load, and it is not 2.
         shuttle = Path(scratch) / "verdictless-pnpm"
         shuttle.mkdir()
         (shuttle / "pnpm").write_text(
@@ -971,6 +1105,69 @@ def self_test() -> int:
         tally.case(
             "end to end: the same shim failing with 1 is still judged",
             ordinary.returncode == 1 and "NOT PROVEN" in ordinary.stdout,
+        )
+        # What vitest's exit code cannot say, and the reason that layout is read
+        # twice over: 1 is both "these tests failed" and "this spec could not be
+        # loaded", and the second is a test that never ran — which is exactly
+        # what a fix that adds the module the spec imports looks like from the
+        # without-the-fix half. So the half is judged only when the run also
+        # wrote a report counting a test it collected. The report path is in the
+        # command line, so a shim can write one; the first shim below never does.
+        def vitest_shim(name: str, tail: str) -> str:
+            body = (
+                "#!/bin/sh\n"
+                'case "$*" in *--version*) exit 0;; esac\n'
+                'for a in "$@"; do case "$a" in --outputFile=*) '
+                'out="${a#--outputFile=}";; esac; done\n'
+            ) + tail
+            shim_dir = Path(scratch) / f"vitest-{name}"
+            shim_dir.mkdir()
+            (shim_dir / "pnpm").write_text(body, encoding="utf-8")
+            (shim_dir / "pnpm").chmod(0o755)
+            return f"{shim_dir}{os.pathsep}{env.get('PATH', '')}"
+
+        silent = vitest_shim("nothing-collected", "exit 1\n")
+        never_ran = prove(without, None, node="frontend/src/a.spec.ts", path=silent)
+        tally.case(
+            "end to end: a vitest half that collected nothing is not judged",
+            never_ran.returncode == 2
+            and "collected no test" in never_ran.stderr
+            and "NOT PROVEN" not in never_ran.stdout,
+        )
+        # ... and a half that did collect one is an ordinary failure, or the
+        # check would refuse the case the layout exists for.
+        counted = vitest_shim(
+            "counted",
+            'if grep -q "value = 2" ../app.py 2>/dev/null; then\n'
+            '  printf \'{"numTotalTests": 1}\' > "$out"\n'
+            "  exit 0\n"
+            "fi\n"
+            'printf \'{"numTotalTests": 1, "numFailedTests": 1}\' > "$out"\n'
+            "exit 1\n",
+        )
+        collected = prove(without, None, node="frontend/src/a.spec.ts", path=counted)
+        tally.case(
+            "end to end: a vitest half that collected a failing test is judged",
+            collected.returncode == 0 and "PROVEN" in collected.stdout,
+        )
+        # Each half answers for itself: here the report is written only where the
+        # fix is absent, so the half in the caller's tree ends 0 having collected
+        # nothing. Read by its exit code alone that is a green half, and green
+        # with a red before half is PROVEN — for a test that never ran.
+        one_sided = vitest_shim(
+            "after-silent",
+            'if grep -q "value = 2" ../app.py 2>/dev/null; then\n'
+            "  exit 0\n"
+            "fi\n"
+            'printf \'{"numTotalTests": 1, "numFailedTests": 1}\' > "$out"\n'
+            "exit 1\n",
+        )
+        half_silent = prove(without, None, node="frontend/src/a.spec.ts", path=one_sided)
+        tally.case(
+            "end to end: the half with the fix answers for itself too",
+            half_silent.returncode == 2
+            and "collected no test" in half_silent.stderr
+            and "NOT PROVEN" not in half_silent.stdout,
         )
         # ... and the refusal is the probe's, not the exit code's on its own.
         # `--command` is a command the caller named and a tree they keep
