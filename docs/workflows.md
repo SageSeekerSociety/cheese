@@ -171,3 +171,19 @@ python3 .github/scripts/ci-fast.py --tier quick --types        # ≡ task ci:fas
 - **pre-push hook**：opt-in，片段在 `ci-fast.py` 文件头注释里，不默认安装；也别用 `--no-verify` 绕过——被跳过的 hook 一律按未执行处理，整体不会是绿。外层 shell 里的 `SKIP` / `PRE_COMMIT_COLOR` 等会改判定的变量在起子进程前被清掉，不会把某个嵌套检查悄悄跳过。
 
 设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释。
+
+### 草稿 PR 只跑快检档，正式 PR / 合并队列跑完整门禁
+
+Required CI（`.github/workflows/required-ci.yml`）按事件分两档，档位由 `.github/scripts/required-ci.py` 从事件读取（`tier_for`）：
+
+- **草稿 PR**（`pull_request` 且 payload 里 `pull_request.draft` 为 `true`）：只跑快检档——一个内联 job 跑 `python3 .github/scripts/ci-fast.py --tier quick`，所有产品 suite 一律跳过。聚合 job 的名字是 **`CI required (draft quick)`**，与正式名字不同。
+- **正式 PR / 合并队列**（`merge_group`，或任意 `draft` 为 `false` 的 `pull_request`，含把草稿转正的 `ready_for_review`）：跑完整门禁——merge diff 选中的每个 suite 都跑，聚合 job 名字是 **`CI required`**。
+
+关键点：
+
+- **草稿的绿永远不会被当成正式门禁的绿**。分支保护要求的是 `CI required` 这个名字；草稿只产出 `CI required (draft quick)`，名字不同，草稿绿不可能满足分支保护。即使某个选测 suite 在草稿里被跳过，聚合 job 也绝不产出裸 `CI required`：名字由事件里的 `draft` 决定，不依赖 scope 输出，所以 scope 失败也不会退化成裸名字。
+- **`ready_for_review` 会重跑，且是完整的**。`pull_request` 触发器显式列了 `opened / synchronize / reopened / ready_for_review / converted_to_draft`；草稿转正触发的是一次全新的**完整** run，草稿那次快检的绿不会被复用。并发组按 ref 只取消**仍在途**的旧 run；已经跑完的草稿快检 run 不会被撤销，也不需要撤销——它留下的是 `CI required (draft quick)`，名字与分支保护要求的 `CI required` 不同，本就不满足门禁，留下的是完整 run 的 `CI required` 结果。
+- **判定失败即红，绝不放行**：`draft` 缺失、事件 JSON 读不出、事件名未知，一律按**完整档**处理（fail closed）；聚合时按事件重算档位，scope 报的档位与事件不一致就报错。草稿 run 里若有产品 suite 真的跑了（哪怕绿）也算失败——那意味着有完整 suite 在草稿名下跑过。所选 suite 缺结果、取消、空报告、超预算都不算绿。
+- **生产部署链不受影响**：部署门禁只认 `required-ci.yml` 的 `merge_group` run（`deploy/check-auto-deploy.py`）；这条链没改。
+
+**平台递卡（提验收）**：递卡本身就会把草稿 PR 转正式——`backend/app/domain/review/pr_publish.py` 在卡递出时对还开着的 draft PR 调 `mark_ready_for_review`（`test_accept_pr.py::test_filing_a_card_takes_the_batchs_pr_out_of_draft` 覆盖），于是 `ready_for_review` 触发一次**完整** Required CI。也就是说：**递卡自动开始完整门禁，不需要先手动 `cheese_ready`／标 ready**。但要拿到的验收信号是**同一 head** 上**完整的 `CI required`**（不是 `CI required (draft quick)`）变绿——递卡时那次草稿快检的绿不构成可验收信号，采纳必须等完整 `CI required` 绿。若想在递卡之前就先看完整结果，可以提前标记 ready（可选做法，不是递卡的前提）。

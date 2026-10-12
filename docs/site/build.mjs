@@ -410,7 +410,12 @@ function ciSource() {
   const declared = [...(jobs.get('scope') || '').matchAll(/^ {6}([a-z0-9_]+): \$\{\{ steps\.scope\.outputs\.\1 \}\}$/gm)].map((m) => m[1])
   const runs = {}
   for (const [job, body] of jobs) {
-    const gate = /^ {4}if: needs\.scope\.outputs\.([a-z0-9_]+) == 'true'$/m.exec(body)
+    // A suite's job is gated on its own scope output. Since the draft tier, the
+    // gate is `needs.scope.outputs.tier == 'full' && needs.scope.outputs.<suite>
+    // == 'true'` — the tier guard makes a `true` suite still skip on a draft —
+    // so the suite key leads the second clause and the tier guard is optional
+    // here (a bare `<suite> == 'true'` gate is still read).
+    const gate = /^ {4}if: (?:needs\.scope\.outputs\.tier == 'full' && )?needs\.scope\.outputs\.([a-z0-9_]+) == 'true'$/m.exec(body)
     const uses = /^ {4}uses: \.\/\.github\/workflows\/([\w.-]+)$/m.exec(body)
     if (gate && uses) runs[gate[1]] = uses[1]
   }
