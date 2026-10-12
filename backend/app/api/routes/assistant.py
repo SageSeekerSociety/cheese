@@ -49,9 +49,9 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
-from app.domain.feature_stats import pricing
 from app.domain.task.claims import claim_of
 from app.domain.task.services import TaskService, ensure_task_readable
+from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.user.services import timezones_by_ids
 

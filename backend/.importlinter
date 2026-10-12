@@ -261,7 +261,6 @@ ignore_imports =
     app.domain.discussion.services -> app.domain.delivery.ledger
     app.domain.discussion.services -> app.domain.notification.models
     app.domain.docs_site.library -> app.domain.project.models
-    app.domain.feedback.repositories -> app.domain.platform_stats.windows
     app.domain.feedback.repositories -> app.domain.topic.models
     app.domain.identity.services -> app.domain.topic_membership.services
     app.domain.knowledge.services -> app.domain.team.repositories
@@ -274,7 +273,6 @@ ignore_imports =
     app.domain.memory.migration_service -> app.domain.project.services
     app.domain.memory.migration_service -> app.domain.usage.ledger
     app.domain.memory.reads -> app.domain.block.models
-    app.domain.memory.reads -> app.domain.platform_stats.windows
     app.domain.memory.redundant -> app.domain.agent.execution
     app.domain.memory.redundant -> app.domain.topic.models
     app.domain.mentions -> app.domain.membership.roster
@@ -388,15 +386,12 @@ ignore_imports =
     app.domain.topic_membership.services -> app.domain.topic.repositories
     app.domain.usage.credits -> app.domain.agent.platform_notices
     app.domain.usage.ledger -> app.domain.project.services
-    app.domain.usage.repositories -> app.domain.platform_stats.windows
     app.domain.usage.repositories -> app.domain.project.models
-    app.domain.usage.subscription_ingest -> app.domain.feature_stats.pricing
     app.domain.usage.subscription_ingest -> app.domain.project.repositories
     app.domain.user.realname_services -> app.domain.space.services
     app.domain.user.repositories -> app.domain.answers.models
     app.domain.user.repositories -> app.domain.identity.models
     app.domain.user.repositories -> app.domain.knowledge.models
-    app.domain.user.repositories -> app.domain.platform_stats.windows
     app.domain.user.repositories -> app.domain.questions.models
     app.domain.user.repositories -> app.domain.task.models
     app.domain.user.repositories -> app.domain.team.models

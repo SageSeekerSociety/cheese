@@ -185,7 +185,7 @@ class Rates:
     @classmethod
     def of(cls, model: str, table: Mapping[str, RateRow] | None) -> "Rates | None":
         """``model``'s rates from the gateway's rate table
-        (``feature_stats.pricing.model_rates``); None when a call to it cannot
+        (``usage.pricing.model_rates``); None when a call to it cannot
         be charged."""
         if not table or model not in table:
             return None

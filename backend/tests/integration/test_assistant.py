@@ -43,9 +43,9 @@ from app.core.config import settings
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant.models import AssistantMessage
-from app.domain.feature_stats import pricing
 from app.domain.task.models import Task, TaskMembership
 from app.domain.team.models import Team
+from app.domain.usage import pricing
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from app.domain.user.models import User
