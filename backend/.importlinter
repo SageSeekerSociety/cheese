@@ -471,23 +471,14 @@ ignore_imports =
     app.api.routes.addresses -> app.api.routes.topics
     app.api.routes.app_sign_in -> app.api.routes.users.auth
     app.api.routes.chat -> app.api.room_snapshot
-    app.api.routes.dashboard -> app.api.routes.spaces
     app.api.routes.document_agent -> app.api.routes.document_comments
     app.api.routes.forge_token -> app.api.routes.llm_tunnel
     app.api.routes.living_docs -> app.api.routes.topics
     app.api.routes.notifications_live -> app.api.routes.awaiting
     app.api.routes.preview_sessions -> app.api.preview_host
     app.api.routes.recruitment -> app.api.routes.teams
-    app.api.routes.space_announcements -> app.api.routes.spaces
-    app.api.routes.spaces_analytics -> app.api.routes.spaces
     app.api.routes.spaces_analytics -> app.api.routes.tasks._common
-    app.api.routes.spaces_invite_codes -> app.api.routes.spaces
-    app.api.routes.spaces_materials -> app.api.routes.spaces
-    app.api.routes.spaces_member -> app.api.routes.spaces
-    app.api.routes.spaces_organization -> app.api.routes.spaces
-    app.api.routes.task_inheritance -> app.api.routes.spaces
     app.api.routes.task_inheritance -> app.api.routes.tasks._common
-    app.api.routes.tasks._common -> app.api.routes.spaces
     app.api.routes.topics -> app.api.routes.projects
     app.api.routes.topics -> app.api.routes.topics_rows
     app.api.routes.topics_asks -> app.api.routes.topics
@@ -510,7 +501,6 @@ ignore_imports =
     app.api.routes.users_team -> app.api.routes.teams
     app.api.task_instructions -> app.api.routes.topics
     app.api.task_origin -> app.api.routes.topics
-    app.api.task_teaching -> app.api.routes.spaces
     app.domain.platform_stats.services -> app.api.routes.health
     app.main -> app.api.preview_host
     app.main -> app.api.routes.connector

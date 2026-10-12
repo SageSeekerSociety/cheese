@@ -19,16 +19,9 @@ the block stood (`spaces.py` < `spaces_analytics.py` < `spaces_member.py` <
 `operationId` and their order exactly where they were, and the module mounts
 itself through `app.main._discover_routers` like every other route module.
 
-The helpers it shares with the routes that stay -- `_ensure_space_admin`,
-`_ensure_space_visible`, `get_space_analytics_view_service`,
-`get_space_user_realname_service`, `require_reviewed_space` and the file's
-`_logger` -- stay in `spaces.py` and are imported here, the shape
-`spaces_member.py` and `spaces_organization.py` already use. `_logger` comes
-along so the one audit warning the participant export writes keeps its channel
-(`app.api.routes.spaces`); `get_space_user_realname_service` stays behind even
-though nothing else in `spaces.py` now calls it, next to the other
-`get_space_*_service` factories. `spaces.py` imports nothing from this module,
-so there is no cycle.
+The helpers it shares with the routes that stay now live in `app/api/space_deps.py`.
+`_logger` is defined here on the `app.api.routes.spaces` channel so the one audit
+warning the participant export writes keeps its name.
 
 Nothing here reads an `app.domain.*.models` module -- the five services are
 reached through `app.domain.space.analytics_view_service`,
@@ -40,6 +33,7 @@ and the one request body `LearningOutlineRequest` are named nowhere else, so
 they move with the routes that use them.
 """
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -47,15 +41,14 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.routes.spaces import (
+from app.api.routes.tasks._common import get_task_submission_service
+from app.api.space_deps import (
     _ensure_space_admin,
     _ensure_space_visible,
-    _logger,
     get_space_analytics_view_service,
     get_space_user_realname_service,
     require_reviewed_space,
 )
-from app.api.routes.tasks._common import get_task_submission_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.client_address import resolved_client_address
@@ -65,6 +58,9 @@ from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
 from app.domain.task.services import TaskSubmissionService
 from app.domain.user.realname_services import UserRealNameService
+
+# Kept on the channel the participant-export audit warning always used.
+_logger = logging.getLogger("app.api.routes.spaces")
 
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]

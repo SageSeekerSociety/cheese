@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
-from app.api.routes.spaces import TeachingRequest
+from app.api.space_payloads import TeachingRequest
 from app.api.task_teaching import (
     apply_task_teaching,
     coerce_teaching,

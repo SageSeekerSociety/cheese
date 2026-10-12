@@ -10,7 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.routes.spaces import _ensure_space_visible, require_reviewed_space
+from app.api.space_deps import _ensure_space_visible, require_reviewed_space
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin

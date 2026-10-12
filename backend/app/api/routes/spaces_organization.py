@@ -35,7 +35,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.api.routes.spaces import (
+from app.api.space_deps import (
+    _ensure_space_visible,
+    get_space_service,
+    get_space_topics_service,
+    require_reviewed_space,
+)
+from app.api.space_payloads import (
     AddSpaceManagerRequest,
     CreateSpaceCategoryRequest,
     CreateSpaceDomainGroupRequest,
@@ -46,10 +52,6 @@ from app.api.routes.spaces import (
     _build_full_space_payload,
     _category_to_api_model,
     _domain_group_to_api_model,
-    _ensure_space_visible,
-    get_space_service,
-    get_space_topics_service,
-    require_reviewed_space,
 )
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
