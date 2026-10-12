@@ -128,6 +128,7 @@
     "src/views/user/settings/SecurityView.vue",
     "src/views/user/settings/ThisDeviceView.vue",
     "src/views/user/settings/UsageView.vue",
+    "src/views/welcome/WelcomeView.vue",
     "src/views/workspace/ChannelBrowseView.vue",
     "src/views/workspace/ChannelFilesView.vue",
     "src/views/workspace/ProjectOverviewView.vue",

@@ -63,12 +63,18 @@ class User(Base):
     # whose clock their quiet hours are read on. NULL until a page reports one;
     # NULL is read as Beijing time (`notification.preferences.DEFAULT_TIMEZONE`).
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # When the account was given its first project (`POST /users/me/first-project`).
-    # Set once: someone who later leaves or deletes every project lands on the
-    # inbox instead of being handed another one.
-    first_project_at: Mapped[datetime | None] = mapped_column(
+    # When they finished or skipped the new-user guide (`POST /users/me/onboarding`,
+    # `frontend/src/views/welcome/`). NULL until then: someone signing in with no
+    # project and this unset is sent to the guide, on whichever device they use.
+    onboarded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # What they mainly use the platform for, picked in the guide: one of
+    # `WORK_ROLES` (`app/domain/user/about.py`). Every AI teammate reads it on the
+    # project roster, so it knows who it is working with.
+    work_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Their school or employer, as they wrote it; read with `work_role`.
+    organization: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

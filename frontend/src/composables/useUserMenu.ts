@@ -46,7 +46,9 @@ export function useUserMenu() {
     } catch (error) {
       console.warn('Logout request failed; clearing local session anyway:', error)
     } finally {
-      AccountService.logout()
+      // 等登录态清掉再回首页：首页的守卫看到还登录着，会把人送回项目里，一个项目都
+      // 没有的新账号还会在退出的这一下被建出第一个项目（`landingForMember`）。
+      await AccountService.logout()
       router.push('/')
     }
   }

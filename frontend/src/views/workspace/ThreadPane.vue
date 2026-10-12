@@ -16,6 +16,7 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useMessageFold } from '@/composables/useMessageFold'
 
 import { ApiError } from '@/api'
@@ -162,7 +163,12 @@ function toTask() {
 </script>
 
 <template>
-  <section class="thread-pane" :aria-label="t('work.room.thread.title')" data-testid="thread-pane">
+  <section
+    v-guide-anchor="'thread-pane'"
+    class="thread-pane"
+    :aria-label="t('work.room.thread.title')"
+    data-testid="thread-pane"
+  >
     <header class="thread-pane__head">
       <div class="thread-pane__titles">
         <h2 class="thread-pane__title t-title">{{ t('work.room.thread.title') }}</h2>

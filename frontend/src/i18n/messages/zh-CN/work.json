@@ -32,7 +32,6 @@
   },
   "allSpaces": "全部空间",
   "emptyTitle": "暂无{project}",
-  "firstProjectName": "{name}的项目",
   "joinAction": "用邀请码加入",
   "joinBody": "邀请码由空间的创建者提供",
   "joinCancel": "取消",

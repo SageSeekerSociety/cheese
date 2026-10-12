@@ -581,6 +581,7 @@ def build_session_opening(
     if roster:
         lines = "\n".join(
             f"- {m['name']}（{_standing(m)}，handle: {m['handle']}"
+            + (f"，{m['about']}" if m.get("about") else "")
             + (f"，时区 {m['timezone']}" if m.get("timezone") else "")
             + "）"
             for m in roster

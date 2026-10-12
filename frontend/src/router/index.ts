@@ -105,6 +105,21 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'navigation.pages.connect', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
+    // 新手引导：一个项目都没有、也没走过引导的人登录后落在这里（router/home.ts
+    // `landingForMember`）；帮助菜单「新手引导」带 `?again=1` 再走一遍。
+    name: 'welcome',
+    path: '/welcome',
+    component: () => import('@/views/welcome/Welcome.vue'),
+    // 整屏：引导期间不露项目栏和顶栏，人只看这一件事。
+    meta: { titleKey: 'welcome.title', isFullPage: true, hideTabs: true, hideAppBar: true },
+    props: (to) => ({ again: to.query.again === '1' }),
+    beforeEnter: async (to) => {
+      const { default: AccountService } = await import('@/services/account')
+      await AccountService.sessionRestored
+      return AccountService.loggedIn ? true : { name: 'SignIn', query: { redirect: to.fullPath } }
+    },
+  },
+  {
     name: 'market',
     path: '/market',
     component: () => import('@/views/MarketView.vue'),

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.membership.roster import roster_rows
 from app.domain.topic.models import Topic
+from app.domain.user.about import about_by_handles
 from app.domain.user.services import timezones_by_handles
 
 
@@ -43,10 +44,15 @@ async def room_roster(
     rows = await roster_rows(session, project_id)
     # A person's zone goes with their row: the times an agent reads are UTC,
     # and what it writes for someone is read on that person's clock.
-    zones = await timezones_by_handles(
-        session, [row["handle"] for row in rows if not row["agent"]]
-    )
+    people = [row["handle"] for row in rows if not row["agent"]]
+    zones = await timezones_by_handles(session, people)
+    # Who they said they are in the new-user guide (「学生，中国人民大学」).
+    about = await about_by_handles(session, people)
     return [
-        {**row, "timezone": zones[row["handle"]]} if row["handle"] in zones else row
+        {
+            **row,
+            **({"timezone": zones[row["handle"]]} if row["handle"] in zones else {}),
+            **({"about": about[row["handle"]]} if row["handle"] in about else {}),
+        }
         for row in rows
     ]

@@ -14,6 +14,9 @@ import { computed, ref, watch } from 'vue'
 
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
+import { vGuideAnchor } from '../composables/useGuideAnchors'
+import { noteFacts, useProjectTour } from '../composables/useProjectTour'
+import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
 import { createQuestionSubmit } from '../lib/previewQuestion'
@@ -110,6 +113,10 @@ const props = withDefaults(
 const emit = defineEmits<ChatPanelEmit>()
 
 // 频道的主线：消息可以有支线。私聊、任务、支线里都没有。
+// 项目本体自己的那一栏：不是支线、不是任务页里的对话栏，房间也没归档。
+const onProjectLine = computed(
+  () => !props.conversationId && props.topic?.kind === 'root' && props.topic.status !== 'archived'
+)
 const mainLine = computed(() => !!props.topic && !props.noUpgrade && !props.conversationId)
 // 已归档的频道只能看：不再开新的支线。
 const threadable = computed(() => mainLine.value && props.topic?.status !== 'archived')
@@ -294,8 +301,16 @@ watch(loadingHistory, (loading, was) => {
 // inside a plain object keeps them intact: props are shallow, not deep.
 const timelineRefs = { scrollRef, contentRef }
 
-// Per-row questions the view asks. The panel hands over data; these are read
-// off it once for the one row that needs them, not once per render.
+// 新手引导要的事实（交给过芝士没有、采纳过没有……）：引导走完了就不再问。没开始时只在项目
+// 本体那一栏问（引导从那里开始）；开始以后哪一栏都问，任务页上的那几步也要知道人走到哪了。
+// 房间里每来一条消息再问一次。
+const guide = useProjectTour()
+const startSteps = useStartSteps(
+  () => (!guide.done.value && (onProjectLine.value || guide.active.value) ? props.topic?.project_id : null),
+  () => rows.value.length
+)
+// 新手引导画在应用最外层（App.vue），任务页上也要出现；做到哪一步看这几条事实。
+watch(startSteps, (steps) => steps && noteFacts(steps), { immediate: true })
 const retryIndex = computed(() => (canRetryAt(rows.value.length - 1) ? rows.value.length - 1 : -1))
 const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 
@@ -350,6 +365,7 @@ useComposerShortcut({
            resetKey = topic id, so switching topics recovers on its own. -->
       <ErrorBoundary :reset-key="topic.id">
         <ChatTimeline
+          v-guide-anchor="onProjectLine ? 'timeline' : ''"
           :topic="topic"
           :ask-closed="askClosed"
           :no-upgrade="noUpgrade"
@@ -492,6 +508,7 @@ useComposerShortcut({
           v-else-if="showComposer"
           ref="composerRef"
           v-model="draft"
+          :guided="onProjectLine"
           :topic="topic"
           :mention-pool="mentionPool"
           :topic-list="topicList"

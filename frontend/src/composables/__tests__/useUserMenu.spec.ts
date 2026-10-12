@@ -11,7 +11,10 @@ const user = ref<{ id: number; nickname: string; avatarId: number | null } | nul
 const loggedIn = ref(true)
 const push = vi.fn()
 const logoutRequest = vi.fn()
-const clearSession = vi.fn(() => {
+// Like the real one, the session clears only after an await (it unsubscribes push
+// first): a caller that does not wait reaches the root while still signed in.
+const clearSession = vi.fn(async () => {
+  await new Promise((r) => setTimeout(r, 0))
   loggedIn.value = false
   user.value = null
 })

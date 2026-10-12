@@ -16,6 +16,8 @@ import type { MenuAction } from '@/components/common/menuAction'
 import { computed, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { openShortcutSheet } from '@/components/common/shortcutSheet'
@@ -30,6 +32,8 @@ const props = defineProps<{
   showImagePicker: boolean
   /** 回车是发送（触摸屏上是换行），这一行的间距跟着它走。 */
   enterSends: boolean
+  /** 界面导览能指「交给芝士」这颗按钮（见 RoomComposer 的 `guided`）。 */
+  guided?: boolean
   /** 和芝士私聊：每条都是说给它听的，没有「交给它」这颗按钮。 */
   alwaysSummon: boolean
   /** 这条消息现在叫不叫它。读的是正文，不是一个单独存着的开关值。 */
@@ -227,6 +231,7 @@ const summonText = computed(() => ({
            让「这条到底算不算叫了它」变成没人答得上来的问题。 -->
     <button
       v-if="!alwaysSummon"
+      v-guide-anchor="guided ? 'composer-summon' : ''"
       type="button"
       class="summon-btn"
       :class="{ 'summon-btn--on': summonOn }"
@@ -244,6 +249,7 @@ const summonText = computed(() => ({
            附件还在传时是例外：这一刻发出去会少带附件，所以要等，并在 title 里说清
            为什么按不动（灰着不解释，看起来像是它坏了）。 -->
     <BaseButton
+      v-guide-anchor="guided ? 'composer-send' : ''"
       class="composer-send"
       kind="primary"
       icon="mdi-send"

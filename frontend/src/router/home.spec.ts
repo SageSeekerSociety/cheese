@@ -5,22 +5,21 @@
 // 和你无关的队伍。
 //
 // 根地址也一样：登录后回到上次待的那个项目——每天第一件事是接着干活。新账号一个
-// 项目都没有，给它建一个，第一屏就是那个项目；建过一次的账号不再建，落在待办上。
+// 项目都没有、也没走过新手引导，去引导；走过引导又没项目了的人落在待办上。
 import { createRouter, createWebHistory } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { setLocale } from '@/i18n'
 import AccountService from '@/services/account'
 
 const listProjects = vi.fn()
-const createFirstProject = vi.fn()
-vi.mock('@/api', () => ({
-  listProjects: () => listProjects(),
-  createFirstProject: (name: string) => createFirstProject(name),
-}))
+vi.mock('@/api', () => ({ listProjects: () => listProjects() }))
 
 vi.mock('@/services/account', () => ({
-  default: { loggedIn: false, sessionRestored: Promise.resolve(), user: { username: 'lin', nickname: '林' } },
+  default: {
+    loggedIn: false,
+    sessionRestored: Promise.resolve(),
+    user: { username: 'lin', nickname: '林', onboarded_at: null as string | null },
+  },
 }))
 vi.mock('@/layouts/home/Home.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/home/HomeSidebar.vue', () => ({ default: { template: '<div />' } }))
@@ -41,8 +40,8 @@ function router() {
     routes: [
       home,
       { path: '/account/signin', name: 'SignIn', component: blank },
+      { path: '/welcome', name: 'welcome', component: blank },
       { path: '/projects/:projectId', name: 'workspace-project', component: blank },
-      { path: '/projects/:projectId/channels/:topicId', name: 'workspace-topic', component: blank },
       { path: '/:pathMatch(.*)*', name: 'catch-all', component: blank },
     ],
   })
@@ -52,9 +51,7 @@ describe('首页那一层', () => {
   beforeEach(() => {
     localStorage.clear()
     listProjects.mockReset().mockResolvedValue({ data: [{ id: 'p1' }, { id: 'p2' }] })
-    createFirstProject.mockReset().mockResolvedValue({ project_id: null })
-    // 第一个项目的名字按这个人的语言写：这里读中文那一份。
-    setLocale('zh-CN')
+    AccountService.user!.onboarded_at = null
     AccountService.loggedIn = false
     AccountService.sessionRestored = Promise.resolve()
     delete (window as { __TAURI__?: unknown }).__TAURI__
@@ -92,33 +89,29 @@ describe('首页那一层', () => {
     expect(r.currentRoute.value.params.projectId).toBe('p1')
   })
 
-  it('新账号登录后落在给它建好的第一个项目的「综合」上', async () => {
-    listProjects
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValue({ data: [{ id: 'first', root_topic_id: 'general' }] })
-    createFirstProject.mockResolvedValue({ project_id: 'first' })
+  it('一个项目都没有、也没走过引导的人登录后去新手引导', async () => {
+    listProjects.mockResolvedValue({ data: [] })
     AccountService.loggedIn = true
     const r = router()
     await r.push('/')
-    expect(r.currentRoute.value.name).toBe('workspace-topic')
-    expect(r.currentRoute.value.params).toEqual({ projectId: 'first', topicId: 'general' })
-    expect(createFirstProject).toHaveBeenCalledWith('林的项目')
+    expect(r.currentRoute.value.name).toBe('welcome')
   })
 
-  // 第一个项目每个账号只给一次：退出或删光了项目的人不会再被塞一个。
-  it('建过第一个项目、现在一个都没有的人落在待办上', async () => {
+  // 走过（或跳过了）引导，后来退出或删光了项目：不再被拉回引导。
+  it('走过引导、现在一个项目都没有的人落在待办上', async () => {
     listProjects.mockResolvedValue({ data: [] })
+    AccountService.user!.onboarded_at = '2026-10-11T00:00:00Z'
     AccountService.loggedIn = true
     const r = router()
     await r.push('/')
     expect(r.currentRoute.value.name).toBe('inbox')
   })
 
-  it('有项目的人不会再得到一个', async () => {
+  it('有项目的人不进引导', async () => {
     AccountService.loggedIn = true
     const r = router()
     await r.push('/')
-    expect(createFirstProject).not.toHaveBeenCalled()
+    expect(r.currentRoute.value.name).toBe('workspace-project')
   })
 
   it('项目清单读不到时落在待办上，而不是停在推广页', async () => {

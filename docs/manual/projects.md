@@ -18,7 +18,7 @@ order: 3
 
 「你打算做什么（可选）」写一句项目的目标，例如「帮我把这学期的课程材料整理成一份大纲」。下一步给项目的 AI 队友起名字，名字已随机填好，可以修改。点「创建项目」后进入频道「综合」。
 
-建项目的完整过程见[快速开始](/quickstart#project)，在团队下建项目见[和同学一起做一个项目](/team-project#project)。
+第一次登录时的新手引导见[快速开始](/quickstart#project)，在团队下建项目见[和同学一起做一个项目](/team-project#project)。
 
 ## 项目里的页面 {#project-navigation}
 
