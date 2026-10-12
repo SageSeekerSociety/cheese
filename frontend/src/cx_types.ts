@@ -234,8 +234,6 @@ export interface TodoItem {
   status: 'pending' | 'in_progress' | 'completed'
 }
 
-// 进度层 (#187): the stored checklist for a topic. `updated_at` is null when the
-// topic has never had one (items is then []).
 // 一件活 —— 房间里的一条支线，不是话题树上的一个节点。房间有名册，一件活只有
 // 唯一的主（`owner_handle`），那个差别就是它不再是房间的全部理由。
 export interface RoomTask {
@@ -267,9 +265,7 @@ export interface RoomTask {
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
-  // 被负责人收起来的时刻（后端 `Task.archived_at`）：从那刻起它不在各处清单里，页面
-  // 只读。非空的一定是关掉的，所以「能不能说话」还是只看 `status`。
-  archived_at?: string | null
+  archived_at?: string | null // 被负责人收起来的时刻；非空一定也是关掉的，能不能说话只看 status
   upgraded_from_block_id?: string | null
   created_at: string
   updated_at: string
@@ -320,7 +316,7 @@ export interface ThreadCard {
 
 export interface TopicProgress {
   items: TodoItem[]
-  updated_at: string | null
+  updated_at: string | null // null = 这个房间还没有过进度层（items 也就是空的）
 }
 
 // WebSocket server -> client frames. What 芝士 says lands as discrete blocks; the

@@ -311,7 +311,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     <button data-step="1" class="is-on">① 今天：⋯ 里没有归档</button>
     <button data-step="2">② 加一条「归档任务」</button>
     <button data-step="3">③ 点下去：收起来，可撤销</button>
-    <button data-step="4">④ 侧栏前后对照</button>
+    <button data-step="4">④ 收走之后去哪儿找</button>
     <button data-step="5">⑤ 谁能点</button>
   </div>
 
@@ -336,7 +336,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
             <button class="row"><span class="row__glyph">#</span><span class="row__name">综合</span></button>
             <button class="row is-on"><span class="row__glyph">#</span><span class="row__name">测试频道</span></button>
 
-            <!-- 归档的任务：从这一组离开，落到下面「已归档」 -->
+            <!-- 归档的任务：整个离开这一组，侧栏里不再有它 -->
             <div data-here>
               <button class="row row--sub is-on"><span class="row__glyph">↳</span><span class="row__name">任务归档入口缺失</span><span class="unread">1</span></button>
               <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">实现15条频道改动</span><span class="await-dot" title="等你拍板"></span></button>
@@ -347,10 +347,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
             <button class="row"><span class="row__glyph">#</span><span class="row__name">前端</span></button>
             <button class="row"><span class="row__glyph">#</span><span class="row__name">bug-fixing</span><span class="unread">3</span></button>
           </div>
-          <div class="side__label" data-gone hidden><span>已归档</span></div>
-          <div class="side__list" data-gone hidden>
-            <button class="row row--gone"><span class="row__glyph">↳</span><span class="row__name">任务归档入口缺失</span></button>
-          </div>
           <div class="side__tail">
             <nav class="side__nav">
               <button>首页</button><button class="is-on">工作区</button><button>待办</button>
@@ -360,11 +356,11 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 
         <div class="view">
 
-          <!-- ===== 场景 4：侧栏前后对照 ===== -->
+          <!-- ===== 场景 4：收走之后去哪儿找 ===== -->
           <section class="scr" data-scr="4">
-            <div class="th"><div class="th__text"><span class="th__title">归档之后，侧栏里这一行长什么样</span></div></div>
+            <div class="th"><div class="th__text"><span class="th__title">归档之后，这一行去哪儿了</span></div></div>
             <div class="cmp">
-              <p class="cmp__lead">任务行在频道下面那一组里。归档之后它离开那一组，落到最下面的「已归档」，颜色变浅、点开还是能看。频道那一组里从此不再有它。</p>
+              <p class="cmp__lead">侧栏里那一行整个离开，侧栏不另开一组「已归档」——侧栏摆的是「现在在做的活」，收走的东西不该再占那一列。要再找到它，去「全部任务」那一排标签里的「已归档」。</p>
               <div class="cmpcols">
                 <div class="cmpcol">
                   <div class="railbox">
@@ -382,10 +378,18 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
                     <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">实现15条频道改动</span><span class="await-dot"></span></button>
                     <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">任务免选审阅人自动开始</span></button>
                     <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">选择题回答可撤回</span></button>
-                    <button class="row row--gone" style="margin-top:6px"><span class="row__glyph">↳</span><span class="row__name">任务归档入口缺失</span><span class="chip">已归档</span></button>
                   </div>
-                  <p class="cmpcol__cap"><b>归档之后</b> —— 那一行收进「已归档」，对话、文档、交付物一个不丢，点开都在，只是不能在这儿发言、也不能再开工。</p>
+                  <p class="cmpcol__cap"><b>归档之后</b> —— 那一行从侧栏走了，这儿没有它，下面也不再另开一组；「已关闭」那一份里也没有它。对话、文档、交付物一个不丢，点开都在，只是不能在这儿发言、也不能再开工。</p>
                 </div>
+              </div>
+              <p class="cmp__lead" style="margin-top:16px"><b>收走之后在这一排标签里找：</b>三个标签互不重叠，一件活只在一处。</p>
+              <div class="railbox" style="max-width:420px">
+                <div style="display:flex;gap:4px;padding:4px;background:var(--fill);border-radius:8px;margin-bottom:8px">
+                  <span style="padding:5px 12px;border-radius:6px;font-size:13px;font-weight:600;color:var(--muted)">进行中</span>
+                  <span style="padding:5px 12px;border-radius:6px;font-size:13px;font-weight:600;color:var(--muted)">已关闭</span>
+                  <span style="padding:5px 12px;border-radius:6px;font-size:13px;font-weight:600;background:var(--surface);color:var(--ink)">已归档</span>
+                </div>
+                <button class="row row--gone"><span class="row__glyph">↳</span><span class="row__name">任务归档入口缺失</span><span class="chip">已归档</span></button>
               </div>
             </div>
           </section>
@@ -403,13 +407,13 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
                 </div>
                 <div class="role">
                   <span class="role__who">频道管理员</span>
-                  <span class="role__what">也能。这条活在他的频道里，收得掉。两个人做的是同一件事，谁先点算谁的。</span>
-                  <span class="chip chip--ok">可以</span>
+                  <span class="role__what">不能。他管的是频道，这件活不是他的。收不收由负责人——这条比归档频道更窄：归档频道是管理员的本职，替别人收掉一件活是替人做主。</span>
+                  <span class="chip">看不到</span>
                 </div>
                 <div class="role">
                   <span class="role__who">项目管理员</span>
-                  <span class="role__what">也能。和归档频道的口径一致，项目里的事他都管得着。</span>
-                  <span class="chip chip--ok">可以</span>
+                  <span class="role__what">不能。同上。负责人要是联系不上、又非收不可，那是要另想一条路的事，这一版不做。</span>
+                  <span class="chip">看不到</span>
                 </div>
                 <div class="role">
                   <span class="role__who">协作者 / 其他人</span>
@@ -417,7 +421,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
                   <span class="chip">看不到</span>
                 </div>
               </div>
-              <p class="cmp__lead" style="margin-top:16px"><b>和「关闭任务」怎么分工：</b>关闭＝这件活做完了，任务还挂在原来那一组里，状态写「已完成 / 已关闭」，谁都能看见它干过；归档＝连那一行也收走，默认不再出现在任何列表里，只在「已归档」找得到。两件事不互相要求：还没关闭的任务也能直接归档（就是「这条我不做了」），归档之后想接着做，先取消归档。<em class="mk" data-item="3">3</em></p>
+              <p class="cmp__lead" style="margin-top:16px"><b>和「关闭任务」怎么分工：</b>关闭＝这件活做完了，任务还挂在原来那一组里，状态写「已完成 / 已关闭」，谁都能看见它干过；归档＝连那一行也收走，默认不再出现在任何列表里，只在「全部任务」的「已归档」里找得到。两件事不互相要求：还开着的任务也能一键归档（等于「这条我不做了，也别再摆着」），归档之后想接着做，先取消归档、再重新打开任务。<em class="mk" data-item="3">3</em></p>
             </div>
           </section>
 
@@ -466,7 +470,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
                 <span class="face" style="--tone:#4a4a52">平</span>
                 <div class="notice__body">
                   <div><b>蔡松洋 把「任务归档入口缺失」归档了</b><span class="t-meta"> 刚刚</span><em class="mk" data-item="5">5</em></div>
-                  <div class="notice__sub">这件活从侧栏收走了，对话、实况文档和交付物都留着，谁都能翻。想接着做，点撤销。</div>
+                  <div class="notice__sub">这件活从各处清单里收走了，对话、实况文档和交付物都留着。点撤销能把它放回清单——还是关着的，要接着做再点「重新打开任务」。</div>
                   <div style="margin-top:8px"><button class="btn btn--secondary btn--sm" data-act="undo">撤销</button></div>
                 </div>
               </div>
@@ -478,7 +482,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
             <div class="composer">
               <div class="composer__box" data-norm>说点什么，芝士接着做…</div>
               <div class="composer__box is-off" data-arch hidden>任务已归档，不能发言</div>
-              <p class="composer__hint" data-arch hidden>想接着做，先点上面那条通知里的「撤销」，或者页头里的「取消归档」。</p>
+              <p class="composer__hint" data-arch hidden>想接着做：先点上面那条通知里的「撤销」，或者页头 ⋯ 里的「取消归档」，再点「重新打开任务」。</p>
             </div>
           </section>
 
@@ -487,7 +491,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     </div>
   </div>
 
-  <p class="hint t-meta">五个场景就是这条改动的全部：① 今天什么样 ② 菜单里多一条 ③ 点下去什么样 ④ 侧栏前后 ⑤ 谁有权限。带数字的黄标点开，写的是「现状 / 这一版 / 要动哪里」。</p>
+  <p class="hint t-meta">五个场景就是这条改动的全部：① 今天什么样 ② 菜单里多一条 ③ 点下去什么样 ④ 收走之后去哪儿找 ⑤ 谁有权限。带数字的黄标点开，写的是「现状 / 这一版 / 要动哪里」。</p>
 </main>
 
 <aside class="sheet" id="sheet" hidden>
@@ -516,28 +520,28 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   var ITEMS = {
     1:{t:'入口长在哪', s:'任务页页头右上那颗 ⋯ 里',
        now:'那颗 ⋯ 里今天只有「重命名」「移交」「关闭任务」（后两条只对负责人显示），关掉的任务显示「重新打开任务」。任务页上没有「归档」，所以想收走一条任务，只能自己在侧栏里忍着看它挂着。',
-       fix:'⋯ 里加一条「归档任务」，和「关闭任务」并排。侧栏那条任务行的 ⋯ 里也给同一条，两处进同一个动作——归档频道已经就是这个路子。',
-       work:'前端 components/task/TaskHeader.vue 的菜单加一项；侧栏 TopicSidebar.vue 的任务行菜单加同一项。'},
-    2:{t:'谁能点', s:'这条任务的负责人自己就行',
+       fix:'⋯ 里加一条「归档任务」，和「关闭任务」并排。入口就这一处：侧栏那条任务行是个没有菜单的普通按钮，归档只能从任务页里点。',
+       work:'前端 components/task/TaskHeader.vue 的菜单加一项。侧栏的任务行不动。'},
+    2:{t:'谁能点', s:'只有这条任务的负责人',
        now:'归档频道要频道的管理权限，入口又藏在侧栏那一行的 ⋯ 和频道详情里，所以除了那个管理员，别人多半找不到。这个毛病在 15 条清单的第 3 条里改，是频道的事。',
-       fix:'任务按另一套口径：负责人（还有频道管理员、项目管理员）都能归档。关键是负责人不必是任何管理员——这件活是他的，收不收由他。不是这些人，菜单里看不到这一条。',
-       work:'权限判断跟着「关闭任务」那一套走（负责人 / 频道管理员 / 项目管理员），前端按后端回的「我能不能」决定画不画这一项。'},
+       fix:'任务只看负责人：是不是他，和是不是频道管理员、项目管理员无关。这件活是他的，收不收由他。别人（含频道管理员、项目管理员）菜单里看不到这一条。',
+       work:'后端一条判断：说话的人不是负责人就 403；前端跟着「移交」「关闭任务」那一条只有负责人看得见的判断走。'},
     3:{t:'和关闭任务的分工', s:'关闭＝干完了；归档＝收走',
        now:'任务只有 open / closed 两种状态，没有第三种。代码里写明这是刻意的：只有「在做」和「不做了」两件事是能观察到的。',
-       fix:'不新增状态值，另记一个「归档时刻」：归档＝这条不出现在任何列表里；关闭＝干完了但还挂在原来那一组。两件事不互相要求——没关闭的任务也能直接归档，归档了也能取消归档。',
-       work:'后端 tasks 表加一列（可空的时间戳）＋迁移；列表查询默认排除已归档；模型在 backend/app/domain/room_task/models.py，列表在 repositories.py。'},
+       fix:'归档不新增状态，而是在关闭之上再记一个「归档时刻」：归档＝先把它关掉，再让它从各处清单里消失。所以还开着的任务也能一键归档（等于「这条我不做了，也别再摆着」），已经关掉的也能归档。取消归档只把「归档时刻」抹掉，不重新打开——和频道那边一样。',
+       work:'后端 tasks 表加一列（可空的时间戳）＋迁移；模型在 backend/app/domain/room_task/models.py，服务在 services.py，清单在 repositories.py。'},
     4:{t:'关掉的任务现在去哪儿了', s:'还挂在原来那一组里',
        now:'任务在最末一步被采纳后自己收工，或者负责人点「关闭任务」。关掉之后它没消失：侧栏里还在频道下面那一组，状态写成「已完成」「已关闭」「已采纳」。这就是你说「想归档但没地方点」的那件事——收工不等于收走。',
-       fix:'归档之后它才从那一组离开，落到最下面的「已归档」，颜色变浅。那边的列表也只列没归档的。',
-       work:'前端侧栏和任务列表加一处「已归档」分组；后端的任务列表多一个「含不含已归档」的开关。'},
+       fix:'关掉的任务照旧留在那一组（它干过什么谁都能看见）。归档之后才离开：侧栏里不再有它，也不在侧栏另开一组「已归档」；要再找到它，去「全部任务」那一排标签切到「已归档」。',
+       work:'后端房间清单默认不含已归档（repositories.py 的 list_for_room）；前端「全部任务」那一排从「进行中 / 已关闭」加成三份，多出来的是「已归档」（ProjectTasksView.vue），三份互不重叠。'},
     5:{t:'撤销', s:'两条路都留着',
        now:'归档频道现在是：点完弹一条带「撤销」的提示。',
-       fix:'任务照抄这一条：归档后当场弹一条可撤销的提示；页头也显示「已归档」标，负责人从那儿能点「取消归档」。对话、实况文档、产物一直都在，归档只是把它从列表里收走。',
+       fix:'任务照抄这一条：归档后当场弹一条可撤销的提示；页头也显示「已归档」标，负责人从那儿能点「取消归档」。对话、实况文档、产物一直都在，归档只是把它从列表里收走。撤销回来的任务还是关着的，要接着做再点「重新打开任务」。',
        work:'前端弹提示的组件（和归档频道同一个）；后端加一条取消归档的接口，和归档接口一对。'},
-    6:{t:'归档之后 AI 队友怎么办', s:'顺手停下来',
+    6:{t:'归档之后 AI 队友怎么办', s:'和关掉的任务一样',
        now:'没有归档，也就没有这一问。',
-       fix:'归档一条还开着的任务时，正在跑的那一轮不打断，但不会再派新活：下次有人在这儿说话，回一句「已归档」。想接着做先取消归档。',
-       work:'后端派活那条路加一道「已归档就别开工」的判断；前端不另外做。'}
+       fix:'归档先把任务关掉，所以「关了的任务不再开工」这条老规矩直接就管住了它：下次有人在这儿说话，平台照旧不回话、不新开一轮。不用为归档另加一道判断。想接着做，先取消归档、再重新打开任务。',
+       work:'不用改代码：关闭已经拦住了新的一轮。'}
   };
 
   var app = document.getElementById('app');
