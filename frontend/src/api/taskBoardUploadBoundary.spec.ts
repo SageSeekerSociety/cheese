@@ -151,4 +151,18 @@ describe.skipIf(!RUN)('task board upload: real wall-clock 30s / 60s boundary', (
     expect(elapsed).toBeGreaterThanOrEqual(59000)
     expect(elapsed).toBeLessThan(65000)
   }, 90000)
+
+  it('aborts a 65s answer on the 60s upload dial (old)', async () => {
+    const { TasksApi } = await import('@/network/api/tasks')
+    delayMs = 65000
+    const started = Date.now()
+    const error = (await TasksApi.uploadAttachment(7, file()).catch((failure) => failure)) as {
+      message?: string
+    }
+    const elapsed = Date.now() - started
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toMatch(/timeout of 60000ms/)
+    expect(elapsed).toBeGreaterThanOrEqual(59000)
+    expect(elapsed).toBeLessThan(65000)
+  }, 90000)
 })
