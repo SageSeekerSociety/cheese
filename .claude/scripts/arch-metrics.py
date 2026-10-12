@@ -5,8 +5,9 @@
     python3 .claude/scripts/arch-metrics.py --compare 721f7b04 another revision, with the deltas
     python3 .claude/scripts/arch-metrics.py --self-test        prove the numbers are counted
 
-WHY A BOARD AND NOT A GATE. The three checks in `.claude/rules/architecture.md`
-block a new violation. None of them can say whether the tree is getting better,
+WHY A BOARD AND NOT A GATE. The boundary checks
+(`backend/.importlinter`, `frontend/import-boundary-baseline.json`) block a new
+violation. None of them can say whether the tree is getting better,
 because each is a ratchet against a frozen baseline and a ratchet that holds
 still reports success forever. This script is the other half: it reads the same
 declarations the checks read and prints where they stand, so "did the last month
@@ -25,8 +26,7 @@ WHAT IT MEASURES, and how each number is obtained:
                            — read, not re-derived: the ESLint rule that produces
                            them needs node_modules, and this has to run anywhere.
   backend.contracts        Frozen `importer -> imported` pairs per contract in
-                           `backend/.importlinter`, C1 + C2 + C3 (counts in
-                           `.claude/rules/architecture.md`).
+                           `backend/.importlinter`, C1 + C2 + C3.
   backend.deferred_imports `Import`/`ImportFrom` statements lexically inside a
                            function body under `backend/app`, via `ast`. This is
                            the shape a cycle is dodged with, which is why the

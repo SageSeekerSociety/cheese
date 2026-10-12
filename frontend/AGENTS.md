@@ -18,9 +18,7 @@ The rule above still holds — never `vue-router`, not even `import type`. Inste
 lightest first: `<NavLink :to="…">` (`components/common/NavLink.vue`),
 `useNavigation()?.route` (`composables/useNavigation.ts`), or
 `useNavigation()?.navigate(to)`; props and emits otherwise. Type a `to` as
-`NavTarget` (`lib/navTarget.ts`), never `RouteLocationRaw` — why one half of the
-boundary counts `import type` and the other does not is in
-[`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
+`NavTarget` (`lib/navTarget.ts`), never `RouteLocationRaw`.
 
 ## The component preview site
 
@@ -57,8 +55,8 @@ counts and the per-page table:
 — non-A child edges, `useRoute` calls, legacy `src/network` imports — and
 `lint:scene-debt:update` only removes; CI also compares the baseline to the merge
 base, so a hand-added exemption fails too. Its failure output names each new
-dependency and its repair; the rule and the fix:
-[`../docs/manual/dev/scenes.md`](../docs/manual/dev/scenes.md).
+dependency and its repair; the rule lives in `.claude/scripts/scene-debt-ratchet.py`,
+the grade it turns on in [`../docs/manual/dev/scenes.md`](../docs/manual/dev/scenes.md).
 
 ## Testing the rendered result
 
@@ -67,11 +65,16 @@ Keep template HTML comments in English: Vitest keeps them in the DOM, and
 stripping comments.
 
 DOM tests (`happy-dom`) have no layout: interaction, layout, scrolling and
-streaming changes need a real browser, and only `e2e/tests/layout-invariants.spec.ts`
-catches layout. The per-trap notes live with the code and in the rules —
-`src/utils/parser.spec.ts` (jsdom for DOMPurify), `src/components/room/room-row.css`
-(`content-visibility` clips row popovers), `../desktop/AGENTS.md` (a browser repro
-misses `desktopNative.ts`) — and in
+streaming changes need a real browser, and only the repo-root
+`e2e/tests/layout-invariants.spec.ts` catches layout. A small Vite entry
+mounting the real component with the repo's Vuetify plugin is enough when the
+full catalog is impractical; for an intercepted-module A/B repro, verify the
+replacement actually matched before trusting equal results.
+
+The per-trap notes live with the code and in the rules — `src/utils/parser.spec.ts`
+(jsdom for DOMPurify), `src/components/room/room-row.css` (`content-visibility`
+clips row popovers), `../desktop/AGENTS.md` (a browser repro misses
+`desktopNative.ts`) — and in
 [`../.claude/rules/frontend.md`](../.claude/rules/frontend.md).
 
 ## Diagnosing ratchets

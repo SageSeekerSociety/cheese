@@ -7,15 +7,15 @@ Read [`../AGENTS.md`](../AGENTS.md) first; this file only adds what applies here
 `app/` is layered **api -> domain -> core**. Imports that point backwards, a
 route reaching into another domain's models, or a cycle between sibling domains
 under `app.domain` are failures — including when the import sits inside a
-function. The contracts, the frozen `importer -> imported` pairs, and the
-commands that run them in CI and under `task boundaries`, are in
-[`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
+function. The contracts and the frozen `importer -> imported` pairs are in
+`.importlinter`; `task boundaries` (`Taskfile.yml`) runs them.
 
 Imports inside a function body may only go down: lift one to the top of the
 module, or say why it cannot be with `# deferred-import: <reason>` on the same
 line or the line above. Unexplained ones are frozen per file in
-`deferred-import-baseline.json`; a new file may have none. Counting, reasons and
-the refresh command: [`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
+`deferred-import-baseline.json`; a new file may have none. The reasons that
+count, and which of them the check can see:
+[`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
 
 ## Refactors must preserve the callers and the frozen graph
 
@@ -53,9 +53,8 @@ and cache-pricing constraints in
 ## Caps and conventions
 
 - `app/**/*.py` over **1500 lines** may not grow: a file already over the cap is
-  frozen at the size it had at the merge base with `origin/main`. The cap and its
-  check are in [`../.claude/rules/architecture.md`](../.claude/rules/architecture.md)
-  and `.claude/scripts/check-file-sizes.py`.
+  frozen at the size it had at the merge base with `origin/main`. The cap, the
+  reason and the exception list are in `.claude/scripts/check-file-sizes.py`.
 - Run `task ci:fast` from the repository root before you push (see
   [`../AGENTS.md`](../AGENTS.md)); add `--types` when you touch shared types.
   `task be:check` runs the whole backend check locally.

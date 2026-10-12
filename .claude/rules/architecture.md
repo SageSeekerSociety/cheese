@@ -6,10 +6,11 @@ paths:
 
 # Module boundaries: the conventions no check can hold
 
-Seven checks gate a change (`task boundaries`; the commands are in `Taskfile.yml`).
-Each check's own file and failure output say what it enforces and how to fix a
-failure, so this file keeps only (a) the conventions no machine holds and (b) the
-landing points other files point at.
+The boundary checks run in CI on matching commits, and locally as one command,
+`task boundaries` (`Taskfile.yml`), which dispatches to `backend/Taskfile.yml`
+and `frontend/Taskfile.yml`. Each check's own file and failure output say what
+it enforces and how to fix a failure, so this file keeps only (a) the
+conventions no machine holds and (b) the landing points other files point at.
 
 A check cannot say whether the tree is getting *better*: a ratchet against a
 frozen baseline holds still and reports success forever. That half is the board,
@@ -19,11 +20,11 @@ per-contract reasoning: `docs/manual/dev/architecture.md`,
 
 ## Backend: the import graph is checked, not assumed
 
-`api -> domain -> core`, sibling domains acyclic, and the four `turn` contracts
-are declared in `backend/.importlinter` (AST-based, so an import inside a
-function counts too). `check_boundaries.py` names the fix contract by contract
-and what the freeze permits (no wildcards; exit 2 is "could not judge", never a
-pass); the commands are in `backend/AGENTS.md`.
+The import graph and the contracts that describe it — `api -> domain -> core`,
+sibling domains acyclic, and the `turn` layering — are declared in
+`backend/.importlinter` (AST-based, so an import inside a function counts too).
+`check_boundaries.py` names the fix contract by contract and what the freeze
+permits (no wildcards; exit 2 is "could not judge", never a pass).
 
 Conventions no contract sees:
 
@@ -54,13 +55,29 @@ principles, in the order they matter:
    file is on: a file that needs a server to render is a view or a container,
    not a component.
 
+The API half of the rule does not count an `import type`, because a type
+binding is erased before anything runs and so cannot fetch; the `vue-router`
+half keeps counting it, because there the alternative
+(`NavTarget` from `lib/navTarget.ts`) is a type too, and naming it is what lets
+a component render with no router at all.
+
+## Frontend: one API module per domain behind `src/api.ts`
+
+`frontend/src/api.ts` holds nothing but `export … from` statements
+(`frontend/eslint.config.mjs` enforces that); the code lives in
+`frontend/src/api/<domain>.ts`, and importers keep writing `@/api`.
+
+**A module under `src/api/` imports `./http` and its siblings, not `../api`.**
+Going through the facade puts the call inside whatever a test mocked `@/api`
+with. Some older modules still do, and changing one changes what its tests
+intercept, so it is its own change.
+
 ## Files have a size cap
 
-`frontend/src` 1000 lines (`src/api/` 400), `backend/app` 1500, judged against
-the merge base. Split the file: `check-file-sizes.py`'s failure names the cap and
-its reason, and `EXEMPT` is the one considered exception. A file over its cap is
-a prompt to split, not a defect; raising the cap helps nothing.
+Judged against the merge base. Split the file: `check-file-sizes.py`'s failure
+names the cap and its reason, and `EXEMPT` is the one considered exception. A
+file over its cap is a prompt to split, not a defect; raising the cap helps
+nothing.
 
 Scenes and the catalog live in `frontend/AGENTS.md` and
-`docs/manual/dev/scenes.md`; `src/api.ts` re-exports only, which
-`frontend/eslint.config.mjs` enforces.
+`docs/manual/dev/scenes.md`.
