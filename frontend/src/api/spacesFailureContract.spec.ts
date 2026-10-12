@@ -171,22 +171,20 @@ describe('spaces: authentication edge cases', () => {
     expect(refresh).toHaveBeenCalledOnce()
   })
 
-  it('redirects to sign-in when the refresh is rejected, without a retry', async () => {
-    const count = detailUnauthorized()
-    refresh.mockReset().mockResolvedValue({ kind: 'rejected' })
-    replace.mockReset()
-    await expect(spaces.detail(7)).rejects.toBeInstanceOf(Error)
-    expect(count()).toBe(1)
-    expect(replace).toHaveBeenCalledWith('/account/signin')
-  })
-
-  it('does not redirect when the refresh is unreachable', async () => {
-    const count = detailUnauthorized()
-    refresh.mockReset().mockResolvedValue({ kind: 'unreachable' })
-    replace.mockReset()
-    await expect(spaces.detail(7)).rejects.toBeInstanceOf(Error)
-    expect(count()).toBe(1)
-    expect(replace).not.toHaveBeenCalled()
+  // A renewal that fails — turned down or out of reach — is attempted once, and
+  // that is all this layer owes. Ending the sign-in is no longer its job:
+  // `lib/session.ts` announces a renewal the server turned down, and
+  // `services/account.ts` drops the session and takes the person to a sign-in,
+  // for both stacks (`account.sessionOver.spec.ts`).
+  it('does not retry a failed renewal, and does not navigate to a sign-in itself', async () => {
+    for (const outcome of [{ kind: 'rejected' as const }, { kind: 'unreachable' as const }]) {
+      const count = detailUnauthorized()
+      refresh.mockReset().mockResolvedValue(outcome)
+      replace.mockReset()
+      await expect(spaces.detail(7)).rejects.toBeInstanceOf(Error)
+      expect(count()).toBe(1)
+      expect(replace).not.toHaveBeenCalled()
+    }
   })
 
   it('stops after a refreshed request is still unauthorized', async () => {
